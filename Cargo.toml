@@ -1,0 +1,154 @@
+[workspace]
+members = [
+    "optirs",
+    "optirs-core",
+    "optirs-gpu",
+    "optirs-tpu",
+    "optirs-learned",
+    "optirs-nas",
+    "optirs-bench",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unused_variables = "allow"
+unused_imports = "allow"
+mismatched_lifetime_syntaxes = "allow"
+dead_code = "allow"
+unpredictable_function_pointer_comparisons = "allow"
+unknown_lints = "allow"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["OptiRS Team"]
+description = "Advanced ML optimization and hardware acceleration library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cool-japan/optirs"
+keywords = ["optimization", "machine-learning", "gpu", "tpu", "neural-architecture-search"]
+categories = ["science", "mathematics", "algorithms", "machine-learning"]
+
+[workspace.dependencies]
+# Core array computing - REMOVED: Use scirs2_core::ndarray_ext instead
+# ndarray = { version = "0.16.1", default-features = false, features = ["std", "serde", "rayon"] }
+# ndarray-stats = "0.6.0"
+# ndarray-rand = "0.15.0"
+
+# Numerical libraries
+num-traits = "0.2.19"
+num-complex = "0.4.6"
+num-integer = "0.1.46"
+
+# Parallelization and performance
+rayon = "1.10.0"
+wide = "0.7.33"
+num_cpus = "1.16.0"
+
+# Random number generation - REMOVED: Use scirs2_core::random instead
+# rand = "0.9.2"
+# rand_distr = "0.5.1"
+# rand_core = "0.9.3"
+# rand_pcg = "0.9.0"
+# rand_chacha = "0.9.0"
+fastrand = "2.0.1"
+
+# Development and testing
+thiserror = "1.0.69"
+approx = "0.5.1"
+criterion = "0.6.0"
+once_cell = "1.21.3"
+tempfile = "3.20.0"
+tokio-test = "0.4.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+bincode = "1.3.3"
+chrono = "0.4.41"
+
+# GPU backends
+metal = "0.31.0"
+objc2 = { version = "0.6.2"}
+objc2-foundation = "0.3.0"
+objc2-metal-performance-shaders = "0.3.0"
+cudarc = { version = "0.12", features = ["cuda-12000"] }
+opencl3 = { version = "0.11" }
+wgpu = { version = "22.1" }
+pollster = { version = "0.4" }
+
+# ML specific
+tokenizers = "0.21.2"
+autograd = "1.1.1"
+smallvec = "1.15.1"
+uuid = { version = "1.18.1", features = ["v4"] }
+rustc-hash = "2.1.1"
+matrixmultiply = "0.3.9"
+
+# System information
+sysinfo = "0.35.2"
+
+# Async dependencies
+tokio = { version = "1.45.1", features = ["full"] }
+futures = "0.3.31"
+futures-util = "0.3.31"
+async-trait = "0.1.83"
+
+# Logging
+log = "0.4"
+
+# Utilities
+sha2 = "0.10"
+md5 = "0.8.0"
+clap = { version = "4.4", features = ["derive"] }
+regex = "1.11.1"
+
+# Cryptography
+rsa = { version = "0.9" }
+x509-parser = { version = "0.16" }
+
+# OptiRS crates
+optirs-core = { version = "0.1.0", path = "./optirs-core" }
+optirs-gpu = { version = "0.1.0", path = "./optirs-gpu" }
+optirs-tpu = { version = "0.1.0", path = "./optirs-tpu" }
+optirs-learned = { version = "0.1.0", path = "./optirs-learned" }
+optirs-nas = { version = "0.1.0", path = "./optirs-nas" }
+optirs-bench = { version = "0.1.0", path = "./optirs-bench" }
+
+# 🚨 CRITICAL: SciRS2 ECOSYSTEM DEPENDENCIES 🚨
+#
+# OptiRS MUST use SciRS2 as its scientific computing foundation.
+# This section implements evidence-based integration as per SCIRS2_INTEGRATION_POLICY.md
+#
+# MINIMAL ESSENTIAL START (as per integration policy):
+# Only these crates are included initially. Additional crates will be added
+# based on compilation evidence and actual usage requirements.
+#
+scirs2-core = { path = "../scirs/scirs2-core" }           # FOUNDATION - Core scientific primitives
+scirs2-optimize = { path = "../scirs/scirs2-optimize" }   # ESSENTIAL - Base optimization interfaces
+scirs2-linalg = { path = "../scirs/scirs2-linalg" }       # EVIDENCE: Matrix operations for optimization
+scirs2-autograd = { path = "../scirs/scirs2-autograd" }   # EVIDENCE: Automatic differentiation
+scirs2-neural = { path = "../scirs/scirs2-neural" }       # EVIDENCE: Neural network optimization
+scirs2-metrics = { path = "../scirs/scirs2-metrics" }     # EVIDENCE: Performance monitoring
+scirs2-stats = { path = "../scirs/scirs2-stats" }         # EVIDENCE: Statistical analysis - compilation errors show this is needed
+scirs2-signal = { path = "../scirs/scirs2-signal" }       # EVIDENCE: Signal processing - compilation errors show this is needed
+scirs2-series = { path = "../scirs/scirs2-series" }       # EVIDENCE: Time series analysis - compilation errors show this is needed
+scirs2-datasets = { path = "../scirs/scirs2-datasets" }   # EVIDENCE: Dataset handling - compilation errors show this is needed
+
+# CONDITIONAL ADDITIONS (add only when compilation errors prove they're needed):
+# scirs2-signal = { path = "../scirs/scirs2-signal" }       # If signal processing needed
+# scirs2-series = { path = "../scirs/scirs2-series" }       # If time-series analysis
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+
+[profile.test]
+opt-level = 0
+
+[profile.bench]
+opt-level = 3

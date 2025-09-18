@@ -1,0 +1,67 @@
+[package]
+name = "optirs-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS core optimization algorithms and utilities"
+license.workspace = true
+repository.workspace = true
+keywords = ["optimization", "sgd", "adam", "adamw", "rmsprop"]
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core dependencies - REMOVED: Use scirs2_core::ndarray_ext instead
+# ndarray = { workspace = true }
+# ndarray-rand = { workspace = true }
+num-traits = { workspace = true }
+num-complex = { workspace = true }
+thiserror = { workspace = true }
+# rand = { workspace = true }  # REMOVED: Use scirs2_core::random instead
+# rand_distr = { workspace = true }  # REMOVED: Use scirs2_core::random instead
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+log = { workspace = true }
+
+# 🚨 SciRS2 FOUNDATION INTEGRATION 🚨
+#
+# OptiRS-Core uses SciRS2 as its scientific computing foundation.
+# Only essential SciRS2 crates are included based on actual optimization needs.
+# Following evidence-based integration policy from SCIRS2_INTEGRATION_POLICY.md
+#
+scirs2-core = { workspace = true }        # FOUNDATION - Core scientific primitives
+scirs2-optimize = { workspace = true }    # ESSENTIAL - Base optimization interfaces
+scirs2-linalg = { workspace = true }      # ESSENTIAL - Matrix operations for optimization
+scirs2-autograd = { workspace = true }    # ESSENTIAL - Automatic differentiation
+scirs2-neural = { workspace = true }      # ESSENTIAL - Neural network optimization support
+scirs2-metrics = { workspace = true }     # ESSENTIAL - Performance monitoring and benchmarks
+scirs2-stats = { workspace = true }       # ESSENTIAL - Statistical analysis functions
+scirs2-signal = { workspace = true }     # EVIDENCE - Signal processing
+scirs2-series = { workspace = true }     # EVIDENCE - Time series analysis
+scirs2-datasets = { workspace = true }   # EVIDENCE - Dataset handling
+uuid = { workspace = true }               # For generating unique identifiers
+futures = { workspace = true }            # For async operations
+sysinfo = { workspace = true }            # For system information
+fastrand = { workspace = true }           # For fast random number generation
+num_cpus = { workspace = true }           # For CPU count detection
+
+# Parallelization (optional)
+rayon = { workspace = true, optional = true }
+
+# Performance
+wide = { workspace = true, optional = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+parallel = ["rayon"]
+simd = ["wide"]

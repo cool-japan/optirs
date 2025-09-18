@@ -1,0 +1,75 @@
+[package]
+name = "optirs-bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS benchmarking, profiling, and performance analysis tools"
+license.workspace = true
+repository.workspace = true
+keywords = ["benchmarking", "profiling", "performance", "regression", "monitoring"]
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+# ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
+num-traits = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+log = { workspace = true }
+
+# Benchmarking
+criterion = { workspace = true }
+
+# System monitoring
+sysinfo = { workspace = true }
+num_cpus = { workspace = true }
+
+# Time and utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# Security auditing
+sha2 = { workspace = true }
+md5 = { workspace = true }
+
+# Crypto for plugin security
+rsa = { workspace = true, optional = true }
+x509-parser = { workspace = true, optional = true }
+
+# Async support
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[features]
+default = ["profiling"]
+profiling = []
+regression_detection = []
+security_auditing = ["rsa", "x509-parser"]
+ci_integration = []
+
+[[bin]]
+name = "optirs-bench"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "performance-regression-detector"
+path = "src/bin/regression_detector.rs"
+
+[[bin]]
+name = "memory-leak-reporter"
+path = "src/bin/memory_reporter.rs"
+
+[[bin]]
+name = "security-audit-scanner"
+path = "src/bin/security_scanner.rs"

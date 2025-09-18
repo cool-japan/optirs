@@ -1,0 +1,47 @@
+[package]
+name = "optirs-gpu"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS GPU acceleration and multi-GPU optimization"
+license.workspace = true
+repository.workspace = true
+keywords = ["gpu", "cuda", "metal", "opencl", "optimization"]
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+# ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
+num-traits = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+log = { workspace = true }
+
+# GPU backends
+metal = { workspace = true, optional = true }
+objc2 = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+objc2-metal-performance-shaders = { workspace = true, optional = true }
+cudarc = { workspace = true, optional = true }
+opencl3 = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+
+# Async support
+tokio = { workspace = true, features = ["rt"] }
+futures = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+tokio-test = { workspace = true }
+
+[features]
+default = ["wgpu"]
+cuda = ["cudarc"]
+metal = ["dep:metal", "objc2", "objc2-foundation", "objc2-metal-performance-shaders"]
+opencl = ["opencl3"]
+wgpu = ["dep:wgpu", "pollster"]
