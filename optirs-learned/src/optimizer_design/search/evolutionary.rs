@@ -201,7 +201,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> EvolutionarySea
 
         // Generate offspring to fill rest of population
         while new_population.len() < self.parameters.population_size {
-            if rand::random::<f64>() < self.parameters.crossover_rate {
+            if scirs2_core::random::random::<f64>() < self.parameters.crossover_rate {
                 // Crossover
                 let offspring = self.generate_crossover_offspring(&fitnesses)?;
                 new_population.extend(offspring);
@@ -282,7 +282,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> EvolutionarySea
 
             // Apply mutation to offspring if enabled
             for child in &mut offspring {
-                if rand::random::<f64>() < self.parameters.mutation_rate {
+                if scirs2_core::random::random::<f64>() < self.parameters.mutation_rate {
                     self.apply_mutations(&mut child.architecture)?;
                 }
             }
@@ -319,14 +319,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> EvolutionarySea
             })
         } else {
             // Default to random selection
-            Ok(rand::random::<usize>() % self.population.len())
+            Ok(scirs2_core::random::random::<usize>() % self.population.len())
         }
     }
 
     /// Apply mutations to architecture
     fn apply_mutations(&self, architecture: &mut ArchitectureSpec) -> Result<(), super::SearchError> {
         for mutation_op in &self.mutation_operators {
-            if rand::random::<f64>() < self.parameters.mutation_rate {
+            if scirs2_core::random::random::<f64>() < self.parameters.mutation_rate {
                 mutation_op.mutate(architecture, self.parameters.mutation_rate);
             }
         }

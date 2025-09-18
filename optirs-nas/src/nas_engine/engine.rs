@@ -170,7 +170,7 @@ pub struct DiversityMetrics<T: Float + Debug + Send + Sync + 'static> {
     pub max_distance: T,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::iter::Sum + for<'a> std::iter::Sum<&'a T> + ndarray::ScalarOperand> NeuralArchitectureSearch<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::iter::Sum + for<'a> std::iter::Sum<&'a T> + scirs2_core::ndarray_ext::ScalarOperand> NeuralArchitectureSearch<T> {
     /// Create a new Neural Architecture Search engine
     pub fn new(config: NASConfig<T>) -> Result<Self> {
         // Initialize search strategy

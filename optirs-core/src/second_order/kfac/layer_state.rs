@@ -5,8 +5,8 @@
 
 use super::config::LayerInfo;
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{s, Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{s, Array1, Array2};
 use std::fmt::Debug;
 
 /// K-FAC optimizer state for a single layer
@@ -49,7 +49,13 @@ pub struct KFACLayerState<T: Float + Debug + Send + Sync + 'static> {
 }
 
 impl<
-        T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_traits::FromPrimitive,
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + num_traits::FromPrimitive,
     > KFACLayerState<T>
 {
     /// Create a new layer state for the given layer
@@ -229,7 +235,7 @@ impl<
         let batch_size_t = num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
 
         // Center the data
-        let mean = data.mean_axis(ndarray::Axis(0)).unwrap();
+        let mean = data.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
         let centered = data - &mean;
 
         // Compute covariance: (1/(n-1)) * X^T * X

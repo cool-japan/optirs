@@ -2,8 +2,8 @@
 //
 // RAdam is an improved variant of Adam with a rectified adaptive learning rate.
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -59,9 +59,9 @@ pub struct RAdam<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor
     weight_decay: A,
     /// First moment vector
-    m: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
     /// Current timestep
     t: usize,
     /// Rho infinity (precomputed constant)

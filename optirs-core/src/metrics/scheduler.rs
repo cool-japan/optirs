@@ -3,8 +3,8 @@
 // This module provides learning rate schedulers that adjust the learning rate
 // based on metric values.
 
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::ScalarOperand;
 #[cfg(not(feature = "metrics_integration"))]
 use std::fmt::Debug;
 #[cfg(feature = "metrics_integration")]

@@ -1,11 +1,11 @@
 // Sequence processing for optimization trajectories
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use std::collections::{HashMap, VecDeque};
-use crate::error::Result;
 use super::config::TransformerBasedOptimizerConfig;
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use std::collections::{HashMap, VecDeque};
+use std::fmt::Debug;
 
 /// Sequence processing strategy types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,10 +87,12 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
         loss_history: &Array1<T>,
     ) -> Result<Array2<T>> {
         // Update statistics
-        self.statistics.update(gradient_history, parameter_history, loss_history)?;
+        self.statistics
+            .update(gradient_history, parameter_history, loss_history)?;
 
         // Store in buffer
-        self.sequence_buffer.add_sequence(gradient_history, parameter_history, loss_history)?;
+        self.sequence_buffer
+            .add_sequence(gradient_history, parameter_history, loss_history)?;
 
         match self.strategy {
             SequenceProcessingStrategy::SlidingWindow => {
@@ -160,7 +162,8 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
 
         // Create hierarchical representation
         let mut levels = Vec::new();
-        let mut current_level = self.combine_sequences(gradient_history, parameter_history, loss_history)?;
+        let mut current_level =
+            self.combine_sequences(gradient_history, parameter_history, loss_history)?;
         levels.push(current_level.clone());
 
         // Build hierarchy by downsampling
@@ -192,16 +195,23 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
         let importance_scores = self.compute_importance_scores(gradient_history, loss_history)?;
 
         // Select most important steps
-        let selected_indices = self.select_top_k_indices(&importance_scores, self.max_sequence_length)?;
+        let selected_indices =
+            self.select_top_k_indices(&importance_scores, self.max_sequence_length)?;
 
         // Extract selected sequences
-        let mut selected_gradients = Array2::zeros((self.max_sequence_length, gradient_history.shape()[1]));
-        let mut selected_parameters = Array2::zeros((self.max_sequence_length, parameter_history.shape()[1]));
+        let mut selected_gradients =
+            Array2::zeros((self.max_sequence_length, gradient_history.shape()[1]));
+        let mut selected_parameters =
+            Array2::zeros((self.max_sequence_length, parameter_history.shape()[1]));
         let mut selected_losses = Array1::zeros(self.max_sequence_length);
 
         for (i, &idx) in selected_indices.iter().enumerate() {
-            selected_gradients.row_mut(i).assign(&gradient_history.row(idx));
-            selected_parameters.row_mut(i).assign(&parameter_history.row(idx));
+            selected_gradients
+                .row_mut(i)
+                .assign(&gradient_history.row(idx));
+            selected_parameters
+                .row_mut(i)
+                .assign(&parameter_history.row(idx));
             selected_losses[i] = loss_history[idx];
         }
 
@@ -219,12 +229,18 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
         let change_points = self.detect_change_points(loss_history)?;
 
         // Segment sequence based on change points
-        let segments = self.segment_by_change_points(gradient_history, parameter_history, loss_history, &change_points)?;
+        let segments = self.segment_by_change_points(
+            gradient_history,
+            parameter_history,
+            loss_history,
+            &change_points,
+        )?;
 
         // Process each segment and combine
         let mut processed_segments = Vec::new();
         for segment in segments {
-            let processed = self.combine_sequences(&segment.gradients, &segment.parameters, &segment.losses)?;
+            let processed =
+                self.combine_sequences(&segment.gradients, &segment.parameters, &segment.losses)?;
             processed_segments.push(processed);
         }
 
@@ -250,7 +266,11 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
         let param_chunk = parameter_history.slice(s![start_idx.., ..]);
         let loss_chunk = loss_history.slice(s![start_idx..]);
 
-        self.combine_sequences(&grad_chunk.to_owned(), &param_chunk.to_owned(), &loss_chunk.to_owned())
+        self.combine_sequences(
+            &grad_chunk.to_owned(),
+            &param_chunk.to_owned(),
+            &loss_chunk.to_owned(),
+        )
     }
 
     /// Convert optimization trajectory to training sequences
@@ -273,11 +293,17 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
             let target_start = start + 1;
 
             let input_gradients = trajectory.gradient_sequence.slice(s![start..input_end, ..]);
-            let input_parameters = trajectory.parameter_sequence.slice(s![start..input_end, ..]);
+            let input_parameters = trajectory
+                .parameter_sequence
+                .slice(s![start..input_end, ..]);
             let input_losses = trajectory.loss_sequence.slice(s![start..input_end]);
 
-            let target_gradients = trajectory.gradient_sequence.slice(s![target_start..end, ..]);
-            let target_parameters = trajectory.parameter_sequence.slice(s![target_start..end, ..]);
+            let target_gradients = trajectory
+                .gradient_sequence
+                .slice(s![target_start..end, ..]);
+            let target_parameters = trajectory
+                .parameter_sequence
+                .slice(s![target_start..end, ..]);
             let target_losses = trajectory.loss_sequence.slice(s![target_start..end]);
 
             let input = self.combine_sequences(
@@ -309,13 +335,16 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
         parameters: &Array2<T>,
         losses: &Array1<T>,
     ) -> Result<Array2<T>> {
-        self.preprocessor.combine_sequences(gradients, parameters, losses)
+        self.preprocessor
+            .combine_sequences(gradients, parameters, losses)
     }
 
     /// Combine multiple processed chunks
     fn combine_chunks(&self, chunks: &[Array2<T>]) -> Result<Array2<T>> {
         if chunks.is_empty() {
-            return Err(crate::error::OptimError::Other("No chunks to combine".to_string()));
+            return Err(crate::error::OptimError::Other(
+                "No chunks to combine".to_string(),
+            ));
         }
 
         if chunks.len() == 1 {
@@ -337,7 +366,8 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
                 break;
             }
 
-            combined.slice_mut(s![current_pos..current_pos + copy_len, ..])
+            combined
+                .slice_mut(s![current_pos..current_pos + copy_len, ..])
                 .assign(&chunk.slice(s![..copy_len, ..]));
 
             current_pos += copy_len;
@@ -364,20 +394,31 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
 
         for i in 0..target_length {
             let source_idx = (i as f64 * step) as usize;
-            downsampled.row_mut(i).assign(&sequence.row(source_idx.min(current_length - 1)));
+            downsampled
+                .row_mut(i)
+                .assign(&sequence.row(source_idx.min(current_length - 1)));
         }
 
         Ok(downsampled)
     }
 
     /// Compute importance scores for sequence steps
-    fn compute_importance_scores(&self, gradients: &Array2<T>, losses: &Array1<T>) -> Result<Array1<T>> {
+    fn compute_importance_scores(
+        &self,
+        gradients: &Array2<T>,
+        losses: &Array1<T>,
+    ) -> Result<Array1<T>> {
         let sequence_length = gradients.shape()[0];
         let mut scores = Array1::zeros(sequence_length);
 
         for i in 0..sequence_length {
             // Combine gradient magnitude and loss change
-            let grad_norm = gradients.row(i).iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x).sqrt();
+            let grad_norm = gradients
+                .row(i)
+                .iter()
+                .map(|&x| x * x)
+                .fold(T::zero(), |acc, x| acc + x)
+                .sqrt();
 
             let loss_change = if i > 0 {
                 (losses[i] - losses[i - 1]).abs()
@@ -393,7 +434,8 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
 
     /// Select top-k indices based on importance scores
     fn select_top_k_indices(&self, scores: &Array1<T>, k: usize) -> Result<Vec<usize>> {
-        let mut indexed_scores: Vec<(usize, T)> = scores.iter()
+        let mut indexed_scores: Vec<(usize, T)> = scores
+            .iter()
             .enumerate()
             .map(|(i, &score)| (i, score))
             .collect();
@@ -534,12 +576,33 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceBuffer<T> {
         self.loss_buffer.clear();
     }
 
-    pub fn get_recent_sequences(&self, count: usize) -> (Vec<Array2<T>>, Vec<Array2<T>>, Vec<Array1<T>>) {
+    pub fn get_recent_sequences(
+        &self,
+        count: usize,
+    ) -> (Vec<Array2<T>>, Vec<Array2<T>>, Vec<Array1<T>>) {
         let actual_count = count.min(self.gradient_buffer.len());
 
-        let gradients = self.gradient_buffer.iter().rev().take(actual_count).cloned().collect();
-        let parameters = self.parameter_buffer.iter().rev().take(actual_count).cloned().collect();
-        let losses = self.loss_buffer.iter().rev().take(actual_count).cloned().collect();
+        let gradients = self
+            .gradient_buffer
+            .iter()
+            .rev()
+            .take(actual_count)
+            .cloned()
+            .collect();
+        let parameters = self
+            .parameter_buffer
+            .iter()
+            .rev()
+            .take(actual_count)
+            .cloned()
+            .collect();
+        let losses = self
+            .loss_buffer
+            .iter()
+            .rev()
+            .take(actual_count)
+            .cloned()
+            .collect();
 
         (gradients, parameters, losses)
     }
@@ -579,7 +642,8 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
         self.gradient_stats.update_from_array2(gradients);
         self.parameter_stats.update_from_array2(parameters);
         self.loss_stats.update_from_array1(losses);
-        self.length_stats.update(T::from(gradients.shape()[0]).unwrap());
+        self.length_stats
+            .update(T::from(gradients.shape()[0]).unwrap());
 
         Ok(())
     }
@@ -781,7 +845,8 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
     pub fn variance(&self) -> T {
         if self.count > 1 {
             let mean = self.mean();
-            (self.sum_sq / num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero())) - (mean * mean)
+            (self.sum_sq / num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero()))
+                - (mean * mean)
         } else {
             T::zero()
         }

@@ -148,7 +148,9 @@ mod integration_tests {
 
         // Multiple optimization steps - need at least 5 for cov_update_freq
         for step in 0..5 {
-            let updates = kfac.step::<fn() -> f64>(layer_gradients.clone(), None).unwrap();
+            let updates = kfac
+                .step::<fn() -> f64>(layer_gradients.clone(), None)
+                .unwrap();
 
             assert_eq!(updates.len(), 2);
             assert!(updates.contains_key("layer1"));
@@ -256,7 +258,8 @@ mod integration_tests {
         layer_gradients.insert("test_layer".to_string(), (&activations, &gradients));
 
         // Perform some steps
-        kfac.step::<fn() -> f32>(layer_gradients.clone(), None).unwrap();
+        kfac.step::<fn() -> f32>(layer_gradients.clone(), None)
+            .unwrap();
         kfac.step::<fn() -> f32>(layer_gradients, None).unwrap();
 
         assert_eq!(kfac.step_count(), 2);

@@ -16,7 +16,7 @@
 //!
 //! ```rust
 //! use optirs::prelude::*;
-//! use ndarray::Array2;
+//! use scirs2_core::ndarray_ext::Array2;
 //!
 //! // Create an optimizer
 //! let optimizer = Adam::new(0.001)?;

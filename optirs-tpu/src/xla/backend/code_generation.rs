@@ -764,10 +764,12 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
     /// Format operand for assembly
     fn format_operand(&self, operand: &TPUOperand) -> Result<String> {
         match operand {
-            TPUOperand::Register(reg) => self.format_register(reg),
-            TPUOperand::Immediate(val) => Ok(format!("#{}", val)),
-            TPUOperand::Memory(addr) => Ok(format!("[{}]", self.format_memory_address(addr)?)),
-            TPUOperand::Label(label) => Ok(label.clone()),
+            TPUOpescirs2_core::random::Register(reg) => self.format_register(reg),
+            TPUOpescirs2_core::random::Immediate(val) => Ok(format!("#{}", val)),
+            TPUOpescirs2_core::random::Memory(addr) => {
+                Ok(format!("[{}]", self.format_memory_address(addr)?))
+            }
+            TPUOpescirs2_core::random::Label(label) => Ok(label.clone()),
         }
     }
 
@@ -936,7 +938,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
             match map {
                 OperandMapping::Input(idx) => {
                     if *idx < operation.inputs.len() {
-                        operands.push(TPUOperand::Register(TPURegister {
+                        operands.push(TPUOpescirs2_core::random::Register(TPURegister {
                             reg_type: RegisterType::Vector,
                             index: operation.inputs[*idx].0,
                             data_type: DataType::F32,
@@ -946,7 +948,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
                 }
                 OperandMapping::Output(idx) => {
                     if *idx == 0 {
-                        operands.push(TPUOperand::Register(TPURegister {
+                        operands.push(TPUOpescirs2_core::random::Register(TPURegister {
                             reg_type: RegisterType::Vector,
                             index: operation.output.0,
                             data_type: DataType::F32,
@@ -955,10 +957,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
                     }
                 }
                 OperandMapping::Constant(val) => {
-                    operands.push(TPUOperand::Immediate(*val));
+                    operands.push(TPUOpescirs2_core::random::Immediate(*val));
                 }
                 OperandMapping::Register(reg_type) => {
-                    operands.push(TPUOperand::Register(TPURegister {
+                    operands.push(TPUOpescirs2_core::random::Register(TPURegister {
                         reg_type: reg_type.clone(),
                         index: 0,
                         data_type: DataType::F32,
@@ -1144,13 +1146,13 @@ mod tests {
             id: 0,
             opcode: TPUOpcode::VectorAdd,
             operands: vec![
-                TPUOperand::Register(TPURegister {
+                TPUOpescirs2_core::random::Register(TPURegister {
                     reg_type: RegisterType::Vector,
                     index: 0,
                     data_type: DataType::F32,
                     size: 4,
                 }),
-                TPUOperand::Register(TPURegister {
+                TPUOpescirs2_core::random::Register(TPURegister {
                     reg_type: RegisterType::Vector,
                     index: 1,
                     data_type: DataType::F32,

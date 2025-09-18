@@ -28,8 +28,8 @@ pub use training::{
     TransformerEvaluator, TransformerMetaLearner,
 };
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{HashMap, VecDeque};
 
 use super::{LearnedOptimizerConfig, MetaOptimizationStrategy};
@@ -95,7 +95,9 @@ pub struct TransformerOptimizerConfig {
 
 /// Transformer network architecture
 #[derive(Debug, Clone)]
-pub struct TransformerNetwork<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static> {
+pub struct TransformerNetwork<
+    T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static,
+> {
     /// Input embedding layer
     input_embedding: InputEmbedding<T>,
 
@@ -117,7 +119,9 @@ pub struct TransformerNetwork<T: Float + Debug + Default + Clone + std::iter::Su
 
 /// Transformer-based neural optimizer with self-attention mechanisms
 #[derive(Debug, Clone)]
-pub struct TransformerOptimizer<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static> {
+pub struct TransformerOptimizer<
+    T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static,
+> {
     /// Configuration for the Transformer optimizer
     config: TransformerOptimizerConfig,
 
@@ -196,7 +200,9 @@ pub struct TransformerOptimizerMetrics {
     performance_comparisons: HashMap<String, f64>,
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static> TransformerNetwork<T> {
+impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static>
+    TransformerNetwork<T>
+{
     /// Create new transformer network
     pub fn new(config: &TransformerOptimizerConfig) -> Result<Self> {
         let input_embedding = InputEmbedding::new(config.modeldim, config.modeldim)?;
@@ -244,7 +250,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static
     }
 
     /// Get attention patterns from all layers
-    pub fn get_attention_patterns(&self) -> Vec<Option<&ndarray::Array3<T>>> {
+    pub fn get_attention_patterns(&self) -> Vec<Option<&scirs2_core::ndarray_ext::Array3<T>>> {
         self.layers
             .iter()
             .map(|layer| layer.get_attention_patterns())
@@ -252,7 +258,9 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static
     }
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static> TransformerOptimizer<T> {
+impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static>
+    TransformerOptimizer<T>
+{
     /// Create new transformer optimizer
     pub fn new(config: TransformerOptimizerConfig) -> Result<Self> {
         let transformer_network = TransformerNetwork::new(&config)?;

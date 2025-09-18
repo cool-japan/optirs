@@ -6,8 +6,8 @@
 
 use crate::error::Result;
 use crate::privacy::{DifferentialPrivacyConfig, NoiseMechanism, PrivacyBudget};
-use scirs2_core::ndarray_ext::{ArrayBase, Data, Dimension};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{ArrayBase, Data, Dimension};
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;

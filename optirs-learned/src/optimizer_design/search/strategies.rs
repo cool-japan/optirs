@@ -220,8 +220,8 @@ impl MutationOperator for ParameterMutation {
         for layer in &mut architecture.layers {
             for param_name in &self.parameter_names {
                 if let Some(value) = layer.parameters.get_mut(param_name) {
-                    if rand::random::<f64>() < mutation_rate {
-                        *value += (rand::random::<f64>() - 0.5) * 2.0 * self.mutation_strength;
+                    if scirs2_core::random::random::<f64>() < mutation_rate {
+                        *value += (scirs2_core::random::random::<f64>() - 0.5) * 2.0 * self.mutation_strength;
                         mutated = true;
                     }
                 }
@@ -270,7 +270,7 @@ impl CrossoverOperator for UniformCrossover {
         let min_layers = parent1.layers.len().min(parent2.layers.len());
 
         for i in 0..min_layers {
-            if rand::random::<f64>() < self.crossover_probability {
+            if scirs2_core::random::random::<f64>() < self.crossover_probability {
                 if i < child1.layers.len() && i < child2.layers.len() {
                     std::mem::swap(&mut child1.layers[i], &mut child2.layers[i]);
                 }
@@ -313,7 +313,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SelectionMethod<T> for Tournament
             
             // Select tournament candidates
             for _ in 0..self.tournament_size {
-                let idx = rand::random::<usize>() % population.len();
+                let idx = scirs2_core::random::random::<usize>() % population.len();
                 tournament.push(idx);
             }
 
@@ -366,13 +366,13 @@ impl<T: Float + Debug + Send + Sync + 'static> SelectionMethod<T> for RouletteWh
         if fitness_sum == T::zero() {
             // If all fitnesses are zero, select randomly
             for _ in 0..num_selected {
-                selected.push(rand::random::<usize>() % fitnesses.len());
+                selected.push(scirs2_core::random::random::<usize>() % fitnesses.len());
             }
             return selected;
         }
 
         for _ in 0..num_selected {
-            let mut roulette_value = T::from(rand::random::<f64>()).unwrap() * fitness_sum;
+            let mut roulette_value = T::from(scirs2_core::random::random::<f64>()).unwrap() * fitness_sum;
             let mut cumulative_fitness = T::zero();
 
             for (idx, &fitness) in fitnesses.iter().enumerate() {
@@ -425,7 +425,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SelectionMethod<T> for RankSelect
 
         for _ in 0..num_selected {
             // Select based on rank
-            let rank = (rand::random::<f64>() * pop_size as f64) as usize;
+            let rank = (scirs2_core::random::random::<f64>() * pop_size as f64) as usize;
             let idx = indexed_fitnesses[rank.min(pop_size - 1)].0;
             selected.push(idx);
         }

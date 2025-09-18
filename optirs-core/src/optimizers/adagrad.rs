@@ -1,7 +1,7 @@
 // Adagrad optimizer implementation
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -44,7 +44,7 @@ pub struct Adagrad<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
     /// Sum of squared gradients
-    sum_squared_grads: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    sum_squared_grads: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> Adagrad<A> {

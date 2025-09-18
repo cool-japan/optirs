@@ -4,9 +4,9 @@
 // for quickly adapting optimizers to new tasks with minimal data. It includes
 // prototypical networks, meta-learning approaches, and rapid adaptation mechanisms.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};

@@ -6,8 +6,8 @@
 //! 3. Chained: Wrap one optimizer with another (like Lookahead)
 
 use scirs2_core::ndarray_ext::{s, Array1, Array2};
-use ndarray_rand::rand_distr::Normal;
-use ndarray_rand::RandomExt;
+use scirs2_core::random::distributions::Normal;
+use scirs2_core::random::RandomExt;
 use scirs2_optim::optimizer_composition::{
     ChainedOptimizer, ParallelOptimizer, ParameterGroup, SequentialOptimizer,
 };

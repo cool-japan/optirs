@@ -345,5 +345,5 @@ fn train_with_sparse_adam(
 /// Generate a random value in the given range
 #[allow(dead_code)]
 fn rand_value(min: f64, max: f64) -> f64 {
-    min + (max - min) * rand::random::<f64>()
+    min + (max - min) * scirs2_core::random::random::<f64>()
 }

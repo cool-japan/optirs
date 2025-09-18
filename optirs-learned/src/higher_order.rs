@@ -15,7 +15,7 @@ use crate::error::{OptimError, Result};
 
 /// Higher-order differentiation engine
 #[allow(dead_code)]
-pub struct HigherOrderEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + ndarray::ScalarOperand> {
+pub struct HigherOrderEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
     /// Forward-mode engine for directional derivatives
     forward_engine: ForwardModeEngine<T>,
 
@@ -188,7 +188,7 @@ pub enum LayerType {
     Attention,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + ndarray::ScalarOperand>
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand>
     HigherOrderEngine<T>
 {
     /// Create a new higher-order differentiation engine

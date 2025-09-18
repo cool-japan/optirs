@@ -4,8 +4,8 @@
 // between two boundaries with a constant frequency.
 
 use crate::schedulers::LearningRateScheduler;
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt;
 
 /// Cyclic learning rate policy

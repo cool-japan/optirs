@@ -5,8 +5,8 @@ use plotters::prelude::*;
 use scirs2_optim::optimizers::{Adam, AdamW, Optimizer, RAdam, RMSprop, SGD};
 
 // Type aliases to simplify complex types
-type OptimizerList = Vec<(String, Box<dyn Optimizer<f64, ndarray::Ix1>>)>;
-type OptimizerSlice<'a> = &'a [(String, Box<dyn Optimizer<f64, ndarray::Ix1>>)];
+type OptimizerList = Vec<(String, Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>)>;
+type OptimizerSlice<'a> = &'a [(String, Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>)];
 
 #[allow(dead_code)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -4,10 +4,10 @@ use std::fmt::Debug;
 // Implements various multi-objective optimization algorithms including NSGA-II, NSGA-III,
 // MOEA/D, and other state-of-the-art algorithms for finding Pareto-optimal optimizer architectures.
 
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
-use scirs2_core::random::Rng;
+use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::random::Random;
+use scirs2_core::random::Rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -218,7 +218,7 @@ pub struct NSGA2<T: Float + Debug + Send + Sync + 'static> {
     mutation_prob: f64,
 
     /// Random number generator
-    rng: Random<rand::rngs::StdRng>,
+    rng: Random<scirs2_core::random::rngs::StdRng>,
 }
 
 /// Individual in the population

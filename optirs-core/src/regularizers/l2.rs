@@ -1,7 +1,7 @@
 // L2 (Ridge) regularization
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use std::fmt::Debug;
 
 use crate::error::Result;

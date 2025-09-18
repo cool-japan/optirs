@@ -4,8 +4,8 @@
 // Lipschitz constant of the neural network by normalizing the spectral norm
 // (largest singular value) of weight matrices.
 
-use scirs2_core::ndarray_ext::{Array, Array2, Array4, Dimension, ScalarOperand};
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::{Array, Array2, Array4, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 use scirs2_core::Random;
 use std::fmt::Debug;
@@ -37,11 +37,11 @@ pub struct SpectralNorm<A: Float> {
     /// Epsilon for numerical stability
     eps: A,
     /// Cached left singular vector
-    u: Option<Array<A, ndarray::Ix1>>,
+    u: Option<Array<A, scirs2_core::ndarray_ext::Ix1>>,
     /// Cached right singular vector  
-    v: Option<Array<A, ndarray::Ix1>>,
+    v: Option<Array<A, scirs2_core::ndarray_ext::Ix1>>,
     /// Random number generator
-    rng: Random<rand::rngs::StdRng>,
+    rng: Random<scirs2_core::random::rngs::StdRng>,
 }
 
 impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNorm<A> {

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::error::{OptimError, Result};
 
 /// Reverse-mode AD engine (gradient tape)
-pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + ndarray::ScalarOperand> {
+pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
     /// Computation tape for reverse pass
     tape: Vec<ReverseOperation<T>>,
 
@@ -226,7 +226,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Gra
     }
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + ndarray::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
+impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
     /// Create a new reverse-mode AD engine
     pub fn new() -> Self {
         Self {
@@ -961,7 +961,7 @@ pub struct GradientAccumulator<T: Float + Debug + Send + Sync + 'static> {
     count: usize,
 }
 
-impl<T: Float + Debug + Default + Clone + ndarray::ScalarOperand + Send + Sync> GradientAccumulator<T> {
+impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> GradientAccumulator<T> {
     pub fn new() -> Self {
         Self {
             gradients: HashMap::new(),

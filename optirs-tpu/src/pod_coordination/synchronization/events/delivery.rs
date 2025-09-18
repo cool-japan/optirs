@@ -295,7 +295,7 @@ impl RetryBackoffStrategy {
             },
             RetryBackoffStrategy::RandomizedExponential { initial_delay, multiplier, jitter } => {
                 let base_delay = initial_delay.as_millis() as f64 * multiplier.powi(attempt as i32);
-                let jitter_factor = 1.0 + (rand::random::<f64>() - 0.5) * jitter;
+                let jitter_factor = 1.0 + (scirs2_core::random::random::<f64>() - 0.5) * jitter;
                 Duration::from_millis((base_delay * jitter_factor) as u64)
             },
             RetryBackoffStrategy::Custom { .. } => Duration::from_secs(1), // Default fallback

@@ -1029,7 +1029,7 @@ impl RaftConsensus {
     /// Helper methods
     fn random_election_timeout() -> Instant {
         let base = Duration::from_millis(150);
-        let jitter = Duration::from_millis(fastrand::u64(0..150));
+        let jitter = Duration::from_millis(scirs2_core::random::u64(0..150));
         Instant::now() + base + jitter
     }
 

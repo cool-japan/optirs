@@ -399,7 +399,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RLArchitectureA
     /// Select action using epsilon-greedy policy
     fn select_action(&self, state: &StateRepresentation<T>) -> Result<Action> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         // Epsilon-greedy exploration
         if rng.random::<f64>() < self.config.exploration_rate.to_f64().unwrap_or(0.1) {
@@ -414,7 +414,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RLArchitectureA
     /// Select random action for exploration
     fn select_random_action(&self, state: &StateRepresentation<T>) -> Result<Action> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         // Randomly choose action type
         let action_type = rng.gen_range(0..3);
@@ -670,7 +670,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ReplayBuffer<T>
             ));
         }
         
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         let mut batch = Vec::with_capacity(batch_size);
         
         for _ in 0..batch_size {

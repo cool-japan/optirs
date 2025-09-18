@@ -4,8 +4,8 @@
 // - Spatial Dropout: drops entire feature maps (useful for CNNs)
 // - Feature Dropout: drops specific features across all spatial locations
 
-use scirs2_core::ndarray_ext::{Array, Axis, Dimension, Ix3, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Axis, Dimension, Ix3, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -66,7 +66,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
     /// Apply spatial dropout to a tensor
     pub fn apply<D>(&self, features: &Array<A, D>, training: bool) -> Array<A, D>
     where
-        D: Dimension + ndarray::RemoveAxis,
+        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis,
     {
         if !training || self.dropprob == A::zero() {
             return features.clone();
@@ -157,7 +157,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
     /// Apply feature dropout to a tensor
     pub fn apply<D>(&self, features: &Array<A, D>, training: bool) -> Array<A, D>
     where
-        D: Dimension + ndarray::RemoveAxis,
+        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis,
     {
         if !training || self.dropprob == A::zero() {
             return features.clone();
@@ -194,8 +194,10 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
 }
 
 // Implement Regularizer trait for SpatialDropout - only for dimensions that support RemoveAxis
-impl<A: Float + Debug + ScalarOperand + Send + Sync, D: Dimension + ndarray::RemoveAxis + Send + Sync>
-    Regularizer<A, D> for SpatialDropout<A>
+impl<
+        A: Float + Debug + ScalarOperand + Send + Sync,
+        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis + Send + Sync,
+    > Regularizer<A, D> for SpatialDropout<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         // Apply spatial dropout to gradients during training
@@ -211,8 +213,10 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync, D: Dimension + ndarray::Rem
 }
 
 // Implement Regularizer trait for FeatureDropout - only for dimensions that support RemoveAxis
-impl<A: Float + Debug + ScalarOperand + Send + Sync, D: Dimension + ndarray::RemoveAxis + Send + Sync>
-    Regularizer<A, D> for FeatureDropout<A>
+impl<
+        A: Float + Debug + ScalarOperand + Send + Sync,
+        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis + Send + Sync,
+    > Regularizer<A, D> for FeatureDropout<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         // Apply feature dropout to gradients during training

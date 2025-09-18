@@ -5,8 +5,8 @@
 // solely on differential privacy noise.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -280,7 +280,9 @@ pub struct CryptographicAggregator<T: Float + Debug + Send + Sync + 'static> {
     aggregation_proofs: Vec<AggregationProof<T>>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> CryptographicAggregator<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+    CryptographicAggregator<T>
+{
     /// Create new cryptographic aggregator
     pub fn new(config: SMPCConfig) -> Self {
         Self {
@@ -867,7 +869,9 @@ pub struct SecureAggregationResult<T: Float + Debug + Send + Sync + 'static> {
     pub security_level: CommunicationSecurity,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> SMPCCoordinator<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+    SMPCCoordinator<T>
+{
     /// Create new SMPC coordinator
     pub fn new(config: SMPCConfig) -> Result<Self> {
         let secret_sharing = ShamirSecretSharing::new(config.threshold, config.num_participants);

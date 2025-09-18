@@ -1,13 +1,13 @@
 // Memory management for transformer-based optimizer
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use super::config::{CacheEvictionStrategy, MemoryConfig, TransformerBasedOptimizerConfig};
+use crate::error::Result;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
-use std::collections::{HashMap, VecDeque, BTreeMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use crate::error::Result;
-use super::config::{TransformerBasedOptimizerConfig, MemoryConfig, CacheEvictionStrategy};
 
 /// Memory management strategy types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,7 +72,8 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
             memory_config.eviction_strategy,
         )?;
 
-        let secondary_cache = if memory_config.max_cache_size > 1024 * 1024 * 100 { // 100MB
+        let secondary_cache = if memory_config.max_cache_size > 1024 * 1024 * 100 {
+            // 100MB
             Some(MemoryCache::new(
                 memory_config.max_cache_size / 2,
                 CacheEvictionStrategy::FIFO,
@@ -120,8 +121,12 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
             MemoryManagementStrategy::LFU => self.store_lfu(key.clone(), tensor.clone()),
             MemoryManagementStrategy::FIFO => self.store_fifo(key.clone(), tensor.clone()),
             MemoryManagementStrategy::ARC => self.store_arc(key.clone(), tensor.clone()),
-            MemoryManagementStrategy::Compressed => self.store_compressed(key.clone(), tensor.clone()),
-            MemoryManagementStrategy::Hierarchical => self.store_hierarchical(key.clone(), tensor.clone()),
+            MemoryManagementStrategy::Compressed => {
+                self.store_compressed(key.clone(), tensor.clone())
+            }
+            MemoryManagementStrategy::Hierarchical => {
+                self.store_hierarchical(key.clone(), tensor.clone())
+            }
         };
 
         // Get tensor length before potential move
@@ -229,11 +234,13 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
     /// Get memory usage statistics
     pub fn get_memory_usage(&self) -> usize {
         let primary_usage = self.primary_cache.get_memory_usage();
-        let secondary_usage = self.secondary_cache
+        let secondary_usage = self
+            .secondary_cache
             .as_ref()
             .map(|cache| cache.get_memory_usage())
             .unwrap_or(0);
-        let compression_usage = self.compression_manager
+        let compression_usage = self
+            .compression_manager
             .as_ref()
             .map(|comp| comp.get_memory_usage())
             .unwrap_or(0);
@@ -364,7 +371,8 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
 
     fn reorganize_by_frequency(&mut self, patterns: &AccessPatterns) -> Result<()> {
         // Move frequently accessed items to primary cache
-        let frequent_keys: Vec<String> = patterns.frequency_map
+        let frequent_keys: Vec<String> = patterns
+            .frequency_map
             .iter()
             .filter(|(_, &count)| count as f64 > patterns.average_frequency)
             .map(|(key, _)| key.clone())
@@ -450,7 +458,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
 
         if tensor_size > self.max_size {
             return Err(crate::error::OptimError::Other(
-                "Tensor too large for cache".to_string()
+                "Tensor too large for cache".to_string(),
             ));
         }
 
@@ -536,7 +544,8 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
     }
 
     fn evict_lfu(&mut self) -> Result<()> {
-        if let Some((min_freq, lfu_key)) = self.access_frequency
+        if let Some((min_freq, lfu_key)) = self
+            .access_frequency
             .iter()
             .min_by_key(|(_, &freq)| freq)
             .map(|(key, &freq)| (freq, key.clone()))
@@ -574,7 +583,8 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
     }
 
     pub fn get_all_items(&self) -> Result<Vec<(String, Array2<T>)>> {
-        let items = self.storage
+        let items = self
+            .storage
             .iter()
             .map(|(key, entry)| (key.clone(), entry.tensor.clone()))
             .collect();
@@ -631,8 +641,11 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionManager<T> {
     }
 
     pub fn decompress(&self, compressed: &CompressedData<T>) -> Result<Array2<T>> {
-        let array = Array2::from_shape_vec((compressed.shape[0], compressed.shape[1]), compressed.data.clone())
-            .map_err(|_| crate::error::OptimError::Other("Decompression failed".to_string()))?;
+        let array = Array2::from_shape_vec(
+            (compressed.shape[0], compressed.shape[1]),
+            compressed.data.clone(),
+        )
+        .map_err(|_| crate::error::OptimError::Other("Decompression failed".to_string()))?;
         Ok(array)
     }
 
@@ -726,8 +739,9 @@ impl MemoryStatistics {
     pub fn record_storage(&mut self, bytes: usize, time: Duration) {
         self.total_stores += 1;
         self.total_bytes_stored += bytes;
-        self.average_storage_time =
-            (self.average_storage_time * (self.total_stores - 1) as u32 + time) / self.total_stores as u32;
+        self.average_storage_time = (self.average_storage_time * (self.total_stores - 1) as u32
+            + time)
+            / self.total_stores as u32;
     }
 
     pub fn record_retrieval(&mut self, time: Duration, hit: bool) {
@@ -738,7 +752,8 @@ impl MemoryStatistics {
             self.cache_misses += 1;
         }
         self.average_retrieval_time =
-            (self.average_retrieval_time * (self.total_retrievals - 1) as u32 + time) / self.total_retrievals as u32;
+            (self.average_retrieval_time * (self.total_retrievals - 1) as u32 + time)
+                / self.total_retrievals as u32;
     }
 
     pub fn record_pressure_event(&mut self) {

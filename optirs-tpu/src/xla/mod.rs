@@ -9,8 +9,8 @@ pub mod backend;
 pub mod frontend;
 pub mod optimization;
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};

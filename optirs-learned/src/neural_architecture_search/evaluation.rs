@@ -199,7 +199,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ArchitectureEvaluator<T> {
         let base_accuracy = 0.6 + 0.3 * param_factor + 0.1 * layer_factor;
 
         // Add some randomness
-        let noise = (rand::random::<f64>() - 0.5) * 0.1;
+        let noise = (scirs2_core::random::random::<f64>() - 0.5) * 0.1;
         Ok((base_accuracy + noise).clamp(0.0, 1.0))
     }
 

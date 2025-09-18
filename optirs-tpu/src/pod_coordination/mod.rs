@@ -299,7 +299,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Clone for OptimizationStep<T> {
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + ndarray::ScalarOperand> OptimizationStep<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> OptimizationStep<T> {
     /// Execute the optimization step
     pub async fn execute(&self, partition: BatchPartition<T>) -> Result<Vec<Array<T, IxDyn>>> {
         (self.stepfn)(partition)
@@ -477,7 +477,7 @@ impl PodCoordinationBuilder {
     }
 
     /// Build the TPU pod coordinator
-    pub fn build<T: Float + Default + Clone + Send + Sync + ndarray::ScalarOperand + std::iter::Sum>(
+    pub fn build<T: Float + Default + Clone + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::iter::Sum>(
         self,
     ) -> Result<TPUPodCoordinator<T>> {
         TPUPodCoordinator::new(self.config)

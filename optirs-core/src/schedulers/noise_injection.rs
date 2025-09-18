@@ -3,8 +3,8 @@
 // This module provides a learning rate scheduler that adds noise to the learning rate
 // to help escape local minima and improve exploration during training.
 
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::{Float, NumCast};
+use scirs2_core::ndarray_ext::ScalarOperand;
 use scirs2_core::random::Rng;
 use std::fmt::Debug;
 

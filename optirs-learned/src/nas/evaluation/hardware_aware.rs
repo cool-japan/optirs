@@ -894,7 +894,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         // Generate latency measurements with some variance
         let mut latency_measurements = Vec::new();
         for _ in 0..self.config.measurement_config.measurement_runs {
-            let variance = 1.0 + (rand::random::<f64>() - 0.5) * 0.2; // ±10% variance
+            let variance = 1.0 + (scirs2_core::random::random::<f64>() - 0.5) * 0.2; // ±10% variance
             let latency = num_traits::cast::cast(base_latency * platform_factor * variance).unwrap_or_else(|| T::zero());
             latency_measurements.push(latency);
         }

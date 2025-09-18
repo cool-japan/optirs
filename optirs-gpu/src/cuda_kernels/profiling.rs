@@ -181,7 +181,7 @@ impl KernelProfiler {
             return Ok(ProfilingHandle::disabled());
         }
 
-        let should_sample = fastrand::f32() < self.config.sample_rate;
+        let should_sample = scirs2_core::random::f32() < self.config.sample_rate;
         if !should_sample {
             return Ok(ProfilingHandle::disabled());
         }

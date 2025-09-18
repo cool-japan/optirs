@@ -1,7 +1,7 @@
 // Dropout regularization
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::random::Rng;
 use scirs2_core::Random;
 use std::fmt::Debug;
@@ -43,11 +43,11 @@ pub struct Dropout<A: Float + Debug> {
     /// Dropout rate (fraction of units that are dropped)
     rate: A,
     /// Random number generator
-    rng: Random<rand::rngs::StdRng>,
+    rng: Random<scirs2_core::random::rngs::StdRng>,
     /// Boolean indicating whether in training mode
     training: bool,
     /// Cached dropout mask
-    mask: Option<Array<A, ndarray::IxDyn>>,
+    mask: Option<Array<A, scirs2_core::ndarray_ext::IxDyn>>,
 }
 
 impl<A: Float + Debug + Send + Sync> Dropout<A> {

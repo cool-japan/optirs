@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements comprehensive evaluation strategies for assessing
 // the performance of transformer-based learned optimizers across various metrics.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};

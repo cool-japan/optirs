@@ -321,28 +321,28 @@ impl AdaptiveOptimizer {
         for _ in 0..size {
             let params = KernelParameters {
                 grid_dims: (
-                    (fastrand::u32(1..=1024)),
-                    (fastrand::u32(1..=1024)),
+                    (scirs2_core::random::u32(1..=1024)),
+                    (scirs2_core::random::u32(1..=1024)),
                     1
                 ),
                 block_dims: (
-                    (fastrand::u32(32..=1024) / 32) * 32, // Multiple of 32
-                    (fastrand::u32(1..=32)),
+                    (scirs2_core::random::u32(32..=1024) / 32) * 32, // Multiple of 32
+                    (scirs2_core::random::u32(1..=32)),
                     1
                 ),
-                shared_memory: fastrand::u32(0..=49152), // Max shared memory per block
-                registers_per_thread: fastrand::u32(16..=255),
-                occupancy_target: fastrand::f32() * 0.5 + 0.5, // 0.5 to 1.0
-                memory_coalescing: match fastrand::u32(0..5) {
+                shared_memory: scirs2_core::random::u32(0..=49152), // Max shared memory per block
+                registers_per_thread: scirs2_core::random::u32(16..=255),
+                occupancy_target: scirs2_core::random::f32() * 0.5 + 0.5, // 0.5 to 1.0
+                memory_coalescing: match scirs2_core::random::u32(0..5) {
                     0 => MemoryCoalescingStrategy::None,
                     1 => MemoryCoalescingStrategy::RowMajor,
                     2 => MemoryCoalescingStrategy::ColumnMajor,
-                    3 => MemoryCoalescingStrategy::Blocked { block_size: 16 + fastrand::usize(0..48) },
+                    3 => MemoryCoalescingStrategy::Blocked { block_size: 16 + scirs2_core::random::usize(0..48) },
                     _ => MemoryCoalescingStrategy::Adaptive,
                 },
-                loop_unroll_factor: fastrand::u32(1..=8),
-                use_texture_memory: fastrand::bool(),
-                use_constant_memory: fastrand::bool(),
+                loop_unroll_factor: scirs2_core::random::u32(1..=8),
+                use_texture_memory: scirs2_core::random::bool(),
+                use_constant_memory: scirs2_core::random::bool(),
             };
             population.push(params);
         }
@@ -567,10 +567,10 @@ impl AdaptiveOptimizer {
             let (mut child1, mut child2) = self.crossover(&population[parent1_idx], &population[parent2_idx])?;
 
             if let AdaptationStrategy::Genetic { mutation_rate, .. } = &self.strategy {
-                if fastrand::f32() < *mutation_rate {
+                if scirs2_core::random::f32() < *mutation_rate {
                     child1 = self.mutate(child1)?;
                 }
-                if fastrand::f32() < *mutation_rate {
+                if scirs2_core::random::f32() < *mutation_rate {
                     child2 = self.mutate(child2)?;
                 }
             }
@@ -587,11 +587,11 @@ impl AdaptiveOptimizer {
     /// Tournament selection for genetic algorithm
     fn tournament_selection(&self, fitness_scores: &[f64]) -> Result<usize> {
         let tournament_size = 3;
-        let mut best_idx = fastrand::usize(0..fitness_scores.len());
+        let mut best_idx = scirs2_core::random::usize(0..fitness_scores.len());
         let mut best_fitness = fitness_scores[best_idx];
 
         for _ in 1..tournament_size {
-            let idx = fastrand::usize(0..fitness_scores.len());
+            let idx = scirs2_core::random::usize(0..fitness_scores.len());
             if fitness_scores[idx] > best_fitness {
                 best_idx = idx;
                 best_fitness = fitness_scores[idx];
@@ -607,24 +607,24 @@ impl AdaptiveOptimizer {
         let mut child2 = parent2.clone();
 
         if let AdaptationStrategy::Genetic { crossover_rate, .. } = &self.strategy {
-            if fastrand::f32() < *crossover_rate {
+            if scirs2_core::random::f32() < *crossover_rate {
                 // Single-point crossover on different parameters
-                if fastrand::bool() {
+                if scirs2_core::random::bool() {
                     child1.grid_dims = parent2.grid_dims;
                     child2.grid_dims = parent1.grid_dims;
                 }
 
-                if fastrand::bool() {
+                if scirs2_core::random::bool() {
                     child1.block_dims = parent2.block_dims;
                     child2.block_dims = parent1.block_dims;
                 }
 
-                if fastrand::bool() {
+                if scirs2_core::random::bool() {
                     child1.shared_memory = parent2.shared_memory;
                     child2.shared_memory = parent1.shared_memory;
                 }
 
-                if fastrand::bool() {
+                if scirs2_core::random::bool() {
                     child1.memory_coalescing = parent2.memory_coalescing.clone();
                     child2.memory_coalescing = parent1.memory_coalescing.clone();
                 }
@@ -637,14 +637,14 @@ impl AdaptiveOptimizer {
     /// Mutation operation for genetic algorithm
     fn mutate(&self, mut params: KernelParameters) -> Result<KernelParameters> {
         // Mutate random parameters
-        match fastrand::u32(0..8) {
-            0 => params.grid_dims.0 = fastrand::u32(1..=1024),
-            1 => params.grid_dims.1 = fastrand::u32(1..=1024),
-            2 => params.block_dims.0 = (fastrand::u32(32..=1024) / 32) * 32,
-            3 => params.block_dims.1 = fastrand::u32(1..=32),
-            4 => params.shared_memory = fastrand::u32(0..=49152),
-            5 => params.occupancy_target = fastrand::f32() * 0.5 + 0.5,
-            6 => params.loop_unroll_factor = fastrand::u32(1..=8),
+        match scirs2_core::random::u32(0..8) {
+            0 => params.grid_dims.0 = scirs2_core::random::u32(1..=1024),
+            1 => params.grid_dims.1 = scirs2_core::random::u32(1..=1024),
+            2 => params.block_dims.0 = (scirs2_core::random::u32(32..=1024) / 32) * 32,
+            3 => params.block_dims.1 = scirs2_core::random::u32(1..=32),
+            4 => params.shared_memory = scirs2_core::random::u32(0..=49152),
+            5 => params.occupancy_target = scirs2_core::random::f32() * 0.5 + 0.5,
+            6 => params.loop_unroll_factor = scirs2_core::random::u32(1..=8),
             _ => params.use_texture_memory = !params.use_texture_memory,
         }
 

@@ -6,8 +6,8 @@
 #[allow(dead_code)]
 use super::core::*;
 use super::sdk::*;
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array1;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};

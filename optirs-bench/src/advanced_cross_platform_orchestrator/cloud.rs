@@ -62,7 +62,7 @@ impl CloudProvider for AwsProvider {
             .unwrap_or_else(|| "t3.micro".to_string());
 
         let instance = CloudInstance {
-            instance_id: format!("i-{:x}", rand::random::<u64>()),
+            instance_id: format!("i-{:x}", scirs2_core::random::random::<u64>()),
             provider: "aws".to_string(),
             instance_type,
             platform: platform.clone(),
@@ -112,7 +112,7 @@ impl CloudProvider for AzureProvider {
             .unwrap_or_else(|| "Standard_B1s".to_string());
 
         let instance = CloudInstance {
-            instance_id: format!("vm-{:x}", rand::random::<u64>()),
+            instance_id: format!("vm-{:x}", scirs2_core::random::random::<u64>()),
             provider: "azure".to_string(),
             instance_type: vm_size,
             platform: platform.clone(),
@@ -160,7 +160,7 @@ impl CloudProvider for GcpProvider {
             .unwrap_or_else(|| "e2-micro".to_string());
 
         let instance = CloudInstance {
-            instance_id: format!("gcp-{:x}", rand::random::<u64>()),
+            instance_id: format!("gcp-{:x}", scirs2_core::random::random::<u64>()),
             provider: "gcp".to_string(),
             instance_type: machine_type,
             platform: platform.clone(),
@@ -210,7 +210,7 @@ impl CloudProvider for GitHubActionsProvider {
         };
 
         let instance = CloudInstance {
-            instance_id: format!("gh-{:x}", rand::random::<u64>()),
+            instance_id: format!("gh-{:x}", scirs2_core::random::random::<u64>()),
             provider: "github".to_string(),
             instance_type: runner_type.to_string(),
             platform: platform.clone(),
@@ -252,7 +252,7 @@ impl CustomProvider {
 impl CloudProvider for CustomProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
         let instance = CloudInstance {
-            instance_id: format!("custom-{:x}", rand::random::<u64>()),
+            instance_id: format!("custom-{:x}", scirs2_core::random::random::<u64>()),
             provider: self.config.name.clone(),
             instance_type: "custom".to_string(),
             platform: platform.clone(),

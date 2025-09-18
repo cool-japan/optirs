@@ -170,7 +170,7 @@ impl ArchitectureSearchSpace {
     /// Mutate architecture
     pub fn mutate_architecture(&self, architecture: &str) -> Result<String> {
         let mut spec = self.encoding.decode(architecture)?;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Mutation strategies
         match rng.gen_range(0..4) {
@@ -449,7 +449,7 @@ mod tests {
     fn test_random_architecture_sampling() {
         let constraints = SearchConstraints::default();
         let space = ArchitectureSearchSpace::new(&constraints).unwrap();
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         let architecture = space.sample_random_architecture(&mut rng);
         assert!(architecture.is_ok());

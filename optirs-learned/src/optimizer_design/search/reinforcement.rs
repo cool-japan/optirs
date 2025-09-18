@@ -373,7 +373,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> RLSearchState<T
 
     /// Sample discrete action
     fn sample_discrete_action(&self, action: &DiscreteAction) -> Result<usize, super::SearchError> {
-        let random_value: f64 = rand::random();
+        let random_value: f64 = scirs2_core::random::random();
         let mut cumulative_prob = 0.0;
 
         for (idx, &prob) in action.probabilities.iter().enumerate() {
@@ -390,7 +390,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> RLSearchState<T
     /// Sample continuous action
     fn sample_continuous_action(&self, action: &ContinuousAction) -> Result<f64, super::SearchError> {
         // Sample from normal distribution
-        let normal_sample: f64 = rand::random::<f64>() * 2.0 - 1.0; // Simple approximation
+        let normal_sample: f64 = scirs2_core::random::random::<f64>() * 2.0 - 1.0; // Simple approximation
         let value = action.mean + normal_sample * action.std;
 
         // Clamp to range
@@ -729,7 +729,7 @@ impl<T: Float + Debug + Default + Send + Sync> ExperienceReplayBuffer<T> {
         let mut indices = Vec::new();
         
         for _ in 0..batch_size {
-            let idx = rand::random::<usize>() % self.size;
+            let idx = scirs2_core::random::random::<usize>() % self.size;
             indices.push(idx);
         }
         

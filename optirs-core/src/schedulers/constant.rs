@@ -3,8 +3,8 @@
 // This module provides a simple scheduler that maintains a constant learning rate.
 // It's useful as a base for other schedulers or for testing.
 
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt::Debug;
 
 use super::LearningRateScheduler;

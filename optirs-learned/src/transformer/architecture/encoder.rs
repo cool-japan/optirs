@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements the encoder components of the transformer optimizer,
 // including the transformer layer, feed-forward network, and layer normalization.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{s, Array1, Array2};
-use num_traits::Float;
 use scirs2_core::random::{Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;
@@ -201,7 +201,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync> Transfor
     }
 
     /// Get attention patterns for analysis
-    pub fn get_attention_patterns(&self) -> Option<&ndarray::Array3<T>> {
+    pub fn get_attention_patterns(&self) -> Option<&scirs2_core::ndarray_ext::Array3<T>> {
         self.self_attention.get_attention_patterns()
     }
 }

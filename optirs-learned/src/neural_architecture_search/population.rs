@@ -163,7 +163,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PopulationManager<T> {
     /// Run tournament selection
     fn run_tournament(&self, tournament_size: usize) -> Result<Individual<T>> {
         use scirs2_core::random::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         let tournament_size = tournament_size.min(self.population.len());
         let mut tournament_indices: Vec<usize> = (0..self.population.len()).collect();
@@ -191,7 +191,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PopulationManager<T> {
         }
 
         let mut survivors = Vec::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Keep elite individuals
         let elite_count = self.elite_size.min(self.population.len());
@@ -199,7 +199,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PopulationManager<T> {
 
         // Select remaining individuals
         while survivors.len() < self.population_size {
-            let random_value = T::from(rand::random::<f64>()).unwrap() * total_fitness;
+            let random_value = T::from(scirs2_core::random::random::<f64>()).unwrap() * total_fitness;
             let mut cumulative_fitness = T::zero();
 
             for individual in &self.population {
@@ -229,7 +229,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PopulationManager<T> {
         let total_ranks: f64 = (self.population.len() * (self.population.len() + 1) / 2) as f64;
 
         for _ in 0..remaining_slots {
-            let random_value = rand::random::<f64>() * total_ranks;
+            let random_value = scirs2_core::random::random::<f64>() * total_ranks;
             let mut cumulative_rank = 0.0;
 
             for (rank, individual) in self.population.iter().enumerate() {

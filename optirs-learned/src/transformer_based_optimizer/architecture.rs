@@ -1,13 +1,15 @@
 // Core transformer architecture implementation
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use crate::error::Result;
-use super::config::TransformerArchConfig;
-use super::layers::{EmbeddingLayer, LayerNormalization, DropoutLayer, OutputProjection, ResidualConnections};
 use super::attention::MultiHeadAttention;
+use super::config::TransformerArchConfig;
 use super::feedforward::FeedForwardNetwork;
+use super::layers::{
+    DropoutLayer, EmbeddingLayer, LayerNormalization, OutputProjection, ResidualConnections,
+};
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use std::fmt::Debug;
 
 /// Core transformer architecture
 pub struct TransformerArchitecture<T: Float + Debug + Send + Sync + 'static> {
@@ -52,10 +54,8 @@ impl<T: Float + Debug + 'static + Send + Sync> TransformerArchitecture<T> {
             config.model_dimension, // Vocab size equals model dimension for continuous inputs
         )?;
 
-        let output_projection = OutputProjection::new(
-            config.model_dimension,
-            config.model_dimension,
-        )?;
+        let output_projection =
+            OutputProjection::new(config.model_dimension, config.model_dimension)?;
 
         let layer_norm = LayerNormalization::new(config.model_dimension)?;
         let dropout = DropoutLayer::new(config.dropout_rate);
@@ -217,7 +217,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerLayer<T> {
     fn forward_pre_norm(&mut self, input: &Array2<T>) -> Result<Array2<T>> {
         // Self-attention sub-layer with pre-norm
         let normed_input = self.pre_norm1.forward(input)?;
-        let attention_output = self.self_attention.forward(&normed_input, &normed_input, &normed_input)?;
+        let attention_output =
+            self.self_attention
+                .forward(&normed_input, &normed_input, &normed_input)?;
         let attention_output = self.dropout.forward(&attention_output);
         let attention_residual = self.residual_connections.add(input, &attention_output)?;
 
@@ -225,7 +227,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerLayer<T> {
         let normed_attention = self.pre_norm2.forward(&attention_residual)?;
         let ff_output = self.feed_forward.forward(&normed_attention)?;
         let ff_output = self.dropout.forward(&ff_output);
-        let ff_residual = self.residual_connections.add(&attention_residual, &ff_output)?;
+        let ff_residual = self
+            .residual_connections
+            .add(&attention_residual, &ff_output)?;
 
         Ok(ff_residual)
     }
@@ -245,7 +249,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerLayer<T> {
         // Feed-forward sub-layer with post-norm
         let ff_output = self.feed_forward.forward(&attention_normed)?;
         let ff_output = self.dropout.forward(&ff_output);
-        let ff_residual = self.residual_connections.add(&attention_normed, &ff_output)?;
+        let ff_residual = self
+            .residual_connections
+            .add(&attention_normed, &ff_output)?;
         let ff_normed = if let Some(ref mut post_norm2) = self.post_norm2 {
             post_norm2.forward(&ff_residual)?
         } else {
@@ -318,7 +324,8 @@ impl<T: Float + Debug + 'static + Send + Sync> TransformerArchitecture<T> {
     /// Get architecture statistics
     pub fn get_stats(&self) -> ArchitectureStats {
         let total_parameters = self.parameter_count();
-        let memory_usage_mb = (total_parameters * std::mem::size_of::<T>()) as f64 / (1024.0 * 1024.0);
+        let memory_usage_mb =
+            (total_parameters * std::mem::size_of::<T>()) as f64 / (1024.0 * 1024.0);
 
         ArchitectureStats {
             total_parameters,

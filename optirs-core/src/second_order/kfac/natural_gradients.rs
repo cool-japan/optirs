@@ -5,8 +5,8 @@
 // natural gradient updates.
 
 use crate::error::Result;
-use scirs2_core::ndarray_ext::Array2;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array2;
 use std::fmt::Debug;
 
 /// Natural gradient optimizer configuration
@@ -216,7 +216,7 @@ impl NaturalGradientCompute {
         tolerance: T,
     ) -> Result<Array2<T>>
     where
-        T: Float + std::iter::Sum + ndarray::ScalarOperand,
+        T: Float + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand,
     {
         let n = a.nrows();
         if n != a.ncols() || n != b.nrows() {

@@ -653,7 +653,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
     /// Initialize embedding matrices
     fn initialize_embeddings(&mut self) -> Result<()> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         for (&encoding_type, &dim) in &self.config.embedding_dimensions {
             let vocab_size = self.config.vocabulary_size;

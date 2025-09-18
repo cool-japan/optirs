@@ -7,8 +7,8 @@ use crate::error::{OptimError, Result};
 use crate::optimizers::*;
 use crate::unified_api::OptimizerConfig;
 use chrono::{DateTime, Utc};
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -15,8 +15,8 @@ use scirs2_stats::distributions;
 
 use crate::error::Result;
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -182,7 +182,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for SpikeNoiseConfig<T> {
 }
 
 /// Spike-based optimizer
-pub struct SpikingOptimizer<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + 'static> {
+pub struct SpikingOptimizer<
+    T: Float + Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + 'static,
+> {
     /// Configuration
     config: SpikingConfig<T>,
 
@@ -223,7 +225,16 @@ pub struct SpikingOptimizer<T: Float + Debug + Send + Sync + ndarray::ScalarOper
     plasticity_model: PlasticityModel,
 }
 
-impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + 'static + std::iter::Sum> SpikingOptimizer<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + 'static
+            + std::iter::Sum,
+    > SpikingOptimizer<T>
+{
     /// Create a new spiking optimizer
     pub fn new(
         config: SpikingConfig<T>,
@@ -292,7 +303,7 @@ impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + 'static + std::it
             let spike_prob =
                 firing_rate * dt / num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero());
 
-            if fastrand::f64() < spike_prob.to_f64().unwrap_or(0.0) {
+            if scirs2_core::random::f64() < spike_prob.to_f64().unwrap_or(0.0) {
                 spike_times.push(time);
             }
 
@@ -633,7 +644,9 @@ impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + 'static + std::it
 }
 
 /// Spike train optimizer for temporal pattern learning
-pub struct SpikeTrainOptimizer<T: Float + Debug + ndarray::ScalarOperand + std::fmt::Debug + Send + Sync> {
+pub struct SpikeTrainOptimizer<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug + Send + Sync,
+> {
     /// Configuration
     config: SpikingConfig<T>,
 
@@ -698,8 +711,9 @@ pub enum TemporalKernelType {
     Rectangular,
 }
 
-impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + std::fmt::Debug>
-    SpikeTrainOptimizer<T>
+impl<
+        T: Float + Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug,
+    > SpikeTrainOptimizer<T>
 {
     /// Create a new spike train optimizer
     pub fn new(config: SpikingConfig<T>) -> Self {

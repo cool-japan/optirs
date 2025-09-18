@@ -106,7 +106,7 @@ fn run_optimization<LR: LearningRateScheduler<f64>>(
 
         // Get current learning rate from scheduler
         let lr = scheduler.get_learning_rate();
-        scheduler.apply_to::<ndarray::Ix1, _>(optimizer);
+        scheduler.apply_to::<scirs2_core::ndarray_ext::Ix1, _>(optimizer);
 
         // Update parameters
         params = optimizer.step(&params, &gradient).unwrap();

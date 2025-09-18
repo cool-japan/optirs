@@ -9,8 +9,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 /// Layer-wise Adaptive Rate Scaling (LARS) optimizer

@@ -3,8 +3,8 @@
 // This module provides a flexible framework for creating custom learning rate schedulers
 // using closures and function combinators.
 
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::marker::PhantomData;

@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements various momentum-based optimization strategies that
 // integrate with the transformer optimizer's attention mechanisms.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use std::collections::VecDeque;
 
 use crate::error::{OptimError, Result};
@@ -355,10 +355,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MomentumIntegra
             let end_idx = ((i + 1) * group_size).min(gradients.len());
 
             if start_idx < gradients.len() {
-                let group_gradients = gradients.slice(ndarray::s![start_idx..end_idx]);
+                let group_gradients =
+                    gradients.slice(scirs2_core::ndarray_ext::s![start_idx..end_idx]);
 
                 // Update group momentum
-                let group_m = state.m.slice(ndarray::s![..group_gradients.len()]);
+                let group_m = state
+                    .m
+                    .slice(scirs2_core::ndarray_ext::s![..group_gradients.len()]);
                 let updated_m = group_m * state.group_beta1 + &group_gradients;
 
                 // Update state

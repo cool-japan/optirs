@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array1;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

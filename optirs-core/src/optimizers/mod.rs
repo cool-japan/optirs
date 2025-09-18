@@ -3,8 +3,8 @@
 // This module provides various optimization algorithms commonly used in machine learning,
 // such as Stochastic Gradient Descent (SGD), Adam, RMSprop, and others.
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};

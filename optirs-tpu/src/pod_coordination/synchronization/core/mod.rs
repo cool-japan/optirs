@@ -589,7 +589,7 @@ pub mod testing {
 
     /// Create test barrier
     pub fn create_test_barrier(core: &mut UnifiedCoreSynchronization, device_ids: &[DeviceId]) -> CoreSyncResult<String> {
-        let barrier_id = format!("test_barrier_{}", rand::random::<u32>());
+        let barrier_id = format!("test_barrier_{}", scirs2_core::random::random::<u32>());
         core.create_global_barrier(barrier_id.clone(), device_ids.to_vec(), Duration::from_secs(5))?;
         Ok(barrier_id)
     }

@@ -946,12 +946,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceMonitor
     fn collect_resource_usage(&self) -> Result<ResourceUsage<T>> {
         // Simplified resource collection - in real implementation would use system APIs
         let utilization = match self.resource_type {
-            ResourceType::CPU => T::from(rand::random::<f32>() * 80.0).unwrap(),
-            ResourceType::Memory => T::from(rand::random::<f32>() * 60.0).unwrap(),
-            ResourceType::GPU => T::from(rand::random::<f32>() * 90.0).unwrap(),
-            ResourceType::Disk => T::from(rand::random::<f32>() * 40.0).unwrap(),
-            ResourceType::Network => T::from(rand::random::<f32>() * 30.0).unwrap(),
-            ResourceType::Power => T::from(rand::random::<f32>() * 70.0).unwrap(),
+            ResourceType::CPU => T::from(scirs2_core::random::random::<f32>() * 80.0).unwrap(),
+            ResourceType::Memory => T::from(scirs2_core::random::random::<f32>() * 60.0).unwrap(),
+            ResourceType::GPU => T::from(scirs2_core::random::random::<f32>() * 90.0).unwrap(),
+            ResourceType::Disk => T::from(scirs2_core::random::random::<f32>() * 40.0).unwrap(),
+            ResourceType::Network => T::from(scirs2_core::random::random::<f32>() * 30.0).unwrap(),
+            ResourceType::Power => T::from(scirs2_core::random::random::<f32>() * 70.0).unwrap(),
         };
 
         Ok(ResourceUsage {

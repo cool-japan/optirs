@@ -1,7 +1,7 @@
 // RMSprop optimizer implementation
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -43,7 +43,7 @@ pub struct RMSprop<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
     /// Moving average of squared gradients
-    v: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSprop<A> {

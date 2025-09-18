@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # Core dependencies
 optirs-core = { workspace = true }
+scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
 # ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
 num-traits = { workspace = true }
 thiserror = { workspace = true }

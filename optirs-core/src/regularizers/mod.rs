@@ -4,8 +4,8 @@
 // machine learning to prevent overfitting, such as L1 (Lasso), L2 (Ridge),
 // ElasticNet, and Dropout.
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;

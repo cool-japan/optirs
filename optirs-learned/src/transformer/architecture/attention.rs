@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements the attention mechanisms used in the transformer optimizer,
 // including multi-head attention, relative position bias, and rotary position embeddings.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, Array3};
-use num_traits::Float;
 use scirs2_core::random::{Random, Rng as SCRRng};
 use std::collections::HashMap;
 
@@ -294,7 +294,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
         Ok(attention_output)
     }
 
-    fn apply_softmax(&self, scores: &mut ndarray::ArrayViewMut2<T>) -> Result<()> {
+    fn apply_softmax(&self, scores: &mut scirs2_core::ndarray_ext::ArrayViewMut2<T>) -> Result<()> {
         let (rows, cols) = scores.dim();
 
         for i in 0..rows {
@@ -358,7 +358,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RelativePositio
         })
     }
 
-    pub fn apply_bias(&self, scores: &mut ndarray::ArrayViewMut2<T>) -> Result<()> {
+    pub fn apply_bias(
+        &self,
+        scores: &mut scirs2_core::ndarray_ext::ArrayViewMut2<T>,
+    ) -> Result<()> {
         let (seq_len, _) = scores.dim();
 
         // Simple bias application - in practice would be more sophisticated

@@ -122,8 +122,8 @@ pub enum TPUMemoryOptimization {
 /// TPU-optimized optimizer wrapper
 pub struct TPUOptimizer<O, A>
 where
-    A: Float + ndarray::ScalarOperand + std::fmt::Debug,
-    O: Optimizer<A, ndarray::Ix1>,
+    A: Float + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug,
+    O: Optimizer<A, scirs2_core::ndarray_ext::Ix1>,
 {
     /// Base optimizer
     base_optimizer: O,
@@ -615,8 +615,8 @@ struct MemoryRequirements {
 
 impl<O, A> TPUOptimizer<O, A>
 where
-    A: Float + Default + Clone + Send + Sync + ndarray::ScalarOperand + std::fmt::Debug,
-    O: Optimizer<A, ndarray::Ix1> + Send + Sync,
+    A: Float + Default + Clone + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug,
+    O: Optimizer<A, scirs2_core::ndarray_ext::Ix1> + Send + Sync,
 {
     /// Create a new TPU optimizer
     pub fn new(base_optimizer: O, config: TPUConfig) -> Result<Self> {

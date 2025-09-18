@@ -224,7 +224,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleTensor<T>
     pub fn randn(shape: &[usize], dtype: CandleDataType, device: CandleDevice) -> Self {
         let size = shape.iter().product();
         let data = Array1::from_vec(
-            (0..size).map(|_| T::from(fastrand::f32()).unwrap()).collect()
+            (0..size).map(|_| T::from(scirs2_core::random::f32()).unwrap()).collect()
         );
         
         Self::new(data, false, dtype, device)

@@ -5,8 +5,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -278,7 +278,8 @@ mod tests {
     #[test]
     fn test_lookahead_creation() {
         let sgd = SGD::new(0.01);
-        let optimizer: Lookahead<f64, SGD<f64>, ndarray::Ix1> = Lookahead::new(sgd);
+        let optimizer: Lookahead<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
+            Lookahead::new(sgd);
 
         assert_abs_diff_eq!(optimizer.alpha(), 0.5);
         assert_eq!(optimizer.k(), 5);
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn test_lookahead_with_config() {
         let sgd = SGD::new(0.01);
-        let optimizer: Lookahead<f64, SGD<f64>, ndarray::Ix1> =
+        let optimizer: Lookahead<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
             Lookahead::with_config(sgd, 0.8, 10);
 
         assert_abs_diff_eq!(optimizer.alpha(), 0.8);
@@ -299,7 +300,7 @@ mod tests {
     fn test_lookahead_step() {
         let mut sgd = SGD::new(0.1);
         sgd.set_momentum(0.0);
-        let mut optimizer: Lookahead<f64, SGD<f64>, ndarray::Ix1> =
+        let mut optimizer: Lookahead<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
             Lookahead::with_config(sgd, 0.5, 2);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
@@ -342,7 +343,7 @@ mod tests {
     fn test_slow_weights_for_eval() {
         let mut sgd = SGD::new(0.1);
         sgd.set_momentum(0.0);
-        let mut optimizer: Lookahead<f64, SGD<f64>, ndarray::Ix1> =
+        let mut optimizer: Lookahead<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
             Lookahead::with_config(sgd, 0.5, 2);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
@@ -375,7 +376,8 @@ mod tests {
     #[test]
     fn test_reset() {
         let sgd = SGD::new(0.1);
-        let mut optimizer: Lookahead<f64, SGD<f64>, ndarray::Ix1> = Lookahead::new(sgd);
+        let mut optimizer: Lookahead<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
+            Lookahead::new(sgd);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);

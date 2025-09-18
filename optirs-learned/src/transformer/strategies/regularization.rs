@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements transformer-specific regularization techniques that
 // work in conjunction with the attention mechanisms and optimization dynamics.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
-use num_traits::Float;
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};

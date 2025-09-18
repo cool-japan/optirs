@@ -8,8 +8,8 @@
 use crate::error::Result;
 use crate::optimizers::*;
 use crate::schedulers::*;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn test_self_tuning_optimizer_creation() {
         let config = SelfTuningConfig::default();
-        let optimizer: Result<SelfTuningOptimizer<f64, ndarray::Ix1>> =
+        let optimizer: Result<SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1>> =
             SelfTuningOptimizer::new(config);
         assert!(optimizer.is_ok());
     }
@@ -1061,7 +1061,7 @@ mod tests {
     #[test]
     fn test_optimizer_step() {
         let config = SelfTuningConfig::default();
-        let mut optimizer: SelfTuningOptimizer<f64, ndarray::Ix1> =
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let mut params = vec![Array1::zeros(10)];
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_bandit_selection() {
         let config = SelfTuningConfig::default();
-        let optimizer: SelfTuningOptimizer<f64, ndarray::Ix1> =
+        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let selection = optimizer.select_ucb1();
@@ -1103,7 +1103,7 @@ mod tests {
             target_metric: TargetMetric::Loss,
             ..Default::default()
         };
-        let optimizer: SelfTuningOptimizer<f64, ndarray::Ix1> =
+        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let stats = PerformanceStats {
@@ -1125,7 +1125,7 @@ mod tests {
     #[test]
     fn test_statistics() {
         let config = SelfTuningConfig::default();
-        let optimizer: SelfTuningOptimizer<f64, ndarray::Ix1> =
+        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let stats = optimizer.get_statistics();

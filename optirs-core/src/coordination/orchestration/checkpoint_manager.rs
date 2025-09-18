@@ -4,9 +4,9 @@
 // optimization workflows, including state persistence, incremental checkpointing,
 // and robust recovery mechanisms.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};

@@ -840,7 +840,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
     /// Select mutation operator based on strategy
     fn select_mutation_operator(&self, architecture: &ArchitectureGenotype<T>) -> Result<MutationType> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         // Filter applicable operators
         let applicable_ops: Vec<MutationType> = self.config.available_operators
@@ -890,7 +890,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
                       source: &ArchitectureGenotype<T>,
                       result: &ArchitectureGenotype<T>) -> Result<()> {
         let record = MutationRecord {
-            id: format!("mut_{}", rand::random::<u64>()),
+            id: format!("mut_{}", scirs2_core::random::random::<u64>()),
             mutation_type,
             source_architecture: source.id.clone(),
             result_architecture: result.id.clone(),
@@ -1014,7 +1014,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for AddOperationMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}", architecture.id, "add_op");
@@ -1029,7 +1029,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
         
         // Create new operation gene
         let new_op = OperationGene {
-            id: format!("op_{}", rand::random::<u64>()),
+            id: format!("op_{}", scirs2_core::random::random::<u64>()),
             operation_type: selected_op.id.clone(),
             parameters: HashMap::new(), // Would be populated from template
             position: Position {
@@ -1097,7 +1097,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for RemoveOperationMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         if architecture.operations.len() <= self.min_operations {
             return Err(OptimError::InvalidInput(
@@ -1170,7 +1170,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for ParameterMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}", architecture.id, "param_mut");

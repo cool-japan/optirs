@@ -12,8 +12,8 @@ use std::fmt::Debug;
 // - Dynamic layout optimization and memory coalescing
 // - Performance profiling and automated benchmarking
 
-use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
 use std::sync::Arc;
 
 use crate::gpu::memory_pool::{CudaKernel, CudaStream};
@@ -790,7 +790,9 @@ impl TensorCoreOptimizer {
             let new_rows = rows + padding_rows;
             let new_cols = cols + padding_cols;
             let mut padded = Array2::zeros((new_rows, new_cols));
-            padded.slice_mut(ndarray::s![..rows, ..cols]).assign(matrix);
+            padded
+                .slice_mut(scirs2_core::ndarray_ext::s![..rows, ..cols])
+                .assign(matrix);
             optimized_data = padded;
         }
 

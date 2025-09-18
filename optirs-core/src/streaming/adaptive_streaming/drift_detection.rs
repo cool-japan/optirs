@@ -719,7 +719,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ADWINTest<A> {
     }
 }
 
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<A> for ADWINTest<A> {
+impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<A>
+    for ADWINTest<A>
+{
     fn test_for_drift(
         &mut self,
         reference: &[A],

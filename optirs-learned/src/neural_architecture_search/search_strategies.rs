@@ -81,7 +81,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategyTrait<T> for Random
         _current_population: &[Individual<T>],
         search_space: &ArchitectureSearchSpace,
     ) -> Result<Vec<String>> {
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut candidates = Vec::new();
 
         for _ in 0..self.batch_size {
@@ -118,7 +118,7 @@ impl EvolutionarySearchStrategy {
 
     fn select_parents<'a, T: Float>(&self, population: &'a [Individual<T>]) -> Result<Vec<&'a Individual<T>>> {
         // Tournament selection
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut parents = Vec::new();
         let tournament_size = 3;
 
@@ -146,7 +146,7 @@ impl EvolutionarySearchStrategy {
 
     fn crossover(&self, parent1: &str, parent2: &str) -> Result<String> {
         // Simple crossover: randomly choose segments from each parent
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // For simplicity, assume architecture strings are JSON-like
         // In practice, this would be more sophisticated
@@ -163,7 +163,7 @@ impl EvolutionarySearchStrategy {
     }
 
     fn mutate(&self, architecture: &str, search_space: &ArchitectureSearchSpace) -> Result<String> {
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         if rng.gen::<f64>() < self.mutation_rate {
             // Perform mutation by regenerating part of the architecture
@@ -232,7 +232,7 @@ impl<T: Float + Debug + Send + Sync + 'static> BayesianSearchStrategy<T> {
 
     fn optimize_acquisition(&self, search_space: &ArchitectureSearchSpace) -> Result<Vec<String>> {
         // Simplified acquisition optimization
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut candidates = Vec::new();
 
         for _ in 0..self.batch_size {
@@ -267,7 +267,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategyTrait<T> for Bayesi
     ) -> Result<Vec<String>> {
         if self.observations.len() < 5 {
             // Not enough data for Bayesian optimization, use random sampling
-            let mut rng = rand::thread_rng();
+            let mut rng = scirs2_core::random::thread_rng();
             let mut candidates = Vec::new();
 
             for _ in 0..self.batch_size {
@@ -315,7 +315,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategyTrait<T> for RLSear
         search_space: &ArchitectureSearchSpace,
     ) -> Result<Vec<String>> {
         // Placeholder implementation
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         Ok(vec![search_space.sample_random_architecture(&mut rng)?])
     }
 
@@ -336,7 +336,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategyTrait<T> for Gradie
         _current_population: &[Individual<T>],
         search_space: &ArchitectureSearchSpace,
     ) -> Result<Vec<String>> {
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         Ok(vec![search_space.sample_random_architecture(&mut rng)?])
     }
 
@@ -357,7 +357,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategyTrait<T> for Progre
         _current_population: &[Individual<T>],
         search_space: &ArchitectureSearchSpace,
     ) -> Result<Vec<String>> {
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         Ok(vec![search_space.sample_random_architecture(&mut rng)?])
     }
 
@@ -378,7 +378,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategyTrait<T> for Hybrid
         _current_population: &[Individual<T>],
         search_space: &ArchitectureSearchSpace,
     ) -> Result<Vec<String>> {
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         Ok(vec![search_space.sample_random_architecture(&mut rng)?])
     }
 

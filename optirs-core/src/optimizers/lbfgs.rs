@@ -2,8 +2,8 @@
 //
 // Based on the Limited-memory Broyden-Fletcher-Goldfarb-Shanno algorithm.
 
-use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 

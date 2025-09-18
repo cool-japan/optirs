@@ -938,7 +938,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer
         } else {
             // Random sampling
             for _ in 0..batch_size.min(self.experiences.len()) {
-                let idx = fastrand::usize(0..self.experiences.len());
+                let idx = scirs2_core::random::usize(0..self.experiences.len());
                 if let Some(experience) = self.experiences.get(idx) {
                     batch.push(experience.clone());
                 }

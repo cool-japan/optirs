@@ -440,7 +440,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         
         // Initialize architecture parameters
         let architecture_parameters = Array3::from_shape_fn((num_edges, num_ops, 1), |_| {
-            T::from(rand::random::<f64>() * 0.1).unwrap()
+            T::from(scirs2_core::random::random::<f64>() * 0.1).unwrap()
         });
         
         // Initialize mixed operations
@@ -729,7 +729,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         
         for (i, (edge_id, mixed_op)) in self.mixed_operations.iter().enumerate() {
             if i < params.shape()[0] {
-                let edge_params = params.slice(ndarray::s![i, .., 0]);
+                let edge_params = params.slice(scirs2_core::ndarray_ext::s![i, .., 0]);
                 let best_idx = edge_params.iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -752,7 +752,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
     /// Sample Gumbel noise
     fn sample_gumbel_noise(&self, size: usize) -> Result<Array1<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let noise = Array1::from_shape_fn(size, |_| {
             let u: f64 = rng.gen_range(1e-10..1.0);

@@ -904,7 +904,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug,
     > LSTMOptimizer<T>
 {

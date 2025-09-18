@@ -4,8 +4,8 @@
 //! scheduler and compares it with standard cosine annealing.
 
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use ndarray_rand::rand_distr::Normal;
-use ndarray_rand::RandomExt;
+use scirs2_core::random::distributions::Normal;
+use scirs2_core::random::RandomExt;
 use scirs2_optim::optimizers::{Optimizer, SGD};
 use scirs2_optim::schedulers::{
     CosineAnnealing, CosineAnnealingWarmRestarts, LearningRateScheduler,
@@ -126,7 +126,7 @@ fn train_linear_regression<S: LearningRateScheduler<f64>>(
     for i in 0..n_iterations {
         // Update learning rate from scheduler
         let lr = scheduler.step();
-        <SGD<f64> as Optimizer<f64, ndarray::Ix1>>::set_learning_rate(&mut optimizer, lr);
+        <SGD<f64> as Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>::set_learning_rate(&mut optimizer, lr);
 
         // Forward pass
         let predictions = &x_train.dot(&_weights) + bias;

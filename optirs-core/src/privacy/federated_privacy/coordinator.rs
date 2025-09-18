@@ -8,8 +8,8 @@ use super::super::{MomentsAccountant, PrivacyBudget};
 use super::components::*;
 use super::config::*;
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array1;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -199,9 +199,9 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug
-            + rand_distr::uniform::SampleUniform,
+            + scirs2_core::random::distributions::uniform::SampleUniform,
     > FederatedPrivacyCoordinator<T>
 {
     /// Create a new federated privacy coordinator

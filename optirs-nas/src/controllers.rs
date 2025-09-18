@@ -139,7 +139,7 @@ pub struct RNNController<
         + 'static
         + std::iter::Sum
         + for<'a> std::iter::Sum<&'a T>
-        + ndarray::ScalarOperand,
+        + scirs2_core::ndarray_ext::ScalarOperand,
 > {
     /// Controller configuration
     config: RNNControllerConfig,
@@ -528,7 +528,7 @@ impl<
             + 'static
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > RNNController<T>
 {
     /// Create new RNN controller
@@ -726,7 +726,7 @@ impl<
             + 'static
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > ArchitectureController<T> for RNNController<T>
 {
     fn initialize(&mut self, searchspace: &SearchSpaceConfig) -> Result<()> {
@@ -844,7 +844,7 @@ impl<
             + 'static
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > RNNController<T>
 {
     fn architecture_to_sequence(
@@ -870,7 +870,7 @@ impl<
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + ndarray::ScalarOperand>
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
     TransformerController<T>
 {
     /// Create new Transformer controller
@@ -1080,7 +1080,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
 }
 
 // Implementation helpers for layers
-impl<T: Float + Debug + Default + Clone + 'static + ndarray::ScalarOperand + Send + Sync> RNNLayer<T> {
+impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> RNNLayer<T> {
     fn new(layer_type: RNNType, input_size: usize, hiddensize: usize) -> Result<Self> {
         let gate_size = match layer_type {
             RNNType::LSTM => hiddensize * 4,
@@ -1186,7 +1186,7 @@ impl<T: Float + Debug + Default + Clone + 'static + ndarray::ScalarOperand + Sen
     }
 }
 
-impl<T: Float + Debug + Default + Clone + 'static + ndarray::ScalarOperand + Send + Sync> OutputLayer<T> {
+impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> OutputLayer<T> {
     fn new(input_size: usize, outputsize: usize, activation: ActivationType) -> Result<Self> {
         Ok(Self {
             weight: Array2::zeros((outputsize, input_size)),

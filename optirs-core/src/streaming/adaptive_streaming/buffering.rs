@@ -425,7 +425,9 @@ pub struct SizeChangeEvent {
     pub reason: String,
 }
 
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug> AdaptiveBuffer<A> {
+impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug>
+    AdaptiveBuffer<A>
+{
     /// Creates a new adaptive buffer
     pub fn new(config: &StreamingConfig) -> Result<Self, String> {
         let buffer_config = config.buffer_config.clone();
@@ -595,8 +597,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
     /// Calculates distance between feature vectors
     fn calculate_feature_distance(
         &self,
-        features1: &ndarray::Array1<A>,
-        features2: &ndarray::Array1<A>,
+        features1: &scirs2_core::ndarray_ext::Array1<A>,
+        features2: &scirs2_core::ndarray_ext::Array1<A>,
     ) -> Result<A, String> {
         if features1.len() != features2.len() {
             return Err("Feature vectors have different lengths".to_string());

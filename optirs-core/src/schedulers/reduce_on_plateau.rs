@@ -1,7 +1,7 @@
 // ReduceOnPlateau learning rate scheduler
 
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt::Debug;
 
 use crate::schedulers::LearningRateScheduler;

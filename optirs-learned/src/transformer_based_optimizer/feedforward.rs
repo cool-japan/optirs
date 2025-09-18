@@ -1,10 +1,10 @@
 // Feed-forward network implementations for transformer layers
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use crate::error::Result;
 use super::layers::ActivationLayer;
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Axis};
+use std::fmt::Debug;
 
 /// Feed-forward network implementation
 pub struct FeedForwardNetwork<T: Float + Debug + Send + Sync + 'static> {
@@ -133,14 +133,16 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
     /// Create new linear layer
     pub fn new(input_dim: usize, output_dim: usize) -> Result<Self> {
         // Xavier/Glorot initialization
-        let scale = T::from(2.0 / (input_dim + output_dim) as f64).unwrap().sqrt();
+        let scale = T::from(2.0 / (input_dim + output_dim) as f64)
+            .unwrap()
+            .sqrt();
         let mut weight = Array2::zeros((input_dim, output_dim));
         let bias = Array1::zeros(output_dim);
 
         // Initialize weights with Xavier initialization
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_val = T::from(rand::random::<f64>() * 2.0 - 1.0).unwrap();
+                let random_val = T::from(scirs2_core::random::random::<f64>() * 2.0 - 1.0).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -155,13 +157,15 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
     /// Create with He initialization (better for ReLU)
     pub fn new_he_init(input_dim: usize, output_dim: usize) -> Result<Self> {
-        let scale = num_traits::cast::cast(2.0 / input_dim as f64).unwrap_or_else(|| T::zero()).sqrt();
+        let scale = num_traits::cast::cast(2.0 / input_dim as f64)
+            .unwrap_or_else(|| T::zero())
+            .sqrt();
         let mut weight = Array2::zeros((input_dim, output_dim));
         let bias = Array1::zeros(output_dim);
 
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_val = T::from(rand::random::<f64>() * 2.0 - 1.0).unwrap();
+                let random_val = T::from(scirs2_core::random::random::<f64>() * 2.0 - 1.0).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -180,10 +184,10 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
         let input_features = input.shape()[1];
 
         if input_features != self.input_dim {
-            return Err(crate::error::OptimError::Other(
-                format!("Input dimension mismatch: expected {}, got {}",
-                       self.input_dim, input_features)
-            ));
+            return Err(crate::error::OptimError::Other(format!(
+                "Input dimension mismatch: expected {}, got {}",
+                self.input_dim, input_features
+            )));
         }
 
         let mut output = Array2::zeros((batch_size, self.output_dim));
@@ -210,11 +214,13 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
     /// Reset parameters
     pub fn reset(&mut self) -> Result<()> {
         // Re-initialize with Xavier
-        let scale = T::from(2.0 / (self.input_dim + self.output_dim) as f64).unwrap().sqrt();
+        let scale = T::from(2.0 / (self.input_dim + self.output_dim) as f64)
+            .unwrap()
+            .sqrt();
 
         for i in 0..self.input_dim {
             for j in 0..self.output_dim {
-                let random_val = T::from(rand::random::<f64>() * 2.0 - 1.0).unwrap();
+                let random_val = T::from(scirs2_core::random::random::<f64>() * 2.0 - 1.0).unwrap();
                 self.weight[[i, j]] = random_val * scale;
             }
         }
@@ -234,16 +240,20 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
     }
 
     /// Update weights (for training)
-    pub fn update_weights(&mut self, weight_delta: &Array2<T>, bias_delta: &Array1<T>) -> Result<()> {
+    pub fn update_weights(
+        &mut self,
+        weight_delta: &Array2<T>,
+        bias_delta: &Array1<T>,
+    ) -> Result<()> {
         if weight_delta.shape() != self.weight.shape() {
             return Err(crate::error::OptimError::Other(
-                "Weight delta shape mismatch".to_string()
+                "Weight delta shape mismatch".to_string(),
             ));
         }
 
         if bias_delta.len() != self.bias.len() {
             return Err(crate::error::OptimError::Other(
-                "Bias delta shape mismatch".to_string()
+                "Bias delta shape mismatch".to_string(),
             ));
         }
 
@@ -497,7 +507,9 @@ impl<T: Float + Debug + Send + Sync + 'static> MixtureOfExperts<T> {
 
     /// Get parameter count
     pub fn parameter_count(&self) -> usize {
-        let expert_params: usize = self.experts.iter()
+        let expert_params: usize = self
+            .experts
+            .iter()
             .map(|expert| expert.parameter_count())
             .sum();
 
@@ -584,9 +596,7 @@ mod tests {
 
     #[test]
     fn test_mixture_of_experts() {
-        let mut moe = MixtureOfExperts::<f32>::new(
-            128, 256, 4, 2, ActivationFunction::ReLU
-        );
+        let mut moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
         assert!(moe.is_ok());
 
         let mut mixture = moe.unwrap();
@@ -604,7 +614,10 @@ mod tests {
         let he_layer = LinearLayer::<f32>::new_he_init(64, 128).unwrap();
 
         assert_eq!(xavier_layer.parameter_count(), he_layer.parameter_count());
-        assert_eq!(xavier_layer.get_weights().shape(), he_layer.get_weights().shape());
+        assert_eq!(
+            xavier_layer.get_weights().shape(),
+            he_layer.get_weights().shape()
+        );
     }
 }
 

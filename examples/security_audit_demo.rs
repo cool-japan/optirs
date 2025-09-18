@@ -295,7 +295,7 @@ fn test_privacy_budget_exhaustion() -> Result<()> {
     };
 
     let mut dp_optimizer =
-        DifferentiallyPrivateOptimizer::<SGD<f64>, f64, ndarray::Dim<[usize; 1]>>::new(
+        DifferentiallyPrivateOptimizer::<SGD<f64>, f64, scirs2_core::ndarray_ext::Dim<[usize; 1]>>::new(
             sgd, dp_config,
         )?;
 
@@ -359,7 +359,7 @@ fn test_privacy_parameter_manipulation() -> Result<()> {
     for (i, config) in invalid_configs.iter().enumerate() {
         let sgd = SGD::new(0.01f64);
 
-        match DifferentiallyPrivateOptimizer::<SGD<f64>, f64, ndarray::Dim<[usize; 1]>>::new(
+        match DifferentiallyPrivateOptimizer::<SGD<f64>, f64, scirs2_core::ndarray_ext::Dim<[usize; 1]>>::new(
             sgd,
             config.clone(),
         ) {

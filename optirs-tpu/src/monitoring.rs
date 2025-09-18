@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-// Re-export from parent module
-use super::core::DeviceId;
+// Import from tpu_backend module
+use crate::tpu_backend::DeviceId;
 use scirs2_core::error::Result;
 
 /// Type alias for topology metrics collection

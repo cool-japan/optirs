@@ -5,8 +5,8 @@
 // Fisher information matrix approximation.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -46,7 +46,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + 'static
             + num_traits::FromPrimitive,
     > KFAC<T>
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn test_covariance_update() {
         let mut config = KFACConfig::<f32>::default();
-        config.cov_update_freq = 1;  // Update covariance on every step
+        config.cov_update_freq = 1; // Update covariance on every step
         let mut kfac = KFAC::new(config);
 
         let layer_info = LayerInfo {

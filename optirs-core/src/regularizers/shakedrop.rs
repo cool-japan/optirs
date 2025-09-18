@@ -1,5 +1,5 @@
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 use std::fmt::Debug;
 
@@ -33,7 +33,7 @@ pub struct ShakeDrop<A: Float + FromPrimitive + Debug> {
     /// Range for the beta parameter
     pub beta_range: (A, A),
     /// Random number generator
-    rng: scirs2_core::random::Random<rand::rngs::StdRng>,
+    rng: scirs2_core::random::Random<scirs2_core::random::rngs::StdRng>,
 }
 
 impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {

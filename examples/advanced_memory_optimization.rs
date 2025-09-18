@@ -1,7 +1,7 @@
 // Advanced memory optimization features demonstration
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use ndarray_rand::rand_distr::Uniform;
-use ndarray_rand::RandomExt;
+use scirs2_core::random::distributions::Uniform;
+use scirs2_core::random::RandomExt;
 use scirs2_optim::memory_efficient::{
     adaptive::{get_memory_usage_ratio, MemoryAwareBatchSizer},
     fused::{fused_adam_update, fused_apply_constraints, fused_gradient_clip_normalize},
@@ -72,7 +72,7 @@ impl AdvancedTrainer {
         grad_output: &Array2<f64>,
     ) -> (Array2<f64>, Array1<f64>) {
         let grad_weights = input.t().dot(grad_output) / input.nrows() as f64;
-        let grad_bias = grad_output.mean_axis(ndarray::Axis(0)).unwrap();
+        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
         (grad_weights, grad_bias)
     }
 
@@ -210,10 +210,10 @@ fn train_with_memory_optimization(
             let batch_end = (batch_start + batch_size).min(total_samples);
 
             let batch_data = data
-                .slice(ndarray::s![batch_start..batch_end, ..])
+                .slice(scirs2_core::ndarray_ext::s![batch_start..batch_end, ..])
                 .to_owned();
             let batch_targets = targets
-                .slice(ndarray::s![batch_start..batch_end, ..])
+                .slice(scirs2_core::ndarray_ext::s![batch_start..batch_end, ..])
                 .to_owned();
 
             // Training step with all optimizations

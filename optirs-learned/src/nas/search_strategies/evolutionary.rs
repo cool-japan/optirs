@@ -360,7 +360,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Create a random individual
     fn create_random_individual(&self, id: usize) -> Result<Individual<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         // Random number of layers (between 2 and max_depth)
         let num_layers = rng.gen_range(2..=self.config.max_depth.min(10));
@@ -394,7 +394,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Create a random layer specification
     fn create_random_layer(&self, layer_id: usize) -> Result<LayerSpec<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let layer_types = vec![
             LayerType::Dense,
@@ -440,7 +440,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Create random connections between layers
     fn create_random_connections(&self, num_layers: usize) -> Result<ConnectionTopology> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let mut adjacency_matrix = Array2::zeros((num_layers, num_layers));
         let mut connection_types = HashMap::new();
@@ -525,7 +525,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Tournament selection
     fn tournament_selection(&self) -> Result<Vec<Individual<T>>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         let mut selected = Vec::new();
         
         for _ in 0..self.config.population_size {
@@ -565,7 +565,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Crossover and mutation phase
     fn crossover_and_mutation(&self, selected: &[Individual<T>]) -> Result<Vec<Individual<T>>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         let mut offspring = Vec::new();
         
         for i in (0..selected.len()).step_by(2) {
@@ -598,7 +598,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Simple crossover (layer-wise)
     fn crossover(&self, parent1: &Individual<T>, parent2: &Individual<T>) -> Result<(Individual<T>, Individual<T>)> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let mut child1 = parent1.clone();
         let mut child2 = parent2.clone();
@@ -625,7 +625,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Mutation operation
     fn mutate(&self, individual: &mut Individual<T>) -> Result<()> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         let mutation_op = self.mutation_operators[rng.gen_range(0..self.mutation_operators.len())];
         
@@ -658,7 +658,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Mutate layer parameters
     fn mutate_layer_parameters(&self, layer: &mut LayerSpec<T>) -> Result<()> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         
         match layer.layer_type {
             LayerType::Dense => {

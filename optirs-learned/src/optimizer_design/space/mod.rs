@@ -113,13 +113,13 @@ impl ArchitectureSearchSpace {
     pub fn sample_random(&self) -> ArchitectureSpec {
         use scirs2_core::random::seq::SliceRandom;
         
-        let num_layers = rand::random::<usize>() % (self.num_layers_range.1 - self.num_layers_range.0 + 1) + self.num_layers_range.0;
+        let num_layers = scirs2_core::random::random::<usize>() % (self.num_layers_range.1 - self.num_layers_range.0 + 1) + self.num_layers_range.0;
         let mut layers = Vec::new();
 
         for i in 0..num_layers {
-            let layer_type = *self.layer_types.choose(&mut rand::rng()).unwrap_or(&LayerType::Linear);
-            let hidden_size = *self.hidden_sizes.choose(&mut rand::rng()).unwrap_or(&128);
-            let activation = *self.activation_functions.choose(&mut rand::rng()).unwrap_or(&ActivationType::ReLU);
+            let layer_type = *self.layer_types.choose(&mut scirs2_core::random::rng()).unwrap_or(&LayerType::Linear);
+            let hidden_size = *self.hidden_sizes.choose(&mut scirs2_core::random::rng()).unwrap_or(&128);
+            let activation = *self.activation_functions.choose(&mut scirs2_core::random::rng()).unwrap_or(&ActivationType::ReLU);
 
             let dimensions = LayerDimensions {
                 input_dim: if i == 0 { hidden_size } else { layers[i-1].dimensions.output_dim },

@@ -5,9 +5,9 @@ use std::fmt::Debug;
 // dynamic resource pools, intelligent allocation strategies, and optimization
 // of resource utilization across optimization tasks.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, SystemTime};
 
@@ -912,7 +912,9 @@ pub struct ResourceStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub conflict_resolution_rate: T,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum> ResourceManager<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum>
+    ResourceManager<T>
+{
     /// Create new resource manager
     pub fn new(resource_pool: ResourcePool, config: ResourceManagerConfig<T>) -> Result<Self> {
         Ok(Self {

@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements various learning rate adaptation strategies that the
 // transformer optimizer can use to dynamically adjust learning rates during training.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use std::collections::VecDeque;
 
 use crate::error::{OptimError, Result};

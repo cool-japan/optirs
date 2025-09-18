@@ -4,8 +4,8 @@
 // including CPUs, GPUs, TPUs, edge devices, and distributed systems.
 
 use crate::error::Result;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -443,7 +443,13 @@ pub struct OptimizationState<A: Float, D: Dimension> {
 }
 
 impl<
-        A: Float + ScalarOperand + Debug + std::iter::Sum + for<'a> std::iter::Sum<&'a A> + Send + Sync,
+        A: Float
+            + ScalarOperand
+            + Debug
+            + std::iter::Sum
+            + for<'a> std::iter::Sum<&'a A>
+            + Send
+            + Sync,
         D: Dimension,
     > HardwareAwareOptimizer<A, D>
 {

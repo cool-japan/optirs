@@ -708,7 +708,7 @@ pub mod testing {
 
     /// Create test barrier
     pub fn create_test_barrier(manager: &mut SynchronizationManager, device_ids: &[DeviceId]) -> Result<String> {
-        let barrier_id = format!("test_barrier_{}", rand::random::<u32>());
+        let barrier_id = format!("test_barrier_{}", scirs2_core::random::random::<u32>());
         let participants = device_ids.iter().cloned().collect();
         manager.create_global_barrier(barrier_id.clone(), participants, Duration::from_secs(5))?;
         Ok(barrier_id)

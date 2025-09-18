@@ -3,8 +3,8 @@
 // Manifold regularization assumes that data lies on a low-dimensional manifold
 // and encourages smoothness along this manifold structure.
 
-use scirs2_core::ndarray_ext::{Array, Array2, ArrayBase, Data, Dimension, ScalarOperand};
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::{Array, Array2, ArrayBase, Data, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -91,7 +91,10 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> ManifoldReg
     }
 
     /// Compute manifold regularization penalty
-    pub fn compute_penalty<S>(&self, params: &ArrayBase<S, ndarray::Ix2>) -> Result<A>
+    pub fn compute_penalty<S>(
+        &self,
+        params: &ArrayBase<S, scirs2_core::ndarray_ext::Ix2>,
+    ) -> Result<A>
     where
         S: Data<Elem = A>,
     {
@@ -113,7 +116,10 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> ManifoldReg
     }
 
     /// Compute gradient of manifold regularization
-    fn compute_gradient<S>(&self, params: &ArrayBase<S, ndarray::Ix2>) -> Result<Array2<A>>
+    fn compute_gradient<S>(
+        &self,
+        params: &ArrayBase<S, scirs2_core::ndarray_ext::Ix2>,
+    ) -> Result<Array2<A>>
     where
         S: Data<Elem = A>,
     {
@@ -129,8 +135,10 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> ManifoldReg
 }
 
 // Implement Regularizer trait
-impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimension + Send + Sync> Regularizer<A, D>
-    for ManifoldRegularization<A>
+impl<
+        A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync,
+        D: Dimension + Send + Sync,
+    > Regularizer<A, D> for ManifoldRegularization<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         if params.ndim() != 2 {
@@ -141,7 +149,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimensio
         // Downcast to 2D
         let params_2d = params
             .view()
-            .into_dimensionality::<ndarray::Ix2>()
+            .into_dimensionality::<scirs2_core::ndarray_ext::Ix2>()
             .map_err(|_| OptimError::InvalidConfig("Expected 2D array".to_string()))?;
 
         let gradient_update = self.compute_gradient(&params_2d)?;
@@ -149,7 +157,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimensio
         // Add manifold regularization gradient
         let mut gradients_2d = gradients
             .view_mut()
-            .into_dimensionality::<ndarray::Ix2>()
+            .into_dimensionality::<scirs2_core::ndarray_ext::Ix2>()
             .map_err(|_| OptimError::InvalidConfig("Expected 2D array".to_string()))?;
 
         gradients_2d.zip_mut_with(&gradient_update, |g, &u| *g = *g + u);
@@ -167,7 +175,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimensio
         // Downcast to 2D
         let params_2d = params
             .view()
-            .into_dimensionality::<ndarray::Ix2>()
+            .into_dimensionality::<scirs2_core::ndarray_ext::Ix2>()
             .map_err(|_| OptimError::InvalidConfig("Expected 2D array".to_string()))?;
 
         self.compute_penalty(&params_2d)

@@ -45,7 +45,7 @@ fn test_scheduler<S: LearningRateScheduler<f64>>(
         }
 
         // Update optimizer with current learning rate
-        <SGD<f64> as Optimizer<f64, ndarray::Ix1>>::set_learning_rate(
+        <SGD<f64> as Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>::set_learning_rate(
             &mut optimizer,
             scheduler.get_learning_rate(),
         );

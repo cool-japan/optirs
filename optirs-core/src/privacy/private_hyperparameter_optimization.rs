@@ -7,8 +7,8 @@
 use crate::error::{OptimError, Result};
 use crate::privacy::moment_accountant::MomentsAccountant;
 use crate::privacy::{DifferentialPrivacyConfig, PrivacyBudget};
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::rngs::StdRng;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;

@@ -1,7 +1,7 @@
 // Example demonstrating the Lookahead optimizer
 use scirs2_core::ndarray_ext::{s, Array1, Array2};
-use ndarray_rand::rand_distr::Uniform;
-use ndarray_rand::RandomExt;
+use scirs2_core::random::distributions::Uniform;
+use scirs2_core::random::RandomExt;
 use scirs2_optim::optimizers::{Adam, Lookahead, SGD};
 use scirs2_optim::Optimizer;
 use std::error::Error;
@@ -38,7 +38,7 @@ fn compute_loss_and_gradient(
 // Train a model using the provided optimizer
 #[allow(dead_code)]
 fn train_model(
-    optimizer: &mut dyn Optimizer<f64, ndarray::Ix1>,
+    optimizer: &mut dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>,
     x: &Array2<f64>,
     y: &Array1<f64>,
     train_batches: &Vec<(Array2<f64>, Array1<f64>)>,

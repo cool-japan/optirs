@@ -10,8 +10,8 @@ use super::{
 };
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -695,7 +695,17 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedEventCoordinator<T> {
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum + ndarray::ScalarOperand + std::ops::AddAssign> EventDrivenOptimizer<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::ops::AddAssign,
+    > EventDrivenOptimizer<T>
+{
     /// Create a new event-driven optimizer
     pub fn new(
         config: EventDrivenConfig<T>,

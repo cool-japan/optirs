@@ -1126,7 +1126,7 @@ impl CoordinationState {
 
         // Record transition
         let transition = StateTransition {
-            transition_id: format!("{}-{}", chrono::Utc::now().timestamp(), rand::random::<u32>()),
+            transition_id: format!("{}-{}", chrono::Utc::now().timestamp(), scirs2_core::random::random::<u32>()),
             from_phase: self.current_phase.clone(),
             to_phase: new_phase.clone(),
             timestamp: Instant::now(),

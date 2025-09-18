@@ -3,8 +3,8 @@
 // Based on the paper "Large Batch Optimization for Deep Learning: Training BERT in 76 minutes"
 // by You et al. (2019).
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -58,9 +58,9 @@ pub struct LAMB<A: Float + ScalarOperand + Debug> {
     /// Whether to use bias correction
     bias_correction: bool,
     /// First moment vector
-    m: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
     /// Current timestep
     t: usize,
 }

@@ -1,5 +1,5 @@
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;

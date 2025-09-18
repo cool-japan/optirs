@@ -21,7 +21,7 @@ pub type CoordinationMetrics = HashMap<String, f64>;
 
 /// Main TPU Pod Coordinator for batch parallelization
 #[derive(Debug)]
-pub struct TPUPodCoordinator<T: Float + Debug + ndarray::ScalarOperand> {
+pub struct TPUPodCoordinator<T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand> {
     /// Pod coordination configuration
     pub config: PodCoordinationConfig,
     /// Current pod topology
@@ -1735,7 +1735,7 @@ impl Default for PodCoordinationConfig {
 }
 
 // Implementation for TPUPodCoordinator
-impl<T: Float + Debug + Default + Clone + Send + Sync + ndarray::ScalarOperand + std::iter::Sum> TPUPodCoordinator<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::iter::Sum> TPUPodCoordinator<T> {
     /// Create a new TPU pod coordinator
     pub fn new(config: PodCoordinationConfig) -> Result<Self> {
         let topology = PodTopology::default();

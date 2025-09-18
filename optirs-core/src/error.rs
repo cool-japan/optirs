@@ -171,8 +171,8 @@ impl From<std::time::SystemTimeError> for OptimError {
     }
 }
 
-impl From<ndarray::ShapeError> for OptimError {
-    fn from(error: ndarray::ShapeError) -> Self {
+impl From<scirs2_core::ndarray_ext::ShapeError> for OptimError {
+    fn from(error: scirs2_core::ndarray_ext::ShapeError) -> Self {
         OptimError::DimensionMismatch(format!("Shape error: {error}"))
     }
 }

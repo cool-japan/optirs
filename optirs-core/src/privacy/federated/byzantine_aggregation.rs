@@ -5,8 +5,8 @@ use std::fmt::Debug;
 // providing protection against malicious clients and outlier detection mechanisms.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array1;
 use std::collections::{HashMap, VecDeque};
 
 /// Byzantine-robust aggregation algorithms
@@ -151,7 +151,7 @@ impl<
             + Sync
             + 'static
             + std::iter::Sum
-            + ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > ByzantineRobustAggregator<T>
 {
     #[allow(dead_code)]

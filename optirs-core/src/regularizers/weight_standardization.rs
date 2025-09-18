@@ -4,8 +4,8 @@
 // layers by standardizing the weights along the channel dimension. This improves
 // training stability and allows for use of larger batch sizes.
 
-use scirs2_core::ndarray_ext::{Array, Array2, Array4, ArrayBase, Data, Dimension, ScalarOperand};
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::{Array, Array2, Array4, ArrayBase, Data, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -68,7 +68,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
         let n_cols_f = A::from_usize(n_cols).unwrap();
 
         // Calculate mean, subtract from weights, then calculate variance and normalize
-        let means = weights.sum_axis(ndarray::Axis(1)) / n_cols_f;
+        let means = weights.sum_axis(scirs2_core::ndarray_ext::Axis(1)) / n_cols_f;
 
         // Subtract mean from weights
         let mut centered = weights.clone();
@@ -197,8 +197,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
     /// The gradient for the weights
     fn compute_gradients<S1, S2>(
         &self,
-        weights: &ArrayBase<S1, ndarray::Ix2>,
-        grad_output: &ArrayBase<S2, ndarray::Ix2>,
+        weights: &ArrayBase<S1, scirs2_core::ndarray_ext::Ix2>,
+        grad_output: &ArrayBase<S2, scirs2_core::ndarray_ext::Ix2>,
     ) -> Result<Array2<A>>
     where
         S1: Data<Elem = A>,
@@ -245,8 +245,10 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
     }
 }
 
-impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimension + Send + Sync> Regularizer<A, D>
-    for WeightStandardization<A>
+impl<
+        A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync,
+        D: Dimension + Send + Sync,
+    > Regularizer<A, D> for WeightStandardization<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         // Check if we have 2D parameters
@@ -259,11 +261,11 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimensio
         // Downcast to 2D
         let params_2d = params
             .view()
-            .into_dimensionality::<ndarray::Ix2>()
+            .into_dimensionality::<scirs2_core::ndarray_ext::Ix2>()
             .map_err(|_| OptimError::InvalidConfig("Expected 2D array".to_string()))?;
         let gradients_2d = gradients
             .view()
-            .into_dimensionality::<ndarray::Ix2>()
+            .into_dimensionality::<scirs2_core::ndarray_ext::Ix2>()
             .map_err(|_| OptimError::InvalidConfig("Expected 2D array".to_string()))?;
 
         // Compute the gradient corrections
@@ -272,7 +274,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimensio
         // Apply the corrections to the gradients
         let mut grad_mut = gradients
             .view_mut()
-            .into_dimensionality::<ndarray::Ix2>()
+            .into_dimensionality::<scirs2_core::ndarray_ext::Ix2>()
             .map_err(|_| OptimError::InvalidConfig("Expected 2D array".to_string()))?;
 
         // Add the corrections to the gradients

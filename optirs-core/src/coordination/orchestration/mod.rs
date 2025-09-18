@@ -11,13 +11,13 @@ pub mod pipeline_orchestrator;
 
 // Re-export key types
 pub use pipeline_orchestrator::{
-    OptimizationPipeline, PipelineConfiguration, PipelineExecution, PipelineOrchestrator,
-    PipelineStage, StageResult, ResourceLimits, TimeoutSettings, MonitoringConfiguration,
-    OrchestratorConfiguration,
+    MonitoringConfiguration, OptimizationPipeline, OrchestratorConfiguration,
+    PipelineConfiguration, PipelineExecution, PipelineOrchestrator, PipelineStage, ResourceLimits,
+    StageResult, TimeoutSettings,
 };
 
 pub use crate::coordination::monitoring::performance_tracking::{
-    StorageConfiguration, AlertConfiguration,
+    AlertConfiguration, StorageConfiguration,
 };
 
 pub use experiment_manager::{

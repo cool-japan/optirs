@@ -3,8 +3,8 @@
 // Implements various NAS algorithms including DARTS, evolutionary search,
 // reinforcement learning-based search, and Bayesian optimization.
 
-use scirs2_core::ndarray_ext::{s, Array1, Array2, Array3};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{s, Array1, Array2, Array3};
 use scirs2_core::random::Rng;
 use scirs2_core::random::{Random, Rng as SCRRng};
 use std::collections::{HashMap, VecDeque};
@@ -51,7 +51,7 @@ pub struct SearchStrategyStatistics<T: Float + Debug + Send + Sync + 'static> {
 
 /// Random search baseline strategy
 pub struct RandomSearch<T: Float + Debug + std::iter::Sum> {
-    rng: Random<rand::rngs::StdRng>,
+    rng: Random<scirs2_core::random::rngs::StdRng>,
     statistics: SearchStrategyStatistics<T>,
     searchspace: Option<SearchSpaceConfig>,
 }
@@ -489,7 +489,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         for i in 0..max_len {
             let component = if i < parent1.components.len() && i < parent2.components.len() {
                 // Crossover between components
-                if rand::random::<f64>() < 0.5 {
+                if scirs2_core::random::random::<f64>() < 0.5 {
                     parent1.components[i].clone()
                 } else {
                     parent2.components[i].clone()
@@ -523,11 +523,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                 .map(|c| &c.hyperparameter_ranges)
                 .unwrap_or(&HashMap::new())
             {
-                if rand::random::<f64>() < self.mutation_rate {
+                if scirs2_core::random::random::<f64>() < self.mutation_rate {
                     if let Some(current_value) = component.hyperparameters.get_mut(param_name) {
                         match param_range {
                             super::ParameterRange::Continuous(min, max) => {
-                                let noise = rand::random::<f64>() * 0.1 - 0.05; // Small noise
+                                let noise = scirs2_core::random::random::<f64>() * 0.1 - 0.05; // Small noise
                                 let new_val = current_value.to_f64().unwrap_or(0.0) + noise;
                                 let clamped = new_val.max(*min).min(*max);
                                 *current_value =
@@ -535,7 +535,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                             }
                             super::ParameterRange::LogUniform(min, max) => {
                                 let log_val = current_value.to_f64().unwrap_or(0.001).ln();
-                                let noise = rand::random::<f64>() * 0.2 - 0.1;
+                                let noise = scirs2_core::random::random::<f64>() * 0.2 - 0.1;
                                 let new_log = log_val + noise;
                                 let new_val = new_log.exp().max(*min).min(*max);
                                 *current_value =
@@ -593,7 +593,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                 let parent1_idx = self.selection(&fitnessscores)?;
                 let parent2_idx = self.selection(&fitnessscores)?;
 
-                let mut child = if rand::random::<f64>() < self.crossover_rate {
+                let mut child = if scirs2_core::random::random::<f64>() < self.crossover_rate {
                     self.crossover(&self.population[parent1_idx], &self.population[parent2_idx])?
                 } else {
                     self.population[parent1_idx].clone()
@@ -1003,7 +1003,7 @@ impl<
             + Send
             + Sync
             + std::fmt::Debug
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::iter::Sum,
     > DifferentiableSearch<T>
 {
@@ -1032,7 +1032,7 @@ impl<
         }
 
         let gumbel_noise: Array1<T> = Array1::from_shape_fn(logits.len(), |_| {
-            let u = rand::random::<f64>();
+            let u = scirs2_core::random::random::<f64>();
             T::from(-(-u.ln()).ln()).unwrap()
         });
 
@@ -1068,7 +1068,7 @@ impl<
                     .unwrap_or(0),
                 DiscretizationStrategy::Sampling => {
                     let probs = self.softmax(&edge_weights.to_owned());
-                    let rand_val = rand::random::<f64>();
+                    let rand_val = scirs2_core::random::random::<f64>();
                     let mut cumsum = 0.0;
 
                     let mut selected_idx = 0;
@@ -1143,14 +1143,14 @@ impl<
             + Sync
             + std::fmt::Debug
             + std::iter::Sum
-            + ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > SearchStrategy<T> for DifferentiableSearch<T>
 {
     fn initialize(&mut self, _searchspace: &SearchSpaceConfig) -> Result<()> {
         // Initialize architecture weights with small random values
         self.architecture_weights =
             Array3::from_shape_fn(self.architecture_weights.raw_dim(), |_| {
-                T::from(rand::random::<f64>() * 0.1 - 0.05).unwrap()
+                T::from(scirs2_core::random::random::<f64>() * 0.1 - 0.05).unwrap()
             });
         Ok(())
     }
@@ -1477,7 +1477,7 @@ impl<T: Float + Debug + Default + Send + Sync> AcquisitionFunction<T> {
             }
             AcquisitionType::Thompson => {
                 // Thompson sampling - sample from posterior
-                mean + variance.sqrt() * T::from(rand::random::<f64>()).unwrap()
+                mean + variance.sqrt() * T::from(scirs2_core::random::random::<f64>()).unwrap()
             }
             AcquisitionType::InfoGain => {
                 // Information gain - simplified as entropy
@@ -1761,7 +1761,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + Send + Sync
 
     fn apply_dropout(&self, input: &Array1<T>, dropoutrate: T) -> Array1<T> {
         input.mapv(|x| {
-            if rand::random::<f64>() < dropoutrate.to_f64().unwrap_or(0.0) {
+            if scirs2_core::random::random::<f64>() < dropoutrate.to_f64().unwrap_or(0.0) {
                 T::zero()
             } else {
                 x / (T::one() - dropoutrate)
@@ -1786,7 +1786,7 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> PredictorLayer<
         let scale = (6.0 / (fan_in + fan_out)).sqrt();
 
         self.weights = Array2::from_shape_fn(self.weights.raw_dim(), |_| {
-            T::from(rand::random::<f64>() * scale * 2.0 - scale).unwrap()
+            T::from(scirs2_core::random::random::<f64>() * scale * 2.0 - scale).unwrap()
         });
 
         Ok(())

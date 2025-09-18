@@ -427,9 +427,10 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
         let n = T::from(values.len()).unwrap();
         let sum_x = (0..values.len()).fold(T::zero(), |acc, i| acc + T::from(i).unwrap());
         let sum_y = values.iter().fold(T::zero(), |acc, &y| acc + y);
-        let sum_xy = values.iter().enumerate().fold(T::zero(), |acc, (i, &y)| {
-            acc + T::from(i).unwrap() * y
-        });
+        let sum_xy = values
+            .iter()
+            .enumerate()
+            .fold(T::zero(), |acc, (i, &y)| acc + T::from(i).unwrap() * y);
         let sum_x2 = (0..values.len()).fold(T::zero(), |acc, i| {
             let i_t = T::from(i).unwrap();
             acc + i_t * i_t

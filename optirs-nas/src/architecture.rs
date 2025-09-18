@@ -230,7 +230,7 @@ impl ArchitectureSpace {
     /// Generate a random architecture within this search space
     pub fn generate_random_architecture(&self) -> Architecture {
         use scirs2_core::random::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         let num_components = rng.gen_range(self.min_components..=self.max_components);
         let mut components = Vec::new();
@@ -300,7 +300,7 @@ impl ArchitectureSpace {
         mutation_rate: f64,
     ) -> Architecture {
         use scirs2_core::random::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}_mut", architecture.id, rng.gen::<u32>());
         mutated.generation = architecture.generation + 1;
@@ -366,7 +366,7 @@ impl ArchitectureSpace {
         parent2: &Architecture,
     ) -> (Architecture, Architecture) {
         use scirs2_core::random::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         let mut child1 = parent1.clone();
         let mut child2 = parent2.clone();

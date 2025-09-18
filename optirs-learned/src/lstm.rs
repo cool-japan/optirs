@@ -4,9 +4,9 @@
 // update optimization parameters. The LSTM learns optimization strategies through
 // meta-learning, enabling automatic discovery of effective optimization patterns.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
-use num_traits::Float;
 use scirs2_core::random::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -903,7 +903,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug,
     > LSTMOptimizer<T>
 {

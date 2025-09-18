@@ -3,8 +3,8 @@
 // Orthogonal regularization encourages weight matrices to be orthogonal,
 // which helps with gradient flow and prevents vanishing/exploding gradients.
 
-use scirs2_core::ndarray_ext::{Array, Array3, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
 use num_traits::{Float, FromPrimitive};
+use scirs2_core::ndarray_ext::{Array, Array3, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -94,8 +94,10 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> OrthogonalR
 }
 
 // Implement Regularizer trait
-impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync, D: Dimension + Send + Sync> Regularizer<A, D>
-    for OrthogonalRegularization<A>
+impl<
+        A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync,
+        D: Dimension + Send + Sync,
+    > Regularizer<A, D> for OrthogonalRegularization<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         if params.ndim() != 2 {

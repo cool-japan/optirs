@@ -11,8 +11,8 @@ use super::{
 };
 use crate::error::Result;
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
@@ -236,7 +236,15 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EnergyEfficientConfig
 
 /// Energy monitoring and tracking
 #[derive(Debug, Clone)]
-struct EnergyMonitor<T: Float + Debug + ndarray::ScalarOperand + std::fmt::Debug + std::iter::Sum + Send + Sync> {
+struct EnergyMonitor<
+    T: Float
+        + Debug
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + std::fmt::Debug
+        + std::iter::Sum
+        + Send
+        + Sync,
+> {
     /// Energy consumption history
     consumption_history: VecDeque<(Instant, T)>,
 
@@ -318,8 +326,18 @@ struct DVFSController<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> DVFSController<T> {
     fn new() -> Self {
         Self {
-            voltage_levels: vec![T::from(0.7).unwrap(), T::from(0.9).unwrap(), T::from(1.0).unwrap(), T::from(1.2).unwrap()],
-            frequency_levels: vec![T::from(500.0).unwrap(), T::from(1000.0).unwrap(), T::from(1500.0).unwrap(), T::from(2000.0).unwrap()],
+            voltage_levels: vec![
+                T::from(0.7).unwrap(),
+                T::from(0.9).unwrap(),
+                T::from(1.0).unwrap(),
+                T::from(1.2).unwrap(),
+            ],
+            frequency_levels: vec![
+                T::from(500.0).unwrap(),
+                T::from(1000.0).unwrap(),
+                T::from(1500.0).unwrap(),
+                T::from(2000.0).unwrap(),
+            ],
             current_voltage_idx: 2,
             current_frequency_idx: 2,
             performance_requirements: PerformanceRequirements {
@@ -344,7 +362,9 @@ impl<T: Float + Debug + Send + Sync + 'static> DVFSController<T> {
     fn compute_optimal_levels(&mut self, workload: &WorkloadSample<T>) -> Result<(T, T)> {
         // Compute optimal voltage and frequency based on workload
         let utilization = T::from(workload.active_neurons).unwrap() / T::from(1000).unwrap();
-        let idx = (utilization * T::from(self.voltage_levels.len() - 1).unwrap()).to_usize().unwrap_or(2);
+        let idx = (utilization * T::from(self.voltage_levels.len() - 1).unwrap())
+            .to_usize()
+            .unwrap_or(2);
 
         self.current_voltage_idx = idx.min(self.voltage_levels.len() - 1);
         self.current_frequency_idx = idx.min(self.frequency_levels.len() - 1);
@@ -516,7 +536,8 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
 
     fn analyze_sparsity(&mut self, workload: &WorkloadSample<T>) -> Result<SparsityAnalysis<T>> {
         // Analyze sparsity in the workload
-        let sparsity_ratio = T::one() - (T::from(workload.active_neurons).unwrap() / T::from(1000).unwrap()).min(T::one());
+        let sparsity_ratio = T::one()
+            - (T::from(workload.active_neurons).unwrap() / T::from(1000).unwrap()).min(T::one());
 
         Ok(SparsityAnalysis {
             sparsity_ratio,
@@ -602,7 +623,15 @@ enum CompressionAlgorithm {
 }
 
 /// Energy-efficient optimizer
-pub struct EnergyEfficientOptimizer<T: Float + Debug + ndarray::ScalarOperand + std::fmt::Debug + std::iter::Sum + Send + Sync> {
+pub struct EnergyEfficientOptimizer<
+    T: Float
+        + Debug
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + std::fmt::Debug
+        + std::iter::Sum
+        + Send
+        + Sync,
+> {
     /// Configuration
     config: EnergyEfficientConfig<T>,
 
@@ -720,9 +749,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ThermalManager<T> {
 
     fn update(&mut self, system_state: &EnergySystemState<T>) -> Result<()> {
         // Update temperature based on system state
-        self.current_temperature = system_state.current_power * self.thermal_model.thermal_resistance
+        self.current_temperature = system_state.current_power
+            * self.thermal_model.thermal_resistance
             + self.thermal_model.ambient_temperature;
-        self.temperature_history.push_back((Instant::now(), self.current_temperature));
+        self.temperature_history
+            .push_back((Instant::now(), self.current_temperature));
         if self.temperature_history.len() > 100 {
             self.temperature_history.pop_front();
         }
@@ -850,7 +881,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictiveEnergyManager<T> {
         if self.energy_predictions.is_empty() {
             return Ok(T::from(1.0).unwrap());
         }
-        let sum: T = self.energy_predictions.iter().take(10).map(|p| p.predicted_energy).fold(T::zero(), |acc, x| acc + x);
+        let sum: T = self
+            .energy_predictions
+            .iter()
+            .take(10)
+            .map(|p| p.predicted_energy)
+            .fold(T::zero(), |acc, x| acc + x);
         Ok(sum / T::from(self.energy_predictions.len().min(10)).unwrap())
     }
 }
@@ -933,8 +969,15 @@ struct EnergyPrediction<T: Float + Debug + Send + Sync + 'static> {
     model_type: ModelType,
 }
 
-impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + std::fmt::Debug + std::iter::Sum>
-    EnergyEfficientOptimizer<T>
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::fmt::Debug
+            + std::iter::Sum,
+    > EnergyEfficientOptimizer<T>
 {
     /// Create a new energy-efficient optimizer
     pub fn new(_config: EnergyEfficientConfig<T>, numneurons: usize) -> Self {
@@ -974,7 +1017,8 @@ impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + std::fmt::Debug +
 
         // Get energy predictions
         let prediction = if self.config.predictive_energy_management {
-            self.predictive_manager.predict_energy(Duration::from_secs(60))? // Predict for next minute
+            self.predictive_manager
+                .predict_energy(Duration::from_secs(60))? // Predict for next minute
         } else {
             T::from(1.0).unwrap()
         };
@@ -1417,7 +1461,16 @@ pub struct EnergyBudgetStatus<T: Float + Debug + Send + Sync + 'static> {
 // Implementation of various helper structs and methods would continue here...
 // For brevity, I'm including placeholder implementations
 
-impl<T: Float + Debug + Send + Sync + ndarray::ScalarOperand + std::fmt::Debug + std::iter::Sum> EnergyMonitor<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::fmt::Debug
+            + std::iter::Sum,
+    > EnergyMonitor<T>
+{
     fn new(_monitoringfrequency: Duration) -> Self {
         Self {
             consumption_history: VecDeque::new(),

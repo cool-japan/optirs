@@ -50,15 +50,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let optimizers = vec![
         (
             "L-BFGS",
-            Box::new(LBFGS::new(0.1)) as Box<dyn Optimizer<f64, ndarray::Ix1>>,
+            Box::new(LBFGS::new(0.1)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
         ),
         (
             "Adam",
-            Box::new(Adam::new(0.01)) as Box<dyn Optimizer<f64, ndarray::Ix1>>,
+            Box::new(Adam::new(0.01)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
         ),
         (
             "SGD",
-            Box::new(SGD::new(0.001)) as Box<dyn Optimizer<f64, ndarray::Ix1>>,
+            Box::new(SGD::new(0.001)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
         ),
     ];
 

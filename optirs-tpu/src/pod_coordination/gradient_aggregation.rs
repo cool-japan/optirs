@@ -377,7 +377,7 @@ pub struct GradientAggregator<T: Float + Debug + Send + Sync + 'static> {
     error_accumulation: Vec<Array<T, IxDyn>>,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + ndarray::ScalarOperand> GradientAggregator<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> GradientAggregator<T> {
     /// Create a new gradient aggregator
     pub fn new(config: AggregationConfig) -> Result<Self> {
         let aggregation_state = AggregationState {

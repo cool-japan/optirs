@@ -3,9 +3,9 @@
 // This module implements various curriculum learning approaches that progressively
 // introduce optimization challenges of increasing difficulty to improve learning.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 

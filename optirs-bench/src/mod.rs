@@ -1501,7 +1501,7 @@ mod tests {
 
     #[test]
     fn test_cosine_similarity() {
-        let analyzer = GradientFlowAnalyzer::<f64, ndarray::Ix1>::new(10);
+        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray_ext::Ix1>::new(10);
 
         let arrays1 = vec![Array1::from_vec(vec![1.0, 0.0])];
         let arrays2 = vec![Array1::from_vec(vec![1.0, 0.0])]; // Same direction

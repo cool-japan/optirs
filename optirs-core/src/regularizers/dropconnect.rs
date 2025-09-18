@@ -3,8 +3,8 @@
 // DropConnect is a regularization technique that randomly drops connections between layers
 // during training. Unlike Dropout which drops units, DropConnect drops individual weights.
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};

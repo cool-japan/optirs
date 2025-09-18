@@ -1010,16 +1010,16 @@ impl ParameterSpace {
             let value = match param.param_type {
                 ParameterType::Continuous => {
                     // Random value between min and max
-                    param.min_value + (param.max_value - param.min_value) * rand::random::<f64>()
+                    param.min_value + (param.max_value - param.min_value) * scirs2_core::random::random::<f64>()
                 },
                 ParameterType::Integer => {
                     // Random integer between min and max
                     let range = param.max_value - param.min_value;
-                    param.min_value + (rand::random::<f64>() * range).floor()
+                    param.min_value + (scirs2_core::random::random::<f64>() * range).floor()
                 },
                 ParameterType::Boolean => {
                     // Random boolean as 0.0 or 1.0
-                    if rand::random::<bool>() { 1.0 } else { 0.0 }
+                    if scirs2_core::random::random::<bool>() { 1.0 } else { 0.0 }
                 },
                 _ => param.default_value,
             };
@@ -1073,7 +1073,7 @@ impl ObjectiveEvaluator {
     /// Simulate evaluation (placeholder)
     fn simulate_evaluation(&self, _config: &HashMap<String, f64>) -> Result<f64> {
         // Simulate objective evaluation
-        Ok(0.8 + 0.2 * rand::random::<f64>())
+        Ok(0.8 + 0.2 * scirs2_core::random::random::<f64>())
     }
 }
 

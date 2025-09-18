@@ -4,8 +4,8 @@
 // based on problem characteristics, performance monitoring, and learned patterns.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
 use scirs2_core::random::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

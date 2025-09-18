@@ -5,9 +5,9 @@ use std::fmt::Debug;
 // transformer encoder/decoder blocks, including various activation functions
 // and output projection layers.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use scirs2_core::random::{Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;

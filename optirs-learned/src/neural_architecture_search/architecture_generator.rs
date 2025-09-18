@@ -20,7 +20,7 @@ impl ArchitectureGenerator {
 
     pub fn generate_random_population(&self, size: usize) -> Result<Vec<String>> {
         let mut architectures = Vec::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         for _ in 0..size {
             if let Some(ref space) = self.search_space {

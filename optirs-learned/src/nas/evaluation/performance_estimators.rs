@@ -521,7 +521,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         
         // Initialize with simple weights
         for i in 0..params.len() {
-            params[i] = T::from(rand::random::<f64>() * 0.1).unwrap();
+            params[i] = T::from(scirs2_core::random::random::<f64>() * 0.1).unwrap();
         }
         
         Ok(CurveFittingModel {

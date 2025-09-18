@@ -16,7 +16,7 @@ use crate::error::Result;
 
 /// Meta-gradient computation engine
 #[allow(dead_code)]
-pub struct MetaGradientEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + ndarray::ScalarOperand> {
+pub struct MetaGradientEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
     /// Forward-mode engine for directional derivatives
     forward_engine: ForwardModeEngine<T>,
 
@@ -407,7 +407,7 @@ pub enum CheckpointPolicy {
     None,
 }
 
-impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + ndarray::ScalarOperand + Send + Sync>
+impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync>
     MetaGradientEngine<T>
 {
     /// Create a new meta-gradient engine

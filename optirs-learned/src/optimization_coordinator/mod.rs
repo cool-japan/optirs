@@ -224,7 +224,7 @@ impl<
             + Send
             + Sync
             + Default
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug,
     > AdvancedCoordinator<T>
 {

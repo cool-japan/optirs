@@ -1,9 +1,9 @@
 // Configuration structures for transformer-based optimizer
 
-use num_traits::Float;
-use std::fmt::Debug;
-use serde::{Serialize, Deserialize};
 use super::positional_encoding::PositionalEncodingType;
+use num_traits::Float;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// Configuration for transformer-based optimizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,7 +173,10 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerBasedOptimizerConfig<T
         }
 
         if self.attention_head_dimension * self.num_attention_heads != self.model_dimension {
-            return Err("attention_head_dimension * num_attention_heads must equal model_dimension".to_string());
+            return Err(
+                "attention_head_dimension * num_attention_heads must equal model_dimension"
+                    .to_string(),
+            );
         }
 
         if self.sequence_length == 0 {
@@ -208,7 +211,8 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerBasedOptimizerConfig<T
         let ffn_params_per_layer = 2 * self.model_dimension * self.feedforward_dimension; // Up and down projections
         let norm_params_per_layer = 2 * self.model_dimension; // Layer norm parameters
 
-        let layer_params = attention_params_per_layer + ffn_params_per_layer + norm_params_per_layer;
+        let layer_params =
+            attention_params_per_layer + ffn_params_per_layer + norm_params_per_layer;
         let total_layer_params = layer_params * self.num_transformer_layers;
 
         let output_params = self.model_dimension * self.model_dimension; // Output projection
@@ -219,10 +223,17 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerBasedOptimizerConfig<T
     /// Calculate memory requirements (in MB)
     pub fn estimate_memory_usage(&self) -> f64 {
         let param_count = self.estimate_parameter_count();
-        let bytes_per_param = if std::mem::size_of::<T>() == 4 { 4.0 } else { 8.0 };
+        let bytes_per_param = if std::mem::size_of::<T>() == 4 {
+            4.0
+        } else {
+            8.0
+        };
 
         let model_memory = param_count as f64 * bytes_per_param;
-        let activation_memory = self.batch_size as f64 * self.sequence_length as f64 * self.model_dimension as f64 * bytes_per_param;
+        let activation_memory = self.batch_size as f64
+            * self.sequence_length as f64
+            * self.model_dimension as f64
+            * bytes_per_param;
         let gradient_memory = model_memory; // Assume same as model for gradients
 
         let total_bytes = model_memory + activation_memory + gradient_memory;
@@ -243,7 +254,9 @@ pub struct TransformerArchConfig {
 }
 
 impl TransformerArchConfig {
-    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(config: &TransformerBasedOptimizerConfig<T>) -> Self {
+    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(
+        config: &TransformerBasedOptimizerConfig<T>,
+    ) -> Self {
         Self {
             model_dimension: config.model_dimension,
             num_layers: config.num_transformer_layers,
@@ -266,7 +279,6 @@ pub enum ActivationFunction {
     Sigmoid,
     LeakyReLU,
 }
-
 
 /// Memory management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

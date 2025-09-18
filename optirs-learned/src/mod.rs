@@ -226,7 +226,7 @@ struct ComputationCheckpoint<T: Float + Debug + Send + Sync + 'static> {
     memory_usage: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + ndarray::ScalarOperand> AutodiffEngine<T> {
+impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::ndarray_ext::ScalarOperand> AutodiffEngine<T> {
     /// Create a new automatic differentiation engine
     pub fn new(config: AutodiffConfig) -> Self {
         Self {

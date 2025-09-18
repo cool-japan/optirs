@@ -319,7 +319,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
     /// Generate random architecture for initial sampling
     fn generate_random_architecture(&self) -> Result<ArchitectureRepresentation<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
 
         // Generate random feature vector
         let features = Array1::from_shape_fn(self.architecture_encoder.encoding_dim, |_| {
@@ -391,7 +391,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
     /// Single restart of acquisition function optimization
     fn optimize_acquisition_single_restart(&self) -> Result<ArchitectureRepresentation<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
 
         // Start with random point
         let mut current_features = Array1::from_shape_fn(

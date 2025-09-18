@@ -4,9 +4,9 @@
 // managing complex optimization workflows with multiple stages, dependencies,
 // and parallel execution paths.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -1073,7 +1073,11 @@ pub struct AggregationSettings<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static + Default> Default for AggregationSettings<T> {
     fn default() -> Self {
         Self {
-            functions: vec![AggregationFunction::Mean, AggregationFunction::Max, AggregationFunction::Min],
+            functions: vec![
+                AggregationFunction::Mean,
+                AggregationFunction::Max,
+                AggregationFunction::Min,
+            ],
             window: Duration::from_secs(60),
             interval: Duration::from_secs(10),
             retention: Duration::from_secs(86400),
@@ -1482,7 +1486,7 @@ impl Default for LogRotation {
         Self {
             enabled: true,
             strategy: RotationStrategy::SizeBased,
-            max_size: 100 * 1024 * 1024, // 100 MB
+            max_size: 100 * 1024 * 1024,             // 100 MB
             max_age: Duration::from_secs(86400 * 7), // 7 days
             max_files: 10,
         }

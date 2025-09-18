@@ -1,11 +1,11 @@
 // Positional encoding implementations for transformer sequences
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use std::f64::consts::PI;
-use serde::{Serialize, Deserialize};
 use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use serde::{Deserialize, Serialize};
+use std::f64::consts::PI;
+use std::fmt::Debug;
 
 /// Positional encoding types
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -78,11 +78,16 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
             for i in 0..self.model_dimension {
                 let position = num_traits::cast::cast(pos).unwrap_or_else(|| T::zero());
                 let dimension = num_traits::cast::cast(i).unwrap_or_else(|| T::zero());
-                let model_dim = num_traits::cast::cast(self.model_dimension).unwrap_or_else(|| T::zero());
+                let model_dim =
+                    num_traits::cast::cast(self.model_dimension).unwrap_or_else(|| T::zero());
 
-                let angle = position / num_traits::cast::cast(10000.0).unwrap_or_else(|| T::zero()).powf(
-                    num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * dimension / model_dim
-                );
+                let angle = position
+                    / num_traits::cast::cast(10000.0)
+                        .unwrap_or_else(|| T::zero())
+                        .powf(
+                            num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * dimension
+                                / model_dim,
+                        );
 
                 if i % 2 == 0 {
                     // Even dimensions: sin
@@ -108,7 +113,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
         // RoPE doesn't use a precomputed matrix, it's applied during attention
         // We'll store frequency inverse for each dimension pair
         for i in (0..self.model_dimension).step_by(2) {
-            let dim_pair = num_traits::cast::cast(i).unwrap_or_else(|| T::zero()) / num_traits::cast::cast(self.model_dimension).unwrap_or_else(|| T::zero());
+            let dim_pair = num_traits::cast::cast(i).unwrap_or_else(|| T::zero())
+                / num_traits::cast::cast(self.model_dimension).unwrap_or_else(|| T::zero());
             let freq = T::one() / self.rope_base.powf(dim_pair);
 
             if i < self.model_dimension {
@@ -138,7 +144,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
 
         if sequence_length > self.max_sequence_length {
             return Err(crate::error::OptimError::Other(
-                "Sequence length exceeds maximum".to_string()
+                "Sequence length exceeds maximum".to_string(),
             ));
         }
 
@@ -163,7 +169,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
 
             if sequence_length > self.max_sequence_length {
                 return Err(crate::error::OptimError::Other(
-                    "Sequence length exceeds maximum".to_string()
+                    "Sequence length exceeds maximum".to_string(),
                 ));
             }
 
@@ -180,7 +186,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
             Ok(output)
         } else {
             Err(crate::error::OptimError::Other(
-                "Learned embeddings not initialized".to_string()
+                "Learned embeddings not initialized".to_string(),
             ))
         }
     }
@@ -224,20 +230,18 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
     pub fn get_position_encoding(&self, position: usize) -> Result<Array1<T>> {
         if position >= self.max_sequence_length {
             return Err(crate::error::OptimError::Other(
-                "Position exceeds maximum sequence length".to_string()
+                "Position exceeds maximum sequence length".to_string(),
             ));
         }
 
         match self.encoding_type {
-            PositionalEncodingType::Sinusoidal => {
-                Ok(self.encoding_matrix.row(position).to_owned())
-            }
+            PositionalEncodingType::Sinusoidal => Ok(self.encoding_matrix.row(position).to_owned()),
             PositionalEncodingType::Learned => {
                 if let Some(ref learned) = self.learned_embeddings {
                     Ok(learned.row(position).to_owned())
                 } else {
                     Err(crate::error::OptimError::Other(
-                        "Learned embeddings not available".to_string()
+                        "Learned embeddings not available".to_string(),
                     ))
                 }
             }
@@ -245,9 +249,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
                 // Return frequency information for RoPE
                 Ok(self.encoding_matrix.row(0).to_owned())
             }
-            PositionalEncodingType::None => {
-                Ok(Array1::zeros(self.model_dimension))
-            }
+            PositionalEncodingType::None => Ok(Array1::zeros(self.model_dimension)),
         }
     }
 
@@ -258,7 +260,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
             Ok(())
         } else {
             Err(crate::error::OptimError::Other(
-                "No learned embeddings to update".to_string()
+                "No learned embeddings to update".to_string(),
             ))
         }
     }
@@ -308,11 +310,14 @@ impl<T: Float + Debug + Send + Sync + 'static> PositionalEncoding<T> {
             for i in 0..model_dimension {
                 let position = num_traits::cast::cast(pos).unwrap_or_else(|| T::zero());
                 let dimension = num_traits::cast::cast(i).unwrap_or_else(|| T::zero());
-                let model_dim = num_traits::cast::cast(model_dimension).unwrap_or_else(|| T::zero());
+                let model_dim =
+                    num_traits::cast::cast(model_dimension).unwrap_or_else(|| T::zero());
 
-                let angle = position / base.powf(
-                    num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * dimension / model_dim
-                );
+                let angle = position
+                    / base.powf(
+                        num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * dimension
+                            / model_dim,
+                    );
 
                 if i % 2 == 0 {
                     encoding.encoding_matrix[[pos, i]] = angle.sin();
@@ -389,11 +394,16 @@ impl<T: Float + Debug + Send + Sync + 'static> RelativePositionalEncoding<T> {
 
             for j in 0..self.model_dimension {
                 let dimension = num_traits::cast::cast(j).unwrap_or_else(|| T::zero());
-                let model_dim = num_traits::cast::cast(self.model_dimension).unwrap_or_else(|| T::zero());
+                let model_dim =
+                    num_traits::cast::cast(self.model_dimension).unwrap_or_else(|| T::zero());
 
-                let angle = position / num_traits::cast::cast(10000.0).unwrap_or_else(|| T::zero()).powf(
-                    num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * dimension / model_dim
-                );
+                let angle = position
+                    / num_traits::cast::cast(10000.0)
+                        .unwrap_or_else(|| T::zero())
+                        .powf(
+                            num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * dimension
+                                / model_dim,
+                        );
 
                 if j % 2 == 0 {
                     self.relative_encoding[[i, j]] = angle.sin();
@@ -451,7 +461,8 @@ mod tests {
 
     #[test]
     fn test_position_encoding_retrieval() {
-        let pe = PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Sinusoidal).unwrap();
+        let pe =
+            PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Sinusoidal).unwrap();
 
         let pos_encoding = pe.get_position_encoding(10);
         assert!(pos_encoding.is_ok());

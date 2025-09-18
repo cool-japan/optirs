@@ -2,8 +2,8 @@
 //
 // AdamW is a variant of Adam that correctly implements weight decay regularization.
 
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -56,9 +56,9 @@ pub struct AdamW<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (decoupled from adaptive moment computation)
     weight_decay: A,
     /// First moment vector
-    m: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, ndarray::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
     /// Current timestep
     t: usize,
 }

@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements various gradient transformation and processing strategies
 // used by the transformer optimizer to improve optimization performance.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -36,7 +36,17 @@ pub enum GradientProcessingStrategy {
 
 /// Gradient processor for transformer optimizer
 #[derive(Debug, Clone)]
-pub struct GradientProcessor<T: Float + Debug + Default + Clone + std::iter::Sum + ndarray::ScalarOperand + Send + Sync + 'static> {
+pub struct GradientProcessor<
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + std::iter::Sum
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + Send
+        + Sync
+        + 'static,
+> {
     /// Processing strategy
     strategy: GradientProcessingStrategy,
 
@@ -97,7 +107,18 @@ pub struct GradientStatistics<T: Float + Debug + Send + Sync + 'static> {
     sparsity: T,
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + ndarray::ScalarOperand + Send + Sync + 'static> GradientProcessor<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > GradientProcessor<T>
+{
     /// Create new gradient processor
     pub fn new(strategy: GradientProcessingStrategy) -> Self {
         Self {

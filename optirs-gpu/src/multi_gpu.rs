@@ -1,7 +1,7 @@
 // Multi-GPU synchronization support for distributed training
 
-use scirs2_core::ndarray_ext::{ArrayBase, Data, DataMut, Dimension};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{ArrayBase, Data, DataMut, Dimension};
 use std::marker::PhantomData;
 use std::sync::Arc;
 

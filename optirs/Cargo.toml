@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # Core dependencies
 optirs-core = { workspace = true }
+scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
 
 # Feature-gated dependencies
 optirs-gpu = { workspace = true, optional = true }

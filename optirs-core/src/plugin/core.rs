@@ -4,8 +4,8 @@
 // must implement to integrate with the plugin system.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;

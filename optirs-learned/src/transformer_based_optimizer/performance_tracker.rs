@@ -1,15 +1,15 @@
 // Performance tracking for transformer-based optimizer
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
-use std::fmt::Debug;
-use std::collections::{HashMap, VecDeque, BTreeMap};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
-use crate::error::Result;
 use super::config::PerformanceConfig;
 use super::meta_learning::MetaLearningResult;
 use super::TrainingMetrics;
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fmt::Debug;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Performance metrics for transformer optimizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +116,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
 
         // Analyze update quality
         let update_norm = self.compute_array_norm(update);
-        self.metrics.optimization_metrics.record_update_norm(update_norm);
+        self.metrics
+            .optimization_metrics
+            .record_update_norm(update_norm);
 
         // Update trends
         self.trends.update_step_timing(duration);
@@ -141,7 +143,8 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
 
         // Update trends
         self.trends.update_training_loss(metrics.loss);
-        self.trends.update_convergence_rate(metrics.convergence_rate);
+        self.trends
+            .update_convergence_rate(metrics.convergence_rate);
 
         // Check for convergence alerts
         self.check_convergence_alerts(&metrics);
@@ -163,16 +166,15 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
 
         // Update trends
         self.trends.update_meta_loss(result.meta_loss);
-        self.trends.update_adaptation_efficiency(result.task_adaptations.len() as f64);
+        self.trends
+            .update_adaptation_efficiency(result.task_adaptations.len() as f64);
     }
 
     /// Record inference performance
     pub fn record_inference(&mut self, input_size: usize, duration: Duration, output_quality: f64) {
-        self.metrics.inference_metrics.record_inference(
-            input_size,
-            duration,
-            output_quality,
-        );
+        self.metrics
+            .inference_metrics
+            .record_inference(input_size, duration, output_quality);
 
         // Update throughput calculations
         let throughput = input_size as f64 / duration.as_secs_f64();
@@ -229,10 +231,13 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
         let duration = start_time.elapsed();
 
         // Record profiling data
-        self.profiling_data.record_operation(operation_name.to_string(), duration);
+        self.profiling_data
+            .record_operation(operation_name.to_string(), duration);
 
         // Update timing metrics
-        self.metrics.timing_metrics.record_operation_time(operation_name, duration);
+        self.metrics
+            .timing_metrics
+            .record_operation_time(operation_name, duration);
 
         result
     }
@@ -315,7 +320,10 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
 
     /// Helper methods
     fn compute_array_norm(&self, array: &Array1<T>) -> f64 {
-        let sum_squares: T = array.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x);
+        let sum_squares: T = array
+            .iter()
+            .map(|&x| x * x)
+            .fold(T::zero(), |acc, x| acc + x);
         sum_squares.sqrt().to_f64().unwrap_or(0.0)
     }
 
@@ -356,7 +364,11 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
         if self.memory_samples.is_empty() {
             0.0
         } else {
-            let total: usize = self.memory_samples.iter().map(|s| s.usage.total_memory).sum();
+            let total: usize = self
+                .memory_samples
+                .iter()
+                .map(|s| s.usage.total_memory)
+                .sum();
             total as f64 / self.memory_samples.len() as f64
         }
     }
@@ -388,7 +400,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
         let convergence_score = self.calculate_current_convergence_rate();
         let stability_score = 1.0 - self.trends.get_loss_volatility().min(1.0);
 
-        (loss_score * 0.4 + convergence_score * 0.3 + stability_score * 0.3).max(0.0).min(1.0)
+        (loss_score * 0.4 + convergence_score * 0.3 + stability_score * 0.3)
+            .max(0.0)
+            .min(1.0)
     }
 
     fn generate_recommendations(&self) -> Vec<String> {
@@ -396,22 +410,30 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
 
         // Loss-based recommendations
         if self.trends.get_loss_trend() > 0.0 {
-            recommendations.push("Loss is increasing. Consider reducing learning rate.".to_string());
+            recommendations
+                .push("Loss is increasing. Consider reducing learning rate.".to_string());
         }
 
         // Memory-based recommendations
-        if self.calculate_peak_memory_usage() > 1024 * 1024 * 1024 { // 1GB
-            recommendations.push("High memory usage detected. Consider enabling memory compression.".to_string());
+        if self.calculate_peak_memory_usage() > 1024 * 1024 * 1024 {
+            // 1GB
+            recommendations.push(
+                "High memory usage detected. Consider enabling memory compression.".to_string(),
+            );
         }
 
         // Performance-based recommendations
         if self.calculate_average_step_time() > Duration::from_millis(100) {
-            recommendations.push("Slow optimization steps. Consider reducing model size or batch size.".to_string());
+            recommendations.push(
+                "Slow optimization steps. Consider reducing model size or batch size.".to_string(),
+            );
         }
 
         // Convergence-based recommendations
         if self.calculate_current_convergence_rate() < 0.1 {
-            recommendations.push("Low convergence rate. Consider adjusting meta-learning parameters.".to_string());
+            recommendations.push(
+                "Low convergence rate. Consider adjusting meta-learning parameters.".to_string(),
+            );
         }
 
         recommendations
@@ -425,27 +447,41 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
 
         // Check for gradient explosion
         if update_norm > self.alert_thresholds.max_gradient_norm {
-            self.record_alert(AlertType::GradientExplosion, format!("Update norm: {:.6}", update_norm));
+            self.record_alert(
+                AlertType::GradientExplosion,
+                format!("Update norm: {:.6}", update_norm),
+            );
         }
 
         // Check for gradient vanishing
         if update_norm < self.alert_thresholds.min_gradient_norm {
-            self.record_alert(AlertType::GradientVanishing, format!("Update norm: {:.6}", update_norm));
+            self.record_alert(
+                AlertType::GradientVanishing,
+                format!("Update norm: {:.6}", update_norm),
+            );
         }
     }
 
     fn check_convergence_alerts(&mut self, metrics: &TrainingMetrics) {
         // Check for training stagnation
         if metrics.convergence_rate < self.alert_thresholds.min_convergence_rate {
-            self.record_alert(AlertType::TrainingStagnation,
-                format!("Convergence rate: {:.6}", metrics.convergence_rate));
+            self.record_alert(
+                AlertType::TrainingStagnation,
+                format!("Convergence rate: {:.6}", metrics.convergence_rate),
+            );
         }
 
         // Check for loss increase
         if let Some(previous) = self.training_history.iter().rev().nth(1) {
-            if metrics.loss > previous.loss * 1.1 { // 10% increase
-                self.record_alert(AlertType::LossIncrease,
-                    format!("Loss increased from {:.6} to {:.6}", previous.loss, metrics.loss));
+            if metrics.loss > previous.loss * 1.1 {
+                // 10% increase
+                self.record_alert(
+                    AlertType::LossIncrease,
+                    format!(
+                        "Loss increased from {:.6} to {:.6}",
+                        previous.loss, metrics.loss
+                    ),
+                );
             }
         }
     }
@@ -453,16 +489,23 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
     fn check_memory_alerts(&mut self, usage: &MemoryUsage) {
         // Check for high memory usage
         if usage.total_memory > self.alert_thresholds.max_memory_usage {
-            self.record_alert(AlertType::HighMemoryUsage,
-                format!("Memory usage: {} bytes", usage.total_memory));
+            self.record_alert(
+                AlertType::HighMemoryUsage,
+                format!("Memory usage: {} bytes", usage.total_memory),
+            );
         }
 
         // Check for memory leaks
         if let Some(previous) = self.memory_samples.back() {
-            let memory_increase = usage.total_memory.saturating_sub(previous.usage.total_memory);
-            if memory_increase > 1024 * 1024 * 100 { // 100MB increase
-                self.record_alert(AlertType::PossibleMemoryLeak,
-                    format!("Memory increased by {} bytes", memory_increase));
+            let memory_increase = usage
+                .total_memory
+                .saturating_sub(previous.usage.total_memory);
+            if memory_increase > 1024 * 1024 * 100 {
+                // 100MB increase
+                self.record_alert(
+                    AlertType::PossibleMemoryLeak,
+                    format!("Memory increased by {} bytes", memory_increase),
+                );
             }
         }
     }
@@ -707,9 +750,15 @@ impl TrendAnalyzer {
         let n = self.samples.len() as f64;
         let x_sum = (0..self.samples.len()).map(|i| i as f64).sum::<f64>();
         let y_sum = self.samples.iter().sum::<f64>();
-        let xy_sum = self.samples.iter().enumerate()
-            .map(|(i, &y)| i as f64 * y).sum::<f64>();
-        let x_sq_sum = (0..self.samples.len()).map(|i| (i as f64).powi(2)).sum::<f64>();
+        let xy_sum = self
+            .samples
+            .iter()
+            .enumerate()
+            .map(|(i, &y)| i as f64 * y)
+            .sum::<f64>();
+        let x_sq_sum = (0..self.samples.len())
+            .map(|i| (i as f64).powi(2))
+            .sum::<f64>();
 
         let denominator = n * x_sq_sum - x_sum * x_sum;
         if denominator.abs() < 1e-10 {
@@ -725,9 +774,12 @@ impl TrendAnalyzer {
         }
 
         let mean = self.samples.iter().sum::<f64>() / self.samples.len() as f64;
-        let variance = self.samples.iter()
+        let variance = self
+            .samples
+            .iter()
             .map(|&x| (x - mean).powi(2))
-            .sum::<f64>() / self.samples.len() as f64;
+            .sum::<f64>()
+            / self.samples.len() as f64;
 
         variance.sqrt()
     }
@@ -752,7 +804,10 @@ impl ProfilingData {
     }
 
     pub fn record_operation(&mut self, operation: String, duration: Duration) {
-        let timings = self.operation_timings.entry(operation).or_insert_with(VecDeque::new);
+        let timings = self
+            .operation_timings
+            .entry(operation)
+            .or_insert_with(VecDeque::new);
         timings.push_back(duration);
         if timings.len() > 1000 {
             timings.pop_front();
@@ -894,7 +949,8 @@ impl TrainingMetricsCollection {
     pub fn record_epoch(&mut self, loss: f64, duration: Duration, convergence: f64) {
         self.total_epochs += 1;
         self.total_training_time += duration;
-        self.average_loss = (self.average_loss * (self.total_epochs - 1) as f64 + loss) / self.total_epochs as f64;
+        self.average_loss =
+            (self.average_loss * (self.total_epochs - 1) as f64 + loss) / self.total_epochs as f64;
         self.best_loss = self.best_loss.min(loss);
         self.convergence_rate = convergence;
     }
@@ -919,8 +975,12 @@ impl InferenceMetricsCollection {
 
     pub fn record_inference(&mut self, _input_size: usize, duration: Duration, quality: f64) {
         self.total_inferences += 1;
-        self.average_latency = (self.average_latency * (self.total_inferences - 1) as u32 + duration) / self.total_inferences as u32;
-        self.average_quality = (self.average_quality * (self.total_inferences - 1) as f64 + quality) / self.total_inferences as f64;
+        self.average_latency = (self.average_latency * (self.total_inferences - 1) as u32
+            + duration)
+            / self.total_inferences as u32;
+        self.average_quality = (self.average_quality * (self.total_inferences - 1) as f64
+            + quality)
+            / self.total_inferences as f64;
     }
 
     pub fn update_throughput(&mut self, throughput: f64) {
@@ -942,7 +1002,9 @@ impl MemoryMetricsCollection {
     pub fn record_usage(&mut self, usage: MemoryUsage) {
         self.peak_usage = self.peak_usage.max(usage.total_memory);
         self.total_allocations += 1;
-        self.average_usage = (self.average_usage * (self.total_allocations - 1) as f64 + usage.total_memory as f64) / self.total_allocations as f64;
+        self.average_usage = (self.average_usage * (self.total_allocations - 1) as f64
+            + usage.total_memory as f64)
+            / self.total_allocations as f64;
     }
 }
 
@@ -962,16 +1024,30 @@ impl TimingMetricsCollection {
     }
 
     pub fn record_operation_time(&mut self, operation: &str, duration: Duration) {
-        self.operation_timings.insert(operation.to_string(), duration);
+        self.operation_timings
+            .insert(operation.to_string(), duration);
     }
 }
 
 impl QualityMetricsCollection {
     pub fn new() -> Self {
         Self {
-            loss_statistics: LossStatistics { mean: 0.0, std_dev: 0.0, min: f64::INFINITY, max: f64::NEG_INFINITY },
-            convergence_statistics: ConvergenceStatistics { average_rate: 0.0, best_rate: 0.0, convergence_episodes: 0 },
-            stability_metrics: StabilityMetrics { loss_volatility: 0.0, gradient_stability: 0.0, convergence_stability: 0.0 },
+            loss_statistics: LossStatistics {
+                mean: 0.0,
+                std_dev: 0.0,
+                min: f64::INFINITY,
+                max: f64::NEG_INFINITY,
+            },
+            convergence_statistics: ConvergenceStatistics {
+                average_rate: 0.0,
+                best_rate: 0.0,
+                convergence_episodes: 0,
+            },
+            stability_metrics: StabilityMetrics {
+                loss_volatility: 0.0,
+                gradient_stability: 0.0,
+                convergence_stability: 0.0,
+            },
             performance_alerts: VecDeque::new(),
         }
     }
@@ -989,7 +1065,12 @@ impl QualityMetricsCollection {
     }
 
     pub fn get_recent_alerts(&self, count: usize) -> Vec<PerformanceAlert> {
-        self.performance_alerts.iter().rev().take(count).cloned().collect()
+        self.performance_alerts
+            .iter()
+            .rev()
+            .take(count)
+            .cloned()
+            .collect()
     }
 }
 
@@ -998,8 +1079,18 @@ impl ResourceMetricsCollection {
         Self {
             cpu_usage_history: VecDeque::new(),
             memory_usage_history: VecDeque::new(),
-            disk_io_metrics: DiskIOMetrics { total_reads: 0, total_writes: 0, total_bytes_read: 0, total_bytes_written: 0 },
-            network_metrics: NetworkMetrics { total_requests: 0, total_bytes_sent: 0, total_bytes_received: 0, average_latency: Duration::new(0, 0) },
+            disk_io_metrics: DiskIOMetrics {
+                total_reads: 0,
+                total_writes: 0,
+                total_bytes_read: 0,
+                total_bytes_written: 0,
+            },
+            network_metrics: NetworkMetrics {
+                total_requests: 0,
+                total_bytes_sent: 0,
+                total_bytes_received: 0,
+                average_latency: Duration::new(0, 0),
+            },
         }
     }
 
@@ -1026,7 +1117,11 @@ impl OptimizationMetricsCollection {
             update_norm_history: VecDeque::new(),
             parameter_change_rate: 0.0,
             optimization_efficiency: 0.0,
-            adaptive_learning_metrics: AdaptiveLearningMetrics { learning_rate_adjustments: 0, batch_size_adjustments: 0, architecture_modifications: 0 },
+            adaptive_learning_metrics: AdaptiveLearningMetrics {
+                learning_rate_adjustments: 0,
+                batch_size_adjustments: 0,
+                architecture_modifications: 0,
+            },
         }
     }
 

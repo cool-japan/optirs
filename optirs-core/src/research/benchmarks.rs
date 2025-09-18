@@ -9,8 +9,8 @@ use crate::optimizers::*;
 use crate::research::experiments::{Experiment, ExperimentResult};
 use crate::unified_api::OptimizerConfig;
 use chrono::{DateTime, Utc};
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -837,7 +837,7 @@ impl BenchmarkRunner {
 
     /// Run benchmark suite on multiple optimizers
     pub fn run_benchmarks<
-        A: Float + std::fmt::Debug + Send + Sync + ndarray::ScalarOperand + 'static,
+        A: Float + std::fmt::Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + 'static,
     >(
         &self,
         optimizers: &[(&str, OptimizerConfig<A>)],
@@ -888,7 +888,7 @@ impl BenchmarkRunner {
     }
 
     fn run_single_problem<
-        A: Float + std::fmt::Debug + Send + Sync + ndarray::ScalarOperand + 'static,
+        A: Float + std::fmt::Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + 'static,
     >(
         &self,
         benchmark: &BenchmarkProblem,
@@ -922,7 +922,7 @@ impl BenchmarkRunner {
     }
 
     fn run_single_instance<
-        A: Float + std::fmt::Debug + Send + Sync + ndarray::ScalarOperand + 'static,
+        A: Float + std::fmt::Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + 'static,
     >(
         &self,
         benchmark: &BenchmarkProblem,

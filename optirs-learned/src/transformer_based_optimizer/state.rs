@@ -1,14 +1,14 @@
 // State management for transformer-based optimizer
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use std::collections::{HashMap, VecDeque, BTreeMap};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
-use crate::error::Result;
 use super::config::TransformerBasedOptimizerConfig;
 use super::meta_learning::MetaState;
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fmt::Debug;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Transformer optimizer state
 pub struct TransformerOptimizerState<T: Float + Debug + Send + Sync + 'static> {
@@ -83,7 +83,8 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
         self.current_parameters = &self.current_parameters + update;
 
         // Record parameter history
-        self.parameter_history.record_parameters(&self.current_parameters)?;
+        self.parameter_history
+            .record_parameters(&self.current_parameters)?;
 
         // Update optimization state
         self.optimization_state.update_with_step(update, loss)?;
@@ -226,7 +227,8 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
 
     /// Compute parameter norm
     fn compute_parameter_norm(&self) -> T {
-        self.current_parameters.iter()
+        self.current_parameters
+            .iter()
             .map(|&x| x * x)
             .fold(T::zero(), |acc, x| acc + x)
             .sqrt()
@@ -260,15 +262,17 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
         // Reconstruct parameters
         if state.parameter_shape.len() != 1 {
             return Err(crate::error::OptimError::Other(
-                "Invalid parameter shape for 1D array".to_string()
+                "Invalid parameter shape for 1D array".to_string(),
             ));
         }
 
         self.current_parameters = Array1::from_vec(state.parameters);
 
         // Restore other state components
-        self.optimization_state.from_serializable(state.optimization_state)?;
-        self.learning_state.from_serializable(state.learning_state)?;
+        self.optimization_state
+            .from_serializable(state.optimization_state)?;
+        self.learning_state
+            .from_serializable(state.learning_state)?;
         self.statistics = state.statistics;
         self.version = state.metadata.version;
         self.last_updated = Instant::now(); // Convert from SystemTime for internal use
@@ -306,7 +310,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
         let snapshot = ParameterSnapshot {
             parameters: parameters.clone(),
             timestamp: std::time::Instant::now(),
-            norm: parameters.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x).sqrt(),
+            norm: parameters
+                .iter()
+                .map(|&x| x * x)
+                .fold(T::zero(), |acc, x| acc + x)
+                .sqrt(),
         };
 
         self.snapshots.push_back(snapshot.clone());
@@ -319,7 +327,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
     }
 
     pub fn get_recent_parameters(&self, count: usize) -> Vec<Array1<T>> {
-        self.snapshots.iter()
+        self.snapshots
+            .iter()
             .rev()
             .take(count)
             .map(|snapshot| snapshot.parameters.clone())
@@ -378,7 +387,8 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationState<T> {
 
     pub fn update_with_step(&mut self, update: &Array1<T>, loss: Option<T>) -> Result<()> {
         self.step_count += 1;
-        self.last_update_magnitude = update.iter()
+        self.last_update_magnitude = update
+            .iter()
             .map(|&x| x * x)
             .fold(T::zero(), |acc, x| acc + x)
             .sqrt();
@@ -451,7 +461,8 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationState<T> {
             self.momentum = Some(Array1::from_vec(momentum_vec));
         }
 
-        self.convergence_tracker.from_serializable(state.convergence_metrics)?;
+        self.convergence_tracker
+            .from_serializable(state.convergence_metrics)?;
         Ok(())
     }
 }
@@ -518,12 +529,17 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
         if self.loss_history.is_empty() {
             T::zero()
         } else {
-            self.loss_history.iter().fold(T::zero(), |acc, &loss| acc + loss) / T::from(self.loss_history.len()).unwrap()
+            self.loss_history
+                .iter()
+                .fold(T::zero(), |acc, &loss| acc + loss)
+                / T::from(self.loss_history.len()).unwrap()
         }
     }
 
     pub fn get_best_loss(&self) -> T {
-        self.loss_history.iter().fold(T::infinity(), |min, &loss| min.min(loss))
+        self.loss_history
+            .iter()
+            .fold(T::infinity(), |min, &loss| min.min(loss))
     }
 
     pub fn get_convergence_rate(&self) -> T {
@@ -642,7 +658,11 @@ impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
         })
     }
 
-    pub fn save_checkpoint(&mut self, name: String, snapshot: OptimizerStateSnapshot<T>) -> Result<String> {
+    pub fn save_checkpoint(
+        &mut self,
+        name: String,
+        snapshot: OptimizerStateSnapshot<T>,
+    ) -> Result<String> {
         let checkpoint_id = format!("{}_{}", name, snapshot.version);
 
         // Add metadata
@@ -666,11 +686,9 @@ impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
     }
 
     pub fn load_checkpoint(&self, checkpoint_id: &str) -> Result<OptimizerStateSnapshot<T>> {
-        self.checkpoints.get(checkpoint_id)
-            .cloned()
-            .ok_or_else(|| crate::error::OptimError::Other(
-                format!("Checkpoint {} not found", checkpoint_id)
-            ))
+        self.checkpoints.get(checkpoint_id).cloned().ok_or_else(|| {
+            crate::error::OptimError::Other(format!("Checkpoint {} not found", checkpoint_id))
+        })
     }
 
     pub fn list_checkpoints(&self) -> Vec<CheckpointMetadata> {
@@ -690,7 +708,9 @@ impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
     fn cleanup_old_checkpoints(&mut self) -> Result<()> {
         // Remove oldest checkpoints if over limit
         while self.checkpoints.len() > self.max_checkpoints {
-            if let Some((oldest_id, _)) = self.metadata.iter()
+            if let Some((oldest_id, _)) = self
+                .metadata
+                .iter()
                 .min_by_key(|(_, metadata)| metadata.created_at)
                 .map(|(id, metadata)| (id.clone(), metadata.clone()))
             {
@@ -735,7 +755,10 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
 
     pub fn update_with_snapshot(&mut self, snapshot: &ParameterSnapshot<T>) {
         self.total_snapshots += 1;
-        self.average_norm = (self.average_norm * num_traits::cast::cast(self.total_snapshots - 1).unwrap_or_else(|| T::zero()) + snapshot.norm) / num_traits::cast::cast(self.total_snapshots).unwrap_or_else(|| T::zero());
+        self.average_norm = (self.average_norm
+            * num_traits::cast::cast(self.total_snapshots - 1).unwrap_or_else(|| T::zero())
+            + snapshot.norm)
+            / num_traits::cast::cast(self.total_snapshots).unwrap_or_else(|| T::zero());
         self.max_norm = self.max_norm.max(snapshot.norm);
         self.min_norm = self.min_norm.min(snapshot.norm);
     }
@@ -851,10 +874,14 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
             return T::zero();
         }
 
-        let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(self.recent_losses.len()).unwrap();
-        let variance = self.recent_losses.iter()
+        let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(self.recent_losses.len()).unwrap();
+        let variance = self
+            .recent_losses
+            .iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(self.recent_losses.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x)
+            / T::from(self.recent_losses.len()).unwrap();
 
         T::one() / (T::one() + variance.sqrt())
     }
@@ -906,7 +933,9 @@ pub struct StateConfig {
 }
 
 impl StateConfig {
-    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(config: &TransformerBasedOptimizerConfig<T>) -> Self {
+    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(
+        config: &TransformerBasedOptimizerConfig<T>,
+    ) -> Self {
         Self {
             max_history_size: 1000,
             checkpoint_frequency: 100,
@@ -948,9 +977,16 @@ impl<T: Float + Debug + Send + Sync + 'static> StateStatistics<T> {
 
     pub fn record_update(&mut self, update: &Array1<T>, _loss: Option<T>) {
         self.total_updates += 1;
-        let magnitude = update.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x).sqrt();
+        let magnitude = update
+            .iter()
+            .map(|&x| x * x)
+            .fold(T::zero(), |acc, x| acc + x)
+            .sqrt();
         self.last_update_magnitude = magnitude;
-        self.average_update_magnitude = (self.average_update_magnitude * num_traits::cast::cast(self.total_updates - 1).unwrap_or_else(|| T::zero()) + magnitude) / num_traits::cast::cast(self.total_updates).unwrap_or_else(|| T::zero());
+        self.average_update_magnitude = (self.average_update_magnitude
+            * num_traits::cast::cast(self.total_updates - 1).unwrap_or_else(|| T::zero())
+            + magnitude)
+            / num_traits::cast::cast(self.total_updates).unwrap_or_else(|| T::zero());
     }
 
     pub fn reset(&mut self) {

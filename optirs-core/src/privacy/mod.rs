@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 use scirs2_core::ScientificNumber;
 use std::collections::VecDeque;
@@ -247,12 +247,12 @@ enum PrivacyEventType {
 impl<O, A, D> DifferentiallyPrivateOptimizer<O, A, D>
 where
     A: Float
-        + rand_distr::uniform::SampleUniform
+        + scirs2_core::random::distributions::uniform::SampleUniform
         + std::ops::AddAssign
         + std::ops::SubAssign
         + Send
         + Sync
-        + ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + std::fmt::Debug,
     D: Dimension,
     O: Optimizer<A, D>,
@@ -757,7 +757,9 @@ mod tests {
         let dp_config = DifferentialPrivacyConfig::default();
 
         let dp_optimizer =
-            DifferentiallyPrivateOptimizer::<_, f64, ndarray::Ix1>::new(sgd, dp_config);
+            DifferentiallyPrivateOptimizer::<_, f64, scirs2_core::ndarray_ext::Ix1>::new(
+                sgd, dp_config,
+            );
         assert!(dp_optimizer.is_ok());
     }
 
@@ -770,8 +772,11 @@ mod tests {
             ..Default::default()
         };
 
-        let dp_optimizer: DifferentiallyPrivateOptimizer<SGD<f64>, f64, ndarray::Ix1> =
-            DifferentiallyPrivateOptimizer::new(sgd, dp_config).unwrap();
+        let dp_optimizer: DifferentiallyPrivateOptimizer<
+            SGD<f64>,
+            f64,
+            scirs2_core::ndarray_ext::Ix1,
+        > = DifferentiallyPrivateOptimizer::new(sgd, dp_config).unwrap();
         let budget = dp_optimizer.get_privacy_budget();
 
         assert_eq!(budget.epsilon_consumed, 0.0);

@@ -4,8 +4,8 @@
 // including generic parameter optimization, lazy registration, and architecture-aware optimizations.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;
 // use statrs::statistics::Statistics; // statrs not available
@@ -164,7 +164,9 @@ pub struct OptimizationConfig<A: Float> {
     pub architecture_optimizations: HashMap<String, bool>,
 }
 
-impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync> ParameterManager<A, D> {
+impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
+    ParameterManager<A, D>
+{
     /// Create a new parameter manager
     pub fn new(config: OptimizationConfig<A>) -> Self {
         Self {
@@ -436,7 +438,14 @@ pub mod forward_backward {
     }
 
     impl<
-            A: Float + ScalarOperand + Debug + 'static + num_traits::FromPrimitive + std::iter::Sum + Send + Sync,
+            A: Float
+                + ScalarOperand
+                + Debug
+                + 'static
+                + num_traits::FromPrimitive
+                + std::iter::Sum
+                + Send
+                + Sync,
             D: Dimension + 'static,
         > NeuralIntegration<A, D>
     {
@@ -1391,7 +1400,7 @@ mod tests {
     #[test]
     fn test_parameter_manager_basic() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, ndarray::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
 
         let metadata = ParameterMetadata {
             layername: "layer1".to_string(),
@@ -1417,7 +1426,7 @@ mod tests {
     #[test]
     fn test_lazy_registration() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, ndarray::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
 
         manager.enable_lazy_mode();
 
@@ -1454,7 +1463,7 @@ mod tests {
             mixed_precision: false,
             architecture_optimizations: HashMap::new(),
         };
-        let mut manager = ParameterManager::<f64, ndarray::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
 
         let rule = LayerOptimizationRule {
             lr_multiplier: 2.0,
@@ -1491,7 +1500,7 @@ mod tests {
     #[test]
     fn test_parameter_sharing() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, ndarray::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
 
         let metadata1 = ParameterMetadata {
             layername: "layer1".to_string(),
@@ -1529,7 +1538,7 @@ mod tests {
     #[test]
     fn test_parameter_filtering() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, ndarray::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
 
         let weight_metadata = ParameterMetadata {
             layername: "layer1".to_string(),
@@ -1587,7 +1596,8 @@ mod tests {
             attention_warmup: 1000,
         };
 
-        let mut optimizer = ArchitectureAwareOptimizer::<f64, ndarray::Ix1>::new(config, strategy);
+        let mut optimizer =
+            ArchitectureAwareOptimizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(config, strategy);
 
         // Register a layer architecture
         let layer_arch = LayerArchitecture {

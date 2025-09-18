@@ -3,8 +3,8 @@
 use super::super::PrivacyBudget;
 use super::config::*;
 use crate::error::Result;
-use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::random::Random;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -592,8 +592,16 @@ impl FairnessMonitor {
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + ndarray::ScalarOperand>
-    FederatedMetaLearner<T>
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > FederatedMetaLearner<T>
 {
     /// Create a new federated meta-learner
     pub fn new(_parametersize: usize) -> Self {
@@ -764,8 +772,16 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ByzantineRobust
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + ndarray::ScalarOperand>
-    PersonalizationManager<T>
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > PersonalizationManager<T>
 {
     /// Create a new personalization manager
     pub fn new() -> Result<Self> {

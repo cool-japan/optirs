@@ -829,8 +829,16 @@ impl CitationManager {
     ) -> std::cmp::Ordering {
         match field {
             SortField::Author => {
-                let a_author = a.authors.first().map(|au| au.last_name.as_str()).unwrap_or("");
-                let b_author = b.authors.first().map(|au| au.last_name.as_str()).unwrap_or("");
+                let a_author = a
+                    .authors
+                    .first()
+                    .map(|au| au.last_name.as_str())
+                    .unwrap_or("");
+                let b_author = b
+                    .authors
+                    .first()
+                    .map(|au| au.last_name.as_str())
+                    .unwrap_or("");
                 a_author.cmp(b_author)
             }
             SortField::Year => a.year.cmp(&b.year),

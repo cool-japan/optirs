@@ -4,9 +4,9 @@
 // learned optimizers, including MAML, Reptile, Meta-SGD, and other advanced
 // techniques for few-shot optimization and rapid adaptation.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2, Dimension};
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -1178,7 +1178,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug,
     > MetaLearningFramework<T>
 {
@@ -1223,7 +1223,9 @@ impl<
                     allow_unused: true,
                     gradient_clip: Some(config.gradient_clip),
                 };
-                Ok(Box::new(MAMLLearner::<T, ndarray::Ix1>::new(maml_config)?))
+                Ok(Box::new(
+                    MAMLLearner::<T, scirs2_core::ndarray_ext::Ix1>::new(maml_config)?,
+                ))
             }
             _ => {
                 // For other algorithms, create appropriate learners
@@ -1238,7 +1240,9 @@ impl<
                     allow_unused: true,
                     gradient_clip: Some(config.gradient_clip),
                 };
-                Ok(Box::new(MAMLLearner::<T, ndarray::Ix1>::new(maml_config)?))
+                Ok(Box::new(
+                    MAMLLearner::<T, scirs2_core::ndarray_ext::Ix1>::new(maml_config)?,
+                ))
             }
         }
     }
@@ -1540,7 +1544,13 @@ pub struct MetaLearningStatistics<T: Float + Debug + Send + Sync + 'static> {
 
 // MAML implementation
 impl<
-        T: Float + Default + Clone + Send + Sync + ndarray::ScalarOperand + std::fmt::Debug,
+        T: Float
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::fmt::Debug,
         D: Dimension,
     > MAMLLearner<T, D>
 {
@@ -1577,7 +1587,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
         D: Dimension,
     > MetaLearner<T> for MAMLLearner<T, D>
 {

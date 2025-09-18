@@ -452,7 +452,7 @@ impl<T: Float + Default + Clone + Send + Sync> HyperparameterOptimizer<T> {
 
     fn random_search(&self) -> HyperparameterConfiguration<T> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         let mut parameters = HashMap::new();
         let mut categorical_parameters = HashMap::new();
@@ -536,7 +536,7 @@ impl<T: Float + Default + Clone + Send + Sync> HyperparameterOptimizer<T> {
         config: &HyperparameterConfiguration<T>,
     ) -> HyperparameterConfiguration<T> {
         use scirs2_core::random::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         let mut new_config = config.clone();
         new_config.id = format!("mutated_{}", self.state.num_evaluations);

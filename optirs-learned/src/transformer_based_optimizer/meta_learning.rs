@@ -1,14 +1,14 @@
 // Meta-learning components for transformer-based optimization
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
-use crate::error::Result;
-use super::config::{MetaLearningConfig, ActivationFunction};
+use super::config::{ActivationFunction, MetaLearningConfig};
 use super::feedforward::FeedForwardNetwork;
 use super::layers::LayerNormalization;
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use std::collections::{HashMap, VecDeque};
+use std::fmt::Debug;
+use std::time::Instant;
 
 /// Meta-learning strategy types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,17 +49,17 @@ pub struct TransformerMetaLearning<T: Float + Debug + Send + Sync + 'static> {
     meta_state: MetaState<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> TransformerMetaLearning<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+    TransformerMetaLearning<T>
+{
     /// Create new transformer meta-learning component
     pub fn new(config: &super::config::TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let meta_config = config.meta_learning_config.clone();
         let strategy = MetaLearningStrategy::MAML; // Default strategy
 
         let meta_optimizer = MetaOptimizer::new(&meta_config)?;
-        let adaptation_network = AdaptationNetwork::new(
-            config.model_dimension,
-            config.feedforward_dimension,
-        )?;
+        let adaptation_network =
+            AdaptationNetwork::new(config.model_dimension, config.feedforward_dimension)?;
         let memory_bank = MemoryBank::new(1000, config.model_dimension)?;
         let performance_tracker = PerformanceTracker::new();
         let meta_state = MetaState::new(config.model_dimension)?;
@@ -86,8 +86,12 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
             MetaLearningStrategy::MAML => self.maml_step(tasks, support_data, query_data),
             MetaLearningStrategy::FOMAML => self.fomaml_step(tasks, support_data, query_data),
             MetaLearningStrategy::Reptile => self.reptile_step(tasks, support_data, query_data),
-            MetaLearningStrategy::GradientBased => self.gradient_based_step(tasks, support_data, query_data),
-            MetaLearningStrategy::MemoryAugmented => self.memory_augmented_step(tasks, support_data, query_data),
+            MetaLearningStrategy::GradientBased => {
+                self.gradient_based_step(tasks, support_data, query_data)
+            }
+            MetaLearningStrategy::MemoryAugmented => {
+                self.memory_augmented_step(tasks, support_data, query_data)
+            }
         }
     }
 
@@ -108,7 +112,8 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
 
             for inner_step in 0..self.config.inner_steps {
                 // Compute gradients on support set
-                let support_loss = self.compute_task_loss(&adapted_params, &support_data[i], task)?;
+                let support_loss =
+                    self.compute_task_loss(&adapted_params, &support_data[i], task)?;
                 let gradients = self.compute_gradients(&adapted_params, support_loss)?;
 
                 // Update parameters
@@ -124,7 +129,11 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
             task_adaptations.push(TaskAdaptation {
                 task_id: task.id.clone(),
                 adapted_parameters: adapted_params,
-                support_loss: self.compute_task_loss(&self.meta_state.get_parameters(), &support_data[i], task)?,
+                support_loss: self.compute_task_loss(
+                    &self.meta_state.get_parameters(),
+                    &support_data[i],
+                    task,
+                )?,
                 query_loss,
                 adaptation_steps: self.config.inner_steps,
             });
@@ -133,7 +142,8 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
         // Meta-update
         let meta_loss = total_loss / T::from(tasks.len()).unwrap();
         let meta_gradients = self.compute_meta_gradients(&task_adaptations)?;
-        self.meta_optimizer.update(&mut self.meta_state, &meta_gradients)?;
+        self.meta_optimizer
+            .update(&mut self.meta_state, &meta_gradients)?;
 
         // Update memory bank
         for (i, adaptation) in task_adaptations.iter().enumerate() {
@@ -193,7 +203,8 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
 
             // Compute parameter difference for meta-update
             let original_params = self.meta_state.get_parameters();
-            let param_diff: Vec<T> = adapted_params.iter()
+            let param_diff: Vec<T> = adapted_params
+                .iter()
                 .zip(original_params.iter())
                 .map(|(adapted, original)| *adapted - *original)
                 .collect();
@@ -218,7 +229,8 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
             *update = *update / num_tasks;
         }
 
-        self.meta_state.update_parameters(&meta_update, self.config.meta_learning_rate)?;
+        self.meta_state
+            .update_parameters(&meta_update, self.config.meta_learning_rate)?;
 
         let result = MetaLearningResult {
             meta_loss: (total_loss / num_tasks).to_f64().unwrap_or(0.0),
@@ -245,7 +257,9 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
         for (i, task) in tasks.iter().enumerate() {
             // Use adaptation network to predict good initialization
             let context_embedding = self.adaptation_network.encode_task_context(task)?;
-            let predicted_params = self.adaptation_network.predict_parameters(&context_embedding)?;
+            let predicted_params = self
+                .adaptation_network
+                .predict_parameters(&context_embedding)?;
 
             // Fine-tune predicted parameters
             let mut adapted_params = predicted_params;
@@ -263,7 +277,9 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
         }
 
         let result = MetaLearningResult {
-            meta_loss: (total_loss / T::from(tasks.len()).unwrap()).to_f64().unwrap_or(0.0),
+            meta_loss: (total_loss / T::from(tasks.len()).unwrap())
+                .to_f64()
+                .unwrap_or(0.0),
             task_adaptations: Vec::new(),
             computation_time: start_time.elapsed(),
             convergence_rate: self.estimate_convergence_rate()?,
@@ -303,11 +319,14 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
             total_loss = total_loss + query_loss;
 
             // Store experience
-            self.memory_bank.store_experience(task, &adapted_params, query_loss)?;
+            self.memory_bank
+                .store_experience(task, &adapted_params, query_loss)?;
         }
 
         let result = MetaLearningResult {
-            meta_loss: (total_loss / T::from(tasks.len()).unwrap()).to_f64().unwrap_or(0.0),
+            meta_loss: (total_loss / T::from(tasks.len()).unwrap())
+                .to_f64()
+                .unwrap_or(0.0),
             task_adaptations: Vec::new(),
             computation_time: start_time.elapsed(),
             convergence_rate: self.estimate_convergence_rate()?,
@@ -323,10 +342,9 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
         current_parameters: &Array1<T>,
     ) -> Result<Array1<T>> {
         // Use adaptation network to generate parameter updates
-        let update = self.adaptation_network.generate_parameter_update(
-            transformer_output,
-            current_parameters,
-        )?;
+        let update = self
+            .adaptation_network
+            .generate_parameter_update(transformer_output, current_parameters)?;
 
         // Apply meta-learned scaling
         let scaled_update = self.apply_meta_scaling(&update)?;
@@ -337,7 +355,8 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
     /// Update meta-learning state from loss
     pub fn update_from_loss(&mut self, loss: T) -> Result<()> {
         self.meta_state.update_loss_history(loss);
-        self.performance_tracker.record_loss(loss.to_f64().unwrap_or(0.0));
+        self.performance_tracker
+            .record_loss(loss.to_f64().unwrap_or(0.0));
         Ok(())
     }
 
@@ -358,15 +377,26 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand> Transfor
         Ok(prediction_error)
     }
 
-    fn compute_prediction_error(&self, _params: &[T], data: &Array2<T>, _task: &TaskBatch<T>) -> Result<T> {
+    fn compute_prediction_error(
+        &self,
+        _params: &[T],
+        data: &Array2<T>,
+        _task: &TaskBatch<T>,
+    ) -> Result<T> {
         // Placeholder: compute actual prediction error
-        let mean_squared_error = data.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x);
+        let mean_squared_error = data
+            .iter()
+            .map(|&x| x * x)
+            .fold(T::zero(), |acc, x| acc + x);
         Ok(mean_squared_error / T::from(data.len()).unwrap())
     }
 
     fn compute_gradients(&self, params: &[T], loss: T) -> Result<Vec<T>> {
         // Simplified gradient computation
-        let gradients = params.iter().map(|_| loss / T::from(params.len()).unwrap()).collect();
+        let gradients = params
+            .iter()
+            .map(|_| loss / T::from(params.len()).unwrap())
+            .collect();
         Ok(gradients)
     }
 
@@ -493,17 +523,11 @@ pub struct AdaptationNetwork<T: Float + Debug + Send + Sync + 'static> {
 
 impl<T: Float + Debug + Send + Sync + 'static> AdaptationNetwork<T> {
     pub fn new(model_dimension: usize, hidden_dimension: usize) -> Result<Self> {
-        let context_encoder = FeedForwardNetwork::new(
-            model_dimension,
-            hidden_dimension,
-            ActivationFunction::ReLU,
-        )?;
+        let context_encoder =
+            FeedForwardNetwork::new(model_dimension, hidden_dimension, ActivationFunction::ReLU)?;
 
-        let parameter_predictor = FeedForwardNetwork::new(
-            hidden_dimension,
-            model_dimension,
-            ActivationFunction::Tanh,
-        )?;
+        let parameter_predictor =
+            FeedForwardNetwork::new(hidden_dimension, model_dimension, ActivationFunction::Tanh)?;
 
         let update_generator = FeedForwardNetwork::new(
             model_dimension * 2, // concatenated transformer output and current params
@@ -603,7 +627,8 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryBank<T> {
     ) -> Result<Vec<MemoryExperience<T>>> {
         let target_signature = self.compute_task_signature(task);
 
-        let mut scored_experiences: Vec<_> = self.experiences
+        let mut scored_experiences: Vec<_> = self
+            .experiences
             .iter()
             .map(|exp| {
                 let similarity = self.compute_similarity(&target_signature, &exp.task_signature);

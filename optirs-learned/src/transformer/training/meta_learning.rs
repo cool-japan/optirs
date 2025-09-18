@@ -3,14 +3,14 @@
 // This module implements meta-learning strategies that allow the transformer
 // optimizer to quickly adapt to new tasks and optimization landscapes.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use crate::transformer::TransformerNetwork;
 use crate::error::{OptimError, Result};
+use crate::transformer::TransformerNetwork;
 
 /// Meta-learning strategies
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +33,9 @@ pub enum MetaLearningStrategy {
 
 /// Meta-learner for transformer optimizer
 #[derive(Debug, Clone)]
-pub struct TransformerMetaLearner<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static> {
+pub struct TransformerMetaLearner<
+    T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static,
+> {
     /// Meta-learning strategy
     strategy: MetaLearningStrategy,
 

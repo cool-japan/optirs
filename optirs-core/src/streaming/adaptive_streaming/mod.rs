@@ -22,9 +22,10 @@ pub use performance::*;
 pub use resource_management::*;
 
 // Utility functions for common configurations
-pub fn create_default_optimizer<A, D>() -> StreamingResult<AdaptiveStreamingOptimizer<crate::optimizers::Adam<A>, A, D>>
+pub fn create_default_optimizer<A, D>(
+) -> StreamingResult<AdaptiveStreamingOptimizer<crate::optimizers::Adam<A>, A, D>>
 where
-    A: ndarray::ScalarOperand
+    A: scirs2_core::ndarray_ext::ScalarOperand
         + Clone
         + Default
         + Send
@@ -34,7 +35,11 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: ndarray::Data<Elem = A> + ndarray::Dimension + Send + Sync + 'static,
+    D: scirs2_core::ndarray_ext::Data<Elem = A>
+        + scirs2_core::ndarray_ext::Dimension
+        + Send
+        + Sync
+        + 'static,
 {
     let config = StreamingConfig::default();
     let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).unwrap()); // Default learning rate
@@ -45,7 +50,7 @@ pub fn create_optimizer_with_config<A, D>(
     config: StreamingConfig,
 ) -> StreamingResult<AdaptiveStreamingOptimizer<crate::optimizers::Adam<A>, A, D>>
 where
-    A: ndarray::ScalarOperand
+    A: scirs2_core::ndarray_ext::ScalarOperand
         + Clone
         + Default
         + Send
@@ -55,7 +60,11 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: ndarray::Data<Elem = A> + ndarray::Dimension + Send + Sync + 'static,
+    D: scirs2_core::ndarray_ext::Data<Elem = A>
+        + scirs2_core::ndarray_ext::Dimension
+        + Send
+        + Sync
+        + 'static,
 {
     let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).unwrap()); // Default learning rate
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)

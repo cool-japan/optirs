@@ -37,7 +37,7 @@ impl MockModel {
     /// Simulate training and return validation performance
     fn train_and_evaluate(&mut self) -> f64 {
         // Simulate realistic performance based on hyperparameters
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
 
         // Base performance with some randomness
         let mut performance = 0.5 + rng.random::<f64>() * 0.1;
@@ -342,19 +342,19 @@ fn population_based_training_example() -> Result<()> {
         let hyperparams = HashMap::from([
             (
                 "learning_rate".to_string(),
-                0.001 * (1.0 + rand::rng().random::<f64>()),
+                0.001 * (1.0 + scirs2_core::random::rng().random::<f64>()),
             ),
             (
                 "weight_decay".to_string(),
-                0.01 * rand::rng().random::<f64>(),
+                0.01 * scirs2_core::random::rng().random::<f64>(),
             ),
             (
                 "batch_size".to_string(),
-                32.0 + rand::rng().random::<f64>() * 96.0,
+                32.0 + scirs2_core::random::rng().random::<f64>() * 96.0,
             ),
             (
                 "momentum".to_string(),
-                0.9 + rand::rng().random::<f64>() * 0.09,
+                0.9 + scirs2_core::random::rng().random::<f64>() * 0.09,
             ),
         ]);
 
@@ -380,7 +380,7 @@ fn population_based_training_example() -> Result<()> {
 
             // Perturb hyperparameters
             for (param, value) in new_hyperparams.iter_mut() {
-                let perturbation = 1.0 + (rand::rng().random::<f64>() - 0.5) * 0.2;
+                let perturbation = 1.0 + (scirs2_core::random::rng().random::<f64>() - 0.5) * 0.2;
                 *value *= perturbation;
 
                 // Apply bounds
@@ -458,7 +458,7 @@ fn neural_predictor_example() -> Result<()> {
 
     for _ in 0..200 {
         // Simulate different problem characteristics
-        let mut rng = rand::rng();
+        let mut rng = scirs2_core::random::rng();
         let features = Array1::from_vec(vec![
             rng.random::<f64>() * 10000.0,    // dataset_size
             rng.random::<f64>() * 1000.0,     // input_dims
@@ -514,19 +514,19 @@ fn neural_predictor_example() -> Result<()> {
         let random_hyperparams = HashMap::from([
             (
                 "learning_rate".to_string(),
-                rand::rng().random::<f64>() * 0.01,
+                scirs2_core::random::rng().random::<f64>() * 0.01,
             ),
             (
                 "weight_decay".to_string(),
-                rand::rng().random::<f64>() * 0.01,
+                scirs2_core::random::rng().random::<f64>() * 0.01,
             ),
             (
                 "batch_size".to_string(),
-                16.0 + rand::rng().random::<f64>() * 112.0,
+                16.0 + scirs2_core::random::rng().random::<f64>() * 112.0,
             ),
             (
                 "momentum".to_string(),
-                0.9 + rand::rng().random::<f64>() * 0.09,
+                0.9 + scirs2_core::random::rng().random::<f64>() * 0.09,
             ),
         ]);
 

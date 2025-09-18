@@ -6,7 +6,9 @@
 
 #[allow(dead_code)]
 use crate::coordination::monitoring::anomaly_detection::{AnomalyConfig, AnomalyResult};
-use crate::coordination::monitoring::performance_tracking::{TrackerConfiguration, DashboardConfiguration};
+use crate::coordination::monitoring::performance_tracking::{
+    DashboardConfiguration, TrackerConfiguration,
+};
 use crate::coordination::orchestration::pipeline_orchestrator::OrchestratorConfiguration;
 use crate::coordination::scheduling::task_scheduler::SchedulerConfig;
 use crate::research::experiments::ResourceUsage;
@@ -24,21 +26,21 @@ pub mod scheduling;
 
 // Re-export key types from submodules
 pub use scheduling::{
-    PriorityLevel, PriorityManager, PriorityQueue, PriorityUpdateStrategy, StaticPriorityStrategy,
+    PriorityLevel, PriorityManager, PriorityQueue, PriorityUpdateStrategy,
     ResourceAllocationStrategy, ResourceAllocationTracker, ResourceManager,
-    ResourceOptimizationEngine, ResourcePool, ScheduledTask, SchedulingStrategy, TaskPriority,
-    TaskScheduler,
+    ResourceOptimizationEngine, ResourcePool, ScheduledTask, SchedulingStrategy,
+    StaticPriorityStrategy, TaskPriority, TaskScheduler,
 };
 
 // Type alias for convenience
 pub type OptimizationTask<T> = ScheduledTask<T>;
 
 pub use orchestration::{
-    Checkpoint, CheckpointConfiguration, CheckpointManager, CheckpointMetadata, Experiment,
-    ExperimentConfiguration, ExperimentExecution, ExperimentManager, ExperimentResult,
-    ExperimentStatus, OptimizationPipeline, PipelineConfiguration, PipelineExecution,
-    PipelineOrchestrator, PipelineStage, RecoveryManager, RecoveryStrategy, StageResult,
-    ResourceLimits, TimeoutSettings, MonitoringConfiguration, StorageConfiguration, AlertConfiguration,
+    AlertConfiguration, Checkpoint, CheckpointConfiguration, CheckpointManager, CheckpointMetadata,
+    Experiment, ExperimentConfiguration, ExperimentExecution, ExperimentManager, ExperimentResult,
+    ExperimentStatus, MonitoringConfiguration, OptimizationPipeline, PipelineConfiguration,
+    PipelineExecution, PipelineOrchestrator, PipelineStage, RecoveryManager, RecoveryStrategy,
+    ResourceLimits, StageResult, StorageConfiguration, TimeoutSettings,
 };
 
 pub use monitoring::{
@@ -178,14 +180,16 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
             estimation_threshold: T::from(0.9).unwrap(),
             enable_adaptive_scheduling: true,
             enable_performance_learning: true,
-        }).expect("Failed to create task scheduler");
+        })
+        .expect("Failed to create task scheduler");
 
         let orchestrator = PipelineOrchestrator::new(OrchestratorConfiguration {
             max_concurrent_pipelines: config.max_concurrent_tasks,
             default_resource_limits: ResourceLimits::default(),
             default_timeouts: TimeoutSettings::default(),
             monitoring: MonitoringConfiguration::default(),
-        }).expect("Failed to create pipeline orchestrator");
+        })
+        .expect("Failed to create pipeline orchestrator");
 
         let performance_tracker = PerformanceTracker::new(TrackerConfiguration {
             collection_interval: config.monitoring_interval,
@@ -199,7 +203,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
                 default_time_range: Duration::from_secs(3600),
                 custom_params: HashMap::new(),
             },
-        }).expect("Failed to create performance tracker");
+        })
+        .expect("Failed to create performance tracker");
 
         let convergence_detector = ConvergenceDetector::new(config.convergence_criteria.clone());
 
@@ -369,10 +374,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
     }
 
     /// Update resource allocation
-    pub fn update_resource_allocation(
-        &mut self,
-        allocation: ResourceUsage,
-    ) -> Result<(), String> {
+    pub fn update_resource_allocation(&mut self, allocation: ResourceUsage) -> Result<(), String> {
         self.state.resource_usage = allocation;
 
         // Update scheduler with new resource information
@@ -527,11 +529,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
         self.state.active_tasks.retain(|_, _task| {
             true // Need proper completion check implementation
-            // !task.is_completed()
-            //     || task
-            //         .get_completion_time()
-            //         .map(|t| now.duration_since(t) < threshold)
-            //         .unwrap_or(true)
+                 // !task.is_completed()
+                 //     || task
+                 //         .get_completion_time()
+                 //         .map(|t| now.duration_since(t) < threshold)
+                 //         .unwrap_or(true)
         });
     }
 

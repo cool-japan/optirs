@@ -5,48 +5,50 @@
 // sequence modeling for optimization trajectories, and advanced transformer
 // architectures tailored for learning optimization strategies.
 
-pub mod config;
 pub mod architecture;
 pub mod attention;
-pub mod layers;
-pub mod positional_encoding;
+pub mod config;
 pub mod feedforward;
-pub mod meta_learning;
-pub mod sequence_processor;
+pub mod layers;
 pub mod memory_manager;
+pub mod meta_learning;
 pub mod performance_tracker;
+pub mod positional_encoding;
+pub mod sequence_processor;
 pub mod state;
 
 // Re-export main types for backward compatibility
-pub use config::{TransformerBasedOptimizerConfig, TransformerArchConfig};
 pub use architecture::{TransformerArchitecture, TransformerLayer};
-pub use attention::{MultiHeadAttention, AttentionMechanism};
-pub use layers::{EmbeddingLayer, LayerNormalization, DropoutLayer, OutputProjection, ResidualConnections};
+pub use attention::{AttentionMechanism, MultiHeadAttention};
+pub use config::{TransformerArchConfig, TransformerBasedOptimizerConfig};
+pub use feedforward::{ActivationFunction, FeedForwardNetwork};
+pub use layers::{
+    DropoutLayer, EmbeddingLayer, LayerNormalization, OutputProjection, ResidualConnections,
+};
+pub use memory_manager::{MemoryManagementStrategy, TransformerMemoryManager};
+pub use meta_learning::{MetaLearningStrategy, TransformerMetaLearning};
+pub use performance_tracker::{PerformanceMetrics, TransformerPerformanceTracker};
 pub use positional_encoding::{PositionalEncoding, PositionalEncodingType};
-pub use feedforward::{FeedForwardNetwork, ActivationFunction};
-pub use meta_learning::{TransformerMetaLearning, MetaLearningStrategy};
 pub use sequence_processor::{OptimizationSequenceProcessor, SequenceProcessingStrategy};
-pub use memory_manager::{TransformerMemoryManager, MemoryManagementStrategy};
-pub use performance_tracker::{TransformerPerformanceTracker, PerformanceMetrics};
-pub use state::{TransformerOptimizerState, OptimizerStateSnapshot};
+pub use state::{OptimizerStateSnapshot, TransformerOptimizerState};
 
 // Re-export for backward compatibility - create alias for the old name
 pub use TransformerBasedOptimizerConfig as TransformerOptimizerConfig;
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, ArrayBase, Data, Dimension, Axis};
 use num_traits::{Float, ToPrimitive};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 
-use optirs_core::adaptive_selection::OptimizerType;
-use crate::error::{OptimError, Result};
 use super::{
-    LearnedOptimizerConfig, MetaOptimizationStrategy, NeuralOptimizerType,
-    TaskContext, OptimizerState, NeuralOptimizerMetrics, TaskPerformance
+    LearnedOptimizerConfig, MetaOptimizationStrategy, NeuralOptimizerMetrics, NeuralOptimizerType,
+    OptimizerState, TaskContext, TaskPerformance,
 };
+use crate::error::{OptimError, Result};
+use optirs_core::adaptive_selection::OptimizerType;
 
 // Import for external compatibility
 
@@ -83,7 +85,16 @@ pub struct TransformerOptimizer<T: Float + Debug + Send + Sync + 'static> {
     state: TransformerOptimizerState<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_traits::FromPrimitive> TransformerOptimizer<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + num_traits::FromPrimitive,
+    > TransformerOptimizer<T>
+{
     /// Create new transformer optimizer
     pub fn new(config: TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let transformer_config = TransformerArchConfig::from_optimizer_config(&config);
@@ -153,17 +164,18 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_tra
         let transformer_output = self.transformer.forward(&encoded_sequence)?;
 
         // Generate optimization step
-        let optimization_step = self.meta_learning.generate_update(
-            &transformer_output,
-            &self.state.current_parameters,
-        )?;
+        let optimization_step = self
+            .meta_learning
+            .generate_update(&transformer_output, &self.state.current_parameters)?;
 
         // Update state
-        self.state.update_with_step(&optimization_step, loss_history.last().copied())?;
+        self.state
+            .update_with_step(&optimization_step, loss_history.last().copied())?;
 
         // Track performance
         let elapsed = start_time.elapsed();
-        self.performance_tracker.record_optimization_step(elapsed, &optimization_step);
+        self.performance_tracker
+            .record_optimization_step(elapsed, &optimization_step);
 
         Ok(optimization_step)
     }
@@ -179,7 +191,9 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_tra
 
         for trajectory in trajectories {
             // Process trajectory into sequences
-            let sequences = self.sequence_processor.trajectory_to_sequences(trajectory)?;
+            let sequences = self
+                .sequence_processor
+                .trajectory_to_sequences(trajectory)?;
 
             for sequence in sequences {
                 // Forward pass
@@ -211,7 +225,8 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_tra
             convergence_rate: self.calculate_convergence_rate()?,
         };
 
-        self.performance_tracker.record_training_epoch(metrics.clone());
+        self.performance_tracker
+            .record_training_epoch(metrics.clone());
 
         Ok(metrics)
     }
@@ -228,7 +243,9 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_tra
     /// Calculate loss for sequence prediction
     fn calculate_sequence_loss(&self, prediction: &Array2<T>, target: &Array2<T>) -> Result<T> {
         if prediction.shape() != target.shape() {
-            return Err(OptimError::Other("Shape mismatch in loss calculation".to_string()));
+            return Err(OptimError::Other(
+                "Shape mismatch in loss calculation".to_string(),
+            ));
         }
 
         // Mean squared error
@@ -241,12 +258,7 @@ impl<T: Float + Debug + Send + Sync + 'static + ndarray::ScalarOperand + num_tra
     }
 
     /// Simplified backward pass
-    fn backward_pass(
-        &mut self,
-        input: &Array2<T>,
-        target: &Array2<T>,
-        loss: T,
-    ) -> Result<()> {
+    fn backward_pass(&mut self, input: &Array2<T>, target: &Array2<T>, loss: T) -> Result<()> {
         // In a full implementation, this would compute gradients and update parameters
         // For now, we'll just update the learning state
         self.meta_learning.update_from_loss(loss)?;

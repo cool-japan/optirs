@@ -1,10 +1,10 @@
 // Core transformer layer implementations
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
-use num_traits::Float;
-use std::fmt::Debug;
-use crate::error::Result;
 use super::config::ActivationFunction;
+use crate::error::Result;
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use std::fmt::Debug;
 
 /// Embedding layer for input vectors
 pub struct EmbeddingLayer<T: Float + Debug + Send + Sync + 'static> {
@@ -105,12 +105,14 @@ impl<T: Float + Debug + Send + Sync + 'static> LayerNormalization<T> {
             let mean = row.sum() / T::from(row.len()).unwrap();
 
             // Calculate variance
-            let variance = row.iter()
+            let variance = row
+                .iter()
                 .map(|&x| {
                     let diff = x - mean;
                     diff * diff
                 })
-                .fold(T::zero(), |acc, x| acc + x) / T::from(row.len()).unwrap();
+                .fold(T::zero(), |acc, x| acc + x)
+                / T::from(row.len()).unwrap();
 
             // Normalize
             let std_dev = (variance + self.epsilon).sqrt();
@@ -156,7 +158,10 @@ impl DropoutLayer {
     }
 
     /// Forward pass through dropout
-    pub fn forward<T: Float + Debug + Send + Sync + 'static>(&self, input: &Array2<T>) -> Array2<T> {
+    pub fn forward<T: Float + Debug + Send + Sync + 'static>(
+        &self,
+        input: &Array2<T>,
+    ) -> Array2<T> {
         if !self.training || self.dropout_rate == 0.0 {
             return input.clone();
         }
@@ -166,7 +171,7 @@ impl DropoutLayer {
         let scale = num_traits::cast::cast(1.0 / keep_prob).unwrap_or_else(|| T::zero());
 
         for elem in output.iter_mut() {
-            if rand::random::<f64>() < self.dropout_rate {
+            if scirs2_core::random::random::<f64>() < self.dropout_rate {
                 *elem = T::zero();
             } else {
                 *elem = *elem * scale;
@@ -278,7 +283,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResidualConnections<T> {
     pub fn add(&self, input: &Array2<T>, residual: &Array2<T>) -> Result<Array2<T>> {
         if input.shape() != residual.shape() {
             return Err(crate::error::OptimError::Other(
-                "Shape mismatch in residual connection".to_string()
+                "Shape mismatch in residual connection".to_string(),
             ));
         }
 
@@ -307,14 +312,20 @@ pub struct ActivationLayer;
 
 impl ActivationLayer {
     /// Apply activation function
-    pub fn apply<T: Float + Debug + Send + Sync + 'static>(input: &Array2<T>, activation: ActivationFunction) -> Array2<T> {
+    pub fn apply<T: Float + Debug + Send + Sync + 'static>(
+        input: &Array2<T>,
+        activation: ActivationFunction,
+    ) -> Array2<T> {
         match activation {
             ActivationFunction::ReLU => Self::relu(input),
             ActivationFunction::GELU => Self::gelu(input),
             ActivationFunction::Swish => Self::swish(input),
             ActivationFunction::Tanh => Self::tanh(input),
             ActivationFunction::Sigmoid => Self::sigmoid(input),
-            ActivationFunction::LeakyReLU => Self::leaky_relu(input, num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero())),
+            ActivationFunction::LeakyReLU => Self::leaky_relu(
+                input,
+                num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            ),
         }
     }
 
@@ -354,7 +365,10 @@ impl ActivationLayer {
     }
 
     /// Leaky ReLU activation
-    fn leaky_relu<T: Float + Debug + Send + Sync + 'static>(input: &Array2<T>, alpha: T) -> Array2<T> {
+    fn leaky_relu<T: Float + Debug + Send + Sync + 'static>(
+        input: &Array2<T>,
+        alpha: T,
+    ) -> Array2<T> {
         input.map(|&x| if x > T::zero() { x } else { alpha * x })
     }
 

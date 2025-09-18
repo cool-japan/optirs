@@ -5,8 +5,8 @@
 // batch size, momentum, and weight decay"
 
 use crate::schedulers::LearningRateScheduler;
-use scirs2_core::ndarray_ext::ScalarOperand;
 use num_traits::Float;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt::{self, Debug};
 
 /// One-cycle learning rate policy

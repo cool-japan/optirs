@@ -21,8 +21,8 @@ use super::resource_management::{ResourceDiagnostics, ResourceManager, ResourceU
 
 use crate::adaptive_selection::OptimizerType;
 // Removed dependency on learned_optimizers - using stub implementation
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension, IxDyn};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension, IxDyn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -202,7 +202,16 @@ where
 
 impl<O, A, D> AdaptiveStreamingOptimizer<O, A, D>
 where
-    A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug + std::ops::DivAssign + ndarray::ScalarOperand + 'static,
+    A: Float
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + std::iter::Sum
+        + std::fmt::Debug
+        + std::ops::DivAssign
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + 'static,
     D: Dimension,
     O: Clone,
 {
@@ -217,8 +226,8 @@ where
         let resource_manager = ResourceManager::new(&config)?;
         let meta_learner = MetaLearner::new(&config)?;
         let anomaly_detector = AnomalyDetector::new(&config)?;
-        let learning_rate_controller = AdaptiveLearningRateController::new(&config)
-            .map_err(|e| e.to_string())?;
+        let learning_rate_controller =
+            AdaptiveLearningRateController::new(&config).map_err(|e| e.to_string())?;
 
         let stats = AdaptiveStreamingStats {
             total_data_points: 0,
@@ -308,9 +317,11 @@ where
         self.stats.optimization_steps += 1;
         self.stats.adaptations_applied += adaptations.len();
         self.stats.current_buffer_size = self.buffer.current_size();
-        self.stats.current_learning_rate = num_traits::cast::cast(self.learning_rate_controller.current_rate()).unwrap_or(0.0);
+        self.stats.current_learning_rate =
+            num_traits::cast::cast(self.learning_rate_controller.current_rate()).unwrap_or(0.0);
         self.stats.performance_trend = self.compute_performance_trend();
-        self.stats.meta_learning_score = num_traits::cast::cast(self.meta_learner.get_effectiveness_score()).unwrap_or(0.0);
+        self.stats.meta_learning_score =
+            num_traits::cast::cast(self.meta_learner.get_effectiveness_score()).unwrap_or(0.0);
 
         let processing_time = start_time.elapsed().as_millis() as f64;
         self.stats.avg_processing_time_ms = (self.stats.avg_processing_time_ms
@@ -443,9 +454,7 @@ where
 
         // Learning rate adaptation
         // Note: compute_adaptation doesn't currently use these parameters
-        let lr_value = self
-            .learning_rate_controller
-            .compute_adaptation(&[]);
+        let lr_value = self.learning_rate_controller.compute_adaptation(&[]);
         let lr_adaptation = Adaptation {
             adaptation_type: AdaptationType::LearningRate,
             magnitude: lr_value,
@@ -494,7 +503,8 @@ where
         for adaptation in adaptations {
             match &adaptation.adaptation_type {
                 AdaptationType::LearningRate => {
-                    self.learning_rate_controller.apply_adaptation(adaptation.magnitude);
+                    self.learning_rate_controller
+                        .apply_adaptation(adaptation.magnitude);
                 }
                 AdaptationType::BufferSize => {
                     self.buffer.apply_size_adaptation(adaptation)?;
@@ -795,8 +805,12 @@ where
         let action = MetaAction {
             adaptation_magnitudes: adaptation_vector,
             adaptation_types,
-            learning_rate_change: self.learning_rate_controller.last_change().unwrap_or(A::zero()),
-            buffer_size_change: num_traits::cast::cast(self.buffer.last_size_change()).unwrap_or(A::zero()),
+            learning_rate_change: self
+                .learning_rate_controller
+                .last_change()
+                .unwrap_or(A::zero()),
+            buffer_size_change: num_traits::cast::cast(self.buffer.last_size_change())
+                .unwrap_or(A::zero()),
             timestamp: Instant::now(),
         };
 

@@ -5,8 +5,8 @@
 // mathematical utilities.
 
 use crate::error::Result;
-use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::fmt::Debug;
 
 /// K-FAC utilities for layer-specific operations
@@ -68,7 +68,7 @@ impl KFACUtils {
         let batch_size_t = num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
 
         // Compute mean
-        let mean = input.mean_axis(ndarray::Axis(0)).unwrap();
+        let mean = input.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
 
         // Compute variance
         let mut var = Array1::zeros(num_features);
@@ -85,7 +85,7 @@ impl KFACUtils {
     }
 
     /// Compute K-FAC update for grouped convolution layers
-    pub fn grouped_conv_kfac<T: Float + ndarray::ScalarOperand>(
+    pub fn grouped_conv_kfac<T: Float + scirs2_core::ndarray_ext::ScalarOperand>(
         input: &Array2<T>,
         gradients: &Array2<T>,
         num_groups: usize,
@@ -113,15 +113,16 @@ impl KFACUtils {
             let output_end = output_start + output_per_group;
 
             // Extract group data
-            let group_input = input.slice(ndarray::s![.., input_start..input_end]);
-            let group_gradients = gradients.slice(ndarray::s![.., output_start..output_end]);
+            let group_input = input.slice(scirs2_core::ndarray_ext::s![.., input_start..input_end]);
+            let group_gradients =
+                gradients.slice(scirs2_core::ndarray_ext::s![.., output_start..output_end]);
 
             // Compute group covariance
             let group_update = group_input.t().dot(&group_gradients);
 
             // Place back in result
             result
-                .slice_mut(ndarray::s![
+                .slice_mut(scirs2_core::ndarray_ext::s![
                     input_start..input_end,
                     output_start..output_end
                 ])

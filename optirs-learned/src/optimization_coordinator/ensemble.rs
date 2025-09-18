@@ -343,7 +343,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
         let epsilon = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
 
         for _ in 0..num_select {
-            if rand::random::<f64>() < epsilon.to_f64().unwrap() {
+            if scirs2_core::random::random::<f64>() < epsilon.to_f64().unwrap() {
                 // Exploration: random selection
                 let available: Vec<String> = self.optimizers.keys()
                     .filter(|k| !selected.contains(k))
@@ -351,7 +351,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
                     .collect();
                 if !available.is_empty() {
                     use scirs2_core::random::Rng;
-                    let mut rng = rand::thread_rng();
+                    let mut rng = scirs2_core::random::thread_rng();
                     let idx = rng.gen_range(0..available.len());
                     selected.push(available[idx].clone());
                 }
@@ -432,7 +432,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
                 let beta = self.selection_stats.failures.get(optimizer_id).cloned().unwrap_or(1) as f64;
 
                 // Simplified sampling (in practice, would use proper Beta distribution)
-                let sample = T::from(alpha / (alpha + beta) + rand::random::<f64>() * 0.1).unwrap();
+                let sample = T::from(alpha / (alpha + beta) + scirs2_core::random::random::<f64>() * 0.1).unwrap();
 
                 if sample > best_sample {
                     best_sample = sample;
@@ -609,7 +609,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
         _context: &OptimizationContext<T>,
     ) -> f64 {
         // Simplified suitability calculation
-        rand::random::<f64>()
+        scirs2_core::random::random::<f64>()
     }
 
     fn extract_context_features(&self, _landscape_features: &LandscapeFeatures<T>, _context: &OptimizationContext<T>) -> Vec<T> {

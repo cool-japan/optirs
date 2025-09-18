@@ -4,9 +4,9 @@
 // multi-dimensional priority queues, dynamic priority adjustment, and
 // intelligent priority update strategies for optimization tasks.
 
+use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fmt::Debug;
@@ -1786,7 +1786,9 @@ impl<T: Float + Debug + Default + Send + Sync> Default for PriorityManagerStatis
 #[derive(Debug, Clone)]
 pub struct StaticPriorityStrategy;
 
-impl<T: Float + Debug + Send + Sync + 'static> PriorityUpdateStrategy<T> for StaticPriorityStrategy {
+impl<T: Float + Debug + Send + Sync + 'static> PriorityUpdateStrategy<T>
+    for StaticPriorityStrategy
+{
     fn update_priorities(
         &mut self,
         _items: &mut [PriorityItem<T>],

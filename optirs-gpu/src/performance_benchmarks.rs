@@ -1059,8 +1059,8 @@ impl NormalDataGenerator {
 
 impl DataGenerator for NormalDataGenerator {
     fn generate(&self, size: usize) -> Result<(Array1<f32>, Array1<f32>)> {
-        let params = Array1::from_vec((0..size).map(|_| fastrand::f32()).collect());
-        let gradients = Array1::from_vec((0..size).map(|_| fastrand::f32() - 0.5).collect());
+        let params = Array1::from_vec((0..size).map(|_| scirs2_core::random::f32()).collect());
+        let gradients = Array1::from_vec((0..size).map(|_| scirs2_core::random::f32() - 0.5).collect());
         Ok((params, gradients))
     }
 
@@ -1099,12 +1099,12 @@ impl DataGenerator for UniformDataGenerator {
         let range = (self.max - self.min) as f32;
         let params = Array1::from_vec(
             (0..size)
-                .map(|_| self.min as f32 + fastrand::f32() * range)
+                .map(|_| self.min as f32 + scirs2_core::random::f32() * range)
                 .collect(),
         );
         let gradients = Array1::from_vec(
             (0..size)
-                .map(|_| self.min as f32 + fastrand::f32() * range)
+                .map(|_| self.min as f32 + scirs2_core::random::f32() * range)
                 .collect(),
         );
         Ok((params, gradients))
@@ -1144,8 +1144,8 @@ impl DataGenerator for SparseDataGenerator {
         let params = Array1::from_vec(
             (0..size)
                 .map(|_| {
-                    if fastrand::f64() < self.density {
-                        fastrand::f32()
+                    if scirs2_core::random::f64() < self.density {
+                        scirs2_core::random::f32()
                     } else {
                         0.0
                     }
@@ -1156,8 +1156,8 @@ impl DataGenerator for SparseDataGenerator {
         let gradients = Array1::from_vec(
             (0..size)
                 .map(|_| {
-                    if fastrand::f64() < self.density {
-                        fastrand::f32() - 0.5
+                    if scirs2_core::random::f64() < self.density {
+                        scirs2_core::random::f32() - 0.5
                     } else {
                         0.0
                     }
@@ -1201,11 +1201,11 @@ impl DataGenerator for RealisticDataGenerator {
         match self.scenario {
             RealisticScenario::ImageNet => {
                 // Simulate ImageNet-like gradients with realistic distributions
-                let params = Array1::from_vec((0..size).map(|_| fastrand::f32() * 0.1).collect());
+                let params = Array1::from_vec((0..size).map(|_| scirs2_core::random::f32() * 0.1).collect());
                 let gradients = Array1::from_vec(
                     (0..size)
                         .map(|_| {
-                            let base = fastrand::f32() - 0.5;
+                            let base = scirs2_core::random::f32() - 0.5;
                             base * 0.01 // Typical gradient magnitude for ImageNet
                         })
                         .collect(),
@@ -1214,11 +1214,11 @@ impl DataGenerator for RealisticDataGenerator {
             }
             RealisticScenario::BERT => {
                 // Simulate BERT-like gradients
-                let params = Array1::from_vec((0..size).map(|_| fastrand::f32() * 0.02).collect());
+                let params = Array1::from_vec((0..size).map(|_| scirs2_core::random::f32() * 0.02).collect());
                 let gradients = Array1::from_vec(
                     (0..size)
                         .map(|_| {
-                            let base = fastrand::f32() - 0.5;
+                            let base = scirs2_core::random::f32() - 0.5;
                             base * 0.001 // Typical gradient magnitude for BERT
                         })
                         .collect(),
@@ -1227,9 +1227,9 @@ impl DataGenerator for RealisticDataGenerator {
             }
             _ => {
                 // Default realistic scenario
-                let params = Array1::from_vec((0..size).map(|_| fastrand::f32() * 0.1).collect());
+                let params = Array1::from_vec((0..size).map(|_| scirs2_core::random::f32() * 0.1).collect());
                 let gradients =
-                    Array1::from_vec((0..size).map(|_| (fastrand::f32() - 0.5) * 0.01).collect());
+                    Array1::from_vec((0..size).map(|_| (scirs2_core::random::f32() - 0.5) * 0.01).collect());
                 Ok((params, gradients))
             }
         }

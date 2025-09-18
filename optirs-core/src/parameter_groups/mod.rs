@@ -6,8 +6,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::Path;
@@ -981,8 +981,8 @@ pub mod checkpointing {
                         .collect::<Result<Vec<_>>>()?;
 
                     // Create array from shape and data with dynamic dimensions
-                    let array: Array<A, ndarray::IxDyn> = Array::from_shape_vec(shape, data)
-                        .map_err(|e| {
+                    let array: Array<A, scirs2_core::ndarray_ext::IxDyn> =
+                        Array::from_shape_vec(shape, data).map_err(|e| {
                             OptimError::InvalidConfig(format!("Failed to create array: {e}"))
                         })?;
                     params.push(array);
@@ -1094,7 +1094,7 @@ pub mod checkpointing {
             metadata.custom = custom_metadata;
 
             // Create the checkpoint with dynamic dimensions
-            let _dyn_checkpoint = OptimizerCheckpoint::<A, ndarray::IxDyn> {
+            let _dyn_checkpoint = OptimizerCheckpoint::<A, scirs2_core::ndarray_ext::IxDyn> {
                 step,
                 groups,
                 global_state,
@@ -1311,7 +1311,7 @@ mod tests {
 
     #[test]
     fn test_group_manager() {
-        let mut manager: GroupManager<f64, ndarray::Ix1> = GroupManager::new();
+        let mut manager: GroupManager<f64, scirs2_core::ndarray_ext::Ix1> = GroupManager::new();
 
         // Add first group
         let params1 = vec![Array1::zeros(5)];
