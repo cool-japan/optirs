@@ -34,7 +34,9 @@ pub enum MomentumStrategy {
 
 /// Momentum integrator for transformer optimizer
 #[derive(Debug, Clone)]
-pub struct MomentumIntegrator<T: Float + Debug + Send + Sync + 'static> {
+pub struct MomentumIntegrator<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Integration strategy
     strategy: MomentumStrategy,
 
@@ -65,7 +67,9 @@ pub struct MomentumIntegrator<T: Float + Debug + Send + Sync + 'static> {
 
 /// Momentum parameters
 #[derive(Debug, Clone)]
-pub struct MomentumParams<T: Float + Debug + Send + Sync + 'static> {
+pub struct MomentumParams<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Beta1 (momentum coefficient)
     beta1: T,
 
@@ -90,7 +94,9 @@ pub struct MomentumParams<T: Float + Debug + Send + Sync + 'static> {
 
 /// Momentum state for hierarchical momentum
 #[derive(Debug, Clone)]
-pub struct MomentumState<T: Float + Debug + Send + Sync + 'static> {
+pub struct MomentumState<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// First moment
     m: Array1<T>,
 
@@ -109,9 +115,11 @@ pub struct MomentumState<T: Float + Debug + Send + Sync + 'static> {
 
 /// Momentum statistics for analysis
 #[derive(Debug, Clone)]
-pub struct MomentumStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct MomentumStatistics<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Average momentum magnitude
-    avg_momentum_magnitude: T,
+    pub avg_momentum_magnitude: T,
 
     /// Momentum variance
     momentum_variance: T,
@@ -126,7 +134,18 @@ pub struct MomentumStatistics<T: Float + Debug + Send + Sync + 'static> {
     update_count: usize,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MomentumIntegrator<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::iter::Sum
+            + Send
+            + Sync
+            + 'static,
+    > MomentumIntegrator<T>
+{
     /// Create new momentum integrator
     pub fn new(strategy: MomentumStrategy) -> Self {
         Self {
@@ -362,7 +381,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MomentumIntegra
                 let group_m = state
                     .m
                     .slice(scirs2_core::ndarray_ext::s![..group_gradients.len()]);
-                let updated_m = group_m * state.group_beta1 + &group_gradients;
+                let updated_m = group_m.to_owned() * state.group_beta1 + &group_gradients;
 
                 // Update state
                 for (j, &val) in updated_m.iter().enumerate() {
@@ -534,7 +553,18 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MomentumIntegra
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for MomentumParams<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::iter::Sum
+            + Send
+            + Sync
+            + 'static,
+    > Default for MomentumParams<T>
+{
     fn default() -> Self {
         Self {
             beta1: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),

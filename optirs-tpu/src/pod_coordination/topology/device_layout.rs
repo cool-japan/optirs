@@ -17,8 +17,8 @@ pub type CommunicationStatistics = HashMap<String, f64>;
 
 // Re-export from config module
 use super::config::{
-    TopologyConfig, TopologyType, InterNodeConnection, IntraNodeConnection,
-    RedundancyLevel, TopologyQoSSettings, TopologyConstraints, PerformanceRequirements
+    InterNodeConnection, IntraNodeConnection, PerformanceRequirements, RedundancyLevel,
+    TopologyConfig, TopologyConstraints, TopologyQoSSettings, TopologyType,
 };
 
 /// Device layout manager
@@ -104,9 +104,7 @@ pub enum NodeType {
         switching_capacity: f64,
     },
     /// Management node
-    Management {
-        services: Vec<String>,
-    },
+    Management { services: Vec<String> },
 }
 
 /// Storage types for storage nodes
@@ -382,7 +380,10 @@ pub enum CoolingSystemType {
     /// Air cooling
     Air { fan_count: usize, airflow_cfm: f64 },
     /// Liquid cooling
-    Liquid { coolant_type: String, flow_rate: f64 },
+    Liquid {
+        coolant_type: String,
+        flow_rate: f64,
+    },
     /// Thermoelectric cooling
     Thermoelectric { coefficient: f64 },
     /// Immersion cooling
@@ -1158,8 +1159,15 @@ impl DeviceLayoutManager {
     }
 
     /// Add a device to the layout
-    pub fn add_device(&mut self, device_id: DeviceId, position: Position3D, node_id: NodeId) -> Result<()> {
-        self.physical_layout.device_positions.insert(device_id, position);
+    pub fn add_device(
+        &mut self,
+        device_id: DeviceId,
+        position: Position3D,
+        node_id: NodeId,
+    ) -> Result<()> {
+        self.physical_layout
+            .device_positions
+            .insert(device_id, position);
 
         if let Some(node) = self.physical_layout.nodes.get_mut(&node_id) {
             node.devices.push(device_id);
@@ -1191,7 +1199,8 @@ impl DeviceLayoutManager {
         let node_count = self.physical_layout.nodes.len();
 
         if node_count > 0 {
-            self.layout_statistics.placement_stats.average_density = device_count as f64 / node_count as f64;
+            self.layout_statistics.placement_stats.average_density =
+                device_count as f64 / node_count as f64;
         }
 
         Ok(())
@@ -1209,10 +1218,16 @@ impl LayoutOptimizer {
     /// Create a new layout optimizer
     pub fn new() -> Result<Self> {
         Ok(Self {
-            config: LayoutOptimizerConfigRef { config_id: "default".to_string() },
-            state: LayoutOptimizationStateRef { optimization_id: "default".to_string() },
+            config: LayoutOptimizerConfigRef {
+                config_id: "default".to_string(),
+            },
+            state: LayoutOptimizationStateRef {
+                optimization_id: "default".to_string(),
+            },
             constraints: Vec::new(),
-            metrics: LayoutOptimizerMetricsRef { metrics_id: "default".to_string() },
+            metrics: LayoutOptimizerMetricsRef {
+                metrics_id: "default".to_string(),
+            },
         })
     }
 }
@@ -1235,10 +1250,14 @@ impl Default for PhysicalLayout {
 impl Default for LogicalLayout {
     fn default() -> Self {
         Self {
-            topology_graph: TopologyGraphRef { graph_id: "default".to_string() },
+            topology_graph: TopologyGraphRef {
+                graph_id: "default".to_string(),
+            },
             device_groups: Vec::new(),
             communication_patterns: Vec::new(),
-            optimization_state: LayoutOptimizationStateRef { optimization_id: "default".to_string() },
+            optimization_state: LayoutOptimizationStateRef {
+                optimization_id: "default".to_string(),
+            },
         }
     }
 }
@@ -1248,8 +1267,12 @@ impl Default for LayoutStatistics {
         Self {
             placement_stats: PlacementStatistics::default(),
             communication_stats: HashMap::new(),
-            performance_stats: LayoutPerformanceStatisticsRef { stats_id: "default".to_string() },
-            optimization_stats: LayoutOptimizationStatisticsRef { stats_id: "default".to_string() },
+            performance_stats: LayoutPerformanceStatisticsRef {
+                stats_id: "default".to_string(),
+            },
+            optimization_stats: LayoutOptimizationStatisticsRef {
+                stats_id: "default".to_string(),
+            },
         }
     }
 }
@@ -1291,10 +1314,10 @@ impl Default for ClusterFormationMetrics {
 impl Default for TemperatureThresholds {
     fn default() -> Self {
         Self {
-            normal: 65.0,      // Normal operating temperature
-            warning: 75.0,     // Warning threshold
-            critical: 85.0,    // Critical threshold
-            emergency: 95.0,   // Emergency shutdown
+            normal: 65.0,    // Normal operating temperature
+            warning: 75.0,   // Warning threshold
+            critical: 85.0,  // Critical threshold
+            emergency: 95.0, // Emergency shutdown
         }
     }
 }

@@ -36,7 +36,9 @@ pub enum RegularizationStrategy {
 
 /// Transformer regularizer
 #[derive(Debug, Clone)]
-pub struct TransformerRegularizer<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerRegularizer<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Regularization strategy
     strategy: RegularizationStrategy,
 
@@ -58,7 +60,9 @@ pub struct TransformerRegularizer<T: Float + Debug + Send + Sync + 'static> {
 
 /// Regularization parameters
 #[derive(Debug, Clone)]
-pub struct RegularizationParams<T: Float + Debug + Send + Sync + 'static> {
+pub struct RegularizationParams<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// L2 regularization coefficient
     l2_weight: T,
 
@@ -89,7 +93,9 @@ pub struct RegularizationParams<T: Float + Debug + Send + Sync + 'static> {
 
 /// Parameter statistics for adaptive regularization
 #[derive(Debug, Clone)]
-pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterStatistics<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Running mean of parameter magnitudes
     mean_magnitude: T,
 
@@ -108,7 +114,9 @@ pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
 
 /// State for spectral normalization
 #[derive(Debug, Clone)]
-pub struct SpectralNormState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SpectralNormState<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Left singular vectors for each weight matrix
     u_vectors: HashMap<String, Array1<T>>,
 
@@ -119,7 +127,17 @@ pub struct SpectralNormState<T: Float + Debug + Send + Sync + 'static> {
     spectral_norms: HashMap<String, T>,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerRegularizer<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > TransformerRegularizer<T>
+{
     /// Create new transformer regularizer
     pub fn new(strategy: RegularizationStrategy) -> Self {
         Self {
@@ -281,7 +299,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerRegu
         for (_param_name, grad) in gradients {
             // Compute gradient penalty (penalize large gradients)
             let grad_norm_squared = grad.iter().map(|&x| x * x).fold(T::zero(), |a, b| a + b);
-            let penalty_grad = grad
+            let penalty_grad = &*grad
                 * (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
                     * self.regularization_params.gradient_penalty_weight);
             *grad = grad.clone() + &penalty_grad;
@@ -308,12 +326,17 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerRegu
         }
 
         let mut total_reg_loss = T::zero();
+        let spectral_iterations = self.regularization_params.spectral_iterations;
 
         if let Some(ref mut spectral_state) = self.spectral_state {
             for (param_name, param_values) in parameters {
                 // Compute spectral norm and apply normalization
-                let spectral_norm =
-                    self.compute_spectral_norm(param_name, param_values, spectral_state)?;
+                let spectral_norm = Self::compute_spectral_norm_static(
+                    param_name,
+                    param_values,
+                    spectral_state,
+                    spectral_iterations,
+                )?;
 
                 if spectral_norm > T::one() {
                     // Apply spectral normalization to gradients
@@ -598,12 +621,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerRegu
         }
     }
 
-    /// Compute spectral norm using power iteration
-    fn compute_spectral_norm(
-        &self,
+    /// Compute spectral norm using power iteration (static version)
+    fn compute_spectral_norm_static(
         param_name: &str,
         matrix: &Array2<T>,
         spectral_state: &mut SpectralNormState<T>,
+        spectral_iterations: usize,
     ) -> Result<T> {
         let (m, n) = matrix.dim();
 
@@ -621,7 +644,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerRegu
         let mut u = spectral_state.u_vectors[param_name].clone();
         let mut v = spectral_state.v_vectors[param_name].clone();
 
-        for _ in 0..self.regularization_params.spectral_iterations {
+        for _ in 0..spectral_iterations {
             // v = W^T u / ||W^T u||
             let mut new_v = Array1::zeros(n);
             for j in 0..n {
@@ -714,7 +737,17 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerRegu
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ParameterStatistics<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > ParameterStatistics<T>
+{
     fn new() -> Self {
         Self {
             mean_magnitude: T::zero(),
@@ -726,8 +759,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ParameterStatis
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default
-    for RegularizationParams<T>
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > Default for RegularizationParams<T>
 {
     fn default() -> Self {
         Self {

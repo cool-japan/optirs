@@ -41,7 +41,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use scirs2_optim::schedulers::{CustomScheduler, LearningRateScheduler};
+    /// use optirs_core::schedulers::{CustomScheduler, LearningRateScheduler};
     ///
     /// // Create a scheduler that reduces the learning rate by 10% every 10 steps
     /// let mut scheduler = CustomScheduler::new(0.1, |step| {
@@ -120,7 +120,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use scirs2_optim::schedulers::{CustomScheduler, CombinedScheduler, LearningRateScheduler};
+    /// use optirs_core::schedulers::{CustomScheduler, CombinedScheduler, LearningRateScheduler};
     ///
     /// // Create a scheduler that uses both exponential decay and cosine annealing
     /// let exponential = CustomScheduler::new(0.1, |step| {

@@ -22,7 +22,7 @@
 // ## Basic CUDA Kernel Execution
 //
 // ```rust
-// use scirs2_optim::gpu::cuda_kernels::*;
+// use optirs_core::gpu::cuda_kernels::*;
 //
 // // Create optimizer kernel with default configuration
 // let config = KernelConfig::default();
@@ -37,7 +37,7 @@
 // ## Advanced Memory Management
 //
 // ```rust
-// use scirs2_optim::gpu::cuda_kernels::*;
+// use optirs_core::gpu::cuda_kernels::*;
 //
 // // Create memory manager with pooled allocation
 // let memory_config = MemoryPoolConfig {
@@ -56,7 +56,7 @@
 // ## Tensor Core Acceleration
 //
 // ```rust
-// use scirs2_optim::gpu::cuda_kernels::*;
+// use optirs_core::gpu::cuda_kernels::*;
 //
 // // Create Tensor Core manager and configure operation
 // let tc_manager = TensorCoreManager::new()?;
@@ -70,7 +70,7 @@
 // ## Adaptive Optimization
 //
 // ```rust
-// use scirs2_optim::gpu::cuda_kernels::*;
+// use optirs_core::gpu::cuda_kernels::*;
 //
 // // Create adaptive optimizer with genetic algorithm
 // let strategy = AdaptationStrategy::Genetic {

@@ -71,7 +71,7 @@
 // ## Usage Example
 //
 // ```rust
-// use scirs2_optim::tpu::pod_coordination::communication::{
+// use optirs_core::tpu::pod_coordination::communication::{
 //     CommunicationManager, CommunicationConfig, CommunicationRequest,
 //     MessageType, Priority, QoSRequirements, ReliabilityRequirements
 // };
@@ -134,114 +134,65 @@
 // - **Health Monitoring**: Continuous monitoring of system health
 // - **Graceful Failover**: Seamless switching to backup resources
 
-pub mod communication_core;
 pub mod buffer_management;
+pub mod communication_core;
 pub mod compression;
+pub mod monitoring;
 pub mod network_config;
 pub mod qos;
 pub mod reliability;
-pub mod monitoring;
 pub mod routing;
 
 // Re-export core types and functionality
-pub use communication_core::*;
 pub use buffer_management::*;
+pub use communication_core::*;
 pub use compression::*;
+pub use monitoring::*;
 pub use network_config::*;
 pub use qos::*;
 pub use reliability::*;
-pub use monitoring::*;
 pub use routing::*;
 
 // Convenience re-exports for commonly used types
 pub use communication_core::{
-    CommunicationManager,
-    CommunicationConfig,
-    CommunicationRequest,
-    MessageType,
-    Priority,
-    CommunicationStatus,
-    CommunicationStatistics,
-    OptimizationConfig,
-    PerformanceTargets,
-    CommunicationScheduler,
-    SchedulingAlgorithm,
+    CommunicationConfig, CommunicationManager, CommunicationRequest, CommunicationScheduler,
+    CommunicationStatistics, CommunicationStatus, MessageType, OptimizationConfig,
+    PerformanceTargets, Priority, SchedulingAlgorithm,
 };
 
 pub use buffer_management::{
-    MessageBufferPool,
-    BufferPoolConfig,
-    PoolGrowthStrategy,
-    MemoryManagementStrategy,
-    BufferStatus,
-    MessagePriority,
-    GarbageCollector,
-    MemoryAllocator,
+    BufferPoolConfig, BufferStatus, GarbageCollector, MemoryAllocator, MemoryManagementStrategy,
+    MessageBufferPool, MessagePriority, PoolGrowthStrategy,
 };
 
 pub use compression::{
-    CompressionEngine,
-    CompressionConfig,
-    CompressionAlgorithm,
-    CompressionResult,
-    AdaptiveCompressionSettings,
-    CompressionStatistics,
-    Compressor,
+    AdaptiveCompressionSettings, CompressionAlgorithm, CompressionConfig, CompressionEngine,
+    CompressionResult, CompressionStatistics, Compressor,
 };
 
 pub use network_config::{
-    NetworkConfig,
-    SocketBufferConfig,
-    ProtocolSettings,
-    TcpSettings,
-    UdpSettings,
-    RdmaSettings,
-    ConnectionPoolingConfig,
-    NetworkOptimizationConfig,
+    ConnectionPoolingConfig, NetworkConfig, NetworkOptimizationConfig, ProtocolSettings,
+    RdmaSettings, SocketBufferConfig, TcpSettings, UdpSettings,
 };
 
 pub use qos::{
-    QoSConfig,
-    QoSClass,
-    TrafficClass,
-    TrafficPriority,
-    BandwidthAllocation,
-    PriorityScheduling,
-    FlowControl,
-    QoSRequirements,
-    ReliabilityRequirements,
+    BandwidthAllocation, FlowControl, PriorityScheduling, QoSClass, QoSConfig, QoSRequirements,
+    ReliabilityRequirements, TrafficClass, TrafficPriority,
 };
 
 pub use reliability::{
-    ReliabilityConfig,
-    ErrorDetectionConfig,
-    RecoveryConfig,
-    FaultToleranceConfig,
-    RedundancyConfig,
-    ErrorDetectionMethod,
-    RecoveryStrategy,
+    ErrorDetectionConfig, ErrorDetectionMethod, FaultToleranceConfig, RecoveryConfig,
+    RecoveryStrategy, RedundancyConfig, ReliabilityConfig,
 };
 
 pub use monitoring::{
-    NetworkMonitor,
-    MonitoringConfig,
-    PerformanceMetrics,
-    HealthStatus,
-    AlertManager,
-    MetricType,
-    HealthState,
-    AlertSeverity,
+    AlertManager, AlertSeverity, HealthState, HealthStatus, MetricType, MonitoringConfig,
+    NetworkMonitor, PerformanceMetrics,
 };
 
 pub use routing::{
-    RoutingTable,
-    RoutingConfig,
-    Route,
-    RouteMetrics,
-    NetworkTopology,
-    LoadBalancingAlgorithm,
-    OptimizationObjective,
-    RouteState,
+    LoadBalancingAlgorithm, NetworkTopology, OptimizationObjective, Route, RouteMetrics,
+    RouteState, RoutingConfig, RoutingTable,
 };
 
 #[cfg(test)]
@@ -282,7 +233,10 @@ mod tests {
 
         assert_eq!(config.initial_pool_size, 100);
         assert_eq!(config.buffer_size, 4096);
-        assert!(matches!(config.growth_strategy, PoolGrowthStrategy::Linear { increment: 10 }));
+        assert!(matches!(
+            config.growth_strategy,
+            PoolGrowthStrategy::Linear { increment: 10 }
+        ));
     }
 
     #[test]
@@ -297,7 +251,10 @@ mod tests {
 
         assert_eq!(algorithms.len(), 5);
         assert!(matches!(algorithms[1], CompressionAlgorithm::LZ4));
-        assert!(matches!(algorithms[2], CompressionAlgorithm::Zstd { level: 3 }));
+        assert!(matches!(
+            algorithms[2],
+            CompressionAlgorithm::Zstd { level: 3 }
+        ));
     }
 
     #[test]
@@ -516,7 +473,9 @@ pub fn create_test_communication_config() -> CommunicationConfig {
                     backpressure_config: BackpressureConfig {
                         enabled: false,
                         threshold: 0.8,
-                        strategy: BackpressureStrategy::Buffer { max_buffer_size: 8192 },
+                        strategy: BackpressureStrategy::Buffer {
+                            max_buffer_size: 8192,
+                        },
                         recovery_config: BackpressureRecoveryConfig {
                             recovery_threshold: 0.5,
                             strategy: RecoveryStrategy::Immediate,
@@ -533,7 +492,9 @@ pub fn create_test_communication_config() -> CommunicationConfig {
             },
             dictionary_config: DictionaryConfig {
                 enabled: false,
-                management_strategy: DictionaryManagementStrategy::Static { dictionary_data: Vec::new() },
+                management_strategy: DictionaryManagementStrategy::Static {
+                    dictionary_data: Vec::new(),
+                },
                 update_frequency: Duration::from_secs(300),
                 max_dictionary_size: 1024 * 1024,
                 sharing_config: DictionarySharingConfig {
@@ -705,7 +666,9 @@ pub fn create_minimal_communication_config() -> CommunicationConfig {
             },
             dictionary_config: DictionaryConfig {
                 enabled: false,
-                management_strategy: DictionaryManagementStrategy::Static { dictionary_data: Vec::new() },
+                management_strategy: DictionaryManagementStrategy::Static {
+                    dictionary_data: Vec::new(),
+                },
                 update_frequency: Duration::from_secs(3600),
                 max_dictionary_size: 64 * 1024,
                 sharing_config: DictionarySharingConfig {
@@ -724,7 +687,7 @@ pub fn create_minimal_communication_config() -> CommunicationConfig {
         network_config: NetworkConfig {
             mtu: 1500, // Standard Ethernet MTU
             socket_buffers: SocketBufferConfig {
-                send_buffer_size: 64 * 1024, // 64KB
+                send_buffer_size: 64 * 1024,    // 64KB
                 receive_buffer_size: 64 * 1024, // 64KB
                 auto_tuning: false,
                 scaling_factors: BufferScalingFactors {
@@ -770,25 +733,23 @@ pub fn create_minimal_communication_config() -> CommunicationConfig {
         },
         qos_config: QoSConfig {
             enabled: false,
-            traffic_classes: vec![
-                TrafficClass {
-                    name: "default".to_string(),
-                    priority: TrafficPriority::BestEffort,
-                    bandwidth_guarantee: 1.0,
-                    max_bandwidth: 1.0,
-                    latency_requirements: LatencyRequirements {
-                        max_latency: Duration::from_millis(100),
-                        target_latency: Duration::from_millis(50),
-                        variation_tolerance: Duration::from_millis(10),
-                    },
-                    jitter_requirements: JitterRequirements {
-                        max_jitter: Duration::from_millis(10),
-                        target_jitter: Duration::from_millis(1),
-                        buffer_size: Duration::from_millis(50),
-                    },
-                    packet_loss_tolerance: 0.1,
+            traffic_classes: vec![TrafficClass {
+                name: "default".to_string(),
+                priority: TrafficPriority::BestEffort,
+                bandwidth_guarantee: 1.0,
+                max_bandwidth: 1.0,
+                latency_requirements: LatencyRequirements {
+                    max_latency: Duration::from_millis(100),
+                    target_latency: Duration::from_millis(50),
+                    variation_tolerance: Duration::from_millis(10),
                 },
-            ],
+                jitter_requirements: JitterRequirements {
+                    max_jitter: Duration::from_millis(10),
+                    target_jitter: Duration::from_millis(1),
+                    buffer_size: Duration::from_millis(50),
+                },
+                packet_loss_tolerance: 0.1,
+            }],
             bandwidth_allocation: BandwidthAllocation {
                 total_bandwidth: 1_000_000.0, // 1 Mbps
                 strategy: BandwidthAllocationStrategy::Static,
@@ -820,7 +781,9 @@ pub fn create_minimal_communication_config() -> CommunicationConfig {
                         drop_policy: DropPolicy::DropTail,
                         congestion_control: QueueCongestionControl {
                             enabled: false,
-                            detection_method: CongestionDetectionMethod::QueueLength { threshold: 0.9 },
+                            detection_method: CongestionDetectionMethod::QueueLength {
+                                threshold: 0.9,
+                            },
                             response_strategy: CongestionResponseStrategy::DropPackets,
                             recovery_mechanism: CongestionRecoveryMechanism::Immediate,
                         },
@@ -888,7 +851,9 @@ pub fn create_minimal_communication_config() -> CommunicationConfig {
                     max_credits: 1000,
                     management: CreditManagement {
                         allocation_strategy: CreditAllocationStrategy::Static,
-                        recovery_mechanism: CreditRecoveryMechanism::TimeBased { interval: Duration::from_secs(1) },
+                        recovery_mechanism: CreditRecoveryMechanism::TimeBased {
+                            interval: Duration::from_secs(1),
+                        },
                     },
                     monitoring: CreditMonitoring {
                         enabled: false,
@@ -963,7 +928,10 @@ pub fn create_minimal_communication_config() -> CommunicationConfig {
             },
             adaptation_config: AdaptationConfig {
                 enabled: false,
-                algorithm: AdaptationAlgorithm::GradientDescent { learning_rate: 0.01, momentum: 0.9 },
+                algorithm: AdaptationAlgorithm::GradientDescent {
+                    learning_rate: 0.01,
+                    momentum: 0.9,
+                },
                 adaptation_rate: 0.01,
                 stability_requirements: StabilityRequirements {
                     min_stability_period: Duration::from_secs(60),

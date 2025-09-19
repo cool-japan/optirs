@@ -89,62 +89,58 @@ pub mod core;
 pub mod utilities;
 
 // Re-export all event synchronization modules
-pub mod delivery;
-pub mod ordering;
-pub mod filtering;
-pub mod persistence;
 pub mod compression;
-pub mod routing;
-pub mod queue;
+pub mod delivery;
+pub mod filtering;
 pub mod handlers;
+pub mod ordering;
+pub mod persistence;
+pub mod queue;
+pub mod routing;
 
 // Re-export core types and builders for convenient access
-pub use core::{
-    types::*,
-    builder::*,
-    config::*,
-};
+pub use core::{builder::*, config::*, types::*};
 
 // Re-export utilities
 pub use utilities::helpers::EventSyncUtils;
 
 // Re-export key types from each module for convenient access
 pub use delivery::{
-    EventDelivery, EventDeliveryBuilder, DeliveryGuarantees, AcknowledgmentConfig,
-    RetryPolicies, TimeoutConfig, DeliveryMetrics, DeliveryPresets,
+    AcknowledgmentConfig, DeliveryGuarantees, DeliveryMetrics, DeliveryPresets, EventDelivery,
+    EventDeliveryBuilder, RetryPolicies, TimeoutConfig,
 };
 
 pub use ordering::{
-    EventOrdering, EventOrderingBuilder, OrderingStrategies, SequenceManagement,
-    GapDetection, OrderingBuffering, OrderingMetrics, OrderingPresets,
+    EventOrdering, EventOrderingBuilder, GapDetection, OrderingBuffering, OrderingMetrics,
+    OrderingPresets, OrderingStrategies, SequenceManagement,
 };
 
 pub use filtering::{
-    EventFiltering, EventFilteringBuilder, FilterRulesConfig, FilterOptimization,
-    FilterPerformanceMonitoring, FilterComposition, FilteringPresets,
+    EventFiltering, EventFilteringBuilder, FilterComposition, FilterOptimization,
+    FilterPerformanceMonitoring, FilterRulesConfig, FilteringPresets,
 };
 
 pub use persistence::{
-    EventPersistence, EventPersistenceBuilder, StorageBackendConfig, RetentionPolicies,
-    BackupRecoveryConfig, PerformanceOptimization, PersistencePresets,
+    BackupRecoveryConfig, EventPersistence, EventPersistenceBuilder, PerformanceOptimization,
+    PersistencePresets, RetentionPolicies, StorageBackendConfig,
 };
 
 pub use compression::{
-    EventCompression, EventCompressionBuilder, CompressionAlgorithms, AdaptiveCompression,
-    StreamingCompression, CompressionAnalytics, CompressionPresets,
+    AdaptiveCompression, CompressionAlgorithms, CompressionAnalytics, CompressionPresets,
+    EventCompression, EventCompressionBuilder, StreamingCompression,
 };
 
 pub use routing::{
-    EventRouting, EventRoutingBuilder, RoutingStrategies, LoadBalancing,
-    Failover, TrafficManagement, RoutingAnalytics, RoutingPresets,
+    EventRouting, EventRoutingBuilder, Failover, LoadBalancing, RoutingAnalytics, RoutingPresets,
+    RoutingStrategies, TrafficManagement,
 };
 
 pub use queue::{
-    EventQueue, EventQueueBuilder, QueueManagement, QueueStatistics,
-    OverflowHandling, QueuePerformance, QueuePresets,
+    EventQueue, EventQueueBuilder, OverflowHandling, QueueManagement, QueuePerformance,
+    QueuePresets, QueueStatistics,
 };
 
 pub use handlers::{
-    EventHandlers, EventHandlersBuilder, HandlerManagement, HandlerCapabilities,
-    HandlerRouting, HandlerMetrics, EventHandlerPresets,
+    EventHandlerPresets, EventHandlers, EventHandlersBuilder, HandlerCapabilities,
+    HandlerManagement, HandlerMetrics, HandlerRouting,
 };

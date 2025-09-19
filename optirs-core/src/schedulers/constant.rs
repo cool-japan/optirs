@@ -26,7 +26,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> ConstantScheduler<A> {
     /// # Example
     ///
     /// ```
-    /// use scirs2_optim::schedulers::{ConstantScheduler, LearningRateScheduler};
+    /// use optirs_core::schedulers::{ConstantScheduler, LearningRateScheduler};
     ///
     /// let mut scheduler = ConstantScheduler::new(0.1);
     /// assert_eq!(scheduler.get_learning_rate(), 0.1);

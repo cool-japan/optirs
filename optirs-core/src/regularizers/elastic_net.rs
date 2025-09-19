@@ -19,7 +19,7 @@ use crate::regularizers::{Regularizer, L1, L2};
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::regularizers::{ElasticNet, Regularizer};
+/// use optirs_core::regularizers::{ElasticNet, Regularizer};
 ///
 /// // Create an ElasticNet regularizer with strength 0.01 and l1_ratio 0.5
 /// // (equal weight to L1 and L2)

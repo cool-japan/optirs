@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::error::{OptimError, Result};
 use crate::tpu::tpu_backend::DeviceId;
-use crate::error::{Result, OptimError};
 
 /// Consensus protocol configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,7 +355,9 @@ impl ConsensusProtocolManager {
     pub fn propose(&mut self, value: Vec<u8>) -> Result<ProposalId> {
         // Validate proposal size
         if value.len() > self.config.parameters.max_proposal_size {
-            return Err(OptimError::invalid_argument("Proposal size exceeds maximum"));
+            return Err(OptimError::invalid_argument(
+                "Proposal size exceeds maximum",
+            ));
         }
 
         // Delegate to protocol implementation
@@ -429,7 +431,11 @@ impl ConsensusProtocolManager {
     }
 
     /// Process completed proposal
-    pub fn complete_proposal(&mut self, proposal_id: ProposalId, result: ConsensusResult) -> Result<()> {
+    pub fn complete_proposal(
+        &mut self,
+        proposal_id: ProposalId,
+        result: ConsensusResult,
+    ) -> Result<()> {
         // Remove from pending proposals
         self.state.pending_proposals.remove(&proposal_id);
 
@@ -440,21 +446,23 @@ impl ConsensusProtocolManager {
         match result.decision {
             ConsensusDecision::Accepted { .. } => {
                 self.statistics.accepted_proposals += 1;
-            },
+            }
             ConsensusDecision::Rejected => {
                 self.statistics.rejected_proposals += 1;
-            },
+            }
             ConsensusDecision::TimedOut => {
                 self.statistics.timed_out_proposals += 1;
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         // Update average consensus time
         let consensus_time = result.timestamp.duration_since(
-            self.state.pending_proposals.get(&proposal_id)
+            self.state
+                .pending_proposals
+                .get(&proposal_id)
                 .map(|p| p.timestamp)
-                .unwrap_or(Instant::now())
+                .unwrap_or(Instant::now()),
         );
 
         self.update_average_consensus_time(consensus_time);
@@ -464,14 +472,16 @@ impl ConsensusProtocolManager {
 
     /// Update average consensus time
     fn update_average_consensus_time(&mut self, new_time: Duration) {
-        let total_completed = self.statistics.accepted_proposals +
-                            self.statistics.rejected_proposals +
-                            self.statistics.timed_out_proposals;
+        let total_completed = self.statistics.accepted_proposals
+            + self.statistics.rejected_proposals
+            + self.statistics.timed_out_proposals;
 
         if total_completed > 0 {
             let current_avg_millis = self.statistics.avg_consensus_time.as_millis() as f64;
             let new_time_millis = new_time.as_millis() as f64;
-            let new_avg_millis = (current_avg_millis * (total_completed - 1) as f64 + new_time_millis) / total_completed as f64;
+            let new_avg_millis = (current_avg_millis * (total_completed - 1) as f64
+                + new_time_millis)
+                / total_completed as f64;
             self.statistics.avg_consensus_time = Duration::from_millis(new_avg_millis as u64);
         } else {
             self.statistics.avg_consensus_time = new_time;
@@ -480,9 +490,9 @@ impl ConsensusProtocolManager {
 
     /// Update throughput statistics
     pub fn update_throughput(&mut self, window_duration: Duration) {
-        let total_completed = self.statistics.accepted_proposals +
-                            self.statistics.rejected_proposals +
-                            self.statistics.timed_out_proposals;
+        let total_completed = self.statistics.accepted_proposals
+            + self.statistics.rejected_proposals
+            + self.statistics.timed_out_proposals;
 
         if window_duration.as_secs_f64() > 0.0 {
             self.statistics.throughput = total_completed as f64 / window_duration.as_secs_f64();
@@ -533,11 +543,15 @@ impl ConsensusProtocolManager {
     pub fn update_config(&mut self, config: ConsensusConfig) -> Result<()> {
         // Validate configuration changes
         if config.parameters.quorum_size == 0 {
-            return Err(OptimError::invalid_argument("Quorum size must be greater than 0"));
+            return Err(OptimError::invalid_argument(
+                "Quorum size must be greater than 0",
+            ));
         }
 
         if config.parameters.max_proposal_size == 0 {
-            return Err(OptimError::invalid_argument("Max proposal size must be greater than 0"));
+            return Err(OptimError::invalid_argument(
+                "Max proposal size must be greater than 0",
+            ));
         }
 
         self.config = config;
@@ -598,7 +612,10 @@ impl ConsensusState {
     }
 
     /// Get pending proposal (mutable)
-    pub fn get_pending_proposal_mut(&mut self, proposal_id: ProposalId) -> Option<&mut PendingProposal> {
+    pub fn get_pending_proposal_mut(
+        &mut self,
+        proposal_id: ProposalId,
+    ) -> Option<&mut PendingProposal> {
         self.pending_proposals.get_mut(&proposal_id)
     }
 
@@ -829,7 +846,12 @@ impl ConsensusConfigBuilder {
     }
 
     /// Set compression configuration
-    pub fn with_compression(mut self, enable: bool, algorithm: CompressionAlgorithm, threshold: usize) -> Self {
+    pub fn with_compression(
+        mut self,
+        enable: bool,
+        algorithm: CompressionAlgorithm,
+        threshold: usize,
+    ) -> Self {
         self.config.optimization.compression.enable = enable;
         self.config.optimization.compression.algorithm = algorithm;
         self.config.optimization.compression.threshold = threshold;
@@ -837,7 +859,12 @@ impl ConsensusConfigBuilder {
     }
 
     /// Set fault tolerance settings
-    pub fn with_fault_tolerance(mut self, max_failures: usize, detection_timeout: Duration, recovery_strategy: ConsensusRecoveryStrategy) -> Self {
+    pub fn with_fault_tolerance(
+        mut self,
+        max_failures: usize,
+        detection_timeout: Duration,
+        recovery_strategy: ConsensusRecoveryStrategy,
+    ) -> Self {
         self.config.fault_tolerance.max_failures = max_failures;
         self.config.fault_tolerance.failure_detection_timeout = detection_timeout;
         self.config.fault_tolerance.recovery_strategy = recovery_strategy;
@@ -895,7 +922,11 @@ impl ConsensusPresets {
     pub fn byzantine_fault_tolerant() -> ConsensusConfig {
         ConsensusConfigBuilder::new()
             .with_protocol(ConsensusProtocol::PBFT)
-            .with_fault_tolerance(2, Duration::from_secs(10), ConsensusRecoveryStrategy::StateSynchronization)
+            .with_fault_tolerance(
+                2,
+                Duration::from_secs(10),
+                ConsensusRecoveryStrategy::StateSynchronization,
+            )
             .build()
     }
 }

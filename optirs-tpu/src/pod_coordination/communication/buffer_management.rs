@@ -5,9 +5,9 @@
 // performance optimization for message buffering.
 
 use num_traits::Float;
-use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -50,9 +50,15 @@ pub enum PoolGrowthStrategy {
     /// Exponential growth
     Exponential { factor: f64 },
     /// Adaptive growth based on usage
-    Adaptive { threshold: f64, max_growth_rate: f64 },
+    Adaptive {
+        threshold: f64,
+        max_growth_rate: f64,
+    },
     /// Custom growth strategy
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Memory management strategies for buffers
@@ -69,7 +75,9 @@ pub enum MemoryManagementStrategy {
     /// NUMA-aware allocation
     NumaAware { preferred_nodes: Vec<usize> },
     /// Hybrid strategy
-    Hybrid { strategies: Vec<MemoryManagementStrategy> },
+    Hybrid {
+        strategies: Vec<MemoryManagementStrategy>,
+    },
 }
 
 /// Garbage collection configuration
@@ -477,7 +485,9 @@ pub enum BufferAllocationStrategy {
     /// Predictive allocation
     Predictive { history_window: usize },
     /// Hybrid allocation
-    Hybrid { strategies: Vec<BufferAllocationStrategy> },
+    Hybrid {
+        strategies: Vec<BufferAllocationStrategy>,
+    },
 }
 
 /// Shared buffer settings
@@ -764,28 +774,27 @@ impl<T: Float + Debug + Send + Sync + 'static> MessageBufferPool<T> {
         match &config.memory_strategy {
             MemoryManagementStrategy::PreAllocated => {
                 Ok(Box::new(PreAllocatedAllocator::new(config)?))
-            },
-            MemoryManagementStrategy::Dynamic => {
-                Ok(Box::new(DynamicAllocator::new(config)?))
-            },
+            }
+            MemoryManagementStrategy::Dynamic => Ok(Box::new(DynamicAllocator::new(config)?)),
             MemoryManagementStrategy::MemoryMapped { file_backed } => {
                 Ok(Box::new(MemoryMappedAllocator::new(config, *file_backed)?))
-            },
+            }
             MemoryManagementStrategy::SharedMemory { segment_size } => {
                 Ok(Box::new(SharedMemoryAllocator::new(config, *segment_size)?))
-            },
-            MemoryManagementStrategy::NumaAware { preferred_nodes } => {
-                Ok(Box::new(NumaAwareAllocator::new(config, preferred_nodes.clone())?))
-            },
+            }
+            MemoryManagementStrategy::NumaAware { preferred_nodes } => Ok(Box::new(
+                NumaAwareAllocator::new(config, preferred_nodes.clone())?,
+            )),
             MemoryManagementStrategy::Hybrid { strategies: _ } => {
                 Ok(Box::new(HybridAllocator::new(config)?))
-            },
+            }
         }
     }
 
     fn preallocate_buffers(&mut self, count: usize) -> Result<()> {
         for _ in 0..count {
-            let buffer = self.create_new_buffer(self.config.buffer_size, MessagePriority::Normal)?;
+            let buffer =
+                self.create_new_buffer(self.config.buffer_size, MessagePriority::Normal)?;
             let mut available = self.available_buffers.lock().unwrap();
             available.push_back(buffer);
         }
@@ -797,7 +806,11 @@ impl<T: Float + Debug + Send + Sync + 'static> MessageBufferPool<T> {
         Ok(available.pop_front())
     }
 
-    fn create_new_buffer(&mut self, size: usize, priority: MessagePriority) -> Result<MessageBuffer<T>> {
+    fn create_new_buffer(
+        &mut self,
+        size: usize,
+        priority: MessagePriority,
+    ) -> Result<MessageBuffer<T>> {
         let buffer_id = self.generate_buffer_id();
         let alignment = self.config.alignment_requirements.data_alignment;
         let memory_region = self.allocator.allocate(size, alignment)?;
@@ -823,7 +836,11 @@ impl<T: Float + Debug + Send + Sync + 'static> MessageBufferPool<T> {
         })
     }
 
-    fn resize_buffer(&mut self, mut buffer: MessageBuffer<T>, new_size: usize) -> Result<MessageBuffer<T>> {
+    fn resize_buffer(
+        &mut self,
+        mut buffer: MessageBuffer<T>,
+        new_size: usize,
+    ) -> Result<MessageBuffer<T>> {
         if new_size > buffer.capacity {
             let alignment = self.config.alignment_requirements.data_alignment;
             let new_region = self.allocator.reallocate(&buffer.memory_region, new_size)?;
@@ -847,8 +864,10 @@ impl<T: Float + Debug + Send + Sync + 'static> MessageBufferPool<T> {
         stats.in_use_count += 1;
 
         // Update average allocation time
-        let total_time = stats.avg_allocation_time.as_nanos() as f64 * (stats.total_allocations - 1) as f64;
-        let new_avg = (total_time + allocation_time.as_nanos() as f64) / stats.total_allocations as f64;
+        let total_time =
+            stats.avg_allocation_time.as_nanos() as f64 * (stats.total_allocations - 1) as f64;
+        let new_avg =
+            (total_time + allocation_time.as_nanos() as f64) / stats.total_allocations as f64;
         stats.avg_allocation_time = Duration::from_nanos(new_avg as u64);
     }
 
@@ -939,19 +958,19 @@ impl<T: Float + Debug + Send + Sync + 'static> GarbageCollector<T> {
             GarbageCollectionStrategy::MarkAndSweep => {
                 // Mark and sweep implementation
                 self.mark_and_sweep_collect(pool, &mut objects_collected, &mut memory_freed)?;
-            },
+            }
             GarbageCollectionStrategy::ReferenceCounting => {
                 // Reference counting implementation
                 self.reference_counting_collect(pool, &mut objects_collected, &mut memory_freed)?;
-            },
+            }
             GarbageCollectionStrategy::Generational { generations: _ } => {
                 // Generational GC implementation
                 self.generational_collect(pool, &mut objects_collected, &mut memory_freed)?;
-            },
+            }
             GarbageCollectionStrategy::Incremental { chunk_size: _ } => {
                 // Incremental GC implementation
                 self.incremental_collect(pool, &mut objects_collected, &mut memory_freed)?;
-            },
+            }
         }
 
         let collection_time = start_time.elapsed();
@@ -965,34 +984,61 @@ impl<T: Float + Debug + Send + Sync + 'static> GarbageCollector<T> {
         Ok(())
     }
 
-    fn mark_and_sweep_collect(&mut self, _pool: &mut MessageBufferPool<T>, _objects_collected: &mut u64, _memory_freed: &mut usize) -> Result<()> {
+    fn mark_and_sweep_collect(
+        &mut self,
+        _pool: &mut MessageBufferPool<T>,
+        _objects_collected: &mut u64,
+        _memory_freed: &mut usize,
+    ) -> Result<()> {
         // Mark and sweep implementation would go here
         Ok(())
     }
 
-    fn reference_counting_collect(&mut self, _pool: &mut MessageBufferPool<T>, _objects_collected: &mut u64, _memory_freed: &mut usize) -> Result<()> {
+    fn reference_counting_collect(
+        &mut self,
+        _pool: &mut MessageBufferPool<T>,
+        _objects_collected: &mut u64,
+        _memory_freed: &mut usize,
+    ) -> Result<()> {
         // Reference counting implementation would go here
         Ok(())
     }
 
-    fn generational_collect(&mut self, _pool: &mut MessageBufferPool<T>, _objects_collected: &mut u64, _memory_freed: &mut usize) -> Result<()> {
+    fn generational_collect(
+        &mut self,
+        _pool: &mut MessageBufferPool<T>,
+        _objects_collected: &mut u64,
+        _memory_freed: &mut usize,
+    ) -> Result<()> {
         // Generational GC implementation would go here
         Ok(())
     }
 
-    fn incremental_collect(&mut self, _pool: &mut MessageBufferPool<T>, _objects_collected: &mut u64, _memory_freed: &mut usize) -> Result<()> {
+    fn incremental_collect(
+        &mut self,
+        _pool: &mut MessageBufferPool<T>,
+        _objects_collected: &mut u64,
+        _memory_freed: &mut usize,
+    ) -> Result<()> {
         // Incremental GC implementation would go here
         Ok(())
     }
 
-    fn update_gc_statistics(&mut self, objects_collected: u64, memory_freed: usize, collection_time: Duration) {
+    fn update_gc_statistics(
+        &mut self,
+        objects_collected: u64,
+        memory_freed: usize,
+        collection_time: Duration,
+    ) {
         self.statistics.total_collections += 1;
         self.statistics.total_objects_collected += objects_collected;
         self.statistics.total_memory_freed += memory_freed;
 
         // Update average collection time
-        let total_time = self.statistics.avg_collection_time.as_nanos() as f64 * (self.statistics.total_collections - 1) as f64;
-        let new_avg = (total_time + collection_time.as_nanos() as f64) / self.statistics.total_collections as f64;
+        let total_time = self.statistics.avg_collection_time.as_nanos() as f64
+            * (self.statistics.total_collections - 1) as f64;
+        let new_avg = (total_time + collection_time.as_nanos() as f64)
+            / self.statistics.total_collections as f64;
         self.statistics.avg_collection_time = Duration::from_nanos(new_avg as u64);
 
         // Update last collection stats
@@ -1000,7 +1046,11 @@ impl<T: Float + Debug + Send + Sync + 'static> GarbageCollector<T> {
             objects_collected,
             memory_freed,
             collection_time,
-            efficiency: if memory_freed > 0 { objects_collected as f64 / memory_freed as f64 } else { 0.0 },
+            efficiency: if memory_freed > 0 {
+                objects_collected as f64 / memory_freed as f64
+            } else {
+                0.0
+            },
         };
 
         self.last_collection = Instant::now();
@@ -1025,19 +1075,33 @@ impl Default for GarbageCollectionStatistics {
 }
 
 // Placeholder allocator implementations
-struct PreAllocatedAllocator<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct DynamicAllocator<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct MemoryMappedAllocator<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct SharedMemoryAllocator<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct NumaAwareAllocator<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct HybridAllocator<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
+struct PreAllocatedAllocator<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct DynamicAllocator<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct MemoryMappedAllocator<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct SharedMemoryAllocator<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct NumaAwareAllocator<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct HybridAllocator<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
 
 // Implement MemoryAllocator trait for placeholder allocators
 macro_rules! impl_memory_allocator {
     ($allocator:ident) => {
         impl<T: Float + Debug + Send + Sync + 'static> $allocator<T> {
             pub fn new(_config: &BufferPoolConfig) -> Result<Self> {
-                Ok(Self { _phantom: std::marker::PhantomData })
+                Ok(Self {
+                    _phantom: std::marker::PhantomData,
+                })
             }
         }
 
@@ -1060,7 +1124,11 @@ macro_rules! impl_memory_allocator {
                 Ok(())
             }
 
-            fn reallocate(&mut self, region: &MemoryRegion, new_size: usize) -> Result<MemoryRegion> {
+            fn reallocate(
+                &mut self,
+                region: &MemoryRegion,
+                new_size: usize,
+            ) -> Result<MemoryRegion> {
                 Ok(MemoryRegion {
                     start_address: region.start_address,
                     size: new_size,
@@ -1091,18 +1159,24 @@ impl_memory_allocator!(HybridAllocator);
 // Additional implementations for specialized allocators
 impl<T: Float + Debug + Send + Sync + 'static> MemoryMappedAllocator<T> {
     pub fn new(_config: &BufferPoolConfig, _file_backed: bool) -> Result<Self> {
-        Ok(Self { _phantom: std::marker::PhantomData })
+        Ok(Self {
+            _phantom: std::marker::PhantomData,
+        })
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> SharedMemoryAllocator<T> {
     pub fn new(_config: &BufferPoolConfig, _segment_size: usize) -> Result<Self> {
-        Ok(Self { _phantom: std::marker::PhantomData })
+        Ok(Self {
+            _phantom: std::marker::PhantomData,
+        })
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> NumaAwareAllocator<T> {
     pub fn new(_config: &BufferPoolConfig, _preferred_nodes: Vec<usize>) -> Result<Self> {
-        Ok(Self { _phantom: std::marker::PhantomData })
+        Ok(Self {
+            _phantom: std::marker::PhantomData,
+        })
     }
 }

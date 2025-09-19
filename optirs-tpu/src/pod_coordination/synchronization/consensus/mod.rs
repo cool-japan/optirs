@@ -7,59 +7,54 @@
 pub mod core;
 pub mod election;
 pub mod failure_detection;
-pub mod recovery;
-pub mod raft;
-pub mod pbft;
 pub mod paxos;
+pub mod pbft;
+pub mod raft;
+pub mod recovery;
 
+use crate::tpu::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use crate::tpu::pod_coordination::types::*;
 
 // Re-export core types and traits
 pub use core::{
-    ConsensusProtocol, ConsensusProtocolTrait, ConsensusManager,
-    ConsensusConfig, ConsensusState, ConsensusMessage, ConsensusResult,
-    ProposalId, ProposalResult, Vote, DeviceId,
+    ConsensusConfig, ConsensusManager, ConsensusMessage, ConsensusProtocol, ConsensusProtocolTrait,
+    ConsensusResult, ConsensusState, DeviceId, ProposalId, ProposalResult, Vote,
 };
 
 // Re-export leader election types
 pub use election::{
-    LeaderElectionManager, LeaderElectionConfig, ElectionState,
-    CandidateInfo, ElectionStatistics, ElectionAlgorithm,
+    CandidateInfo, ElectionAlgorithm, ElectionState, ElectionStatistics, LeaderElectionConfig,
+    LeaderElectionManager,
 };
 
 // Re-export failure detection types
 pub use failure_detection::{
-    FailureDetectionManager, FailureDetectionConfig, DeviceStatus,
-    FailureEvent, FailureType, FailureSeverity, DetectionMethod,
-    RecoveryStatus,
+    DetectionMethod, DeviceStatus, FailureDetectionConfig, FailureDetectionManager, FailureEvent,
+    FailureSeverity, FailureType, RecoveryStatus,
 };
 
 // Re-export recovery coordination types
 pub use recovery::{
-    RecoveryCoordinator, RecoveryCoordinationConfig, RecoveryOperation,
-    RecoveryStep, RecoveryTarget, RecoveryType, RecoveryStatus as RecoveryOpStatus,
-    RecoveryStatistics,
+    RecoveryCoordinationConfig, RecoveryCoordinator, RecoveryOperation, RecoveryStatistics,
+    RecoveryStatus as RecoveryOpStatus, RecoveryStep, RecoveryTarget, RecoveryType,
 };
 
 // Re-export protocol-specific types
 pub use raft::{
-    RaftConsensus, RaftConfig, RaftState, RaftMessage, RaftStatistics,
-    Term, LogIndex, LogEntry, NodeId as RaftNodeId,
+    LogEntry, LogIndex, NodeId as RaftNodeId, RaftConfig, RaftConsensus, RaftMessage, RaftState,
+    RaftStatistics, Term,
 };
 
 pub use pbft::{
-    PbftConsensus, PbftConfig, PbftState, PbftMessage, PbftStatistics,
-    ViewNumber, SequenceNumber, RequestMessage, ReplyMessage,
-    NodeId as PbftNodeId,
+    NodeId as PbftNodeId, PbftConfig, PbftConsensus, PbftMessage, PbftState, PbftStatistics,
+    ReplyMessage, RequestMessage, SequenceNumber, ViewNumber,
 };
 
 pub use paxos::{
-    PaxosConsensus, PaxosConfig, PaxosMessage, PaxosStatistics,
-    InstanceId, ProposalNumber, ProposalValue,
-    NodeId as PaxosNodeId, PaxosRole,
+    InstanceId, NodeId as PaxosNodeId, PaxosConfig, PaxosConsensus, PaxosMessage, PaxosRole,
+    PaxosStatistics, ProposalNumber, ProposalValue,
 };
 
 /// Unified consensus configuration
@@ -366,17 +361,14 @@ pub struct ProtocolSpecificStats {
 impl UnifiedConsensusManager {
     /// Create a new unified consensus manager
     pub fn new(config: UnifiedConsensusConfig) -> Result<Self> {
-        let leader_election = LeaderElectionManager::new(
-            config.global_settings.create_election_config()?
-        );
+        let leader_election =
+            LeaderElectionManager::new(config.global_settings.create_election_config()?);
 
-        let failure_detection = FailureDetectionManager::new(
-            config.global_settings.create_failure_detection_config()?
-        );
+        let failure_detection =
+            FailureDetectionManager::new(config.global_settings.create_failure_detection_config()?);
 
-        let recovery_coordinator = RecoveryCoordinator::new(
-            config.global_settings.create_recovery_config()?
-        );
+        let recovery_coordinator =
+            RecoveryCoordinator::new(config.global_settings.create_recovery_config()?);
 
         let active_protocol = Self::initialize_protocol(&config.protocol)?;
 
@@ -429,18 +421,10 @@ impl UnifiedConsensusManager {
     /// Propose a value for consensus
     pub fn propose(&mut self, value: Vec<u8>) -> Result<ProposalId> {
         match &mut self.active_protocol {
-            ActiveConsensusProtocol::Raft(raft) => {
-                self.propose_via_raft(raft, value)
-            }
-            ActiveConsensusProtocol::Pbft(pbft) => {
-                self.propose_via_pbft(pbft, value)
-            }
-            ActiveConsensusProtocol::Paxos(paxos) => {
-                self.propose_via_paxos(paxos, value)
-            }
-            ActiveConsensusProtocol::Hybrid(hybrid) => {
-                self.propose_via_hybrid(hybrid, value)
-            }
+            ActiveConsensusProtocol::Raft(raft) => self.propose_via_raft(raft, value),
+            ActiveConsensusProtocol::Pbft(pbft) => self.propose_via_pbft(pbft, value),
+            ActiveConsensusProtocol::Paxos(paxos) => self.propose_via_paxos(paxos, value),
+            ActiveConsensusProtocol::Hybrid(hybrid) => self.propose_via_hybrid(hybrid, value),
             ActiveConsensusProtocol::Adaptive(adaptive) => {
                 self.propose_via_adaptive(adaptive, value)
             }
@@ -461,18 +445,10 @@ impl UnifiedConsensusManager {
     /// Get consensus result
     pub fn get_result(&self, proposal_id: &ProposalId) -> Option<ConsensusResult> {
         match &self.active_protocol {
-            ActiveConsensusProtocol::Raft(raft) => {
-                self.get_raft_result(raft, proposal_id)
-            }
-            ActiveConsensusProtocol::Pbft(pbft) => {
-                self.get_pbft_result(pbft, proposal_id)
-            }
-            ActiveConsensusProtocol::Paxos(paxos) => {
-                self.get_paxos_result(paxos, proposal_id)
-            }
-            ActiveConsensusProtocol::Hybrid(hybrid) => {
-                self.get_hybrid_result(hybrid, proposal_id)
-            }
+            ActiveConsensusProtocol::Raft(raft) => self.get_raft_result(raft, proposal_id),
+            ActiveConsensusProtocol::Pbft(pbft) => self.get_pbft_result(pbft, proposal_id),
+            ActiveConsensusProtocol::Paxos(paxos) => self.get_paxos_result(paxos, proposal_id),
+            ActiveConsensusProtocol::Hybrid(hybrid) => self.get_hybrid_result(hybrid, proposal_id),
             ActiveConsensusProtocol::Adaptive(adaptive) => {
                 self.get_adaptive_result(adaptive, proposal_id)
             }
@@ -514,7 +490,10 @@ impl UnifiedConsensusManager {
         self.config.protocol = new_protocol;
 
         // Update statistics
-        self.statistics.protocol_stats.protocol_switching_stats.total_switches += 1;
+        self.statistics
+            .protocol_stats
+            .protocol_switching_stats
+            .total_switches += 1;
 
         Ok(())
     }
@@ -536,21 +515,21 @@ impl UnifiedConsensusManager {
     // Private helper methods
     fn initialize_protocol(protocol: &ConsensusProtocolType) -> Result<ActiveConsensusProtocol> {
         match protocol {
-            ConsensusProtocolType::Raft(config) => {
-                Ok(ActiveConsensusProtocol::Raft(RaftConsensus::new(config.clone())))
-            }
-            ConsensusProtocolType::Pbft(config) => {
-                Ok(ActiveConsensusProtocol::Pbft(PbftConsensus::new(config.clone())))
-            }
-            ConsensusProtocolType::Paxos(config) => {
-                Ok(ActiveConsensusProtocol::Paxos(PaxosConsensus::new(config.clone())))
-            }
-            ConsensusProtocolType::Hybrid(config) => {
-                Ok(ActiveConsensusProtocol::Hybrid(HybridProtocolCoordinator::new(config.clone())))
-            }
-            ConsensusProtocolType::Adaptive(config) => {
-                Ok(ActiveConsensusProtocol::Adaptive(AdaptiveProtocolManager::new(config.clone())))
-            }
+            ConsensusProtocolType::Raft(config) => Ok(ActiveConsensusProtocol::Raft(
+                RaftConsensus::new(config.clone()),
+            )),
+            ConsensusProtocolType::Pbft(config) => Ok(ActiveConsensusProtocol::Pbft(
+                PbftConsensus::new(config.clone()),
+            )),
+            ConsensusProtocolType::Paxos(config) => Ok(ActiveConsensusProtocol::Paxos(
+                PaxosConsensus::new(config.clone()),
+            )),
+            ConsensusProtocolType::Hybrid(config) => Ok(ActiveConsensusProtocol::Hybrid(
+                HybridProtocolCoordinator::new(config.clone()),
+            )),
+            ConsensusProtocolType::Adaptive(config) => Ok(ActiveConsensusProtocol::Adaptive(
+                AdaptiveProtocolManager::new(config.clone()),
+            )),
         }
     }
 
@@ -559,7 +538,10 @@ impl UnifiedConsensusManager {
             ConsensusProtocolType::Raft(_) => true,
             ConsensusProtocolType::Pbft(_) => false, // PBFT has its own view change mechanism
             ConsensusProtocolType::Paxos(config) => {
-                matches!(config.protocol_variant, paxos::PaxosProtocolVariant::MultiPaxos(_))
+                matches!(
+                    config.protocol_variant,
+                    paxos::PaxosProtocolVariant::MultiPaxos(_)
+                )
             }
             ConsensusProtocolType::Hybrid(_) => true,
             ConsensusProtocolType::Adaptive(_) => true,
@@ -598,7 +580,11 @@ impl UnifiedConsensusManager {
         Ok(self.generate_proposal_id())
     }
 
-    fn propose_via_paxos(&mut self, paxos: &mut PaxosConsensus, value: Vec<u8>) -> Result<ProposalId> {
+    fn propose_via_paxos(
+        &mut self,
+        paxos: &mut PaxosConsensus,
+        value: Vec<u8>,
+    ) -> Result<ProposalId> {
         // Implementation for Paxos proposal
         let proposal_value = paxos::ProposalValue::from_client_data(value);
         let instance_id = paxos.propose_value(proposal_value)?;
@@ -620,22 +606,82 @@ impl UnifiedConsensusManager {
     }
 
     // Stub implementations for additional methods
-    fn start_active_protocol(&mut self) -> Result<()> { Ok(()) }
-    fn propose_via_hybrid(&mut self, _hybrid: &mut HybridProtocolCoordinator, _value: Vec<u8>) -> Result<ProposalId> { Ok("hybrid_prop".to_string()) }
-    fn propose_via_adaptive(&mut self, _adaptive: &mut AdaptiveProtocolManager, _value: Vec<u8>) -> Result<ProposalId> { Ok("adaptive_prop".to_string()) }
-    fn get_raft_result(&self, _raft: &RaftConsensus, _proposal_id: &ProposalId) -> Option<ConsensusResult> { None }
-    fn get_pbft_result(&self, _pbft: &PbftConsensus, _proposal_id: &ProposalId) -> Option<ConsensusResult> { None }
-    fn get_paxos_result(&self, _paxos: &PaxosConsensus, _proposal_id: &ProposalId) -> Option<ConsensusResult> { None }
-    fn get_hybrid_result(&self, _hybrid: &HybridProtocolCoordinator, _proposal_id: &ProposalId) -> Option<ConsensusResult> { None }
-    fn get_adaptive_result(&self, _adaptive: &AdaptiveProtocolManager, _proposal_id: &ProposalId) -> Option<ConsensusResult> { None }
-    fn get_protocol_health(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn get_component_health(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn get_resource_health(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn get_network_health(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn validate_protocol_switch(&self, _new_protocol: &ConsensusProtocolType) -> Result<()> { Ok(()) }
-    fn prepare_protocol_switch(&mut self, _new_protocol: &ConsensusProtocolType) -> Result<()> { Ok(()) }
-    fn validate_configuration(&self, _new_config: &UnifiedConsensusConfig) -> Result<()> { Ok(()) }
-    fn apply_configuration_changes(&mut self, _new_config: &UnifiedConsensusConfig) -> Result<()> { Ok(()) }
+    fn start_active_protocol(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn propose_via_hybrid(
+        &mut self,
+        _hybrid: &mut HybridProtocolCoordinator,
+        _value: Vec<u8>,
+    ) -> Result<ProposalId> {
+        Ok("hybrid_prop".to_string())
+    }
+    fn propose_via_adaptive(
+        &mut self,
+        _adaptive: &mut AdaptiveProtocolManager,
+        _value: Vec<u8>,
+    ) -> Result<ProposalId> {
+        Ok("adaptive_prop".to_string())
+    }
+    fn get_raft_result(
+        &self,
+        _raft: &RaftConsensus,
+        _proposal_id: &ProposalId,
+    ) -> Option<ConsensusResult> {
+        None
+    }
+    fn get_pbft_result(
+        &self,
+        _pbft: &PbftConsensus,
+        _proposal_id: &ProposalId,
+    ) -> Option<ConsensusResult> {
+        None
+    }
+    fn get_paxos_result(
+        &self,
+        _paxos: &PaxosConsensus,
+        _proposal_id: &ProposalId,
+    ) -> Option<ConsensusResult> {
+        None
+    }
+    fn get_hybrid_result(
+        &self,
+        _hybrid: &HybridProtocolCoordinator,
+        _proposal_id: &ProposalId,
+    ) -> Option<ConsensusResult> {
+        None
+    }
+    fn get_adaptive_result(
+        &self,
+        _adaptive: &AdaptiveProtocolManager,
+        _proposal_id: &ProposalId,
+    ) -> Option<ConsensusResult> {
+        None
+    }
+    fn get_protocol_health(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn get_component_health(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn get_resource_health(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn get_network_health(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn validate_protocol_switch(&self, _new_protocol: &ConsensusProtocolType) -> Result<()> {
+        Ok(())
+    }
+    fn prepare_protocol_switch(&mut self, _new_protocol: &ConsensusProtocolType) -> Result<()> {
+        Ok(())
+    }
+    fn validate_configuration(&self, _new_config: &UnifiedConsensusConfig) -> Result<()> {
+        Ok(())
+    }
+    fn apply_configuration_changes(&mut self, _new_config: &UnifiedConsensusConfig) -> Result<()> {
+        Ok(())
+    }
 }
 
 // Unified consensus message types
@@ -800,26 +846,69 @@ pub enum SystemManagementOperation {
 
 // Import and re-export external types
 use crate::tpu::pod_coordination::types::{
-    ProtocolSwitchingCriteria, HybridCoordinationMechanism, AdaptationStrategy,
-    PerformanceThresholds, EnvironmentMonitoring, DecisionEngineConfig,
-    BatchProcessingSettings, OrderingGuarantees, ConsistencyLevels,
-    DurabilitySettings, AvailabilitySettings, NodeIdentity, ClusterMembership,
-    NodeCapabilities, ResourceAllocation, RoleManagement, TransportProtocols,
-    ConnectionManagement, MessageRouting, NetworkTopology, QualityOfService,
-    NetworkSecurity, AuthenticationMechanisms, AuthorizationPolicies,
-    CryptographicSettings, ByzantineFaultTolerance, SecurityMonitoring,
-    AuditCompliance, PerformanceOptimization, MonitoringObservability,
-    IntegrationSettings, InstanceMetadata, InstanceLifecycleManager,
-    CoordinationState, CrossProtocolCommunication, StateMachineCoordination,
-    EventCoordination, ResourceCoordination, MessageRoutingTable,
-    MessageQueues, MessageSerialization, MessageValidation,
-    SynchronizationState, StateReplication, ConsistencyMaintenance,
-    ConflictResolution, StateRecovery, PerformanceMetrics, BenchmarkingSystem,
-    ProfilingSystem, OptimizationRecommendations, AlertSystem,
-    PerformanceStats, ReliabilityStats, SecurityStats, ResourceUtilizationStats,
-    ProtocolSwitchingStats, HybridCoordinationStats, HybridProtocolCoordinator,
+    AdaptationStrategy,
     AdaptiveProtocolManager,
+    AlertSystem,
+    AuditCompliance,
+    AuthenticationMechanisms,
+    AuthorizationPolicies,
+    AvailabilitySettings,
+    BatchProcessingSettings,
+    BenchmarkingSystem,
+    ByzantineFaultTolerance,
+    ClusterMembership,
+    ConflictResolution,
+    ConnectionManagement,
+    ConsistencyLevels,
+    ConsistencyMaintenance,
+    CoordinationState,
+    CrossProtocolCommunication,
+    CryptographicSettings,
+    DecisionEngineConfig,
+    DurabilitySettings,
+    EnvironmentMonitoring,
+    EventCoordination,
     // Default types
-    GlobalConsensusSettings, NodeConfiguration, NetworkConfiguration,
+    GlobalConsensusSettings,
+    HybridCoordinationMechanism,
+    HybridCoordinationStats,
+    HybridProtocolCoordinator,
+    InstanceLifecycleManager,
+    InstanceMetadata,
+    IntegrationSettings,
+    MessageQueues,
+    MessageRouting,
+    MessageRoutingTable,
+    MessageSerialization,
+    MessageValidation,
+    MonitoringObservability,
+    NetworkConfiguration,
+    NetworkSecurity,
+    NetworkTopology,
+    NodeCapabilities,
+    NodeConfiguration,
+    NodeIdentity,
+    OptimizationRecommendations,
+    OrderingGuarantees,
+    PerformanceMetrics,
+    PerformanceOptimization,
+    PerformanceStats,
+    PerformanceThresholds,
+    ProfilingSystem,
+    ProtocolSwitchingCriteria,
+    ProtocolSwitchingStats,
+    QualityOfService,
+    ReliabilityStats,
+    ResourceAllocation,
+    ResourceCoordination,
+    ResourceUtilizationStats,
+    RoleManagement,
     SecurityConfiguration,
+    SecurityMonitoring,
+    SecurityStats,
+    StateMachineCoordination,
+    StateRecovery,
+    StateReplication,
+    SynchronizationState,
+    TransportProtocols,
 };

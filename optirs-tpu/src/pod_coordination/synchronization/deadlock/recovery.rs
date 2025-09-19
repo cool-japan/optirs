@@ -102,7 +102,10 @@ pub enum RecoveryAction {
     /// Notify administrator
     NotifyAdministrator { message: String },
     /// Custom action
-    Custom { action: String, parameters: HashMap<String, String> },
+    Custom {
+        action: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Recovery verification configuration
@@ -464,7 +467,11 @@ pub struct RecoveryExecutor {
 /// Recovery executor strategy trait
 pub trait RecoveryExecutorStrategy: std::fmt::Debug + Send + Sync {
     /// Execute recovery strategy
-    fn execute(&self, recovery: &ActiveRecovery, context: &ExecutionContext) -> crate::error::Result<RecoveryResult>;
+    fn execute(
+        &self,
+        recovery: &ActiveRecovery,
+        context: &ExecutionContext,
+    ) -> crate::error::Result<RecoveryResult>;
     /// Get strategy capabilities
     fn capabilities(&self) -> ExecutorCapabilities;
 }
@@ -598,7 +605,10 @@ impl DeadlockRecoverySystem {
     }
 
     /// Initiate recovery for a detected deadlock
-    pub fn initiate_recovery(&mut self, deadlock: DetectedDeadlock) -> crate::error::Result<String> {
+    pub fn initiate_recovery(
+        &mut self,
+        deadlock: DetectedDeadlock,
+    ) -> crate::error::Result<String> {
         let request = RecoveryRequest {
             id: format!("recovery_{}", uuid::Uuid::new_v4()),
             deadlock,
@@ -652,7 +662,9 @@ impl RecoveryCoordinator {
             let recovery = ActiveRecovery {
                 id: request.id.clone(),
                 deadlock_id: request.deadlock.id,
-                strategy: request.strategy.unwrap_or(RecoveryStrategy::ProcessTermination),
+                strategy: request
+                    .strategy
+                    .unwrap_or(RecoveryStrategy::ProcessTermination),
                 progress: RecoveryProgress::new(),
                 start_time: Instant::now(),
             };
@@ -701,7 +713,9 @@ impl Default for DeadlockRecovery {
         Self {
             strategy: RecoveryStrategy::ProcessTermination,
             victim_selection: VictimSelection::default(),
-            actions: vec![RecoveryAction::TerminateProcess { process_id: "default".to_string() }],
+            actions: vec![RecoveryAction::TerminateProcess {
+                process_id: "default".to_string(),
+            }],
             verification: RecoveryVerification::default(),
             optimization: RecoveryOptimization::default(),
         }
@@ -712,7 +726,10 @@ impl Default for VictimSelection {
     fn default() -> Self {
         Self {
             algorithm: VictimSelectionAlgorithm::MinimumCost,
-            criteria: vec![SelectionCriterion::ProcessPriority, SelectionCriterion::ResourceConsumption],
+            criteria: vec![
+                SelectionCriterion::ProcessPriority,
+                SelectionCriterion::ResourceConsumption,
+            ],
             weights: HashMap::new(),
         }
     }

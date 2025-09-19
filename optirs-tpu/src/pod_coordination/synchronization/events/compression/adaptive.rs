@@ -524,10 +524,7 @@ impl Default for AnomalyDetection {
             enabled: true,
             algorithm: AnomalyAlgorithm::StatisticalOutlier,
             sensitivity: 0.95,
-            response_actions: vec![
-                AnomalyResponse::Log,
-                AnomalyResponse::Adjust,
-            ],
+            response_actions: vec![AnomalyResponse::Log, AnomalyResponse::Adjust],
         }
     }
 }
@@ -751,12 +748,12 @@ pub enum OptimizationObjective {
 /// Selection frequency settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SelectionFrequency {
-    VeryHigh,   // Every operation
-    High,       // Every 10 operations
-    Medium,     // Every 100 operations
-    Low,        // Every 1000 operations
-    VeryLow,    // Every 10000 operations
-    Adaptive,   // Based on performance variance
+    VeryHigh,       // Every operation
+    High,           // Every 10 operations
+    Medium,         // Every 100 operations
+    Low,            // Every 1000 operations
+    VeryLow,        // Every 10000 operations
+    Adaptive,       // Based on performance variance
     Time(Duration), // Time-based frequency
 }
 
@@ -854,8 +851,17 @@ impl ParameterSearchSpace {
     /// Speed-focused search space
     pub fn speed_focused() -> Self {
         let mut ranges = HashMap::new();
-        ranges.insert("compression_level".to_string(), ParameterRange::Integer { min: 1, max: 3 });
-        ranges.insert("block_size".to_string(), ParameterRange::Integer { min: 4096, max: 65536 });
+        ranges.insert(
+            "compression_level".to_string(),
+            ParameterRange::Integer { min: 1, max: 3 },
+        );
+        ranges.insert(
+            "block_size".to_string(),
+            ParameterRange::Integer {
+                min: 4096,
+                max: 65536,
+            },
+        );
 
         Self {
             ranges,
@@ -867,8 +873,14 @@ impl ParameterSearchSpace {
     /// Ratio-focused search space
     pub fn ratio_focused() -> Self {
         let mut ranges = HashMap::new();
-        ranges.insert("compression_level".to_string(), ParameterRange::Integer { min: 9, max: 22 });
-        ranges.insert("window_size".to_string(), ParameterRange::Integer { min: 15, max: 27 });
+        ranges.insert(
+            "compression_level".to_string(),
+            ParameterRange::Integer { min: 9, max: 22 },
+        );
+        ranges.insert(
+            "window_size".to_string(),
+            ParameterRange::Integer { min: 15, max: 27 },
+        );
 
         Self {
             ranges,
@@ -880,8 +892,17 @@ impl ParameterSearchSpace {
     /// Latency-focused search space
     pub fn latency_focused() -> Self {
         let mut ranges = HashMap::new();
-        ranges.insert("compression_level".to_string(), ParameterRange::Integer { min: 1, max: 1 });
-        ranges.insert("buffer_size".to_string(), ParameterRange::Integer { min: 1024, max: 4096 });
+        ranges.insert(
+            "compression_level".to_string(),
+            ParameterRange::Integer { min: 1, max: 1 },
+        );
+        ranges.insert(
+            "buffer_size".to_string(),
+            ParameterRange::Integer {
+                min: 1024,
+                max: 4096,
+            },
+        );
 
         Self {
             ranges,
@@ -1012,9 +1033,9 @@ pub struct ResourceConstraints {
 impl Default for ResourceConstraints {
     fn default() -> Self {
         Self {
-            max_memory: 100 * 1024 * 1024, // 100MB
-            max_cpu: 0.5, // 50%
-            max_disk: 1024 * 1024 * 1024, // 1GB
+            max_memory: 100 * 1024 * 1024,   // 100MB
+            max_cpu: 0.5,                    // 50%
+            max_disk: 1024 * 1024 * 1024,    // 1GB
             max_bandwidth: 10 * 1024 * 1024, // 10MB/s
         }
     }
@@ -1024,8 +1045,8 @@ impl ResourceConstraints {
     /// Performance-focused resource constraints
     pub fn performance_focused() -> Self {
         Self {
-            max_memory: 500 * 1024 * 1024, // 500MB
-            max_cpu: 0.8, // 80%
+            max_memory: 500 * 1024 * 1024,    // 500MB
+            max_cpu: 0.8,                     // 80%
             max_disk: 5 * 1024 * 1024 * 1024, // 5GB
             max_bandwidth: 100 * 1024 * 1024, // 100MB/s
         }
@@ -1035,9 +1056,9 @@ impl ResourceConstraints {
     pub fn latency_focused() -> Self {
         Self {
             max_memory: 50 * 1024 * 1024, // 50MB
-            max_cpu: 0.3, // 30%
-            max_disk: 100 * 1024 * 1024, // 100MB
-            max_bandwidth: 1024 * 1024, // 1MB/s
+            max_cpu: 0.3,                 // 30%
+            max_disk: 100 * 1024 * 1024,  // 100MB
+            max_bandwidth: 1024 * 1024,   // 1MB/s
         }
     }
 }

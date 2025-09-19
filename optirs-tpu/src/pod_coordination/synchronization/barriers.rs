@@ -65,7 +65,10 @@ pub enum BarrierOptimizationStrategy {
     /// Combining tree barrier
     CombiningTree,
     /// Custom strategy
-    Custom { name: String, parameters: HashMap<String, String> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Barrier performance tuning
@@ -91,11 +94,22 @@ pub enum BackoffStrategy {
     /// Fixed backoff
     Fixed { delay: Duration },
     /// Exponential backoff
-    Exponential { initial_delay: Duration, factor: f64, max_delay: Duration },
+    Exponential {
+        initial_delay: Duration,
+        factor: f64,
+        max_delay: Duration,
+    },
     /// Linear backoff
-    Linear { initial_delay: Duration, increment: Duration, max_delay: Duration },
+    Linear {
+        initial_delay: Duration,
+        increment: Duration,
+        max_delay: Duration,
+    },
     /// Adaptive backoff
-    Adaptive { min_delay: Duration, max_delay: Duration },
+    Adaptive {
+        min_delay: Duration,
+        max_delay: Duration,
+    },
 }
 
 /// Cache optimization for barriers
@@ -221,7 +235,9 @@ pub enum FailureDetectionMethod {
     /// Consensus-based detection
     Consensus { quorum_size: usize },
     /// Hybrid detection
-    Hybrid { methods: Vec<FailureDetectionMethod> },
+    Hybrid {
+        methods: Vec<FailureDetectionMethod>,
+    },
 }
 
 /// Barrier recovery strategies
@@ -299,7 +315,10 @@ pub enum AnomalyDetectionAlgorithm {
     /// Statistical outlier detection
     Statistical { z_score_threshold: f64 },
     /// Moving average based detection
-    MovingAverage { window_size: usize, deviation_threshold: f64 },
+    MovingAverage {
+        window_size: usize,
+        deviation_threshold: f64,
+    },
     /// Machine learning based detection
     MachineLearning { model_type: String },
     /// Rule-based detection
@@ -666,9 +685,15 @@ pub enum BarrierOptimizationAlgorithm {
     /// Adaptive algorithm selection
     Adaptive,
     /// Genetic algorithm
-    Genetic { population_size: usize, generations: usize },
+    Genetic {
+        population_size: usize,
+        generations: usize,
+    },
     /// Simulated annealing
-    SimulatedAnnealing { initial_temperature: f64, cooling_rate: f64 },
+    SimulatedAnnealing {
+        initial_temperature: f64,
+        cooling_rate: f64,
+    },
     /// Gradient descent
     GradientDescent { learning_rate: f64, momentum: f64 },
     /// Reinforcement learning
@@ -795,7 +820,11 @@ impl BarrierManager {
     }
 
     /// Participant arrives at barrier
-    pub fn arrive_at_barrier(&mut self, barrier_id: BarrierId, device_id: DeviceId) -> crate::error::Result<BarrierStatus> {
+    pub fn arrive_at_barrier(
+        &mut self,
+        barrier_id: BarrierId,
+        device_id: DeviceId,
+    ) -> crate::error::Result<BarrierStatus> {
         if let Some(barrier) = self.active_barriers.get_mut(&barrier_id) {
             if barrier.expected_participants.contains(&device_id) {
                 barrier.arrived_participants.insert(device_id);
@@ -809,14 +838,16 @@ impl BarrierManager {
 
                 Ok(barrier.status.clone())
             } else {
-                Err(crate::error::ScirsError::InvalidOperation(
-                    format!("Device {} not expected at barrier {}", device_id, barrier_id)
-                ))
+                Err(crate::error::ScirsError::InvalidOperation(format!(
+                    "Device {} not expected at barrier {}",
+                    device_id, barrier_id
+                )))
             }
         } else {
-            Err(crate::error::ScirsError::NotFound(
-                format!("Barrier {} not found", barrier_id)
-            ))
+            Err(crate::error::ScirsError::NotFound(format!(
+                "Barrier {} not found",
+                barrier_id
+            )))
         }
     }
 
@@ -830,9 +861,12 @@ impl BarrierManager {
         let now = Instant::now();
         self.active_barriers.retain(|_, barrier| {
             match barrier.status {
-                BarrierStatus::Completed | BarrierStatus::Failed { .. } | BarrierStatus::Aborted => {
+                BarrierStatus::Completed
+                | BarrierStatus::Failed { .. }
+                | BarrierStatus::Aborted => {
                     if let Some(completed_at) = barrier.completed_at {
-                        now.duration_since(completed_at) < Duration::from_secs(300) // Keep for 5 minutes
+                        now.duration_since(completed_at) < Duration::from_secs(300)
+                    // Keep for 5 minutes
                     } else {
                         false
                     }
@@ -862,7 +896,9 @@ impl BarrierManager {
             // Update average completion time
             let total_completions = self.statistics.total_completed as f64;
             let current_avg = self.statistics.avg_completion_time.as_nanos() as f64;
-            let new_avg = (current_avg * (total_completions - 1.0) + completion_time.as_nanos() as f64) / total_completions;
+            let new_avg = (current_avg * (total_completions - 1.0)
+                + completion_time.as_nanos() as f64)
+                / total_completions;
             self.statistics.avg_completion_time = Duration::from_nanos(new_avg as u64);
         }
     }
@@ -880,7 +916,10 @@ impl BarrierOptimizer {
     }
 
     /// Optimize barrier configuration
-    pub fn optimize(&mut self, current_metrics: &BarrierPerformanceMetrics) -> crate::error::Result<BarrierOptimizationConfig> {
+    pub fn optimize(
+        &mut self,
+        current_metrics: &BarrierPerformanceMetrics,
+    ) -> crate::error::Result<BarrierOptimizationConfig> {
         // Optimization implementation would go here
         Ok(self.config.clone())
     }
@@ -974,8 +1013,12 @@ impl Default for BarrierFailureDetection {
         Self {
             method: FailureDetectionMethod::Hybrid {
                 methods: vec![
-                    FailureDetectionMethod::Heartbeat { interval: Duration::from_secs(5) },
-                    FailureDetectionMethod::Timeout { threshold: Duration::from_secs(30) },
+                    FailureDetectionMethod::Heartbeat {
+                        interval: Duration::from_secs(5),
+                    },
+                    FailureDetectionMethod::Timeout {
+                        threshold: Duration::from_secs(30),
+                    },
                 ],
             },
             interval: Duration::from_secs(1),
@@ -1014,8 +1057,13 @@ impl Default for AnomalyDetection {
         Self {
             enabled: true,
             algorithms: vec![
-                AnomalyDetectionAlgorithm::Statistical { z_score_threshold: 3.0 },
-                AnomalyDetectionAlgorithm::MovingAverage { window_size: 10, deviation_threshold: 2.0 },
+                AnomalyDetectionAlgorithm::Statistical {
+                    z_score_threshold: 3.0,
+                },
+                AnomalyDetectionAlgorithm::MovingAverage {
+                    window_size: 10,
+                    deviation_threshold: 2.0,
+                },
             ],
             thresholds: AnomalyThresholds::default(),
         }
@@ -1129,7 +1177,10 @@ impl Default for ResourceUtilization {
 impl Default for BarrierOptimizationConfig {
     fn default() -> Self {
         Self {
-            objectives: vec![OptimizationObjective::MinimizeLatency, OptimizationObjective::MaximizeThroughput],
+            objectives: vec![
+                OptimizationObjective::MinimizeLatency,
+                OptimizationObjective::MaximizeThroughput,
+            ],
             constraints: Vec::new(),
             frequency: Duration::from_secs(300),
             learning_rate: 0.01,

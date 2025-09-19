@@ -14,7 +14,7 @@ use crate::schedulers::LearningRateScheduler;
 /// # Examples
 ///
 /// ```
-/// use scirs2_optim::schedulers::{ExponentialDecay, LearningRateScheduler};
+/// use optirs_core::schedulers::{ExponentialDecay, LearningRateScheduler};
 ///
 /// // Create a scheduler with initial learning rate 0.1, decay rate 0.95
 /// // and decay steps 1000

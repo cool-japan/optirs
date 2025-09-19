@@ -4,7 +4,7 @@
 //! a simple function and compares it with other optimizers.
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::optimizers::{Adam, Lion, Optimizer, SGD};
+use optirs_core::optimizers::{Adam, Lion, Optimizer, SGD};
 use std::collections::HashMap;
 
 #[allow(dead_code)]

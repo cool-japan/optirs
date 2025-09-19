@@ -1007,11 +1007,17 @@ struct SignalAcquisitionEngine {
 
 impl SignalAcquisitionEngine {
     fn new(config: &SignalAcquisition) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn start(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn stop(&mut self) -> Result<(), GpsError> { Ok(()) }
+    fn start(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn stop(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1021,11 +1027,17 @@ struct TrackingLoopManager {
 
 impl TrackingLoopManager {
     fn new(config: &TrackingLoops) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), GpsError> { Ok(()) }
+    fn initialize(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1035,11 +1047,17 @@ struct MultipathMitigator {
 
 impl MultipathMitigator {
     fn new(config: &MultipathMitigation) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn activate(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn deactivate(&mut self) -> Result<(), GpsError> { Ok(()) }
+    fn activate(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn deactivate(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1049,12 +1067,20 @@ struct IonosphericCorrector {
 
 impl IonosphericCorrector {
     fn new(config: &IonosphericCorrection) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> { Ok(time) }
+    fn initialize(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> {
+        Ok(time)
+    }
 }
 
 #[derive(Debug)]
@@ -1064,12 +1090,20 @@ struct TroposphericCorrector {
 
 impl TroposphericCorrector {
     fn new(config: &TroposphericCorrection) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> { Ok(time) }
+    fn initialize(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> {
+        Ok(time)
+    }
 }
 
 #[derive(Debug)]
@@ -1079,12 +1113,20 @@ struct SatelliteClockCorrector {
 
 impl SatelliteClockCorrector {
     fn new(config: &SatelliteClockCorrection) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> { Ok(time) }
+    fn initialize(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> {
+        Ok(time)
+    }
 }
 
 #[derive(Debug)]
@@ -1094,10 +1136,18 @@ struct RelativisticCorrector {
 
 impl RelativisticCorrector {
     fn new(config: &RelativisticCorrection) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), GpsError> { Ok(()) }
-    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> { Ok(time) }
+    fn initialize(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), GpsError> {
+        Ok(())
+    }
+    fn correct_time(&self, time: std::time::SystemTime) -> Result<std::time::SystemTime, GpsError> {
+        Ok(time)
+    }
 }

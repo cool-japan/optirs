@@ -79,7 +79,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use scirs2_optim::schedulers::{
+    /// use optirs_core::schedulers::{
     ///     ExponentialDecay, NoiseDistribution, NoiseInjectionScheduler, LearningRateScheduler
     /// };
     ///

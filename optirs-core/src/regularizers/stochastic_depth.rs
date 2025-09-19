@@ -20,7 +20,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::StochasticDepth;
+/// use optirs_core::regularizers::StochasticDepth;
 ///
 /// let stochastic_depth = StochasticDepth::new(0.2, 10, 50);
 /// let features = array![[1.0, 2.0], [3.0, 4.0]];

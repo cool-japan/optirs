@@ -4,7 +4,7 @@
 // shortest paths computation, and graph-based analysis for TPU pod coordination.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque, BTreeSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,7 +20,7 @@ pub type AlgorithmId = String;
 
 // Re-export from other modules
 use super::config::TopologyConfig;
-use super::device_layout::{Position3D, DeviceGroup};
+use super::device_layout::{DeviceGroup, Position3D};
 
 /// Topology graph representation
 #[derive(Debug, Clone)]
@@ -427,17 +427,29 @@ pub enum EdgeStatus {
 #[derive(Debug, Clone)]
 pub enum PhysicalMedium {
     /// Fiber optic cable
-    FiberOptic { fiber_type: String, length_meters: f64 },
+    FiberOptic {
+        fiber_type: String,
+        length_meters: f64,
+    },
     /// Copper cable
-    Copper { cable_type: String, length_meters: f64 },
+    Copper {
+        cable_type: String,
+        length_meters: f64,
+    },
     /// Wireless connection
-    Wireless { frequency_ghz: f64, distance_meters: f64 },
+    Wireless {
+        frequency_ghz: f64,
+        distance_meters: f64,
+    },
     /// Backplane connection
     Backplane { slot_distance: usize },
     /// Virtual connection
     Virtual,
     /// Custom medium
-    Custom { medium_type: String, specifications: HashMap<String, f64> },
+    Custom {
+        medium_type: String,
+        specifications: HashMap<String, f64>,
+    },
 }
 
 /// Algorithms state for individual edges
@@ -502,17 +514,26 @@ pub struct CongestionMitigation {
 #[derive(Debug, Clone)]
 pub enum MitigationType {
     /// Traffic rerouting
-    TrafficRerouting { alternative_paths: Vec<Vec<DeviceId>> },
+    TrafficRerouting {
+        alternative_paths: Vec<Vec<DeviceId>>,
+    },
     /// Bandwidth allocation adjustment
     BandwidthAdjustment { new_allocation: f64 },
     /// Quality of service modification
     QoSModification { new_qos: EdgeQoSParameters },
     /// Load balancing
-    LoadBalancing { distribution_weights: HashMap<EdgeId, f64> },
+    LoadBalancing {
+        distribution_weights: HashMap<EdgeId, f64>,
+    },
     /// Traffic shaping
-    TrafficShaping { shaping_parameters: HashMap<String, f64> },
+    TrafficShaping {
+        shaping_parameters: HashMap<String, f64>,
+    },
     /// Custom mitigation
-    Custom { mitigation_name: String, parameters: HashMap<String, f64> },
+    Custom {
+        mitigation_name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Statistics for individual edges
@@ -818,7 +839,9 @@ pub enum MitigationStrategy {
     /// Add redundant nodes
     AddRedundantNodes { node_count: usize },
     /// Add redundant edges
-    AddRedundantEdges { edge_specifications: Vec<(DeviceId, DeviceId)> },
+    AddRedundantEdges {
+        edge_specifications: Vec<(DeviceId, DeviceId)>,
+    },
     /// Improve clustering
     ImproveClustering { clustering_strategy: String },
     /// Implement failover mechanisms
@@ -1051,7 +1074,10 @@ pub enum FlowOptimizationObjective {
     /// Load balancing
     LoadBalancing,
     /// Multi-objective optimization
-    MultiObjective { objectives: Vec<String>, weights: Vec<f64> },
+    MultiObjective {
+        objectives: Vec<String>,
+        weights: Vec<f64>,
+    },
 }
 
 /// Flow constraints
@@ -1077,7 +1103,9 @@ pub enum FlowConstraintType {
     /// Flow conservation constraint
     FlowConservation,
     /// Quality of service constraint
-    QoSConstraint { qos_requirements: HashMap<String, f64> },
+    QoSConstraint {
+        qos_requirements: HashMap<String, f64>,
+    },
 }
 
 /// Optimization status
@@ -1429,7 +1457,10 @@ pub enum ClusteringAlgorithm {
     /// Label propagation
     LabelPropagation { max_iterations: usize },
     /// Custom clustering algorithm
-    Custom { algorithm_name: String, parameters: HashMap<String, f64> },
+    Custom {
+        algorithm_name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// State of centrality algorithms
@@ -1956,7 +1987,10 @@ pub enum AccuracySpeedTradeoff {
     /// Prioritize accuracy over speed
     Accuracy,
     /// Custom settings
-    Custom { speed_weight: f64, accuracy_weight: f64 },
+    Custom {
+        speed_weight: f64,
+        accuracy_weight: f64,
+    },
 }
 
 /// Performance settings for graph algorithms
@@ -2080,7 +2114,11 @@ impl TopologyGraph {
 
         self.edges.push(edge.clone());
         self.edge_lookup.insert(edge_id, index);
-        self.adjacency_matrix.add_edge(edge.source.clone(), edge.target.clone(), edge.properties.weight)?;
+        self.adjacency_matrix.add_edge(
+            edge.source.clone(),
+            edge.target.clone(),
+            edge.properties.weight,
+        )?;
 
         // Update node connections
         if let Some(source_node) = self.nodes.get_mut(&edge.source) {
@@ -2097,7 +2135,8 @@ impl TopologyGraph {
     /// Remove a node from the graph
     pub fn remove_node(&mut self, device_id: &DeviceId) -> Result<()> {
         // Remove all edges connected to this node
-        self.edges.retain(|edge| edge.source != *device_id && edge.target != *device_id);
+        self.edges
+            .retain(|edge| edge.source != *device_id && edge.target != *device_id);
 
         // Remove the node
         self.nodes.remove(device_id);
@@ -2143,7 +2182,11 @@ impl TopologyGraph {
 
     /// Get shortest path between two nodes
     pub fn get_shortest_path(&self, source: &DeviceId, target: &DeviceId) -> Option<Vec<DeviceId>> {
-        self.algorithms_state.shortest_paths_state.shortest_paths.get(&(source.clone(), target.clone())).cloned()
+        self.algorithms_state
+            .shortest_paths_state
+            .shortest_paths
+            .get(&(source.clone(), target.clone()))
+            .cloned()
     }
 
     /// Compute shortest paths for all pairs
@@ -2169,7 +2212,8 @@ impl TopologyGraph {
         self.statistics.basic_stats.edge_count = self.edges.len();
 
         if !self.nodes.is_empty() {
-            self.statistics.basic_stats.average_degree = (2 * self.edges.len()) as f64 / self.nodes.len() as f64;
+            self.statistics.basic_stats.average_degree =
+                (2 * self.edges.len()) as f64 / self.nodes.len() as f64;
         }
 
         // Calculate degree distribution
@@ -2218,9 +2262,12 @@ impl TopologyGraph {
 
             for i in 0..neighbors.len() {
                 for j in (i + 1)..neighbors.len() {
-                    if self.nodes.get(&neighbors[i])
+                    if self
+                        .nodes
+                        .get(&neighbors[i])
                         .map(|n| n.connections.contains(&neighbors[j]))
-                        .unwrap_or(false) {
+                        .unwrap_or(false)
+                    {
                         triangles += 1;
                     }
                 }
@@ -2273,8 +2320,10 @@ impl AdjacencyMatrix {
 
     /// Add an edge to the matrix
     pub fn add_edge(&mut self, source: DeviceId, target: DeviceId, weight: f64) -> Result<()> {
-        if let (Some(&source_idx), Some(&target_idx)) =
-            (self.device_to_index.get(&source), self.device_to_index.get(&target)) {
+        if let (Some(&source_idx), Some(&target_idx)) = (
+            self.device_to_index.get(&source),
+            self.device_to_index.get(&target),
+        ) {
             self.matrix.insert((source_idx, target_idx), weight);
             // For undirected graphs, also add the reverse edge
             self.matrix.insert((target_idx, source_idx), weight);
@@ -2305,8 +2354,10 @@ impl AdjacencyMatrix {
 
     /// Remove an edge from the matrix
     pub fn remove_edge(&mut self, source: DeviceId, target: DeviceId) -> Result<()> {
-        if let (Some(&source_idx), Some(&target_idx)) =
-            (self.device_to_index.get(&source), self.device_to_index.get(&target)) {
+        if let (Some(&source_idx), Some(&target_idx)) = (
+            self.device_to_index.get(&source),
+            self.device_to_index.get(&target),
+        ) {
             self.matrix.remove(&(source_idx, target_idx));
             self.matrix.remove(&(target_idx, source_idx));
         }
@@ -2736,7 +2787,10 @@ impl Default for AlgorithmPreferences {
         Self {
             shortest_path_algorithm: ShortestPathAlgorithm::Dijkstra,
             clustering_algorithm: ClusteringAlgorithm::KMeans { k: 2 },
-            centrality_algorithms: vec![CentralityAlgorithm::Degree, CentralityAlgorithm::Betweenness],
+            centrality_algorithms: vec![
+                CentralityAlgorithm::Degree,
+                CentralityAlgorithm::Betweenness,
+            ],
             timeouts: HashMap::new(),
             accuracy_speed_tradeoff: AccuracySpeedTradeoff::Balanced,
         }

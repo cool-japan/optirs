@@ -19,8 +19,8 @@
 // ## Example Usage
 //
 // ```rust
-// use scirs2_optim::benchmarking::regression_tester::{RegressionTester, RegressionConfig};
-// use scirs2_optim::benchmarking::BenchmarkResult;
+// use optirs_core::benchmarking::regression_tester::{RegressionTester, RegressionConfig};
+// use optirs_core::benchmarking::BenchmarkResult;
 // use std::time::Duration;
 //
 // // Create regression tester with configuration

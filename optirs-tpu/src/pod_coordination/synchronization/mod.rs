@@ -50,163 +50,87 @@
 // * `core` - Main synchronization manager and coordination logic
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use crate::error::{OptimError, Result};
 use crate::tpu::tpu_backend::DeviceId;
-use crate::error::{Result, OptimError};
 
 // Module declarations
-pub mod config;
 pub mod barriers;
-pub mod events;
 pub mod clocks;
-pub mod deadlock;
+pub mod config;
 pub mod consensus;
 pub mod core;
+pub mod deadlock;
+pub mod events;
 
 // Re-export core types for convenience
 pub use self::core::{
-    SynchronizationManager,
-    SynchronizationConfig,
-    SynchronizationMode,
-    GlobalSynchronizationState,
-    GlobalSyncStatus,
-    GlobalQualityMetrics,
-    DeviceSyncState,
-    DeviceSyncStatus,
-    CoordinationScheduler,
-    PerformanceMonitor,
-    AdaptiveOptimizer,
-    SynchronizationStatistics,
+    AdaptiveOptimizer, CoordinationScheduler, DeviceSyncState, DeviceSyncStatus,
+    GlobalQualityMetrics, GlobalSyncStatus, GlobalSynchronizationState, PerformanceMonitor,
+    SynchronizationConfig, SynchronizationManager, SynchronizationMode, SynchronizationStatistics,
 };
 
 // Re-export configuration types
 pub use self::config::{
-    ClockSynchronizationConfig,
-    ClockSyncProtocol,
-    ClockAccuracyRequirements,
-    BarrierConfig,
-    BarrierOptimization,
-    BarrierFaultTolerance,
-    EventSynchronizationConfig,
-    DeliveryGuarantees,
-    EventOrdering,
-    DeadlockDetectionConfig,
-    DeadlockDetectionAlgorithm,
-    ConsensusConfig,
-    ConsensusProtocol,
-    SynchronizationOptimization,
-    OptimizationStrategy,
+    BarrierConfig, BarrierFaultTolerance, BarrierOptimization, ClockAccuracyRequirements,
+    ClockSyncProtocol, ClockSynchronizationConfig, ConsensusConfig, ConsensusProtocol,
+    DeadlockDetectionAlgorithm, DeadlockDetectionConfig, DeliveryGuarantees, EventOrdering,
+    EventSynchronizationConfig, OptimizationStrategy, SynchronizationOptimization,
 };
 
 // Re-export barrier types
 pub use self::barriers::{
-    BarrierManager,
-    BarrierState,
-    BarrierStatus,
+    BarrierId, BarrierManager, BarrierOptimizer, BarrierState, BarrierStatistics, BarrierStatus,
     BarrierType,
-    BarrierStatistics,
-    BarrierOptimizer,
-    BarrierId,
 };
 
 // Re-export event types
 pub use self::events::{
-    EventSynchronizationManager,
-    SyncEvent,
-    SyncEventId,
-    EventHandler,
-    EventQueue,
-    EventRouter,
-    EventStatistics,
-    EventFilter,
-    EventPersistenceManager,
+    EventFilter, EventHandler, EventPersistenceManager, EventQueue, EventRouter, EventStatistics,
+    EventSynchronizationManager, SyncEvent, SyncEventId,
 };
 
 // Re-export clock types
 pub use self::clocks::{
-    ClockSynchronizationManager,
-    ClockSource,
-    ClockSynchronizer,
-    ClockStatistics,
-    TimeSourceManager,
-    ClockQualityMonitor,
-    TimeSource,
+    ClockQualityMonitor, ClockSource, ClockStatistics, ClockSynchronizationManager,
+    ClockSynchronizer, TimeSource, TimeSourceManager,
 };
 
 // Re-export deadlock types
 pub use self::deadlock::{
-    DeadlockDetector,
-    DependencyGraph,
-    DeadlockStatistics,
-    DeadlockPreventionSystem,
-    DeadlockRecoverySystem,
-    ResourceId,
-    TransactionId,
+    DeadlockDetector, DeadlockPreventionSystem, DeadlockRecoverySystem, DeadlockStatistics,
+    DependencyGraph, ResourceId, TransactionId,
 };
 
 // Re-export consensus types
 pub use self::consensus::{
-    ConsensusProtocolManager,
-    ConsensusProtocol as ConsensusProtocolTrait,
-    ConsensusResult,
-    ConsensusDecision,
-    Vote,
-    ProposalId,
-    RaftConsensus,
-    PBFTConsensus,
-    PaxosConsensus,
-    LeaderElectionManager,
-    FaultToleranceManager,
+    ConsensusDecision, ConsensusProtocol as ConsensusProtocolTrait, ConsensusProtocolManager,
+    ConsensusResult, FaultToleranceManager, LeaderElectionManager, PBFTConsensus, PaxosConsensus,
+    ProposalId, RaftConsensus, Vote,
 };
 
 /// Prelude module for easy imports
 pub mod prelude {
     pub use super::{
-        SynchronizationManager,
-        SynchronizationConfig,
-        SynchronizationMode,
-        GlobalSynchronizationState,
-        GlobalSyncStatus,
-        DeviceId,
+        DeviceId, GlobalSyncStatus, GlobalSynchronizationState, SynchronizationConfig,
+        SynchronizationManager, SynchronizationMode,
     };
 
-    pub use super::barriers::{
-        BarrierManager,
-        BarrierType,
-        BarrierStatus,
-        BarrierId,
-    };
+    pub use super::barriers::{BarrierId, BarrierManager, BarrierStatus, BarrierType};
 
-    pub use super::events::{
-        EventSynchronizationManager,
-        SyncEvent,
-        SyncEventId,
-    };
+    pub use super::events::{EventSynchronizationManager, SyncEvent, SyncEventId};
 
-    pub use super::clocks::{
-        ClockSynchronizationManager,
-        ClockSource,
-        TimeSource,
-    };
+    pub use super::clocks::{ClockSource, ClockSynchronizationManager, TimeSource};
 
-    pub use super::deadlock::{
-        DeadlockDetector,
-        ResourceId,
-        TransactionId,
-    };
+    pub use super::deadlock::{DeadlockDetector, ResourceId, TransactionId};
 
-    pub use super::consensus::{
-        ConsensusProtocolManager,
-        ConsensusResult,
-        Vote,
-        ProposalId,
-    };
+    pub use super::consensus::{ConsensusProtocolManager, ConsensusResult, ProposalId, Vote};
 
-    pub use crate::error::{Result, OptimError};
-    pub use std::time::{Duration, Instant};
+    pub use crate::error::{OptimError, Result};
     pub use std::collections::{HashMap, HashSet};
+    pub use std::time::{Duration, Instant};
 }
 
 /// Constants for synchronization operations
@@ -282,7 +206,8 @@ pub mod types {
     pub type AlertCallback = Box<dyn Fn(&str) + Send + Sync>;
 
     /// Optimization callback type
-    pub type OptimizationCallback = Box<dyn Fn(&HashMap<String, f64>) -> Result<HashMap<String, f64>> + Send + Sync>;
+    pub type OptimizationCallback =
+        Box<dyn Fn(&HashMap<String, f64>) -> Result<HashMap<String, f64>> + Send + Sync>;
 
     /// Shared synchronization manager type
     pub type SharedSyncManager = Arc<std::sync::Mutex<SynchronizationManager>>;
@@ -327,7 +252,7 @@ pub mod utils {
     pub fn create_high_performance_config() -> SynchronizationConfig {
         SynchronizationConfig {
             sync_mode: SynchronizationMode::Adaptive {
-                strategy: "high_performance".to_string()
+                strategy: "high_performance".to_string(),
             },
             global_timeout: Duration::from_secs(60),
             clock_sync: config::ClockSynchronizationConfig {
@@ -444,24 +369,33 @@ pub mod utils {
         // Validate clock synchronization settings
         if config.clock_sync.enable {
             if config.clock_sync.sync_frequency.as_secs() == 0 {
-                return Err(OptimError::invalid_input("Clock sync frequency cannot be zero"));
+                return Err(OptimError::invalid_input(
+                    "Clock sync frequency cannot be zero",
+                ));
             }
 
             if config.clock_sync.accuracy_requirements.drift_tolerance <= 0.0 {
-                return Err(OptimError::invalid_input("Drift tolerance must be positive"));
+                return Err(OptimError::invalid_input(
+                    "Drift tolerance must be positive",
+                ));
             }
         }
 
         // Validate consensus settings
         if config.consensus_config.parameters.quorum_size == 0 {
-            return Err(OptimError::invalid_input("Consensus quorum size cannot be zero"));
+            return Err(OptimError::invalid_input(
+                "Consensus quorum size cannot be zero",
+            ));
         }
 
         Ok(())
     }
 
     /// Merge two synchronization configurations
-    pub fn merge_configs(base: SynchronizationConfig, override_config: SynchronizationConfig) -> SynchronizationConfig {
+    pub fn merge_configs(
+        base: SynchronizationConfig,
+        override_config: SynchronizationConfig,
+    ) -> SynchronizationConfig {
         SynchronizationConfig {
             sync_mode: override_config.sync_mode,
             global_timeout: if override_config.global_timeout != Duration::from_secs(30) {
@@ -490,7 +424,9 @@ pub mod utils {
         HealthSummary {
             overall_status: global_state.status.clone(),
             device_count: global_state.participants.len(),
-            synchronized_devices: global_state.device_states.values()
+            synchronized_devices: global_state
+                .device_states
+                .values()
                 .filter(|state| state.status == DeviceSyncStatus::Synchronized)
                 .count(),
             average_quality: global_state.quality_metrics.overall_quality,
@@ -519,7 +455,10 @@ pub mod utils {
     }
 
     /// Perform bulk device operations
-    pub fn bulk_add_devices(sync_manager: &mut SynchronizationManager, device_ids: &[u32]) -> Result<()> {
+    pub fn bulk_add_devices(
+        sync_manager: &mut SynchronizationManager,
+        device_ids: &[u32],
+    ) -> Result<()> {
         for &device_id in device_ids {
             sync_manager.add_device(DeviceId(device_id))?;
         }
@@ -672,7 +611,8 @@ impl MetricsCollector {
     /// Add a metric value
     pub fn add_metric(&mut self, name: &str, value: f64) {
         let timestamp = Instant::now();
-        self.metrics.entry(name.to_string())
+        self.metrics
+            .entry(name.to_string())
             .or_insert_with(Vec::new)
             .push((timestamp, value));
     }
@@ -704,7 +644,10 @@ impl MetricsCollector {
 #[derive(Debug, Clone)]
 pub enum SyncError {
     /// Synchronization timeout
-    Timeout { operation: String, duration: Duration },
+    Timeout {
+        operation: String,
+        duration: Duration,
+    },
     /// Device not found
     DeviceNotFound { device_id: DeviceId },
     /// Synchronization quality too low
@@ -724,22 +667,35 @@ pub enum SyncError {
 impl std::fmt::Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SyncError::Timeout { operation, duration } =>
-                write!(f, "Synchronization timeout for {} after {:?}", operation, duration),
-            SyncError::DeviceNotFound { device_id } =>
-                write!(f, "Device not found: {:?}", device_id),
-            SyncError::QualityTooLow { current, required } =>
-                write!(f, "Synchronization quality too low: {} < {}", current, required),
-            SyncError::ResourceAllocationFailed { resource, reason } =>
-                write!(f, "Resource allocation failed for {}: {}", resource, reason),
-            SyncError::ConsensusFailed { reason } =>
-                write!(f, "Consensus failed: {}", reason),
-            SyncError::DeadlockDetected { resources } =>
-                write!(f, "Deadlock detected involving resources: {:?}", resources),
-            SyncError::InvalidConfiguration { field, reason } =>
-                write!(f, "Invalid configuration for {}: {}", field, reason),
-            SyncError::Unknown { message } =>
-                write!(f, "Unknown synchronization error: {}", message),
+            SyncError::Timeout {
+                operation,
+                duration,
+            } => write!(
+                f,
+                "Synchronization timeout for {} after {:?}",
+                operation, duration
+            ),
+            SyncError::DeviceNotFound { device_id } => {
+                write!(f, "Device not found: {:?}", device_id)
+            }
+            SyncError::QualityTooLow { current, required } => write!(
+                f,
+                "Synchronization quality too low: {} < {}",
+                current, required
+            ),
+            SyncError::ResourceAllocationFailed { resource, reason } => {
+                write!(f, "Resource allocation failed for {}: {}", resource, reason)
+            }
+            SyncError::ConsensusFailed { reason } => write!(f, "Consensus failed: {}", reason),
+            SyncError::DeadlockDetected { resources } => {
+                write!(f, "Deadlock detected involving resources: {:?}", resources)
+            }
+            SyncError::InvalidConfiguration { field, reason } => {
+                write!(f, "Invalid configuration for {}: {}", field, reason)
+            }
+            SyncError::Unknown { message } => {
+                write!(f, "Unknown synchronization error: {}", message)
+            }
         }
     }
 }
@@ -764,7 +720,10 @@ pub enum SyncEvent {
     /// Optimization applied
     OptimizationApplied { config: HashMap<String, f64> },
     /// Alert triggered
-    AlertTriggered { alert_type: String, severity: String },
+    AlertTriggered {
+        alert_type: String,
+        severity: String,
+    },
 }
 
 /// Synchronization event listener trait
@@ -825,7 +784,10 @@ mod tests {
         assert_eq!(config.global_timeout, Duration::from_secs(60));
         assert!(config.clock_sync.enable);
         assert_eq!(config.clock_sync.protocol, config::ClockSyncProtocol::PTP);
-        assert_eq!(config.consensus_config.protocol, config::ConsensusProtocol::Raft);
+        assert_eq!(
+            config.consensus_config.protocol,
+            config::ConsensusProtocol::Raft
+        );
         assert!(config.optimization.enable);
     }
 
@@ -956,7 +918,10 @@ mod tests {
     fn test_high_performance_config() {
         let config = utils::create_high_performance_config();
 
-        assert!(matches!(config.sync_mode, SynchronizationMode::Adaptive { .. }));
+        assert!(matches!(
+            config.sync_mode,
+            SynchronizationMode::Adaptive { .. }
+        ));
         assert!(config.optimization.enable);
         assert!(config.consensus_config.optimization.enable);
         assert_eq!(config.clock_sync.protocol, config::ClockSyncProtocol::PTP);
@@ -983,7 +948,10 @@ mod tests {
 
         assert_eq!(health.device_count, 0);
         assert_eq!(health.synchronized_devices, 0);
-        assert!(!matches!(health.overall_status, GlobalSyncStatus::Synchronized { .. }));
+        assert!(!matches!(
+            health.overall_status,
+            GlobalSyncStatus::Synchronized { .. }
+        ));
     }
 
     #[test]
@@ -1043,7 +1011,10 @@ mod integration_tests {
 
         // Verify synchronization completed
         let global_state = sync_manager.get_global_state();
-        assert!(matches!(global_state.status, GlobalSyncStatus::Synchronized { .. }));
+        assert!(matches!(
+            global_state.status,
+            GlobalSyncStatus::Synchronized { .. }
+        ));
 
         // Stop the synchronization manager
         assert!(sync_manager.stop().is_ok());
@@ -1052,9 +1023,7 @@ mod integration_tests {
     #[test]
     fn test_concurrent_device_operations() {
         let config = utils::create_test_config();
-        let sync_manager = Arc::new(Mutex::new(
-            SynchronizationManager::new(config).unwrap()
-        ));
+        let sync_manager = Arc::new(Mutex::new(SynchronizationManager::new(config).unwrap()));
 
         let mut handles = vec![];
 
@@ -1117,7 +1086,10 @@ mod integration_tests {
 
         // Verify metrics collection
         assert_eq!(collector.get_metric_history("latency").unwrap().len(), 100);
-        assert_eq!(collector.get_metric_history("throughput").unwrap().len(), 100);
+        assert_eq!(
+            collector.get_metric_history("throughput").unwrap().len(),
+            100
+        );
 
         // Check averages
         let avg_latency = collector.calculate_average("latency").unwrap();
@@ -1143,11 +1115,17 @@ mod integration_tests {
             .unwrap();
 
         // Verify configuration was built correctly
-        assert!(matches!(config.sync_mode, SynchronizationMode::Hybrid { .. }));
+        assert!(matches!(
+            config.sync_mode,
+            SynchronizationMode::Hybrid { .. }
+        ));
         assert_eq!(config.global_timeout, Duration::from_secs(45));
         assert!(config.clock_sync.enable);
         assert_eq!(config.clock_sync.protocol, config::ClockSyncProtocol::PTP);
-        assert_eq!(config.consensus_config.protocol, config::ConsensusProtocol::PBFT);
+        assert_eq!(
+            config.consensus_config.protocol,
+            config::ConsensusProtocol::PBFT
+        );
         assert!(config.optimization.enable);
         assert!(config.deadlock_config.enable);
 
@@ -1205,7 +1183,10 @@ mod benchmarks {
 
         let duration = start.elapsed();
 
-        println!("Performed 10 sync cycles with 100 devices in {:?}", duration);
+        println!(
+            "Performed 10 sync cycles with 100 devices in {:?}",
+            duration
+        );
         println!("Average sync time: {:?}", duration / 10);
 
         sync_manager.stop().unwrap();

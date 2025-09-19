@@ -1,8 +1,8 @@
 // Configuration defaults and utilities for event synchronization system
 
+use super::types::*;
 use std::collections::HashMap;
 use std::time::Duration;
-use super::types::*;
 
 // Default implementations for core types
 

@@ -144,13 +144,27 @@ impl PodCoordinationConfigBuilder {
     pub fn build(self) -> PodCoordinationConfig {
         PodCoordinationConfig {
             device_count: self.device_count.unwrap_or(8),
-            coordination_strategy: self.coordination_strategy.unwrap_or(CoordinationStrategy::Adaptive),
-            communication_pattern: self.communication_pattern.unwrap_or(CommunicationPattern::AllToAll),
-            synchronization_mode: self.synchronization_mode.unwrap_or(SynchronizationMode::BulkSynchronous),
-            batch_parallelization: self.batch_parallelization.unwrap_or(BatchParallelizationStrategy::DataParallel),
-            gradient_aggregation: self.gradient_aggregation.unwrap_or(GradientAggregationMethod::AllReduce),
-            load_balancing: self.load_balancing.unwrap_or(LoadBalancingStrategy::Adaptive),
-            memory_management: self.memory_management.unwrap_or(MemoryManagementStrategy::Dynamic),
+            coordination_strategy: self
+                .coordination_strategy
+                .unwrap_or(CoordinationStrategy::Adaptive),
+            communication_pattern: self
+                .communication_pattern
+                .unwrap_or(CommunicationPattern::AllToAll),
+            synchronization_mode: self
+                .synchronization_mode
+                .unwrap_or(SynchronizationMode::BulkSynchronous),
+            batch_parallelization: self
+                .batch_parallelization
+                .unwrap_or(BatchParallelizationStrategy::DataParallel),
+            gradient_aggregation: self
+                .gradient_aggregation
+                .unwrap_or(GradientAggregationMethod::AllReduce),
+            load_balancing: self
+                .load_balancing
+                .unwrap_or(LoadBalancingStrategy::Adaptive),
+            memory_management: self
+                .memory_management
+                .unwrap_or(MemoryManagementStrategy::Dynamic),
             coordination_timeout: self.coordination_timeout.unwrap_or(30),
             monitoring_interval: self.monitoring_interval.unwrap_or(1000),
             enable_fault_tolerance: self.enable_fault_tolerance.unwrap_or(true),
@@ -272,7 +286,7 @@ impl SynchronizationMode {
             SynchronizationMode::Asynchronous => "Asynchronous coordination".to_string(),
             SynchronizationMode::BoundedAsynchronous { staleness_bound } => {
                 format!("Bounded asynchronous (staleness: {})", staleness_bound)
-            },
+            }
             SynchronizationMode::EventDriven => "Event-driven synchronization".to_string(),
         }
     }
@@ -312,10 +326,16 @@ impl BatchParallelizationStrategy {
             BatchParallelizationStrategy::ModelParallel => "Model parallelism".to_string(),
             BatchParallelizationStrategy::PipelineParallel { stages } => {
                 format!("Pipeline parallelism ({} stages)", stages)
-            },
-            BatchParallelizationStrategy::Hybrid { data_parallel_factor, model_parallel_factor } => {
-                format!("Hybrid parallelism (data: {}, model: {})", data_parallel_factor, model_parallel_factor)
-            },
+            }
+            BatchParallelizationStrategy::Hybrid {
+                data_parallel_factor,
+                model_parallel_factor,
+            } => {
+                format!(
+                    "Hybrid parallelism (data: {}, model: {})",
+                    data_parallel_factor, model_parallel_factor
+                )
+            }
         }
     }
 
@@ -330,7 +350,7 @@ impl BatchParallelizationStrategy {
                 } else {
                     0.6
                 }
-            },
+            }
             BatchParallelizationStrategy::Hybrid { .. } => 0.8,
         }
     }
@@ -360,11 +380,13 @@ impl GradientAggregationMethod {
             GradientAggregationMethod::Average => "Simple gradient averaging".to_string(),
             GradientAggregationMethod::WeightedAverage => "Weighted gradient averaging".to_string(),
             GradientAggregationMethod::AllReduce => "All-reduce aggregation".to_string(),
-            GradientAggregationMethod::ParameterServer => "Parameter server aggregation".to_string(),
+            GradientAggregationMethod::ParameterServer => {
+                "Parameter server aggregation".to_string()
+            }
             GradientAggregationMethod::Hierarchical => "Hierarchical aggregation".to_string(),
             GradientAggregationMethod::Compressed { compression_ratio } => {
                 format!("Compressed aggregation (ratio: {:.2})", compression_ratio)
-            },
+            }
         }
     }
 
@@ -538,7 +560,11 @@ pub struct ConfigValidationError {
 
 impl std::fmt::Display for ConfigValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Configuration error in field '{}': {}", self.field, self.message)
+        write!(
+            f,
+            "Configuration error in field '{}': {}",
+            self.field, self.message
+        )
     }
 }
 
@@ -585,10 +611,12 @@ impl ConfigValidator {
         }
 
         // Validate strategy compatibility
-        if !config.coordination_strategy.supports_fault_tolerance() && config.enable_fault_tolerance {
+        if !config.coordination_strategy.supports_fault_tolerance() && config.enable_fault_tolerance
+        {
             errors.push(ConfigValidationError {
                 field: "coordination_strategy".to_string(),
-                message: "Selected coordination strategy does not support fault tolerance".to_string(),
+                message: "Selected coordination strategy does not support fault tolerance"
+                    .to_string(),
             });
         }
 
@@ -667,7 +695,9 @@ impl ConfigProfiles {
             .communication_pattern(CommunicationPattern::Ring)
             .synchronization_mode(SynchronizationMode::Asynchronous)
             .batch_parallelization(BatchParallelizationStrategy::DataParallel)
-            .gradient_aggregation(GradientAggregationMethod::Compressed { compression_ratio: 0.5 })
+            .gradient_aggregation(GradientAggregationMethod::Compressed {
+                compression_ratio: 0.5,
+            })
             .load_balancing(LoadBalancingStrategy::LoadAware)
             .memory_management(MemoryManagementStrategy::Dynamic)
             .coordination_timeout(5)
@@ -711,7 +741,10 @@ mod tests {
             .build();
 
         assert_eq!(config.device_count, 16);
-        assert!(matches!(config.coordination_strategy, CoordinationStrategy::Hierarchical));
+        assert!(matches!(
+            config.coordination_strategy,
+            CoordinationStrategy::Hierarchical
+        ));
         assert!(config.enable_fault_tolerance);
     }
 
@@ -740,12 +773,21 @@ mod tests {
     fn test_config_profiles() {
         let hp_config = ConfigProfiles::high_performance();
         assert_eq!(hp_config.device_count, 16);
-        assert!(matches!(hp_config.coordination_strategy, CoordinationStrategy::Hierarchical));
+        assert!(matches!(
+            hp_config.coordination_strategy,
+            CoordinationStrategy::Hierarchical
+        ));
 
         let ll_config = ConfigProfiles::low_latency();
-        assert!(matches!(ll_config.synchronization_mode, SynchronizationMode::Asynchronous));
+        assert!(matches!(
+            ll_config.synchronization_mode,
+            SynchronizationMode::Asynchronous
+        ));
 
         let ee_config = ConfigProfiles::energy_efficient();
-        assert!(matches!(ee_config.memory_management, MemoryManagementStrategy::Compressed));
+        assert!(matches!(
+            ee_config.memory_management,
+            MemoryManagementStrategy::Compressed
+        ));
     }
 }

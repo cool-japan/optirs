@@ -203,11 +203,23 @@ pub enum LearningRateSchedule<T: Float + Debug + Send + Sync + 'static> {
     /// Constant learning rate
     Constant { rate: T },
     /// Exponential decay
-    ExponentialDecay { initial: T, decay_rate: T, decay_steps: usize },
+    ExponentialDecay {
+        initial: T,
+        decay_rate: T,
+        decay_steps: usize,
+    },
     /// Step decay
-    StepDecay { initial: T, drop_rate: T, step_size: usize },
+    StepDecay {
+        initial: T,
+        drop_rate: T,
+        step_size: usize,
+    },
     /// Cosine annealing
-    CosineAnnealing { initial: T, min_rate: T, cycle_length: usize },
+    CosineAnnealing {
+        initial: T,
+        min_rate: T,
+        cycle_length: usize,
+    },
     /// Custom schedule
     Custom { schedule: String },
 }
@@ -218,9 +230,17 @@ pub enum BatchSizeSchedule {
     /// Constant batch size
     Constant { size: usize },
     /// Linear increase
-    LinearIncrease { initial: usize, increment: usize, max_size: usize },
+    LinearIncrease {
+        initial: usize,
+        increment: usize,
+        max_size: usize,
+    },
     /// Exponential increase
-    ExponentialIncrease { initial: usize, growth_rate: f64, max_size: usize },
+    ExponentialIncrease {
+        initial: usize,
+        growth_rate: f64,
+        max_size: usize,
+    },
     /// Adaptive based on performance
     Adaptive { min_size: usize, max_size: usize },
 }
@@ -531,7 +551,7 @@ impl ExecutionStrategy {
             ExecutionStrategy::Adaptive => "Adaptive execution strategy".to_string(),
             ExecutionStrategy::Hybrid { strategies } => {
                 format!("Hybrid execution: {}", strategies.join(", "))
-            },
+            }
         }
     }
 
@@ -833,7 +853,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OptimizationSte
     /// Build the optimization step
     pub fn build(self) -> Result<OptimizationStep<T>> {
         Ok(OptimizationStep {
-            step_id: self.step_id.unwrap_or_else(|| format!("step-{}", chrono::Utc::now().timestamp())),
+            step_id: self
+                .step_id
+                .unwrap_or_else(|| format!("step-{}", chrono::Utc::now().timestamp())),
             parameters: self.parameters.unwrap_or_default(),
             execution_plan: self.execution_plan.unwrap_or_default(),
             resource_requirements: self.resource_requirements.unwrap_or_default(),
@@ -939,7 +961,9 @@ impl<T: Float + Debug + Default + Send + Sync> Default for AdaptiveConfig<T> {
     fn default() -> Self {
         Self {
             adaptive_lr: true,
-            lr_schedule: LearningRateSchedule::Constant { rate: T::from(0.001).unwrap_or_default() },
+            lr_schedule: LearningRateSchedule::Constant {
+                rate: T::from(0.001).unwrap_or_default(),
+            },
             adaptive_batch_size: false,
             batch_schedule: BatchSizeSchedule::Constant { size: 32 },
         }
@@ -1001,7 +1025,7 @@ impl Default for ExecutionConstraints {
     fn default() -> Self {
         Self {
             max_execution_time: Duration::from_secs(3600), // 1 hour
-            max_memory: 32 * 1024 * 1024 * 1024, // 32 GB
+            max_memory: 32 * 1024 * 1024 * 1024,           // 32 GB
             max_cpu_utilization: 0.8,
             required_devices: Vec::new(),
             excluded_devices: Vec::new(),
@@ -1014,7 +1038,7 @@ impl Default for ResourceRequirements {
         Self {
             memory_per_device: 4 * 1024 * 1024 * 1024, // 4 GB
             compute_per_device: 0.5,
-            bandwidth_requirements: 1000.0, // 1 Gbps
+            bandwidth_requirements: 1000.0,           // 1 Gbps
             storage_requirements: 1024 * 1024 * 1024, // 1 GB
             qos_requirements: QoSRequirements::default(),
             constraints: ResourceConstraints::default(),
@@ -1221,7 +1245,10 @@ mod tests {
     fn test_optimization_parameters_defaults() {
         let params: OptimizationParameters<f64> = OptimizationParameters::default();
         assert_eq!(params.batch_size, 32);
-        assert!(matches!(params.algorithm_config.algorithm_type, OptimizationAlgorithmType::Adam));
+        assert!(matches!(
+            params.algorithm_config.algorithm_type,
+            OptimizationAlgorithmType::Adam
+        ));
     }
 
     #[test]

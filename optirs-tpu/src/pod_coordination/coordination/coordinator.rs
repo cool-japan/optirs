@@ -4,8 +4,8 @@
 // coordinated execution across TPU devices in a pod. It handles coordination
 // strategies, execution planning, and resource orchestration.
 
-use scirs2_core::ndarray_ext::{Array, Array2};
 use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, Array2};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,9 +16,9 @@ use crate::error::{OptimError, Result};
 
 use super::config::*;
 use super::device_manager::*;
+use super::optimization::*;
 use super::performance::*;
 use super::state::*;
-use super::optimization::*;
 
 /// Type aliases for coordination
 pub type DeviceMetrics = HashMap<DeviceId, f64>;
@@ -500,7 +500,17 @@ pub struct QualityConstraints {
 }
 
 // Implementation for TPUPodCoordinator
-impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::iter::Sum> TPUPodCoordinator<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::iter::Sum,
+    > TPUPodCoordinator<T>
+{
     /// Create a new TPU pod coordinator
     pub fn new(config: PodCoordinationConfig) -> Result<Self> {
         let topology = PodTopology::default();
@@ -510,9 +520,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
         let pod_statistics = PodPerformanceStatistics::default();
 
         Ok(Self {
-            strategy_executor: CoordinationStrategyExecutor::new(config.coordination_strategy.clone()),
+            strategy_executor: CoordinationStrategyExecutor::new(
+                config.coordination_strategy.clone(),
+            ),
             communication_manager: CommunicationManager::new(&config)?,
-            synchronization_manager: SynchronizationManager::new(config.synchronization_mode.clone()),
+            synchronization_manager: SynchronizationManager::new(
+                config.synchronization_mode.clone(),
+            ),
             config,
             topology,
             device_manager,
@@ -566,7 +580,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
         self.last_coordination = Instant::now();
 
         // Update strategy if adaptive mode is enabled
-        if matches!(self.config.coordination_strategy, CoordinationStrategy::Adaptive) {
+        if matches!(
+            self.config.coordination_strategy,
+            CoordinationStrategy::Adaptive
+        ) {
             self.update_strategy()?;
         }
 
@@ -576,7 +593,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
     /// Update coordination strategy based on performance
     fn update_strategy(&mut self) -> Result<()> {
         let current_performance = self.evaluate_current_performance();
-        let best_strategy = self.strategy_executor.select_best_strategy(&current_performance)?;
+        let best_strategy = self
+            .strategy_executor
+            .select_best_strategy(&current_performance)?;
 
         if best_strategy != self.strategy_executor.current_strategy {
             self.switch_strategy(best_strategy)?;
@@ -600,7 +619,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
         };
 
         self.strategy_executor.record_execution(execution);
-        self.strategy_executor.switch_strategy(new_strategy, &self.config)?;
+        self.strategy_executor
+            .switch_strategy(new_strategy, &self.config)?;
 
         Ok(())
     }
@@ -623,7 +643,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
             sync_efficiency: self.synchronization_manager.statistics.efficiency,
             communication_efficiency: self.communication_manager.statistics.efficiency,
             load_balance_factor: 0.9, // Simplified
-            fault_tolerance: 0.95, // Simplified
+            fault_tolerance: 0.95,    // Simplified
         }
     }
 
@@ -671,30 +691,44 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
 
     /// Synchronize after execution
     async fn synchronize_after_execution(&mut self) -> Result<()> {
-        self.synchronization_manager.finalize_synchronization().await
+        self.synchronization_manager
+            .finalize_synchronization()
+            .await
     }
 
     /// Execute centralized coordination step
-    async fn execute_centralized_step(&mut self, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_centralized_step(
+        &mut self,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // Central coordinator manages all execution
         let master_device = self.select_master_device()?;
         self.execute_on_master(master_device, step).await
     }
 
     /// Execute decentralized coordination step
-    async fn execute_decentralized_step(&mut self, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_decentralized_step(
+        &mut self,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // All devices coordinate peer-to-peer
         self.execute_peer_to_peer(step).await
     }
 
     /// Execute hierarchical coordination step
-    async fn execute_hierarchical_step(&mut self, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_hierarchical_step(
+        &mut self,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // Multi-level hierarchy coordination
         self.execute_hierarchical(step).await
     }
 
     /// Execute adaptive coordination step
-    async fn execute_adaptive_step(&mut self, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_adaptive_step(
+        &mut self,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // Adaptive strategy selection based on workload
         let optimal_strategy = self.select_optimal_strategy_for_step(&step)?;
         self.execute_with_strategy(step, optimal_strategy).await
@@ -709,25 +743,38 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
     }
 
     /// Execute on master device
-    async fn execute_on_master(&mut self, master: DeviceId, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_on_master(
+        &mut self,
+        master: DeviceId,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // Implementation for centralized execution
         Ok(ExecutionResult::default())
     }
 
     /// Execute peer-to-peer coordination
-    async fn execute_peer_to_peer(&mut self, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_peer_to_peer(
+        &mut self,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // Implementation for decentralized execution
         Ok(ExecutionResult::default())
     }
 
     /// Execute hierarchical coordination
-    async fn execute_hierarchical(&mut self, step: OptimizationStep<T>) -> Result<ExecutionResult<T>> {
+    async fn execute_hierarchical(
+        &mut self,
+        step: OptimizationStep<T>,
+    ) -> Result<ExecutionResult<T>> {
         // Implementation for hierarchical execution
         Ok(ExecutionResult::default())
     }
 
     /// Select optimal strategy for step
-    fn select_optimal_strategy_for_step(&self, step: &OptimizationStep<T>) -> Result<CoordinationStrategy> {
+    fn select_optimal_strategy_for_step(
+        &self,
+        step: &OptimizationStep<T>,
+    ) -> Result<CoordinationStrategy> {
         // Analyze step characteristics and select best strategy
         match step.execution_plan.strategy {
             ExecutionStrategy::Sequential => Ok(CoordinationStrategy::Centralized),
@@ -738,7 +785,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
     }
 
     /// Execute with specific strategy
-    async fn execute_with_strategy(&mut self, step: OptimizationStep<T>, strategy: CoordinationStrategy) -> Result<ExecutionResult<T>> {
+    async fn execute_with_strategy(
+        &mut self,
+        step: OptimizationStep<T>,
+        strategy: CoordinationStrategy,
+    ) -> Result<ExecutionResult<T>> {
         match strategy {
             CoordinationStrategy::Centralized => self.execute_centralized_step(step).await,
             CoordinationStrategy::Decentralized => self.execute_decentralized_step(step).await,
@@ -770,8 +821,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::ndarray_ext
     }
 
     /// Create coordination barrier
-    pub fn create_barrier(&mut self, barrier_id: String, participants: HashSet<DeviceId>, timeout: Duration) -> Result<()> {
-        self.synchronization_manager.create_barrier(barrier_id, participants, timeout)
+    pub fn create_barrier(
+        &mut self,
+        barrier_id: String,
+        participants: HashSet<DeviceId>,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.synchronization_manager
+            .create_barrier(barrier_id, participants, timeout)
     }
 
     /// Wait for barrier
@@ -817,12 +874,19 @@ impl CoordinationStrategyExecutor {
     }
 
     /// Select best strategy based on performance
-    pub fn select_best_strategy(&self, performance: &PerformanceEvaluation) -> Result<CoordinationStrategy> {
+    pub fn select_best_strategy(
+        &self,
+        performance: &PerformanceEvaluation,
+    ) -> Result<CoordinationStrategy> {
         self.effectiveness_tracker.recommend_strategy(performance)
     }
 
     /// Switch to new strategy
-    pub fn switch_strategy(&mut self, new_strategy: CoordinationStrategy, config: &PodCoordinationConfig) -> Result<()> {
+    pub fn switch_strategy(
+        &mut self,
+        new_strategy: CoordinationStrategy,
+        config: &PodCoordinationConfig,
+    ) -> Result<()> {
         self.current_strategy = new_strategy;
         self.effectiveness_tracker.record_strategy_switch()?;
         Ok(())
@@ -866,9 +930,13 @@ impl StrategyEffectivenessTracker {
     }
 
     /// Recommend best strategy
-    pub fn recommend_strategy(&self, performance: &PerformanceEvaluation) -> Result<CoordinationStrategy> {
+    pub fn recommend_strategy(
+        &self,
+        performance: &PerformanceEvaluation,
+    ) -> Result<CoordinationStrategy> {
         // Find strategy with highest effectiveness score
-        let best_strategy = self.effectiveness_scores
+        let best_strategy = self
+            .effectiveness_scores
             .iter()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(strategy, _)| strategy.clone())
@@ -893,7 +961,8 @@ impl StrategyEffectivenessTracker {
         let alpha = 0.1; // Learning rate
         let new_score = alpha * performance_score + (1.0 - alpha) * current_score;
 
-        self.effectiveness_scores.insert(strategy.clone(), new_score);
+        self.effectiveness_scores
+            .insert(strategy.clone(), new_score);
 
         // Add to performance history
         let record = PerformanceRecord {
@@ -988,7 +1057,12 @@ impl SynchronizationManager {
     }
 
     /// Create synchronization barrier
-    pub fn create_barrier(&mut self, barrier_id: String, participants: HashSet<DeviceId>, timeout: Duration) -> Result<()> {
+    pub fn create_barrier(
+        &mut self,
+        barrier_id: String,
+        participants: HashSet<DeviceId>,
+        timeout: Duration,
+    ) -> Result<()> {
         let barrier = SynchronizationBarrier {
             id: barrier_id.clone(),
             expected_participants: participants,
@@ -1066,8 +1140,8 @@ impl Default for PowerConstraints {
 impl Default for ThermalLimits {
     fn default() -> Self {
         Self {
-            max_temperature: 85.0,  // 85°C
-            target_temperature: 70.0, // 70°C
+            max_temperature: 85.0,        // 85°C
+            target_temperature: 70.0,     // 70°C
             cooling_requirements: 1000.0, // Watts of cooling
         }
     }
@@ -1192,7 +1266,15 @@ pub mod utils {
     use super::*;
 
     /// Create test coordinator
-    pub fn create_test_coordinator<T: Float + Default + Clone + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::iter::Sum>() -> Result<TPUPodCoordinator<T>> {
+    pub fn create_test_coordinator<
+        T: Float
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::iter::Sum,
+    >() -> Result<TPUPodCoordinator<T>> {
         let config = PodCoordinationConfig::default();
         TPUPodCoordinator::new(config)
     }

@@ -12,54 +12,48 @@ pub mod state;
 
 // Re-export main types for convenience
 pub use config::{
-    PodCoordinationConfig, PodCoordinationConfigBuilder, ConfigProfiles,
-    CoordinationStrategy, CommunicationPattern, SynchronizationMode,
-    BatchParallelizationStrategy, GradientAggregationMethod,
-    LoadBalancingStrategy, MemoryManagementStrategy, QoSRequirements,
+    BatchParallelizationStrategy, CommunicationPattern, ConfigProfiles, CoordinationStrategy,
+    GradientAggregationMethod, LoadBalancingStrategy, MemoryManagementStrategy,
+    PodCoordinationConfig, PodCoordinationConfigBuilder, QoSRequirements, SynchronizationMode,
 };
 
 pub use coordinator::{
-    TPUPodCoordinator, CoordinationStrategyExecutor, CommunicationManager,
-    SynchronizationManager, ExecutionResult,
+    CommunicationManager, CoordinationStrategyExecutor, ExecutionResult, SynchronizationManager,
+    TPUPodCoordinator,
 };
 
 pub use device_manager::{
-    DeviceManager, DeviceInfo, DeviceType, DeviceStatus, DevicePerformance,
-    AllocationInfo, AllocationPriority, ResourceConstraints,
-    DeviceHealthMonitor, HealthStatus, HealthIssue, HealthMetrics,
-    ErrorTracker, ErrorRecord, ErrorSeverity,
-    DegradationDetector, PerformanceBaseline, DegradationThresholds,
-    DeviceConfiguration, DeviceConfig, MemoryLimits, ComputeLimits,
-    PowerSettings, CommunicationSettings,
+    AllocationInfo, AllocationPriority, CommunicationSettings, ComputeLimits, DegradationDetector,
+    DegradationThresholds, DeviceConfig, DeviceConfiguration, DeviceHealthMonitor, DeviceInfo,
+    DeviceManager, DevicePerformance, DeviceStatus, DeviceType, ErrorRecord, ErrorSeverity,
+    ErrorTracker, HealthIssue, HealthMetrics, HealthStatus, MemoryLimits, PerformanceBaseline,
+    PowerSettings, ResourceConstraints,
 };
 
 pub use optimization::{
-    OptimizationStep, OptimizationStepBuilder, OptimizationParameters,
-    RegularizationParams, ExecutionPlan, ExecutionPlanBuilder,
-    ExecutionPhase, PhaseType, ExecutionStrategy, ResourceRequirements,
-    StepMetadata, StepPriority, ExecutionResult as OptimizationExecutionResult,
-    ExecutionMetrics, QualityMetrics, ExecutionStatistics,
+    ExecutionMetrics, ExecutionPhase, ExecutionPlan, ExecutionPlanBuilder,
+    ExecutionResult as OptimizationExecutionResult, ExecutionStatistics, ExecutionStrategy,
+    OptimizationParameters, OptimizationStep, OptimizationStepBuilder, PhaseType, QualityMetrics,
+    RegularizationParams, ResourceRequirements, StepMetadata, StepPriority,
 };
 
 pub use performance::{
-    PerformanceMonitor, MetricsCollector, PerformanceMetrics,
-    ThroughputMetrics, LatencyMetrics, MemoryMetrics, PowerMetrics,
-    CommunicationMetrics, DeviceMetrics, PerformanceAnalyzer,
-    AnalysisResult, AnalysisFinding, FindingSeverity,
-    PerformancePredictor, PredictionModel, PerformanceOptimizer,
-    OptimizationStrategy as PerformanceOptimizationStrategy,
+    AnalysisFinding, AnalysisResult, CommunicationMetrics, DeviceMetrics, FindingSeverity,
+    LatencyMetrics, MemoryMetrics, MetricsCollector,
+    OptimizationStrategy as PerformanceOptimizationStrategy, PerformanceAnalyzer,
+    PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer, PerformancePredictor,
+    PowerMetrics, PredictionModel, ThroughputMetrics,
 };
 
 pub use state::{
-    CoordinationState, CoordinationPhase, CoordinationSession,
-    SessionStatus, SessionMetadata, SessionPriority, SessionMetrics,
-    CoordinationStatistics, SynchronizationInfo, SyncStatus, SyncMetrics,
-    StateHistory, StateMachine, StatePersistenceManager,
+    CoordinationPhase, CoordinationSession, CoordinationState, CoordinationStatistics,
+    SessionMetadata, SessionMetrics, SessionPriority, SessionStatus, StateHistory, StateMachine,
+    StatePersistenceManager, SyncMetrics, SyncStatus, SynchronizationInfo,
 };
 
 use num_traits::Float;
-use std::fmt::Debug;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -389,7 +383,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + Send + Sync> UnifiedCoor
         let step_id = step.step_id.clone();
 
         // Add to active optimizations
-        self.active_optimizations.insert(step_id.clone(), step.clone());
+        self.active_optimizations
+            .insert(step_id.clone(), step.clone());
 
         // Execute step using coordinator
         let result = self.coordinator.execute_optimization_step(step).await?;
@@ -648,8 +643,9 @@ pub mod utils {
 
     /// Validate coordination configuration
     pub fn validate_config(config: &PodCoordinationConfig) -> Result<()> {
-        config::ConfigValidator::validate(config)
-            .map_err(|errors| OptimError::Other(format!("Configuration validation failed: {:?}", errors)))
+        config::ConfigValidator::validate(config).map_err(|errors| {
+            OptimError::Other(format!("Configuration validation failed: {:?}", errors))
+        })
     }
 
     /// Calculate optimal batch size for given configuration
@@ -797,7 +793,8 @@ mod tests {
         let result = utils::validate_config(&config);
         assert!(result.is_ok());
 
-        let batch_size = utils::calculate_optimal_batch_size(8, 32 * 1024 * 1024 * 1024, 1024 * 1024 * 1024);
+        let batch_size =
+            utils::calculate_optimal_batch_size(8, 32 * 1024 * 1024 * 1024, 1024 * 1024 * 1024);
         assert!(batch_size > 0);
 
         let overhead = utils::estimate_coordination_overhead(
@@ -822,7 +819,8 @@ mod tests {
 
     #[test]
     fn test_coordination_metrics() {
-        let mut coordination: UnifiedCoordination<f64> = UnifiedCoordination::new(PodCoordinationConfig::default()).unwrap();
+        let mut coordination: UnifiedCoordination<f64> =
+            UnifiedCoordination::new(PodCoordinationConfig::default()).unwrap();
 
         let result = coordination.update_metrics();
         assert!(result.is_ok());

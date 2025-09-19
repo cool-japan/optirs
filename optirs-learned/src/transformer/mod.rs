@@ -96,7 +96,15 @@ pub struct TransformerOptimizerConfig {
 /// Transformer network architecture
 #[derive(Debug, Clone)]
 pub struct TransformerNetwork<
-    T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + std::iter::Sum
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + Send
+        + Sync
+        + 'static,
 > {
     /// Input embedding layer
     input_embedding: InputEmbedding<T>,
@@ -120,7 +128,15 @@ pub struct TransformerNetwork<
 /// Transformer-based neural optimizer with self-attention mechanisms
 #[derive(Debug, Clone)]
 pub struct TransformerOptimizer<
-    T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + std::iter::Sum
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + Send
+        + Sync
+        + 'static,
 > {
     /// Configuration for the Transformer optimizer
     config: TransformerOptimizerConfig,
@@ -164,7 +180,9 @@ pub struct TransformerOptimizer<
 
 /// Sequence buffer for optimization history
 #[derive(Debug, Clone)]
-pub struct SequenceBuffer<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceBuffer<
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+> {
     /// Gradient sequences
     gradient_sequences: VecDeque<Array1<T>>,
 
@@ -200,8 +218,17 @@ pub struct TransformerOptimizerMetrics {
     performance_comparisons: HashMap<String, f64>,
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static>
-    TransformerNetwork<T>
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > TransformerNetwork<T>
 {
     /// Create new transformer network
     pub fn new(config: &TransformerOptimizerConfig) -> Result<Self> {
@@ -258,8 +285,17 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static
     }
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static>
-    TransformerOptimizer<T>
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > TransformerOptimizer<T>
 {
     /// Create new transformer optimizer
     pub fn new(config: TransformerOptimizerConfig) -> Result<Self> {
@@ -419,7 +455,17 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> SequenceBuffer<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + Send
+            + Sync
+            + 'static,
+    > SequenceBuffer<T>
+{
     /// Create new sequence buffer
     pub fn new(capacity: usize) -> Self {
         Self {

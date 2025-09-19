@@ -58,10 +58,7 @@ impl CompressionAlgorithms {
                 auto_flush: true,
             }),
             preferences: AlgorithmPreferences {
-                priority_order: vec![
-                    "lz4".to_string(),
-                    "snappy".to_string(),
-                ],
+                priority_order: vec!["lz4".to_string(), "snappy".to_string()],
                 fallback_algorithm: "snappy".to_string(),
                 selection_criteria: SelectionCriteria::Speed,
             },
@@ -106,10 +103,7 @@ impl CompressionAlgorithms {
                 strategy: ZstdStrategy::Btultra2,
             }),
             preferences: AlgorithmPreferences {
-                priority_order: vec![
-                    "zstd".to_string(),
-                    "brotli".to_string(),
-                ],
+                priority_order: vec!["zstd".to_string(), "brotli".to_string()],
                 fallback_algorithm: "gzip".to_string(),
                 selection_criteria: SelectionCriteria::CompressionRatio,
             },
@@ -138,10 +132,7 @@ impl CompressionAlgorithms {
             ],
             default: Algorithm::Snappy(SnappyConfig::default()),
             preferences: AlgorithmPreferences {
-                priority_order: vec![
-                    "snappy".to_string(),
-                    "lz4".to_string(),
-                ],
+                priority_order: vec!["snappy".to_string(), "lz4".to_string()],
                 fallback_algorithm: "lz4".to_string(),
                 selection_criteria: SelectionCriteria::Latency,
             },
@@ -404,9 +395,7 @@ pub struct SnappyConfig {
 
 impl Default for SnappyConfig {
     fn default() -> Self {
-        Self {
-            checksum: false,
-        }
+        Self { checksum: false }
     }
 }
 

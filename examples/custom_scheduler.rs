@@ -1,6 +1,6 @@
 //! Example demonstrating the custom scheduler framework
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::{
+use optirs_core::{
     optimizers::{Optimizer, SGD},
     schedulers::{CombinedScheduler, CustomScheduler, LearningRateScheduler, SchedulerBuilder},
 };

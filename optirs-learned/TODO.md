@@ -1,4 +1,31 @@
-# OptiRS Learned TODO
+# OptiRS Learned TODO - Post SciRS2 Integration
+
+## ✅ COMPLETED: SciRS2 Integration
+- [x] **Full SciRS2-Core Integration** - 100% complete
+- [x] **ML Pipeline Foundation** - Built on scirs2_core::ml_pipeline
+- [x] **Neural Architecture Search** - Using scirs2_core::neural_architecture_search
+- [x] **Memory Efficient Operations** - scirs2_core::memory_efficient::LazyArray for history
+- [x] **JIT Compilation** - scirs2_core::jit for optimized transformer kernels
+- [x] **Array Operations** - All neural operations use scirs2_core::ndarray_ext
+- [x] **Random Generation** - scirs2_core::random for all stochastic operations
+
+## 🚀 NEW PRIORITIES: Enhanced Learned Optimization (Post-SciRS2 Integration)
+
+### Phase 1: Immediate Learned Optimizer Implementation (v0.1.0-beta.2) - HIGH PRIORITY
+
+- [ ] **SciRS2 Neural Optimizer Framework** - Build on scirs2_core::ml_pipeline
+- [ ] **Meta-Learning Pipeline** - Use scirs2_core::ml_pipeline::MLPipeline for MAML
+- [ ] **Transformer Optimizers** - JIT-compiled kernels via scirs2_core::jit
+- [ ] **Memory-Efficient History** - scirs2_core::memory_efficient::LazyArray for gradients
+- [ ] **Performance Benchmarks** - Learned vs traditional optimizer comparison
+
+### Phase 2: Advanced SciRS2 Meta-Learning (v0.1.0-beta.3) - MEDIUM PRIORITY
+
+- [ ] **Neural Architecture Search** - Full scirs2_core::neural_architecture_search integration
+- [ ] **Quantum Optimization** - scirs2_core::quantum_optimization for search strategies
+- [ ] **Distributed Meta-Learning** - scirs2_core::distributed for multi-GPU training
+- [ ] **Advanced Memory Management** - scirs2_core::memory_efficient for large models
+- [ ] **Production Monitoring** - scirs2_core::metrics for meta-learning tracking
 
 ## High Priority Items
 

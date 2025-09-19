@@ -155,7 +155,13 @@ pub enum MechanismSelectionStrategy {
 
 impl<T> GaussianMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     /// Create a new Gaussian mechanism
     pub fn new() -> Self {
@@ -218,7 +224,13 @@ where
 
 impl<T> NoiseMechanism<T> for GaussianMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     fn add_noise_1d(
         &mut self,
@@ -273,7 +285,13 @@ where
 
 impl<T> LaplaceMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     /// Create a new Laplace mechanism
     pub fn new() -> Self {
@@ -330,7 +348,13 @@ where
 
 impl<T> NoiseMechanism<T> for LaplaceMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     fn add_noise_1d(
         &mut self,
@@ -385,7 +409,13 @@ where
 
 impl<T> ExponentialMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     /// Create a new exponential mechanism
     pub fn new(_qualityfunction: Box<dyn Fn(&T) -> T + Send + Sync>) -> Self {
@@ -441,7 +471,13 @@ where
 
 impl<T> TruncatedNoiseMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     /// Create a new truncated noise mechanism
     pub fn new(_base_mechanism: Box<dyn NoiseMechanism<T> + Send>, truncationbound: T) -> Self {
@@ -455,7 +491,13 @@ where
 
 impl<T> NoiseMechanism<T> for TruncatedNoiseMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     fn add_noise_1d(
         &mut self,
@@ -584,7 +626,13 @@ where
 
 impl<T> SparseVectorMechanism<T>
 where
-    T: Float + Debug + Default + Clone + Send + Sync + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
 {
     /// Create a new sparse vector mechanism
     pub fn new(
@@ -830,7 +878,11 @@ pub fn generate_correlated_gaussian_noise<T>(
     rng: &mut scirs2_core::random::Random,
 ) -> Result<Array2<T>>
 where
-    T: Float + Default + Clone + scirs2_core::random::distributions::uniform::SampleUniform + 'static,
+    T: Float
+        + Default
+        + Clone
+        + scirs2_core::random::distributions::uniform::SampleUniform
+        + 'static,
 {
     let (rows, cols) = shape;
 

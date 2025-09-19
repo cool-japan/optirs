@@ -4,7 +4,7 @@
 // sequence management, gap detection, duplicate detection, and buffering for TPU synchronization.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::tpu::tpu_backend::DeviceId;
@@ -49,17 +49,13 @@ pub enum EventOrderingType {
     /// Causal ordering (Lamport timestamps)
     Causal,
     /// Total ordering (global sequence)
-    Total {
-        sequencer: SequencerType,
-    },
+    Total { sequencer: SequencerType },
     /// Partial ordering with dependencies
     Partial {
         dependency_tracker: DependencyTracker,
     },
     /// Custom ordering function
-    Custom {
-        ordering_function: String,
-    },
+    Custom { ordering_function: String },
 }
 
 /// Tie breaker strategies for priority ordering
@@ -150,9 +146,7 @@ pub enum EnforcementStrictness {
     /// Strict enforcement (drop out-of-order events)
     Strict,
     /// Relaxed enforcement (allow some reordering)
-    Relaxed {
-        max_reorder_distance: usize,
-    },
+    Relaxed { max_reorder_distance: usize },
     /// Best effort (process events as they arrive)
     BestEffort,
     /// Adaptive enforcement based on conditions
@@ -208,9 +202,7 @@ pub enum ViolationHandling {
     /// Allow violation with warning
     AllowWithWarning,
     /// Custom violation handler
-    Custom {
-        handler: String,
-    },
+    Custom { handler: String },
 }
 
 /// Ordering tolerance settings
@@ -269,23 +261,16 @@ pub struct OrderingWindow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WindowType {
     /// Fixed time window
-    FixedTime {
-        duration: Duration,
-    },
+    FixedTime { duration: Duration },
     /// Fixed count window
-    FixedCount {
-        count: usize,
-    },
+    FixedCount { count: usize },
     /// Sliding time window
     SlidingTime {
         duration: Duration,
         slide_interval: Duration,
     },
     /// Sliding count window
-    SlidingCount {
-        count: usize,
-        slide_count: usize,
-    },
+    SlidingCount { count: usize, slide_count: usize },
     /// Session-based window
     Session {
         session_timeout: Duration,
@@ -446,29 +431,20 @@ pub struct SequenceNumberManagement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SequenceNumberType {
     /// Simple incrementing counter
-    Counter {
-        initial_value: u64,
-        increment: u64,
-    },
+    Counter { initial_value: u64, increment: u64 },
     /// Timestamp-based sequence
-    Timestamp {
-        precision: TimestampPrecision,
-    },
+    Timestamp { precision: TimestampPrecision },
     /// Lamport logical clock
     Lamport,
     /// Vector clock
-    Vector {
-        device_count: usize,
-    },
+    Vector { device_count: usize },
     /// Hybrid logical clock
     HybridLogical {
         physical_clock: ClockSource,
         logical_counter: u64,
     },
     /// Custom sequence type
-    Custom {
-        sequence_type: String,
-    },
+    Custom { sequence_type: String },
 }
 
 /// Timestamp precision levels
@@ -1338,7 +1314,10 @@ impl EventOrderingManager {
     }
 
     /// Process incoming event
-    pub fn process_event(&mut self, event: OrderedEvent) -> Result<ProcessingResult, OrderingError> {
+    pub fn process_event(
+        &mut self,
+        event: OrderedEvent,
+    ) -> Result<ProcessingResult, OrderingError> {
         // Check for duplicates
         if self.duplicate_detector.is_duplicate(&event)? {
             return Ok(ProcessingResult::Duplicate);
@@ -1360,21 +1339,29 @@ impl EventOrderingManager {
     /// Determine which window an event belongs to
     fn determine_window(&self, event: &OrderedEvent) -> Result<String, OrderingError> {
         // Implementation would determine window based on configuration
-        Ok(format!("window-{}", event.timestamp.elapsed().as_secs() / 60)) // Example: 1-minute windows
+        Ok(format!(
+            "window-{}",
+            event.timestamp.elapsed().as_secs() / 60
+        )) // Example: 1-minute windows
     }
 
     /// Add event to window
-    fn add_to_window(&mut self, window_id: String, event: OrderedEvent) -> Result<(), OrderingError> {
-        let window = self.windows.entry(window_id.clone()).or_insert_with(|| {
-            OrderingWindowState {
+    fn add_to_window(
+        &mut self,
+        window_id: String,
+        event: OrderedEvent,
+    ) -> Result<(), OrderingError> {
+        let window = self
+            .windows
+            .entry(window_id.clone())
+            .or_insert_with(|| OrderingWindowState {
                 window_id: window_id.clone(),
                 start_time: Instant::now(),
                 end_time: None,
                 events: BTreeMap::new(),
                 status: WindowStatus::Active,
                 metadata: WindowMetadata::default(),
-            }
-        });
+            });
 
         window.events.insert(event.sequence_number, event);
         window.metadata.actual_count += 1;
@@ -1388,15 +1375,15 @@ impl EventOrderingManager {
             GapHandling::Wait { timeout } => {
                 // Implementation would wait for missing events
                 Ok(())
-            },
+            }
             GapHandling::Request { max_requests } => {
                 // Implementation would request missing events
                 Ok(())
-            },
+            }
             GapHandling::Skip => {
                 // Mark gap as ignored and continue
                 Ok(())
-            },
+            }
             _ => Ok(()),
         }
     }
@@ -1430,17 +1417,17 @@ impl SequenceGenerator {
                 self.current_sequence += 1;
                 self.statistics.total_generated += 1;
                 Ok(self.current_sequence)
-            },
+            }
             GenerationStrategy::Centralized { coordinator: _ } => {
                 // Implementation would coordinate with central sequencer
                 self.current_sequence += 1;
                 Ok(self.current_sequence)
-            },
+            }
             _ => {
                 // Other strategies would be implemented similarly
                 self.current_sequence += 1;
                 Ok(self.current_sequence)
-            },
+            }
         }
     }
 }
@@ -1473,7 +1460,10 @@ impl GapDetector {
     }
 
     /// Check for gaps
-    pub fn check_for_gap(&mut self, event: &OrderedEvent) -> Result<Option<DetectedGap>, OrderingError> {
+    pub fn check_for_gap(
+        &mut self,
+        event: &OrderedEvent,
+    ) -> Result<Option<DetectedGap>, OrderingError> {
         // Implementation would check for sequence number gaps
         // This is simplified for demonstration
         Ok(None)
@@ -1506,13 +1496,16 @@ impl DuplicateDetector {
             Ok(true)
         } else {
             // Cache the event
-            self.event_cache.insert(event_hash, CachedEvent {
-                event_id: event.event_id,
-                hash: event_hash.clone(),
-                timestamp: event.timestamp,
-                source_device: event.source_device.clone(),
-                expires_at: Instant::now() + self.config.detection_window,
-            });
+            self.event_cache.insert(
+                event_hash,
+                CachedEvent {
+                    event_id: event.event_id,
+                    hash: event_hash.clone(),
+                    timestamp: event.timestamp,
+                    source_device: event.source_device.clone(),
+                    expires_at: Instant::now() + self.config.detection_window,
+                },
+            );
             Ok(false)
         }
     }
@@ -1541,13 +1534,13 @@ impl EventBuffer {
                 BufferOverflowHandling::DropOldest => {
                     self.events.pop_front();
                     self.statistics.overflow_drops += 1;
-                },
+                }
                 BufferOverflowHandling::DropNewest => {
                     return Ok(()); // Don't add the new event
-                },
+                }
                 _ => {
                     return Err(OrderingError::BufferOverflow);
-                },
+                }
             }
         }
 
@@ -1605,12 +1598,22 @@ impl std::fmt::Display for OrderingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OrderingError::BufferOverflow => write!(f, "Buffer overflow"),
-            OrderingError::InvalidSequence { sequence } => write!(f, "Invalid sequence number: {}", sequence),
-            OrderingError::GapDetectionFailed { reason } => write!(f, "Gap detection failed: {}", reason),
-            OrderingError::DuplicateDetectionFailed { reason } => write!(f, "Duplicate detection failed: {}", reason),
+            OrderingError::InvalidSequence { sequence } => {
+                write!(f, "Invalid sequence number: {}", sequence)
+            }
+            OrderingError::GapDetectionFailed { reason } => {
+                write!(f, "Gap detection failed: {}", reason)
+            }
+            OrderingError::DuplicateDetectionFailed { reason } => {
+                write!(f, "Duplicate detection failed: {}", reason)
+            }
             OrderingError::WindowError { message } => write!(f, "Window error: {}", message),
-            OrderingError::SynchronizationError { reason } => write!(f, "Synchronization error: {}", reason),
-            OrderingError::ConfigurationError { message } => write!(f, "Configuration error: {}", message),
+            OrderingError::SynchronizationError { reason } => {
+                write!(f, "Synchronization error: {}", reason)
+            }
+            OrderingError::ConfigurationError { message } => {
+                write!(f, "Configuration error: {}", message)
+            }
         }
     }
 }
@@ -1635,7 +1638,9 @@ impl Default for EventOrdering {
 impl Default for OrderingEnforcement {
     fn default() -> Self {
         Self {
-            strictness: EnforcementStrictness::Relaxed { max_reorder_distance: 10 },
+            strictness: EnforcementStrictness::Relaxed {
+                max_reorder_distance: 10,
+            },
             violation_handling: ViolationHandling::BufferAndRetry {
                 max_buffer_size: 1000,
                 retry_timeout: Duration::from_secs(5),
@@ -1671,7 +1676,9 @@ impl Default for OrderingRecovery {
 impl Default for OrderingWindow {
     fn default() -> Self {
         Self {
-            window_type: WindowType::FixedTime { duration: Duration::from_secs(60) },
+            window_type: WindowType::FixedTime {
+                duration: Duration::from_secs(60),
+            },
             parameters: WindowParameters::default(),
             management: WindowManagement::default(),
         }
@@ -1705,7 +1712,9 @@ impl Default for WindowPersistence {
         Self {
             enabled: false,
             backend: PersistenceBackend::Memory,
-            frequency: PersistenceFrequency::Periodic { interval: Duration::from_secs(60) },
+            frequency: PersistenceFrequency::Periodic {
+                interval: Duration::from_secs(60),
+            },
             compression: CompressionSettings::default(),
         }
     }
@@ -1724,7 +1733,10 @@ impl Default for CompressionSettings {
 impl Default for SequenceNumberManagement {
     fn default() -> Self {
         Self {
-            sequence_type: SequenceNumberType::Counter { initial_value: 1, increment: 1 },
+            sequence_type: SequenceNumberType::Counter {
+                initial_value: 1,
+                increment: 1,
+            },
             generation: SequenceGeneration::default(),
             validation: SequenceValidation::default(),
             synchronization: SequenceSynchronization::default(),
@@ -1766,7 +1778,9 @@ impl Default for SequenceValidation {
 impl Default for SequenceSynchronization {
     fn default() -> Self {
         Self {
-            frequency: SynchronizationFrequency::Periodic { interval: Duration::from_secs(30) },
+            frequency: SynchronizationFrequency::Periodic {
+                interval: Duration::from_secs(30),
+            },
             protocol: SynchronizationProtocol::Broadcast,
             conflict_resolution: ConflictResolution::LatestWriterWins,
         }
@@ -1779,7 +1793,9 @@ impl Default for GapDetection {
             enabled: true,
             algorithms: vec![GapDetectionAlgorithm::SequenceNumber],
             detection_window: Duration::from_secs(30),
-            gap_handling: GapHandling::Wait { timeout: Duration::from_secs(10) },
+            gap_handling: GapHandling::Wait {
+                timeout: Duration::from_secs(10),
+            },
             statistics: GapStatistics::default(),
         }
     }
@@ -1866,7 +1882,9 @@ impl Default for AutoFlushSettings {
             enabled: true,
             triggers: vec![
                 FlushTrigger::SizeThreshold { threshold: 8000 },
-                FlushTrigger::TimeBased { interval: Duration::from_secs(30) },
+                FlushTrigger::TimeBased {
+                    interval: Duration::from_secs(30),
+                },
             ],
             strategy: FlushStrategy::FlushOldest { count: 1000 },
         }
@@ -1887,8 +1905,8 @@ impl Default for MemoryLimits {
     fn default() -> Self {
         Self {
             max_memory: 1024 * 1024 * 1024, // 1 GB
-            warning_threshold: 0.8, // 80%
-            critical_threshold: 0.95, // 95%
+            warning_threshold: 0.8,         // 80%
+            critical_threshold: 0.95,       // 95%
         }
     }
 }
@@ -1916,9 +1934,9 @@ impl Default for MemoryMonitoring {
 impl Default for MemoryAlertThresholds {
     fn default() -> Self {
         Self {
-            high_usage: 0.85, // 85%
+            high_usage: 0.85,    // 85%
             leak_detection: 0.1, // 10% growth per hour
-            fragmentation: 0.5, // 50%
+            fragmentation: 0.5,  // 50%
         }
     }
 }

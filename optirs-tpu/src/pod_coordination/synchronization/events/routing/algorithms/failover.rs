@@ -20,10 +20,7 @@ pub struct Failover {
 impl Default for Failover {
     fn default() -> Self {
         Self {
-            strategies: vec![
-                FailoverStrategy::Automatic,
-                FailoverStrategy::Manual,
-            ],
+            strategies: vec![FailoverStrategy::Automatic, FailoverStrategy::Manual],
             detection: FailureDetection::default(),
             recovery: FailoverRecovery::default(),
             health_checking: HealthChecking::default(),

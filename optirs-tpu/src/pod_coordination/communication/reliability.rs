@@ -220,17 +220,18 @@ impl Default for ReliabilityConfig {
             error_detection: ErrorDetectionConfig {
                 methods: vec![
                     ErrorDetectionMethod::CRC,
-                    ErrorDetectionMethod::Heartbeat { interval: Duration::from_secs(30) },
-                    ErrorDetectionMethod::Timeout { threshold: Duration::from_secs(60) },
+                    ErrorDetectionMethod::Heartbeat {
+                        interval: Duration::from_secs(30),
+                    },
+                    ErrorDetectionMethod::Timeout {
+                        threshold: Duration::from_secs(60),
+                    },
                 ],
                 interval: Duration::from_secs(10),
                 thresholds: HashMap::new(),
             },
             recovery: RecoveryConfig {
-                strategies: vec![
-                    RecoveryStrategy::Retry,
-                    RecoveryStrategy::Failover,
-                ],
+                strategies: vec![RecoveryStrategy::Retry, RecoveryStrategy::Failover],
                 retry: RetryConfig {
                     max_attempts: 3,
                     delay: Duration::from_millis(100),
@@ -248,12 +249,10 @@ impl Default for ReliabilityConfig {
                 level: FaultToleranceLevel::High,
                 isolation: IsolationConfig {
                     enabled: true,
-                    boundaries: vec![
-                        IsolationBoundary {
-                            boundary_type: BoundaryType::Process,
-                            protection_level: ProtectionLevel::Enhanced,
-                        },
-                    ],
+                    boundaries: vec![IsolationBoundary {
+                        boundary_type: BoundaryType::Process,
+                        protection_level: ProtectionLevel::Enhanced,
+                    }],
                 },
                 rto: Duration::from_secs(30),
                 rpo: Duration::from_secs(10),

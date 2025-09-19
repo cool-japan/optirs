@@ -261,7 +261,10 @@ pub enum TimeSource {
     /// Local system clock
     SystemClock,
     /// Custom time source
-    Custom { source_type: String, config: HashMap<String, String> },
+    Custom {
+        source_type: String,
+        config: HashMap<String, String>,
+    },
 }
 
 /// GPS configuration
@@ -329,7 +332,10 @@ pub enum FilterType {
     /// High-pass filter
     HighPass { cutoff_frequency: f64 },
     /// Band-pass filter
-    BandPass { low_frequency: f64, high_frequency: f64 },
+    BandPass {
+        low_frequency: f64,
+        high_frequency: f64,
+    },
     /// Kalman filter
     Kalman,
     /// Custom filter
@@ -572,7 +578,10 @@ pub enum BackoffStrategy {
     /// Exponential backoff
     Exponential { base: f64, max_delay: Duration },
     /// Randomized backoff
-    Randomized { min_delay: Duration, max_delay: Duration },
+    Randomized {
+        min_delay: Duration,
+        max_delay: Duration,
+    },
     /// Adaptive backoff
     Adaptive,
 }
@@ -1127,7 +1136,10 @@ pub enum PartitionDetection {
     /// Heartbeat-based detection
     Heartbeat { timeout: Duration },
     /// Ping-based detection
-    Ping { interval: Duration, timeout: Duration },
+    Ping {
+        interval: Duration,
+        timeout: Duration,
+    },
     /// Custom detection
     Custom { strategy: String },
 }
@@ -1722,10 +1734,7 @@ impl Default for DeadlockResolution {
         Self {
             strategy: ResolutionStrategy::AbortLowestPriority,
             victim_selection: VictimSelection::default(),
-            recovery_actions: vec![
-                RecoveryAction::RestartAborted,
-                RecoveryAction::LogIncident,
-            ],
+            recovery_actions: vec![RecoveryAction::RestartAborted, RecoveryAction::LogIncident],
         }
     }
 }

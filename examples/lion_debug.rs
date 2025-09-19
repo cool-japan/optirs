@@ -1,7 +1,7 @@
 //! Debug Lion optimizer behavior
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::optimizers::{Lion, Optimizer};
+use optirs_core::optimizers::{Lion, Optimizer};
 
 #[allow(dead_code)]
 fn main() {

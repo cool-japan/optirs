@@ -19,7 +19,7 @@ unpredictable_function_pointer_comparisons = "allow"
 unknown_lints = "allow"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-beta.1"
 edition = "2021"
 authors = ["OptiRS Team"]
 description = "Advanced ML optimization and hardware acceleration library"
@@ -108,12 +108,12 @@ rsa = { version = "0.9" }
 x509-parser = { version = "0.16" }
 
 # OptiRS crates
-optirs-core = { version = "0.1.0", path = "./optirs-core" }
-optirs-gpu = { version = "0.1.0", path = "./optirs-gpu" }
-optirs-tpu = { version = "0.1.0", path = "./optirs-tpu" }
-optirs-learned = { version = "0.1.0", path = "./optirs-learned" }
-optirs-nas = { version = "0.1.0", path = "./optirs-nas" }
-optirs-bench = { version = "0.1.0", path = "./optirs-bench" }
+optirs-core = { version = "0.1.0-beta.1", path = "./optirs-core" }
+optirs-gpu = { version = "0.1.0-beta.1", path = "./optirs-gpu" }
+optirs-tpu = { version = "0.1.0-beta.1", path = "./optirs-tpu" }
+optirs-learned = { version = "0.1.0-beta.1", path = "./optirs-learned" }
+optirs-nas = { version = "0.1.0-beta.1", path = "./optirs-nas" }
+optirs-bench = { version = "0.1.0-beta.1", path = "./optirs-bench" }
 
 # 🚨 CRITICAL: SciRS2 ECOSYSTEM DEPENDENCIES 🚨
 #

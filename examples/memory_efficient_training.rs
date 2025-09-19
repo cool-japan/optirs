@@ -2,8 +2,8 @@
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::distributions::Uniform;
 use scirs2_core::random::RandomExt;
-use scirs2_optim::gradient_processing::GradientProcessor;
-use scirs2_optim::memory_efficient::{InPlaceAdam, InPlaceOptimizer};
+use optirs_core::gradient_processing::GradientProcessor;
+use optirs_core::memory_efficient::{InPlaceAdam, InPlaceOptimizer};
 use std::error::Error;
 // use statrs::statistics::Statistics; // statrs not available
 
@@ -95,7 +95,7 @@ fn train_with_custom_processing(
     targets: &Array2<f64>,
     epochs: usize,
 ) -> Result<Vec<f64>, Box<dyn Error>> {
-    use scirs2_optim::memory_efficient::{clip_inplace, scale_inplace};
+    use optirs_core::memory_efficient::{clip_inplace, scale_inplace};
 
     let mut weights_optimizer = InPlaceAdam::new(0.001);
     let mut bias_optimizer = InPlaceAdam::new(0.001);

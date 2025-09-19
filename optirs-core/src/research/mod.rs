@@ -19,7 +19,7 @@
 // ## Setting up a Research Project
 //
 // ```rust
-// use scirs2_optim::research::*;
+// use optirs_core::research::*;
 //
 // let project = ResearchProject::new("Neural Optimizer Comparison")
 //     .add_researcher("Dr. Alice Smith", "alice@university.edu")

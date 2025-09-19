@@ -21,7 +21,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::{WeightStandardization, Regularizer};
+/// use optirs_core::regularizers::{WeightStandardization, Regularizer};
 ///
 /// let weight_std = WeightStandardization::new(1e-5);
 /// let weights = array![[1.0, 2.0], [3.0, 4.0]];

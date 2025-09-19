@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use super::super::{TPUConfig, TPUVersion, XLAOptimizationLevel};
-use super::types::{AttributeValue, ElementType, OperationType, OperationId};
+use super::types::{AttributeValue, ElementType, OperationId, OperationType};
 
 /// XLA compiler configuration
 #[derive(Debug, Clone)]

@@ -142,7 +142,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
         // Initialize weights with Xavier initialization
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_val = T::from(scirs2_core::random::random::<f64>() * 2.0 - 1.0).unwrap();
+                let random_f64 = scirs2_core::random::f64();
+                let scaled_f64 = random_f64 * 2.0 - 1.0;
+                let random_val = T::from(scaled_f64).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -165,7 +167,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_val = T::from(scirs2_core::random::random::<f64>() * 2.0 - 1.0).unwrap();
+                let random_f64 = scirs2_core::random::f64();
+                let scaled_f64 = random_f64 * 2.0 - 1.0;
+                let random_val = T::from(scaled_f64).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -220,7 +224,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
         for i in 0..self.input_dim {
             for j in 0..self.output_dim {
-                let random_val = T::from(scirs2_core::random::random::<f64>() * 2.0 - 1.0).unwrap();
+                let random_f64 = scirs2_core::random::f64();
+                let scaled_f64 = random_f64 * 2.0 - 1.0;
+                let random_val = T::from(scaled_f64).unwrap();
                 self.weight[[i, j]] = random_val * scale;
             }
         }
@@ -539,7 +545,11 @@ mod tests {
 
     #[test]
     fn test_feedforward_network() {
-        let mut ffn = FeedForwardNetwork::<f32>::new(128, 512, crate::learned_optimizers::transformer_based_optimizer::config::ActivationFunction::ReLU);
+        let mut ffn = FeedForwardNetwork::<f32>::new(
+            128,
+            512,
+            crate::transformer_based_optimizer::config::ActivationFunction::ReLU,
+        );
         assert!(ffn.is_ok());
 
         let mut network = ffn.unwrap();

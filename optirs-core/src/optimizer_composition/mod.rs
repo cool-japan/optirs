@@ -22,8 +22,8 @@ use std::fmt::Debug;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizer_composition::SequentialOptimizer;
-/// use scirs2_optim::optimizers::{SGD, Adam, Optimizer};
+/// use optirs_core::optimizer_composition::SequentialOptimizer;
+/// use optirs_core::optimizers::{SGD, Adam, Optimizer};
 ///
 /// // Create optimizers
 /// let sgd = SGD::new(0.1);
@@ -193,8 +193,8 @@ where
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizer_composition::{ParallelOptimizer, ParameterGroup};
-/// use scirs2_optim::optimizers::{SGD, Adam, Optimizer};
+/// use optirs_core::optimizer_composition::{ParallelOptimizer, ParameterGroup};
+/// use optirs_core::optimizers::{SGD, Adam, Optimizer};
 ///
 /// // Create optimizers
 /// let sgd = SGD::new(0.1);
@@ -492,8 +492,8 @@ where
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizer_composition::ChainedOptimizer;
-/// use scirs2_optim::optimizers::{SGD, Adam, Optimizer};
+/// use optirs_core::optimizer_composition::ChainedOptimizer;
+/// use optirs_core::optimizers::{SGD, Adam, Optimizer};
 ///
 /// // Create optimizers
 /// let inner = SGD::new(0.1);

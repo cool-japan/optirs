@@ -16,8 +16,7 @@ use num_traits::Float;
 use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
 use std::sync::Arc;
 
-use crate::gpu::memory_pool::{CudaKernel, CudaStream};
-use crate::gpu::{GpuOptimError, GpuOptimizerConfig};
+use crate::backends::{Backend, CompiledKernel, GpuBackend};
 use scirs2_core::gpu::{GpuContext, GpuKernel};
 
 /// Tensor core matrix multiplication configuration

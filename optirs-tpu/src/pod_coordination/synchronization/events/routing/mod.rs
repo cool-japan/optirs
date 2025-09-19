@@ -29,39 +29,37 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Core routing modules
-pub mod core;
 pub mod algorithms;
-pub mod optimization;
+pub mod core;
 pub mod monitoring;
+pub mod optimization;
 
 // Re-export core types
 pub use core::{
-    RoutingError, RoutingResult, Router, RouterConfig, RouterSettings,
-    RoutingTables, StaticRoute, DynamicRoute, RouteMetadata,
-    RoutingStrategy, RoundRobinConfig, WeightedRoundRobinConfig,
-    LeastConnectionsConfig, HashBasedConfig, GeographicConfig,
-    PerformanceBasedConfig, ContentBasedConfig, RandomConfig,
-    PriorityBasedConfig, AdaptiveConfig, CustomRoutingConfig,
+    AdaptiveConfig, ContentBasedConfig, CustomRoutingConfig, DynamicRoute, GeographicConfig,
+    HashBasedConfig, LeastConnectionsConfig, PerformanceBasedConfig, PriorityBasedConfig,
+    RandomConfig, RoundRobinConfig, RouteMetadata, Router, RouterConfig, RouterSettings,
+    RoutingError, RoutingResult, RoutingStrategy, RoutingTables, StaticRoute,
+    WeightedRoundRobinConfig,
 };
 
 // Re-export algorithm types
 pub use algorithms::{
-    LoadBalancing, LoadBalancingAlgorithm, Failover, FailoverStrategy,
-    TopologyAwareRouting, FailureDetection, FailoverRecovery,
-    HealthChecking, NetworkAwareness, QoSAwareness,
+    Failover, FailoverRecovery, FailoverStrategy, FailureDetection, HealthChecking, LoadBalancing,
+    LoadBalancingAlgorithm, NetworkAwareness, QoSAwareness, TopologyAwareRouting,
 };
 
 // Re-export optimization types
 pub use optimization::{
-    PathOptimization, OptimizationCriteria, RoutingCache, CacheStrategy,
-    AdaptiveRouting as AdaptiveOptimization, LearningAlgorithm,
+    AdaptiveRouting as AdaptiveOptimization, CacheStrategy, LearningAlgorithm,
+    OptimizationCriteria, PathOptimization, RoutingCache,
 };
 
 // Re-export monitoring types
 pub use monitoring::{
-    RoutingAnalytics, RoutingMetrics, TrafficManagement, HealthMonitoring,
-    PerformanceMetrics, QualityMetrics, UsageMetrics, TrafficShaping,
-    LoadDistribution, PriorityHandling, FlowControl,
+    FlowControl, HealthMonitoring, LoadDistribution, PerformanceMetrics, PriorityHandling,
+    QualityMetrics, RoutingAnalytics, RoutingMetrics, TrafficManagement, TrafficShaping,
+    UsageMetrics,
 };
 
 /// Event routing configuration
@@ -214,10 +212,8 @@ impl EventRoutingBuilder {
 
     /// Configure failover
     pub fn with_failover(mut self) -> Self {
-        self.config.failover.strategies = vec![
-            FailoverStrategy::Automatic,
-            FailoverStrategy::Manual,
-        ];
+        self.config.failover.strategies =
+            vec![FailoverStrategy::Automatic, FailoverStrategy::Manual];
         self
     }
 

@@ -61,7 +61,7 @@ pub mod prelude {
 }
 
 // Re-export core functionality at the top level
-pub use crate::core::error::{OptiRSError, Result};
+pub use crate::core::error::{OptimError, Result};
 pub use crate::core::optimizers;
 pub use crate::core::regularizers;
 pub use crate::core::schedulers;

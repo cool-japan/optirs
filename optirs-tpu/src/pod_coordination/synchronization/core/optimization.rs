@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::error::{Result, OptimError};
+use crate::error::{OptimError, Result};
 
 use super::config::*;
 use super::state::*;
@@ -867,12 +867,18 @@ impl AdaptiveOptimizer {
     /// Select best optimization strategy
     fn select_best_strategy(&self) -> Result<&OptimizationStrategy> {
         // Use meta-learning to select strategy
-        let recommendation = self.learning_system.meta_learning
+        let recommendation = self
+            .learning_system
+            .meta_learning
             .get_strategy_recommendation(&self.get_current_context())?;
 
         // Find strategy matching recommendation
-        self.strategies.iter()
-            .find(|s| std::mem::discriminant(&s.strategy_type) == std::mem::discriminant(&recommendation.strategy))
+        self.strategies
+            .iter()
+            .find(|s| {
+                std::mem::discriminant(&s.strategy_type)
+                    == std::mem::discriminant(&recommendation.strategy)
+            })
             .ok_or_else(|| OptimError::NotFound("Recommended strategy not found".to_string()))
     }
 
@@ -880,14 +886,26 @@ impl AdaptiveOptimizer {
     fn get_current_context(&self) -> HashMap<String, f64> {
         // Collect context features
         let mut context = HashMap::new();
-        context.insert("parameter_count".to_string(), self.parameter_space.parameters.len() as f64);
-        context.insert("evaluation_count".to_string(), self.history.configurations.len() as f64);
-        context.insert("best_objective".to_string(), self.state.best_config.as_ref().map(|_| 0.8).unwrap_or(0.0));
+        context.insert(
+            "parameter_count".to_string(),
+            self.parameter_space.parameters.len() as f64,
+        );
+        context.insert(
+            "evaluation_count".to_string(),
+            self.history.configurations.len() as f64,
+        );
+        context.insert(
+            "best_objective".to_string(),
+            self.state.best_config.as_ref().map(|_| 0.8).unwrap_or(0.0),
+        );
         context
     }
 
     /// Run optimization strategy
-    fn run_optimization_strategy(&mut self, strategy: &OptimizationStrategy) -> Result<OptimizationResult> {
+    fn run_optimization_strategy(
+        &mut self,
+        strategy: &OptimizationStrategy,
+    ) -> Result<OptimizationResult> {
         match &strategy.strategy_type {
             StrategyType::BayesianOptimization => self.run_bayesian_optimization(),
             StrategyType::GeneticAlgorithm => self.run_genetic_algorithm(),
@@ -909,7 +927,8 @@ impl AdaptiveOptimizer {
             constraints_satisfied: true,
             timestamp: Instant::now(),
             strategy: "BayesianOptimization".to_string(),
-            improvement: objective_value - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
+            improvement: objective_value
+                - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
         })
     }
 
@@ -926,7 +945,8 @@ impl AdaptiveOptimizer {
             constraints_satisfied: true,
             timestamp: Instant::now(),
             strategy: "GeneticAlgorithm".to_string(),
-            improvement: objective_value - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
+            improvement: objective_value
+                - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
         })
     }
 
@@ -943,7 +963,8 @@ impl AdaptiveOptimizer {
             constraints_satisfied: true,
             timestamp: Instant::now(),
             strategy: "ParticleSwarmOptimization".to_string(),
-            improvement: objective_value - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
+            improvement: objective_value
+                - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
         })
     }
 
@@ -959,7 +980,8 @@ impl AdaptiveOptimizer {
             constraints_satisfied: true,
             timestamp: Instant::now(),
             strategy: "RandomSearch".to_string(),
-            improvement: objective_value - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
+            improvement: objective_value
+                - self.state.best_config.as_ref().map(|_| 0.5).unwrap_or(0.0),
         })
     }
 
@@ -968,7 +990,16 @@ impl AdaptiveOptimizer {
         self.parameter_space.current_values = config.clone();
         self.state.current_config = config.clone();
 
-        if self.state.best_config.is_none() || config.values().sum::<f64>() > self.state.best_config.as_ref().unwrap().values().sum::<f64>() {
+        if self.state.best_config.is_none()
+            || config.values().sum::<f64>()
+                > self
+                    .state
+                    .best_config
+                    .as_ref()
+                    .unwrap()
+                    .values()
+                    .sum::<f64>()
+        {
             self.state.best_config = Some(config.clone());
         }
 
@@ -996,8 +1027,10 @@ impl ParameterSpace {
     /// Add parameter definition
     pub fn add_parameter(&mut self, param: ParameterDefinition) -> Result<()> {
         let name = param.name.clone();
-        self.bounds.insert(name.clone(), (param.min_value, param.max_value));
-        self.current_values.insert(name.clone(), param.default_value);
+        self.bounds
+            .insert(name.clone(), (param.min_value, param.max_value));
+        self.current_values
+            .insert(name.clone(), param.default_value);
         self.parameters.insert(name, param);
         Ok(())
     }
@@ -1010,17 +1043,22 @@ impl ParameterSpace {
             let value = match param.param_type {
                 ParameterType::Continuous => {
                     // Random value between min and max
-                    param.min_value + (param.max_value - param.min_value) * scirs2_core::random::random::<f64>()
-                },
+                    param.min_value
+                        + (param.max_value - param.min_value) * scirs2_core::random::random::<f64>()
+                }
                 ParameterType::Integer => {
                     // Random integer between min and max
                     let range = param.max_value - param.min_value;
                     param.min_value + (scirs2_core::random::random::<f64>() * range).floor()
-                },
+                }
                 ParameterType::Boolean => {
                     // Random boolean as 0.0 or 1.0
-                    if scirs2_core::random::random::<bool>() { 1.0 } else { 0.0 }
-                },
+                    if scirs2_core::random::random::<bool>() {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
                 _ => param.default_value,
             };
 
@@ -1113,7 +1151,8 @@ impl LearningSystem {
             metadata: HashMap::new(),
         };
 
-        self.models.insert("performance_predictor".to_string(), performance_model);
+        self.models
+            .insert("performance_predictor".to_string(), performance_model);
 
         Ok(())
     }
@@ -1227,7 +1266,10 @@ impl MetaLearning {
     }
 
     /// Get strategy recommendation
-    pub fn get_strategy_recommendation(&self, context: &HashMap<String, f64>) -> Result<StrategyRecommendation> {
+    pub fn get_strategy_recommendation(
+        &self,
+        context: &HashMap<String, f64>,
+    ) -> Result<StrategyRecommendation> {
         // Simplified strategy recommendation
         Ok(StrategyRecommendation {
             strategy: StrategyType::BayesianOptimization,
@@ -1390,13 +1432,17 @@ pub mod utils {
     }
 
     /// Validate parameter configuration
-    pub fn validate_configuration(config: &HashMap<String, f64>, parameter_space: &ParameterSpace) -> Result<()> {
+    pub fn validate_configuration(
+        config: &HashMap<String, f64>,
+        parameter_space: &ParameterSpace,
+    ) -> Result<()> {
         for (name, value) in config {
             if let Some((min, max)) = parameter_space.bounds.get(name) {
                 if *value < *min || *value > *max {
-                    return Err(OptimError::InvalidInput(
-                        format!("Parameter {} value {} is out of bounds [{}, {}]", name, value, min, max)
-                    ));
+                    return Err(OptimError::InvalidInput(format!(
+                        "Parameter {} value {} is out of bounds [{}, {}]",
+                        name, value, min, max
+                    )));
                 }
             }
         }

@@ -24,7 +24,7 @@
 // # Usage Example
 //
 // ```rust
-// use scirs2_optim::benchmarking::advanced_cross_platform_orchestrator::{
+// use optirs_core::benchmarking::advanced_cross_platform_orchestrator::{
 //     CrossPlatformOrchestrator, OrchestratorConfig, PlatformTarget
 // };
 //

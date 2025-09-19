@@ -1,8 +1,8 @@
 //! Example of using regularization techniques
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::optimizers::{Optimizer, SGD};
-use scirs2_optim::regularizers::{ElasticNet, Regularizer, L1, L2};
+use optirs_core::optimizers::{Optimizer, SGD};
+use optirs_core::regularizers::{ElasticNet, Regularizer, L1, L2};
 
 #[allow(dead_code)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

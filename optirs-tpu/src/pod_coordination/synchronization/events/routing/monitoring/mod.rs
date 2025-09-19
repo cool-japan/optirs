@@ -1,8 +1,8 @@
 // Routing monitoring modules
 
-pub mod metrics;
 pub mod diagnostics;
+pub mod metrics;
 
 // Re-export monitoring types
-pub use metrics::*;
 pub use diagnostics::*;
+pub use metrics::*;

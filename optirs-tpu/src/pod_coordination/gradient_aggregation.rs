@@ -4,10 +4,10 @@ use std::fmt::Debug;
 // This module provides comprehensive gradient aggregation functionality for TPU pod coordination,
 // including various aggregation methods, compression, quantization, and communication optimization.
 
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, IxDyn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use scirs2_core::ndarray_ext::{Array, IxDyn};
-use num_traits::Float;
 
 use super::DeviceId;
 use crate::error::{OptimError, Result};
@@ -377,7 +377,17 @@ pub struct GradientAggregator<T: Float + Debug + Send + Sync + 'static> {
     error_accumulation: Vec<Array<T, IxDyn>>,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> GradientAggregator<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > GradientAggregator<T>
+{
     /// Create a new gradient aggregator
     pub fn new(config: AggregationConfig) -> Result<Self> {
         let aggregation_state = AggregationState {
@@ -439,24 +449,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_
         self.communication_stats.communication_rounds += 1;
 
         let aggregated = match self.config.method {
-            GradientAggregationMethod::Average => {
-                self.aggregate_average(device_gradients).await?
-            }
-            GradientAggregationMethod::Sum => {
-                self.aggregate_sum(device_gradients).await?
-            }
+            GradientAggregationMethod::Average => self.aggregate_average(device_gradients).await?,
+            GradientAggregationMethod::Sum => self.aggregate_sum(device_gradients).await?,
             GradientAggregationMethod::WeightedAverage => {
                 self.aggregate_weighted_average(device_gradients).await?
             }
-            GradientAggregationMethod::Median => {
-                self.aggregate_median(device_gradients).await?
-            }
+            GradientAggregationMethod::Median => self.aggregate_median(device_gradients).await?,
             GradientAggregationMethod::QuantizedAverage => {
                 self.aggregate_quantized_average(device_gradients).await?
             }
-            GradientAggregationMethod::TopK => {
-                self.aggregate_top_k(device_gradients).await?
-            }
+            GradientAggregationMethod::TopK => self.aggregate_top_k(device_gradients).await?,
             GradientAggregationMethod::LocalSGD => {
                 self.aggregate_local_sgd(device_gradients).await?
             }
@@ -505,7 +507,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_
             }
 
             // Average
-            let averaged = sum_gradient / num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
+            let averaged =
+                sum_gradient / num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
             aggregated_gradients.push(averaged);
         }
 
@@ -683,7 +686,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_
                         let levels = 2_i32.pow(self.config.quantization.bits as u32) as f64;
                         let (min_val, max_val) = self.config.quantization.range;
                         let scale = (max_val - min_val) / levels;
-                        let quantized_val = ((x.to_f64().unwrap() - min_val) / scale).round() * scale + min_val;
+                        let quantized_val =
+                            ((x.to_f64().unwrap() - min_val) / scale).round() * scale + min_val;
                         num_traits::cast::cast(quantized_val).unwrap_or_else(|| T::zero())
                     });
                     quantized.push(quantized_grad);
@@ -732,23 +736,33 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_
         &mut self,
         gradients: Vec<Array<T, IxDyn>>,
     ) -> Result<(Vec<Array<T, IxDyn>>, CompressionInfo)> {
-        let original_size = gradients.iter().map(|g| g.len() * std::mem::size_of::<T>()).sum();
+        let original_size = gradients
+            .iter()
+            .map(|g| g.len() * std::mem::size_of::<T>())
+            .sum();
 
         let compressed = match self.config.compression.algorithms.first() {
-            Some(CompressionAlgorithm::Quantization) => {
-                self.apply_quantization(gradients)?
-            }
+            Some(CompressionAlgorithm::Quantization) => self.apply_quantization(gradients)?,
             Some(CompressionAlgorithm::Sparsification) => {
                 self.apply_top_k_sparsification(gradients, 0.9)? // 90% sparsity
             }
             _ => gradients,
         };
 
-        let compressed_size = compressed.iter().map(|g| g.len() * std::mem::size_of::<T>()).sum();
+        let compressed_size = compressed
+            .iter()
+            .map(|g| g.len() * std::mem::size_of::<T>())
+            .sum();
         let compression_ratio = original_size as f64 / compressed_size as f64;
 
         let compression_info = CompressionInfo {
-            algorithm: self.config.compression.algorithms.first().copied().unwrap_or(CompressionAlgorithm::None),
+            algorithm: self
+                .config
+                .compression
+                .algorithms
+                .first()
+                .copied()
+                .unwrap_or(CompressionAlgorithm::None),
             compression_ratio,
             original_size,
             compressed_size,
@@ -805,7 +819,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + scirs2_
 
         stats.insert(
             "avg_time_ms".to_string(),
-            self.aggregation_state.statistics.avg_aggregation_time.as_millis() as f64,
+            self.aggregation_state
+                .statistics
+                .avg_aggregation_time
+                .as_millis() as f64,
         );
 
         stats.insert(
@@ -961,14 +978,8 @@ mod tests {
         let mut aggregator = GradientAggregator::<f32>::new(config).unwrap();
 
         let mut device_gradients = HashMap::new();
-        device_gradients.insert(
-            DeviceId(0),
-            vec![Array::ones(IxDyn(&[2, 2]))],
-        );
-        device_gradients.insert(
-            DeviceId(1),
-            vec![Array::ones(IxDyn(&[2, 2])) * 2.0],
-        );
+        device_gradients.insert(DeviceId(0), vec![Array::ones(IxDyn(&[2, 2]))]);
+        device_gradients.insert(DeviceId(1), vec![Array::ones(IxDyn(&[2, 2])) * 2.0]);
 
         let result = aggregator.aggregate_gradients(device_gradients).await;
         assert!(result.is_ok());

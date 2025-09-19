@@ -18,7 +18,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::regularizers::{L1, Regularizer};
+/// use optirs_core::regularizers::{L1, Regularizer};
 ///
 /// // Create an L1 regularizer with strength 0.01
 /// let regularizer = L1::new(0.01);

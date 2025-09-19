@@ -28,7 +28,7 @@
 // ## Usage
 //
 // ```rust
-// use scirs2_optim::benchmarking::ci_cd_automation::{
+// use optirs_core::benchmarking::ci_cd_automation::{
 //     CiCdAutomation, CiCdAutomationConfig, CiCdPlatform
 // };
 //

@@ -5,7 +5,7 @@ use scirs2_core::ndarray_ext::{ArrayBase, Data, DataMut, Dimension};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::gpu::GpuOptimError;
+use crate::backends::GpuBackend;
 
 #[cfg(feature = "gpu")]
 use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuKernelHandle};

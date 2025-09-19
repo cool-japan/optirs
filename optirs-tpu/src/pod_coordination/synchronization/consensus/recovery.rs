@@ -4,10 +4,10 @@
 // systems, including automatic recovery strategies, fault tolerance mechanisms,
 // and system restoration coordination.
 
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque, BTreeMap};
-use std::time::{Duration, Instant};
 use crate::tpu::pod_coordination::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 /// Recovery coordination configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -700,7 +700,9 @@ impl RecoveryCoordinator {
         let recovery_id = RecoveryId::new();
 
         // Select appropriate recovery strategy
-        let strategy = self.recovery_strategies.select_strategy(&recovery_request)?;
+        let strategy = self
+            .recovery_strategies
+            .select_strategy(&recovery_request)?;
 
         // Create recovery operation
         let mut recovery_operation = RecoveryOperation {
@@ -728,7 +730,8 @@ impl RecoveryCoordinator {
         self.start_recovery_execution(&mut recovery_operation)?;
 
         // Add to active recoveries
-        self.active_recoveries.insert(recovery_id.clone(), recovery_operation);
+        self.active_recoveries
+            .insert(recovery_id.clone(), recovery_operation);
 
         // Update recovery state
         self.recovery_state.active_recovery_count += 1;
@@ -738,8 +741,14 @@ impl RecoveryCoordinator {
     }
 
     /// Execute a recovery step
-    fn execute_recovery_step(&mut self, recovery_id: &RecoveryId, step_index: usize) -> Result<bool> {
-        let recovery = self.active_recoveries.get_mut(recovery_id)
+    fn execute_recovery_step(
+        &mut self,
+        recovery_id: &RecoveryId,
+        step_index: usize,
+    ) -> Result<bool> {
+        let recovery = self
+            .active_recoveries
+            .get_mut(recovery_id)
             .ok_or_else(|| anyhow::anyhow!("Recovery operation not found"))?;
 
         if step_index >= recovery.recovery_steps.len() {
@@ -759,7 +768,8 @@ impl RecoveryCoordinator {
 
         if step_result && validation_result {
             recovery.current_step += 1;
-            recovery.progress_percentage = (recovery.current_step as f64 / recovery.recovery_steps.len() as f64) * 100.0;
+            recovery.progress_percentage =
+                (recovery.current_step as f64 / recovery.recovery_steps.len() as f64) * 100.0;
             Ok(recovery.current_step >= recovery.recovery_steps.len())
         } else {
             // Step failed, handle according to retry policy
@@ -798,20 +808,18 @@ impl RecoveryCoordinator {
     }
 
     /// Execute step actions
-    fn execute_step_actions(&mut self, recovery_id: &RecoveryId, step: &RecoveryStep) -> Result<bool> {
+    fn execute_step_actions(
+        &mut self,
+        recovery_id: &RecoveryId,
+        step: &RecoveryStep,
+    ) -> Result<bool> {
         let mut all_actions_successful = true;
 
         for action in &step.actions {
             let action_result = match action.action_type {
-                RecoveryActionType::ServiceRestart => {
-                    self.execute_service_restart(action)
-                }
-                RecoveryActionType::StateRestore => {
-                    self.execute_state_restore(action)
-                }
-                RecoveryActionType::NetworkReconfig => {
-                    self.execute_network_reconfig(action)
-                }
+                RecoveryActionType::ServiceRestart => self.execute_service_restart(action),
+                RecoveryActionType::StateRestore => self.execute_state_restore(action),
+                RecoveryActionType::NetworkReconfig => self.execute_network_reconfig(action),
                 RecoveryActionType::ResourceReallocation => {
                     self.execute_resource_reallocation(action)
                 }
@@ -821,12 +829,8 @@ impl RecoveryCoordinator {
                 RecoveryActionType::DataSynchronization => {
                     self.execute_data_synchronization(action)
                 }
-                RecoveryActionType::HealthCheck => {
-                    self.execute_health_check(action)
-                }
-                RecoveryActionType::CustomAction => {
-                    self.execute_custom_action(action)
-                }
+                RecoveryActionType::HealthCheck => self.execute_health_check(action),
+                RecoveryActionType::CustomAction => self.execute_custom_action(action),
             };
 
             match action_result {
@@ -847,7 +851,11 @@ impl RecoveryCoordinator {
     }
 
     /// Validate step completion
-    fn validate_step_completion(&self, recovery_id: &RecoveryId, step: &RecoveryStep) -> Result<bool> {
+    fn validate_step_completion(
+        &self,
+        recovery_id: &RecoveryId,
+        step: &RecoveryStep,
+    ) -> Result<bool> {
         for validation_check in &step.validation_checks {
             if !self.execute_validation_check(validation_check)? {
                 return Ok(false);
@@ -858,7 +866,9 @@ impl RecoveryCoordinator {
 
     /// Handle step failure
     fn handle_step_failure(&mut self, recovery_id: &RecoveryId, step_index: usize) -> Result<()> {
-        let recovery = self.active_recoveries.get_mut(recovery_id)
+        let recovery = self
+            .active_recoveries
+            .get_mut(recovery_id)
             .ok_or_else(|| anyhow::anyhow!("Recovery operation not found"))?;
 
         let step = &recovery.recovery_steps[step_index];
@@ -883,7 +893,9 @@ impl RecoveryCoordinator {
 
     /// Complete a recovery operation
     fn complete_recovery(&mut self, recovery_id: &RecoveryId) -> Result<()> {
-        let recovery = self.active_recoveries.remove(recovery_id)
+        let recovery = self
+            .active_recoveries
+            .remove(recovery_id)
             .ok_or_else(|| anyhow::anyhow!("Recovery operation not found"))?;
 
         // Create history entry
@@ -891,7 +903,11 @@ impl RecoveryCoordinator {
             completion_time: Instant::now(),
             duration: Instant::now().duration_since(recovery.start_time),
             final_status: recovery.status.clone(),
-            success_rate: if recovery.status == RecoveryStatus::Completed { 1.0 } else { 0.0 },
+            success_rate: if recovery.status == RecoveryStatus::Completed {
+                1.0
+            } else {
+                0.0
+            },
             lessons_learned: self.extract_lessons_learned(&recovery)?,
             recommendations: self.generate_recommendations(&recovery)?,
             recovery_operation: recovery,
@@ -924,7 +940,9 @@ impl RecoveryCoordinator {
 
     /// Get recovery status
     pub fn get_recovery_status(&self, recovery_id: &RecoveryId) -> Option<RecoveryStatus> {
-        self.active_recoveries.get(recovery_id).map(|r| r.status.clone())
+        self.active_recoveries
+            .get(recovery_id)
+            .map(|r| r.status.clone())
     }
 
     /// List active recoveries
@@ -949,14 +967,14 @@ impl RecoveryCoordinator {
     // Helper methods for action execution
     fn start_recovery_execution(&mut self, recovery: &mut RecoveryOperation) -> Result<()> {
         recovery.status = RecoveryStatus::InProgress;
-        recovery.estimated_completion = Some(
-            Instant::now() + self.estimate_recovery_duration(recovery)
-        );
+        recovery.estimated_completion =
+            Some(Instant::now() + self.estimate_recovery_duration(recovery));
         Ok(())
     }
 
     fn estimate_recovery_duration(&self, recovery: &RecoveryOperation) -> Duration {
-        recovery.recovery_steps
+        recovery
+            .recovery_steps
             .iter()
             .map(|step| step.expected_duration)
             .sum()
@@ -965,19 +983,20 @@ impl RecoveryCoordinator {
     fn update_recovery_statistics(&mut self) {
         // Update success rate
         if self.statistics.total_recovery_attempts > 0 {
-            self.statistics.recovery_success_rate =
-                self.statistics.successful_recoveries as f64 /
-                self.statistics.total_recovery_attempts as f64;
+            self.statistics.recovery_success_rate = self.statistics.successful_recoveries as f64
+                / self.statistics.total_recovery_attempts as f64;
         }
 
         // Calculate average recovery time
         if !self.recovery_history.is_empty() {
-            let total_duration: Duration = self.recovery_history
+            let total_duration: Duration = self
+                .recovery_history
                 .iter()
                 .map(|entry| entry.duration)
                 .sum();
 
-            self.statistics.average_recovery_time = total_duration / self.recovery_history.len() as u32;
+            self.statistics.average_recovery_time =
+                total_duration / self.recovery_history.len() as u32;
             self.statistics.mean_time_to_recovery = self.statistics.average_recovery_time;
         }
     }
@@ -1175,7 +1194,11 @@ pub struct SystemHealthStatus {
 
 // Additional stub implementations for referenced configuration types
 use crate::tpu::pod_coordination::types::{
-    RecoveryStrategiesConfig, FaultToleranceConfig, RecoveryOrchestrationConfig,
-    RecoveryMonitoringConfig, RecoveryValidationConfig, RecoveryAnalyticsConfig,
+    FaultToleranceConfig,
+    RecoveryAnalyticsConfig,
     // All the other referenced configuration types would be imported here
+    RecoveryMonitoringConfig,
+    RecoveryOrchestrationConfig,
+    RecoveryStrategiesConfig,
+    RecoveryValidationConfig,
 };

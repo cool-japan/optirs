@@ -90,72 +90,72 @@ pub mod gps;
 pub mod network;
 
 // Monitoring and analysis modules
-pub mod quality;
 pub mod drift;
 pub mod health;
+pub mod quality;
 pub mod statistics;
 
 // Re-export main types from core module
 pub use core::{
-    ClockSynchronizationManager, ClockSynchronizationConfig, ClockSynchronizer,
-    ClockSynchronizationState, ClockSynchronizationStatus, ClockOffset,
-    SynchronizationEvent, SynchronizationResult,
+    ClockOffset, ClockSynchronizationConfig, ClockSynchronizationManager,
+    ClockSynchronizationState, ClockSynchronizationStatus, ClockSynchronizer, SynchronizationEvent,
+    SynchronizationResult,
 };
 
 // Re-export protocol types
 pub use protocols::{
-    ClockSyncProtocol, NtpConfig, PtpConfig, SntpConfig, BerkeleyConfig,
-    CristianConfig, CustomProtocolConfig, ProtocolManager, ProtocolError,
-    NtpSynchronizer, PtpSynchronizer, SntpSynchronizer,
+    BerkeleyConfig, ClockSyncProtocol, CristianConfig, CustomProtocolConfig, NtpConfig,
+    NtpSynchronizer, ProtocolError, ProtocolManager, PtpConfig, PtpSynchronizer, SntpConfig,
+    SntpSynchronizer,
 };
 
 // Re-export source management types
 pub use sources::{
-    ClockSource, TimeSource, TimeSourceManager, TimeSourceConfig,
-    SourceSelectionAlgorithm, SourceSelectionCriteria, SourceValidation,
-    AtomicClockType, RadioTimeStation, SystemClockConfig,
+    AtomicClockType, ClockSource, RadioTimeStation, SourceSelectionAlgorithm,
+    SourceSelectionCriteria, SourceValidation, SystemClockConfig, TimeSource, TimeSourceConfig,
+    TimeSourceManager,
 };
 
 // Re-export GPS synchronization types
 pub use gps::{
-    GpsConfig, GpsReceiverType, GpsSignalProcessing, GpsErrorCorrection,
-    GpsSynchronizationManager, GpsTime, GpsError, AntennaConfig,
-    IonosphericCorrection, TroposphericCorrection, SatelliteClockCorrection,
+    AntennaConfig, GpsConfig, GpsError, GpsErrorCorrection, GpsReceiverType, GpsSignalProcessing,
+    GpsSynchronizationManager, GpsTime, IonosphericCorrection, SatelliteClockCorrection,
+    TroposphericCorrection,
 };
 
 // Re-export network synchronization types
 pub use network::{
-    NetworkSyncConfig, NetworkTopology, MessagePassingConfig, NetworkLoadBalancing,
-    NetworkFaultTolerance, NetworkSynchronizationManager, NetworkSyncError,
-    SyncMessageType, MessagePriority, LoadBalancingAlgorithm,
+    LoadBalancingAlgorithm, MessagePassingConfig, MessagePriority, NetworkFaultTolerance,
+    NetworkLoadBalancing, NetworkSyncConfig, NetworkSyncError, NetworkSynchronizationManager,
+    NetworkTopology, SyncMessageType,
 };
 
 // Re-export quality monitoring types
 pub use quality::{
-    ClockAccuracyRequirements, QualityRequirements, SourceQualityMonitoring,
-    QualityMetric, QualityThresholds, ClockQualityMonitor, QualitySnapshot,
-    QualityGrade, QualityMonitoringConfig, QualityAssessment,
+    ClockAccuracyRequirements, ClockQualityMonitor, QualityAssessment, QualityGrade, QualityMetric,
+    QualityMonitoringConfig, QualityRequirements, QualitySnapshot, QualityThresholds,
+    SourceQualityMonitoring,
 };
 
 // Re-export drift compensation types
 pub use drift::{
-    DriftCompensationConfig, DriftCompensationAlgorithm, DriftMeasurementConfig,
-    DriftPredictionConfig, DriftCompensator, DriftModel, DriftPredictionEngine,
-    DriftCompensationError, DriftMeasurement, DriftCompensationStatus,
+    DriftCompensationAlgorithm, DriftCompensationConfig, DriftCompensationError,
+    DriftCompensationStatus, DriftCompensator, DriftMeasurement, DriftMeasurementConfig,
+    DriftModel, DriftPredictionConfig, DriftPredictionEngine,
 };
 
 // Re-export health monitoring types
 pub use health::{
-    SourceHealthMonitor, HealthCheck, HealthCheckType, HealthMonitorConfig,
-    HealthThresholds, AlertConfiguration, RecoveryConfiguration, HealthAlert,
-    HealthStatus, AlertSeverity, HealthMonitorError, SourceFailoverConfig,
+    AlertConfiguration, AlertSeverity, HealthAlert, HealthCheck, HealthCheckType,
+    HealthMonitorConfig, HealthMonitorError, HealthStatus, HealthThresholds, RecoveryConfiguration,
+    SourceFailoverConfig, SourceHealthMonitor,
 };
 
 // Re-export statistics and reporting types
 pub use statistics::{
-    ClockStatistics, PerformanceTracking, PerformanceHistory, PerformanceMeasurement,
-    QualityReporting, ReportGeneration, StatisticsCollector, PerformanceReport,
-    StatisticsError, TrendDirection, ReliabilityStatistics,
+    ClockStatistics, PerformanceHistory, PerformanceMeasurement, PerformanceReport,
+    PerformanceTracking, QualityReporting, ReliabilityStatistics, ReportGeneration,
+    StatisticsCollector, StatisticsError, TrendDirection,
 };
 
 // Convenience type aliases
@@ -193,16 +193,30 @@ pub enum ClockSynchronizationError {
 impl std::fmt::Display for ClockSynchronizationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClockSynchronizationError::CoreError(e) => write!(f, "Core synchronization error: {}", e),
+            ClockSynchronizationError::CoreError(e) => {
+                write!(f, "Core synchronization error: {}", e)
+            }
             ClockSynchronizationError::ProtocolError(e) => write!(f, "Protocol error: {}", e),
-            ClockSynchronizationError::SourceError(e) => write!(f, "Source management error: {}", e),
+            ClockSynchronizationError::SourceError(e) => {
+                write!(f, "Source management error: {}", e)
+            }
             ClockSynchronizationError::GpsError(e) => write!(f, "GPS synchronization error: {}", e),
-            ClockSynchronizationError::NetworkError(e) => write!(f, "Network synchronization error: {}", e),
-            ClockSynchronizationError::QualityError(e) => write!(f, "Quality monitoring error: {}", e),
-            ClockSynchronizationError::DriftError(e) => write!(f, "Drift compensation error: {}", e),
-            ClockSynchronizationError::HealthError(e) => write!(f, "Health monitoring error: {}", e),
+            ClockSynchronizationError::NetworkError(e) => {
+                write!(f, "Network synchronization error: {}", e)
+            }
+            ClockSynchronizationError::QualityError(e) => {
+                write!(f, "Quality monitoring error: {}", e)
+            }
+            ClockSynchronizationError::DriftError(e) => {
+                write!(f, "Drift compensation error: {}", e)
+            }
+            ClockSynchronizationError::HealthError(e) => {
+                write!(f, "Health monitoring error: {}", e)
+            }
             ClockSynchronizationError::StatisticsError(e) => write!(f, "Statistics error: {}", e),
-            ClockSynchronizationError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
+            ClockSynchronizationError::ConfigurationError(msg) => {
+                write!(f, "Configuration error: {}", msg)
+            }
             ClockSynchronizationError::SystemError(msg) => write!(f, "System error: {}", msg),
         }
     }
@@ -347,7 +361,10 @@ impl ClockSynchronizationBuilder {
     }
 
     /// Set statistics collection configuration
-    pub fn with_statistics_config(mut self, config: statistics::StatisticsCollectionConfig) -> Self {
+    pub fn with_statistics_config(
+        mut self,
+        config: statistics::StatisticsCollectionConfig,
+    ) -> Self {
         self.statistics_config = Some(config);
         self
     }
@@ -409,7 +426,9 @@ pub mod utils {
     use super::*;
 
     /// Create a basic NTP-based synchronization setup
-    pub fn create_ntp_sync_manager(ntp_servers: Vec<String>) -> Result<ClockSynchronizationManager> {
+    pub fn create_ntp_sync_manager(
+        ntp_servers: Vec<String>,
+    ) -> Result<ClockSynchronizationManager> {
         let mut builder = ClockSynchronizationBuilder::new();
 
         // Add NTP protocol
@@ -439,7 +458,9 @@ pub mod utils {
     }
 
     /// Create a GPS-based synchronization setup
-    pub fn create_gps_sync_manager(gps_config: gps::GpsConfig) -> Result<ClockSynchronizationManager> {
+    pub fn create_gps_sync_manager(
+        gps_config: gps::GpsConfig,
+    ) -> Result<ClockSynchronizationManager> {
         let mut builder = ClockSynchronizationBuilder::new();
 
         // Add GPS configuration
@@ -552,14 +573,14 @@ pub mod utils {
 /// Prelude module for common imports
 pub mod prelude {
     pub use super::{
-        ClockSynchronizationManager, ClockSynchronizationConfig, ClockSynchronizationBuilder,
-        ClockOffset, Result, ClockSynchronizationError,
+        ClockOffset, ClockSynchronizationBuilder, ClockSynchronizationConfig,
+        ClockSynchronizationError, ClockSynchronizationManager, Result,
     };
 
-    pub use super::protocols::{ClockSyncProtocol, NtpConfig, PtpConfig};
-    pub use super::sources::{ClockSource, TimeSource, AtomicClockType};
-    pub use super::quality::{QualityGrade, QualityMetric, TrendDirection};
     pub use super::health::{AlertSeverity, HealthCheckType};
+    pub use super::protocols::{ClockSyncProtocol, NtpConfig, PtpConfig};
+    pub use super::quality::{QualityGrade, QualityMetric, TrendDirection};
+    pub use super::sources::{AtomicClockType, ClockSource, TimeSource};
     pub use super::statistics::{PerformanceMetric, ReportFormat};
     pub use super::utils;
 }
@@ -571,8 +592,8 @@ mod tests {
 
     #[test]
     fn test_builder_pattern() {
-        let builder = ClockSynchronizationBuilder::new()
-            .with_protocol(protocols::ClockSyncProtocol::NTP {
+        let builder =
+            ClockSynchronizationBuilder::new().with_protocol(protocols::ClockSyncProtocol::NTP {
                 version: 4,
                 servers: vec!["pool.ntp.org".to_string()],
                 authentication: false,
@@ -588,7 +609,7 @@ mod tests {
         let sync_error: ClockSynchronizationError = core_error.into();
 
         match sync_error {
-            ClockSynchronizationError::CoreError(_) => {},
+            ClockSynchronizationError::CoreError(_) => {}
             _ => panic!("Error conversion failed"),
         }
     }

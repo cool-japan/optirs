@@ -4,7 +4,7 @@
 // providing insights into long-term system behavior and reliability.
 
 use clap::{Arg, Command};
-use scirs2_optim::error::{OptimError, Result};
+use optirs_core::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;

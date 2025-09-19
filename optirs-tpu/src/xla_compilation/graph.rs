@@ -4,17 +4,17 @@
 // including type inference, shape analysis, dependency tracking, and constant folding.
 
 use num_traits::Float;
-use std::fmt::Debug;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use crate::error::Result;
 use super::types::{
-    ComputationId, OperationId, OperandId, XLAOperation, XLAComputation, InputSpecification,
-    OutputSpecification, ComputationMetadata, PerformanceHint, LayoutHint, OperationType,
-    OperandType, TensorShape, ElementType
+    ComputationId, ComputationMetadata, ElementType, InputSpecification, LayoutHint, OperandId,
+    OperandType, OperationId, OperationType, OutputSpecification, PerformanceHint, TensorShape,
+    XLAComputation, XLAOperation,
 };
+use crate::error::Result;
 
 /// Computation graph builder for XLA
 #[derive(Debug)]

@@ -61,7 +61,10 @@ pub enum TopologyType {
     /// Fat tree topology
     FatTree { levels: usize, branching: usize },
     /// Dragonfly topology
-    Dragonfly { groups: usize, routers_per_group: usize },
+    Dragonfly {
+        groups: usize,
+        routers_per_group: usize,
+    },
     /// Custom topology with user-defined connections
     Custom { adjacency_matrix: Vec<Vec<bool>> },
 }
@@ -204,11 +207,17 @@ pub enum CoolingType {
     /// Air cooling
     Air { fan_count: usize, cfm_per_fan: f64 },
     /// Liquid cooling
-    Liquid { pump_capacity: f64, radiator_size: f64 },
+    Liquid {
+        pump_capacity: f64,
+        radiator_size: f64,
+    },
     /// Immersion cooling
     Immersion { fluid_type: String, flow_rate: f64 },
     /// Hybrid cooling
-    Hybrid { primary: Box<CoolingType>, secondary: Box<CoolingType> },
+    Hybrid {
+        primary: Box<CoolingType>,
+        secondary: Box<CoolingType>,
+    },
 }
 
 /// Cooling redundancy levels
@@ -445,9 +454,7 @@ pub enum NodeType {
         switching_capacity: f64,
     },
     /// Management node
-    Management {
-        services: Vec<String>,
-    },
+    Management { services: Vec<String> },
 }
 
 /// Storage types for storage nodes
@@ -464,7 +471,10 @@ pub enum StorageType {
     /// Distributed storage
     Distributed { replication_factor: usize },
     /// Hybrid storage
-    Hybrid { primary: Box<StorageType>, secondary: Box<StorageType> },
+    Hybrid {
+        primary: Box<StorageType>,
+        secondary: Box<StorageType>,
+    },
 }
 
 /// Network interface types
@@ -584,7 +594,10 @@ pub enum OptimizationConstraint {
     /// Reliability constraint
     Reliability { min_reliability: f64 },
     /// Custom constraint
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Optimization algorithms
@@ -628,7 +641,7 @@ impl Default for TopologyConfig {
             inter_node_connection: InterNodeConnection::InfiniBand { speed_gbps: 100.0 },
             intra_node_connection: IntraNodeConnection::NVLink {
                 version: "4.0".to_string(),
-                speed_gbps: 600.0
+                speed_gbps: 600.0,
             },
             enable_optimization: true,
             enable_dynamic_reconfig: false,
@@ -643,11 +656,11 @@ impl Default for TopologyConfig {
 impl Default for TopologyQoSSettings {
     fn default() -> Self {
         Self {
-            max_latency: 10.0,  // 10 microseconds
-            min_bandwidth: 100.0,  // 100 Gbps
-            reliability: 0.999,  // 99.9% reliability
-            jitter_tolerance: 1.0,  // 1 microsecond
-            packet_loss_tolerance: 0.0001,  // 0.01% packet loss
+            max_latency: 10.0,             // 10 microseconds
+            min_bandwidth: 100.0,          // 100 Gbps
+            reliability: 0.999,            // 99.9% reliability
+            jitter_tolerance: 1.0,         // 1 microsecond
+            packet_loss_tolerance: 0.0001, // 0.01% packet loss
         }
     }
 }
@@ -656,7 +669,7 @@ impl Default for TopologyConstraints {
     fn default() -> Self {
         Self {
             max_hops: Some(3),
-            max_cable_length: Some(100.0),  // 100 meters
+            max_cable_length: Some(100.0), // 100 meters
             power_budget: PowerBudgetConstraints::default(),
             thermal_constraints: ThermalConstraints::default(),
             space_constraints: SpaceConstraints::default(),
@@ -667,9 +680,9 @@ impl Default for TopologyConstraints {
 impl Default for PowerBudgetConstraints {
     fn default() -> Self {
         Self {
-            max_total_power: 10000.0,  // 10 kW
-            max_power_per_node: 2000.0,  // 2 kW per node
-            efficiency_requirements: 0.85,  // 85% efficiency
+            max_total_power: 10000.0,      // 10 kW
+            max_power_per_node: 2000.0,    // 2 kW per node
+            efficiency_requirements: 0.85, // 85% efficiency
             emergency_limits: EmergencyPowerLimits::default(),
         }
     }
@@ -678,9 +691,11 @@ impl Default for PowerBudgetConstraints {
 impl Default for EmergencyPowerLimits {
     fn default() -> Self {
         Self {
-            critical_level: 8000.0,  // 8 kW
-            shutdown_threshold: 12000.0,  // 12 kW
-            reduction_strategy: PowerReductionStrategy::ReduceFrequency { target_reduction: 0.2 },
+            critical_level: 8000.0,      // 8 kW
+            shutdown_threshold: 12000.0, // 12 kW
+            reduction_strategy: PowerReductionStrategy::ReduceFrequency {
+                target_reduction: 0.2,
+            },
         }
     }
 }
@@ -688,8 +703,8 @@ impl Default for EmergencyPowerLimits {
 impl Default for ThermalConstraints {
     fn default() -> Self {
         Self {
-            max_temperature: 85.0,  // 85°C
-            max_temperature_gradient: 10.0,  // 10°C/m
+            max_temperature: 85.0,          // 85°C
+            max_temperature_gradient: 10.0, // 10°C/m
             cooling_requirements: CoolingRequirements::default(),
             thermal_zones: Vec::new(),
         }
@@ -699,9 +714,12 @@ impl Default for ThermalConstraints {
 impl Default for CoolingRequirements {
     fn default() -> Self {
         Self {
-            required_capacity: 8000.0,  // 8 kW cooling
-            cooling_type: CoolingType::Air { fan_count: 8, cfm_per_fan: 200.0 },
-            airflow_cfm: 1600.0,  // 1600 CFM
+            required_capacity: 8000.0, // 8 kW cooling
+            cooling_type: CoolingType::Air {
+                fan_count: 8,
+                cfm_per_fan: 200.0,
+            },
+            airflow_cfm: 1600.0, // 1600 CFM
             redundancy: CoolingRedundancy::NPlusOne,
         }
     }
@@ -711,8 +729,8 @@ impl Default for SpaceConstraints {
     fn default() -> Self {
         Self {
             max_rack_units: 42,
-            floor_space_sqm: 4.0,  // 4 square meters
-            max_height: 2.1,  // 2.1 meters
+            floor_space_sqm: 4.0, // 4 square meters
+            max_height: 2.1,      // 2.1 meters
             weight_constraints: WeightConstraints::default(),
             cable_management: CableManagementRequirements::default(),
         }
@@ -722,9 +740,9 @@ impl Default for SpaceConstraints {
 impl Default for WeightConstraints {
     fn default() -> Self {
         Self {
-            max_total_weight: 1000.0,  // 1000 kg
-            max_weight_per_ru: 25.0,  // 25 kg per RU
-            floor_loading_capacity: 500.0,  // 500 kg/sqm
+            max_total_weight: 1000.0,      // 1000 kg
+            max_weight_per_ru: 25.0,       // 25 kg per RU
+            floor_loading_capacity: 500.0, // 500 kg/sqm
         }
     }
 }
@@ -733,8 +751,8 @@ impl Default for CableManagementRequirements {
     fn default() -> Self {
         Self {
             tray_capacity: 100,
-            max_cable_length: 50.0,  // 50 meters
-            separation_requirements: 0.1,  // 10 cm separation
+            max_cable_length: 50.0,       // 50 meters
+            separation_requirements: 0.1, // 10 cm separation
             routing_constraints: Vec::new(),
         }
     }
@@ -754,10 +772,10 @@ impl Default for PerformanceRequirements {
 impl Default for BandwidthRequirements {
     fn default() -> Self {
         Self {
-            min_aggregate: 800.0,  // 800 Gbps aggregate
-            min_per_device: 100.0,  // 100 Gbps per device
-            peak_bandwidth: 1000.0,  // 1 Tbps peak
-            sustained_bandwidth: 800.0,  // 800 Gbps sustained
+            min_aggregate: 800.0,       // 800 Gbps aggregate
+            min_per_device: 100.0,      // 100 Gbps per device
+            peak_bandwidth: 1000.0,     // 1 Tbps peak
+            sustained_bandwidth: 800.0, // 800 Gbps sustained
             utilization_targets: BandwidthUtilizationTargets::default(),
         }
     }
@@ -766,10 +784,10 @@ impl Default for BandwidthRequirements {
 impl Default for BandwidthUtilizationTargets {
     fn default() -> Self {
         Self {
-            target: 0.7,  // 70% target utilization
+            target: 0.7,             // 70% target utilization
             warning_threshold: 0.8,  // 80% warning
-            critical_threshold: 0.9,  // 90% critical
-            max_utilization: 0.95,  // 95% maximum
+            critical_threshold: 0.9, // 90% critical
+            max_utilization: 0.95,   // 95% maximum
         }
     }
 }
@@ -779,7 +797,7 @@ impl Default for LatencyRequirements {
         Self {
             max_end_to_end: 20.0,  // 20 microseconds
             max_hop_latency: 5.0,  // 5 microseconds per hop
-            jitter_tolerance: 1.0,  // 1 microsecond jitter
+            jitter_tolerance: 1.0, // 1 microsecond jitter
             sla_requirements: LatencySLA::default(),
         }
     }
@@ -788,10 +806,10 @@ impl Default for LatencyRequirements {
 impl Default for LatencySLA {
     fn default() -> Self {
         Self {
-            p50_target: 5.0,  // 5 μs P50
+            p50_target: 5.0,   // 5 μs P50
             p95_target: 15.0,  // 15 μs P95
             p99_target: 25.0,  // 25 μs P99
-            p999_target: 50.0,  // 50 μs P99.9
+            p999_target: 50.0, // 50 μs P99.9
         }
     }
 }
@@ -814,7 +832,7 @@ impl Default for HorizontalScalingRequirements {
             support_node_addition: true,
             dynamic_reconfig: false,
             hot_plug_support: false,
-            max_scaling_rate: 10.0,  // 10 nodes/hour
+            max_scaling_rate: 10.0, // 10 nodes/hour
         }
     }
 }
@@ -825,7 +843,7 @@ impl Default for VerticalScalingRequirements {
             support_device_upgrade: true,
             memory_expansion: true,
             compute_enhancement: true,
-            max_upgrade_frequency: 2.0,  // 2 upgrades/year
+            max_upgrade_frequency: 2.0, // 2 upgrades/year
         }
     }
 }
@@ -833,7 +851,7 @@ impl Default for VerticalScalingRequirements {
 impl Default for FaultToleranceRequirements {
     fn default() -> Self {
         Self {
-            target_availability: 0.9999,  // 99.99% availability
+            target_availability: 0.9999, // 99.99% availability
             max_tolerable_failures: 2,
             recovery_objectives: RecoveryObjectives::default(),
             isolation_requirements: FailureIsolationRequirements::default(),
@@ -844,10 +862,10 @@ impl Default for FaultToleranceRequirements {
 impl Default for RecoveryObjectives {
     fn default() -> Self {
         Self {
-            rto_seconds: 300.0,  // 5 minutes RTO
-            rpo_seconds: 60.0,  // 1 minute RPO
-            mttr_seconds: 600.0,  // 10 minutes MTTR
-            max_downtime_per_year: 3153.6,  // 52.56 minutes/year for 99.99%
+            rto_seconds: 300.0,            // 5 minutes RTO
+            rpo_seconds: 60.0,             // 1 minute RPO
+            mttr_seconds: 600.0,           // 10 minutes MTTR
+            max_downtime_per_year: 3153.6, // 52.56 minutes/year for 99.99%
         }
     }
 }
@@ -855,7 +873,7 @@ impl Default for RecoveryObjectives {
 impl Default for FailureIsolationRequirements {
     fn default() -> Self {
         Self {
-            blast_radius_limit: 4,  // Limit failures to 4 devices
+            blast_radius_limit: 4, // Limit failures to 4 devices
             fault_containment: true,
             graceful_degradation: true,
             automatic_failover: true,
@@ -869,7 +887,7 @@ impl Default for TopologyValidationConfig {
             validate_connectivity: true,
             validate_performance: true,
             validate_constraints: true,
-            validation_timeout: 300.0,  // 5 minutes
+            validation_timeout: 300.0, // 5 minutes
             validation_criteria: ValidationCriteria::default(),
         }
     }
@@ -878,9 +896,9 @@ impl Default for TopologyValidationConfig {
 impl Default for ValidationCriteria {
     fn default() -> Self {
         Self {
-            min_connectivity: 0.95,  // 95% connectivity
-            max_latency_increase: 0.1,  // 10% latency increase
-            min_bandwidth_efficiency: 0.8,  // 80% bandwidth efficiency
+            min_connectivity: 0.95,        // 95% connectivity
+            max_latency_increase: 0.1,     // 10% latency increase
+            min_bandwidth_efficiency: 0.8, // 80% bandwidth efficiency
             max_constraint_violations: 0,
         }
     }

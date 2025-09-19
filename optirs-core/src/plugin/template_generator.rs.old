@@ -711,7 +711,7 @@ impl OptimizerCoreGenerator {
 // This plugin implements the {} optimization algorithm.
 // Generated with scirs2-optim template generator v{}
 
-use scirs2_optim::plugin::*;
+use optirs_core::plugin::*;
 use ndarray::{{Array1, Array2}};
 use num_traits::Float;
 use std::fmt::Debug;
@@ -1035,7 +1035,7 @@ impl TestSuiteGenerator {
 //
 // These tests validate the complete functionality of the {} optimizer plugin.
 
-use scirs2_optim::plugin::*;
+use optirs_core::plugin::*;
 use ndarray::{{Array1, Array2}};
 
 mod common;
@@ -1196,7 +1196,7 @@ fn test_{}_performance_characteristics() {{
 // These benchmarks measure the performance characteristics of the {} optimizer.
 
 use criterion::{{black_box, criterion_group, criterion_main, Criterion}};
-use scirs2_optim::plugin::*;
+use optirs_core::plugin::*;
 use ndarray::Array1;
 
 #[allow(dead_code)]
@@ -1325,7 +1325,7 @@ Add this plugin to your `Cargo.toml`:
 ### Basic Usage
 
 ```rust
-use scirs2_optim::plugin::*;
+use optirs_core::plugin::*;
 use {}::*;
 use ndarray::Array1;
 

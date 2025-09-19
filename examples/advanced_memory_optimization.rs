@@ -2,7 +2,7 @@
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::distributions::Uniform;
 use scirs2_core::random::RandomExt;
-use scirs2_optim::memory_efficient::{
+use optirs_core::memory_efficient::{
     adaptive::{get_memory_usage_ratio, MemoryAwareBatchSizer},
     fused::{fused_adam_update, fused_apply_constraints, fused_gradient_clip_normalize},
     mixed_precision::LossScaler,

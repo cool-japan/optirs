@@ -22,7 +22,7 @@
 // ## Usage
 //
 // ```rust
-// use scirs2_optim::tpu::pod_coordination::topology::{
+// use optirs_core::tpu::pod_coordination::topology::{
 //     TopologyManager, TopologyConfig, TopologyType
 // };
 //
@@ -46,56 +46,54 @@
 // ```
 
 // Module declarations
-pub mod config;
-pub mod device_layout;
-pub mod power_management;
-pub mod graph_management;
 pub mod communication;
-pub mod optimization;
+pub mod config;
 pub mod core;
+pub mod device_layout;
+pub mod graph_management;
+pub mod optimization;
+pub mod power_management;
 
 // Core re-exports for easy access
 pub use config::*;
-pub use core::{TopologyManager, TopologyPerformanceMonitor, TopologyEventManager};
+pub use core::{TopologyEventManager, TopologyManager, TopologyPerformanceMonitor};
 
 // Device layout re-exports
 pub use device_layout::{
-    DeviceLayoutManager, PhysicalLayout, LogicalLayout, DeviceInfo, DeviceConfig,
-    DeviceCapabilities, DeviceGroup, DeviceNode, ThermalZone, ThermalStatus,
-    LayoutOptimizer, LayoutStatistics, PlacementPolicy
+    DeviceCapabilities, DeviceConfig, DeviceGroup, DeviceInfo, DeviceLayoutManager, DeviceNode,
+    LayoutOptimizer, LayoutStatistics, LogicalLayout, PhysicalLayout, PlacementPolicy,
+    ThermalStatus, ThermalZone,
 };
 
 // Power management re-exports
 pub use power_management::{
-    PowerManagementSystem, PowerDistribution, PowerSupply, PowerDistributionUnit,
-    PowerMonitoring, PowerBudget, PowerEfficiencyManager, EnergyHarvesting,
-    ThermalManagement, PowerRequirements, PowerConfiguration
+    EnergyHarvesting, PowerBudget, PowerConfiguration, PowerDistribution, PowerDistributionUnit,
+    PowerEfficiencyManager, PowerManagementSystem, PowerMonitoring, PowerRequirements, PowerSupply,
+    ThermalManagement,
 };
 
 // Graph management re-exports
 pub use graph_management::{
-    GraphManager, TopologyGraph, GraphNode, GraphEdge, GraphAlgorithms,
-    ClusteringAlgorithms, CommunityDetection, PathfindingAlgorithms,
-    CentralityAlgorithms, GraphMetrics, TopologyAnalysis
+    CentralityAlgorithms, ClusteringAlgorithms, CommunityDetection, GraphAlgorithms, GraphEdge,
+    GraphManager, GraphMetrics, GraphNode, PathfindingAlgorithms, TopologyAnalysis, TopologyGraph,
 };
 
 // Communication re-exports
 pub use communication::{
-    CommunicationTopologyManager, CommunicationTopologyConfig, NetworkTopology,
-    NetworkInterface, CommunicationPattern, NetworkQoSSettings, TrafficManagement,
-    RoutingManager, TrafficManager, QoSManager, NetworkConfiguration
+    CommunicationPattern, CommunicationTopologyConfig, CommunicationTopologyManager,
+    NetworkConfiguration, NetworkInterface, NetworkQoSSettings, NetworkTopology, QoSManager,
+    RoutingManager, TrafficManagement, TrafficManager,
 };
 
 // Optimization re-exports
 pub use optimization::{
-    TopologyOptimizer, LayoutOptimizerConfig, OptimizationAlgorithmType,
-    LayoutOptimizationObjective, OptimizationProblem, OptimizationResult,
-    LayoutSolution, SolutionQualityMetrics, AdvancedOptimizationStrategy,
-    MultiObjectiveOptimization, AdaptiveParameterControl
+    AdaptiveParameterControl, AdvancedOptimizationStrategy, LayoutOptimizationObjective,
+    LayoutOptimizerConfig, LayoutSolution, MultiObjectiveOptimization, OptimizationAlgorithmType,
+    OptimizationProblem, OptimizationResult, SolutionQualityMetrics, TopologyOptimizer,
 };
 
 // Error handling
-use scirs2_core::error::{Result, Error};
+use scirs2_core::error::{Error, Result};
 
 // Standard library imports
 use std::collections::HashMap;
@@ -135,7 +133,7 @@ pub fn create_mesh_topology_config(
         inter_node_connection: InterNodeConnection::InfiniBand { speed_gbps: 200.0 },
         intra_node_connection: IntraNodeConnection::NVLink {
             version: "4.0".to_string(),
-            speed_gbps: 900.0
+            speed_gbps: 900.0,
         },
         device_layout_config: DeviceLayoutConfig::default(),
         communication_config: CommunicationTopologyConfig::default(),
@@ -147,9 +145,7 @@ pub fn create_mesh_topology_config(
 }
 
 /// Create a default torus topology configuration
-pub fn create_torus_topology_config(
-    dimensions: Vec<usize>,
-) -> Result<TopologyConfig> {
+pub fn create_torus_topology_config(dimensions: Vec<usize>) -> Result<TopologyConfig> {
     let device_count = dimensions.iter().product();
     let node_count = (device_count / 8).max(1); // Assume 8 devices per node
     let devices_per_node = device_count / node_count;
@@ -162,7 +158,7 @@ pub fn create_torus_topology_config(
         inter_node_connection: InterNodeConnection::InfiniBand { speed_gbps: 200.0 },
         intra_node_connection: IntraNodeConnection::NVLink {
             version: "4.0".to_string(),
-            speed_gbps: 900.0
+            speed_gbps: 900.0,
         },
         device_layout_config: DeviceLayoutConfig::default(),
         communication_config: CommunicationTopologyConfig::default(),
@@ -183,14 +179,17 @@ pub fn create_tree_topology_config(
     let devices_per_node = device_count / node_count;
 
     Ok(TopologyConfig {
-        topology_type: TopologyType::Tree { branching_factor, depth },
+        topology_type: TopologyType::Tree {
+            branching_factor,
+            depth,
+        },
         device_count,
         node_count,
         devices_per_node,
         inter_node_connection: InterNodeConnection::InfiniBand { speed_gbps: 200.0 },
         intra_node_connection: IntraNodeConnection::NVLink {
             version: "4.0".to_string(),
-            speed_gbps: 900.0
+            speed_gbps: 900.0,
         },
         device_layout_config: DeviceLayoutConfig::default(),
         communication_config: CommunicationTopologyConfig::default(),
@@ -229,9 +228,9 @@ pub fn create_high_performance_optimization_config() -> LayoutOptimizerConfig {
                         ("particle_swarm".to_string(), 0.1),
                     ]),
                     memory_allocation: HashMap::from([
-                        ("genetic".to_string(), 2_000_000_000), // 2 GB
+                        ("genetic".to_string(), 2_000_000_000),           // 2 GB
                         ("simulated_annealing".to_string(), 500_000_000), // 500 MB
-                        ("particle_swarm".to_string(), 500_000_000), // 500 MB
+                        ("particle_swarm".to_string(), 500_000_000),      // 500 MB
                     ]),
                     time_allocation: HashMap::from([
                         ("genetic".to_string(), Duration::from_secs(180)),
@@ -362,14 +361,20 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
                     MetricType::BandwidthUtilization,
                     MetricType::PacketLoss,
                     MetricType::QueueOccupancy,
-                    MetricType::Custom { name: "power_efficiency".to_string() },
-                    MetricType::Custom { name: "thermal_distribution".to_string() },
-                    MetricType::Custom { name: "load_balance".to_string() },
+                    MetricType::Custom {
+                        name: "power_efficiency".to_string(),
+                    },
+                    MetricType::Custom {
+                        name: "thermal_distribution".to_string(),
+                    },
+                    MetricType::Custom {
+                        name: "load_balance".to_string(),
+                    },
                 ],
                 granularity: CollectionGranularity::PerDevice,
                 retention_period: Duration::from_secs(86400), // 24 hours
                 storage_backend: StorageBackend::TimeSeries {
-                    database: "topology_metrics".to_string()
+                    database: "topology_metrics".to_string(),
                 },
             },
             performance_thresholds: PerformanceThresholds {
@@ -379,9 +384,9 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
                     emergency: 10.0, // 10 ms
                 },
                 throughput_thresholds: ThresholdLevels {
-                    warning: 0.7,    // 70% of expected
-                    critical: 0.5,   // 50% of expected
-                    emergency: 0.3,  // 30% of expected
+                    warning: 0.7,   // 70% of expected
+                    critical: 0.5,  // 50% of expected
+                    emergency: 0.3, // 30% of expected
                 },
                 utilization_thresholds: ThresholdLevels {
                     warning: 0.8,    // 80%
@@ -389,15 +394,15 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
                     emergency: 0.95, // 95%
                 },
                 error_rate_thresholds: ThresholdLevels {
-                    warning: 0.01,   // 1%
-                    critical: 0.05,  // 5%
-                    emergency: 0.1,  // 10%
+                    warning: 0.01,  // 1%
+                    critical: 0.05, // 5%
+                    emergency: 0.1, // 10%
                 },
             },
             reporting_settings: ReportingSettings {
                 format: ReportFormat::JSON,
                 frequency: ReportFrequency::Periodic {
-                    interval: Duration::from_secs(300) // 5 minutes
+                    interval: Duration::from_secs(300), // 5 minutes
                 },
                 recipients: vec![
                     "topology-admin@example.com".to_string(),
@@ -416,9 +421,9 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
                 HealthIndicator::ResourceUtilization,
             ],
             health_thresholds: HealthThresholds {
-                error_rate_threshold: 0.01,      // 1%
-                performance_threshold: 0.8,      // 80%
-                resource_threshold: 0.9,         // 90%
+                error_rate_threshold: 0.01, // 1%
+                performance_threshold: 0.8, // 80%
+                resource_threshold: 0.9,    // 90%
             },
             recovery_actions: RecoveryActions {
                 automatic_recovery: AutomaticRecovery {
@@ -430,18 +435,16 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
                     ],
                     timeout: Duration::from_secs(300),
                 },
-                manual_procedures: vec![
-                    RecoveryProcedure {
-                        name: "Device Restart".to_string(),
-                        steps: vec![
-                            "Isolate device from topology".to_string(),
-                            "Perform device reset".to_string(),
-                            "Verify device health".to_string(),
-                            "Reintegrate device into topology".to_string(),
-                        ],
-                        duration: Duration::from_secs(120),
-                    },
-                ],
+                manual_procedures: vec![RecoveryProcedure {
+                    name: "Device Restart".to_string(),
+                    steps: vec![
+                        "Isolate device from topology".to_string(),
+                        "Perform device reset".to_string(),
+                        "Verify device health".to_string(),
+                        "Reintegrate device into topology".to_string(),
+                    ],
+                    duration: Duration::from_secs(120),
+                }],
                 escalation_policy: EscalationPolicy {
                     levels: vec![
                         EscalationLevel {
@@ -481,9 +484,7 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
                 },
                 export_settings: FlowExportSettings {
                     format: FlowExportFormat::NetFlowV9,
-                    destinations: vec![
-                        "flow-collector.example.com:9996".to_string(),
-                    ],
+                    destinations: vec!["flow-collector.example.com:9996".to_string()],
                     frequency: Duration::from_secs(60),
                 },
             },
@@ -548,46 +549,38 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
         alert_settings: AlertSettings {
             channels: vec![
                 AlertChannel::Email {
-                    recipients: vec!["alerts@example.com".to_string()]
+                    recipients: vec!["alerts@example.com".to_string()],
                 },
                 AlertChannel::Webhook {
-                    url: "https://alerts.example.com/webhook".to_string()
+                    url: "https://alerts.example.com/webhook".to_string(),
                 },
                 AlertChannel::Log {
-                    level: LogLevel::Warning
+                    level: LogLevel::Warning,
                 },
             ],
             rules: vec![
                 AlertRule {
                     name: "High Latency Alert".to_string(),
-                    conditions: vec![
-                        AlertCondition::Threshold {
-                            metric: "latency".to_string(),
-                            operator: ComparisonOperator::GreaterThan,
-                            value: 5.0
-                        }
-                    ],
+                    conditions: vec![AlertCondition::Threshold {
+                        metric: "latency".to_string(),
+                        operator: ComparisonOperator::GreaterThan,
+                        value: 5.0,
+                    }],
                     severity: AlertSeverity::Critical,
-                    channels: vec![
-                        AlertChannel::Email {
-                            recipients: vec!["ops-team@example.com".to_string()]
-                        }
-                    ],
+                    channels: vec![AlertChannel::Email {
+                        recipients: vec!["ops-team@example.com".to_string()],
+                    }],
                 },
                 AlertRule {
                     name: "Power Anomaly Alert".to_string(),
-                    conditions: vec![
-                        AlertCondition::Anomaly {
-                            metric: "power_consumption".to_string(),
-                            sensitivity: 0.8
-                        }
-                    ],
+                    conditions: vec![AlertCondition::Anomaly {
+                        metric: "power_consumption".to_string(),
+                        sensitivity: 0.8,
+                    }],
                     severity: AlertSeverity::Warning,
-                    channels: vec![
-                        AlertChannel::Email {
-                            recipients: vec!["power-team@example.com".to_string()]
-                        }
-                    ],
+                    channels: vec![AlertChannel::Email {
+                        recipients: vec!["power-team@example.com".to_string()],
+                    }],
                 },
             ],
             aggregation: AlertAggregation {
@@ -608,13 +601,16 @@ pub fn create_comprehensive_monitoring_config() -> MonitoringConfiguration {
 pub fn validate_topology_config(config: &TopologyConfig) -> Result<()> {
     // Check device count limits
     if config.device_count == 0 {
-        return Err(Error::InvalidInput("Device count cannot be zero".to_string()));
+        return Err(Error::InvalidInput(
+            "Device count cannot be zero".to_string(),
+        ));
     }
 
     if config.device_count > MAX_DEVICES_PER_POD {
-        return Err(Error::InvalidInput(
-            format!("Device count {} exceeds maximum {}", config.device_count, MAX_DEVICES_PER_POD)
-        ));
+        return Err(Error::InvalidInput(format!(
+            "Device count {} exceeds maximum {}",
+            config.device_count, MAX_DEVICES_PER_POD
+        )));
     }
 
     // Check node count limits
@@ -623,20 +619,23 @@ pub fn validate_topology_config(config: &TopologyConfig) -> Result<()> {
     }
 
     if config.node_count > MAX_NODES_PER_POD {
-        return Err(Error::InvalidInput(
-            format!("Node count {} exceeds maximum {}", config.node_count, MAX_NODES_PER_POD)
-        ));
+        return Err(Error::InvalidInput(format!(
+            "Node count {} exceeds maximum {}",
+            config.node_count, MAX_NODES_PER_POD
+        )));
     }
 
     // Check devices per node
     if config.devices_per_node == 0 {
-        return Err(Error::InvalidInput("Devices per node cannot be zero".to_string()));
+        return Err(Error::InvalidInput(
+            "Devices per node cannot be zero".to_string(),
+        ));
     }
 
     // Check consistency
     if config.device_count != config.node_count * config.devices_per_node {
         return Err(Error::InvalidInput(
-            "Device count must equal node count × devices per node".to_string()
+            "Device count must equal node count × devices per node".to_string(),
         ));
     }
 
@@ -644,37 +643,54 @@ pub fn validate_topology_config(config: &TopologyConfig) -> Result<()> {
     match &config.topology_type {
         TopologyType::Mesh { dimension } => {
             if *dimension == 0 {
-                return Err(Error::InvalidInput("Mesh dimension cannot be zero".to_string()));
+                return Err(Error::InvalidInput(
+                    "Mesh dimension cannot be zero".to_string(),
+                ));
             }
             if *dimension > 10 {
-                return Err(Error::InvalidInput("Mesh dimension too large (max 10)".to_string()));
+                return Err(Error::InvalidInput(
+                    "Mesh dimension too large (max 10)".to_string(),
+                ));
             }
-        },
+        }
         TopologyType::Torus { dimensions } => {
             if dimensions.is_empty() {
-                return Err(Error::InvalidInput("Torus dimensions cannot be empty".to_string()));
+                return Err(Error::InvalidInput(
+                    "Torus dimensions cannot be empty".to_string(),
+                ));
             }
             if dimensions.iter().any(|&d| d == 0) {
-                return Err(Error::InvalidInput("Torus dimension values cannot be zero".to_string()));
+                return Err(Error::InvalidInput(
+                    "Torus dimension values cannot be zero".to_string(),
+                ));
             }
             if dimensions.len() > 10 {
-                return Err(Error::InvalidInput("Too many torus dimensions (max 10)".to_string()));
+                return Err(Error::InvalidInput(
+                    "Too many torus dimensions (max 10)".to_string(),
+                ));
             }
-        },
-        TopologyType::Tree { branching_factor, depth } => {
+        }
+        TopologyType::Tree {
+            branching_factor,
+            depth,
+        } => {
             if *branching_factor < 2 {
-                return Err(Error::InvalidInput("Tree branching factor must be at least 2".to_string()));
+                return Err(Error::InvalidInput(
+                    "Tree branching factor must be at least 2".to_string(),
+                ));
             }
             if *depth == 0 {
                 return Err(Error::InvalidInput("Tree depth cannot be zero".to_string()));
             }
             if *depth > 20 {
-                return Err(Error::InvalidInput("Tree depth too large (max 20)".to_string()));
+                return Err(Error::InvalidInput(
+                    "Tree depth too large (max 20)".to_string(),
+                ));
             }
-        },
+        }
         TopologyType::Custom { .. } => {
             // Custom topologies are assumed to be pre-validated
-        },
+        }
     }
 
     Ok(())
@@ -688,8 +704,10 @@ pub fn calculate_topology_complexity(config: &TopologyConfig) -> f64 {
     let topology_factor = match &config.topology_type {
         TopologyType::Mesh { dimension } => *dimension as f64,
         TopologyType::Torus { dimensions } => dimensions.len() as f64 * 1.2,
-        TopologyType::Tree { branching_factor, depth } =>
-            (*branching_factor as f64).log2() * (*depth as f64),
+        TopologyType::Tree {
+            branching_factor,
+            depth,
+        } => (*branching_factor as f64).log2() * (*depth as f64),
         TopologyType::Custom { .. } => 10.0, // Assume high complexity for custom
     };
 
@@ -866,12 +884,7 @@ pub mod info {
 
     /// Get supported topology types
     pub fn supported_topologies() -> Vec<&'static str> {
-        vec![
-            "mesh",
-            "torus",
-            "tree",
-            "custom",
-        ]
+        vec!["mesh", "torus", "tree", "custom"]
     }
 
     /// Get supported optimization algorithms
@@ -920,7 +933,7 @@ pub mod test_utils {
             inter_node_connection: InterNodeConnection::InfiniBand { speed_gbps: 100.0 },
             intra_node_connection: IntraNodeConnection::NVLink {
                 version: "3.0".to_string(),
-                speed_gbps: 600.0
+                speed_gbps: 600.0,
             },
             device_layout_config: DeviceLayoutConfig::default(),
             communication_config: CommunicationTopologyConfig::default(),

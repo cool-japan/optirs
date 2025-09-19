@@ -1,0 +1,42 @@
+// SGD Optimizer GPU Kernel Template
+// Data Type: {{dtype}}
+// Learning Rate Type: {{lr_type}}
+// Momentum Enabled: {{momentum_enabled}}
+// Weight Decay Enabled: {{weight_decay_enabled}}
+
+{{kernel_header}}
+
+__global__ void sgd_update_kernel(
+    {{dtype}}* params,
+    const {{dtype}}* gradients,
+    {{dtype}}* momentum_buffer,
+    const {{lr_type}} learning_rate,
+    const {{dtype}} momentum_factor,
+    const {{dtype}} weight_decay,
+    const int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < size) {
+        {{dtype}} grad = gradients[idx];
+        {{dtype}} param = params[idx];
+
+        // Weight decay
+        {{#if weight_decay_enabled}}
+        grad += weight_decay * param;
+        {{/if}}
+
+        // Momentum update
+        {{#if momentum_enabled}}
+        {{dtype}} momentum = momentum_buffer[idx];
+        momentum = momentum_factor * momentum + grad;
+        momentum_buffer[idx] = momentum;
+        grad = momentum;
+        {{/if}}
+
+        // Parameter update
+        params[idx] = param - learning_rate * grad;
+    }
+}
+
+{{kernel_footer}}

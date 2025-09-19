@@ -111,7 +111,9 @@ impl Default for OutlierDetection {
     fn default() -> Self {
         Self {
             enabled: true,
-            method: OutlierDetectionMethod::Statistical { z_score_threshold: 3.0 },
+            method: OutlierDetectionMethod::Statistical {
+                z_score_threshold: 3.0,
+            },
             thresholds: OutlierThresholds::default(),
         }
     }
@@ -362,12 +364,22 @@ pub struct HyperparameterOptimization {
 impl Default for HyperparameterOptimization {
     fn default() -> Self {
         let mut search_space = HashMap::new();
-        search_space.insert("learning_rate".to_string(), ParameterRange::Float {
-            min: 0.001, max: 0.1, step: 0.001
-        });
-        search_space.insert("batch_size".to_string(), ParameterRange::Integer {
-            min: 16, max: 128, step: 16
-        });
+        search_space.insert(
+            "learning_rate".to_string(),
+            ParameterRange::Float {
+                min: 0.001,
+                max: 0.1,
+                step: 0.001,
+            },
+        );
+        search_space.insert(
+            "batch_size".to_string(),
+            ParameterRange::Integer {
+                min: 16,
+                max: 128,
+                step: 16,
+            },
+        );
 
         Self {
             method: OptimizationMethod::BayesianOptimization,
@@ -721,7 +733,10 @@ impl DriftCompensator {
     }
 
     /// Update drift estimate
-    pub fn update_drift_estimate(&mut self, measurement: f64) -> Result<(), DriftCompensationError> {
+    pub fn update_drift_estimate(
+        &mut self,
+        measurement: f64,
+    ) -> Result<(), DriftCompensationError> {
         // Update the drift model with new measurement
         self.drift_model.update(measurement)?;
 
@@ -732,7 +747,10 @@ impl DriftCompensator {
     }
 
     /// Compensate clock offset
-    pub fn compensate(&mut self, current_offset: ClockOffset) -> Result<ClockOffset, DriftCompensationError> {
+    pub fn compensate(
+        &mut self,
+        current_offset: ClockOffset,
+    ) -> Result<ClockOffset, DriftCompensationError> {
         let compensation_value = self.calculate_compensation(current_offset)?;
 
         let compensated_offset = if current_offset > compensation_value {
@@ -772,7 +790,10 @@ impl DriftCompensator {
     }
 
     /// Calculate compensation value
-    fn calculate_compensation(&self, current_offset: ClockOffset) -> Result<ClockOffset, DriftCompensationError> {
+    fn calculate_compensation(
+        &self,
+        current_offset: ClockOffset,
+    ) -> Result<ClockOffset, DriftCompensationError> {
         let drift_seconds = self.current_drift * current_offset.as_secs_f64();
         Ok(Duration::from_secs_f64(drift_seconds.abs()))
     }
@@ -858,12 +879,8 @@ impl DriftModel {
     /// Train the drift model
     pub fn train(&mut self) -> Result<(), DriftCompensationError> {
         match &self.model_type {
-            DriftModelType::Linear => {
-                self.train_linear_model()
-            }
-            DriftModelType::Quadratic => {
-                self.train_quadratic_model()
-            }
+            DriftModelType::Linear => self.train_linear_model(),
+            DriftModelType::Quadratic => self.train_quadratic_model(),
             _ => {
                 // Other model types would be implemented here
                 Ok(())
@@ -878,9 +895,7 @@ impl DriftModel {
         }
 
         match &self.model_type {
-            DriftModelType::Linear => {
-                self.parameters.get(0).copied().unwrap_or(0.0)
-            }
+            DriftModelType::Linear => self.parameters.get(0).copied().unwrap_or(0.0),
             _ => {
                 // Other model evaluations would be implemented here
                 0.0
@@ -925,13 +940,14 @@ impl DriftModel {
         let n = self.measurements.len() as f64;
         let start_time = self.measurements[0].0;
 
-        let (sum_x, sum_y, sum_xy, sum_x2) = self.measurements
-            .iter()
-            .fold((0.0, 0.0, 0.0, 0.0), |acc, (time, value)| {
-                let x = time.duration_since(start_time).as_secs_f64();
-                let y = *value;
-                (acc.0 + x, acc.1 + y, acc.2 + x * y, acc.3 + x * x)
-            });
+        let (sum_x, sum_y, sum_xy, sum_x2) =
+            self.measurements
+                .iter()
+                .fold((0.0, 0.0, 0.0, 0.0), |acc, (time, value)| {
+                    let x = time.duration_since(start_time).as_secs_f64();
+                    let y = *value;
+                    (acc.0 + x, acc.1 + y, acc.2 + x * y, acc.3 + x * x)
+                });
 
         let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
         let intercept = (sum_y - slope * sum_x) / n;
@@ -960,17 +976,19 @@ impl DriftModel {
         }
 
         let start_time = self.measurements[0].0;
-        let mean_y = self.measurements.iter().map(|(_, y)| *y).sum::<f64>() / self.measurements.len() as f64;
+        let mean_y =
+            self.measurements.iter().map(|(_, y)| *y).sum::<f64>() / self.measurements.len() as f64;
 
-        let (ss_tot, ss_res) = self.measurements
-            .iter()
-            .fold((0.0, 0.0), |acc, (time, y_actual)| {
-                let x = time.duration_since(start_time).as_secs_f64();
-                let y_pred = slope * x + intercept;
-                let tot = (y_actual - mean_y).powi(2);
-                let res = (y_actual - y_pred).powi(2);
-                (acc.0 + tot, acc.1 + res)
-            });
+        let (ss_tot, ss_res) =
+            self.measurements
+                .iter()
+                .fold((0.0, 0.0), |acc, (time, y_actual)| {
+                    let x = time.duration_since(start_time).as_secs_f64();
+                    let y_pred = slope * x + intercept;
+                    let tot = (y_actual - mean_y).powi(2);
+                    let res = (y_actual - y_pred).powi(2);
+                    (acc.0 + tot, acc.1 + res)
+                });
 
         if ss_tot == 0.0 {
             1.0
@@ -1203,7 +1221,9 @@ impl DriftPredictionEngine {
     /// Train prediction model
     pub fn train_model(&mut self) -> Result<(), DriftCompensationError> {
         if self.training_data.len() < 10 {
-            return Err(DriftCompensationError::InsufficientData("Not enough training data".to_string()));
+            return Err(DriftCompensationError::InsufficientData(
+                "Not enough training data".to_string(),
+            ));
         }
 
         self.model.train(&self.training_data)?;
@@ -1228,9 +1248,7 @@ impl DriftPredictionEngine {
     /// Create model based on configuration
     fn create_model(model_type: &DriftPredictionModel) -> Box<dyn DriftPredictor> {
         match model_type {
-            DriftPredictionModel::LinearRegression => {
-                Box::new(LinearRegressionPredictor::new())
-            }
+            DriftPredictionModel::LinearRegression => Box::new(LinearRegressionPredictor::new()),
             _ => {
                 // Other model types would be implemented here
                 Box::new(LinearRegressionPredictor::new())
@@ -1279,17 +1297,21 @@ impl LinearRegressionPredictor {
 impl DriftPredictor for LinearRegressionPredictor {
     fn train(&mut self, data: &VecDeque<DriftMeasurement>) -> Result<(), DriftCompensationError> {
         if data.len() < 2 {
-            return Err(DriftCompensationError::InsufficientData("Need at least 2 data points".to_string()));
+            return Err(DriftCompensationError::InsufficientData(
+                "Need at least 2 data points".to_string(),
+            ));
         }
 
         // Simple linear regression implementation
         let n = data.len() as f64;
         let start_time = data[0].timestamp;
 
-        let (sum_x, sum_y, sum_xy, sum_x2) = data
-            .iter()
-            .fold((0.0, 0.0, 0.0, 0.0), |acc, measurement| {
-                let x = measurement.timestamp.duration_since(start_time).as_secs_f64();
+        let (sum_x, sum_y, sum_xy, sum_x2) =
+            data.iter().fold((0.0, 0.0, 0.0, 0.0), |acc, measurement| {
+                let x = measurement
+                    .timestamp
+                    .duration_since(start_time)
+                    .as_secs_f64();
                 let y = measurement.drift_value;
                 (acc.0 + x, acc.1 + y, acc.2 + x * y, acc.3 + x * x)
             });
@@ -1305,7 +1327,9 @@ impl DriftPredictor for LinearRegressionPredictor {
 
     fn predict(&self, horizon: Duration) -> Result<f64, DriftCompensationError> {
         if self.coefficients.len() < 2 {
-            return Err(DriftCompensationError::ModelNotTrained("Model not trained".to_string()));
+            return Err(DriftCompensationError::ModelNotTrained(
+                "Model not trained".to_string(),
+            ));
         }
 
         let t = horizon.as_secs_f64();
@@ -1354,12 +1378,20 @@ pub enum DriftCompensationError {
 impl std::fmt::Display for DriftCompensationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DriftCompensationError::ConfigurationError(msg) => write!(f, "Drift compensation configuration error: {}", msg),
-            DriftCompensationError::InsufficientData(msg) => write!(f, "Insufficient data: {}", msg),
-            DriftCompensationError::ModelTrainingError(msg) => write!(f, "Model training error: {}", msg),
+            DriftCompensationError::ConfigurationError(msg) => {
+                write!(f, "Drift compensation configuration error: {}", msg)
+            }
+            DriftCompensationError::InsufficientData(msg) => {
+                write!(f, "Insufficient data: {}", msg)
+            }
+            DriftCompensationError::ModelTrainingError(msg) => {
+                write!(f, "Model training error: {}", msg)
+            }
             DriftCompensationError::ModelNotTrained(msg) => write!(f, "Model not trained: {}", msg),
             DriftCompensationError::PredictionError(msg) => write!(f, "Prediction error: {}", msg),
-            DriftCompensationError::CompensationError(msg) => write!(f, "Compensation error: {}", msg),
+            DriftCompensationError::CompensationError(msg) => {
+                write!(f, "Compensation error: {}", msg)
+            }
         }
     }
 }

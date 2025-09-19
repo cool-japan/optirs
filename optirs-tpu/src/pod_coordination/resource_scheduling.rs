@@ -4,12 +4,12 @@ use std::fmt::Debug;
 // This module provides comprehensive resource scheduling functionality for TPU pod coordination,
 // including device allocation, resource management, and scheduling optimization.
 
+use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use num_traits::Float;
 
-use super::{DeviceId, BatchId};
 use super::load_balancing::{DeviceAvailability, LoadBalancer, LoadBalancingAlgorithm};
+use super::{BatchId, DeviceId};
 use crate::error::{OptimError, Result};
 
 /// Resource requirements for batch execution
@@ -322,10 +322,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
         let allocation_start = Instant::now();
 
         // Find the request in the queue
-        let request_index = self.scheduling_queue
+        let request_index = self
+            .scheduling_queue
             .iter()
             .position(|req| req.batch_id == batch_id)
-            .ok_or_else(|| OptimError::ConfigurationError("Request not found in queue".to_string()))?;
+            .ok_or_else(|| {
+                OptimError::ConfigurationError("Request not found in queue".to_string())
+            })?;
 
         let mut request = self.scheduling_queue.remove(request_index).unwrap();
         request.status = RequestStatus::Scheduled;
@@ -337,7 +340,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
         for &device_id in &allocation.devices {
             if let Some(availability) = self.device_availability.get_mut(&device_id) {
                 let memory_allocated = allocation.memory_allocation.get(&device_id).unwrap_or(&0);
-                availability.available_memory = availability.available_memory.saturating_sub(*memory_allocated);
+                availability.available_memory = availability
+                    .available_memory
+                    .saturating_sub(*memory_allocated);
                 availability.current_load += 1.0 / allocation.devices.len() as f64;
             }
         }
@@ -361,21 +366,25 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
         let requirements = &request.resource_requirements;
 
         // Filter available devices
-        let available_devices: Vec<DeviceId> = self.device_availability
+        let available_devices: Vec<DeviceId> = self
+            .device_availability
             .iter()
             .filter(|(_, availability)| {
-                availability.available_memory >= requirements.memory_bytes &&
-                availability.current_load < 0.8 &&
-                availability.reserved_until.map_or(true, |until| until < Instant::now())
+                availability.available_memory >= requirements.memory_bytes
+                    && availability.current_load < 0.8
+                    && availability
+                        .reserved_until
+                        .map_or(true, |until| until < Instant::now())
             })
             .map(|(device_id, _)| *device_id)
             .collect();
 
         if available_devices.len() < requirements.min_devices {
-            return Err(OptimError::ResourceUnavailable(
-                format!("Insufficient devices available: {} required, {} available",
-                    requirements.min_devices, available_devices.len())
-            ));
+            return Err(OptimError::ResourceUnavailable(format!(
+                "Insufficient devices available: {} required, {} available",
+                requirements.min_devices,
+                available_devices.len()
+            )));
         }
 
         // Select devices based on scheduling strategy
@@ -414,9 +423,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
         let target_count = requirements.max_devices.min(available_devices.len());
 
         match self.scheduling_strategy {
-            SchedulingStrategy::FirstFit => {
-                Ok(available_devices.iter().take(target_count).cloned().collect())
-            }
+            SchedulingStrategy::FirstFit => Ok(available_devices
+                .iter()
+                .take(target_count)
+                .cloned()
+                .collect()),
             SchedulingStrategy::BestFit => {
                 let mut device_scores: Vec<_> = available_devices
                     .iter()
@@ -455,24 +466,36 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
             }
             SchedulingStrategy::Adaptive => {
                 // Use load balancer for adaptive selection
-                Ok(self.load_balancer.select_optimal_devices(
-                    available_devices,
-                    &self.device_availability,
-                ).into_iter().take(target_count).collect())
+                Ok(self
+                    .load_balancer
+                    .select_optimal_devices(available_devices, &self.device_availability)
+                    .into_iter()
+                    .take(target_count)
+                    .collect())
             }
             _ => {
                 // Default to first fit for other strategies
-                Ok(available_devices.iter().take(target_count).cloned().collect())
+                Ok(available_devices
+                    .iter()
+                    .take(target_count)
+                    .cloned()
+                    .collect())
             }
         }
     }
 
     /// Calculate device fitness for scheduling
-    fn calculate_device_fitness(&self, device_id: DeviceId, requirements: &ResourceRequirements) -> f64 {
+    fn calculate_device_fitness(
+        &self,
+        device_id: DeviceId,
+        requirements: &ResourceRequirements,
+    ) -> f64 {
         if let Some(availability) = self.device_availability.get(&device_id) {
-            let memory_ratio = availability.available_memory as f64 / requirements.memory_bytes as f64;
+            let memory_ratio =
+                availability.available_memory as f64 / requirements.memory_bytes as f64;
             let load_factor = 1.0 - availability.current_load;
-            let bandwidth_ratio = availability.communication_bandwidth / requirements.communication_bandwidth;
+            let bandwidth_ratio =
+                availability.communication_bandwidth / requirements.communication_bandwidth;
 
             // Prefer devices with slightly more resources than needed (to avoid waste)
             let memory_score = if memory_ratio >= 1.0 && memory_ratio <= 2.0 {
@@ -490,16 +513,24 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
     }
 
     /// Calculate allocation quality score
-    fn calculate_allocation_quality(&self, devices: &[DeviceId], requirements: &ResourceRequirements) -> f64 {
+    fn calculate_allocation_quality(
+        &self,
+        devices: &[DeviceId],
+        requirements: &ResourceRequirements,
+    ) -> f64 {
         let mut total_score = 0.0;
 
         for &device_id in devices {
             if let Some(availability) = self.device_availability.get(&device_id) {
-                let memory_ratio = availability.available_memory as f64 / requirements.memory_bytes as f64;
+                let memory_ratio =
+                    availability.available_memory as f64 / requirements.memory_bytes as f64;
                 let load_score = 1.0 - availability.current_load;
-                let bandwidth_score = (availability.communication_bandwidth / requirements.communication_bandwidth).min(1.0);
+                let bandwidth_score = (availability.communication_bandwidth
+                    / requirements.communication_bandwidth)
+                    .min(1.0);
 
-                let device_score = (memory_ratio.min(2.0) / 2.0 + load_score + bandwidth_score) / 3.0;
+                let device_score =
+                    (memory_ratio.min(2.0) / 2.0 + load_score + bandwidth_score) / 3.0;
                 total_score += device_score;
             }
         }
@@ -512,7 +543,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
     }
 
     /// Calculate resource efficiency
-    fn calculate_resource_efficiency(&self, devices: &[DeviceId], requirements: &ResourceRequirements) -> f64 {
+    fn calculate_resource_efficiency(
+        &self,
+        devices: &[DeviceId],
+        requirements: &ResourceRequirements,
+    ) -> f64 {
         let total_available_memory: usize = devices
             .iter()
             .filter_map(|&device_id| self.device_availability.get(&device_id))
@@ -536,7 +571,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
             // Release device resources
             for device_id in allocation.devices {
                 if let Some(availability) = self.device_availability.get_mut(&device_id) {
-                    let memory_to_release = allocation.memory_allocation.get(&device_id).unwrap_or(&0);
+                    let memory_to_release =
+                        allocation.memory_allocation.get(&device_id).unwrap_or(&0);
                     availability.available_memory += memory_to_release;
                     availability.current_load = (availability.current_load - 0.25).max(0.0);
                 }
@@ -622,7 +658,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
 
     /// Mark request as failed
     fn mark_request_failed(&mut self, batch_id: BatchId) {
-        if let Some(request) = self.scheduling_queue.iter_mut().find(|req| req.batch_id == batch_id) {
+        if let Some(request) = self
+            .scheduling_queue
+            .iter_mut()
+            .find(|req| req.batch_id == batch_id)
+        {
             request.status = RequestStatus::Failed;
         }
         self.allocation_metrics.failed_allocations += 1;
@@ -633,9 +673,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
         let now = Instant::now();
 
         for (device_id, reservations) in &mut self.device_reservations {
-            reservations.retain(|reservation| {
-                now < reservation.start_time + reservation.duration
-            });
+            reservations.retain(|reservation| now < reservation.start_time + reservation.duration);
 
             // Update device availability if all reservations expired
             if reservations.is_empty() {
@@ -651,17 +689,20 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
         self.queue_metrics.queue_length = self.scheduling_queue.len();
 
         if !self.scheduling_queue.is_empty() {
-            let total_wait_time: Duration = self.scheduling_queue
+            let total_wait_time: Duration = self
+                .scheduling_queue
                 .iter()
                 .map(|req| req.submitted_at.elapsed())
                 .sum();
 
-            self.queue_metrics.average_wait_time = total_wait_time / self.scheduling_queue.len() as u32;
+            self.queue_metrics.average_wait_time =
+                total_wait_time / self.scheduling_queue.len() as u32;
         }
 
         // Calculate resource utilization
         let total_devices = self.pool_config.total_devices as f64;
-        let allocated_devices = self.active_allocations
+        let allocated_devices = self
+            .active_allocations
             .values()
             .map(|allocation| allocation.devices.len())
             .sum::<usize>() as f64;
@@ -678,14 +719,28 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
 
     /// Update scheduling statistics
     fn update_statistics(&mut self) {
-        self.statistics.insert("active_allocations".to_string(), self.active_allocations.len() as f64);
-        self.statistics.insert("queue_length".to_string(), self.queue_metrics.queue_length as f64);
-        self.statistics.insert("resource_utilization".to_string(), self.queue_metrics.resource_utilization);
-        self.statistics.insert("success_rate".to_string(), self.queue_metrics.success_rate);
-        self.statistics.insert("average_wait_time_ms".to_string(), self.queue_metrics.average_wait_time.as_millis() as f64);
+        self.statistics.insert(
+            "active_allocations".to_string(),
+            self.active_allocations.len() as f64,
+        );
+        self.statistics.insert(
+            "queue_length".to_string(),
+            self.queue_metrics.queue_length as f64,
+        );
+        self.statistics.insert(
+            "resource_utilization".to_string(),
+            self.queue_metrics.resource_utilization,
+        );
+        self.statistics
+            .insert("success_rate".to_string(), self.queue_metrics.success_rate);
+        self.statistics.insert(
+            "average_wait_time_ms".to_string(),
+            self.queue_metrics.average_wait_time.as_millis() as f64,
+        );
 
         // Calculate fragmentation
-        let available_devices = self.device_availability
+        let available_devices = self
+            .device_availability
             .values()
             .filter(|availability| availability.current_load < 0.8)
             .count() as f64;
@@ -696,7 +751,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceScheduler<T> {
             0.0
         };
         self.allocation_metrics.fragmentation_level = fragmentation;
-        self.statistics.insert("fragmentation_level".to_string(), fragmentation);
+        self.statistics
+            .insert("fragmentation_level".to_string(), fragmentation);
     }
 
     /// Get scheduling statistics
@@ -760,8 +816,8 @@ impl Default for ResourceRequirements {
     fn default() -> Self {
         Self {
             memory_bytes: 1024 * 1024 * 1024, // 1GB
-            compute_flops: 1_000_000_000,      // 1 GFLOP
-            communication_bandwidth: 10.0,     // 10 GB/s
+            compute_flops: 1_000_000_000,     // 1 GFLOP
+            communication_bandwidth: 10.0,    // 10 GB/s
             preferred_devices: Vec::new(),
             min_devices: 1,
             max_devices: 4,
@@ -776,8 +832,8 @@ impl Default for ResourcePoolConfig {
         Self {
             total_devices: 16,
             memory_per_device: 16 * 1024 * 1024 * 1024, // 16GB
-            compute_per_device: 100_000_000_000,         // 100 GFLOPS
-            bandwidth_per_device: 100.0,                 // 100 GB/s
+            compute_per_device: 100_000_000_000,        // 100 GFLOPS
+            bandwidth_per_device: 100.0,                // 100 GB/s
             oversubscription_ratio: 1.2,
             reservation_policy: ReservationPolicy::DynamicReservation,
         }

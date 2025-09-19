@@ -21,7 +21,7 @@
 // # Usage Example
 //
 // ```rust
-// use scirs2_optim::learned_optimizers::optimization_coordinator::analytics::{
+// use optirs_core::learned_optimizers::optimization_coordinator::analytics::{
 //     AnalyticsEngine, AnalyticsConfig
 // };
 //

@@ -18,8 +18,8 @@ use std::fmt::Debug;
 ///
 /// ```no_run
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{GroupedAdam, Optimizer};
-/// use scirs2_optim::parameter_groups::{GroupedOptimizer, ParameterGroupConfig};
+/// use optirs_core::optimizers::{GroupedAdam, Optimizer};
+/// use optirs_core::parameter_groups::{GroupedOptimizer, ParameterGroupConfig};
 ///
 /// // Create grouped optimizer
 /// let mut optimizer = GroupedAdam::new(0.001);

@@ -4,18 +4,18 @@
 // TPU pod topology management, integrating device layout, communication, power,
 // graph algorithms, and optimization components.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use scirs2_core::error::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use super::communication::CommunicationTopologyManager;
 use super::config::*;
 use super::device_layout::DeviceLayoutManager;
-use super::communication::CommunicationTopologyManager;
-use super::power_management::PowerManagementSystem;
 use super::graph_management::GraphManager;
 use super::optimization::TopologyOptimizer;
+use super::power_management::PowerManagementSystem;
 
 /// Main topology manager for TPU pod coordination
 #[derive(Debug)]
@@ -120,7 +120,10 @@ pub enum SamplingStrategy {
     /// Fixed interval sampling
     FixedInterval { interval: Duration },
     /// Adaptive sampling
-    Adaptive { min_interval: Duration, max_interval: Duration },
+    Adaptive {
+        min_interval: Duration,
+        max_interval: Duration,
+    },
     /// Event-driven sampling
     EventDriven { events: Vec<String> },
     /// Threshold-based sampling
@@ -227,13 +230,24 @@ pub struct AlertRule {
 #[derive(Debug, Clone)]
 pub enum AlertCondition {
     /// Threshold condition
-    Threshold { metric: String, operator: ComparisonOperator, value: f64 },
+    Threshold {
+        metric: String,
+        operator: ComparisonOperator,
+        value: f64,
+    },
     /// Rate condition
-    Rate { metric: String, rate_threshold: f64, window: Duration },
+    Rate {
+        metric: String,
+        rate_threshold: f64,
+        window: Duration,
+    },
     /// Anomaly condition
     Anomaly { metric: String, sensitivity: f64 },
     /// Composite condition
-    Composite { conditions: Vec<AlertCondition>, operator: LogicalOperator },
+    Composite {
+        conditions: Vec<AlertCondition>,
+        operator: LogicalOperator,
+    },
     /// Custom condition
     Custom { expression: String },
 }
@@ -313,7 +327,9 @@ pub enum EscalationAction {
     /// Execute script
     ExecuteScript { script: String },
     /// Update configuration
-    UpdateConfiguration { config_changes: HashMap<String, String> },
+    UpdateConfiguration {
+        config_changes: HashMap<String, String>,
+    },
     /// Trigger optimization
     TriggerOptimization,
     /// Custom action
@@ -706,7 +722,10 @@ pub enum CoordinationStrategy {
     /// Peer-to-peer coordination
     PeerToPeer,
     /// Hybrid coordination
-    Hybrid { primary: Box<CoordinationStrategy>, fallback: Box<CoordinationStrategy> },
+    Hybrid {
+        primary: Box<CoordinationStrategy>,
+        fallback: Box<CoordinationStrategy>,
+    },
 }
 
 /// Coordination state
@@ -900,13 +919,20 @@ pub struct PolicyCondition {
 #[derive(Debug, Clone)]
 pub enum PolicyConditionType {
     /// Metric threshold condition
-    MetricThreshold { metric: String, threshold: f64, operator: ComparisonOperator },
+    MetricThreshold {
+        metric: String,
+        threshold: f64,
+        operator: ComparisonOperator,
+    },
     /// Event condition
     Event { event_types: Vec<TopologyEventType> },
     /// Time condition
     Time { schedule: String },
     /// Resource condition
-    Resource { resource_type: String, threshold: f64 },
+    Resource {
+        resource_type: String,
+        threshold: f64,
+    },
     /// Custom condition
     Custom { condition: String },
 }
@@ -981,10 +1007,14 @@ impl TopologyManager {
         self.validate_configuration(&new_config)?;
 
         // Update individual components
-        self.device_layout.update_configuration(new_config.device_layout_config.clone())?;
-        self.communication_topology.configure_topology(new_config.communication_config.clone())?;
-        self.power_management.update_configuration(new_config.power_config.clone())?;
-        self.graph_manager.update_configuration(new_config.graph_config.clone())?;
+        self.device_layout
+            .update_configuration(new_config.device_layout_config.clone())?;
+        self.communication_topology
+            .configure_topology(new_config.communication_config.clone())?;
+        self.power_management
+            .update_configuration(new_config.power_config.clone())?;
+        self.graph_manager
+            .update_configuration(new_config.graph_config.clone())?;
 
         // Update main configuration
         self.config = new_config;
@@ -1012,15 +1042,21 @@ impl TopologyManager {
     fn validate_configuration(&self, config: &TopologyConfig) -> Result<()> {
         // Configuration validation logic
         if config.device_count == 0 {
-            return Err(scirs2_core::error::Error::InvalidInput("Device count cannot be zero".to_string()));
+            return Err(scirs2_core::error::Error::InvalidInput(
+                "Device count cannot be zero".to_string(),
+            ));
         }
 
         if config.node_count == 0 {
-            return Err(scirs2_core::error::Error::InvalidInput("Node count cannot be zero".to_string()));
+            return Err(scirs2_core::error::Error::InvalidInput(
+                "Node count cannot be zero".to_string(),
+            ));
         }
 
         if config.devices_per_node == 0 {
-            return Err(scirs2_core::error::Error::InvalidInput("Devices per node cannot be zero".to_string()));
+            return Err(scirs2_core::error::Error::InvalidInput(
+                "Devices per node cannot be zero".to_string(),
+            ));
         }
 
         // Additional validation checks...
@@ -1043,7 +1079,10 @@ impl TopologyManager {
 
         // Emit optimization completed event
         self.emit_event(TopologyEvent {
-            id: format!("optimization_completed_{}", Instant::now().elapsed().as_nanos()),
+            id: format!(
+                "optimization_completed_{}",
+                Instant::now().elapsed().as_nanos()
+            ),
             event_type: TopologyEventType::OptimizationCompleted,
             timestamp: Instant::now(),
             source: EventSource {
@@ -1080,7 +1119,7 @@ impl TopologyManager {
                 properties: vec![ProblemProperty::Nonlinear, ProblemProperty::Multimodal],
                 computational_requirements: ComputationalRequirements {
                     memory_requirements: MemoryRequirements {
-                        minimum_memory: 1_000_000_000, // 1 GB
+                        minimum_memory: 1_000_000_000,     // 1 GB
                         recommended_memory: 4_000_000_000, // 4 GB
                         scaling_factor: 1.5,
                     },
@@ -1109,14 +1148,16 @@ impl TopologyManager {
         // Apply the optimized layout
         if let Some(placement) = &result.best_solution.device_placement {
             for (device_id, position) in placement {
-                self.device_layout.update_device_position(*device_id, *position)?;
+                self.device_layout
+                    .update_device_position(*device_id, *position)?;
             }
         }
 
         // Update communication routing
         if let Some(routing) = &result.best_solution.communication_routing {
             for ((src, dst), path) in routing {
-                self.communication_topology.update_routing_path(*src, *dst, path.clone())?;
+                self.communication_topology
+                    .update_routing_path(*src, *dst, path.clone())?;
             }
         }
 
@@ -1126,10 +1167,18 @@ impl TopologyManager {
 
     /// Update optimization statistics
     fn update_optimization_statistics(&mut self, result: &OptimizationResult) -> Result<()> {
-        self.statistics.insert("last_optimization_time".to_string(), result.statistics.total_runtime.as_secs_f64());
-        self.statistics.insert("last_optimization_improvement".to_string(), result.statistics.improvement);
-        self.statistics.insert("optimization_count".to_string(),
-            self.statistics.get("optimization_count").unwrap_or(&0.0) + 1.0);
+        self.statistics.insert(
+            "last_optimization_time".to_string(),
+            result.statistics.total_runtime.as_secs_f64(),
+        );
+        self.statistics.insert(
+            "last_optimization_improvement".to_string(),
+            result.statistics.improvement,
+        );
+        self.statistics.insert(
+            "optimization_count".to_string(),
+            self.statistics.get("optimization_count").unwrap_or(&0.0) + 1.0,
+        );
         Ok(())
     }
 
@@ -1138,16 +1187,22 @@ impl TopologyManager {
         let device_id = self.device_layout.add_device(device_config.clone())?;
 
         // Update communication topology
-        self.communication_topology.register_device(device_id, device_config.clone())?;
+        self.communication_topology
+            .register_device(device_id, device_config.clone())?;
 
         // Update power management
-        self.power_management.register_device(device_id, device_config.power_requirements.clone())?;
+        self.power_management
+            .register_device(device_id, device_config.power_requirements.clone())?;
 
         // Update graph management
-        self.graph_manager.add_node(device_id, device_config.clone())?;
+        self.graph_manager
+            .add_node(device_id, device_config.clone())?;
 
         // Update statistics
-        self.statistics.insert("device_count".to_string(), self.config.device_count as f64 + 1.0);
+        self.statistics.insert(
+            "device_count".to_string(),
+            self.config.device_count as f64 + 1.0,
+        );
         self.config.device_count += 1;
 
         // Emit device added event
@@ -1184,7 +1239,10 @@ impl TopologyManager {
         self.graph_manager.remove_node(device_id)?;
 
         // Update statistics
-        self.statistics.insert("device_count".to_string(), self.config.device_count as f64 - 1.0);
+        self.statistics.insert(
+            "device_count".to_string(),
+            self.config.device_count as f64 - 1.0,
+        );
         if self.config.device_count > 0 {
             self.config.device_count -= 1;
         }
@@ -1265,15 +1323,17 @@ impl TopologyManager {
         let power_health = self.power_management.check_health()?;
         let graph_health = self.graph_manager.check_health()?;
 
-        let overall_health = if device_health == HealthStatus::Healthy &&
-                               communication_health == HealthStatus::Healthy &&
-                               power_health == HealthStatus::Healthy &&
-                               graph_health == HealthStatus::Healthy {
+        let overall_health = if device_health == HealthStatus::Healthy
+            && communication_health == HealthStatus::Healthy
+            && power_health == HealthStatus::Healthy
+            && graph_health == HealthStatus::Healthy
+        {
             HealthStatus::Healthy
-        } else if device_health == HealthStatus::Failed ||
-                  communication_health == HealthStatus::Failed ||
-                  power_health == HealthStatus::Failed ||
-                  graph_health == HealthStatus::Failed {
+        } else if device_health == HealthStatus::Failed
+            || communication_health == HealthStatus::Failed
+            || power_health == HealthStatus::Failed
+            || graph_health == HealthStatus::Failed
+        {
             HealthStatus::Failed
         } else {
             HealthStatus::Degraded
@@ -1426,7 +1486,9 @@ impl Default for PerformanceMonitoringConfig {
             ],
             alert_thresholds: HashMap::new(),
             retention_period: Duration::from_secs(3600),
-            sampling_strategy: SamplingStrategy::FixedInterval { interval: Duration::from_secs(1) },
+            sampling_strategy: SamplingStrategy::FixedInterval {
+                interval: Duration::from_secs(1),
+            },
         }
     }
 }
@@ -1512,6 +1574,6 @@ impl Default for EventStatistics {
 }
 
 // Re-export common types and traits
+pub use super::device_layout::{DeviceConfig, DeviceInfo};
 pub use super::optimization::{OptimizationProblem, OptimizationResult};
-pub use super::device_layout::{DeviceInfo, DeviceConfig};
 pub use super::power_management::PowerRequirements;

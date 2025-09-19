@@ -388,7 +388,10 @@ impl DependencyGraph {
             });
         }
 
-        self.edges.entry(source.clone()).or_insert_with(Vec::new).push(edge);
+        self.edges
+            .entry(source.clone())
+            .or_insert_with(Vec::new)
+            .push(edge);
         self.metadata.statistics.edge_count = self.edges.values().map(|v| v.len()).sum();
 
         // Record the change
@@ -419,7 +422,12 @@ impl DependencyGraph {
     }
 
     /// Utility function for cycle detection
-    fn has_cycle_util(&self, node_id: &str, visited: &mut HashSet<String>, rec_stack: &mut HashSet<String>) -> bool {
+    fn has_cycle_util(
+        &self,
+        node_id: &str,
+        visited: &mut HashSet<String>,
+        rec_stack: &mut HashSet<String>,
+    ) -> bool {
         visited.insert(node_id.to_string());
         rec_stack.insert(node_id.to_string());
 
@@ -445,11 +453,12 @@ impl DependencyGraph {
         self.metadata.statistics.edge_count = self.edges.values().map(|v| v.len()).sum();
 
         if self.metadata.statistics.node_count > 0 {
-            self.metadata.statistics.density = self.metadata.statistics.edge_count as f64 /
-                (self.metadata.statistics.node_count * (self.metadata.statistics.node_count - 1)) as f64;
+            self.metadata.statistics.density = self.metadata.statistics.edge_count as f64
+                / (self.metadata.statistics.node_count * (self.metadata.statistics.node_count - 1))
+                    as f64;
 
-            self.metadata.statistics.average_degree =
-                self.metadata.statistics.edge_count as f64 / self.metadata.statistics.node_count as f64;
+            self.metadata.statistics.average_degree = self.metadata.statistics.edge_count as f64
+                / self.metadata.statistics.node_count as f64;
         }
     }
 }

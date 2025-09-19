@@ -24,9 +24,9 @@ pub mod types;
 
 // Re-export core types
 pub use types::{
-    AdvancedDeadlockConfig, AdvancedDiagnostics, AdaptiveSensitivity, DeadlockDetectionConfig,
-    DeadlockDetector, DeadlockPerformanceConfig, DeadlockSensitivity, DetectionEvent,
-    DetectionEventType, DetectionState, DetectionStatus, DeliveryMethod, ExportFormat,
+    AdaptiveSensitivity, AdvancedDeadlockConfig, AdvancedDiagnostics, DeadlockDetectionConfig,
+    DeadlockDetector, DeadlockPerformanceConfig, DeadlockSensitivity, DeliveryMethod,
+    DetectionEvent, DetectionEventType, DetectionState, DetectionStatus, ExportFormat,
     IntegrationSettings, NotificationConfig, NotificationType, PerformanceOptimization,
     ResourceLimits, SensitivityMetric,
 };
@@ -36,8 +36,8 @@ pub use algorithms::{
     BackoffStrategy, CacheOptimization, CachePolicy, CombinationStrategy, ConflictResolution,
     CycleDetectionMethod, DeadlockCriteria, DeadlockDetectionAlgorithm, ErrorHandling,
     GraphOptimization, GraphReductionMethod, ParallelProcessing, PrefetchingStrategy,
-    PropagationStrategy, ResourceAllocationMethod, ResponseHandling, RetryPolicy,
-    SafeStateMethod, SynchronizationMethod, TimestampOrdering, WorkDistribution,
+    PropagationStrategy, ResourceAllocationMethod, ResponseHandling, RetryPolicy, SafeStateMethod,
+    SynchronizationMethod, TimestampOrdering, WorkDistribution,
 };
 
 // Re-export prevention types
@@ -45,22 +45,22 @@ pub use prevention::{
     AllocationPolicy, AvoidanceStrategy, BankersAlgorithmConfig, CircularWaitPrevention,
     ConservativeStrategy, DeadlockPrevention, DeadlockPreventionSystem, HoldAndWaitPrevention,
     MutualExclusionPrevention, NoPreemptionPrevention, OptimisticStrategy, OrderingStrategy,
-    PreemptionPolicy, PreemptionStrategy, PreventionPolicy, PreventionStatistics,
-    ResourceOrdering, TimeoutStrategy, ValidationStatistics, WoundWaitStrategy,
+    PreemptionPolicy, PreemptionStrategy, PreventionPolicy, PreventionStatistics, ResourceOrdering,
+    TimeoutStrategy, ValidationStatistics, WoundWaitStrategy,
 };
 
 // Re-export machine learning types
 pub use ml::{
-    CombinationStrategy as MLCombinationStrategy, EnsembleMethod, FeatureExtraction,
-    GraphFeature, MLModelType, ResourceFeature, TemporalFeature,
+    CombinationStrategy as MLCombinationStrategy, EnsembleMethod, FeatureExtraction, GraphFeature,
+    MLModelType, ResourceFeature, TemporalFeature,
 };
 
 // Re-export graph types
 pub use graph::{
-    ChangeType, DependencyEdge, DependencyGraph, EdgeMetadata, EdgeType, GraphChange,
-    GraphHistory, GraphMetadata, GraphNode, GraphOptimizationState, GraphProperties,
-    GraphSnapshot, GraphStatistics, NodeMetadata, NodeState, NodeType, OptimizationOperation,
-    OptimizationRecord, OptimizationStatistics, PerformanceImpact,
+    ChangeType, DependencyEdge, DependencyGraph, EdgeMetadata, EdgeType, GraphChange, GraphHistory,
+    GraphMetadata, GraphNode, GraphOptimizationState, GraphProperties, GraphSnapshot,
+    GraphStatistics, NodeMetadata, NodeState, NodeType, OptimizationOperation, OptimizationRecord,
+    OptimizationStatistics, PerformanceImpact,
 };
 
 // Re-export performance types
@@ -83,8 +83,8 @@ pub use recovery::{
     ActiveRecovery, CoordinatorSelection, CoordinatorState, DeadlockRecovery,
     DeadlockRecoverySystem, DeadlockSeverity, DetectedDeadlock, DistributedRecovery,
     DistributedRecoveryStrategy, ExecutionContext, ExecutionRecord, ExecutorCapabilities,
-    ExecutorPerformance, PhaseRecord, PhaseResult, RecoveryAction, RecoveryCoordination,
-    RecoveryCoordinator, RecoveryConstraint, RecoveryConstraintType, RecoveryExecutor,
+    ExecutorPerformance, PhaseRecord, PhaseResult, RecoveryAction, RecoveryConstraint,
+    RecoveryConstraintType, RecoveryCoordination, RecoveryCoordinator, RecoveryExecutor,
     RecoveryExecutorStrategy, RecoveryObjective, RecoveryOptimization,
     RecoveryOptimizationAlgorithm, RecoveryPhase, RecoveryProgress, RecoveryRequest,
     RecoveryResult, RecoveryStatistics, RecoveryStrategy, RecoveryVerification,
@@ -105,7 +105,9 @@ pub fn create_detector() -> crate::error::Result<DeadlockDetector> {
 }
 
 /// Create a new deadlock detector with custom configuration
-pub fn create_detector_with_config(config: DeadlockDetectionConfig) -> crate::error::Result<DeadlockDetector> {
+pub fn create_detector_with_config(
+    config: DeadlockDetectionConfig,
+) -> crate::error::Result<DeadlockDetector> {
     let mut detector = DeadlockDetector::new()?;
     detector.config = config;
     Ok(detector)
@@ -117,7 +119,9 @@ pub fn create_dependency_graph() -> crate::error::Result<DependencyGraph> {
 }
 
 /// Create a new recovery system
-pub fn create_recovery_system(config: DeadlockRecovery) -> crate::error::Result<DeadlockRecoverySystem> {
+pub fn create_recovery_system(
+    config: DeadlockRecovery,
+) -> crate::error::Result<DeadlockRecoverySystem> {
     DeadlockRecoverySystem::new(config)
 }
 
@@ -161,7 +165,7 @@ impl DeadlockDetector {
 
     /// Add a resource dependency
     pub fn add_dependency(&mut self, source: String, target: String) -> crate::error::Result<()> {
-        use graph::{DependencyEdge, EdgeType, EdgeMetadata};
+        use graph::{DependencyEdge, EdgeMetadata, EdgeType};
 
         // Add nodes if they don't exist
         if !self.dependency_graph.nodes.contains_key(&source) {

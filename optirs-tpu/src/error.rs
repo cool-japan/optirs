@@ -3,7 +3,7 @@
 // This module re-exports error types from scirs2_core to maintain
 // SciRS2 integration policy compliance.
 
-// Re-export from scirs2_core for SciRS2 compliance
+// Re-export from scirs2-core for SciRS2 compliance
 pub use scirs2_core::error::{CoreError as OptimError, Result};
 
 // TPU-specific error types

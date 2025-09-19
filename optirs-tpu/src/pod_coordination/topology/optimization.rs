@@ -4,10 +4,10 @@
 // TPU pod topology management, including device placement, layout optimization,
 // and communication routing optimization.
 
+use scirs2_core::error::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
-use scirs2_core::error::Result;
 
 use super::config::{DeviceId, Position3D, TopologyId};
 
@@ -306,27 +306,59 @@ pub struct ConstraintConfig {
 #[derive(Debug, Clone)]
 pub enum LayoutConstraintType {
     /// Distance constraints
-    Distance { max_distance: f64, device_pairs: Vec<(DeviceId, DeviceId)> },
+    Distance {
+        max_distance: f64,
+        device_pairs: Vec<(DeviceId, DeviceId)>,
+    },
     /// Bandwidth constraints
-    Bandwidth { min_bandwidth: f64, communication_pairs: Vec<(DeviceId, DeviceId)> },
+    Bandwidth {
+        min_bandwidth: f64,
+        communication_pairs: Vec<(DeviceId, DeviceId)>,
+    },
     /// Latency constraints
-    Latency { max_latency: f64, communication_pairs: Vec<(DeviceId, DeviceId)> },
+    Latency {
+        max_latency: f64,
+        communication_pairs: Vec<(DeviceId, DeviceId)>,
+    },
     /// Power constraints
-    Power { max_power: f64, power_zones: Vec<String> },
+    Power {
+        max_power: f64,
+        power_zones: Vec<String>,
+    },
     /// Thermal constraints
-    Thermal { max_temperature: f64, thermal_zones: Vec<String> },
+    Thermal {
+        max_temperature: f64,
+        thermal_zones: Vec<String>,
+    },
     /// Placement constraints
-    Placement { allowed_positions: Vec<Position3D>, device_groups: Vec<Vec<DeviceId>> },
+    Placement {
+        allowed_positions: Vec<Position3D>,
+        device_groups: Vec<Vec<DeviceId>>,
+    },
     /// Connectivity constraints
-    Connectivity { min_connectivity: usize, device_groups: Vec<Vec<DeviceId>> },
+    Connectivity {
+        min_connectivity: usize,
+        device_groups: Vec<Vec<DeviceId>>,
+    },
     /// Resource constraints
-    Resource { max_utilization: f64, resource_types: Vec<String> },
+    Resource {
+        max_utilization: f64,
+        resource_types: Vec<String>,
+    },
     /// Fault tolerance constraints
-    FaultTolerance { min_redundancy: usize, critical_devices: Vec<DeviceId> },
+    FaultTolerance {
+        min_redundancy: usize,
+        critical_devices: Vec<DeviceId>,
+    },
     /// Security constraints
-    Security { isolation_requirements: Vec<SecurityIsolationRequirement> },
+    Security {
+        isolation_requirements: Vec<SecurityIsolationRequirement>,
+    },
     /// Custom constraints
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Security isolation requirements
@@ -934,9 +966,15 @@ pub enum ObjectiveFunctionType {
     /// Linear function
     Linear { coefficients: Vec<f64> },
     /// Quadratic function
-    Quadratic { matrix: Vec<Vec<f64>>, linear: Vec<f64> },
+    Quadratic {
+        matrix: Vec<Vec<f64>>,
+        linear: Vec<f64>,
+    },
     /// Polynomial function
-    Polynomial { coefficients: Vec<f64>, powers: Vec<usize> },
+    Polynomial {
+        coefficients: Vec<f64>,
+        powers: Vec<usize>,
+    },
     /// Custom function
     Custom { expression: String },
 }
@@ -969,7 +1007,10 @@ pub enum OptimizationConstraintType {
     /// Linear constraint
     Linear { coefficients: Vec<f64> },
     /// Quadratic constraint
-    Quadratic { matrix: Vec<Vec<f64>>, linear: Vec<f64> },
+    Quadratic {
+        matrix: Vec<Vec<f64>>,
+        linear: Vec<f64>,
+    },
     /// Nonlinear constraint
     Nonlinear { expression: String },
     /// Custom constraint

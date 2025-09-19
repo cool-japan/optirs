@@ -387,7 +387,10 @@ pub enum ProtocolOptimizationStrategy {
     /// Batch processing
     BatchProcessing,
     /// Custom optimization
-    Custom { name: String, parameters: HashMap<String, String> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Protocol optimization parameters
@@ -504,7 +507,7 @@ impl Default for NetworkConfig {
 impl Default for SocketBufferConfig {
     fn default() -> Self {
         Self {
-            send_buffer_size: 8 * 1024 * 1024, // 8MB
+            send_buffer_size: 8 * 1024 * 1024,    // 8MB
             receive_buffer_size: 8 * 1024 * 1024, // 8MB
             auto_tuning: true,
             scaling_factors: BufferScalingFactors {

@@ -4,10 +4,10 @@
 // including NTP, PTP, GPS, Berkeley algorithm, Cristian's algorithm, and custom protocols.
 // Each protocol has its own configuration, state management, and specific features.
 
+use scirs2_core::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime};
-use scirs2_core::error::Result;
 
 use super::gps::GpsConfig;
 
@@ -780,28 +780,18 @@ impl ProtocolFactory {
     /// Create a protocol instance from configuration
     pub fn create_protocol(protocol: &ClockSyncProtocol) -> Result<Box<dyn SyncProtocolTrait>> {
         match protocol {
-            ClockSyncProtocol::NTP { .. } => {
-                Ok(Box::new(NtpProtocol::new(protocol)?))
-            },
-            ClockSyncProtocol::PTP { .. } => {
-                Ok(Box::new(PtpProtocol::new(protocol)?))
-            },
-            ClockSyncProtocol::SNTP { .. } => {
-                Ok(Box::new(SntpProtocol::new(protocol)?))
-            },
-            ClockSyncProtocol::Berkeley { .. } => {
-                Ok(Box::new(BerkeleyProtocol::new(protocol)?))
-            },
-            ClockSyncProtocol::Cristian { .. } => {
-                Ok(Box::new(CristianProtocol::new(protocol)?))
-            },
+            ClockSyncProtocol::NTP { .. } => Ok(Box::new(NtpProtocol::new(protocol)?)),
+            ClockSyncProtocol::PTP { .. } => Ok(Box::new(PtpProtocol::new(protocol)?)),
+            ClockSyncProtocol::SNTP { .. } => Ok(Box::new(SntpProtocol::new(protocol)?)),
+            ClockSyncProtocol::Berkeley { .. } => Ok(Box::new(BerkeleyProtocol::new(protocol)?)),
+            ClockSyncProtocol::Cristian { .. } => Ok(Box::new(CristianProtocol::new(protocol)?)),
             ClockSyncProtocol::GPS { .. } => {
                 // GPS protocol would be handled by the GPS module
-                Err(scirs2_core::error::Error::InvalidInput("GPS protocol handled by GPS module".to_string()))
-            },
-            ClockSyncProtocol::Custom { .. } => {
-                Ok(Box::new(CustomProtocol::new(protocol)?))
-            },
+                Err(scirs2_core::error::Error::InvalidInput(
+                    "GPS protocol handled by GPS module".to_string(),
+                ))
+            }
+            ClockSyncProtocol::Custom { .. } => Ok(Box::new(CustomProtocol::new(protocol)?)),
         }
     }
 }
@@ -838,7 +828,12 @@ pub trait SyncProtocolTrait: std::fmt::Debug + Send + Sync {
 impl NtpProtocol {
     /// Create a new NTP protocol instance
     pub fn new(config: &ClockSyncProtocol) -> Result<Self> {
-        if let ClockSyncProtocol::NTP { version, servers, authentication } = config {
+        if let ClockSyncProtocol::NTP {
+            version,
+            servers,
+            authentication,
+        } = config
+        {
             Ok(Self {
                 config: NtpConfig {
                     version: *version,
@@ -853,17 +848,25 @@ impl NtpProtocol {
                 },
                 state: NtpState::default(),
                 servers: Vec::new(),
-                auth_manager: if *authentication { Some(NtpAuthManager::default()) } else { None },
+                auth_manager: if *authentication {
+                    Some(NtpAuthManager::default())
+                } else {
+                    None
+                },
                 statistics: NtpStatistics::default(),
             })
         } else {
-            Err(scirs2_core::error::Error::InvalidInput("Invalid NTP configuration".to_string()))
+            Err(scirs2_core::error::Error::InvalidInput(
+                "Invalid NTP configuration".to_string(),
+            ))
         }
     }
 }
 
 impl SyncProtocolTrait for NtpProtocol {
-    fn protocol_name(&self) -> &str { "NTP" }
+    fn protocol_name(&self) -> &str {
+        "NTP"
+    }
 
     fn initialize(&mut self) -> Result<()> {
         // NTP initialization logic
@@ -877,17 +880,33 @@ impl SyncProtocolTrait for NtpProtocol {
         Ok(SystemTime::now())
     }
 
-    fn get_offset(&self) -> Duration { Duration::from_millis(0) }
-    fn get_quality(&self) -> f64 { 0.95 }
-    fn is_synchronized(&self) -> bool { matches!(self.state.clock_state, NtpClockState::Synchronized) }
-    fn get_statistics(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn get_offset(&self) -> Duration {
+        Duration::from_millis(0)
+    }
+    fn get_quality(&self) -> f64 {
+        0.95
+    }
+    fn is_synchronized(&self) -> bool {
+        matches!(self.state.clock_state, NtpClockState::Synchronized)
+    }
+    fn get_statistics(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl PtpProtocol {
     /// Create a new PTP protocol instance
     pub fn new(config: &ClockSyncProtocol) -> Result<Self> {
-        if let ClockSyncProtocol::PTP { version, domain, transport, profile } = config {
+        if let ClockSyncProtocol::PTP {
+            version,
+            domain,
+            transport,
+            profile,
+        } = config
+        {
             Ok(Self {
                 config: PtpConfig {
                     version: version.clone(),
@@ -907,13 +926,17 @@ impl PtpProtocol {
                 statistics: PtpStatistics::default(),
             })
         } else {
-            Err(scirs2_core::error::Error::InvalidInput("Invalid PTP configuration".to_string()))
+            Err(scirs2_core::error::Error::InvalidInput(
+                "Invalid PTP configuration".to_string(),
+            ))
         }
     }
 }
 
 impl SyncProtocolTrait for PtpProtocol {
-    fn protocol_name(&self) -> &str { "PTP" }
+    fn protocol_name(&self) -> &str {
+        "PTP"
+    }
 
     fn initialize(&mut self) -> Result<()> {
         self.state.clock_state = PtpClockState::Initializing;
@@ -926,11 +949,21 @@ impl SyncProtocolTrait for PtpProtocol {
         Ok(SystemTime::now())
     }
 
-    fn get_offset(&self) -> Duration { self.state.offset_from_master }
-    fn get_quality(&self) -> f64 { 0.98 }
-    fn is_synchronized(&self) -> bool { matches!(self.state.clock_state, PtpClockState::Slave) }
-    fn get_statistics(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn get_offset(&self) -> Duration {
+        self.state.offset_from_master
+    }
+    fn get_quality(&self) -> f64 {
+        0.98
+    }
+    fn is_synchronized(&self) -> bool {
+        matches!(self.state.clock_state, PtpClockState::Slave)
+    }
+    fn get_statistics(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl SntpProtocol {
@@ -950,13 +983,17 @@ impl SntpProtocol {
                 statistics: SntpStatistics::default(),
             })
         } else {
-            Err(scirs2_core::error::Error::InvalidInput("Invalid SNTP configuration".to_string()))
+            Err(scirs2_core::error::Error::InvalidInput(
+                "Invalid SNTP configuration".to_string(),
+            ))
         }
     }
 }
 
 impl SyncProtocolTrait for SntpProtocol {
-    fn protocol_name(&self) -> &str { "SNTP" }
+    fn protocol_name(&self) -> &str {
+        "SNTP"
+    }
 
     fn initialize(&mut self) -> Result<()> {
         self.state.status = SntpStatus::Idle;
@@ -968,17 +1005,31 @@ impl SyncProtocolTrait for SntpProtocol {
         Ok(SystemTime::now())
     }
 
-    fn get_offset(&self) -> Duration { Duration::from_millis(0) }
-    fn get_quality(&self) -> f64 { 0.85 }
-    fn is_synchronized(&self) -> bool { matches!(self.state.status, SntpStatus::Synchronized) }
-    fn get_statistics(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn get_offset(&self) -> Duration {
+        Duration::from_millis(0)
+    }
+    fn get_quality(&self) -> f64 {
+        0.85
+    }
+    fn is_synchronized(&self) -> bool {
+        matches!(self.state.status, SntpStatus::Synchronized)
+    }
+    fn get_statistics(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl BerkeleyProtocol {
     /// Create a new Berkeley protocol instance
     pub fn new(config: &ClockSyncProtocol) -> Result<Self> {
-        if let ClockSyncProtocol::Berkeley { fault_tolerance, convergence_threshold } = config {
+        if let ClockSyncProtocol::Berkeley {
+            fault_tolerance,
+            convergence_threshold,
+        } = config
+        {
             Ok(Self {
                 config: BerkeleyConfig {
                     fault_tolerance: *fault_tolerance,
@@ -993,13 +1044,17 @@ impl BerkeleyProtocol {
                 statistics: BerkeleyStatistics::default(),
             })
         } else {
-            Err(scirs2_core::error::Error::InvalidInput("Invalid Berkeley configuration".to_string()))
+            Err(scirs2_core::error::Error::InvalidInput(
+                "Invalid Berkeley configuration".to_string(),
+            ))
         }
     }
 }
 
 impl SyncProtocolTrait for BerkeleyProtocol {
-    fn protocol_name(&self) -> &str { "Berkeley" }
+    fn protocol_name(&self) -> &str {
+        "Berkeley"
+    }
 
     fn initialize(&mut self) -> Result<()> {
         self.state.role = BerkeleyRole::Slave;
@@ -1011,17 +1066,31 @@ impl SyncProtocolTrait for BerkeleyProtocol {
         Ok(SystemTime::now())
     }
 
-    fn get_offset(&self) -> Duration { Duration::from_millis(0) }
-    fn get_quality(&self) -> f64 { 0.90 }
-    fn is_synchronized(&self) -> bool { self.state.converged }
-    fn get_statistics(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn get_offset(&self) -> Duration {
+        Duration::from_millis(0)
+    }
+    fn get_quality(&self) -> f64 {
+        0.90
+    }
+    fn is_synchronized(&self) -> bool {
+        self.state.converged
+    }
+    fn get_statistics(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl CristianProtocol {
     /// Create a new Cristian protocol instance
     pub fn new(config: &ClockSyncProtocol) -> Result<Self> {
-        if let ClockSyncProtocol::Cristian { time_server, uncertainty_factor } = config {
+        if let ClockSyncProtocol::Cristian {
+            time_server,
+            uncertainty_factor,
+        } = config
+        {
             Ok(Self {
                 config: CristianConfig {
                     time_server: time_server.clone(),
@@ -1042,13 +1111,17 @@ impl CristianProtocol {
                 statistics: CristianStatistics::default(),
             })
         } else {
-            Err(scirs2_core::error::Error::InvalidInput("Invalid Cristian configuration".to_string()))
+            Err(scirs2_core::error::Error::InvalidInput(
+                "Invalid Cristian configuration".to_string(),
+            ))
         }
     }
 }
 
 impl SyncProtocolTrait for CristianProtocol {
-    fn protocol_name(&self) -> &str { "Cristian" }
+    fn protocol_name(&self) -> &str {
+        "Cristian"
+    }
 
     fn initialize(&mut self) -> Result<()> {
         self.state.status = CristianStatus::Idle;
@@ -1060,17 +1133,31 @@ impl SyncProtocolTrait for CristianProtocol {
         Ok(SystemTime::now())
     }
 
-    fn get_offset(&self) -> Duration { self.state.current_offset }
-    fn get_quality(&self) -> f64 { 0.88 }
-    fn is_synchronized(&self) -> bool { matches!(self.state.status, CristianStatus::Synchronized) }
-    fn get_statistics(&self) -> HashMap<String, f64> { HashMap::new() }
-    fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn get_offset(&self) -> Duration {
+        self.state.current_offset
+    }
+    fn get_quality(&self) -> f64 {
+        0.88
+    }
+    fn is_synchronized(&self) -> bool {
+        matches!(self.state.status, CristianStatus::Synchronized)
+    }
+    fn get_statistics(&self) -> HashMap<String, f64> {
+        HashMap::new()
+    }
+    fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl CustomProtocol {
     /// Create a new custom protocol instance
     pub fn new(config: &ClockSyncProtocol) -> Result<Self> {
-        if let ClockSyncProtocol::Custom { protocol_name, parameters } = config {
+        if let ClockSyncProtocol::Custom {
+            protocol_name,
+            parameters,
+        } = config
+        {
             Ok(Self {
                 name: protocol_name.clone(),
                 config: parameters.clone(),
@@ -1086,13 +1173,17 @@ impl CustomProtocol {
                 },
             })
         } else {
-            Err(scirs2_core::error::Error::InvalidInput("Invalid Custom configuration".to_string()))
+            Err(scirs2_core::error::Error::InvalidInput(
+                "Invalid Custom configuration".to_string(),
+            ))
         }
     }
 }
 
 impl SyncProtocolTrait for CustomProtocol {
-    fn protocol_name(&self) -> &str { &self.name }
+    fn protocol_name(&self) -> &str {
+        &self.name
+    }
 
     fn initialize(&mut self) -> Result<()> {
         self.state.status = "initialized".to_string();
@@ -1100,15 +1191,29 @@ impl SyncProtocolTrait for CustomProtocol {
     }
 
     fn synchronize(&mut self) -> Result<SystemTime> {
-        *self.statistics.event_counts.entry("sync_calls".to_string()).or_insert(0) += 1;
+        *self
+            .statistics
+            .event_counts
+            .entry("sync_calls".to_string())
+            .or_insert(0) += 1;
         Ok(SystemTime::now())
     }
 
-    fn get_offset(&self) -> Duration { Duration::from_millis(0) }
-    fn get_quality(&self) -> f64 { 0.80 }
-    fn is_synchronized(&self) -> bool { self.state.status == "synchronized" }
-    fn get_statistics(&self) -> HashMap<String, f64> { self.statistics.metrics.clone() }
-    fn shutdown(&mut self) -> Result<()> { Ok(()) }
+    fn get_offset(&self) -> Duration {
+        Duration::from_millis(0)
+    }
+    fn get_quality(&self) -> f64 {
+        0.80
+    }
+    fn is_synchronized(&self) -> bool {
+        self.state.status == "synchronized"
+    }
+    fn get_statistics(&self) -> HashMap<String, f64> {
+        self.statistics.metrics.clone()
+    }
+    fn shutdown(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 // Default implementations
@@ -1194,8 +1299,8 @@ impl Default for PtpClockIdentity {
             identity: [0; 8],
             priority1: 128,
             priority2: 128,
-            clock_class: 248, // Default for slave-only clock
-            clock_accuracy: 0x31, // Unknown
+            clock_class: 248,       // Default for slave-only clock
+            clock_accuracy: 0x31,   // Unknown
             clock_variance: 0xFFFF, // Unknown
         }
     }

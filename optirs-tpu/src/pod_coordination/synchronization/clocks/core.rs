@@ -4,19 +4,19 @@
 // for TPU pod clock synchronization. It handles the primary synchronization operations,
 // clock offset tracking, and coordination between different time sources.
 
+use scirs2_core::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime};
-use scirs2_core::error::Result;
 
 use crate::tpu::tpu_backend::DeviceId;
 
 // Import types from other modules (these will be defined in their respective modules)
-use super::protocols::ClockSyncProtocol;
-use super::sources::{ClockSource, TimeSourceManager, TimeSourceConfig};
-use super::quality::{ClockQualityMonitor, QualityMonitoringConfig};
-use super::drift::{DriftCompensator, DriftCompensationConfig};
+use super::drift::{DriftCompensationConfig, DriftCompensator};
 use super::network::NetworkSyncConfig;
+use super::protocols::ClockSyncProtocol;
+use super::quality::{ClockQualityMonitor, QualityMonitoringConfig};
+use super::sources::{ClockSource, TimeSourceConfig, TimeSourceManager};
 use super::statistics::ClockStatistics;
 
 /// Clock offset type alias
@@ -215,7 +215,10 @@ pub enum SyncAlgorithm {
     /// Adaptive algorithm
     Adaptive { parameters: HashMap<String, f64> },
     /// Custom algorithm
-    Custom { name: String, config: HashMap<String, String> },
+    Custom {
+        name: String,
+        config: HashMap<String, String>,
+    },
 }
 
 /// State snapshot for history tracking
@@ -413,13 +416,19 @@ pub enum FilterType {
     /// Exponential moving average
     ExponentialMovingAverage { alpha: f64 },
     /// Kalman filter
-    Kalman { process_noise: f64, measurement_noise: f64 },
+    Kalman {
+        process_noise: f64,
+        measurement_noise: f64,
+    },
     /// Low-pass filter
     LowPass { cutoff_frequency: f64 },
     /// Adaptive filter
     Adaptive { adaptation_algorithm: String },
     /// Custom filter
-    Custom { filter_name: String, parameters: HashMap<String, f64> },
+    Custom {
+        filter_name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Offset tracker configuration
@@ -561,7 +570,10 @@ pub enum CoordinationStrategy {
     /// Weighted averaging
     WeightedAveraging { weights: HashMap<DeviceId, f64> },
     /// Custom coordination
-    Custom { strategy_name: String, parameters: HashMap<String, String> },
+    Custom {
+        strategy_name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Coordination statistics
@@ -648,7 +660,10 @@ impl ClockSynchronizationManager {
 
     /// Check if synchronized
     pub fn is_synchronized(&self) -> bool {
-        matches!(self.synchronizer.state.sync_status, SyncStatus::Synchronized)
+        matches!(
+            self.synchronizer.state.sync_status,
+            SyncStatus::Synchronized
+        )
     }
 
     /// Get synchronization quality
@@ -711,7 +726,8 @@ impl ClockSynchronizer {
 
         // Calculate offset
         let local_time = SystemTime::now();
-        let offset = reference_time.duration_since(local_time)
+        let offset = reference_time
+            .duration_since(local_time)
             .unwrap_or_else(|_| local_time.duration_since(reference_time).unwrap());
 
         // Update offset tracker
@@ -740,7 +756,7 @@ impl ClockSynchronizer {
         self.statistics.successful_syncs += 1;
         self.statistics.avg_sync_time =
             (self.statistics.avg_sync_time * (self.statistics.total_syncs - 1) as u32 + sync_time)
-            / self.statistics.total_syncs as u32;
+                / self.statistics.total_syncs as u32;
 
         Ok(())
     }
@@ -802,7 +818,8 @@ impl OffsetTracker {
         }
 
         // Simple outlier detection based on deviation from recent measurements
-        let recent_offsets: Vec<Duration> = self.offset_history
+        let recent_offsets: Vec<Duration> = self
+            .offset_history
             .iter()
             .rev()
             .take(10)
@@ -870,7 +887,7 @@ impl SynchronizationCoordinator {
                         synchronizer.synchronize(ref_time)?;
                     }
                 }
-            },
+            }
             CoordinationStrategy::MasterSlave { master_device } => {
                 // Master provides reference for all slaves
                 if let Some(master) = self.synchronizers.get(master_device) {
@@ -883,19 +900,19 @@ impl SynchronizationCoordinator {
                         }
                     }
                 }
-            },
+            }
             CoordinationStrategy::DistributedConsensus { .. } => {
                 // Distributed consensus algorithm
                 self.perform_distributed_consensus()?;
-            },
+            }
             CoordinationStrategy::WeightedAveraging { weights } => {
                 // Weighted averaging of time sources
                 self.perform_weighted_averaging(weights)?;
-            },
+            }
             CoordinationStrategy::Custom { .. } => {
                 // Custom coordination logic
                 self.perform_custom_coordination()?;
-            },
+            }
         }
 
         Ok(())

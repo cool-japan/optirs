@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::error::{OptimError, Result};
 use crate::tpu::tpu_backend::DeviceId;
-use crate::error::{Result, OptimError};
 
 /// Leader election manager
 #[derive(Debug)]
@@ -129,7 +129,10 @@ pub enum PriorityFactorType {
     /// Load average (lower is better)
     LoadAverage,
     /// Custom factor
-    Custom { metric: String, higher_is_better: bool },
+    Custom {
+        metric: String,
+        higher_is_better: bool,
+    },
 }
 
 /// Normalization methods for priority factors
@@ -457,8 +460,8 @@ impl LeaderElectionManager {
         match self.election_state {
             ElectionState::InProgress { .. } => {
                 return Err(OptimError::invalid_state("Election already in progress"));
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         let now = Instant::now();
@@ -477,7 +480,9 @@ impl LeaderElectionManager {
             end_time: None,
             winner: None,
             participants: self.candidates.keys().copied().collect(),
-            outcome: ElectionOutcome::Failed { reason: "In progress".to_string() },
+            outcome: ElectionOutcome::Failed {
+                reason: "In progress".to_string(),
+            },
             duration: None,
         };
 
@@ -491,7 +496,9 @@ impl LeaderElectionManager {
     pub fn register_candidate(&mut self, device_id: DeviceId, info: CandidateInfo) -> Result<()> {
         // Check candidate requirements
         if !self.meets_requirements(&info)? {
-            return Err(OptimError::invalid_argument("Candidate does not meet requirements"));
+            return Err(OptimError::invalid_argument(
+                "Candidate does not meet requirements",
+            ));
         }
 
         // Calculate priority if priority-based election
@@ -550,8 +557,8 @@ impl LeaderElectionManager {
                     self.complete_election(winner_id)?;
                     return Ok(Some(winner_id));
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         Ok(None)
@@ -625,7 +632,9 @@ impl LeaderElectionManager {
     /// Determine winner using priority-based algorithm
     fn determine_winner_priority(&self) -> Result<Option<DeviceId>> {
         // Find candidate with highest priority
-        let winner = self.candidates.iter()
+        let winner = self
+            .candidates
+            .iter()
             .filter(|(_, info)| info.status == CandidateStatus::Active)
             .max_by(|(_, a), (_, b)| a.priority.partial_cmp(&b.priority).unwrap())
             .map(|(id, _)| *id);
@@ -635,7 +644,9 @@ impl LeaderElectionManager {
     /// Determine winner using performance-based algorithm
     fn determine_winner_performance(&self) -> Result<Option<DeviceId>> {
         // Calculate performance score and find best candidate
-        let winner = self.candidates.iter()
+        let winner = self
+            .candidates
+            .iter()
             .filter(|(_, info)| info.status == CandidateStatus::Active)
             .max_by(|(_, a), (_, b)| {
                 let score_a = self.calculate_performance_score(a);
@@ -651,7 +662,9 @@ impl LeaderElectionManager {
         use std::collections::hash_map::RandomState;
         use std::hash::{BuildHasher, Hasher};
 
-        let active_candidates: Vec<_> = self.candidates.iter()
+        let active_candidates: Vec<_> = self
+            .candidates
+            .iter()
             .filter(|(_, info)| info.status == CandidateStatus::Active)
             .map(|(id, _)| *id)
             .collect();
@@ -702,11 +715,11 @@ impl LeaderElectionManager {
         let error_score = 1.0 - metrics.error_rate; // Lower error rate is better
 
         let weights = &self.config.priority_settings.weights;
-        cpu_score * weights.performance +
-        memory_score * weights.load +
-        latency_score * weights.network +
-        availability_score * weights.availability +
-        error_score * weights.stability
+        cpu_score * weights.performance
+            + memory_score * weights.load
+            + latency_score * weights.network
+            + availability_score * weights.availability
+            + error_score * weights.stability
     }
 
     /// Calculate priority for candidate
@@ -725,7 +738,9 @@ impl LeaderElectionManager {
         let requirements = &self.config.candidate_requirements;
 
         // Check minimum uptime
-        let uptime = candidate.last_heartbeat.duration_since(candidate.registration_time);
+        let uptime = candidate
+            .last_heartbeat
+            .duration_since(candidate.registration_time);
         if uptime < requirements.min_uptime {
             return Ok(false);
         }
@@ -737,8 +752,9 @@ impl LeaderElectionManager {
         }
 
         // Check resource utilization
-        if candidate.performance.cpu_utilization > requirements.max_resource_utilization ||
-           candidate.performance.memory_usage > requirements.max_resource_utilization {
+        if candidate.performance.cpu_utilization > requirements.max_resource_utilization
+            || candidate.performance.memory_usage > requirements.max_resource_utilization
+        {
             return Ok(false);
         }
 
@@ -754,7 +770,8 @@ impl LeaderElectionManager {
 
     /// Update election time statistics
     fn update_election_time_statistics(&mut self, duration: Duration) {
-        let total_elections = self.statistics.successful_elections + self.statistics.failed_elections;
+        let total_elections =
+            self.statistics.successful_elections + self.statistics.failed_elections;
 
         if total_elections == 1 {
             self.statistics.avg_election_time = duration;
@@ -764,7 +781,9 @@ impl LeaderElectionManager {
             // Update average
             let current_avg_millis = self.statistics.avg_election_time.as_millis() as f64;
             let new_duration_millis = duration.as_millis() as f64;
-            let new_avg_millis = (current_avg_millis * (total_elections - 1) as f64 + new_duration_millis) / total_elections as f64;
+            let new_avg_millis = (current_avg_millis * (total_elections - 1) as f64
+                + new_duration_millis)
+                / total_elections as f64;
             self.statistics.avg_election_time = Duration::from_millis(new_avg_millis as u64);
 
             // Update min/max
@@ -806,7 +825,11 @@ impl LeaderElectionManager {
     }
 
     /// Update candidate performance metrics
-    pub fn update_candidate_metrics(&mut self, device_id: DeviceId, metrics: PerformanceMetrics) -> Result<()> {
+    pub fn update_candidate_metrics(
+        &mut self,
+        device_id: DeviceId,
+        metrics: PerformanceMetrics,
+    ) -> Result<()> {
         if let Some(candidate) = self.candidates.get_mut(&device_id) {
             candidate.performance = metrics;
             candidate.last_heartbeat = Instant::now();
@@ -1113,7 +1136,7 @@ impl ElectionPresets {
                         weight: 0.3,
                         normalization: NormalizationMethod::MinMax { min: 0.0, max: 1.0 },
                     },
-                ]
+                ],
             })
             .build()
     }

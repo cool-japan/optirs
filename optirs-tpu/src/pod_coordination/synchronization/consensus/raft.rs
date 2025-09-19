@@ -4,10 +4,10 @@
 // for distributed systems, including leader election, log replication, safety
 // mechanisms, and cluster membership changes.
 
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap, VecDeque};
-use std::time::{Duration, Instant};
 use crate::tpu::pod_coordination::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 /// Raft consensus configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -603,10 +603,18 @@ impl RaftConsensus {
         match message {
             RaftMessage::VoteRequest(request) => self.handle_vote_request(request),
             RaftMessage::VoteResponse(response) => self.handle_vote_response(response),
-            RaftMessage::AppendEntriesRequest(request) => self.handle_append_entries_request(request),
-            RaftMessage::AppendEntriesResponse(response) => self.handle_append_entries_response(response),
-            RaftMessage::InstallSnapshotRequest(request) => self.handle_install_snapshot_request(request),
-            RaftMessage::InstallSnapshotResponse(response) => self.handle_install_snapshot_response(response),
+            RaftMessage::AppendEntriesRequest(request) => {
+                self.handle_append_entries_request(request)
+            }
+            RaftMessage::AppendEntriesResponse(response) => {
+                self.handle_append_entries_response(response)
+            }
+            RaftMessage::InstallSnapshotRequest(request) => {
+                self.handle_install_snapshot_request(request)
+            }
+            RaftMessage::InstallSnapshotResponse(response) => {
+                self.handle_install_snapshot_response(response)
+            }
             RaftMessage::PreVoteRequest(request) => self.handle_pre_vote_request(request),
             RaftMessage::PreVoteResponse(response) => self.handle_pre_vote_response(response),
             RaftMessage::Heartbeat(heartbeat) => self.handle_heartbeat(heartbeat),
@@ -627,13 +635,11 @@ impl RaftConsensus {
 
         // Grant vote if conditions are met
         if request.term == self.persistent_state.current_term {
-            let can_vote = self.persistent_state.voted_for.is_none() ||
-                          self.persistent_state.voted_for == Some(request.candidate_id.clone());
+            let can_vote = self.persistent_state.voted_for.is_none()
+                || self.persistent_state.voted_for == Some(request.candidate_id.clone());
 
-            let log_up_to_date = self.is_log_up_to_date(
-                request.last_log_index,
-                request.last_log_term
-            );
+            let log_up_to_date =
+                self.is_log_up_to_date(request.last_log_index, request.last_log_term);
 
             if can_vote && log_up_to_date {
                 vote_granted = true;
@@ -659,10 +665,8 @@ impl RaftConsensus {
             node_metrics: Some(self.get_node_metrics()),
         };
 
-        self.network.send_message(
-            &request.candidate_id,
-            RaftMessage::VoteResponse(response)
-        )?;
+        self.network
+            .send_message(&request.candidate_id, RaftMessage::VoteResponse(response))?;
 
         Ok(())
     }
@@ -683,13 +687,13 @@ impl RaftConsensus {
         // Process vote if from current term
         if response.term == self.persistent_state.current_term {
             if let Some(ref mut candidate_state) = self.candidate_state {
-                candidate_state.votes_received.insert(
-                    response.voter_id.clone(),
-                    response
-                );
+                candidate_state
+                    .votes_received
+                    .insert(response.voter_id.clone(), response);
 
                 // Check if we have majority
-                let votes_for = candidate_state.votes_received
+                let votes_for = candidate_state
+                    .votes_received
                     .values()
                     .filter(|v| v.vote_granted)
                     .count();
@@ -732,10 +736,8 @@ impl RaftConsensus {
 
                 // Update commit index
                 if request.leader_commit > self.persistent_state.commit_index {
-                    self.persistent_state.commit_index = std::cmp::min(
-                        request.leader_commit,
-                        self.get_last_log_index()
-                    );
+                    self.persistent_state.commit_index =
+                        std::cmp::min(request.leader_commit, self.get_last_log_index());
                     self.apply_committed_entries()?;
                 }
 
@@ -758,7 +760,7 @@ impl RaftConsensus {
 
         self.network.send_message(
             &request.leader_id,
-            RaftMessage::AppendEntriesResponse(response)
+            RaftMessage::AppendEntriesResponse(response),
         )?;
 
         Ok(())
@@ -785,8 +787,12 @@ impl RaftConsensus {
                 if response.success {
                     // Update next_index and match_index
                     if let Some(match_index) = response.match_index {
-                        leader_state.next_index.insert(follower_id.clone(), match_index + 1);
-                        leader_state.match_index.insert(follower_id.clone(), match_index);
+                        leader_state
+                            .next_index
+                            .insert(follower_id.clone(), match_index + 1);
+                        leader_state
+                            .match_index
+                            .insert(follower_id.clone(), match_index);
 
                         // Check if we can advance commit index
                         self.advance_commit_index()?;
@@ -840,10 +846,9 @@ impl RaftConsensus {
         self.save_persistent_state()?;
 
         // Add to pending requests
-        self.volatile_state.pending_requests.insert(
-            request.request_id,
-            request
-        );
+        self.volatile_state
+            .pending_requests
+            .insert(request.request_id, request);
 
         // Start replication
         self.replicate_to_followers()?;
@@ -897,7 +902,7 @@ impl RaftConsensus {
                     vote_granted: true,
                     rejection_reason: None,
                     node_metrics: Some(self.get_node_metrics()),
-                }
+                },
             );
         }
 
@@ -959,16 +964,13 @@ impl RaftConsensus {
 
         for member in &self.config.node_config.cluster_members {
             if *member != self.config.node_config.node_id {
-                self.network.send_message(
-                    member,
-                    RaftMessage::VoteRequest(vote_request.clone())
-                )?;
+                self.network
+                    .send_message(member, RaftMessage::VoteRequest(vote_request.clone()))?;
 
                 if let Some(ref mut candidate_state) = self.candidate_state {
-                    candidate_state.vote_requests_sent.insert(
-                        member.clone(),
-                        Instant::now()
-                    );
+                    candidate_state
+                        .vote_requests_sent
+                        .insert(member.clone(), Instant::now());
                 }
             }
         }
@@ -994,9 +996,17 @@ impl RaftConsensus {
     }
 
     /// Send heartbeat to specific follower
-    fn send_heartbeat_to_follower(&mut self, follower_id: &NodeId, heartbeat_time: Instant) -> Result<()> {
+    fn send_heartbeat_to_follower(
+        &mut self,
+        follower_id: &NodeId,
+        heartbeat_time: Instant,
+    ) -> Result<()> {
         if let Some(ref mut leader_state) = self.leader_state {
-            let next_index = leader_state.next_index.get(follower_id).cloned().unwrap_or(1);
+            let next_index = leader_state
+                .next_index
+                .get(follower_id)
+                .cloned()
+                .unwrap_or(1);
             let prev_log_index = if next_index > 1 { next_index - 1 } else { 0 };
             let prev_log_term = if prev_log_index > 0 {
                 self.get_log_term(prev_log_index).unwrap_or(0)
@@ -1015,12 +1025,12 @@ impl RaftConsensus {
                 batch_info: None,
             };
 
-            self.network.send_message(
-                follower_id,
-                RaftMessage::AppendEntriesRequest(request)
-            )?;
+            self.network
+                .send_message(follower_id, RaftMessage::AppendEntriesRequest(request))?;
 
-            leader_state.heartbeat_timers.insert(follower_id.clone(), heartbeat_time);
+            leader_state
+                .heartbeat_timers
+                .insert(follower_id.clone(), heartbeat_time);
         }
 
         Ok(())
@@ -1042,7 +1052,8 @@ impl RaftConsensus {
     }
 
     fn get_last_log_term(&self) -> Term {
-        self.persistent_state.log
+        self.persistent_state
+            .log
             .last()
             .map(|entry| entry.term)
             .unwrap_or(0)
@@ -1052,14 +1063,14 @@ impl RaftConsensus {
         let our_last_log_term = self.get_last_log_term();
         let our_last_log_index = self.get_last_log_index();
 
-        last_log_term > our_last_log_term ||
-        (last_log_term == our_last_log_term && last_log_index >= our_last_log_index)
+        last_log_term > our_last_log_term
+            || (last_log_term == our_last_log_term && last_log_index >= our_last_log_index)
     }
 
     fn get_node_metrics(&self) -> NodeMetrics {
         NodeMetrics {
-            cpu_usage: 50.0, // Placeholder
-            memory_usage: 30.0, // Placeholder
+            cpu_usage: 50.0,                            // Placeholder
+            memory_usage: 30.0,                         // Placeholder
             network_latency: Duration::from_millis(10), // Placeholder
             log_size: self.persistent_state.log.len(),
             commit_index: self.persistent_state.commit_index,
@@ -1155,20 +1166,62 @@ use anyhow::Result;
 
 // Stub implementations for referenced types
 use crate::tpu::pod_coordination::types::{
-    RaftRolePreferences, RaftNodeCapabilities, LogStorageBackend, LogPersistenceSettings,
-    LogValidationSettings, LogIndexingSettings, SnapshotFrequency, SnapshotStorageBackend,
-    SnapshotRetentionPolicy, TransportProtocol, ConnectionPoolingConfig, MessageBatchingConfig,
-    NetworkCompressionConfig, NetworkFailureDetectionConfig, NetworkLoadBalancingConfig,
-    ByzantineFaultToleranceConfig, MembershipChangeSafetyConfig, LogSafetyGuaranteesConfig,
-    LeaderSafetyMechanismsConfig, PartitionHandlingConfig, ParallelProcessingConfig,
-    CachingConfig, OptimizationStrategiesConfig, ResourceManagementConfig, PerformanceTuningConfig,
-    MetricsCollectionConfig, HealthMonitoringConfig, PerformanceMonitoringConfig,
-    AlertConfiguration, LoggingConfiguration,
+    AlertConfiguration,
+    BatchInfo,
+    BatchStatistics,
+    ByzantineFaultToleranceConfig,
+    CachingConfig,
+    CatchUpState,
+    ClientError,
+    ClientRequestType,
+    ClientSessionManager,
+    ClientStatistics,
+    CompressionType,
     // Additional types
-    ConfigurationState, MessageQueues, PerformanceMetrics, LeaderLease, ClientSessionManager,
-    FollowerMetrics, RecoveryState, CatchUpState, PreVoteState, CompressionType,
-    PreVoteRequest, PreVoteResponse, HeartbeatMessage, BatchInfo, ConflictInfo,
-    SnapshotMetadata, SnapshotError, ClientRequestType, ClientError,
-    BatchStatistics, FollowerLagStats, RaftPerformanceStatistics, NetworkStatistics,
-    ClientStatistics, LogStorage, SnapshotStorage, RaftNetwork,
+    ConfigurationState,
+    ConflictInfo,
+    ConnectionPoolingConfig,
+    FollowerLagStats,
+    FollowerMetrics,
+    HealthMonitoringConfig,
+    HeartbeatMessage,
+    LeaderLease,
+    LeaderSafetyMechanismsConfig,
+    LogIndexingSettings,
+    LogPersistenceSettings,
+    LogSafetyGuaranteesConfig,
+    LogStorage,
+    LogStorageBackend,
+    LogValidationSettings,
+    LoggingConfiguration,
+    MembershipChangeSafetyConfig,
+    MessageBatchingConfig,
+    MessageQueues,
+    MetricsCollectionConfig,
+    NetworkCompressionConfig,
+    NetworkFailureDetectionConfig,
+    NetworkLoadBalancingConfig,
+    NetworkStatistics,
+    OptimizationStrategiesConfig,
+    ParallelProcessingConfig,
+    PartitionHandlingConfig,
+    PerformanceMetrics,
+    PerformanceMonitoringConfig,
+    PerformanceTuningConfig,
+    PreVoteRequest,
+    PreVoteResponse,
+    PreVoteState,
+    RaftNetwork,
+    RaftNodeCapabilities,
+    RaftPerformanceStatistics,
+    RaftRolePreferences,
+    RecoveryState,
+    ResourceManagementConfig,
+    SnapshotError,
+    SnapshotFrequency,
+    SnapshotMetadata,
+    SnapshotRetentionPolicy,
+    SnapshotStorage,
+    SnapshotStorageBackend,
+    TransportProtocol,
 };

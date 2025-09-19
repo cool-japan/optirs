@@ -25,7 +25,7 @@ use crate::error::{OptimError, Result};
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::utils::clip_gradients;
+/// use optirs_core::utils::clip_gradients;
 ///
 /// let mut gradients = Array1::from_vec(vec![-10.0, 0.5, 8.0, -0.2]);
 /// clip_gradients(&mut gradients, -5.0, 5.0);
@@ -68,7 +68,7 @@ where
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::utils::clip_gradient_norm;
+/// use optirs_core::utils::clip_gradient_norm;
 ///
 /// let mut gradients = Array1::<f64>::from_vec(vec![3.0, 4.0]); // L2 norm = 5.0
 /// clip_gradient_norm(&mut gradients, 1.0f64).unwrap();
@@ -127,7 +127,7 @@ where
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::utils::gradient_centralization;
+/// use optirs_core::utils::gradient_centralization;
 ///
 /// let mut gradients = Array1::from_vec(vec![1.0, 2.0, 3.0, 2.0]);
 /// gradient_centralization(&mut gradients);
@@ -166,7 +166,7 @@ where
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::utils::zero_small_gradients;
+/// use optirs_core::utils::zero_small_gradients;
 ///
 /// let mut gradients = Array1::from_vec(vec![0.001, 0.02, -0.005, 0.3]);
 /// zero_small_gradients(&mut gradients, 0.01);

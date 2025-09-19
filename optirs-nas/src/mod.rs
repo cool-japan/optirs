@@ -36,7 +36,7 @@
 // ## Usage Example
 //
 // ```rust
-// use scirs2_optim::neural_architecture_search::{
+// use optirs_core::neural_architecture_search::{
 //     NeuralArchitectureSearch, NASConfig, SearchStrategyType,
 //     create_example_nas_config
 // };
@@ -69,7 +69,7 @@
 // The NAS system is highly configurable through the `NASConfig` struct:
 //
 // ```rust
-// use scirs2_optim::neural_architecture_search::*;
+// use optirs_core::neural_architecture_search::*;
 //
 // let config = NASConfig::<f64> {
 //     // Search strategy selection

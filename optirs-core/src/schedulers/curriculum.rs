@@ -72,7 +72,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> CurriculumScheduler<A> {
     /// # Example
     ///
     /// ```
-    /// use scirs2_optim::schedulers::{
+    /// use optirs_core::schedulers::{
     ///     CurriculumScheduler, CurriculumStage, TransitionStrategy, LearningRateScheduler
     /// };
     ///

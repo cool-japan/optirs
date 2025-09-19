@@ -5,17 +5,17 @@
 // handler registration, lifecycle management, routing, load balancing, performance
 // monitoring, and health checks.
 
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
-use std::sync::{Arc, Mutex, RwLock, Condvar};
-use std::time::{Duration, Instant, SystemTime};
-use std::thread;
-use tokio::sync::{mpsc, oneshot, Semaphore, RwLock as AsyncRwLock};
-use tokio::time::{interval, sleep, timeout};
-use std::fmt;
-use std::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool, Ordering as AtomicOrdering};
-use uuid::Uuid;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::sync::{mpsc, oneshot, RwLock as AsyncRwLock, Semaphore};
+use tokio::time::{interval, sleep, timeout};
+use uuid::Uuid;
 
 /// Event handler configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,7 +156,10 @@ pub enum ValidationRuleType {
     /// Required field validation
     RequiredField { field: String },
     /// Type validation
-    TypeValidation { field: String, expected_type: String },
+    TypeValidation {
+        field: String,
+        expected_type: String,
+    },
     /// Range validation
     Range { field: String, min: f64, max: f64 },
     /// Pattern validation
@@ -502,7 +505,10 @@ pub enum PersistenceBackend {
     /// Database
     Database { connection_string: String },
     /// Key-value store
-    KeyValue { store_type: String, config: HashMap<String, serde_json::Value> },
+    KeyValue {
+        store_type: String,
+        config: HashMap<String, serde_json::Value>,
+    },
     /// Custom backend
     Custom { implementation: String },
 }
@@ -848,11 +854,17 @@ pub struct AlertRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertCondition {
     /// Metric-based condition
-    Metric { metric: String, operator: ComparisonOperator },
+    Metric {
+        metric: String,
+        operator: ComparisonOperator,
+    },
     /// Event-based condition
     Event { event_type: String, count: usize },
     /// Composite condition
-    Composite { conditions: Vec<AlertCondition>, operator: LogicalOperator },
+    Composite {
+        conditions: Vec<AlertCondition>,
+        operator: LogicalOperator,
+    },
     /// Custom condition
     Custom { condition: String },
 }
@@ -1459,7 +1471,10 @@ impl EventHandlersBuilder {
     }
 
     /// Configure resource management
-    pub fn with_resource_management(mut self, resource_management: HandlerResourceManagement) -> Self {
+    pub fn with_resource_management(
+        mut self,
+        resource_management: HandlerResourceManagement,
+    ) -> Self {
         self.config.resource_management = resource_management;
         self
     }
@@ -1488,32 +1503,27 @@ pub struct EventHandlerPresets;
 impl EventHandlerPresets {
     /// High-performance configuration for low-latency event handling
     pub fn high_performance() -> EventHandlers {
-        EventHandlersBuilder::new()
-            .build() // Simplified for example
+        EventHandlersBuilder::new().build() // Simplified for example
     }
 
     /// Reliable configuration with strong error handling and recovery
     pub fn reliable() -> EventHandlers {
-        EventHandlersBuilder::new()
-            .build() // Simplified for example
+        EventHandlersBuilder::new().build() // Simplified for example
     }
 
     /// Scalable configuration for distributed handler management
     pub fn scalable() -> EventHandlers {
-        EventHandlersBuilder::new()
-            .build() // Simplified for example
+        EventHandlersBuilder::new().build() // Simplified for example
     }
 
     /// Development configuration with enhanced debugging and monitoring
     pub fn development() -> EventHandlers {
-        EventHandlersBuilder::new()
-            .build() // Simplified for example
+        EventHandlersBuilder::new().build() // Simplified for example
     }
 
     /// Production configuration with comprehensive monitoring and alerting
     pub fn production() -> EventHandlers {
-        EventHandlersBuilder::new()
-            .build() // Simplified for example
+        EventHandlersBuilder::new().build() // Simplified for example
     }
 }
 

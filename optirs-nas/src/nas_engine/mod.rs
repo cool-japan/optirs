@@ -15,7 +15,7 @@ use std::fmt::Debug;
 // ## Usage
 //
 // ```rust
-// use scirs2_optim::neural_architecture_search::nas_engine::{
+// use optirs_core::neural_architecture_search::nas_engine::{
 //     NeuralArchitectureSearch, NASConfig, SearchStrategyType,
 //     SearchSpaceConfig, EvaluationConfig, MultiObjectiveConfig
 // };

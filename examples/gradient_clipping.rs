@@ -1,7 +1,7 @@
 //! Example demonstrating gradient clipping techniques
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::{
+use optirs_core::{
     // use statrs::statistics::Statistics; // statrs not available
     gradient_processing::GradientProcessor,
     optimizers::{Adam, Optimizer},

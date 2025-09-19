@@ -92,8 +92,13 @@ impl SourceHealthMonitor {
     }
 
     /// Execute health check
-    pub fn execute_health_check(&mut self, source_id: &str) -> Result<HealthCheckResult, HealthMonitorError> {
-        let check = self.health_checks.get(source_id)
+    pub fn execute_health_check(
+        &mut self,
+        source_id: &str,
+    ) -> Result<HealthCheckResult, HealthMonitorError> {
+        let check = self
+            .health_checks
+            .get(source_id)
             .ok_or_else(|| HealthMonitorError::CheckNotFound(source_id.to_string()))?;
 
         let result = self.perform_check(source_id, check)?;
@@ -118,14 +123,22 @@ impl SourceHealthMonitor {
     }
 
     /// Perform individual health check
-    fn perform_check(&self, source_id: &str, check: &HealthCheck) -> Result<HealthCheckResult, HealthMonitorError> {
+    fn perform_check(
+        &self,
+        source_id: &str,
+        check: &HealthCheck,
+    ) -> Result<HealthCheckResult, HealthMonitorError> {
         let start_time = Instant::now();
 
         let success = match &check.check_type {
             HealthCheckType::Connectivity => self.check_connectivity(source_id)?,
-            HealthCheckType::ResponseTime => self.check_response_time(source_id, &check.success_criteria)?,
+            HealthCheckType::ResponseTime => {
+                self.check_response_time(source_id, &check.success_criteria)?
+            }
             HealthCheckType::Accuracy => self.check_accuracy(source_id, &check.success_criteria)?,
-            HealthCheckType::Stability => self.check_stability(source_id, &check.success_criteria)?,
+            HealthCheckType::Stability => {
+                self.check_stability(source_id, &check.success_criteria)?
+            }
             HealthCheckType::Custom { check: _ } => self.check_custom(source_id, check)?,
         };
 
@@ -149,35 +162,57 @@ impl SourceHealthMonitor {
     }
 
     /// Check response time
-    fn check_response_time(&self, _source_id: &str, criteria: &SuccessCriteria) -> Result<bool, HealthMonitorError> {
+    fn check_response_time(
+        &self,
+        _source_id: &str,
+        criteria: &SuccessCriteria,
+    ) -> Result<bool, HealthMonitorError> {
         // Implementation would measure response time
         let _threshold = criteria.response_time;
         Ok(true)
     }
 
     /// Check accuracy
-    fn check_accuracy(&self, _source_id: &str, criteria: &SuccessCriteria) -> Result<bool, HealthMonitorError> {
+    fn check_accuracy(
+        &self,
+        _source_id: &str,
+        criteria: &SuccessCriteria,
+    ) -> Result<bool, HealthMonitorError> {
         // Implementation would measure timing accuracy
         let _threshold = criteria.accuracy;
         Ok(true)
     }
 
     /// Check stability
-    fn check_stability(&self, _source_id: &str, criteria: &SuccessCriteria) -> Result<bool, HealthMonitorError> {
+    fn check_stability(
+        &self,
+        _source_id: &str,
+        criteria: &SuccessCriteria,
+    ) -> Result<bool, HealthMonitorError> {
         // Implementation would measure timing stability
         let _threshold = criteria.stability;
         Ok(true)
     }
 
     /// Check custom metric
-    fn check_custom(&self, _source_id: &str, _check: &HealthCheck) -> Result<bool, HealthMonitorError> {
+    fn check_custom(
+        &self,
+        _source_id: &str,
+        _check: &HealthCheck,
+    ) -> Result<bool, HealthMonitorError> {
         // Implementation would execute custom health check
         Ok(true)
     }
 
     /// Handle health check failure
-    fn handle_health_check_failure(&mut self, source_id: &str, result: &HealthCheckResult) -> Result<(), HealthMonitorError> {
-        let check = self.health_checks.get(source_id)
+    fn handle_health_check_failure(
+        &mut self,
+        source_id: &str,
+        result: &HealthCheckResult,
+    ) -> Result<(), HealthMonitorError> {
+        let check = self
+            .health_checks
+            .get(source_id)
             .ok_or_else(|| HealthMonitorError::CheckNotFound(source_id.to_string()))?;
 
         // Execute failure handling actions
@@ -193,10 +228,18 @@ impl SourceHealthMonitor {
     }
 
     /// Execute escalation action
-    fn execute_escalation_action(&self, source_id: &str, action: &EscalationAction) -> Result<(), HealthMonitorError> {
+    fn execute_escalation_action(
+        &self,
+        source_id: &str,
+        action: &EscalationAction,
+    ) -> Result<(), HealthMonitorError> {
         match action {
             EscalationAction::SendAlert { severity } => {
-                self.send_alert(source_id, severity.clone(), "Health check failed".to_string())?;
+                self.send_alert(
+                    source_id,
+                    severity.clone(),
+                    "Health check failed".to_string(),
+                )?;
             }
             EscalationAction::SwitchSource => {
                 // Implementation would trigger source switching
@@ -212,7 +255,11 @@ impl SourceHealthMonitor {
     }
 
     /// Execute recovery action
-    fn execute_recovery_action(&self, _source_id: &str, action: &RecoveryAction) -> Result<(), HealthMonitorError> {
+    fn execute_recovery_action(
+        &self,
+        _source_id: &str,
+        action: &RecoveryAction,
+    ) -> Result<(), HealthMonitorError> {
         match action {
             RecoveryAction::RestartSource => {
                 // Implementation would restart time source
@@ -234,7 +281,12 @@ impl SourceHealthMonitor {
     }
 
     /// Send alert
-    fn send_alert(&self, source_id: &str, severity: AlertSeverity, message: String) -> Result<(), HealthMonitorError> {
+    fn send_alert(
+        &self,
+        source_id: &str,
+        severity: AlertSeverity,
+        message: String,
+    ) -> Result<(), HealthMonitorError> {
         let alert = HealthAlert {
             source_id: source_id.to_string(),
             severity,
@@ -399,7 +451,9 @@ impl Default for FailureHandling {
         Self {
             retry_count: 3,
             retry_delay: Duration::from_secs(5),
-            escalation: vec![EscalationAction::SendAlert { severity: AlertSeverity::Medium }],
+            escalation: vec![EscalationAction::SendAlert {
+                severity: AlertSeverity::Medium,
+            }],
             recovery: vec![RecoveryAction::RecalibrateSource],
         }
     }
@@ -519,7 +573,9 @@ pub struct AlertConfiguration {
 impl Default for AlertConfiguration {
     fn default() -> Self {
         Self {
-            channels: vec![AlertChannel::Log { level: "warn".to_string() }],
+            channels: vec![AlertChannel::Log {
+                level: "warn".to_string(),
+            }],
             throttling: AlertThrottling::default(),
             escalation: AlertEscalation::default(),
         }
@@ -602,14 +658,14 @@ pub struct AlertEscalation {
 impl Default for AlertEscalation {
     fn default() -> Self {
         Self {
-            levels: vec![
-                EscalationLevel {
-                    name: "Level 1".to_string(),
+            levels: vec![EscalationLevel {
+                name: "Level 1".to_string(),
+                severity: AlertSeverity::Medium,
+                contacts: vec!["operator@example.com".to_string()],
+                actions: vec![EscalationAction::SendAlert {
                     severity: AlertSeverity::Medium,
-                    contacts: vec!["operator@example.com".to_string()],
-                    actions: vec![EscalationAction::SendAlert { severity: AlertSeverity::Medium }],
-                },
-            ],
+                }],
+            }],
             delay: Duration::from_secs(300),
             criteria: EscalationCriteria::default(),
         }
@@ -978,7 +1034,9 @@ impl Default for ValidationNotifications {
         Self {
             notify_on_failure: true,
             notify_on_success: false,
-            channels: vec![NotificationChannel::Log { level: "info".to_string() }],
+            channels: vec![NotificationChannel::Log {
+                level: "info".to_string(),
+            }],
         }
     }
 }
@@ -1144,14 +1202,20 @@ impl HealthRecoveryManager {
     }
 
     /// Start recovery process
-    pub fn start_recovery(&mut self, source_id: String, issue: HealthIssue) -> Result<(), HealthMonitorError> {
+    pub fn start_recovery(
+        &mut self,
+        source_id: String,
+        issue: HealthIssue,
+    ) -> Result<(), HealthMonitorError> {
         let process = RecoveryProcess::new(source_id.clone(), issue, &self.config);
         self.active_recoveries.insert(source_id, process);
         Ok(())
     }
 
     /// Check recovery progress
-    pub fn check_recovery_progress(&mut self) -> Result<HashMap<String, RecoveryStatus>, HealthMonitorError> {
+    pub fn check_recovery_progress(
+        &mut self,
+    ) -> Result<HashMap<String, RecoveryStatus>, HealthMonitorError> {
         let mut status_map = HashMap::new();
 
         for (source_id, process) in &self.active_recoveries {
@@ -1163,7 +1227,11 @@ impl HealthRecoveryManager {
     }
 
     /// Complete recovery
-    pub fn complete_recovery(&mut self, source_id: &str, success: bool) -> Result<(), HealthMonitorError> {
+    pub fn complete_recovery(
+        &mut self,
+        source_id: &str,
+        success: bool,
+    ) -> Result<(), HealthMonitorError> {
         if let Some(process) = self.active_recoveries.remove(source_id) {
             let record = RecoveryRecord {
                 source_id: source_id.to_string(),
@@ -1208,7 +1276,9 @@ pub struct RecoveryProcess {
 impl RecoveryProcess {
     /// Create new recovery process
     pub fn new(source_id: String, issue: HealthIssue, config: &RecoveryConfiguration) -> Self {
-        let strategy = config.strategies.first()
+        let strategy = config
+            .strategies
+            .first()
             .cloned()
             .unwrap_or(RecoveryStrategy::Manual);
 
@@ -1300,10 +1370,16 @@ impl std::fmt::Display for HealthMonitorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HealthMonitorError::CheckNotFound(id) => write!(f, "Health check not found: {}", id),
-            HealthMonitorError::CheckExecutionFailed(msg) => write!(f, "Health check execution failed: {}", msg),
+            HealthMonitorError::CheckExecutionFailed(msg) => {
+                write!(f, "Health check execution failed: {}", msg)
+            }
             HealthMonitorError::AlertFailed(msg) => write!(f, "Alert sending failed: {}", msg),
-            HealthMonitorError::RecoveryFailed(msg) => write!(f, "Recovery process failed: {}", msg),
-            HealthMonitorError::ConfigurationError(msg) => write!(f, "Health monitor configuration error: {}", msg),
+            HealthMonitorError::RecoveryFailed(msg) => {
+                write!(f, "Recovery process failed: {}", msg)
+            }
+            HealthMonitorError::ConfigurationError(msg) => {
+                write!(f, "Health monitor configuration error: {}", msg)
+            }
             HealthMonitorError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
         }
     }

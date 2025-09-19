@@ -20,7 +20,7 @@ use crate::optimizers::Optimizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{RMSprop, Optimizer};
+/// use optirs_core::optimizers::{RMSprop, Optimizer};
 ///
 /// // Initialize parameters and gradients
 /// let params = Array1::zeros(5);

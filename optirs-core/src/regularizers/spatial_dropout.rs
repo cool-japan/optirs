@@ -20,7 +20,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::{Array4, array};
-/// use scirs2_optim::regularizers::SpatialDropout;
+/// use optirs_core::regularizers::SpatialDropout;
 ///
 /// let spatial_dropout = SpatialDropout::new(0.3).unwrap(); // 30% dropout rate
 ///
@@ -111,7 +111,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::{Array3, array};
-/// use scirs2_optim::regularizers::FeatureDropout;
+/// use optirs_core::regularizers::FeatureDropout;
 ///
 /// let feature_dropout = FeatureDropout::new(0.5).unwrap(); // 50% dropout rate
 ///

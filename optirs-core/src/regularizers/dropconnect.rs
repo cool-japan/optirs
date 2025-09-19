@@ -18,7 +18,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::{Array2, array};
-/// use scirs2_optim::regularizers::DropConnect;
+/// use optirs_core::regularizers::DropConnect;
 ///
 /// let dropconnect = DropConnect::new(0.5).unwrap(); // 50% connection dropout
 /// let weights = array![[1.0, 2.0], [3.0, 4.0]];

@@ -4,8 +4,8 @@
 // analysis, prediction, and optimization for TPU pod coordination systems.
 
 use num_traits::Float;
-use std::fmt::Debug;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
 use super::super::super::tpu_backend::DeviceId;
@@ -606,7 +606,10 @@ pub enum CollectionStrategy {
     /// Event-driven collection
     EventDriven,
     /// Adaptive collection
-    Adaptive { min_interval: Duration, max_interval: Duration },
+    Adaptive {
+        min_interval: Duration,
+        max_interval: Duration,
+    },
     /// Hybrid collection
     Hybrid,
 }
@@ -1063,7 +1066,10 @@ pub enum PredictionModel {
     /// Ensemble model combining multiple approaches
     Ensemble { models: Vec<String> },
     /// LSTM model for sequence prediction
-    LSTM { hidden_size: usize, num_layers: usize },
+    LSTM {
+        hidden_size: usize,
+        num_layers: usize,
+    },
     /// Random forest model
     RandomForest { trees: usize },
 }
@@ -1364,7 +1370,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformanceMonitor<T> {
 
     /// Analyze performance trends
     pub fn analyze_performance(&mut self) -> Result<Vec<AnalysisResult>> {
-        self.analyzer.analyze(&self.metrics_collector.current_metrics)
+        self.analyzer
+            .analyze(&self.metrics_collector.current_metrics)
     }
 
     /// Predict future performance
@@ -1374,7 +1381,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformanceMonitor<T> {
 
     /// Optimize performance
     pub fn optimize_performance(&mut self) -> Result<OptimizationResult> {
-        self.optimizer.optimize(&self.metrics_collector.current_metrics)
+        self.optimizer
+            .optimize(&self.metrics_collector.current_metrics)
     }
 }
 
@@ -1409,7 +1417,10 @@ impl PerformanceAlertingSystem {
     }
 
     /// Check for alert conditions
-    pub fn check_alerts(&mut self, metrics: &PerformanceMetrics<impl Float>) -> Vec<ActivePerformanceAlert> {
+    pub fn check_alerts(
+        &mut self,
+        metrics: &PerformanceMetrics<impl Float>,
+    ) -> Vec<ActivePerformanceAlert> {
         // Implementation would check alert conditions and create alerts
         Vec::new()
     }
@@ -1469,7 +1480,10 @@ impl PerformanceAnalyzer {
     }
 
     /// Analyze performance data
-    pub fn analyze(&mut self, metrics: &PerformanceMetrics<impl Float>) -> Result<Vec<AnalysisResult>> {
+    pub fn analyze(
+        &mut self,
+        metrics: &PerformanceMetrics<impl Float>,
+    ) -> Result<Vec<AnalysisResult>> {
         // Implementation would perform actual analysis
         Ok(Vec::new())
     }
@@ -1556,7 +1570,10 @@ impl PerformanceOptimizer {
     }
 
     /// Optimize performance
-    pub fn optimize(&mut self, metrics: &PerformanceMetrics<impl Float>) -> Result<OptimizationResult> {
+    pub fn optimize(
+        &mut self,
+        metrics: &PerformanceMetrics<impl Float>,
+    ) -> Result<OptimizationResult> {
         // Implementation would perform actual optimization
         Ok(OptimizationResult::default())
     }
@@ -1770,7 +1787,7 @@ impl Default for AggregationConfig {
 impl Default for RetentionPolicy {
     fn default() -> Self {
         Self {
-            raw_retention: Duration::from_secs(3600), // 1 hour
+            raw_retention: Duration::from_secs(3600),         // 1 hour
             aggregated_retention: Duration::from_secs(86400), // 24 hours
             compression: CompressionSettings::default(),
         }

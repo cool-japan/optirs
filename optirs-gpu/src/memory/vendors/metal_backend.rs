@@ -775,7 +775,7 @@ impl MetalMemoryBackend {
             }
         } else {
             // Direct allocation
-            self.direct_allocate(size, memory_type)?
+            self.direct_allocate(size, memory_type.clone())?
         };
 
         // Update statistics

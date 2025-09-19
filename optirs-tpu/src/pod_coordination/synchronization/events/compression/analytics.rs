@@ -586,7 +586,7 @@ impl Default for AnalysisConfig {
                 AnalysisAlgorithm::AnomalyDetection,
             ],
             window_size: Duration::from_secs(3600), // 1 hour
-            frequency: Duration::from_secs(300), // 5 minutes
+            frequency: Duration::from_secs(300),    // 5 minutes
             significance_level: 0.05,
         }
     }
@@ -603,7 +603,7 @@ impl AnalysisConfig {
                 AnalysisAlgorithm::BottleneckDetection,
             ],
             window_size: Duration::from_secs(1800), // 30 minutes
-            frequency: Duration::from_secs(60), // 1 minute
+            frequency: Duration::from_secs(60),     // 1 minute
             significance_level: 0.01,
         }
     }
@@ -618,7 +618,7 @@ impl AnalysisConfig {
                 AnalysisAlgorithm::OptimizationAnalysis,
             ],
             window_size: Duration::from_secs(7200), // 2 hours
-            frequency: Duration::from_secs(600), // 10 minutes
+            frequency: Duration::from_secs(600),    // 10 minutes
             significance_level: 0.01,
         }
     }
@@ -633,7 +633,7 @@ impl AnalysisConfig {
                 AnalysisAlgorithm::PredictiveAnalysis,
             ],
             window_size: Duration::from_secs(600), // 10 minutes
-            frequency: Duration::from_secs(30), // 30 seconds
+            frequency: Duration::from_secs(30),    // 30 seconds
             significance_level: 0.001,
         }
     }
@@ -888,7 +888,7 @@ impl Default for PredictionAnalysis {
         Self {
             enabled: false,
             model: PredictionModel::LinearRegression,
-            horizon: Duration::from_secs(3600), // 1 hour
+            horizon: Duration::from_secs(3600),          // 1 hour
             update_frequency: Duration::from_secs(3600), // 1 hour
         }
     }
@@ -910,7 +910,7 @@ impl PredictionAnalysis {
         Self {
             enabled: true,
             model: PredictionModel::RandomForest,
-            horizon: Duration::from_secs(7200), // 2 hours
+            horizon: Duration::from_secs(7200),          // 2 hours
             update_frequency: Duration::from_secs(1800), // 30 minutes
         }
     }
@@ -920,7 +920,7 @@ impl PredictionAnalysis {
         Self {
             enabled: true,
             model: PredictionModel::LSTM,
-            horizon: Duration::from_secs(300), // 5 minutes
+            horizon: Duration::from_secs(300),         // 5 minutes
             update_frequency: Duration::from_secs(60), // 1 minute
         }
     }
@@ -1014,10 +1014,7 @@ impl Default for ReportingConfig {
         Self {
             enabled: true,
             frequency: Duration::from_secs(3600), // 1 hour
-            report_types: vec![
-                ReportType::Summary,
-                ReportType::Performance,
-            ],
+            report_types: vec![ReportType::Summary, ReportType::Performance],
             visualizations: false,
             recommendations: false,
         }
@@ -1030,10 +1027,7 @@ impl ReportingConfig {
         Self {
             enabled: true,
             frequency: Duration::from_secs(300), // 5 minutes
-            report_types: vec![
-                ReportType::Performance,
-                ReportType::RealTime,
-            ],
+            report_types: vec![ReportType::Performance, ReportType::RealTime],
             visualizations: true,
             recommendations: true,
         }
@@ -1059,10 +1053,7 @@ impl ReportingConfig {
         Self {
             enabled: true,
             frequency: Duration::from_secs(60), // 1 minute
-            report_types: vec![
-                ReportType::RealTime,
-                ReportType::Alert,
-            ],
+            report_types: vec![ReportType::RealTime, ReportType::Alert],
             visualizations: false,
             recommendations: true,
         }
@@ -1123,7 +1114,10 @@ impl ReportTemplates {
     /// Ratio-focused templates
     pub fn ratio_focused() -> Self {
         let mut templates = HashMap::new();
-        templates.insert("compression_analysis".to_string(), ReportTemplate::compression_analysis());
+        templates.insert(
+            "compression_analysis".to_string(),
+            ReportTemplate::compression_analysis(),
+        );
         templates.insert("optimization".to_string(), ReportTemplate::optimization());
 
         Self {
@@ -1176,10 +1170,7 @@ impl ReportTemplate {
     pub fn summary() -> Self {
         Self {
             name: "Summary Report".to_string(),
-            sections: vec![
-                ReportSection::Overview,
-                ReportSection::KeyMetrics,
-            ],
+            sections: vec![ReportSection::Overview, ReportSection::KeyMetrics],
             format: TemplateFormat::Text,
         }
     }
@@ -1201,10 +1192,7 @@ impl ReportTemplate {
     pub fn real_time() -> Self {
         Self {
             name: "Real-time Report".to_string(),
-            sections: vec![
-                ReportSection::CurrentMetrics,
-                ReportSection::Alerts,
-            ],
+            sections: vec![ReportSection::CurrentMetrics, ReportSection::Alerts],
             format: TemplateFormat::JSON,
         }
     }
@@ -1252,10 +1240,7 @@ impl ReportTemplate {
     pub fn alert() -> Self {
         Self {
             name: "Alert Report".to_string(),
-            sections: vec![
-                ReportSection::Alerts,
-                ReportSection::ImmediateActions,
-            ],
+            sections: vec![ReportSection::Alerts, ReportSection::ImmediateActions],
             format: TemplateFormat::Text,
         }
     }
@@ -1325,11 +1310,7 @@ impl ReportFormats {
     /// Detailed report formats
     pub fn detailed() -> Self {
         Self {
-            formats: vec![
-                ReportFormat::HTML,
-                ReportFormat::PDF,
-                ReportFormat::JSON,
-            ],
+            formats: vec![ReportFormat::HTML, ReportFormat::PDF, ReportFormat::JSON],
             default_format: ReportFormat::HTML,
             format_options: HashMap::new(),
         }
@@ -1389,10 +1370,7 @@ impl ReportDistribution {
     /// Frequent distribution
     pub fn frequent() -> Self {
         Self {
-            channels: vec![
-                DistributionChannel::Log,
-                DistributionChannel::File,
-            ],
+            channels: vec![DistributionChannel::Log, DistributionChannel::File],
             default_channel: DistributionChannel::Log,
             schedule: DistributionSchedule::Immediate,
         }
@@ -1414,10 +1392,7 @@ impl ReportDistribution {
     /// Immediate distribution
     pub fn immediate() -> Self {
         Self {
-            channels: vec![
-                DistributionChannel::Log,
-                DistributionChannel::Alert,
-            ],
+            channels: vec![DistributionChannel::Log, DistributionChannel::Alert],
             default_channel: DistributionChannel::Alert,
             schedule: DistributionSchedule::Immediate,
         }

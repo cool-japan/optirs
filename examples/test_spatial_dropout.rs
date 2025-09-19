@@ -1,5 +1,5 @@
 use scirs2_core::ndarray_ext::{Array, Axis};
-use scirs2_optim::regularizers::SpatialDropout;
+use optirs_core::regularizers::SpatialDropout;
 
 #[allow(dead_code)]
 fn main() {

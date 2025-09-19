@@ -728,7 +728,8 @@ impl NetworkSynchronizationManager {
         target: DeviceId,
         payload: &[u8],
     ) -> Result<(), NetworkSyncError> {
-        self.message_router.send_message(message_type, target, payload)
+        self.message_router
+            .send_message(message_type, target, payload)
     }
 
     /// Get network synchronization status
@@ -1021,11 +1022,17 @@ pub enum NetworkSyncError {
 impl std::fmt::Display for NetworkSyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NetworkSyncError::ConnectionFailed(msg) => write!(f, "Network connection failed: {}", msg),
+            NetworkSyncError::ConnectionFailed(msg) => {
+                write!(f, "Network connection failed: {}", msg)
+            }
             NetworkSyncError::RoutingError(msg) => write!(f, "Message routing error: {}", msg),
-            NetworkSyncError::AuthenticationError(msg) => write!(f, "Authentication error: {}", msg),
+            NetworkSyncError::AuthenticationError(msg) => {
+                write!(f, "Authentication error: {}", msg)
+            }
             NetworkSyncError::LoadBalancingError(msg) => write!(f, "Load balancing error: {}", msg),
-            NetworkSyncError::FaultToleranceError(msg) => write!(f, "Fault tolerance error: {}", msg),
+            NetworkSyncError::FaultToleranceError(msg) => {
+                write!(f, "Fault tolerance error: {}", msg)
+            }
             NetworkSyncError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
         }
     }
@@ -1042,11 +1049,17 @@ struct FailureDetector {
 
 impl FailureDetector {
     fn new(config: &NetworkFailureDetection) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn start(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
-    fn stop(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
+    fn start(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
+    fn stop(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1056,11 +1069,17 @@ struct RecoveryCoordinator {
 
 impl RecoveryCoordinator {
     fn new(strategy: &NetworkRecoveryStrategy) -> Self {
-        Self { strategy: strategy.clone() }
+        Self {
+            strategy: strategy.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
+    fn initialize(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1070,11 +1089,17 @@ struct DegradationController {
 
 impl DegradationController {
     fn new(config: &GracefulDegradation) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn activate(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
-    fn deactivate(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
+    fn activate(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
+    fn deactivate(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1084,11 +1109,17 @@ struct LoadDistributionEngine {
 
 impl LoadDistributionEngine {
     fn new(algorithm: &LoadBalancingAlgorithm) -> Self {
-        Self { algorithm: algorithm.clone() }
+        Self {
+            algorithm: algorithm.clone(),
+        }
     }
 
-    fn initialize(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
+    fn initialize(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1098,11 +1129,17 @@ struct LoadBalancingPerformanceMonitor {
 
 impl LoadBalancingPerformanceMonitor {
     fn new(config: &LoadBalancingMonitoring) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn start(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
-    fn stop(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
+    fn start(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
+    fn stop(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -1112,9 +1149,15 @@ struct AdaptationEngine {
 
 impl AdaptationEngine {
     fn new(config: &LoadBalancingAdaptation) -> Self {
-        Self { config: config.clone() }
+        Self {
+            config: config.clone(),
+        }
     }
 
-    fn activate(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
-    fn deactivate(&mut self) -> Result<(), NetworkSyncError> { Ok(()) }
+    fn activate(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
+    fn deactivate(&mut self) -> Result<(), NetworkSyncError> {
+        Ok(())
+    }
 }

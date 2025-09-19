@@ -19,7 +19,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::{OrthogonalRegularization, Regularizer};
+/// use optirs_core::regularizers::{OrthogonalRegularization, Regularizer};
 ///
 /// let ortho_reg = OrthogonalRegularization::new(0.01);
 /// let weights = array![[1.0, 0.0], [0.0, 1.0]];

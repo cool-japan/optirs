@@ -1,8 +1,8 @@
 //! Example of using Adam optimizer with learning rate scheduler
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::optimizers::{Adam, Optimizer};
-use scirs2_optim::schedulers::{ExponentialDecay, LearningRateScheduler};
+use optirs_core::optimizers::{Adam, Optimizer};
+use optirs_core::schedulers::{ExponentialDecay, LearningRateScheduler};
 
 #[allow(dead_code)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

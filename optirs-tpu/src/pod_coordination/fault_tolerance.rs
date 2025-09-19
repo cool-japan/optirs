@@ -300,8 +300,8 @@ impl FailureDetector {
     fn calculate_failure_severity(&self, time_since_heartbeat: Duration) -> f64 {
         match self.detection_algorithm {
             FailureDetectionAlgorithm::Timeout => {
-                let ratio = time_since_heartbeat.as_secs_f64()
-                    / self.failure_threshold.as_secs_f64();
+                let ratio =
+                    time_since_heartbeat.as_secs_f64() / self.failure_threshold.as_secs_f64();
                 (ratio - 1.0).min(1.0).max(0.0)
             }
             FailureDetectionAlgorithm::HeartbeatMissing => {
@@ -330,7 +330,9 @@ impl FailureDetector {
         );
 
         // Calculate failure rate
-        let recent_failures = self.failure_history.iter()
+        let recent_failures = self
+            .failure_history
+            .iter()
             .filter(|f| f.detected_at.elapsed() < Duration::from_hours(1))
             .count();
         stats.insert("recent_failure_rate".to_string(), recent_failures as f64);
@@ -339,10 +341,12 @@ impl FailureDetector {
         let avg_recovery_time = if self.failure_history.is_empty() {
             0.0
         } else {
-            self.failure_history.iter()
+            self.failure_history
+                .iter()
                 .filter(|f| matches!(f.status, FailureStatus::Recovered))
                 .map(|f| f.detected_at.elapsed().as_secs_f64())
-                .sum::<f64>() / self.failure_history.len() as f64
+                .sum::<f64>()
+                / self.failure_history.len() as f64
         };
         stats.insert("avg_recovery_time_secs".to_string(), avg_recovery_time);
 
@@ -598,7 +602,12 @@ impl FaultToleranceManager {
             checkpoint_id: checkpoint_id.clone(),
             created_at: Instant::now(),
             size_bytes: 1024 * 1024, // 1MB simulated size
-            devices: self.failure_detector.get_monitored_devices().iter().cloned().collect(),
+            devices: self
+                .failure_detector
+                .get_monitored_devices()
+                .iter()
+                .cloned()
+                .collect(),
             checkpoint_type: CheckpointType::Full,
             metadata: HashMap::new(),
         };
@@ -759,11 +768,8 @@ mod tests {
         let redundancy_config = RedundancyConfig::default();
         let checkpoint_config = CheckpointConfig::default();
 
-        let manager = FaultToleranceManager::new(
-            detection_config,
-            redundancy_config,
-            checkpoint_config,
-        );
+        let manager =
+            FaultToleranceManager::new(detection_config, redundancy_config, checkpoint_config);
 
         assert!(manager.is_ok());
     }
@@ -774,13 +780,13 @@ mod tests {
         let redundancy_config = RedundancyConfig::default();
         let checkpoint_config = CheckpointConfig::default();
 
-        let mut manager = FaultToleranceManager::new(
-            detection_config,
-            redundancy_config,
-            checkpoint_config,
-        ).unwrap();
+        let mut manager =
+            FaultToleranceManager::new(detection_config, redundancy_config, checkpoint_config)
+                .unwrap();
 
-        let checkpoint_info = manager.create_checkpoint("test_checkpoint".to_string()).await;
+        let checkpoint_info = manager
+            .create_checkpoint("test_checkpoint".to_string())
+            .await;
         assert!(checkpoint_info.is_ok());
         assert_eq!(checkpoint_info.unwrap().checkpoint_id, "test_checkpoint");
     }

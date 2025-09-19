@@ -14,7 +14,7 @@ use crate::schedulers::LearningRateScheduler;
 /// # Examples
 ///
 /// ```
-/// use scirs2_optim::schedulers::{ReduceOnPlateau, LearningRateScheduler};
+/// use optirs_core::schedulers::{ReduceOnPlateau, LearningRateScheduler};
 ///
 /// // Create a scheduler with initial learning rate 0.1, factor 0.1,
 /// // patience 2, and minimum learning rate 1e-6

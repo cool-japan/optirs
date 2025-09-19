@@ -118,7 +118,10 @@ pub enum HealthCheck {
     /// Resource availability check
     ResourceAvailability,
     /// Custom check
-    Custom { name: String, parameters: HashMap<String, String> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Alerting configuration

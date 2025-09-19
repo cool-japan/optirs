@@ -529,14 +529,16 @@ impl GlobalSynchronizationState {
 
     /// Get synchronized device count
     pub fn get_synchronized_count(&self) -> usize {
-        self.device_states.values()
+        self.device_states
+            .values()
             .filter(|state| state.status == DeviceSyncStatus::Synchronized)
             .count()
     }
 
     /// Get failed device count
     pub fn get_failed_count(&self) -> usize {
-        self.device_states.values()
+        self.device_states
+            .values()
             .filter(|state| matches!(state.status, DeviceSyncStatus::Failed { .. }))
             .count()
     }
@@ -553,7 +555,8 @@ impl GlobalSynchronizationState {
 
     /// Check if all devices are synchronized
     pub fn all_devices_synchronized(&self) -> bool {
-        self.device_states.values()
+        self.device_states
+            .values()
             .all(|state| state.status == DeviceSyncStatus::Synchronized)
     }
 
@@ -563,9 +566,7 @@ impl GlobalSynchronizationState {
             return 0.0;
         }
 
-        let total_quality: f64 = self.device_states.values()
-            .map(|state| state.quality)
-            .sum();
+        let total_quality: f64 = self.device_states.values().map(|state| state.quality).sum();
 
         total_quality / self.device_states.len() as f64
     }
@@ -586,8 +587,10 @@ impl DeviceSyncState {
 
     /// Check if device is healthy
     pub fn is_healthy(&self) -> bool {
-        matches!(self.status, DeviceSyncStatus::Synchronized | DeviceSyncStatus::Synchronizing)
-            && self.quality > 0.7
+        matches!(
+            self.status,
+            DeviceSyncStatus::Synchronized | DeviceSyncStatus::Synchronizing
+        ) && self.quality > 0.7
             && self.performance.success_rate > 0.9
     }
 
@@ -663,7 +666,10 @@ impl GlobalBarrier {
 
     /// Get waiting devices
     pub fn get_waiting_devices(&self) -> HashSet<DeviceId> {
-        self.expected_participants.difference(&self.arrived_participants).cloned().collect()
+        self.expected_participants
+            .difference(&self.arrived_participants)
+            .cloned()
+            .collect()
     }
 }
 
@@ -687,7 +693,8 @@ impl SyncHealthSnapshot {
 
     /// Get critical issues
     pub fn get_critical_issues(&self) -> Vec<&HealthIssue> {
-        self.active_issues.iter()
+        self.active_issues
+            .iter()
             .filter(|issue| issue.severity == IssueSeverity::Critical)
             .collect()
     }
@@ -756,7 +763,7 @@ impl Default for ResourcePool {
     fn default() -> Self {
         Self {
             cpu_cores: 8,
-            memory: 16 * 1024 * 1024 * 1024, // 16 GB
+            memory: 16 * 1024 * 1024 * 1024,   // 16 GB
             network_bandwidth: 10_000_000_000, // 10 Gbps
             custom_resources: HashMap::new(),
         }
@@ -881,10 +888,22 @@ pub mod utils {
         }
 
         // Calculate component health scores
-        snapshot.component_health.insert("clock_sync".to_string(), global_state.quality_metrics.clock_quality);
-        snapshot.component_health.insert("event_sync".to_string(), global_state.quality_metrics.event_quality);
-        snapshot.component_health.insert("barrier_sync".to_string(), global_state.quality_metrics.barrier_quality);
-        snapshot.component_health.insert("consensus".to_string(), global_state.quality_metrics.consensus_quality);
+        snapshot.component_health.insert(
+            "clock_sync".to_string(),
+            global_state.quality_metrics.clock_quality,
+        );
+        snapshot.component_health.insert(
+            "event_sync".to_string(),
+            global_state.quality_metrics.event_quality,
+        );
+        snapshot.component_health.insert(
+            "barrier_sync".to_string(),
+            global_state.quality_metrics.barrier_quality,
+        );
+        snapshot.component_health.insert(
+            "consensus".to_string(),
+            global_state.quality_metrics.consensus_quality,
+        );
 
         // Calculate overall health
         snapshot.calculate_overall_health();
@@ -918,7 +937,10 @@ pub mod utils {
             issues.push(HealthIssue {
                 id: "low_overall_quality".to_string(),
                 severity: IssueSeverity::High,
-                description: format!("Overall synchronization quality is low: {:.2}", global_state.quality_metrics.overall_quality),
+                description: format!(
+                    "Overall synchronization quality is low: {:.2}",
+                    global_state.quality_metrics.overall_quality
+                ),
                 affected_components: vec!["global_sync".to_string()],
                 detected_at: Instant::now(),
                 recommendations: vec!["Review component health and performance".to_string()],
@@ -938,13 +960,16 @@ pub mod utils {
                 description: format!("{} devices have failed synchronization", failed_count),
                 affected_components: vec!["device_coordination".to_string()],
                 detected_at: Instant::now(),
-                recommendations: vec!["Investigate failed devices and restart synchronization".to_string()],
+                recommendations: vec![
+                    "Investigate failed devices and restart synchronization".to_string()
+                ],
             });
         }
 
         // Check for stale synchronization
         if let Some(last_sync) = global_state.last_global_sync {
-            if last_sync.elapsed() > Duration::from_secs(300) { // 5 minutes
+            if last_sync.elapsed() > Duration::from_secs(300) {
+                // 5 minutes
                 issues.push(HealthIssue {
                     id: "stale_synchronization".to_string(),
                     severity: IssueSeverity::Medium,
@@ -1038,6 +1063,10 @@ pub mod testing {
     /// Create test global barrier
     pub fn create_test_barrier(device_ids: &[DeviceId]) -> GlobalBarrier {
         let participants = device_ids.iter().cloned().collect();
-        GlobalBarrier::new("test_barrier".to_string(), participants, Duration::from_secs(30))
+        GlobalBarrier::new(
+            "test_barrier".to_string(),
+            participants,
+            Duration::from_secs(30),
+        )
     }
 }

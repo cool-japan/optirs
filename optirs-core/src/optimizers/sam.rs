@@ -33,8 +33,8 @@ use std::marker::PhantomData;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{SAM, SGD};
-/// use scirs2_optim::Optimizer;
+/// use optirs_core::optimizers::{SAM, SGD};
+/// use optirs_core::Optimizer;
 ///
 /// // Create a base optimizer
 /// let sgd = SGD::new(0.1);

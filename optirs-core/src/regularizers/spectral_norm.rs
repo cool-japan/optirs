@@ -22,7 +22,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```no_run
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::SpectralNorm;
+/// use optirs_core::regularizers::SpectralNorm;
 ///
 /// let mut spec_norm = SpectralNorm::new(1);
 /// let weights = array![[1.0, 2.0], [3.0, 4.0]];

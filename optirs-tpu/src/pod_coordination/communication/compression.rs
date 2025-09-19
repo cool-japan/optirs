@@ -5,9 +5,9 @@
 // and performance optimization for high-throughput scenarios.
 
 use num_traits::Float;
-use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -59,7 +59,10 @@ pub enum CompressionAlgorithm {
     /// GZIP compression
     GZIP { level: i32 },
     /// Custom compression algorithm
-    Custom { name: String, parameters: HashMap<String, String> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Compression quality settings
@@ -123,7 +126,9 @@ pub enum AlgorithmSelectionStrategy {
     /// Static algorithm selection
     Static { algorithm: CompressionAlgorithm },
     /// Round-robin selection
-    RoundRobin { algorithms: Vec<CompressionAlgorithm> },
+    RoundRobin {
+        algorithms: Vec<CompressionAlgorithm>,
+    },
     /// Performance-based selection
     PerformanceBased { metrics: Vec<PerformanceMetric> },
     /// Content-aware selection
@@ -161,7 +166,10 @@ pub enum ContentAnalyzer {
     /// File type detector
     FileTypeDetector,
     /// Custom analyzer
-    Custom { name: String, parameters: HashMap<String, String> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Predictor configuration
@@ -228,7 +236,10 @@ pub enum RecoveryStrategy {
     /// Gradual fallback
     Gradual { steps: usize },
     /// Retry with backoff
-    RetryWithBackoff { max_retries: usize, backoff_factor: f64 },
+    RetryWithBackoff {
+        max_retries: usize,
+        backoff_factor: f64,
+    },
     /// Custom recovery
     Custom { strategy: String },
 }
@@ -1050,13 +1061,17 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionEngine<T> {
         Self::initialize_compressors(&mut compressors, &config)?;
 
         let adaptive_controller = if config.adaptive_settings.enable_adaptive {
-            Some(AdaptiveCompressionController::new(config.adaptive_settings.clone())?)
+            Some(AdaptiveCompressionController::new(
+                config.adaptive_settings.clone(),
+            )?)
         } else {
             None
         };
 
         let cache_manager = if config.performance_config.cache_config.enabled {
-            Some(CompressionCacheManager::new(config.performance_config.cache_config.clone())?)
+            Some(CompressionCacheManager::new(
+                config.performance_config.cache_config.clone(),
+            )?)
         } else {
             None
         };
@@ -1093,8 +1108,9 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionEngine<T> {
 
         // Get compressor for algorithm
         let compressor_name = format!("{:?}", algorithm);
-        let compressor = self.compressors.get_mut(&compressor_name)
-            .ok_or_else(|| OptimError::CompressionError(format!("Compressor not found: {}", compressor_name)))?;
+        let compressor = self.compressors.get_mut(&compressor_name).ok_or_else(|| {
+            OptimError::CompressionError(format!("Compressor not found: {}", compressor_name))
+        })?;
 
         // Perform compression
         let result = compressor.compress(data)?;
@@ -1116,10 +1132,15 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionEngine<T> {
     }
 
     /// Decompress data
-    pub fn decompress(&mut self, compressed_data: &[u8], algorithm: &CompressionAlgorithm) -> Result<Vec<u8>> {
+    pub fn decompress(
+        &mut self,
+        compressed_data: &[u8],
+        algorithm: &CompressionAlgorithm,
+    ) -> Result<Vec<u8>> {
         let compressor_name = format!("{:?}", algorithm);
-        let compressor = self.compressors.get_mut(&compressor_name)
-            .ok_or_else(|| OptimError::CompressionError(format!("Compressor not found: {}", compressor_name)))?;
+        let compressor = self.compressors.get_mut(&compressor_name).ok_or_else(|| {
+            OptimError::CompressionError(format!("Compressor not found: {}", compressor_name))
+        })?;
 
         let result = compressor.decompress(compressed_data)?;
 
@@ -1136,7 +1157,10 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionEngine<T> {
     }
 
     // Private helper methods
-    fn initialize_compressors(compressors: &mut HashMap<String, Box<dyn Compressor<T>>>, _config: &CompressionConfig) -> Result<()> {
+    fn initialize_compressors(
+        compressors: &mut HashMap<String, Box<dyn Compressor<T>>>,
+        _config: &CompressionConfig,
+    ) -> Result<()> {
         // Initialize available compressors
         compressors.insert("LZ4".to_string(), Box::new(LZ4Compressor::new()?));
         compressors.insert("Zstd".to_string(), Box::new(ZstdCompressor::new()?));
@@ -1162,14 +1186,19 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionEngine<T> {
 
         // Update average compression ratio
         let total_ratio = stats.avg_compression_ratio * (stats.total_compressions - 1) as f64;
-        stats.avg_compression_ratio = (total_ratio + result.compression_ratio) / stats.total_compressions as f64;
+        stats.avg_compression_ratio =
+            (total_ratio + result.compression_ratio) / stats.total_compressions as f64;
 
         // Update algorithm usage
         let algorithm_name = format!("{:?}", result.algorithm);
         *stats.algorithm_usage.entry(algorithm_name).or_insert(0) += 1;
     }
 
-    fn update_decompression_statistics(&mut self, compressed_size: usize, decompressed_size: usize) {
+    fn update_decompression_statistics(
+        &mut self,
+        compressed_size: usize,
+        decompressed_size: usize,
+    ) {
         let mut stats = self.statistics.lock().unwrap();
         stats.total_decompressions += 1;
         stats.total_bytes_decompressed += decompressed_size as u64;
@@ -1193,15 +1222,23 @@ impl Default for CompressionStatistics {
 }
 
 // Placeholder compressor implementations
-struct LZ4Compressor<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct ZstdCompressor<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
-struct SnappyCompressor<T: Float + Debug + Send + Sync + 'static> { _phantom: std::marker::PhantomData<T> }
+struct LZ4Compressor<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct ZstdCompressor<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
+struct SnappyCompressor<T: Float + Debug + Send + Sync + 'static> {
+    _phantom: std::marker::PhantomData<T>,
+}
 
 macro_rules! impl_compressor {
     ($compressor:ident, $name:expr) => {
         impl<T: Float + Debug + Send + Sync + 'static> $compressor<T> {
             pub fn new() -> Result<Self> {
-                Ok(Self { _phantom: std::marker::PhantomData })
+                Ok(Self {
+                    _phantom: std::marker::PhantomData,
+                })
             }
         }
 
@@ -1335,7 +1372,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformanceMonitor<T> {
 impl<T: Float + Debug + Send + Sync + 'static> AlgorithmSelector<T> {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            strategy: AlgorithmSelectionStrategy::Static { algorithm: CompressionAlgorithm::LZ4 },
+            strategy: AlgorithmSelectionStrategy::Static {
+                algorithm: CompressionAlgorithm::LZ4,
+            },
             algorithm_performance: HashMap::new(),
             current_best: None,
         })

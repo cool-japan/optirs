@@ -86,14 +86,12 @@ impl Pipeline {
         Self {
             name: "fast".to_string(),
             description: "Fast compression pipeline optimized for speed".to_string(),
-            stages: vec![
-                PipelineStage {
-                    name: "compression".to_string(),
-                    stage_type: StageType::Compression,
-                    config: StageConfig::fast_compression(),
-                    enabled: true,
-                },
-            ],
+            stages: vec![PipelineStage {
+                name: "compression".to_string(),
+                stage_type: StageType::Compression,
+                config: StageConfig::fast_compression(),
+                enabled: true,
+            }],
             config: PipelineConfig::fast(),
         }
     }
@@ -674,7 +672,7 @@ impl Default for MemoryLimits {
     fn default() -> Self {
         Self {
             max_memory_per_pipeline: 1024 * 1024 * 1024, // 1GB
-            max_memory_per_stage: 256 * 1024 * 1024, // 256MB
+            max_memory_per_stage: 256 * 1024 * 1024,     // 256MB
             monitoring_enabled: true,
         }
     }
@@ -695,7 +693,7 @@ impl Default for CpuLimits {
     fn default() -> Self {
         Self {
             max_cpu_per_pipeline: 0.8, // 80%
-            max_cpu_per_stage: 0.5, // 50%
+            max_cpu_per_stage: 0.5,    // 50%
             monitoring_enabled: true,
         }
     }
@@ -913,8 +911,8 @@ impl Default for OptimizationTargets {
         Self {
             execution_time: Some(Duration::from_secs(60)),
             throughput: Some(1_000_000.0), // 1 MB/s
-            compression_ratio: Some(2.0), // 2:1
-            resource_usage: Some(0.5), // 50%
+            compression_ratio: Some(2.0),  // 2:1
+            resource_usage: Some(0.5),     // 50%
         }
     }
 }
@@ -1092,10 +1090,7 @@ impl Default for HealthMonitoring {
                 HealthIndicator::ResourceHealth,
                 HealthIndicator::ErrorRate,
             ],
-            actions: vec![
-                HealthAction::Alert,
-                HealthAction::Log,
-            ],
+            actions: vec![HealthAction::Alert, HealthAction::Log],
         }
     }
 }

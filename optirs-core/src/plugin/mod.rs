@@ -17,9 +17,9 @@
 // ## Creating a Custom Optimizer Plugin
 //
 // ```no_run
-// use scirs2_optim::plugin::{OptimizerPlugin, PluginCapabilities};
-// use scirs2_optim::plugin::core::{PluginInfo, OptimizerConfig, OptimizerState};
-// use scirs2_optim::error::{OptimError, Result};
+// use optirs_core::plugin::{OptimizerPlugin, PluginCapabilities};
+// use optirs_core::plugin::core::{PluginInfo, OptimizerConfig, OptimizerState};
+// use optirs_core::error::{OptimError, Result};
 // use scirs2_core::ndarray_ext::Array1;
 //
 // #[derive(Debug, Clone)]

@@ -272,11 +272,21 @@ pub enum RetryBackoffStrategy {
     /// Fixed delay between retries
     Fixed { delay: Duration },
     /// Linear backoff (delay increases linearly)
-    Linear { initial_delay: Duration, increment: Duration },
+    Linear {
+        initial_delay: Duration,
+        increment: Duration,
+    },
     /// Exponential backoff (delay doubles each time)
-    Exponential { initial_delay: Duration, multiplier: f64 },
+    Exponential {
+        initial_delay: Duration,
+        multiplier: f64,
+    },
     /// Randomized exponential backoff (with jitter)
-    RandomizedExponential { initial_delay: Duration, multiplier: f64, jitter: f64 },
+    RandomizedExponential {
+        initial_delay: Duration,
+        multiplier: f64,
+        jitter: f64,
+    },
     /// Custom backoff strategy
     Custom { strategy: String },
 }
@@ -286,18 +296,26 @@ impl RetryBackoffStrategy {
     pub fn calculate_delay(&self, attempt: usize) -> Duration {
         match self {
             RetryBackoffStrategy::Fixed { delay } => *delay,
-            RetryBackoffStrategy::Linear { initial_delay, increment } => {
-                *initial_delay + *increment * attempt as u32
-            },
-            RetryBackoffStrategy::Exponential { initial_delay, multiplier } => {
+            RetryBackoffStrategy::Linear {
+                initial_delay,
+                increment,
+            } => *initial_delay + *increment * attempt as u32,
+            RetryBackoffStrategy::Exponential {
+                initial_delay,
+                multiplier,
+            } => {
                 let delay_ms = initial_delay.as_millis() as f64 * multiplier.powi(attempt as i32);
                 Duration::from_millis(delay_ms as u64)
-            },
-            RetryBackoffStrategy::RandomizedExponential { initial_delay, multiplier, jitter } => {
+            }
+            RetryBackoffStrategy::RandomizedExponential {
+                initial_delay,
+                multiplier,
+                jitter,
+            } => {
                 let base_delay = initial_delay.as_millis() as f64 * multiplier.powi(attempt as i32);
                 let jitter_factor = 1.0 + (scirs2_core::random::random::<f64>() - 0.5) * jitter;
                 Duration::from_millis((base_delay * jitter_factor) as u64)
-            },
+            }
             RetryBackoffStrategy::Custom { .. } => Duration::from_secs(1), // Default fallback
         }
     }
@@ -898,7 +916,8 @@ impl DeliveryGuaranteeManager {
                     event_id,
                     target_device: pending_ack.target_device.clone(),
                     attempt: pending_ack.retry_attempts,
-                    next_retry_time: Instant::now() + self.calculate_retry_delay(pending_ack.retry_attempts),
+                    next_retry_time: Instant::now()
+                        + self.calculate_retry_delay(pending_ack.retry_attempts),
                     reason: RetryReason::Timeout,
                     metadata: RetryMetadata {
                         original_send_time: pending_ack.metadata.event_timestamp,
@@ -934,7 +953,11 @@ impl DeliveryGuaranteeManager {
     }
 
     /// Track pending acknowledgment
-    fn track_pending_ack(&mut self, event_id: u64, target_device: DeviceId) -> Result<(), DeliveryError> {
+    fn track_pending_ack(
+        &mut self,
+        event_id: u64,
+        target_device: DeviceId,
+    ) -> Result<(), DeliveryError> {
         let pending_ack = PendingAck {
             event_id,
             target_device: target_device.clone(),
@@ -955,12 +978,16 @@ impl DeliveryGuaranteeManager {
 
     /// Calculate retry delay based on backoff strategy
     fn calculate_retry_delay(&self, attempt: usize) -> Duration {
-        self.config.retry_settings.backoff_strategy.calculate_delay(attempt)
+        self.config
+            .retry_settings
+            .backoff_strategy
+            .calculate_delay(attempt)
     }
 
     /// Update circuit breaker state
     fn update_circuit_breaker(&mut self, device_id: &DeviceId, success: bool) {
-        let cb_state = self.circuit_breakers
+        let cb_state = self
+            .circuit_breakers
             .entry(device_id.clone())
             .or_insert_with(|| CircuitBreakerState {
                 state: CircuitState::Closed,
@@ -978,7 +1005,8 @@ impl DeliveryGuaranteeManager {
             }
         } else {
             cb_state.failure_count += 1;
-            if cb_state.failure_count >= self.config.retry_settings.circuit_breaker.failure_threshold
+            if cb_state.failure_count
+                >= self.config.retry_settings.circuit_breaker.failure_threshold
                 && cb_state.state == CircuitState::Closed
             {
                 cb_state.state = CircuitState::Open;
@@ -1032,7 +1060,8 @@ impl RetryQueue {
     /// Get entries ready for retry
     pub fn get_ready_entries(&mut self) -> Vec<RetryEntry> {
         let now = Instant::now();
-        let (ready, not_ready): (Vec<_>, Vec<_>) = self.entries
+        let (ready, not_ready): (Vec<_>, Vec<_>) = self
+            .entries
             .drain(..)
             .partition(|entry| entry.next_retry_time <= now);
 
@@ -1095,9 +1124,13 @@ impl std::fmt::Display for DeliveryError {
             DeliveryError::CircuitBreakerOpen => write!(f, "Circuit breaker is open"),
             DeliveryError::UnknownEvent { event_id } => write!(f, "Unknown event ID: {}", event_id),
             DeliveryError::Timeout { event_id } => write!(f, "Timeout for event: {}", event_id),
-            DeliveryError::AckValidationFailed { reason } => write!(f, "ACK validation failed: {}", reason),
+            DeliveryError::AckValidationFailed { reason } => {
+                write!(f, "ACK validation failed: {}", reason)
+            }
             DeliveryError::RetryQueueOverflow => write!(f, "Retry queue overflow"),
-            DeliveryError::ConfigurationError { message } => write!(f, "Configuration error: {}", message),
+            DeliveryError::ConfigurationError { message } => {
+                write!(f, "Configuration error: {}", message)
+            }
         }
     }
 }
@@ -1147,7 +1180,9 @@ impl Default for AckPersistence {
             enabled: false,
             duration: Duration::from_secs(3600), // 1 hour
             backend: AckStorageBackend::Memory,
-            cleanup_policy: AckCleanupPolicy::TimeBased { interval: Duration::from_secs(300) },
+            cleanup_policy: AckCleanupPolicy::TimeBased {
+                interval: Duration::from_secs(300),
+            },
         }
     }
 }

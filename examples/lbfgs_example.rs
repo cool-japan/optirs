@@ -4,7 +4,7 @@
 //! a function and compares it with other optimizers.
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::optimizers::{Adam, Optimizer, LBFGS, SGD};
+use optirs_core::optimizers::{Adam, Optimizer, LBFGS, SGD};
 
 #[allow(dead_code)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

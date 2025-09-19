@@ -33,7 +33,7 @@ use std::fmt::Debug;
 ///
 /// ```no_run
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{LARS, Optimizer};
+/// use optirs_core::optimizers::{LARS, Optimizer};
 ///
 /// let mut optimizer = LARS::new(0.01)
 ///     .with_momentum(0.9)

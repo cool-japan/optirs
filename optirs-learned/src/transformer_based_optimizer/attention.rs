@@ -78,8 +78,9 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
 
         for i in 0..rows {
             for j in 0..cols {
-                let random_val = (scirs2_core::random::random::<f64>() - 0.5) * 2.0 * std;
-                weights[[i, j]] = num_traits::cast::cast(random_val).unwrap_or_else(|| T::zero());
+                let random_val = scirs2_core::random::f64();
+                let scaled_val = (random_val - 0.5) * 2.0 * std;
+                weights[[i, j]] = num_traits::cast::cast(scaled_val).unwrap_or_else(|| T::zero());
             }
         }
 
@@ -93,8 +94,14 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
         key: &Array2<T>,
         value: &Array2<T>,
     ) -> Result<Array2<T>> {
-        let batch_size = query.shape()[0];
-        let seq_length = query.shape()[1];
+        // Input shape is (batch_size * seq_length, model_dim)
+        let total_seq_len = query.shape()[0];
+        let model_dim = query.shape()[1];
+
+        // For now, assume batch_size = 1 and seq_length = total_seq_len
+        // TODO: This should be passed as parameters or inferred properly
+        let batch_size = 1;
+        let seq_length = total_seq_len;
 
         // Linear projections
         let q = query.dot(&self.query_weights);

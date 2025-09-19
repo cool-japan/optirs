@@ -4,10 +4,10 @@
 // different types of time sources (GPS, network, atomic clocks, radio, system),
 // source selection algorithms, health monitoring, and quality assessment.
 
+use scirs2_core::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime};
-use scirs2_core::error::Result;
 
 use super::gps::GpsConfig;
 use super::protocols::NetworkTimeProtocol;
@@ -102,10 +102,7 @@ pub struct NetworkCredentials {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AtomicClockType {
     /// Cesium atomic clock
-    Cesium {
-        frequency: f64,
-        stability: f64,
-    },
+    Cesium { frequency: f64, stability: f64 },
     /// Rubidium atomic clock
     Rubidium {
         frequency: f64,
@@ -248,14 +245,14 @@ pub enum RadioAntennaType {
         turns: usize,
     },
     /// Loop antenna
-    Loop {
-        diameter: f64,
-        turns: usize,
-    },
+    Loop { diameter: f64, turns: usize },
     /// Whip antenna
     Whip { length: f64 },
     /// Custom antenna
-    Custom { antenna_type: String, specifications: HashMap<String, f64> },
+    Custom {
+        antenna_type: String,
+        specifications: HashMap<String, f64>,
+    },
 }
 
 /// Antenna orientation
@@ -277,7 +274,10 @@ pub enum Polarization {
     /// Circular polarization
     Circular { handedness: Handedness },
     /// Elliptical polarization
-    Elliptical { major_axis_angle: f64, axial_ratio: f64 },
+    Elliptical {
+        major_axis_angle: f64,
+        axial_ratio: f64,
+    },
 }
 
 /// Circular polarization handedness
@@ -495,11 +495,17 @@ pub enum ErrorCorrectionCode {
     /// Reed-Solomon code
     ReedSolomon { n: usize, k: usize },
     /// Convolutional code
-    Convolutional { constraint_length: usize, code_rate: f64 },
+    Convolutional {
+        constraint_length: usize,
+        code_rate: f64,
+    },
     /// Turbo code
     Turbo { iterations: usize },
     /// Custom code
-    Custom { code_type: String, parameters: HashMap<String, f64> },
+    Custom {
+        code_type: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Interleaving configuration
@@ -581,7 +587,10 @@ pub enum TimeSourceSelection {
     /// Ensemble selection
     Ensemble { methods: Vec<TimeSourceSelection> },
     /// Custom selection
-    Custom { strategy: String, parameters: HashMap<String, String> },
+    Custom {
+        strategy: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Source quality monitoring configuration
@@ -1192,7 +1201,10 @@ pub enum AlertChannel {
     /// Log alerts
     Log { level: String },
     /// Custom channel
-    Custom { channel_type: String, config: HashMap<String, String> },
+    Custom {
+        channel_type: String,
+        config: HashMap<String, String>,
+    },
 }
 
 /// Alert throttling configuration
@@ -1681,11 +1693,15 @@ impl TimeSourceManager {
             },
             failure_handling: FailureHandling {
                 escalation_actions: vec![EscalationAction::MarkDegraded],
-                recovery_actions: vec![RecoveryAction::WaitAndRetry { delay: Duration::from_secs(30) }],
+                recovery_actions: vec![RecoveryAction::WaitAndRetry {
+                    delay: Duration::from_secs(30),
+                }],
                 notifications: vec!["admin@example.com".to_string()],
             },
         };
-        self.health_monitor.health_checks.insert(source_id, health_check);
+        self.health_monitor
+            .health_checks
+            .insert(source_id, health_check);
 
         Ok(())
     }
@@ -1702,26 +1718,24 @@ impl TimeSourceManager {
     /// Select the best time source
     pub fn select_best_source(&mut self) -> Result<Option<&ClockSource>> {
         match self.selection_algorithm.algorithm_type {
-            SourceSelectionType::QualityBased => {
-                self.select_best_quality_source()
-            },
-            SourceSelectionType::VotingBased => {
-                self.select_by_voting()
-            },
-            SourceSelectionType::MachineLearning { .. } => {
-                self.select_by_ml()
-            },
-            SourceSelectionType::Hybrid { .. } => {
-                self.select_by_hybrid()
-            },
+            SourceSelectionType::QualityBased => self.select_best_quality_source(),
+            SourceSelectionType::VotingBased => self.select_by_voting(),
+            SourceSelectionType::MachineLearning { .. } => self.select_by_ml(),
+            SourceSelectionType::Hybrid { .. } => self.select_by_hybrid(),
         }
     }
 
     fn select_best_quality_source(&self) -> Result<Option<&ClockSource>> {
-        let best_source = self.sources
+        let best_source = self
+            .sources
             .values()
             .filter(|source| source.status == ClockSourceStatus::Active)
-            .max_by(|a, b| a.quality.overall_score.partial_cmp(&b.quality.overall_score).unwrap());
+            .max_by(|a, b| {
+                a.quality
+                    .overall_score
+                    .partial_cmp(&b.quality.overall_score)
+                    .unwrap()
+            });
 
         Ok(best_source)
     }
@@ -1751,7 +1765,9 @@ impl TimeSourceManager {
 
     /// Get source status
     pub fn get_source_status(&self, source_id: &str) -> Option<ClockSourceStatus> {
-        self.sources.get(source_id).map(|source| source.status.clone())
+        self.sources
+            .get(source_id)
+            .map(|source| source.status.clone())
     }
 
     /// Shutdown the manager
@@ -1782,7 +1798,7 @@ impl SourceHealthMonitor {
                 HealthCheckType::Quality => {
                     self.statistics.successful_checks += 1;
                     Ok(ClockSourceStatus::Active)
-                },
+                }
                 _ => {
                     self.statistics.successful_checks += 1;
                     Ok(ClockSourceStatus::Active)
@@ -1826,7 +1842,7 @@ impl ClockSource {
             TimeSource::Network { .. } => {
                 // Network time retrieval implementation
                 Ok(SystemTime::now())
-            },
+            }
             _ => {
                 // Other source types
                 Ok(SystemTime::now())
@@ -1866,12 +1882,10 @@ impl Default for TimeSourceConfig {
                 protocol: NetworkTimeProtocol::NTP,
                 authentication: None,
             },
-            backup_sources: vec![
-                TimeSource::SystemClock {
-                    calibration_source: None,
-                    drift_compensation: true,
-                },
-            ],
+            backup_sources: vec![TimeSource::SystemClock {
+                calibration_source: None,
+                drift_compensation: true,
+            }],
             selection_strategy: TimeSourceSelection::BestQuality,
             quality_monitoring: SourceQualityMonitoring::default(),
             switching: SourceSwitching::default(),
@@ -1911,7 +1925,12 @@ impl Default for QualityAnomalyDetection {
             algorithm: QualityAnomalyAlgorithm::Statistical,
             threshold: 3.0, // 3 sigma
             window_size: 100,
-            response_actions: vec![AnomalyResponseAction::Log, AnomalyResponseAction::Alert { severity: AlertSeverity::Medium }],
+            response_actions: vec![
+                AnomalyResponseAction::Log,
+                AnomalyResponseAction::Alert {
+                    severity: AlertSeverity::Medium,
+                },
+            ],
         }
     }
 }
@@ -1943,7 +1962,7 @@ impl Default for SourceSwitching {
 impl Default for ClockQuality {
     fn default() -> Self {
         Self {
-            accuracy: 0.001, // 1 ms
+            accuracy: 0.001,   // 1 ms
             precision: 0.0001, // 0.1 ms
             stability: 1e-9,
             availability: 99.0,
@@ -2107,7 +2126,9 @@ impl Default for TimeSourceManagerConfig {
                     FailoverTrigger::SourceUnavailable,
                     FailoverTrigger::QualityDegradation { threshold: 0.5 },
                 ],
-                strategy: SourceFailoverStrategy::Graceful { transition_time: Duration::from_secs(30) },
+                strategy: SourceFailoverStrategy::Graceful {
+                    transition_time: Duration::from_secs(30),
+                },
                 recovery: FailoverRecoverySettings {
                     recovery_delay: Duration::from_secs(60),
                     validation: true,

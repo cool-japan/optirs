@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 
 // Re-export key types from submodules
 pub use allocation::{
-    AllocationConfig, AllocationEngine, AllocationStats, AllocationStrategy, AllocatorType,
-    ArenaAllocator, BuddyAllocator, SlabAllocator,
+    AllocationStats, AllocationStrategy, AllocationStrategyManager, ArenaAllocator, BuddyAllocator,
+    SlabAllocator, UnifiedAllocator, UnifiedConfig,
 };
 
 pub use management::{
@@ -42,7 +42,7 @@ pub struct GpuMemorySystemConfig {
     /// Vendor-specific backend configuration
     pub vendor_config: VendorConfig,
     /// Memory allocation configuration
-    pub allocation_config: AllocationConfig,
+    pub allocation_config: UnifiedConfig,
     /// Memory management configuration
     pub management_config: MemoryManagementConfig,
     /// System-wide configuration

@@ -4,10 +4,10 @@
 // and its variants including Basic Paxos, Multi-Paxos, and Fast Paxos for
 // distributed systems consensus.
 
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap, VecDeque, HashSet};
-use std::time::{Duration, Instant};
 use crate::tpu::pod_coordination::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 /// Paxos consensus configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -509,7 +509,10 @@ impl PaxosConsensus {
         self.start_background_tasks()?;
 
         // Initialize leader election if Multi-Paxos
-        if matches!(self.config.protocol_variant, PaxosProtocolVariant::MultiPaxos(_)) {
+        if matches!(
+            self.config.protocol_variant,
+            PaxosProtocolVariant::MultiPaxos(_)
+        ) {
             self.start_leader_election()?;
         }
 
@@ -529,8 +532,12 @@ impl PaxosConsensus {
             PaxosMessage::ClientProposal(proposal) => self.handle_client_proposal(proposal),
             PaxosMessage::FastAccept(fast_accept) => self.handle_fast_accept(fast_accept),
             PaxosMessage::FastAccepted(fast_accepted) => self.handle_fast_accepted(fast_accepted),
-            PaxosMessage::CatchUpRequest(catchup_request) => self.handle_catchup_request(catchup_request),
-            PaxosMessage::CatchUpResponse(catchup_response) => self.handle_catchup_response(catchup_response),
+            PaxosMessage::CatchUpRequest(catchup_request) => {
+                self.handle_catchup_request(catchup_request)
+            }
+            PaxosMessage::CatchUpResponse(catchup_response) => {
+                self.handle_catchup_response(catchup_response)
+            }
             PaxosMessage::ClientResponse(_) => Ok(()), // Handled by client
         }
     }
@@ -576,10 +583,12 @@ impl PaxosConsensus {
                 };
 
                 // Send promise to proposer
-                self.network.send_message(&prepare.proposer_id, PaxosMessage::Promise(promise))?;
+                self.network
+                    .send_message(&prepare.proposer_id, PaxosMessage::Promise(promise))?;
 
                 // Persist state
-                self.persistent_storage.save_acceptor_state(acceptor_state)?;
+                self.persistent_storage
+                    .save_acceptor_state(acceptor_state)?;
             }
         }
 
@@ -590,16 +599,23 @@ impl PaxosConsensus {
     fn handle_promise(&mut self, promise: PromiseMessage) -> Result<()> {
         if let Some(ref mut proposer_state) = self.proposer_state {
             // Store promise
-            proposer_state.promises_received.insert(promise.acceptor_id.clone(), promise.clone());
+            proposer_state
+                .promises_received
+                .insert(promise.acceptor_id.clone(), promise.clone());
 
             // Check if we have majority of promises
             let quorum_size = self.calculate_quorum_size();
             if proposer_state.promises_received.len() >= quorum_size {
                 // Select value based on highest proposal number from promises
-                let selected_value = self.select_value_from_promises(&proposer_state.promises_received)?;
+                let selected_value =
+                    self.select_value_from_promises(&proposer_state.promises_received)?;
 
                 // Start Phase 2 (Accept)
-                self.start_phase2(promise.instance_id, proposer_state.current_proposal_number, selected_value)?;
+                self.start_phase2(
+                    promise.instance_id,
+                    proposer_state.current_proposal_number,
+                    selected_value,
+                )?;
             }
         }
 
@@ -630,7 +646,8 @@ impl PaxosConsensus {
                     self.broadcast_to_learners(PaxosMessage::Accepted(accepted))?;
 
                     // Persist state
-                    self.persistent_storage.save_acceptor_state(acceptor_state)?;
+                    self.persistent_storage
+                        .save_acceptor_state(acceptor_state)?;
                 }
             }
         }
@@ -642,7 +659,8 @@ impl PaxosConsensus {
     fn handle_accepted(&mut self, accepted: AcceptedMessage) -> Result<()> {
         if let Some(ref mut learner_state) = self.learner_state {
             // Track acceptance
-            let tracker = learner_state.acceptance_tracking
+            let tracker = learner_state
+                .acceptance_tracking
                 .entry(accepted.instance_id)
                 .or_insert_with(AcceptanceTracker::new);
 
@@ -659,7 +677,9 @@ impl PaxosConsensus {
                     supporting_acceptances: tracker.get_acceptances(),
                 };
 
-                learner_state.learned_values.insert(accepted.instance_id, learned_value.clone());
+                learner_state
+                    .learned_values
+                    .insert(accepted.instance_id, learned_value.clone());
 
                 // Notify application/clients
                 self.notify_value_learned(&learned_value)?;
@@ -721,14 +741,20 @@ impl PaxosConsensus {
             self.broadcast_to_acceptors(PaxosMessage::Prepare(prepare))?;
 
             // Set timeout
-            proposer_state.proposal_timeout = Some(Instant::now() + self.config.timing_config.phase1_timeout);
+            proposer_state.proposal_timeout =
+                Some(Instant::now() + self.config.timing_config.phase1_timeout);
         }
 
         Ok(())
     }
 
     /// Start Phase 2 (Accept)
-    fn start_phase2(&mut self, instance_id: InstanceId, proposal_number: ProposalNumber, value: ProposalValue) -> Result<()> {
+    fn start_phase2(
+        &mut self,
+        instance_id: InstanceId,
+        proposal_number: ProposalNumber,
+        value: ProposalValue,
+    ) -> Result<()> {
         if let Some(ref mut proposer_state) = self.proposer_state {
             proposer_state.round_state = ProposalRoundState::Phase2;
 
@@ -746,16 +772,21 @@ impl PaxosConsensus {
             self.broadcast_to_acceptors(PaxosMessage::Accept(accept))?;
 
             // Set timeout
-            proposer_state.proposal_timeout = Some(Instant::now() + self.config.timing_config.phase2_timeout);
+            proposer_state.proposal_timeout =
+                Some(Instant::now() + self.config.timing_config.phase2_timeout);
         }
 
         Ok(())
     }
 
     /// Select value from promises (Phase 1b responses)
-    fn select_value_from_promises(&self, promises: &HashMap<NodeId, PromiseMessage>) -> Result<ProposalValue> {
+    fn select_value_from_promises(
+        &self,
+        promises: &HashMap<NodeId, PromiseMessage>,
+    ) -> Result<ProposalValue> {
         // Find promise with highest proposal number
-        let highest_accepted = promises.values()
+        let highest_accepted = promises
+            .values()
             .filter_map(|p| p.accepted_proposal.as_ref())
             .max_by_key(|ap| ap.proposal_number);
 
@@ -763,7 +794,8 @@ impl PaxosConsensus {
             Ok(accepted.value.clone())
         } else {
             // Use our original proposal value
-            self.proposer_state.as_ref()
+            self.proposer_state
+                .as_ref()
                 .and_then(|ps| ps.proposal_value.clone())
                 .ok_or_else(|| anyhow::anyhow!("No proposal value available"))
         }
@@ -831,7 +863,9 @@ impl PaxosConsensus {
 
     /// Check if instance is completed
     pub fn is_instance_completed(&self, instance_id: InstanceId) -> bool {
-        self.instance_manager.completed_instances.contains_key(&instance_id)
+        self.instance_manager
+            .completed_instances
+            .contains_key(&instance_id)
     }
 
     // Additional helper methods would be implemented here...
@@ -855,7 +889,11 @@ impl PaxosConsensus {
         Ok(())
     }
 
-    fn start_multi_paxos_round(&mut self, _instance_id: InstanceId, _value: ProposalValue) -> Result<()> {
+    fn start_multi_paxos_round(
+        &mut self,
+        _instance_id: InstanceId,
+        _value: ProposalValue,
+    ) -> Result<()> {
         // Implementation for Multi-Paxos round
         Ok(())
     }
@@ -1063,7 +1101,8 @@ impl AcceptanceTracker {
     }
 
     pub fn add_acceptance(&mut self, accepted: AcceptedMessage) {
-        self.acceptances.insert(accepted.acceptor_id.clone(), accepted);
+        self.acceptances
+            .insert(accepted.acceptor_id.clone(), accepted);
     }
 
     pub fn has_quorum(&self, quorum_size: usize) -> bool {
@@ -1094,27 +1133,74 @@ use anyhow::Result;
 
 // Stub implementations for referenced types
 use crate::tpu::pod_coordination::types::{
-    PaxosClusterConfig, PaxosNodeCapabilities, QuorumConfiguration,
-    LogCompactionConfig, BatchProcessingConfig, SequenceManagementConfig,
-    CollisionDetectionConfig, FastPaxosRecoveryConfig, ByzantinePaxosConfig,
-    FlexiblePaxosConfig, GeneralizedPaxosConfig, AdaptiveTimeoutConfig,
-    TimeoutBackoffStrategy, PaxosFailureDetectionConfig, MessageReliabilityConfig,
-    RetryPoliciesConfig, RedundancySettings, PaxosRecoveryMechanisms,
-    PaxosPerformanceConfig, PaxosNetworkConfig, PaxosPersistenceConfig,
-    PaxosMonitoringConfig, InstanceAllocationStrategy, GarbageCollectionPolicy,
-    InstanceLimits, InstanceMetadata, InstanceTiming, InstanceProposerState,
-    InstanceAcceptorState, InstanceLearnerState, MessageMetadata,
-    LeaderHeartbeatMessage, LeadershipElectionMessage, ClientProposalMessage,
-    ClientResponseMessage, FastAcceptMessage, FastAcceptedMessage,
-    CatchUpRequestMessage, CatchUpResponseMessage, PrepareHandler,
-    PromiseHandler, AcceptHandler, AcceptedHandler, LearnHandler,
-    LeadershipHandlers, ClientHandlers, LatencyMetrics, ThroughputMetrics,
-    MessageOverheadMetrics, PhaseTimingMetrics, ResourceUtilization,
-    NetworkMetrics, PerformanceStatistics, PaxosNetwork, PaxosPersistentStorage,
-    AcceptorHistory, LearningProgress, CatchUpState, FollowerTrackingState,
-    LeaderElectionState, CompletedInstance, ProposalGenerationStrategy,
-    PaxosTimingConfig, PaxosReliabilityConfig,
+    AcceptHandler,
+    AcceptedHandler,
+    AcceptorHistory,
+    AdaptiveTimeoutConfig,
+    BasicPaxosConfig,
+    BatchProcessingConfig,
+    ByzantinePaxosConfig,
+    CatchUpRequestMessage,
+    CatchUpResponseMessage,
+    CatchUpState,
+    ClientHandlers,
+    ClientProposalMessage,
+    ClientResponseMessage,
+    CollisionDetectionConfig,
+    CompletedInstance,
+    FastAcceptMessage,
+    FastAcceptedMessage,
+    FastPaxosConfig,
+    FastPaxosRecoveryConfig,
+    FlexiblePaxosConfig,
+    FollowerTrackingState,
+    GarbageCollectionPolicy,
+    GeneralizedPaxosConfig,
+    InstanceAcceptorState,
+    InstanceAllocationStrategy,
+    InstanceLearnerState,
+    InstanceLimits,
+    InstanceMetadata,
+    InstanceProposerState,
+    InstanceTiming,
+    LatencyMetrics,
+    LeaderElectionState,
+    LeaderHeartbeatMessage,
+    LeadershipElectionMessage,
+    LeadershipHandlers,
+    LearnHandler,
+    LearningProgress,
+    LogCompactionConfig,
+    MessageMetadata,
+    MessageOverheadMetrics,
+    MessageReliabilityConfig,
+    MultiPaxosConfig,
+    NetworkMetrics,
+    PaxosClusterConfig,
+    PaxosFailureDetectionConfig,
+    PaxosMonitoringConfig,
+    PaxosNetwork,
+    PaxosNetworkConfig,
+    PaxosNodeCapabilities,
     // Default types
-    PaxosNodeConfig, BasicPaxosConfig, MultiPaxosConfig, FastPaxosConfig,
+    PaxosNodeConfig,
+    PaxosPerformanceConfig,
     PaxosPerformanceMetrics,
+    PaxosPersistenceConfig,
+    PaxosPersistentStorage,
+    PaxosRecoveryMechanisms,
+    PaxosReliabilityConfig,
+    PaxosTimingConfig,
+    PerformanceStatistics,
+    PhaseTimingMetrics,
+    PrepareHandler,
+    PromiseHandler,
+    ProposalGenerationStrategy,
+    QuorumConfiguration,
+    RedundancySettings,
+    ResourceUtilization,
+    RetryPoliciesConfig,
+    SequenceManagementConfig,
+    ThroughputMetrics,
+    TimeoutBackoffStrategy,
 };

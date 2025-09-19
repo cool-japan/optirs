@@ -8,19 +8,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use crate::error::{OptimError, Result};
 use crate::tpu::tpu_backend::DeviceId;
-use crate::error::{Result, OptimError};
 
 use super::config::*;
-use super::state::*;
-use super::scheduler::*;
 use super::monitoring::*;
 use super::optimization::*;
+use super::scheduler::*;
+use super::state::*;
 use crate::tpu::pod_coordination::synchronization::barriers::BarrierManager;
-use crate::tpu::pod_coordination::synchronization::events::EventSynchronizationManager;
 use crate::tpu::pod_coordination::synchronization::clocks::ClockSynchronizationManager;
-use crate::tpu::pod_coordination::synchronization::deadlock::DeadlockDetector;
 use crate::tpu::pod_coordination::synchronization::consensus::ConsensusProtocolManager;
+use crate::tpu::pod_coordination::synchronization::deadlock::DeadlockDetector;
+use crate::tpu::pod_coordination::synchronization::events::EventSynchronizationManager;
 
 /// Type alias for synchronization statistics
 pub type SynchronizationStatistics = HashMap<String, f64>;
@@ -117,7 +117,9 @@ impl SynchronizationManager {
             performance: DevicePerformanceMetrics::default(),
         };
 
-        self.global_state.device_states.insert(device_id, device_state);
+        self.global_state
+            .device_states
+            .insert(device_id, device_state);
         Ok(())
     }
 
@@ -145,14 +147,23 @@ impl SynchronizationManager {
         self.update_progress(0.6);
 
         // Update consensus state
-        self.consensus_manager.sync_state(&self.global_state.participants.iter().cloned().collect::<Vec<_>>())?;
+        self.consensus_manager.sync_state(
+            &self
+                .global_state
+                .participants
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        )?;
         self.update_progress(0.8);
 
         // Finalize synchronization
         self.finalize_sync()?;
         self.update_progress(1.0);
 
-        self.global_state.status = GlobalSyncStatus::Synchronized { quality: self.calculate_sync_quality() };
+        self.global_state.status = GlobalSyncStatus::Synchronized {
+            quality: self.calculate_sync_quality(),
+        };
         self.global_state.last_global_sync = Some(Instant::now());
         self.global_state.current_epoch += 1;
 
@@ -169,8 +180,12 @@ impl SynchronizationManager {
     /// Calculate synchronization quality
     fn calculate_sync_quality(&self) -> f64 {
         let metrics = &self.global_state.quality_metrics;
-        (metrics.clock_quality + metrics.event_quality + metrics.barrier_quality +
-         metrics.consensus_quality + metrics.deadlock_prevention_quality) / 5.0
+        (metrics.clock_quality
+            + metrics.event_quality
+            + metrics.barrier_quality
+            + metrics.consensus_quality
+            + metrics.deadlock_prevention_quality)
+            / 5.0
     }
 
     /// Finalize synchronization
@@ -205,7 +220,12 @@ impl SynchronizationManager {
     }
 
     /// Schedule synchronization operation
-    pub fn schedule_operation(&mut self, operation_type: OperationType, devices: Vec<DeviceId>, params: OperationParameters) -> Result<OperationId> {
+    pub fn schedule_operation(
+        &mut self,
+        operation_type: OperationType,
+        devices: Vec<DeviceId>,
+        params: OperationParameters,
+    ) -> Result<OperationId> {
         let operation_id = OperationId(self.scheduler.scheduled_operations.len() as u64 + 1);
 
         let operation = ScheduledOperation {
@@ -278,11 +298,18 @@ impl SynchronizationManager {
             HealthLevel::Critical
         };
 
-        health.component_health.insert("clock_sync".to_string(), health_level);
+        health
+            .component_health
+            .insert("clock_sync".to_string(), health_level);
 
         if clock_quality < 0.7 {
-            health.issues.push(format!("Clock synchronization quality is low: {:.2}", clock_quality));
-            health.recommendations.push("Check network connectivity and clock sources".to_string());
+            health.issues.push(format!(
+                "Clock synchronization quality is low: {:.2}",
+                clock_quality
+            ));
+            health
+                .recommendations
+                .push("Check network connectivity and clock sources".to_string());
         }
     }
 
@@ -299,11 +326,18 @@ impl SynchronizationManager {
             HealthLevel::Critical
         };
 
-        health.component_health.insert("event_sync".to_string(), health_level);
+        health
+            .component_health
+            .insert("event_sync".to_string(), health_level);
 
         if event_quality < 0.7 {
-            health.issues.push(format!("Event synchronization quality is low: {:.2}", event_quality));
-            health.recommendations.push("Review event ordering and delivery guarantees".to_string());
+            health.issues.push(format!(
+                "Event synchronization quality is low: {:.2}",
+                event_quality
+            ));
+            health
+                .recommendations
+                .push("Review event ordering and delivery guarantees".to_string());
         }
     }
 
@@ -320,11 +354,18 @@ impl SynchronizationManager {
             HealthLevel::Critical
         };
 
-        health.component_health.insert("barrier_sync".to_string(), health_level);
+        health
+            .component_health
+            .insert("barrier_sync".to_string(), health_level);
 
         if barrier_quality < 0.7 {
-            health.issues.push(format!("Barrier synchronization quality is low: {:.2}", barrier_quality));
-            health.recommendations.push("Check barrier timeout settings and participant availability".to_string());
+            health.issues.push(format!(
+                "Barrier synchronization quality is low: {:.2}",
+                barrier_quality
+            ));
+            health
+                .recommendations
+                .push("Check barrier timeout settings and participant availability".to_string());
         }
     }
 
@@ -341,17 +382,27 @@ impl SynchronizationManager {
             HealthLevel::Critical
         };
 
-        health.component_health.insert("consensus".to_string(), health_level);
+        health
+            .component_health
+            .insert("consensus".to_string(), health_level);
 
         if consensus_quality < 0.7 {
-            health.issues.push(format!("Consensus quality is low: {:.2}", consensus_quality));
-            health.recommendations.push("Check leader election and log replication".to_string());
+            health.issues.push(format!(
+                "Consensus quality is low: {:.2}",
+                consensus_quality
+            ));
+            health
+                .recommendations
+                .push("Check leader election and log replication".to_string());
         }
     }
 
     /// Check deadlock detection health
     fn check_deadlock_health(&self, health: &mut SystemHealthStatus) {
-        let deadlock_quality = self.global_state.quality_metrics.deadlock_prevention_quality;
+        let deadlock_quality = self
+            .global_state
+            .quality_metrics
+            .deadlock_prevention_quality;
         let health_level = if deadlock_quality > 0.9 {
             HealthLevel::Excellent
         } else if deadlock_quality > 0.7 {
@@ -362,11 +413,18 @@ impl SynchronizationManager {
             HealthLevel::Critical
         };
 
-        health.component_health.insert("deadlock_detection".to_string(), health_level);
+        health
+            .component_health
+            .insert("deadlock_detection".to_string(), health_level);
 
         if deadlock_quality < 0.7 {
-            health.issues.push(format!("Deadlock prevention quality is low: {:.2}", deadlock_quality));
-            health.recommendations.push("Review resource allocation and dependency chains".to_string());
+            health.issues.push(format!(
+                "Deadlock prevention quality is low: {:.2}",
+                deadlock_quality
+            ));
+            health
+                .recommendations
+                .push("Review resource allocation and dependency chains".to_string());
         }
     }
 
@@ -397,7 +455,8 @@ impl SynchronizationManager {
 
     /// Check if device is synchronized
     pub fn is_device_synchronized(&self, device_id: DeviceId) -> bool {
-        self.global_state.device_states
+        self.global_state
+            .device_states
             .get(&device_id)
             .map(|state| state.status == DeviceSyncStatus::Synchronized)
             .unwrap_or(false)
@@ -443,7 +502,9 @@ impl SynchronizationManager {
     /// Handle synchronization failure
     pub fn handle_sync_failure(&mut self, device_id: DeviceId, reason: String) -> Result<()> {
         if let Some(device_state) = self.global_state.device_states.get_mut(&device_id) {
-            device_state.status = DeviceSyncStatus::Failed { reason: reason.clone() };
+            device_state.status = DeviceSyncStatus::Failed {
+                reason: reason.clone(),
+            };
         }
 
         // Update global status if critical
@@ -467,14 +528,19 @@ impl SynchronizationManager {
     /// Trigger recovery for failed device
     fn trigger_recovery(&mut self, device_id: DeviceId) -> Result<()> {
         // Schedule recovery operation
-        let operation_type = OperationType::Custom { operation: "device_recovery".to_string() };
+        let operation_type = OperationType::Custom {
+            operation: "device_recovery".to_string(),
+        };
         let params = OperationParameters {
             timeout: Duration::from_secs(60),
             priority: 10, // High priority
             retry_settings: RetrySettings {
                 max_attempts: 3,
                 interval: Duration::from_secs(10),
-                backoff: BackoffStrategy::Exponential { base: 2.0, max_delay: Duration::from_secs(60) },
+                backoff: BackoffStrategy::Exponential {
+                    base: 2.0,
+                    max_delay: Duration::from_secs(60),
+                },
                 conditions: vec![RetryCondition::OnTimeout, RetryCondition::OnNetworkError],
             },
             custom_params: HashMap::new(),
@@ -491,7 +557,12 @@ impl SynchronizationManager {
     }
 
     /// Create global barrier
-    pub fn create_global_barrier(&mut self, barrier_id: String, participants: HashSet<DeviceId>, timeout: Duration) -> Result<()> {
+    pub fn create_global_barrier(
+        &mut self,
+        barrier_id: String,
+        participants: HashSet<DeviceId>,
+        timeout: Duration,
+    ) -> Result<()> {
         let barrier = GlobalBarrier {
             id: barrier_id.clone(),
             expected_participants: participants,
@@ -501,12 +572,18 @@ impl SynchronizationManager {
             completed_at: None,
         };
 
-        self.global_state.active_sync_barriers.insert(barrier_id, barrier);
+        self.global_state
+            .active_sync_barriers
+            .insert(barrier_id, barrier);
         Ok(())
     }
 
     /// Signal barrier arrival
-    pub fn signal_barrier_arrival(&mut self, barrier_id: &str, device_id: DeviceId) -> Result<bool> {
+    pub fn signal_barrier_arrival(
+        &mut self,
+        barrier_id: &str,
+        device_id: DeviceId,
+    ) -> Result<bool> {
         if let Some(barrier) = self.global_state.active_sync_barriers.get_mut(barrier_id) {
             barrier.arrived_participants.insert(device_id);
 
@@ -646,7 +723,10 @@ pub mod utils {
     pub fn get_sync_summary(manager: &SynchronizationManager) -> SyncSummary {
         SyncSummary {
             total_devices: manager.global_state.participants.len(),
-            synchronized_devices: manager.global_state.device_states.values()
+            synchronized_devices: manager
+                .global_state
+                .device_states
+                .values()
                 .filter(|state| state.status == DeviceSyncStatus::Synchronized)
                 .count(),
             current_epoch: manager.global_state.current_epoch,
@@ -691,7 +771,10 @@ pub mod testing {
     }
 
     /// Add test devices to manager
-    pub fn add_test_devices(manager: &mut SynchronizationManager, count: usize) -> Result<Vec<DeviceId>> {
+    pub fn add_test_devices(
+        manager: &mut SynchronizationManager,
+        count: usize,
+    ) -> Result<Vec<DeviceId>> {
         let mut device_ids = Vec::new();
         for i in 0..count {
             let device_id = DeviceId::from(i as u32);
@@ -707,7 +790,10 @@ pub mod testing {
     }
 
     /// Create test barrier
-    pub fn create_test_barrier(manager: &mut SynchronizationManager, device_ids: &[DeviceId]) -> Result<String> {
+    pub fn create_test_barrier(
+        manager: &mut SynchronizationManager,
+        device_ids: &[DeviceId],
+    ) -> Result<String> {
         let barrier_id = format!("test_barrier_{}", scirs2_core::random::random::<u32>());
         let participants = device_ids.iter().cloned().collect();
         manager.create_global_barrier(barrier_id.clone(), participants, Duration::from_secs(5))?;

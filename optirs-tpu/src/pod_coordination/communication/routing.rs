@@ -356,7 +356,12 @@ impl RoutingTable {
     }
 
     /// Update route metrics
-    pub fn update_route_metrics(&mut self, source: DeviceId, destination: DeviceId, metrics: RouteMetrics) {
+    pub fn update_route_metrics(
+        &mut self,
+        source: DeviceId,
+        destination: DeviceId,
+        metrics: RouteMetrics,
+    ) {
         if let Some(route) = self.routes.get_mut(&(source, destination)) {
             route.metrics = metrics;
             route.last_updated = Instant::now();
@@ -367,8 +372,14 @@ impl RoutingTable {
     }
 
     /// Get best route for given criteria
-    pub fn get_best_route(&self, source: DeviceId, destination: DeviceId, criteria: &OptimizationObjective) -> Option<&Route> {
-        self.routes.get(&(source, destination))
+    pub fn get_best_route(
+        &self,
+        source: DeviceId,
+        destination: DeviceId,
+        criteria: &OptimizationObjective,
+    ) -> Option<&Route> {
+        self.routes
+            .get(&(source, destination))
             .filter(|route| self.meets_criteria(route, criteria))
     }
 
@@ -458,38 +469,47 @@ impl RouteCache {
         match self.config.eviction_policy {
             EvictionPolicy::LRU => {
                 // Remove least recently used entry
-                if let Some((key, _)) = self.cache.iter()
-                    .min_by_key(|(_, cached_route)| cached_route.last_accessed) {
+                if let Some((key, _)) = self
+                    .cache
+                    .iter()
+                    .min_by_key(|(_, cached_route)| cached_route.last_accessed)
+                {
                     let key = *key;
                     self.cache.remove(&key);
                     self.statistics.evictions += 1;
                 }
-            },
+            }
             EvictionPolicy::LFU => {
                 // Remove least frequently used entry
-                if let Some((key, _)) = self.cache.iter()
-                    .min_by_key(|(_, cached_route)| cached_route.access_count) {
+                if let Some((key, _)) = self
+                    .cache
+                    .iter()
+                    .min_by_key(|(_, cached_route)| cached_route.access_count)
+                {
                     let key = *key;
                     self.cache.remove(&key);
                     self.statistics.evictions += 1;
                 }
-            },
+            }
             EvictionPolicy::TimeBased => {
                 // Remove oldest entry
-                if let Some((key, _)) = self.cache.iter()
-                    .min_by_key(|(_, cached_route)| cached_route.cached_at) {
+                if let Some((key, _)) = self
+                    .cache
+                    .iter()
+                    .min_by_key(|(_, cached_route)| cached_route.cached_at)
+                {
                     let key = *key;
                     self.cache.remove(&key);
                     self.statistics.evictions += 1;
                 }
-            },
+            }
             EvictionPolicy::Random => {
                 // Remove random entry
                 if let Some(key) = self.cache.keys().next().copied() {
                     self.cache.remove(&key);
                     self.statistics.evictions += 1;
                 }
-            },
+            }
         }
     }
 
@@ -522,7 +542,9 @@ impl Default for RoutingConfig {
             },
             failover: FailoverConfig {
                 enabled: true,
-                threshold: FailoverThreshold::Latency { threshold: Duration::from_millis(10) },
+                threshold: FailoverThreshold::Latency {
+                    threshold: Duration::from_millis(10),
+                },
                 recovery: RecoverySettings {
                     strategy: RecoveryStrategy::Gradual { steps: 3 },
                     timeout: Duration::from_secs(120),

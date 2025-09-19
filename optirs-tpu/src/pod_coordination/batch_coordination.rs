@@ -4,13 +4,13 @@ use std::fmt::Debug;
 // This module provides comprehensive batch coordination functionality for TPU pod coordination,
 // including batch management, data distribution, pipeline execution, and result aggregation.
 
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, IxDyn};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use scirs2_core::ndarray_ext::{Array, IxDyn};
-use num_traits::Float;
 
-use super::{DeviceId, BatchId};
 use super::resource_scheduling::ResourceAllocation;
+use super::{BatchId, DeviceId};
 use crate::error::{OptimError, Result};
 
 /// Batch parallelization strategies
@@ -498,7 +498,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
                         input_partitions: Vec::new(),
                         output_partitions: Vec::new(),
                         assigned_devices: Vec::new(),
-                        status: if i == 0 { PipelineStageStatus::Ready } else { PipelineStageStatus::Waiting },
+                        status: if i == 0 {
+                            PipelineStageStatus::Ready
+                        } else {
+                            PipelineStageStatus::Waiting
+                        },
                         dependencies: if i == 0 { Vec::new() } else { vec![i - 1] },
                         estimated_duration: Duration::from_secs(10),
                         actual_duration: None,
@@ -573,15 +577,24 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
         batch_id: BatchId,
         resource_allocation: &ResourceAllocation,
     ) -> Result<()> {
-        let batch_execution = self.active_batches.get_mut(&batch_id)
+        let batch_execution = self
+            .active_batches
+            .get_mut(&batch_id)
             .ok_or_else(|| OptimError::ConfigurationError("Batch not found".to_string()))?;
 
         // Create partitions based on strategy
-        let partitions = self.create_partitions(&batch_execution.data, &resource_allocation.devices)?;
+        let partitions =
+            self.create_partitions(&batch_execution.data, &resource_allocation.devices)?;
 
         // Assign partitions to devices
-        for (device_id, partition) in resource_allocation.devices.iter().zip(partitions.into_iter()) {
-            batch_execution.device_assignments.insert(*device_id, partition);
+        for (device_id, partition) in resource_allocation
+            .devices
+            .iter()
+            .zip(partitions.into_iter())
+        {
+            batch_execution
+                .device_assignments
+                .insert(*device_id, partition);
         }
 
         // Update progress
@@ -656,7 +669,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
             DataPartitioning::Random => {
                 // Randomly distribute data across devices
                 for (i, &device_id) in devices.iter().enumerate() {
-                    let partition_data = Array::zeros(IxDyn(&[batch_data.batch_size / devices.len(), 10]));
+                    let partition_data =
+                        Array::zeros(IxDyn(&[batch_data.batch_size / devices.len(), 10]));
 
                     let partition = BatchPartition {
                         data: partition_data,
@@ -675,7 +689,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
             _ => {
                 // Default uniform distribution
                 for (i, &device_id) in devices.iter().enumerate() {
-                    let partition_data = Array::zeros(IxDyn(&[batch_data.batch_size / devices.len(), 10]));
+                    let partition_data =
+                        Array::zeros(IxDyn(&[batch_data.batch_size / devices.len(), 10]));
 
                     let partition = BatchPartition {
                         data: partition_data,
@@ -697,11 +712,19 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
     }
 
     /// Get partition for a specific device
-    pub fn get_partition(&self, batch_id: BatchId, device_id: DeviceId) -> Result<BatchPartition<T>> {
-        let batch_execution = self.active_batches.get(&batch_id)
+    pub fn get_partition(
+        &self,
+        batch_id: BatchId,
+        device_id: DeviceId,
+    ) -> Result<BatchPartition<T>> {
+        let batch_execution = self
+            .active_batches
+            .get(&batch_id)
             .ok_or_else(|| OptimError::ConfigurationError("Batch not found".to_string()))?;
 
-        batch_execution.device_assignments.get(&device_id)
+        batch_execution
+            .device_assignments
+            .get(&device_id)
             .cloned()
             .ok_or_else(|| OptimError::ConfigurationError("Partition not found".to_string()))
     }
@@ -713,7 +736,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
         device_id: DeviceId,
         status: PartitionStatus,
     ) -> Result<()> {
-        let batch_execution = self.active_batches.get_mut(&batch_id)
+        let batch_execution = self
+            .active_batches
+            .get_mut(&batch_id)
             .ok_or_else(|| OptimError::ConfigurationError("Batch not found".to_string()))?;
 
         if let Some(partition) = batch_execution.device_assignments.get_mut(&device_id) {
@@ -742,7 +767,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
 
     /// Update batch progress
     fn update_batch_progress(&mut self, batch_id: BatchId) -> Result<()> {
-        let batch_execution = self.active_batches.get_mut(&batch_id)
+        let batch_execution = self
+            .active_batches
+            .get_mut(&batch_id)
             .ok_or_else(|| OptimError::ConfigurationError("Batch not found".to_string()))?;
 
         let elapsed = batch_execution.started_at.elapsed();
@@ -755,9 +782,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
             if batch_execution.progress.processing_rate > 0.0 {
                 let remaining = total - completed;
                 let estimated_remaining_time = Duration::from_secs_f64(
-                    remaining as f64 / batch_execution.progress.processing_rate
+                    remaining as f64 / batch_execution.progress.processing_rate,
                 );
-                batch_execution.progress.estimated_completion = Instant::now() + estimated_remaining_time;
+                batch_execution.progress.estimated_completion =
+                    Instant::now() + estimated_remaining_time;
             }
         }
 
@@ -785,7 +813,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
                     latency: execution_time,
                     throughput: batch_execution.progress.processing_rate,
                     resource_efficiency: 0.85,
-                    error_rate: batch_execution.progress.failed_partitions as f64 / batch_execution.progress.total_partitions as f64,
+                    error_rate: batch_execution.progress.failed_partitions as f64
+                        / batch_execution.progress.total_partitions as f64,
                 },
             };
 
@@ -799,11 +828,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
 
     /// Process batch pipeline
     pub async fn process_pipeline(&mut self, batch_id: BatchId) -> Result<()> {
-        let batch_execution = self.active_batches.get_mut(&batch_id)
+        let batch_execution = self
+            .active_batches
+            .get_mut(&batch_id)
             .ok_or_else(|| OptimError::ConfigurationError("Batch not found".to_string()))?;
 
         // Find ready stages
-        let ready_stages: Vec<usize> = batch_execution.pipeline_stages
+        let ready_stages: Vec<usize> = batch_execution
+            .pipeline_stages
             .iter()
             .enumerate()
             .filter(|(_, stage)| stage.status == PipelineStageStatus::Ready)
@@ -820,7 +852,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
 
     /// Execute a pipeline stage
     async fn execute_pipeline_stage(&mut self, batch_id: BatchId, stage_idx: usize) -> Result<()> {
-        let batch_execution = self.active_batches.get_mut(&batch_id)
+        let batch_execution = self
+            .active_batches
+            .get_mut(&batch_id)
             .ok_or_else(|| OptimError::ConfigurationError("Batch not found".to_string()))?;
 
         if let Some(stage) = batch_execution.pipeline_stages.get_mut(stage_idx) {
@@ -837,15 +871,20 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
             for next_stage_idx in 0..batch_execution.pipeline_stages.len() {
                 let can_start = {
                     let next_stage = &batch_execution.pipeline_stages[next_stage_idx];
-                    next_stage.status == PipelineStageStatus::Waiting &&
-                    next_stage.dependencies.iter().all(|&dep_idx| {
-                        batch_execution.pipeline_stages.get(dep_idx)
-                            .map_or(false, |dep_stage| dep_stage.status == PipelineStageStatus::Completed)
-                    })
+                    next_stage.status == PipelineStageStatus::Waiting
+                        && next_stage.dependencies.iter().all(|&dep_idx| {
+                            batch_execution
+                                .pipeline_stages
+                                .get(dep_idx)
+                                .map_or(false, |dep_stage| {
+                                    dep_stage.status == PipelineStageStatus::Completed
+                                })
+                        })
                 };
 
                 if can_start {
-                    batch_execution.pipeline_stages[next_stage_idx].status = PipelineStageStatus::Ready;
+                    batch_execution.pipeline_stages[next_stage_idx].status =
+                        PipelineStageStatus::Ready;
                 }
             }
         }
@@ -906,7 +945,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
                         }
 
                         // Divide by number of devices
-                        sum_array.mapv_inplace(|x| x / num_traits::cast::cast(num_devices).unwrap_or_else(|| T::zero()));
+                        sum_array.mapv_inplace(|x| {
+                            x / num_traits::cast::cast(num_devices).unwrap_or_else(|| T::zero())
+                        });
                         averaged.push(sum_array);
                     }
                 }
@@ -947,8 +988,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
     pub fn get_statistics(&self) -> BatchCoordinationStatistics {
         let mut stats = HashMap::new();
 
-        stats.insert("active_batches".to_string(), self.active_batches.len() as f64);
-        stats.insert("completed_batches".to_string(), self.completed_batches.len() as f64);
+        stats.insert(
+            "active_batches".to_string(),
+            self.active_batches.len() as f64,
+        );
+        stats.insert(
+            "completed_batches".to_string(),
+            self.completed_batches.len() as f64,
+        );
         stats.insert("queue_length".to_string(), self.batch_queue.len() as f64);
 
         // Calculate average processing rate
@@ -958,16 +1005,19 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
             self.active_batches
                 .values()
                 .map(|batch| batch.progress.processing_rate)
-                .sum::<f64>() / self.active_batches.len() as f64
+                .sum::<f64>()
+                / self.active_batches.len() as f64
         };
         stats.insert("avg_processing_rate".to_string(), avg_processing_rate);
 
         // Calculate average completion rate
-        let total_completed: usize = self.active_batches
+        let total_completed: usize = self
+            .active_batches
             .values()
             .map(|batch| batch.progress.completed_partitions)
             .sum();
-        let total_partitions: usize = self.active_batches
+        let total_partitions: usize = self
+            .active_batches
             .values()
             .map(|batch| batch.progress.total_partitions)
             .sum();
@@ -1014,7 +1064,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> BatchCoo
             self.update_statistics();
             Ok(())
         } else {
-            Err(OptimError::ConfigurationError("Batch not found".to_string()))
+            Err(OptimError::ConfigurationError(
+                "Batch not found".to_string(),
+            ))
         }
     }
 
@@ -1073,7 +1125,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_creation() {
-        let mut coordinator = BatchCoordinator::<f32>::new(BatchParallelizationStrategy::DataParallel).unwrap();
+        let mut coordinator =
+            BatchCoordinator::<f32>::new(BatchParallelizationStrategy::DataParallel).unwrap();
         let batch_data = BatchData::default();
 
         let batch_id = coordinator.create_batch(batch_data).await;
@@ -1083,7 +1136,8 @@ mod tests {
 
     #[test]
     fn test_partition_status_update() {
-        let mut coordinator = BatchCoordinator::<f32>::new(BatchParallelizationStrategy::DataParallel).unwrap();
+        let mut coordinator =
+            BatchCoordinator::<f32>::new(BatchParallelizationStrategy::DataParallel).unwrap();
 
         // This test would need a proper setup with active batches
         // For now, just test that the method exists and handles errors appropriately

@@ -6,7 +6,9 @@
 // automated report generation to monitor and optimize synchronization performance
 // across distributed TPU systems.
 
-use crate::tpu::pod_coordination::synchronization::clocks::quality::{QualityGrade, TrendDirection};
+use crate::tpu::pod_coordination::synchronization::clocks::quality::{
+    QualityGrade, TrendDirection,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -397,7 +399,7 @@ pub struct DataRetention {
 impl Default for DataRetention {
     fn default() -> Self {
         Self {
-            raw_data: Duration::from_secs(86400),    // 1 day
+            raw_data: Duration::from_secs(86400),          // 1 day
             aggregated_data: Duration::from_secs(2592000), // 30 days
             summary_data: Duration::from_secs(31536000),   // 1 year
             archival: ArchivalPolicy::default(),
@@ -423,7 +425,9 @@ impl Default for ArchivalPolicy {
     fn default() -> Self {
         Self {
             enabled: false,
-            destination: ArchivalDestination::FileSystem { path: "/archive".to_string() },
+            destination: ArchivalDestination::FileSystem {
+                path: "/archive".to_string(),
+            },
             compression: CompressionSettings::default(),
         }
     }
@@ -621,12 +625,14 @@ impl PerformanceHistory {
     pub fn get_recent_summary(&self, window: Duration) -> PerformanceSummary {
         let cutoff_time = Instant::now() - window;
 
-        let recent_accuracy: Vec<_> = self.accuracy_history
+        let recent_accuracy: Vec<_> = self
+            .accuracy_history
             .iter()
             .filter(|m| m.timestamp > cutoff_time)
             .collect();
 
-        let recent_stability: Vec<_> = self.stability_history
+        let recent_stability: Vec<_> = self
+            .stability_history
             .iter()
             .filter(|m| m.timestamp > cutoff_time)
             .collect();
@@ -1227,7 +1233,11 @@ impl StatisticsCollector {
     }
 
     /// Collect performance measurement
-    pub fn collect_measurement(&mut self, metric: PerformanceMetric, value: f64) -> Result<(), StatisticsError> {
+    pub fn collect_measurement(
+        &mut self,
+        metric: PerformanceMetric,
+        value: f64,
+    ) -> Result<(), StatisticsError> {
         let measurement = PerformanceMeasurement::new(value);
 
         match metric {
@@ -1250,8 +1260,12 @@ impl StatisticsCollector {
     }
 
     /// Generate performance report
-    pub fn generate_report(&self, template: &ReportTemplate) -> Result<PerformanceReport, StatisticsError> {
-        self.report_generator.generate_report(template, &self.current_stats, &self.history)
+    pub fn generate_report(
+        &self,
+        template: &ReportTemplate,
+    ) -> Result<PerformanceReport, StatisticsError> {
+        self.report_generator
+            .generate_report(template, &self.current_stats, &self.history)
     }
 
     /// Get current statistics
@@ -1374,10 +1388,18 @@ pub enum StatisticsError {
 impl std::fmt::Display for StatisticsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StatisticsError::CollectionError(msg) => write!(f, "Statistics collection error: {}", msg),
-            StatisticsError::ReportGenerationError(msg) => write!(f, "Report generation error: {}", msg),
-            StatisticsError::DistributionError(msg) => write!(f, "Report distribution error: {}", msg),
-            StatisticsError::ConfigurationError(msg) => write!(f, "Statistics configuration error: {}", msg),
+            StatisticsError::CollectionError(msg) => {
+                write!(f, "Statistics collection error: {}", msg)
+            }
+            StatisticsError::ReportGenerationError(msg) => {
+                write!(f, "Report generation error: {}", msg)
+            }
+            StatisticsError::DistributionError(msg) => {
+                write!(f, "Report distribution error: {}", msg)
+            }
+            StatisticsError::ConfigurationError(msg) => {
+                write!(f, "Statistics configuration error: {}", msg)
+            }
             StatisticsError::StorageError(msg) => write!(f, "Statistics storage error: {}", msg),
         }
     }

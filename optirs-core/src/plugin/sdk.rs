@@ -549,7 +549,7 @@ impl PluginTemplate {
 //
 // This is an auto-generated plugin template.
 
-use scirs2_optim::plugin::*;
+use optirs_core::plugin::*;
 use scirs2_core::ndarray_ext::Array1;
 use num_traits::Float;
 

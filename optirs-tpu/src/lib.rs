@@ -19,4 +19,9 @@ pub mod tpu_backend;
 pub mod xla;
 pub mod xla_compilation;
 
+// Re-export main types from mod.rs
+mod main_types;
+pub use main_types::*;
+
 pub use coordination::PodCoordinator;
+pub use tpu_backend::DeviceId;

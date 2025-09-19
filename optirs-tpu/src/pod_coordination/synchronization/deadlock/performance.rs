@@ -967,9 +967,7 @@ impl Default for VerticalPerformanceMonitoring {
                 VerticalMetric::ResourceUtilization,
                 VerticalMetric::PerformanceDegradation,
             ],
-            triggers: vec![
-                ScalingTrigger::CpuUtilization { threshold: 90.0 },
-            ],
+            triggers: vec![ScalingTrigger::CpuUtilization { threshold: 90.0 }],
             cooldown: Duration::from_secs(300),
         }
     }

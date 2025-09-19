@@ -43,3 +43,7 @@ learned = ["dep:optirs-learned"]
 nas = ["dep:optirs-nas"]
 bench = ["dep:optirs-bench"]
 full = ["gpu", "tpu", "learned", "nas", "bench"]
+
+[[example]]
+name = "scirs2_integration_demo"
+path = "../examples/scirs2_integration_demo.rs"

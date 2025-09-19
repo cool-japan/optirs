@@ -4,7 +4,7 @@
 //! input validation, privacy guarantee verification, memory safety analysis, and more.
 
 use scirs2_core::ndarray_ext::Array1;
-use scirs2_optim::{
+use optirs_core::{
     benchmarking::security_auditor::*,
     error::Result,
     optimizers::{Adam, Optimizer, SGD},

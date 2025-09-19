@@ -331,7 +331,7 @@ impl<A: Float + ScalarOperand + Debug> NeuralOptimizer<A> {
 ### Hyperparameter Optimization
 
 ```rust
-use scirs2_optim::meta_learning::*;
+use optirs_core::meta_learning::*;
 use std::collections::HashMap;
 
 // Grid search example
@@ -438,7 +438,7 @@ println!("Predicted hyperparameters: {:?}", predicted_hyperparams);
 ### Meta-Learning Optimizer
 
 ```rust
-use scirs2_optim::meta_learning::*;
+use optirs_core::meta_learning::*;
 use ndarray::{Array1, Array2};
 
 // Create meta-optimizer

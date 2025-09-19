@@ -36,8 +36,8 @@ use std::marker::PhantomData;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{Lookahead, SGD};
-/// use scirs2_optim::Optimizer;
+/// use optirs_core::optimizers::{Lookahead, SGD};
+/// use optirs_core::Optimizer;
 ///
 /// // Create an inner optimizer
 /// let sgd = SGD::new(0.01);

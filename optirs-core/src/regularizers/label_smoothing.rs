@@ -21,7 +21,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::LabelSmoothing;
+/// use optirs_core::regularizers::LabelSmoothing;
 ///
 /// let label_smooth = LabelSmoothing::new(0.1, 3).unwrap();
 /// let one_hot_target = array![0.0, 1.0, 0.0];

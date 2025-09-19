@@ -54,7 +54,7 @@ pub enum DecayStrategy<A: Float + Debug> {
 /// # Examples
 ///
 /// ```
-/// use scirs2_optim::schedulers::{LinearWarmupDecay, DecayStrategy, LearningRateScheduler};
+/// use optirs_core::schedulers::{LinearWarmupDecay, DecayStrategy, LearningRateScheduler};
 ///
 /// // Create a scheduler with linear warmup for 10 steps, followed by linear decay
 /// // to 0.001 over 90 steps

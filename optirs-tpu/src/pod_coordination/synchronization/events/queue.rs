@@ -6,15 +6,15 @@
 // and health management.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque, BTreeMap, BinaryHeap};
-use std::sync::{Arc, Mutex, RwLock, Condvar};
-use std::time::{Duration, Instant, SystemTime};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
+use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::time::{interval, sleep};
-use std::cmp::Ordering;
-use std::fmt;
-use std::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool, Ordering as AtomicOrdering};
 
 /// Event queue configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -929,7 +929,10 @@ pub enum FlowControlAlgorithm {
     /// Sliding window
     SlidingWindow { window_size: usize },
     /// Token bucket
-    TokenBucket { bucket_size: usize, refill_rate: f64 },
+    TokenBucket {
+        bucket_size: usize,
+        refill_rate: f64,
+    },
     /// Leaky bucket
     LeakyBucket { bucket_size: usize, leak_rate: f64 },
     /// Custom algorithm
@@ -1354,7 +1357,10 @@ pub enum ForecastingModel {
     /// ARIMA model
     ARIMA { p: usize, d: usize, q: usize },
     /// Prophet model
-    Prophet { yearly_seasonality: bool, weekly_seasonality: bool },
+    Prophet {
+        yearly_seasonality: bool,
+        weekly_seasonality: bool,
+    },
     /// Neural network
     NeuralNetwork { hidden_layers: Vec<usize> },
     /// Linear regression
@@ -1690,32 +1696,27 @@ pub struct EventQueuePresets;
 impl EventQueuePresets {
     /// High-performance configuration for low-latency scenarios
     pub fn high_performance() -> EventQueue {
-        EventQueueBuilder::new()
-            .build() // Simplified for example
+        EventQueueBuilder::new().build() // Simplified for example
     }
 
     /// High-throughput configuration for batch processing
     pub fn high_throughput() -> EventQueue {
-        EventQueueBuilder::new()
-            .build() // Simplified for example
+        EventQueueBuilder::new().build() // Simplified for example
     }
 
     /// Reliable configuration with strong durability guarantees
     pub fn reliable() -> EventQueue {
-        EventQueueBuilder::new()
-            .build() // Simplified for example
+        EventQueueBuilder::new().build() // Simplified for example
     }
 
     /// Memory-optimized configuration for resource-constrained environments
     pub fn memory_optimized() -> EventQueue {
-        EventQueueBuilder::new()
-            .build() // Simplified for example
+        EventQueueBuilder::new().build() // Simplified for example
     }
 
     /// Development configuration with enhanced debugging and monitoring
     pub fn development() -> EventQueue {
-        EventQueueBuilder::new()
-            .build() // Simplified for example
+        EventQueueBuilder::new().build() // Simplified for example
     }
 }
 

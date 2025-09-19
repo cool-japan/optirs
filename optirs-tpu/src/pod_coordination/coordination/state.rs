@@ -4,8 +4,8 @@
 // synchronization information, and statistics for TPU pod coordination systems.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use std::sync::{Arc, RwLock, Mutex};
 
 use super::super::super::tpu_backend::DeviceId;
 use crate::error::{OptimError, Result};
@@ -211,7 +211,10 @@ pub enum TransitionCondition {
     /// System state condition
     SystemState { condition: String },
     /// Device state condition
-    DeviceState { device_id: DeviceId, condition: String },
+    DeviceState {
+        device_id: DeviceId,
+        condition: String,
+    },
     /// Custom condition
     Custom { expression: String },
 }
@@ -785,10 +788,9 @@ impl CoordinationPhase {
     /// Get valid next phases
     pub fn valid_transitions(&self) -> Vec<CoordinationPhase> {
         match self {
-            CoordinationPhase::Initialization => vec![
-                CoordinationPhase::Active,
-                CoordinationPhase::ErrorRecovery,
-            ],
+            CoordinationPhase::Initialization => {
+                vec![CoordinationPhase::Active, CoordinationPhase::ErrorRecovery]
+            }
             CoordinationPhase::Active => vec![
                 CoordinationPhase::Synchronization,
                 CoordinationPhase::Cleanup,
@@ -796,23 +798,20 @@ impl CoordinationPhase {
                 CoordinationPhase::Maintenance,
                 CoordinationPhase::Shutdown,
             ],
-            CoordinationPhase::Synchronization => vec![
-                CoordinationPhase::Active,
-                CoordinationPhase::ErrorRecovery,
-            ],
-            CoordinationPhase::Cleanup => vec![
-                CoordinationPhase::Active,
-                CoordinationPhase::Shutdown,
-            ],
+            CoordinationPhase::Synchronization => {
+                vec![CoordinationPhase::Active, CoordinationPhase::ErrorRecovery]
+            }
+            CoordinationPhase::Cleanup => {
+                vec![CoordinationPhase::Active, CoordinationPhase::Shutdown]
+            }
             CoordinationPhase::ErrorRecovery => vec![
                 CoordinationPhase::Active,
                 CoordinationPhase::Initialization,
                 CoordinationPhase::Shutdown,
             ],
-            CoordinationPhase::Maintenance => vec![
-                CoordinationPhase::Active,
-                CoordinationPhase::Shutdown,
-            ],
+            CoordinationPhase::Maintenance => {
+                vec![CoordinationPhase::Active, CoordinationPhase::Shutdown]
+            }
             CoordinationPhase::Shutdown => vec![],
         }
     }
@@ -1126,7 +1125,11 @@ impl CoordinationState {
 
         // Record transition
         let transition = StateTransition {
-            transition_id: format!("{}-{}", chrono::Utc::now().timestamp(), scirs2_core::random::random::<u32>()),
+            transition_id: format!(
+                "{}-{}",
+                chrono::Utc::now().timestamp(),
+                scirs2_core::random::random::<u32>()
+            ),
             from_phase: self.current_phase.clone(),
             to_phase: new_phase.clone(),
             timestamp: Instant::now(),
@@ -1144,7 +1147,8 @@ impl CoordinationState {
 
     /// Add a new coordination session
     pub fn add_session(&mut self, session: CoordinationSession) {
-        self.active_sessions.insert(session.session_id.clone(), session);
+        self.active_sessions
+            .insert(session.session_id.clone(), session);
         self.statistics.total_sessions += 1;
     }
 
@@ -1161,12 +1165,14 @@ impl CoordinationState {
     /// Update statistics
     fn update_statistics(&mut self) -> Result<()> {
         // Update session statistics
-        let completed_sessions = self.active_sessions
+        let completed_sessions = self
+            .active_sessions
             .values()
             .filter(|s| matches!(s.status, SessionStatus::Completed))
             .count();
 
-        let failed_sessions = self.active_sessions
+        let failed_sessions = self
+            .active_sessions
             .values()
             .filter(|s| matches!(s.status, SessionStatus::Failed { .. }))
             .count();
@@ -1175,7 +1181,8 @@ impl CoordinationState {
         self.statistics.failed_sessions += failed_sessions;
 
         // Calculate average duration
-        let durations: Vec<Duration> = self.active_sessions
+        let durations: Vec<Duration> = self
+            .active_sessions
             .values()
             .filter_map(|s| s.metadata.metrics.duration)
             .collect();
@@ -1200,10 +1207,7 @@ impl StateHistory {
     }
 
     /// Take a state snapshot
-    pub fn take_snapshot(
-        &mut self,
-        state: &CoordinationState,
-    ) -> Result<()> {
+    pub fn take_snapshot(&mut self, state: &CoordinationState) -> Result<()> {
         let snapshot = StateSnapshot {
             snapshot_id: format!("snapshot-{}", chrono::Utc::now().timestamp()),
             timestamp: Instant::now(),
@@ -1439,7 +1443,9 @@ impl Default for EncryptionConfig {
         Self {
             enabled: false,
             algorithm: EncryptionAlgorithm::AES256,
-            key_management: KeyManagement::Static { key: "default".to_string() },
+            key_management: KeyManagement::Static {
+                key: "default".to_string(),
+            },
         }
     }
 }
@@ -1447,7 +1453,9 @@ impl Default for EncryptionConfig {
 impl Default for BackupSchedule {
     fn default() -> Self {
         Self {
-            schedule_type: ScheduleType::Interval { interval: Duration::from_secs(3600) },
+            schedule_type: ScheduleType::Interval {
+                interval: Duration::from_secs(3600),
+            },
             config: ScheduleConfig::default(),
         }
     }

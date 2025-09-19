@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 // Re-export types from submodules for convenience
-pub use super::super::delivery::{EventDelivery};
-pub use super::super::ordering::{EventOrdering};
-pub use super::super::filtering::{EventFiltering};
-pub use super::super::persistence::{EventPersistence};
-pub use super::super::compression::{EventCompression};
-pub use super::super::routing::{EventRouting};
-pub use super::super::queue::{EventQueue};
-pub use super::super::handlers::{EventHandlers};
+pub use super::super::compression::EventCompression;
+pub use super::super::delivery::EventDelivery;
+pub use super::super::filtering::EventFiltering;
+pub use super::super::handlers::EventHandlers;
+pub use super::super::ordering::EventOrdering;
+pub use super::super::persistence::EventPersistence;
+pub use super::super::queue::EventQueue;
+pub use super::super::routing::EventRouting;
 
 /// Comprehensive event synchronization configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -777,7 +777,10 @@ pub enum EventIdType {
     /// Sequential IDs
     Sequential { start: u64, increment: u64 },
     /// Hash-based IDs
-    Hash { algorithm: String, input_fields: Vec<String> },
+    Hash {
+        algorithm: String,
+        input_fields: Vec<String>,
+    },
     /// Custom ID format
     Custom { format: String, generator: String },
 }
@@ -801,11 +804,17 @@ pub enum IdGenerationStrategy {
     /// Centralized generation
     Centralized { generator_endpoint: String },
     /// Distributed generation
-    Distributed { node_id: String, coordination: String },
+    Distributed {
+        node_id: String,
+        coordination: String,
+    },
     /// Local generation
     Local { seed: Option<u64> },
     /// Hybrid generation
-    Hybrid { primary: Box<IdGenerationStrategy>, fallback: Box<IdGenerationStrategy> },
+    Hybrid {
+        primary: Box<IdGenerationStrategy>,
+        fallback: Box<IdGenerationStrategy>,
+    },
 }
 
 /// ID validation configuration

@@ -19,7 +19,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::regularizers::Dropout;
+/// use optirs_core::regularizers::Dropout;
 /// use scirs2_core::random::SeedableRng;
 /// use scirs2_core::random::rngs::SmallRng;
 ///

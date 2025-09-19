@@ -280,7 +280,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
                     self.patience_counter = 0;
 
                     // Slight increase in learning rate if loss is improving well
-                    self.current_lr * num_traits::cast::cast(1.01).unwrap_or_else(|| T::zero())
+                    Ok(self.current_lr * num_traits::cast::cast(1.01).unwrap_or_else(|| T::zero()))
                 } else {
                     // Loss didn't improve sufficiently
                     self.patience_counter += 1;
@@ -288,18 +288,18 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
                     if self.patience_counter >= self.adaptation_params.patience {
                         // Reduce learning rate
                         self.patience_counter = 0;
-                        self.current_lr * self.adaptation_params.reduction_factor
+                        Ok(self.current_lr * self.adaptation_params.reduction_factor)
                     } else {
-                        self.current_lr
+                        Ok(self.current_lr)
                     }
                 }
             } else {
                 // First loss value
                 self.best_loss = Some(current_loss);
-                self.current_lr
+                Ok(self.current_lr)
             }
         } else {
-            self.current_lr
+            Ok(self.current_lr)
         }
     }
 
@@ -322,7 +322,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
             let adapted_lr =
                 self.current_lr * (T::one() - alpha) + (self.base_lr * scale_factor) * alpha;
 
-            adapted_lr
+            Ok(adapted_lr)
         } else {
             Ok(self.current_lr)
         }

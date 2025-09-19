@@ -5,7 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use clap::{Arg, ArgMatches, Command};
-use scirs2_optim::error::{OptimError, Result};
+use optirs_core::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;

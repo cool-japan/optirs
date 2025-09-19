@@ -1,7 +1,7 @@
 // Builder patterns for event synchronization system
 
-use std::time::Duration;
 use super::types::*;
+use std::time::Duration;
 
 /// Event synchronization builder for comprehensive configuration
 pub struct EventSyncBuilder {
@@ -115,23 +115,17 @@ pub struct EventSyncPresets;
 impl EventSyncPresets {
     /// High-performance configuration for low-latency scenarios
     pub fn high_performance() -> EventSynchronization {
-        EventSyncBuilder::new()
-            .with_high_performance()
-            .build()
+        EventSyncBuilder::new().with_high_performance().build()
     }
 
     /// Reliable configuration with strong durability guarantees
     pub fn reliable() -> EventSynchronization {
-        EventSyncBuilder::new()
-            .with_reliable_delivery()
-            .build()
+        EventSyncBuilder::new().with_reliable_delivery().build()
     }
 
     /// Memory-optimized configuration
     pub fn memory_optimized() -> EventSynchronization {
-        EventSyncBuilder::new()
-            .with_compression_enabled()
-            .build()
+        EventSyncBuilder::new().with_compression_enabled().build()
     }
 
     /// Development configuration with enhanced debugging

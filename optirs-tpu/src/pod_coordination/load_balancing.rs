@@ -202,10 +202,7 @@ impl PodLoadBalancer {
             .collect();
 
         let mean: f64 = utilizations.iter().sum::<f64>() / utilizations.len() as f64;
-        let variance: f64 = utilizations
-            .iter()
-            .map(|u| (u - mean).powi(2))
-            .sum::<f64>()
+        let variance: f64 = utilizations.iter().map(|u| (u - mean).powi(2)).sum::<f64>()
             / utilizations.len() as f64;
 
         // Return inverse of variance (higher is better balance)
@@ -220,9 +217,7 @@ impl PodLoadBalancer {
     pub fn identify_hotspots(&self, threshold: f64) -> Vec<DeviceId> {
         self.device_loads
             .iter()
-            .filter(|(_, load)| {
-                (load.cpu_utilization + load.memory_utilization) / 2.0 > threshold
-            })
+            .filter(|(_, load)| (load.cpu_utilization + load.memory_utilization) / 2.0 > threshold)
             .map(|(device_id, _)| *device_id)
             .collect()
     }
@@ -289,26 +284,22 @@ impl PodLoadBalancer {
             RebalancingTrigger::LoadImbalance(threshold) => {
                 self.calculate_load_balance_metric() < *threshold
             }
-            RebalancingTrigger::HighUtilization(threshold) => {
-                self.device_loads.values().any(|load| {
-                    (load.cpu_utilization + load.memory_utilization) / 2.0 > *threshold
-                })
-            }
-            RebalancingTrigger::LowUtilization(threshold) => {
-                self.device_loads.values().all(|load| {
-                    (load.cpu_utilization + load.memory_utilization) / 2.0 < *threshold
-                })
-            }
-            RebalancingTrigger::QueueBacklog(threshold) => {
-                self.device_loads
-                    .values()
-                    .any(|load| load.queue_length > *threshold)
-            }
-            RebalancingTrigger::TemperatureThreshold(threshold) => {
-                self.device_loads
-                    .values()
-                    .any(|load| load.temperature > *threshold)
-            }
+            RebalancingTrigger::HighUtilization(threshold) => self
+                .device_loads
+                .values()
+                .any(|load| (load.cpu_utilization + load.memory_utilization) / 2.0 > *threshold),
+            RebalancingTrigger::LowUtilization(threshold) => self
+                .device_loads
+                .values()
+                .all(|load| (load.cpu_utilization + load.memory_utilization) / 2.0 < *threshold),
+            RebalancingTrigger::QueueBacklog(threshold) => self
+                .device_loads
+                .values()
+                .any(|load| load.queue_length > *threshold),
+            RebalancingTrigger::TemperatureThreshold(threshold) => self
+                .device_loads
+                .values()
+                .any(|load| load.temperature > *threshold),
             RebalancingTrigger::Custom(_) => false, // Custom triggers need custom evaluation
         }
     }
@@ -319,9 +310,7 @@ impl PodLoadBalancer {
         let underutilized: Vec<DeviceId> = self
             .device_loads
             .iter()
-            .filter(|(_, load)| {
-                (load.cpu_utilization + load.memory_utilization) / 2.0 < 0.5
-            })
+            .filter(|(_, load)| (load.cpu_utilization + load.memory_utilization) / 2.0 < 0.5)
             .map(|(device_id, _)| *device_id)
             .collect();
 
@@ -348,7 +337,10 @@ impl PodLoadBalancer {
             .sum();
         let target_load = total_load / self.device_loads.len() as f64;
 
-        println!("Redistributing load with target utilization: {:.2}", target_load);
+        println!(
+            "Redistributing load with target utilization: {:.2}",
+            target_load
+        );
 
         // Update migration manager with redistribution plan
         for (device_id, load) in &self.device_loads {
@@ -406,10 +398,7 @@ impl PodLoadBalancer {
                 0.0
             } else {
                 let mean: f64 = utilizations.iter().sum::<f64>() / utilizations.len() as f64;
-                utilizations
-                    .iter()
-                    .map(|u| (u - mean).powi(2))
-                    .sum::<f64>()
+                utilizations.iter().map(|u| (u - mean).powi(2)).sum::<f64>()
                     / utilizations.len() as f64
             }
         });
@@ -686,17 +675,23 @@ mod tests {
         let mut balancer = PodLoadBalancer::new(LoadBalancingStrategy::Dynamic).unwrap();
 
         // Add some test devices with varying loads
-        balancer.update_device_load(DeviceId(0), DeviceLoad {
-            cpu_utilization: 0.5,
-            memory_utilization: 0.6,
-            ..Default::default()
-        });
+        balancer.update_device_load(
+            DeviceId(0),
+            DeviceLoad {
+                cpu_utilization: 0.5,
+                memory_utilization: 0.6,
+                ..Default::default()
+            },
+        );
 
-        balancer.update_device_load(DeviceId(1), DeviceLoad {
-            cpu_utilization: 0.8,
-            memory_utilization: 0.7,
-            ..Default::default()
-        });
+        balancer.update_device_load(
+            DeviceId(1),
+            DeviceLoad {
+                cpu_utilization: 0.8,
+                memory_utilization: 0.7,
+                ..Default::default()
+            },
+        );
 
         let metric = balancer.calculate_load_balance_metric();
         assert!(metric > 0.0 && metric <= 1.0);
@@ -706,17 +701,23 @@ mod tests {
     fn test_hotspot_identification() {
         let mut balancer = PodLoadBalancer::new(LoadBalancingStrategy::Dynamic).unwrap();
 
-        balancer.update_device_load(DeviceId(0), DeviceLoad {
-            cpu_utilization: 0.9,
-            memory_utilization: 0.95,
-            ..Default::default()
-        });
+        balancer.update_device_load(
+            DeviceId(0),
+            DeviceLoad {
+                cpu_utilization: 0.9,
+                memory_utilization: 0.95,
+                ..Default::default()
+            },
+        );
 
-        balancer.update_device_load(DeviceId(1), DeviceLoad {
-            cpu_utilization: 0.3,
-            memory_utilization: 0.4,
-            ..Default::default()
-        });
+        balancer.update_device_load(
+            DeviceId(1),
+            DeviceLoad {
+                cpu_utilization: 0.3,
+                memory_utilization: 0.4,
+                ..Default::default()
+            },
+        );
 
         let hotspots = balancer.identify_hotspots(0.8);
         assert_eq!(hotspots.len(), 1);
@@ -726,7 +727,13 @@ mod tests {
     #[test]
     fn test_load_balancer_device_selection() {
         let balancer = LoadBalancer::new();
-        let devices = vec![DeviceId(0), DeviceId(1), DeviceId(2), DeviceId(3), DeviceId(4)];
+        let devices = vec![
+            DeviceId(0),
+            DeviceId(1),
+            DeviceId(2),
+            DeviceId(3),
+            DeviceId(4),
+        ];
         let mut availability = HashMap::new();
 
         for &device in &devices {

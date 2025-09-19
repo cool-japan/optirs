@@ -5,18 +5,18 @@
 // communications between TPU devices in a pod configuration.
 
 use num_traits::Float;
-use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::buffer_management::*;
 use super::compression::*;
+use super::monitoring::*;
 use super::network_config::*;
 use super::qos::*;
 use super::reliability::*;
-use super::monitoring::*;
 use super::routing::*;
 use crate::error::{OptimError, Result};
 
@@ -101,7 +101,10 @@ pub enum OptimizationStrategy {
     /// Balance latency and throughput
     BalanceLatencyThroughput { weight: f64 },
     /// Custom optimization function
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Performance targets for optimization
@@ -180,7 +183,10 @@ pub enum AnomalyDetectionAlgorithm {
     /// Exponential smoothing
     ExponentialSmoothing { alpha: f64, threshold: f64 },
     /// Machine learning based
-    MachineLearning { model_type: String, parameters: HashMap<String, f64> },
+    MachineLearning {
+        model_type: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Actions to take when anomalies are detected
@@ -195,7 +201,10 @@ pub enum AnomalyResponseAction {
     /// Increase monitoring frequency
     IncreaseMonitoring { factor: f64 },
     /// Execute custom action
-    Custom { action: String, parameters: HashMap<String, String> },
+    Custom {
+        action: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Alert severity levels
@@ -232,11 +241,20 @@ pub enum AdaptationAlgorithm {
     /// Gradient descent optimization
     GradientDescent { learning_rate: f64, momentum: f64 },
     /// Genetic algorithm
-    GeneticAlgorithm { population_size: usize, mutation_rate: f64 },
+    GeneticAlgorithm {
+        population_size: usize,
+        mutation_rate: f64,
+    },
     /// Simulated annealing
-    SimulatedAnnealing { initial_temperature: f64, cooling_rate: f64 },
+    SimulatedAnnealing {
+        initial_temperature: f64,
+        cooling_rate: f64,
+    },
     /// Reinforcement learning
-    ReinforcementLearning { algorithm: String, parameters: HashMap<String, f64> },
+    ReinforcementLearning {
+        algorithm: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Stability requirements for adaptation
@@ -432,7 +450,10 @@ pub enum SchedulingAlgorithm {
     /// Earliest deadline first
     EarliestDeadlineFirst,
     /// Custom scheduling algorithm
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Scheduled communication entry
@@ -509,7 +530,10 @@ pub enum SchedulingConstraint {
     /// Requires specific resources
     RequiresResource { resource: String },
     /// Custom constraint
-    Custom { name: String, parameters: HashMap<String, String> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, String>,
+    },
 }
 
 /// Scheduler statistics
@@ -606,7 +630,10 @@ pub enum LoadBalancingAlgorithm {
     /// Resource-based balancing
     ResourceBased,
     /// Custom algorithm
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> CommunicationManager<T> {
@@ -642,7 +669,8 @@ impl<T: Float + Debug + Send + Sync + 'static> CommunicationManager<T> {
         self.validate_communication_request(&request)?;
 
         // Schedule the communication
-        self.scheduler.schedule_communication(request.clone(), comm_id)?;
+        self.scheduler
+            .schedule_communication(request.clone(), comm_id)?;
 
         // Create active communication tracking
         let active_comm = ActiveCommunication {
@@ -682,7 +710,10 @@ impl<T: Float + Debug + Send + Sync + 'static> CommunicationManager<T> {
     }
 
     /// Get status of a communication
-    pub fn get_communication_status(&self, comm_id: CommunicationId) -> Option<&CommunicationStatus> {
+    pub fn get_communication_status(
+        &self,
+        comm_id: CommunicationId,
+    ) -> Option<&CommunicationStatus> {
         self.active_communications
             .get(&comm_id)
             .map(|comm| &comm.status)
@@ -714,15 +745,25 @@ impl<T: Float + Debug + Send + Sync + 'static> CommunicationManager<T> {
         }
 
         if active_count > 0 {
-            let avg_latency = total_latency / num_traits::cast::cast(active_count).unwrap_or_else(|| T::zero());
-            let avg_throughput = total_throughput / num_traits::cast::cast(active_count).unwrap_or_else(|| T::zero());
+            let avg_latency =
+                total_latency / num_traits::cast::cast(active_count).unwrap_or_else(|| T::zero());
+            let avg_throughput = total_throughput
+                / num_traits::cast::cast(active_count).unwrap_or_else(|| T::zero());
 
-            self.statistics.insert("avg_latency_us".to_string(), avg_latency.to_f64().unwrap());
-            self.statistics.insert("avg_throughput_mbps".to_string(), avg_throughput.to_f64().unwrap());
+            self.statistics
+                .insert("avg_latency_us".to_string(), avg_latency.to_f64().unwrap());
+            self.statistics.insert(
+                "avg_throughput_mbps".to_string(),
+                avg_throughput.to_f64().unwrap(),
+            );
         }
 
-        self.statistics.insert("active_communications".to_string(), active_count as f64);
-        self.statistics.insert("total_communications".to_string(), self.active_communications.len() as f64);
+        self.statistics
+            .insert("active_communications".to_string(), active_count as f64);
+        self.statistics.insert(
+            "total_communications".to_string(),
+            self.active_communications.len() as f64,
+        );
     }
 
     /// Get communication statistics
@@ -786,7 +827,10 @@ impl CommunicationScheduler {
 
         // Add to appropriate queue based on priority
         let priority = request.priority;
-        let queue = self.priority_queues.entry(priority).or_insert_with(VecDeque::new);
+        let queue = self
+            .priority_queues
+            .entry(priority)
+            .or_insert_with(VecDeque::new);
         queue.push_back(scheduled_comm);
 
         self.statistics.total_scheduled += 1;
@@ -796,7 +840,12 @@ impl CommunicationScheduler {
     /// Get next scheduled communication
     pub fn get_next_scheduled(&mut self) -> Option<ScheduledCommunication> {
         // Process queues in priority order
-        for priority in [Priority::Critical, Priority::High, Priority::Normal, Priority::Low] {
+        for priority in [
+            Priority::Critical,
+            Priority::High,
+            Priority::Normal,
+            Priority::Low,
+        ] {
             if let Some(queue) = self.priority_queues.get_mut(&priority) {
                 if let Some(scheduled_comm) = queue.pop_front() {
                     return Some(scheduled_comm);

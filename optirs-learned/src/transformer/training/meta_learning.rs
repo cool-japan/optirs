@@ -34,7 +34,15 @@ pub enum MetaLearningStrategy {
 /// Meta-learner for transformer optimizer
 #[derive(Debug, Clone)]
 pub struct TransformerMetaLearner<
-    T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync + 'static,
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + std::iter::Sum
+        + scirs2_core::ndarray_ext::ScalarOperand
+        + Send
+        + Sync
+        + 'static,
 > {
     /// Meta-learning strategy
     strategy: MetaLearningStrategy,
@@ -352,7 +360,18 @@ pub struct TransferEvent<T: Float + Debug + Send + Sync + 'static> {
     adaptation_time: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransformerMetaLearner<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > TransformerMetaLearner<T>
+{
     /// Create new meta-learner
     pub fn new(strategy: MetaLearningStrategy) -> Result<Self> {
         Ok(Self {
@@ -577,7 +596,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransformerMeta
 }
 
 // Implementation for supporting types
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DomainAdapter<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > DomainAdapter<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             adapters: HashMap::new(),
@@ -592,7 +622,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DomainAdapter<T
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> FewShotLearner<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > FewShotLearner<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             support_memory: HashMap::new(),
@@ -628,7 +669,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> FewShotLearner<
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ContinualLearningState<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > ContinualLearningState<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             ewc_params: HashMap::new(),
@@ -662,7 +714,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ContinualLearni
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DomainSimilarityEstimator<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > DomainSimilarityEstimator<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             similarity_matrix: HashMap::new(),
@@ -671,7 +734,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DomainSimilarit
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransferEfficiencyTracker<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > TransferEfficiencyTracker<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             transfer_history: Vec::new(),
@@ -680,7 +754,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransferEfficie
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DistanceMetricLearner<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > DistanceMetricLearner<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             metric_parameters: Array2::eye(10), // Default 10x10 identity matrix
@@ -689,7 +774,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DistanceMetricL
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for MetaLearningParams<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > Default for MetaLearningParams<T>
+{
     fn default() -> Self {
         Self {
             meta_learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
@@ -702,7 +798,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Met
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for FewShotParams<T> {
+impl<
+        T: Float
+            + Debug
+            + Send
+            + Sync
+            + 'static
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > Default for FewShotParams<T>
+{
     fn default() -> Self {
         Self {
             support_size: 5,

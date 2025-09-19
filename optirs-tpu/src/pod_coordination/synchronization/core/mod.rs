@@ -17,7 +17,7 @@
 // # Usage Example
 //
 // ```rust
-// use scirs2_optim::tpu::pod_coordination::synchronization::core::{
+// use optirs_core::tpu::pod_coordination::synchronization::core::{
 //     SynchronizationManager, SynchronizationConfig,
 //     CoordinationScheduler, PerformanceMonitor,
 //     AdaptiveOptimizer
@@ -62,74 +62,68 @@
 // - Active learning and exploration
 // - Meta-learning and transfer learning
 
-pub mod manager;
 pub mod config;
-pub mod state;
-pub mod scheduler;
+pub mod manager;
 pub mod monitoring;
 pub mod optimization;
+pub mod scheduler;
+pub mod state;
 
 // Re-export core management types
 pub use manager::{
-    SynchronizationManager, SynchronizationManagerBuilder,
-    SystemHealthStatus, HealthLevel, SyncSummary,
+    HealthLevel, SyncSummary, SynchronizationManager, SynchronizationManagerBuilder,
+    SystemHealthStatus,
 };
 
 // Re-export configuration types
 pub use config::{
-    SynchronizationConfig, SynchronizationMode, SchedulerConfig, SchedulingAlgorithm,
-    PrioritySettings, PriorityLevel, ResourceConfig, CPUAllocationConfig,
-    MemoryAllocationConfig, NetworkAllocationConfig, ResourceLimits,
-    MonitorConfig, MetricType, AlertConfig, AlertThresholds, NotificationConfig,
-    OptimizerConfig, OptimizationObjective, LearningConfig, LearningAlgorithm,
-    ConstraintConfig, RetrySettings, RetryCondition, BackoffStrategy,
+    AlertConfig, AlertThresholds, BackoffStrategy, CPUAllocationConfig, ConstraintConfig,
+    LearningAlgorithm, LearningConfig, MemoryAllocationConfig, MetricType, MonitorConfig,
+    NetworkAllocationConfig, NotificationConfig, OptimizationObjective, OptimizerConfig,
+    PriorityLevel, PrioritySettings, ResourceConfig, ResourceLimits, RetryCondition, RetrySettings,
+    SchedulerConfig, SchedulingAlgorithm, SynchronizationConfig, SynchronizationMode,
 };
 
 // Re-export state management types
 pub use state::{
-    GlobalSynchronizationState, GlobalSyncStatus, GlobalQualityMetrics,
-    DeviceSyncState, DeviceSyncStatus, DevicePerformanceMetrics,
-    ResourceUtilization, GlobalBarrier, ResourcePool, AllocatedResources,
-    ResourceUsageStatistics, UsageStatistics, PerformanceMetrics,
-    LatencyMetrics, ThroughputMetrics, ErrorRateMetrics, SyncQualityMetrics,
-    OptimizationState, ConvergenceStatus, SyncHealthSnapshot, HealthIssue,
-    IssueSeverity, PerformanceIndicators, TrendDirection,
+    AllocatedResources, ConvergenceStatus, DevicePerformanceMetrics, DeviceSyncState,
+    DeviceSyncStatus, ErrorRateMetrics, GlobalBarrier, GlobalQualityMetrics, GlobalSyncStatus,
+    GlobalSynchronizationState, HealthIssue, IssueSeverity, LatencyMetrics, OptimizationState,
+    PerformanceIndicators, PerformanceMetrics, ResourcePool, ResourceUsageStatistics,
+    ResourceUtilization, SyncHealthSnapshot, SyncQualityMetrics, ThroughputMetrics, TrendDirection,
+    UsageStatistics,
 };
 
 // Re-export scheduler types
 pub use scheduler::{
-    CoordinationScheduler, OperationId, ScheduledOperation, OperationType,
-    OperationParameters, OperationStatus, QueuedOperation, ExecutionRecord,
-    OperationResult, ExecutionMetrics, ResourceManager, ResourceRequirements,
-    SchedulerState, SchedulerStatus, SchedulerStatistics,
+    CoordinationScheduler, ExecutionMetrics, ExecutionRecord, OperationId, OperationParameters,
+    OperationResult, OperationStatus, OperationType, QueuedOperation, ResourceManager,
+    ResourceRequirements, ScheduledOperation, SchedulerState, SchedulerStatistics, SchedulerStatus,
 };
 
 // Re-export monitoring types
 pub use monitoring::{
-    PerformanceMonitor, MonitorState, MonitorStatus, DataCollector,
-    CollectorType, CollectedData, MetricValue, MonitoringHistory,
-    HistoricalMetric, MonitoringEvent, EventType, SeverityLevel,
-    TrendAnalysis, Trend, PredictionModel, ModelType, Prediction,
-    AnomalyResult, AnomalyType, AlertSystem, AlertId, Alert, AlertType,
-    AlertRule, AlertCondition, NotificationSystem, NotificationRecord,
-    NotificationStatus, AlertSummary,
+    Alert, AlertCondition, AlertId, AlertRule, AlertSummary, AlertSystem, AlertType, AnomalyResult,
+    AnomalyType, CollectedData, CollectorType, DataCollector, EventType, HistoricalMetric,
+    MetricValue, ModelType, MonitorState, MonitorStatus, MonitoringEvent, MonitoringHistory,
+    NotificationRecord, NotificationStatus, NotificationSystem, PerformanceMonitor, Prediction,
+    PredictionModel, SeverityLevel, Trend, TrendAnalysis,
 };
 
 // Re-export optimization types
 pub use optimization::{
-    AdaptiveOptimizer, ParameterSpace, ParameterDefinition, ParameterType,
-    ObjectiveEvaluator, EvaluationMetric, ObjectiveEvaluation, OptimizationStrategy,
-    StrategyType, StrategyContext, OptimizationHistory, OptimizationResult,
-    LearningSystem, Model, TrainingData, ModelPerformance, ActiveLearning,
-    MetaLearning, StrategyRecommendation,
+    ActiveLearning, AdaptiveOptimizer, EvaluationMetric, LearningSystem, MetaLearning, Model,
+    ModelPerformance, ObjectiveEvaluation, ObjectiveEvaluator, OptimizationHistory,
+    OptimizationResult, OptimizationStrategy, ParameterDefinition, ParameterSpace, ParameterType,
+    StrategyContext, StrategyRecommendation, StrategyType, TrainingData,
 };
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::error::{OptimError, Result};
 use crate::tpu::tpu_backend::DeviceId;
-use crate::error::{Result, OptimError};
 
 /// Core synchronization result type
 pub type CoreSyncResult<T> = Result<T>;
@@ -217,11 +211,11 @@ impl UnifiedCoreSynchronization {
         let manager = SynchronizationManager::new(config)
             .map_err(|e| CoreSyncError::Manager(e.to_string()))?;
 
-        let monitor = PerformanceMonitor::new()
-            .map_err(|e| CoreSyncError::Monitoring(e.to_string()))?;
+        let monitor =
+            PerformanceMonitor::new().map_err(|e| CoreSyncError::Monitoring(e.to_string()))?;
 
-        let optimizer = AdaptiveOptimizer::new()
-            .map_err(|e| CoreSyncError::Optimization(e.to_string()))?;
+        let optimizer =
+            AdaptiveOptimizer::new().map_err(|e| CoreSyncError::Optimization(e.to_string()))?;
 
         Ok(Self {
             manager,
@@ -234,13 +228,16 @@ impl UnifiedCoreSynchronization {
 
     /// Initialize all core components
     pub fn initialize(&mut self) -> CoreSyncResult<()> {
-        self.manager.start()
+        self.manager
+            .start()
             .map_err(|e| CoreSyncError::Manager(e.to_string()))?;
 
-        self.monitor.start()
+        self.monitor
+            .start()
             .map_err(|e| CoreSyncError::Monitoring(e.to_string()))?;
 
-        self.optimizer.start()
+        self.optimizer
+            .start()
             .map_err(|e| CoreSyncError::Optimization(e.to_string()))?;
 
         Ok(())
@@ -248,13 +245,16 @@ impl UnifiedCoreSynchronization {
 
     /// Shutdown all core components
     pub fn shutdown(&mut self) -> CoreSyncResult<()> {
-        self.optimizer.stop()
+        self.optimizer
+            .stop()
             .map_err(|e| CoreSyncError::Optimization(e.to_string()))?;
 
-        self.monitor.stop()
+        self.monitor
+            .stop()
             .map_err(|e| CoreSyncError::Monitoring(e.to_string()))?;
 
-        self.manager.stop()
+        self.manager
+            .stop()
             .map_err(|e| CoreSyncError::Manager(e.to_string()))?;
 
         Ok(())
@@ -262,7 +262,8 @@ impl UnifiedCoreSynchronization {
 
     /// Perform global synchronization
     pub fn global_sync(&mut self) -> CoreSyncResult<()> {
-        self.manager.global_sync()
+        self.manager
+            .global_sync()
             .map_err(|e| CoreSyncError::Manager(e.to_string()))?;
 
         self.update_statistics()?;
@@ -272,13 +273,15 @@ impl UnifiedCoreSynchronization {
 
     /// Add device to synchronization
     pub fn add_device(&mut self, device_id: DeviceId) -> CoreSyncResult<()> {
-        self.manager.add_device(device_id)
+        self.manager
+            .add_device(device_id)
             .map_err(|e| CoreSyncError::Manager(e.to_string()))
     }
 
     /// Remove device from synchronization
     pub fn remove_device(&mut self, device_id: DeviceId) -> CoreSyncResult<()> {
-        self.manager.remove_device(device_id)
+        self.manager
+            .remove_device(device_id)
             .map_err(|e| CoreSyncError::Manager(e.to_string()))
     }
 
@@ -299,7 +302,10 @@ impl UnifiedCoreSynchronization {
 
         // Get manager statistics
         let manager_stats = self.manager.get_statistics();
-        stats.total_operations = manager_stats.get("total_operations").copied().unwrap_or(0.0) as u64;
+        stats.total_operations = manager_stats
+            .get("total_operations")
+            .copied()
+            .unwrap_or(0.0) as u64;
 
         // Get performance metrics
         let perf_metrics = self.monitor.get_metrics();
@@ -324,13 +330,15 @@ impl UnifiedCoreSynchronization {
 
     /// Trigger optimization
     pub fn trigger_optimization(&mut self) -> CoreSyncResult<()> {
-        self.optimizer.optimize()
+        self.optimizer
+            .optimize()
             .map_err(|e| CoreSyncError::Optimization(e.to_string()))
     }
 
     /// Collect metrics
     pub fn collect_metrics(&mut self) -> CoreSyncResult<()> {
-        self.monitor.collect_metrics()
+        self.monitor
+            .collect_metrics()
             .map_err(|e| CoreSyncError::Monitoring(e.to_string()))
     }
 
@@ -340,7 +348,11 @@ impl UnifiedCoreSynchronization {
     }
 
     /// Schedule operation
-    pub fn schedule_operation(&mut self, operation_type: OperationType, devices: Vec<DeviceId>) -> CoreSyncResult<OperationId> {
+    pub fn schedule_operation(
+        &mut self,
+        operation_type: OperationType,
+        devices: Vec<DeviceId>,
+    ) -> CoreSyncResult<OperationId> {
         let params = OperationParameters {
             timeout: Duration::from_secs(60),
             priority: 5,
@@ -355,20 +367,28 @@ impl UnifiedCoreSynchronization {
             quality_requirements: None,
         };
 
-        self.manager.schedule_operation(operation_type, devices, params)
+        self.manager
+            .schedule_operation(operation_type, devices, params)
             .map_err(|e| CoreSyncError::Scheduler(e.to_string()))
     }
 
     /// Force synchronization of specific devices
     pub fn force_sync_devices(&mut self, device_ids: &[DeviceId]) -> CoreSyncResult<()> {
-        self.manager.force_sync_devices(device_ids)
+        self.manager
+            .force_sync_devices(device_ids)
             .map_err(|e| CoreSyncError::Manager(e.to_string()))
     }
 
     /// Create global barrier
-    pub fn create_global_barrier(&mut self, barrier_id: String, participants: Vec<DeviceId>, timeout: Duration) -> CoreSyncResult<()> {
+    pub fn create_global_barrier(
+        &mut self,
+        barrier_id: String,
+        participants: Vec<DeviceId>,
+        timeout: Duration,
+    ) -> CoreSyncResult<()> {
         let participants_set = participants.into_iter().collect();
-        self.manager.create_global_barrier(barrier_id, participants_set, timeout)
+        self.manager
+            .create_global_barrier(barrier_id, participants_set, timeout)
             .map_err(|e| CoreSyncError::Manager(e.to_string()))
     }
 
@@ -384,7 +404,8 @@ impl UnifiedCoreSynchronization {
 
     /// Update configuration
     pub fn update_config(&mut self, config: SynchronizationConfig) -> CoreSyncResult<()> {
-        self.manager.update_config(config)
+        self.manager
+            .update_config(config)
             .map_err(|e| CoreSyncError::Configuration(e.to_string()))
     }
 }
@@ -518,7 +539,9 @@ pub mod utils {
     /// Validate core configuration
     pub fn validate_core_config(config: &SynchronizationConfig) -> CoreSyncResult<()> {
         if config.global_timeout.as_secs() == 0 {
-            return Err(CoreSyncError::Configuration("Global timeout cannot be zero".to_string()));
+            return Err(CoreSyncError::Configuration(
+                "Global timeout cannot be zero".to_string(),
+            ));
         }
 
         Ok(())
@@ -565,7 +588,10 @@ pub mod testing {
     }
 
     /// Add test devices to core
-    pub fn add_test_devices(core: &mut UnifiedCoreSynchronization, count: usize) -> CoreSyncResult<Vec<DeviceId>> {
+    pub fn add_test_devices(
+        core: &mut UnifiedCoreSynchronization,
+        count: usize,
+    ) -> CoreSyncResult<Vec<DeviceId>> {
         let mut device_ids = Vec::new();
         for i in 0..count {
             let device_id = DeviceId::from(i as u32);
@@ -576,7 +602,10 @@ pub mod testing {
     }
 
     /// Simulate synchronization workload
-    pub fn simulate_workload(core: &mut UnifiedCoreSynchronization, operations: usize) -> CoreSyncResult<()> {
+    pub fn simulate_workload(
+        core: &mut UnifiedCoreSynchronization,
+        operations: usize,
+    ) -> CoreSyncResult<()> {
         for i in 0..operations {
             if i % 10 == 0 {
                 core.global_sync()?;
@@ -588,16 +617,26 @@ pub mod testing {
     }
 
     /// Create test barrier
-    pub fn create_test_barrier(core: &mut UnifiedCoreSynchronization, device_ids: &[DeviceId]) -> CoreSyncResult<String> {
+    pub fn create_test_barrier(
+        core: &mut UnifiedCoreSynchronization,
+        device_ids: &[DeviceId],
+    ) -> CoreSyncResult<String> {
         let barrier_id = format!("test_barrier_{}", scirs2_core::random::random::<u32>());
-        core.create_global_barrier(barrier_id.clone(), device_ids.to_vec(), Duration::from_secs(5))?;
+        core.create_global_barrier(
+            barrier_id.clone(),
+            device_ids.to_vec(),
+            Duration::from_secs(5),
+        )?;
         Ok(barrier_id)
     }
 
     /// Assert system health
     pub fn assert_system_healthy(core: &UnifiedCoreSynchronization) {
         let health = core.get_health_status();
-        assert!(matches!(health.overall_health, HealthLevel::Good | HealthLevel::Excellent));
+        assert!(matches!(
+            health.overall_health,
+            HealthLevel::Good | HealthLevel::Excellent
+        ));
     }
 
     /// Assert no critical alerts
@@ -683,7 +722,10 @@ pub mod analysis {
     }
 
     /// Generate performance recommendations
-    fn generate_recommendations(stats: &UnifiedCoreStatistics, health: &SystemHealthStatus) -> Vec<String> {
+    fn generate_recommendations(
+        stats: &UnifiedCoreStatistics,
+        health: &SystemHealthStatus,
+    ) -> Vec<String> {
         let mut recommendations = Vec::new();
 
         if stats.health_score < 0.7 {
@@ -691,11 +733,13 @@ pub mod analysis {
         }
 
         if stats.average_latency > Duration::from_millis(100) {
-            recommendations.push("High latency detected - optimize synchronization parameters".to_string());
+            recommendations
+                .push("High latency detected - optimize synchronization parameters".to_string());
         }
 
         if health.issues.len() > 5 {
-            recommendations.push("Multiple issues detected - perform comprehensive health check".to_string());
+            recommendations
+                .push("Multiple issues detected - perform comprehensive health check".to_string());
         }
 
         recommendations

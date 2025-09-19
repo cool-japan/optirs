@@ -1,50 +1,74 @@
-# OptiRS GPU TODO
+# OptiRS GPU TODO - Post SciRS2 Integration
 
-## High Priority Items
+## ✅ COMPLETED: SciRS2 Integration
+- [x] **Full SciRS2-Core Integration** - 100% complete
+- [x] **GPU Abstractions** - Built on scirs2_core::gpu foundation
+- [x] **Array Operations** - All GPU arrays use scirs2_core::array_protocol::GPUArray
+- [x] **Memory Management** - Integrated with scirs2_core::memory::TrackedGpuBuffer
+- [x] **Tensor Cores** - Using scirs2_core::tensor_cores for mixed precision
+- [x] **Template System** - GPU kernel templates for all optimizers
+
+## 🚀 NEW PRIORITIES: Enhanced GPU Development (Post-SciRS2 Integration)
+
+### Phase 1: Immediate GPU Enhancements (v0.1.0-beta.2) - HIGH PRIORITY
+
+- [ ] **SciRS2 GPU Backend Implementation** - Build complete GPU system on scirs2_core::gpu
+- [ ] **Core Optimizer GPU Kernels** - SGD, Adam, AdamW with SciRS2 tensor cores
+- [ ] **Memory Pool Integration** - Use scirs2_core::memory::TrackedGpuBuffer system
+- [ ] **Multi-Backend Support** - CUDA, Metal, OpenCL, WebGPU with SciRS2 abstractions
+- [ ] **Performance Benchmarks** - GPU vs CPU optimization comparison
+
+### Phase 2: Advanced SciRS2 GPU Features (v0.1.0-beta.3) - MEDIUM PRIORITY
+
+- [ ] **Tensor Core Acceleration** - Full scirs2_core::tensor_cores integration
+- [ ] **Multi-GPU Coordination** - Use scirs2_core::distributed for GPU clusters
+- [ ] **Async GPU Operations** - scirs2_core::array_protocol::AsyncArray support
+- [ ] **JIT Kernel Compilation** - scirs2_core::jit for optimized GPU kernels
+- [ ] **GPU Memory Efficiency** - scirs2_core::memory_efficient for large models
 
 ### Core GPU Infrastructure
-- [ ] **Device Management**: Comprehensive GPU device detection and management
-  - [ ] Automatic GPU detection across all backends
-  - [ ] Device capability querying (memory, compute units, features)
-  - [ ] Device selection algorithms (performance-based, memory-based)
-  - [ ] Multi-GPU topology detection and analysis
-  - [ ] Device health monitoring and error recovery
+- [ ] **Device Management**: SciRS2-based GPU device management
+  - [ ] Build on scirs2_core::gpu::GpuContext
+  - [ ] Use scirs2_core::gpu device capability querying
+  - [ ] Integrate with SciRS2 device selection algorithms
+  - [ ] Multi-GPU topology via scirs2_core::distributed
+  - [ ] SciRS2 monitoring and error recovery
 
-### Backend Implementations
+### Backend Implementations (SciRS2-Enhanced)
 
-#### CUDA Backend
-- [ ] **CUDA Integration**: Complete NVIDIA CUDA support
-  - [ ] CuDarc integration for CUDA runtime
-  - [ ] CUDA kernel compilation and caching
-  - [ ] Memory management with cudaMalloc/cudaFree
-  - [ ] Stream management for async operations
-  - [ ] Multi-GPU communication with NCCL
-  - [ ] CUDA graphs for optimization pipelines
+#### CUDA Backend (via SciRS2)
+- [ ] **SciRS2 CUDA Integration**: Build on scirs2_core::gpu::CudaBackend
+  - [ ] Use scirs2_core::gpu::GpuContext for CUDA runtime
+  - [ ] Leverage scirs2_core::jit for kernel compilation and caching
+  - [ ] Memory management via scirs2_core::memory::TrackedGpuBuffer
+  - [ ] Stream management with scirs2_core::array_protocol::AsyncArray
+  - [ ] Multi-GPU via scirs2_core::distributed and NCCL
+  - [ ] CUDA graphs through scirs2_core::gpu optimization pipelines
 
-#### Metal Backend
-- [ ] **Metal Integration**: Apple Silicon optimization
-  - [ ] Metal device and command queue setup
-  - [ ] Metal Performance Shaders (MPS) integration
-  - [ ] Metal Shading Language (MSL) kernel compilation
-  - [ ] Unified memory architecture optimization
-  - [ ] Metal Performance Shaders Graph integration
-  - [ ] Apple Neural Engine integration consideration
+#### Metal Backend (via SciRS2)
+- [ ] **SciRS2 Metal Integration**: Build on scirs2_core::gpu::MetalBackend
+  - [ ] Metal device setup via scirs2_core::gpu::GpuContext
+  - [ ] MPS integration through scirs2_core::tensor_cores
+  - [ ] MSL compilation via scirs2_core::jit::JitCompiler
+  - [ ] Unified memory with scirs2_core::memory_efficient
+  - [ ] Metal Performance Shaders via scirs2_core::gpu abstractions
+  - [ ] Neural Engine consideration through SciRS2 extensions
 
-#### OpenCL Backend
-- [ ] **OpenCL Integration**: Cross-platform GPU support
-  - [ ] OpenCL 3.0 platform and device management
-  - [ ] Kernel compilation and binary caching
-  - [ ] Buffer management and memory transfers
-  - [ ] Vendor-specific optimizations (AMD, Intel, etc.)
-  - [ ] OpenCL extension detection and usage
+#### OpenCL Backend (via SciRS2)
+- [ ] **SciRS2 OpenCL Integration**: Cross-platform via scirs2_core::gpu
+  - [ ] OpenCL management through scirs2_core::gpu::GpuContext
+  - [ ] Kernel compilation via scirs2_core::jit::JitCompiler
+  - [ ] Buffer management with scirs2_core::memory::TrackedGpuBuffer
+  - [ ] Vendor optimizations through SciRS2 backend abstractions
+  - [ ] Extension detection via scirs2_core::gpu capabilities
 
-#### WebGPU Backend
-- [ ] **WebGPU Integration**: Portable GPU compute
-  - [ ] WGPU device and adapter selection
-  - [ ] Compute shader compilation and caching
-  - [ ] Buffer and texture management
-  - [ ] WebAssembly compatibility
-  - [ ] Cross-platform shader compilation
+#### WebGPU Backend (via SciRS2)
+- [ ] **SciRS2 WebGPU Integration**: Portable compute via SciRS2
+  - [ ] WGPU device selection through scirs2_core::gpu::GpuContext
+  - [ ] Compute shader compilation via scirs2_core::jit
+  - [ ] Buffer management with scirs2_core::array_protocol::GPUArray
+  - [ ] WebAssembly compatibility through SciRS2 abstractions
+  - [ ] Cross-platform compilation via scirs2_core::jit
 
 ### Memory Management
 - [ ] **GPU Memory System**: Efficient memory allocation and transfer

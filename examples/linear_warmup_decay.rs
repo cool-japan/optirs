@@ -1,9 +1,9 @@
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use num_traits::Float;
 use scirs2_core::random::Rng;
-use scirs2_optim::optimizers::SGD;
-use scirs2_optim::schedulers::{DecayStrategy, LearningRateScheduler, LinearWarmupDecay};
-use scirs2_optim::Optimizer;
+use optirs_core::optimizers::SGD;
+use optirs_core::schedulers::{DecayStrategy, LearningRateScheduler, LinearWarmupDecay};
+use optirs_core::Optimizer;
 
 /// Generate synthetic data for linear regression
 #[allow(dead_code)]

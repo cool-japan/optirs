@@ -4,10 +4,10 @@
 // for distributed systems that can tolerate Byzantine failures, including
 // malicious nodes and network partitions.
 
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap, VecDeque, HashSet};
-use std::time::{Duration, Instant};
 use crate::tpu::pod_coordination::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 /// PBFT consensus configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -532,8 +532,12 @@ impl PbftConsensus {
             PbftMessage::NewView(new_view) => self.handle_new_view(new_view),
             PbftMessage::Checkpoint(checkpoint) => self.handle_checkpoint(checkpoint),
             PbftMessage::Heartbeat(heartbeat) => self.handle_heartbeat(heartbeat),
-            PbftMessage::RecoveryRequest(recovery_request) => self.handle_recovery_request(recovery_request),
-            PbftMessage::RecoveryResponse(recovery_response) => self.handle_recovery_response(recovery_response),
+            PbftMessage::RecoveryRequest(recovery_request) => {
+                self.handle_recovery_request(recovery_request)
+            }
+            PbftMessage::RecoveryResponse(recovery_response) => {
+                self.handle_recovery_response(recovery_response)
+            }
             PbftMessage::ByzantineAlert(alert) => self.handle_byzantine_alert(alert),
             PbftMessage::Reply(_) => Ok(()), // Handled by client
         }
@@ -581,7 +585,9 @@ impl PbftConsensus {
         self.verify_primary_signature(&pre_prepare)?;
 
         // Store pre-prepare message
-        self.message_log.pre_prepare_log.insert(key, pre_prepare.clone());
+        self.message_log
+            .pre_prepare_log
+            .insert(key, pre_prepare.clone());
 
         // Send prepare message
         self.send_prepare_message(&pre_prepare)?;
@@ -596,14 +602,19 @@ impl PbftConsensus {
 
         // Store prepare message
         let key = (prepare.view_number, prepare.sequence_number);
-        self.message_log.prepare_log
+        self.message_log
+            .prepare_log
             .entry(key)
             .or_insert_with(Vec::new)
             .push(prepare.clone());
 
         // Check if we have enough prepare messages
         if self.has_enough_prepare_messages(prepare.view_number, prepare.sequence_number)? {
-            self.send_commit_message(prepare.view_number, prepare.sequence_number, &prepare.batch_digest)?;
+            self.send_commit_message(
+                prepare.view_number,
+                prepare.sequence_number,
+                &prepare.batch_digest,
+            )?;
         }
 
         Ok(())
@@ -616,7 +627,8 @@ impl PbftConsensus {
 
         // Store commit message
         let key = (commit.view_number, commit.sequence_number);
-        self.message_log.commit_log
+        self.message_log
+            .commit_log
             .entry(key)
             .or_insert_with(Vec::new)
             .push(commit.clone());
@@ -635,10 +647,9 @@ impl PbftConsensus {
         self.validate_view_change(&view_change)?;
 
         // Store view change message
-        self.view_change_state.view_change_messages.insert(
-            view_change.node_id.clone(),
-            view_change.clone()
-        );
+        self.view_change_state
+            .view_change_messages
+            .insert(view_change.node_id.clone(), view_change.clone());
 
         // Check if we have enough view change messages
         if self.has_enough_view_change_messages(view_change.new_view_number)? {
@@ -672,7 +683,8 @@ impl PbftConsensus {
         self.validate_checkpoint(&checkpoint)?;
 
         // Store checkpoint message
-        self.checkpoint_state.active_checkpoints
+        self.checkpoint_state
+            .active_checkpoints
             .entry(checkpoint.sequence_number)
             .or_insert_with(|| CheckpointInfo::new(checkpoint.sequence_number))
             .add_checkpoint_message(checkpoint.clone());
@@ -709,7 +721,9 @@ impl PbftConsensus {
 
         // Store pre-prepare message
         let key = (pre_prepare.view_number, pre_prepare.sequence_number);
-        self.message_log.pre_prepare_log.insert(key, pre_prepare.clone());
+        self.message_log
+            .pre_prepare_log
+            .insert(key, pre_prepare.clone());
 
         // Broadcast pre-prepare to all replicas
         self.broadcast_message(PbftMessage::PrePrepare(pre_prepare))?;
@@ -730,7 +744,8 @@ impl PbftConsensus {
 
         // Store our prepare message
         let key = (prepare.view_number, prepare.sequence_number);
-        self.message_log.prepare_log
+        self.message_log
+            .prepare_log
             .entry(key)
             .or_insert_with(Vec::new)
             .push(prepare.clone());
@@ -742,7 +757,12 @@ impl PbftConsensus {
     }
 
     /// Send commit message
-    fn send_commit_message(&mut self, view_number: ViewNumber, sequence_number: SequenceNumber, batch_digest: &MessageDigest) -> Result<()> {
+    fn send_commit_message(
+        &mut self,
+        view_number: ViewNumber,
+        sequence_number: SequenceNumber,
+        batch_digest: &MessageDigest,
+    ) -> Result<()> {
         let commit = CommitMessage {
             view_number,
             sequence_number,
@@ -754,7 +774,8 @@ impl PbftConsensus {
 
         // Store our commit message
         let key = (commit.view_number, commit.sequence_number);
-        self.message_log.commit_log
+        self.message_log
+            .commit_log
             .entry(key)
             .or_insert_with(Vec::new)
             .push(commit.clone());
@@ -766,10 +787,17 @@ impl PbftConsensus {
     }
 
     /// Execute request batch
-    fn execute_request_batch(&mut self, view_number: ViewNumber, sequence_number: SequenceNumber) -> Result<()> {
+    fn execute_request_batch(
+        &mut self,
+        view_number: ViewNumber,
+        sequence_number: SequenceNumber,
+    ) -> Result<()> {
         // Get the pre-prepare message for this sequence
         let key = (view_number, sequence_number);
-        let pre_prepare = self.message_log.pre_prepare_log.get(&key)
+        let pre_prepare = self
+            .message_log
+            .pre_prepare_log
+            .get(&key)
             .ok_or_else(|| anyhow::anyhow!("No pre-prepare message found"))?;
 
         // Execute each request in the batch
@@ -792,9 +820,15 @@ impl PbftConsensus {
     }
 
     /// Check if we have enough prepare messages
-    fn has_enough_prepare_messages(&self, view_number: ViewNumber, sequence_number: SequenceNumber) -> Result<bool> {
+    fn has_enough_prepare_messages(
+        &self,
+        view_number: ViewNumber,
+        sequence_number: SequenceNumber,
+    ) -> Result<bool> {
         let key = (view_number, sequence_number);
-        let prepare_count = self.message_log.prepare_log
+        let prepare_count = self
+            .message_log
+            .prepare_log
             .get(&key)
             .map(|messages| messages.len())
             .unwrap_or(0);
@@ -805,9 +839,15 @@ impl PbftConsensus {
     }
 
     /// Check if we have enough commit messages
-    fn has_enough_commit_messages(&self, view_number: ViewNumber, sequence_number: SequenceNumber) -> Result<bool> {
+    fn has_enough_commit_messages(
+        &self,
+        view_number: ViewNumber,
+        sequence_number: SequenceNumber,
+    ) -> Result<bool> {
         let key = (view_number, sequence_number);
-        let commit_count = self.message_log.commit_log
+        let commit_count = self
+            .message_log
+            .commit_log
             .get(&key)
             .map(|messages| messages.len())
             .unwrap_or(0);
@@ -867,7 +907,11 @@ impl PbftConsensus {
         Ok(OperationResult::Success)
     }
 
-    fn send_reply_to_client(&self, request: &RequestMessage, result: &OperationResult) -> Result<()> {
+    fn send_reply_to_client(
+        &self,
+        request: &RequestMessage,
+        result: &OperationResult,
+    ) -> Result<()> {
         let reply = ReplyMessage {
             view_number: self.current_view,
             request_id: request.request_id.clone(),
@@ -1099,25 +1143,72 @@ use anyhow::Result;
 
 // Stub implementations for referenced types
 use crate::tpu::pod_coordination::types::{
-    PbftNodeCapabilities, ClusterTopology, AdaptiveTimingConfig,
-    CryptographicSettings, DigitalSignatureConfig, MessageAuthenticationConfig,
-    ByzantineDetectionConfig, SecurityMonitoringConfig, AuditConfig,
-    MessageOrderingConfig, NetworkReliabilityConfig, PbftMessageBatchingConfig,
-    CommunicationProtocolsConfig, PbftLoadBalancingConfig, NetworkPartitionHandlingConfig,
-    BatchingOptimizationConfig, PipelineProcessingConfig, ParallelValidationConfig,
-    CachingStrategiesConfig, ResourceOptimizationConfig, ThroughputOptimizationConfig,
-    PbftMonitoringConfig, PbftRecoveryConfig,
+    AdaptiveTimingConfig,
+    AuditConfig,
+    BatchFormation,
+    BatchingOptimizationConfig,
+    ByzantineAlertMessage,
+    ByzantineDetectionConfig,
+    ByzantineDetectionState,
+    ByzantineFaultToleranceConfig,
+    CachingStrategiesConfig,
+    CertificateAuthority,
+    CheckpointInfo,
+    CheckpointMetadata,
+    CheckpointProof,
+    ClientAuthentication,
+    ClientSessionManagement,
+    ClientState,
+    ClusterTopology,
+    CommitMetadata,
+    CommunicationProtocolsConfig,
+    ConsensusMetrics,
+    CryptographicSettings,
+    DigitalSignature,
+    DigitalSignatureConfig,
+    HeartbeatMessage,
+    LatencyMetrics,
+    MessageAuthenticationConfig,
+    MessageDigest,
+    MessageOrderingConfig,
+    NetworkMetrics,
+    NetworkPartitionHandlingConfig,
+    NetworkReliabilityConfig,
     // Additional types
-    Operation, RequestMetadata, ReplyMetadata, PrePrepareMetadata, PrepareMetadata,
-    CommitMetadata, CheckpointMetadata, RequestBatch, MessageDigest, DigitalSignature,
-    CheckpointProof, PreparedRequest, StateDigest, CheckpointInfo, StableCheckpoint,
-    PrivateKey, PublicKey, CertificateAuthority, ByzantineDetectionState, SecurityAuditLog,
-    ThroughputMetrics, LatencyMetrics, ResourceUtilization, NetworkMetrics,
-    ConsensusMetrics, SecurityMetrics, ClientState, ClientSessionManagement,
-    ClientAuthentication, RequestOrdering, QueueLimits, PriorityHandling,
-    BatchFormation, PbftPerformanceMetrics, HeartbeatMessage, RecoveryRequestMessage,
-    RecoveryResponseMessage, ByzantineAlertMessage,
+    Operation,
+    ParallelValidationConfig,
+    PbftLoadBalancingConfig,
+    PbftMessageBatchingConfig,
+    PbftMonitoringConfig,
+    PbftNetworkConfig,
+    PbftNodeCapabilities,
+    PbftPerformanceConfig,
+    PbftPerformanceMetrics,
+    PbftRecoveryConfig,
+    PbftSecurityConfig,
     // Default implementations
-    PbftTimingConfig, PbftSecurityConfig, ByzantineFaultToleranceConfig,
-    PbftNetworkConfig, PbftPerformanceConfig,
+    PbftTimingConfig,
+    PipelineProcessingConfig,
+    PrePrepareMetadata,
+    PrepareMetadata,
+    PreparedRequest,
+    PriorityHandling,
+    PrivateKey,
+    PublicKey,
+    QueueLimits,
+    RecoveryRequestMessage,
+    RecoveryResponseMessage,
+    ReplyMetadata,
+    RequestBatch,
+    RequestMetadata,
+    RequestOrdering,
+    ResourceOptimizationConfig,
+    ResourceUtilization,
+    SecurityAuditLog,
+    SecurityMetrics,
+    SecurityMonitoringConfig,
+    StableCheckpoint,
+    StateDigest,
+    ThroughputMetrics,
+    ThroughputOptimizationConfig,
 };

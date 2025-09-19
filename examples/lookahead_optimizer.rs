@@ -2,8 +2,8 @@
 use scirs2_core::ndarray_ext::{s, Array1, Array2};
 use scirs2_core::random::distributions::Uniform;
 use scirs2_core::random::RandomExt;
-use scirs2_optim::optimizers::{Adam, Lookahead, SGD};
-use scirs2_optim::Optimizer;
+use optirs_core::optimizers::{Adam, Lookahead, SGD};
+use optirs_core::Optimizer;
 use std::error::Error;
 use std::time::Instant;
 // use statrs::statistics::Statistics; // statrs not available

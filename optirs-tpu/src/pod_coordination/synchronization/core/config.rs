@@ -502,7 +502,10 @@ pub enum OptimizationObjective {
     /// Maximize reliability
     MaximizeReliability,
     /// Multi-objective optimization
-    MultiObjective { objectives: Vec<String>, weights: Vec<f64> },
+    MultiObjective {
+        objectives: Vec<String>,
+        weights: Vec<f64>,
+    },
 }
 
 /// Learning configuration
@@ -767,9 +770,21 @@ impl Default for PrioritySettings {
         Self {
             default_priority: 5,
             priority_levels: vec![
-                PriorityLevel { priority: 1, name: "Low".to_string(), weight: 0.2 },
-                PriorityLevel { priority: 5, name: "Normal".to_string(), weight: 1.0 },
-                PriorityLevel { priority: 10, name: "High".to_string(), weight: 2.0 },
+                PriorityLevel {
+                    priority: 1,
+                    name: "Low".to_string(),
+                    weight: 0.2,
+                },
+                PriorityLevel {
+                    priority: 5,
+                    name: "Normal".to_string(),
+                    weight: 1.0,
+                },
+                PriorityLevel {
+                    priority: 10,
+                    name: "High".to_string(),
+                    weight: 2.0,
+                },
             ],
             dynamic_adjustment: true,
         }
@@ -953,8 +968,8 @@ impl Default for ResourceThresholds {
     fn default() -> Self {
         Self {
             cpu_usage: 0.8,     // 80%
-            memory_usage: 0.85,  // 85%
-            network_usage: 0.9,  // 90%
+            memory_usage: 0.85, // 85%
+            network_usage: 0.9, // 90%
         }
     }
 }
@@ -1007,7 +1022,7 @@ impl Default for LearningConfig {
     fn default() -> Self {
         Self {
             algorithm: LearningAlgorithm::ReinforcementLearning {
-                algorithm: "Q-Learning".to_string()
+                algorithm: "Q-Learning".to_string(),
             },
             rate: 0.01,
             training_data: TrainingDataConfig::default(),
@@ -1084,7 +1099,7 @@ impl Default for PerformanceConstraints {
         Self {
             max_latency: Duration::from_millis(100),
             min_throughput: 100.0,
-            max_error_rate: 0.01, // 1%
+            max_error_rate: 0.01,   // 1%
             min_availability: 0.99, // 99%
         }
     }

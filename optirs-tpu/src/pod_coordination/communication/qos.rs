@@ -234,7 +234,10 @@ pub enum SchedulingAlgorithm {
     /// Hierarchical scheduling
     Hierarchical,
     /// Custom algorithm
-    Custom { name: String, parameters: HashMap<String, f64> },
+    Custom {
+        name: String,
+        parameters: HashMap<String, f64>,
+    },
 }
 
 /// Queue configuration
@@ -951,7 +954,7 @@ impl Default for FlowControl {
             mechanism: FlowControlMechanism::WindowBased,
             window_settings: WindowSettings {
                 initial_window_size: 64 * 1024, // 64KB
-                max_window_size: 1024 * 1024, // 1MB
+                max_window_size: 1024 * 1024,   // 1MB
                 adaptive_sizing: AdaptiveWindowSizing {
                     enabled: true,
                     algorithm: WindowAdaptationAlgorithm::CUBIC,

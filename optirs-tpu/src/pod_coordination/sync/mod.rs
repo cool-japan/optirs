@@ -17,7 +17,7 @@
 // # Usage Example
 //
 // ```rust
-// use scirs2_optim::tpu::pod_coordination::sync::{
+// use optirs_core::tpu::pod_coordination::sync::{
 //     SynchronizationManager, SynchronizationConfig,
 //     ConsensusManager, ConsensusProtocolType,
 //     BarrierManager, EventSynchronizationManager,

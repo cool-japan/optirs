@@ -13,27 +13,23 @@ use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
 pub use garbage_collection::{
-    ConcurrentCollector, GCConfig, GCStats, GarbageCollectionEngine, GarbageCollector,
-    GenerationalCollector, IncrementalCollector, MarkAndSweepCollector, ReferenceTracker,
-    WriteBarrier,
+    GCConfig, GCStats, GarbageCollectionEngine, GarbageCollector, GenerationalCollector,
+    IncrementalCollector, MarkSweepCollector, ReferenceTracker,
 };
 
 pub use prefetching::{
-    AccessHistoryTracker, AdaptivePrefetcher, MLBasedPrefetcher, PatternBasedPrefetcher,
-    PrefetchCache, PrefetchConfig, PrefetchStrategy, PrefetchingEngine, SequentialPrefetcher,
-    StrideBasedPrefetcher,
+    AccessHistoryTracker, PrefetchCache, PrefetchConfig, PrefetchStrategy, PrefetchingEngine,
+    SequentialPrefetcher, StridePrefetcher,
 };
 
 pub use eviction_policies::{
-    ARCEvictionPolicy, ClockEvictionPolicy, EvictionEngine, EvictionPerformanceMonitor,
-    EvictionPolicy, FIFOEvictionPolicy, LFUEvictionPolicy, LRUEvictionPolicy, MemoryRegion,
-    WorkloadAwareEvictionPolicy,
+    ARCPolicy, ClockPolicy, EvictionEngine, EvictionPerformanceMonitor, EvictionPolicy, FIFOPolicy,
+    LFUPolicy, LRUPolicy, MemoryRegion, WorkloadAwarePolicy,
 };
 
 pub use defragmentation::{
-    BackgroundDefragmenter, CompactionDefragmenter, CopyingDefragmenter, DefragConfig,
-    DefragmentationEngine, DefragmentationStrategy, FragmentationAnalyzer,
-    GenerationalDefragmenter, RelocatingDefragmenter,
+    CompactionAlgorithm, CompactionStrategy, DefragConfig, DefragError, DefragmentationEngine,
+    SlidingCompactionStrategy, ThreadSafeDefragmentationEngine, TwoPointerCompactionStrategy,
 };
 
 /// Unified memory management configuration

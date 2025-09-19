@@ -4,10 +4,10 @@
 // consensus systems, including device health monitoring, network failure detection,
 // and recovery coordination.
 
+use crate::tpu::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use crate::tpu::pod_coordination::types::*;
 
 /// Failure detection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -938,7 +938,11 @@ impl FailureDetectionManager {
             // Calculate health score based on various metrics
             let cpu_score = 1.0 - (status.resource_utilization.cpu_usage / 100.0);
             let memory_score = 1.0 - (status.resource_utilization.memory_usage / 100.0);
-            let network_score = if status.network_statistics.packet_loss_rate < 0.01 { 1.0 } else { 0.5 };
+            let network_score = if status.network_statistics.packet_loss_rate < 0.01 {
+                1.0
+            } else {
+                0.5
+            };
 
             status.health_score = (cpu_score + memory_score + network_score) / 3.0;
 
@@ -1068,32 +1072,78 @@ impl Default for FailureDetectionStatistics {
 }
 
 // Stub implementations for referenced types that would be defined elsewhere
-use uuid;
 use crate::tpu::pod_coordination::types::{
-    HeartbeatPayload, PerformanceMetrics, ResourceUtilization, NetworkStatistics,
-    FailureIndicators, ResourceUsage, ConfidenceScoreStats, DataCollectionStats,
-    PhiAccrualDetector, GossipFailureDetector, RingFailureDetector,
-    HierarchicalFailureDetector, MLBasedDetector, HybridDetector,
-    DeviceHealthMonitor, ResourceMonitor, PerformanceMonitor,
-    EnvironmentalMonitor, NetworkMonitor,
     // Configuration types
-    AdaptiveHeartbeatConfig, HeartbeatPayloadConfig, HeartbeatTransmissionConfig,
-    MulticastConfig, ReliabilityLevel, RetryConfig, BatchingConfig,
-    PhiAccrualConfig, GossipFailureDetectionConfig, RingFailureDetectionConfig,
-    HierarchicalFailureDetectionConfig, MLBasedDetectionConfig, HybridDetectionConfig,
-    DeviceHealthConfig, ResourceMonitoringConfig, PerformanceMonitoringConfig,
-    EnvironmentalMonitoringConfig, HealthScoringConfig, AlertConfig,
-    ConnectionMonitoringConfig, LatencyMonitoringConfig, BandwidthMonitoringConfig,
-    TopologyMonitoringConfig, QoSMonitoringConfig,
-    RecoveryStrategies, FailureClassificationConfig, RecoveryOrchestrationConfig,
-    RecoveryValidationConfig, RecoveryMonitoringConfig,
-    FailurePatternAnalysisConfig, RootCauseAnalysisConfig, FailurePredictionConfig,
-    AnalysisReportingConfig, HistoricalAnalysisConfig,
+    AdaptiveHeartbeatConfig,
+    AlertConfig,
+    AnalysisReportingConfig,
+    AutomaticRecoveryConfig,
+    BandwidthMonitoringConfig,
+    BatchingConfig,
+    ConfidenceScoreStats,
+    ConnectionMonitoringConfig,
+    ConnectionRetryPolicy,
+    ConnectionValidationConfig,
+    DataCollectionStats,
+    DetectionLatencyStats,
+    DeviceHealthConfig,
+    DeviceHealthMonitor,
+    EarlyStoppingConfig,
+    EnvironmentalMonitor,
+    EnvironmentalMonitoringConfig,
+    FailureClassificationConfig,
+    FailureIndicators,
+    FailurePatternAnalysisConfig,
+    FailurePredictionConfig,
+    GossipFailureDetectionConfig,
+    GossipFailureDetector,
+    HealthScoringConfig,
+    HeartbeatPayload,
+    HeartbeatPayloadConfig,
+    HeartbeatTransmissionConfig,
+    HierarchicalFailureDetectionConfig,
+    HierarchicalFailureDetector,
+    HistoricalAnalysisConfig,
+    HybridDetectionConfig,
+    HybridDetector,
+    HybridRecoveryConfig,
+    LatencyMonitoringConfig,
+    MLBasedDetectionConfig,
+    MLBasedDetector,
+    ManualRecoveryConfig,
+    MemoryLeakDetectionConfig,
+    MonitorStatistics,
+    MulticastConfig,
+    NetworkFeatures,
+    NetworkMonitor,
+    NetworkStatistics,
+    PerformanceMetrics,
+    PerformanceMonitor,
+    PerformanceMonitoringConfig,
+    PerformanceOptimization,
+    PhiAccrualConfig,
+    PhiAccrualDetector,
+    QoSMonitoringConfig,
+    RecoveryMonitoringConfig,
+    RecoveryOrchestrationConfig,
+    RecoveryPrioritizationConfig,
+    RecoveryStrategies,
+    RecoveryValidationConfig,
+    ReliabilityLevel,
+    ResourceFeatures,
+    ResourceMonitor,
+    ResourceMonitoringConfig,
+    ResourceUsage,
+    ResourceUtilization,
+    RetryConfig,
+    RingFailureDetectionConfig,
+    RingFailureDetector,
+    RootCauseAnalysisConfig,
+    SensorMonitoringConfig,
+    StatisticalFeatures,
+    TimeWindowFeatures,
+    TopologyMonitoringConfig,
     // Additional specific types
-    UtilizationThresholds, MemoryLeakDetectionConfig, SensorMonitoringConfig,
-    ConnectionRetryPolicy, ConnectionValidationConfig,
-    AutomaticRecoveryConfig, ManualRecoveryConfig, HybridRecoveryConfig,
-    RecoveryPrioritizationConfig, EarlyStoppingConfig,
-    TimeWindowFeatures, StatisticalFeatures, NetworkFeatures, ResourceFeatures,
-    PerformanceOptimization, DetectionLatencyStats, MonitorStatistics,
+    UtilizationThresholds,
 };
+use uuid;

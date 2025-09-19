@@ -8,46 +8,39 @@
 // This file serves as a convenience re-export for backward compatibility.
 
 // Import and re-export all sub-modules
-pub mod algorithms;
 pub mod adaptive;
-pub mod streaming;
+pub mod algorithms;
 pub mod analytics;
 pub mod pipelines;
+pub mod streaming;
 
 // Re-export core types and functionality
 pub use algorithms::{
-    Algorithm, CompressionAlgorithms,
-    ZstdConfig, ZstdDictionary, GzipConfig, GzipStrategy,
-    Lz4Config, Lz4BlockSize, BrotliConfig, BrotliMode,
-    SnappyConfig, DeflateConfig, DeflateStrategy,
-    LzoConfig, LzoAlgorithm, Lz77Config, Lz78Config,
-    BurrowsWheelerConfig, HuffmanConfig, ArithmeticConfig,
-    PpmConfig, Lzw2Config,
+    Algorithm, ArithmeticConfig, BrotliConfig, BrotliMode, BurrowsWheelerConfig,
+    CompressionAlgorithms, DeflateConfig, DeflateStrategy, GzipConfig, GzipStrategy, HuffmanConfig,
+    Lz4BlockSize, Lz4Config, Lz77Config, Lz78Config, LzoAlgorithm, LzoConfig, Lzw2Config,
+    PpmConfig, SnappyConfig, ZstdConfig, ZstdDictionary,
 };
 
 pub use adaptive::{
-    AdaptiveCompression, AdaptiveController, AdaptiveStrategy,
-    PerformanceMonitor, AlgorithmSelector, ParameterOptimizer,
-    SelectionStrategy, SelectionCriteria, SelectionFrequency,
-    OptimizationObjective, SelectionAlgorithm,
+    AdaptiveCompression, AdaptiveController, AdaptiveStrategy, AlgorithmSelector,
+    OptimizationObjective, ParameterOptimizer, PerformanceMonitor, SelectionAlgorithm,
+    SelectionCriteria, SelectionFrequency, SelectionStrategy,
 };
 
 pub use streaming::{
-    StreamingCompression, StreamingConfig, StreamingBuffer,
-    StreamingPerformance, StreamingOptimization, StreamingAnalytics,
-    BufferManagement, FlowControl, ErrorHandling,
+    BufferManagement, ErrorHandling, FlowControl, StreamingAnalytics, StreamingBuffer,
+    StreamingCompression, StreamingConfig, StreamingOptimization, StreamingPerformance,
 };
 
 pub use analytics::{
-    CompressionAnalytics, AnalyticsConfig, MetricsCollector,
-    PerformanceAnalyzer, ReportGenerator, AnalyticsStorage,
-    CompressionMetrics, QualityMetrics, PerformanceMetrics,
+    AnalyticsConfig, AnalyticsStorage, CompressionAnalytics, CompressionMetrics, MetricsCollector,
+    PerformanceAnalyzer, PerformanceMetrics, QualityMetrics, ReportGenerator,
 };
 
 pub use pipelines::{
-    CompressionPipelines, Pipeline, PipelineStage, PipelineConfig,
-    PipelineExecution, PipelineOptimization, PipelineMonitoring,
-    StageType, ExecutionMode, MonitoringConfig,
+    CompressionPipelines, ExecutionMode, MonitoringConfig, Pipeline, PipelineConfig,
+    PipelineExecution, PipelineMonitoring, PipelineOptimization, PipelineStage, StageType,
 };
 
 // Core error and result types

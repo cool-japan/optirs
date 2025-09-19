@@ -260,7 +260,7 @@ impl KernelManager {
             "sgd_update".to_string(),
             KernelTemplate {
                 name: "sgd_update".to_string(),
-                source_template: include_str!("templates/sgd_kernel.template").to_string(),
+                source_template: sgd_kernel_template().to_string(),
                 parameters: vec![
                     TemplateParameter {
                         name: "dtype".to_string(),
@@ -290,7 +290,7 @@ impl KernelManager {
             "adam_update".to_string(),
             KernelTemplate {
                 name: "adam_update".to_string(),
-                source_template: include_str!("templates/adam_kernel.template").to_string(),
+                source_template: adam_kernel_template().to_string(),
                 parameters: vec![
                     TemplateParameter {
                         name: "dtype".to_string(),
@@ -744,11 +744,7 @@ __global__ void adam_update_kernel(
 "#
 }
 
-// Include template files as string constants
-mod templates {
-    pub const SGD_KERNEL_TEMPLATE: &str = include_str!("../../../templates/sgd_kernel.template");
-    pub const ADAM_KERNEL_TEMPLATE: &str = include_str!("../../../templates/adam_kernel.template");
-}
+// Template constants are provided by the functions above
 
 // Hack to provide template content when files don't exist
 fn include_str(path: &str) -> &str {

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::error::{Result, OptimError};
+use crate::error::{OptimError, Result};
 
 use super::config::*;
 use super::state::*;
@@ -954,13 +954,17 @@ impl PerformanceMonitor {
         } else if metric_name.contains("error") {
             MetricType::ErrorRate
         } else {
-            MetricType::Custom { metric: metric_name.to_string() }
+            MetricType::Custom {
+                metric: metric_name.to_string(),
+            }
         }
     }
 
     /// Analyze trends
     fn analyze_trends(&mut self) -> Result<()> {
-        self.history.trend_analysis.analyze_trends(&self.history.metrics_history)?;
+        self.history
+            .trend_analysis
+            .analyze_trends(&self.history.metrics_history)?;
         Ok(())
     }
 
@@ -1173,7 +1177,10 @@ impl TrendAnalysis {
 
         for metric in metrics {
             let key = format!("{:?}", metric.metric_type);
-            metric_groups.entry(key).or_insert_with(Vec::new).push(metric);
+            metric_groups
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push(metric);
         }
 
         // Analyze each group
@@ -1204,7 +1211,9 @@ impl TrendAnalysis {
         let n = metrics.len() as f64;
         let sum_x: f64 = (0..metrics.len()).map(|i| i as f64).sum();
         let sum_y: f64 = metrics.iter().map(|m| m.value).sum();
-        let sum_xy: f64 = metrics.iter().enumerate()
+        let sum_xy: f64 = metrics
+            .iter()
+            .enumerate()
             .map(|(i, m)| i as f64 * m.value)
             .sum();
         let sum_x_sq: f64 = (0..metrics.len()).map(|i| (i * i) as f64).sum();
@@ -1222,7 +1231,10 @@ impl TrendAnalysis {
         let strength = slope.abs();
         let confidence = 0.8; // Simplified confidence calculation
 
-        let period = metrics.last().unwrap().timestamp
+        let period = metrics
+            .last()
+            .unwrap()
+            .timestamp
             .duration_since(metrics.first().unwrap().timestamp);
 
         Ok(Trend {
@@ -1275,14 +1287,27 @@ impl AlertSystem {
     }
 
     /// Evaluate alert condition
-    fn evaluate_condition(&self, condition: &AlertCondition, metrics: &PerformanceMetrics) -> Result<bool> {
+    fn evaluate_condition(
+        &self,
+        condition: &AlertCondition,
+        metrics: &PerformanceMetrics,
+    ) -> Result<bool> {
         match condition {
-            AlertCondition::Threshold { metric, operator, value, .. } => {
+            AlertCondition::Threshold {
+                metric,
+                operator,
+                value,
+                ..
+            } => {
                 let metric_value = self.get_metric_value(metric, metrics)?;
                 Ok(self.compare_values(metric_value, *value, operator))
-            },
-            AlertCondition::Composite { operator, conditions } => {
-                let results: Result<Vec<bool>, _> = conditions.iter()
+            }
+            AlertCondition::Composite {
+                operator,
+                conditions,
+            } => {
+                let results: Result<Vec<bool>, _> = conditions
+                    .iter()
                     .map(|c| self.evaluate_condition(c, metrics))
                     .collect();
 
@@ -1293,7 +1318,7 @@ impl AlertSystem {
                     LogicalOperator::Or => Ok(results.iter().any(|&x| x)),
                     LogicalOperator::Not => Ok(!results.first().unwrap_or(&false)),
                 }
-            },
+            }
             _ => Ok(false), // Simplified for other condition types
         }
     }
@@ -1326,7 +1351,9 @@ impl AlertSystem {
 
         let alert = Alert {
             id: alert_id,
-            alert_type: AlertType::System { component: "synchronization".to_string() },
+            alert_type: AlertType::System {
+                component: "synchronization".to_string(),
+            },
             severity: rule.severity.clone(),
             message: rule.message_template.clone(),
             created_at: Instant::now(),
@@ -1359,11 +1386,15 @@ impl AlertSystem {
 
     /// Get alert summary
     pub fn get_summary(&self) -> AlertSummary {
-        let critical_count = self.active_alerts.values()
+        let critical_count = self
+            .active_alerts
+            .values()
             .filter(|a| a.severity == SeverityLevel::Critical)
             .count();
 
-        let warning_count = self.active_alerts.values()
+        let warning_count = self
+            .active_alerts
+            .values()
             .filter(|a| a.severity == SeverityLevel::Warning)
             .count();
 
@@ -1371,7 +1402,9 @@ impl AlertSystem {
             total_active: self.active_alerts.len(),
             critical_alerts: critical_count,
             warning_alerts: warning_count,
-            unacknowledged: self.active_alerts.values()
+            unacknowledged: self
+                .active_alerts
+                .values()
                 .filter(|a| !a.acknowledged)
                 .count(),
         }
@@ -1411,7 +1444,9 @@ impl NotificationSystem {
 
     /// Stop notification system
     pub fn stop(&mut self) -> Result<()> {
-        self.state.status = NotificationStatus::Failed { reason: "System stopped".to_string() };
+        self.state.status = NotificationStatus::Failed {
+            reason: "System stopped".to_string(),
+        };
         Ok(())
     }
 
@@ -1419,7 +1454,10 @@ impl NotificationSystem {
     pub fn send_alert_notification(&mut self, alert: &Alert) -> Result<()> {
         let content = NotificationContent {
             subject: format!("Alert: {}", alert.message),
-            body: format!("Alert {} was triggered at {:?}", alert.id.0, alert.created_at),
+            body: format!(
+                "Alert {} was triggered at {:?}",
+                alert.id.0, alert.created_at
+            ),
             content_type: ContentType::PlainText,
             attachments: Vec::new(),
         };
@@ -1519,7 +1557,7 @@ impl Default for RetentionSettings {
         Self {
             metrics_retention: Duration::from_secs(7 * 24 * 3600), // 7 days
             events_retention: Duration::from_secs(30 * 24 * 3600), // 30 days
-            max_storage_size: 1024 * 1024 * 1024, // 1 GB
+            max_storage_size: 1024 * 1024 * 1024,                  // 1 GB
             compression_enabled: true,
         }
     }
@@ -1551,7 +1589,9 @@ pub mod utils {
     pub fn create_test_alert() -> Alert {
         Alert {
             id: AlertId(1),
-            alert_type: AlertType::Performance { metric: "latency".to_string() },
+            alert_type: AlertType::Performance {
+                metric: "latency".to_string(),
+            },
             severity: SeverityLevel::Warning,
             message: "High latency detected".to_string(),
             created_at: Instant::now(),
@@ -1574,9 +1614,7 @@ pub mod utils {
         let sum: f64 = values.iter().sum();
         let mean = sum / values.len() as f64;
 
-        let variance = values.iter()
-            .map(|v| (v - mean).powi(2))
-            .sum::<f64>() / values.len() as f64;
+        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
 
         let std_dev = variance.sqrt();
 

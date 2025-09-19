@@ -19,7 +19,7 @@ use std::fmt::{self, Debug};
 /// # Example
 ///
 /// ```
-/// use scirs2_optim::schedulers::{OneCycle, LearningRateScheduler};
+/// use optirs_core::schedulers::{OneCycle, LearningRateScheduler};
 ///
 /// let mut scheduler = OneCycle::new(
 ///     0.0001,  // initial learning rate

@@ -32,8 +32,8 @@ use crate::schedulers::LearningRateScheduler;
 /// # Examples
 ///
 /// ```
-/// use scirs2_optim::schedulers::{CosineAnnealingWarmRestarts, LearningRateScheduler};
-/// use scirs2_optim::optimizers::SGD;
+/// use optirs_core::schedulers::{CosineAnnealingWarmRestarts, LearningRateScheduler};
+/// use optirs_core::optimizers::SGD;
 /// use scirs2_core::ndarray_ext::Array1;
 ///
 /// // Create a scheduler with initial learning rate 0.1, minimum learning rate 0.001,

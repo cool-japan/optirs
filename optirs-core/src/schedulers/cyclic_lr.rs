@@ -27,7 +27,7 @@ pub enum CyclicMode {
 /// # Example
 ///
 /// ```
-/// use scirs2_optim::schedulers::{CyclicLR, CyclicMode, LearningRateScheduler};
+/// use optirs_core::schedulers::{CyclicLR, CyclicMode, LearningRateScheduler};
 ///
 /// let mut scheduler = CyclicLR::new(0.001, 0.01, 2000, CyclicMode::Triangular);
 ///

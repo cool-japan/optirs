@@ -4,8 +4,8 @@
 // and allocation tracking for TPU pod coordination systems.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use super::super::super::tpu_backend::DeviceId;
 use super::config::PodCoordinationConfig;
@@ -1200,7 +1200,8 @@ impl DeviceManager {
 
     /// Add a device to the manager
     pub fn add_device(&mut self, device_info: DeviceInfo) -> Result<()> {
-        self.devices.insert(device_info.device_id.clone(), device_info);
+        self.devices
+            .insert(device_info.device_id.clone(), device_info);
         Ok(())
     }
 
@@ -1272,7 +1273,10 @@ impl DeviceStateManager {
         reason: String,
     ) -> Result<()> {
         let mut states = self.device_states.write().unwrap();
-        let old_state = states.get(&device_id).cloned().unwrap_or(DeviceState::Unknown);
+        let old_state = states
+            .get(&device_id)
+            .cloned()
+            .unwrap_or(DeviceState::Unknown);
 
         // Record state transition
         self.state_history.push(StateTransition {
@@ -1477,7 +1481,11 @@ impl Default for MonitoringSettings {
         Self {
             enabled: true,
             interval: Duration::from_secs(10),
-            metrics: vec!["cpu".to_string(), "memory".to_string(), "network".to_string()],
+            metrics: vec![
+                "cpu".to_string(),
+                "memory".to_string(),
+                "network".to_string(),
+            ],
             retention_period: Duration::from_secs(3600),
         }
     }
@@ -1487,7 +1495,7 @@ impl Default for MemoryLimits {
     fn default() -> Self {
         Self {
             max_allocation: 32 * 1024 * 1024 * 1024, // 32 GB
-            reserved_memory: 2 * 1024 * 1024 * 1024,  // 2 GB
+            reserved_memory: 2 * 1024 * 1024 * 1024, // 2 GB
             fragmentation_limit: 0.2,
             pool_config: MemoryPoolConfig::default(),
         }
@@ -1500,7 +1508,9 @@ impl Default for MemoryPoolConfig {
             enabled: true,
             pool_size: 16 * 1024 * 1024 * 1024, // 16 GB
             block_sizes: vec![4096, 65536, 1048576, 16777216],
-            growth_strategy: PoolGrowthStrategy::Dynamic { max_size: 64 * 1024 * 1024 * 1024 },
+            growth_strategy: PoolGrowthStrategy::Dynamic {
+                max_size: 64 * 1024 * 1024 * 1024,
+            },
         }
     }
 }
@@ -1530,7 +1540,7 @@ impl Default for PowerSettings {
 impl Default for ThermalSettings {
     fn default() -> Self {
         Self {
-            max_temperature: 85.0,  // 85°C
+            max_temperature: 85.0,    // 85°C
             target_temperature: 70.0, // 70°C
             throttling_thresholds: vec![75.0, 80.0, 83.0],
             cooling_strategy: CoolingStrategy::Adaptive,
@@ -1593,8 +1603,8 @@ impl Default for BandwidthPriorities {
 impl Default for LatencyRequirements {
     fn default() -> Self {
         Self {
-            max_latency: 10.0,    // 10ms
-            target_latency: 5.0,  // 5ms
+            max_latency: 10.0,   // 10ms
+            target_latency: 5.0, // 5ms
             sla_requirements: LatencySLA::default(),
         }
     }
@@ -1603,9 +1613,9 @@ impl Default for LatencyRequirements {
 impl Default for LatencySLA {
     fn default() -> Self {
         Self {
-            p99_latency: 20.0,  // 20ms
-            p95_latency: 15.0,  // 15ms
-            avg_latency: 8.0,   // 8ms
+            p99_latency: 20.0, // 20ms
+            p95_latency: 15.0, // 15ms
+            avg_latency: 8.0,  // 8ms
         }
     }
 }
@@ -1674,10 +1684,10 @@ impl Default for ErrorThresholds {
 impl Default for DegradationThresholds {
     fn default() -> Self {
         Self {
-            throughput_threshold: 10.0,  // 10% degradation
-            latency_threshold: 20.0,     // 20% increase
-            bandwidth_threshold: 15.0,   // 15% degradation
-            power_threshold: 25.0,       // 25% increase
+            throughput_threshold: 10.0, // 10% degradation
+            latency_threshold: 20.0,    // 20% increase
+            bandwidth_threshold: 15.0,  // 15% degradation
+            power_threshold: 25.0,      // 25% increase
             min_duration: Duration::from_secs(30),
         }
     }
@@ -1736,7 +1746,10 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert_eq!(state_manager.get_state(&device_id), Some(DeviceState::Online));
+        assert_eq!(
+            state_manager.get_state(&device_id),
+            Some(DeviceState::Online)
+        );
     }
 
     #[test]

@@ -1,4 +1,31 @@
-# OptiRS Bench TODO
+# OptiRS Bench TODO - Post SciRS2 Integration
+
+## ✅ COMPLETED: SciRS2 Integration
+- [x] **Full SciRS2-Core Integration** - 100% complete
+- [x] **Benchmarking Framework** - Built on scirs2_core::benchmarking::BenchmarkSuite
+- [x] **Performance Profiling** - Using scirs2_core::profiling::Profiler exclusively
+- [x] **Metrics Collection** - scirs2_core::metrics::MetricRegistry for tracking
+- [x] **Stability Analysis** - scirs2_core::stability for regression detection
+- [x] **Statistical Analysis** - scirs2_core::benchmarking::BenchmarkStatistics
+- [x] **Array Operations** - All benchmarking operations use scirs2_core::ndarray_ext
+
+## 🚀 NEW PRIORITIES: Enhanced Benchmarking (Post-SciRS2 Integration)
+
+### Phase 1: Immediate Benchmarking Implementation (v0.1.0-beta.2) - HIGH PRIORITY
+
+- [ ] **SciRS2 Benchmarking Suite** - Build on scirs2_core::benchmarking::BenchmarkSuite
+- [ ] **Performance Profiler** - Use scirs2_core::profiling::Profiler for all analysis
+- [ ] **Metrics Registry** - scirs2_core::metrics::MetricRegistry for comprehensive tracking
+- [ ] **Stability Monitoring** - scirs2_core::stability for performance regression detection
+- [ ] **Statistical Analysis** - scirs2_core::benchmarking::BenchmarkStatistics
+
+### Phase 2: Advanced SciRS2 Benchmarking (v0.1.0-beta.3) - MEDIUM PRIORITY
+
+- [ ] **Advanced Profiling** - Full scirs2_core::profiling capabilities integration
+- [ ] **Observability Suite** - scirs2_core::observability for production monitoring
+- [ ] **Memory Profiling** - scirs2_core::memory::LeakDetector and MemoryMetricsCollector
+- [ ] **Parallel Benchmarking** - scirs2_core::parallel for distributed benchmarking
+- [ ] **Cloud Benchmarking** - scirs2_core::cloud for cloud-based performance testing
 
 ## High Priority Items
 

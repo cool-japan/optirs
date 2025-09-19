@@ -340,7 +340,7 @@ impl<T: Float + Debug + 'static + Send + Sync> TransformerArchitecture<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::learned_optimizers::transformer_based_optimizer::config::TransformerArchConfig;
+    use crate::transformer_based_optimizer::config::TransformerArchConfig;
 
     fn create_test_config() -> TransformerArchConfig {
         TransformerArchConfig {
@@ -380,7 +380,7 @@ mod tests {
         let config = create_test_config();
         let mut architecture = TransformerArchitecture::<f32>::new(config).unwrap();
 
-        let input = Array2::<f32>::zeros((4, 128)); // batch_size=4, seq_len=128
+        let input = Array2::<f32>::zeros((4, 128)); // (batch_size * seq_length, model_dimension) = (4, 128)
         let result = architecture.forward(&input);
         assert!(result.is_ok());
 

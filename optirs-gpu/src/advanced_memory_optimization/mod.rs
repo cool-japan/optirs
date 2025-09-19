@@ -27,7 +27,7 @@
 // # Usage Example
 //
 // ```rust
-// use scirs2_optim::gpu::advanced_memory_optimization::{
+// use optirs_core::gpu::advanced_memory_optimization::{
 //     AdvancedMemoryOptimizer, AdvancedMemoryConfig
 // };
 //

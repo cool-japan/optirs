@@ -27,7 +27,7 @@
 // # Usage
 //
 // ```rust
-// use scirs2_optim::second_order::kfac::{KFAC, KFACConfig, LayerInfo, LayerType};
+// use optirs_core::second_order::kfac::{KFAC, KFACConfig, LayerInfo, LayerType};
 // use scirs2_core::ndarray_ext::Array2;
 //
 // // Create K-FAC configuration

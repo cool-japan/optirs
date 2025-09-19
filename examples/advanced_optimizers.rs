@@ -2,7 +2,7 @@
 
 use scirs2_core::ndarray_ext::Array1;
 use plotters::prelude::*;
-use scirs2_optim::optimizers::{Adam, AdamW, Optimizer, RAdam, RMSprop, SGD};
+use optirs_core::optimizers::{Adam, AdamW, Optimizer, RAdam, RMSprop, SGD};
 
 // Type aliases to simplify complex types
 type OptimizerList = Vec<(String, Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>)>;

@@ -1,6 +1,6 @@
 // Utility functions for GPU memory pool operations
 
-use crate::gpu::GpuOptimError;
+// Utility functions for GPU operations
 
 /// Round size up to next alignment boundary
 pub fn align_size(size: usize, alignment: usize) -> usize {

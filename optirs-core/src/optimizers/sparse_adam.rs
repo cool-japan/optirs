@@ -103,7 +103,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SparseGradient<A> {
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{SparseAdam, SparseGradient, Optimizer};
+/// use optirs_core::optimizers::{SparseAdam, SparseGradient, Optimizer};
 ///
 /// // Initialize parameters
 /// let params = Array1::zeros(5);

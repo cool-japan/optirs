@@ -171,7 +171,7 @@ impl DropoutLayer {
         let scale = num_traits::cast::cast(1.0 / keep_prob).unwrap_or_else(|| T::zero());
 
         for elem in output.iter_mut() {
-            if scirs2_core::random::random::<f64>() < self.dropout_rate {
+            if scirs2_core::random::f64() < self.dropout_rate {
                 *elem = T::zero();
             } else {
                 *elem = *elem * scale;

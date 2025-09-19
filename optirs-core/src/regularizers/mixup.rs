@@ -22,7 +22,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::MixUp;
+/// use optirs_core::regularizers::MixUp;
 ///
 /// let mixup = MixUp::new(0.2).unwrap();
 ///
@@ -152,7 +152,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
 ///
 /// ```no_run
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::CutMix;
+/// use optirs_core::regularizers::CutMix;
 ///
 /// let cutmix = CutMix::new(1.0).unwrap();
 ///

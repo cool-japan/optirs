@@ -412,7 +412,11 @@ impl PodPerformanceAnalyzer {
         };
 
         // Simulate realistic performance variations
-        let workload_factor = if self.config.adaptive_optimization { 1.1 } else { 1.0 };
+        let workload_factor = if self.config.adaptive_optimization {
+            1.1
+        } else {
+            1.0
+        };
         let time_variation = 1.0 + (elapsed * 0.1).sin() * 0.05; // ±5% variation
         let throughput = base_throughput * efficiency_factor * workload_factor * time_variation;
 
@@ -504,8 +508,15 @@ impl PodPerformanceAnalyzer {
     }
 
     /// Record device metrics
-    pub fn record_device_metrics(&mut self, device_id: DeviceId, metrics: DevicePerformanceMetrics) {
-        let device_history = self.device_metrics.entry(device_id).or_insert_with(|| VecDeque::with_capacity(100));
+    pub fn record_device_metrics(
+        &mut self,
+        device_id: DeviceId,
+        metrics: DevicePerformanceMetrics,
+    ) {
+        let device_history = self
+            .device_metrics
+            .entry(device_id)
+            .or_insert_with(|| VecDeque::with_capacity(100));
         device_history.push_back(metrics);
         if device_history.len() > 100 {
             device_history.pop_front();
@@ -515,7 +526,8 @@ impl PodPerformanceAnalyzer {
     /// Check for performance alerts
     fn check_performance_alerts(&mut self, metrics: &PodPerformanceMetrics) {
         // Clear old alerts
-        self.active_alerts.retain(|alert| alert.timestamp.elapsed() < Duration::from_secs(300));
+        self.active_alerts
+            .retain(|alert| alert.timestamp.elapsed() < Duration::from_secs(300));
 
         // Check latency
         if let Some(&threshold) = self.alert_thresholds.get(&AlertType::HighLatency) {
@@ -524,7 +536,10 @@ impl PodPerformanceAnalyzer {
                     AlertType::HighLatency,
                     AlertSeverity::Warning,
                     None,
-                    format!("High latency detected: {:.2}ms", metrics.latency.as_millis()),
+                    format!(
+                        "High latency detected: {:.2}ms",
+                        metrics.latency.as_millis()
+                    ),
                     metrics.latency.as_millis() as f64,
                     threshold,
                 );
@@ -552,7 +567,10 @@ impl PodPerformanceAnalyzer {
                     AlertType::HighUtilization,
                     AlertSeverity::Critical,
                     None,
-                    format!("High utilization detected: {:.1}%", metrics.utilization * 100.0),
+                    format!(
+                        "High utilization detected: {:.1}%",
+                        metrics.utilization * 100.0
+                    ),
                     metrics.utilization,
                     threshold,
                 );
@@ -580,7 +598,10 @@ impl PodPerformanceAnalyzer {
                     AlertType::HighPowerConsumption,
                     AlertSeverity::Warning,
                     None,
-                    format!("High power consumption detected: {:.1}W", metrics.power_consumption),
+                    format!(
+                        "High power consumption detected: {:.1}W",
+                        metrics.power_consumption
+                    ),
                     metrics.power_consumption,
                     threshold,
                 );
@@ -622,7 +643,8 @@ impl PodPerformanceAnalyzer {
                 target_devices: vec![], // Apply to all devices
                 expected_improvement: 0.15,
                 implementation_effort: EffortLevel::Medium,
-                description: "Implement dynamic load balancing to redistribute workload".to_string(),
+                description: "Implement dynamic load balancing to redistribute workload"
+                    .to_string(),
                 priority: RecommendationPriority::High,
             });
         }
@@ -673,25 +695,32 @@ impl PodPerformanceAnalyzer {
         }
 
         // Throughput trend
-        let throughput_values: Vec<f64> = self.metrics_history.iter().map(|m| m.throughput).collect();
+        let throughput_values: Vec<f64> =
+            self.metrics_history.iter().map(|m| m.throughput).collect();
         if let Some(trend) = self.calculate_metric_trend("throughput", &throughput_values) {
             trends.push(trend);
         }
 
         // Latency trend
-        let latency_values: Vec<f64> = self.metrics_history.iter().map(|m| m.latency.as_millis() as f64).collect();
+        let latency_values: Vec<f64> = self
+            .metrics_history
+            .iter()
+            .map(|m| m.latency.as_millis() as f64)
+            .collect();
         if let Some(trend) = self.calculate_metric_trend("latency", &latency_values) {
             trends.push(trend);
         }
 
         // Utilization trend
-        let utilization_values: Vec<f64> = self.metrics_history.iter().map(|m| m.utilization).collect();
+        let utilization_values: Vec<f64> =
+            self.metrics_history.iter().map(|m| m.utilization).collect();
         if let Some(trend) = self.calculate_metric_trend("utilization", &utilization_values) {
             trends.push(trend);
         }
 
         // Temperature trend
-        let temperature_values: Vec<f64> = self.metrics_history.iter().map(|m| m.temperature).collect();
+        let temperature_values: Vec<f64> =
+            self.metrics_history.iter().map(|m| m.temperature).collect();
         if let Some(trend) = self.calculate_metric_trend("temperature", &temperature_values) {
             trends.push(trend);
         }
@@ -700,7 +729,11 @@ impl PodPerformanceAnalyzer {
     }
 
     /// Calculate trend for a specific metric
-    fn calculate_metric_trend(&self, metric_name: &str, values: &[f64]) -> Option<PerformanceTrend> {
+    fn calculate_metric_trend(
+        &self,
+        metric_name: &str,
+        values: &[f64],
+    ) -> Option<PerformanceTrend> {
         if values.len() < 10 {
             return None;
         }
@@ -712,13 +745,13 @@ impl PodPerformanceAnalyzer {
         let x_mean = x_values.iter().sum::<f64>() / n;
         let y_mean = values.iter().sum::<f64>() / n;
 
-        let numerator: f64 = x_values.iter().zip(values.iter())
+        let numerator: f64 = x_values
+            .iter()
+            .zip(values.iter())
             .map(|(x, y)| (x - x_mean) * (y - y_mean))
             .sum();
 
-        let denominator: f64 = x_values.iter()
-            .map(|x| (x - x_mean).powi(2))
-            .sum();
+        let denominator: f64 = x_values.iter().map(|x| (x - x_mean).powi(2)).sum();
 
         if denominator == 0.0 {
             return None;
@@ -736,15 +769,22 @@ impl PodPerformanceAnalyzer {
         };
 
         // Calculate R-squared for confidence
-        let y_pred: Vec<f64> = x_values.iter().map(|x| y_mean + slope * (x - x_mean)).collect();
-        let ss_res: f64 = values.iter().zip(y_pred.iter())
+        let y_pred: Vec<f64> = x_values
+            .iter()
+            .map(|x| y_mean + slope * (x - x_mean))
+            .collect();
+        let ss_res: f64 = values
+            .iter()
+            .zip(y_pred.iter())
             .map(|(y, y_p)| (y - y_p).powi(2))
             .sum();
-        let ss_tot: f64 = values.iter()
-            .map(|y| (y - y_mean).powi(2))
-            .sum();
+        let ss_tot: f64 = values.iter().map(|y| (y - y_mean).powi(2)).sum();
 
-        let confidence = if ss_tot == 0.0 { 1.0 } else { 1.0 - (ss_res / ss_tot) };
+        let confidence = if ss_tot == 0.0 {
+            1.0
+        } else {
+            1.0 - (ss_res / ss_tot)
+        };
 
         Some(PerformanceTrend {
             metric_name: metric_name.to_string(),
@@ -761,7 +801,8 @@ impl PodPerformanceAnalyzer {
 
         for benchmark in &self.benchmarks {
             let throughput_ratio = metrics.throughput / benchmark.expected_throughput;
-            let latency_ratio = benchmark.expected_latency.as_millis() as f64 / metrics.latency.as_millis() as f64;
+            let latency_ratio =
+                benchmark.expected_latency.as_millis() as f64 / metrics.latency.as_millis() as f64;
             let utilization_ratio = metrics.utilization / benchmark.max_utilization;
 
             // Overall performance score (higher is better)
@@ -779,19 +820,51 @@ impl PodPerformanceAnalyzer {
 
         if let Some(latest_metrics) = self.metrics_history.back() {
             summary.insert("current_throughput".to_string(), latest_metrics.throughput);
-            summary.insert("current_latency_ms".to_string(), latest_metrics.latency.as_millis() as f64);
-            summary.insert("current_utilization".to_string(), latest_metrics.utilization);
+            summary.insert(
+                "current_latency_ms".to_string(),
+                latest_metrics.latency.as_millis() as f64,
+            );
+            summary.insert(
+                "current_utilization".to_string(),
+                latest_metrics.utilization,
+            );
             summary.insert("current_efficiency".to_string(), latest_metrics.efficiency);
-            summary.insert("current_power_w".to_string(), latest_metrics.power_consumption);
-            summary.insert("current_temperature_c".to_string(), latest_metrics.temperature);
+            summary.insert(
+                "current_power_w".to_string(),
+                latest_metrics.power_consumption,
+            );
+            summary.insert(
+                "current_temperature_c".to_string(),
+                latest_metrics.temperature,
+            );
         }
 
         // Calculate averages
         if !self.metrics_history.is_empty() {
-            let avg_throughput = self.metrics_history.iter().map(|m| m.throughput).sum::<f64>() / self.metrics_history.len() as f64;
-            let avg_latency = self.metrics_history.iter().map(|m| m.latency.as_millis() as f64).sum::<f64>() / self.metrics_history.len() as f64;
-            let avg_utilization = self.metrics_history.iter().map(|m| m.utilization).sum::<f64>() / self.metrics_history.len() as f64;
-            let avg_efficiency = self.metrics_history.iter().map(|m| m.efficiency).sum::<f64>() / self.metrics_history.len() as f64;
+            let avg_throughput = self
+                .metrics_history
+                .iter()
+                .map(|m| m.throughput)
+                .sum::<f64>()
+                / self.metrics_history.len() as f64;
+            let avg_latency = self
+                .metrics_history
+                .iter()
+                .map(|m| m.latency.as_millis() as f64)
+                .sum::<f64>()
+                / self.metrics_history.len() as f64;
+            let avg_utilization = self
+                .metrics_history
+                .iter()
+                .map(|m| m.utilization)
+                .sum::<f64>()
+                / self.metrics_history.len() as f64;
+            let avg_efficiency = self
+                .metrics_history
+                .iter()
+                .map(|m| m.efficiency)
+                .sum::<f64>()
+                / self.metrics_history.len() as f64;
 
             summary.insert("avg_throughput".to_string(), avg_throughput);
             summary.insert("avg_latency_ms".to_string(), avg_latency);
@@ -800,8 +873,14 @@ impl PodPerformanceAnalyzer {
         }
 
         summary.insert("active_alerts".to_string(), self.active_alerts.len() as f64);
-        summary.insert("recommendations".to_string(), self.recommendations.len() as f64);
-        summary.insert("uptime_seconds".to_string(), self.start_time.elapsed().as_secs() as f64);
+        summary.insert(
+            "recommendations".to_string(),
+            self.recommendations.len() as f64,
+        );
+        summary.insert(
+            "uptime_seconds".to_string(),
+            self.start_time.elapsed().as_secs() as f64,
+        );
 
         summary
     }
@@ -832,7 +911,10 @@ impl PodPerformanceAnalyzer {
     }
 
     /// Get device metrics
-    pub fn get_device_metrics(&self, device_id: DeviceId) -> Option<&VecDeque<DevicePerformanceMetrics>> {
+    pub fn get_device_metrics(
+        &self,
+        device_id: DeviceId,
+    ) -> Option<&VecDeque<DevicePerformanceMetrics>> {
         self.device_metrics.get(&device_id)
     }
 }
@@ -942,6 +1024,9 @@ mod tests {
         // Should detect increasing throughput trend
         let throughput_trend = trends.iter().find(|t| t.metric_name == "throughput");
         assert!(throughput_trend.is_some());
-        assert!(matches!(throughput_trend.unwrap().trend_direction, TrendDirection::Increasing));
+        assert!(matches!(
+            throughput_trend.unwrap().trend_direction,
+            TrendDirection::Increasing
+        ));
     }
 }

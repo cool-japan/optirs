@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+use crate::error::{OptimError, Result};
 use crate::tpu::tpu_backend::DeviceId;
-use crate::error::{Result, OptimError};
 
 use super::config::*;
 use super::state::*;
@@ -620,7 +620,12 @@ impl CoordinationScheduler {
     }
 
     /// Create new operation
-    pub fn create_operation(&mut self, operation_type: OperationType, target_devices: Vec<DeviceId>, parameters: OperationParameters) -> Result<OperationId> {
+    pub fn create_operation(
+        &mut self,
+        operation_type: OperationType,
+        target_devices: Vec<DeviceId>,
+        parameters: OperationParameters,
+    ) -> Result<OperationId> {
         let operation_id = OperationId(self.next_operation_id);
         self.next_operation_id += 1;
 
@@ -718,7 +723,8 @@ impl CoordinationScheduler {
     /// Check if dependencies are satisfied
     fn dependencies_satisfied(&self, dependencies: &[OperationId]) -> bool {
         dependencies.iter().all(|dep_id| {
-            self.scheduled_operations.get(dep_id)
+            self.scheduled_operations
+                .get(dep_id)
                 .map(|op| op.status == OperationStatus::Completed)
                 .unwrap_or(false)
         })
@@ -728,11 +734,13 @@ impl CoordinationScheduler {
     fn execute_operation(&mut self, operation_id: OperationId) -> Result<()> {
         if let Some(operation) = self.scheduled_operations.get_mut(&operation_id) {
             // Allocate resources
-            let allocated_resources = if let Some(requirements) = &operation.parameters.resource_requirements {
-                self.resource_manager.allocate_resources(operation_id, requirements.clone())?
-            } else {
-                AllocatedResources::default()
-            };
+            let allocated_resources =
+                if let Some(requirements) = &operation.parameters.resource_requirements {
+                    self.resource_manager
+                        .allocate_resources(operation_id, requirements.clone())?
+                } else {
+                    AllocatedResources::default()
+                };
 
             // Create execution context
             let context = ExecutionContext {
@@ -755,7 +763,8 @@ impl CoordinationScheduler {
             operation.status = OperationStatus::Running;
 
             // Add to active executions
-            self.active_executions.insert(operation_id, active_execution);
+            self.active_executions
+                .insert(operation_id, active_execution);
             self.scheduler_state.active_operations += 1;
             self.scheduler_state.queued_operations -= 1;
 
@@ -785,7 +794,8 @@ impl CoordinationScheduler {
 
         for (operation_id, execution) in &mut self.active_executions {
             // Check for timeout
-            if execution.start_time.elapsed() > Duration::from_secs(300) { // 5 minutes default timeout
+            if execution.start_time.elapsed() > Duration::from_secs(300) {
+                // 5 minutes default timeout
                 completed_operations.push((*operation_id, OperationResult::TimedOut));
             }
 
@@ -802,14 +812,22 @@ impl CoordinationScheduler {
     }
 
     /// Complete operation
-    fn complete_operation(&mut self, operation_id: OperationId, result: OperationResult) -> Result<()> {
+    fn complete_operation(
+        &mut self,
+        operation_id: OperationId,
+        result: OperationResult,
+    ) -> Result<()> {
         if let Some(execution) = self.active_executions.remove(&operation_id) {
             // Create execution record
             let record = ExecutionRecord {
                 operation_id,
-                operation_type: self.scheduled_operations.get(&operation_id)
+                operation_type: self
+                    .scheduled_operations
+                    .get(&operation_id)
                     .map(|op| op.operation_type.clone())
-                    .unwrap_or(OperationType::Custom { operation: "unknown".to_string() }),
+                    .unwrap_or(OperationType::Custom {
+                        operation: "unknown".to_string(),
+                    }),
                 start_time: execution.start_time,
                 end_time: Some(Instant::now()),
                 duration: Some(execution.start_time.elapsed()),
@@ -833,7 +851,9 @@ impl CoordinationScheduler {
             if let Some(operation) = self.scheduled_operations.get_mut(&operation_id) {
                 operation.status = match &self.execution_history.last().unwrap().result {
                     OperationResult::Success { .. } => OperationStatus::Completed,
-                    OperationResult::Failure { error } => OperationStatus::Failed { reason: error.clone() },
+                    OperationResult::Failure { error } => OperationStatus::Failed {
+                        reason: error.clone(),
+                    },
                     OperationResult::TimedOut => OperationStatus::TimedOut,
                     OperationResult::Cancelled { reason } => OperationStatus::Cancelled,
                     OperationResult::PartialSuccess { .. } => OperationStatus::Completed,
@@ -847,11 +867,17 @@ impl CoordinationScheduler {
     /// Cancel operation
     pub fn cancel_operation(&mut self, operation_id: OperationId) -> Result<()> {
         // Remove from queue if queued
-        self.operation_queue.retain(|op| op.operation_id != operation_id);
+        self.operation_queue
+            .retain(|op| op.operation_id != operation_id);
 
         // Cancel if active
         if self.active_executions.contains_key(&operation_id) {
-            self.complete_operation(operation_id, OperationResult::Cancelled { reason: "Manual cancellation".to_string() })?;
+            self.complete_operation(
+                operation_id,
+                OperationResult::Cancelled {
+                    reason: "Manual cancellation".to_string(),
+                },
+            )?;
         }
 
         // Update operation status
@@ -880,12 +906,16 @@ impl CoordinationScheduler {
     fn validate_operation(&self, operation: &ScheduledOperation) -> Result<()> {
         // Check if devices exist
         if operation.target_devices.is_empty() {
-            return Err(OptimError::InvalidInput("Target devices cannot be empty".to_string()));
+            return Err(OptimError::InvalidInput(
+                "Target devices cannot be empty".to_string(),
+            ));
         }
 
         // Check timeout
         if operation.parameters.timeout.as_secs() == 0 {
-            return Err(OptimError::InvalidInput("Operation timeout cannot be zero".to_string()));
+            return Err(OptimError::InvalidInput(
+                "Operation timeout cannot be zero".to_string(),
+            ));
         }
 
         Ok(())
@@ -897,7 +927,9 @@ impl CoordinationScheduler {
             return 0.0;
         }
 
-        let successful_operations = self.execution_history.iter()
+        let successful_operations = self
+            .execution_history
+            .iter()
             .filter(|record| matches!(record.result, OperationResult::Success { .. }))
             .count();
 
@@ -906,7 +938,9 @@ impl CoordinationScheduler {
 
     /// Get operation status
     pub fn get_operation_status(&self, operation_id: OperationId) -> Option<&OperationStatus> {
-        self.scheduled_operations.get(&operation_id).map(|op| &op.status)
+        self.scheduled_operations
+            .get(&operation_id)
+            .map(|op| &op.status)
     }
 
     /// Get scheduler statistics
@@ -921,14 +955,18 @@ impl CoordinationScheduler {
             return;
         }
 
-        let successful_ops = self.execution_history.iter()
+        let successful_ops = self
+            .execution_history
+            .iter()
             .filter(|record| matches!(record.result, OperationResult::Success { .. }))
             .count();
 
         self.scheduler_state.statistics.success_rate = successful_ops as f64 / total_ops as f64;
 
         // Calculate average latency
-        let total_duration: Duration = self.execution_history.iter()
+        let total_duration: Duration = self
+            .execution_history
+            .iter()
             .filter_map(|record| record.duration)
             .sum();
 
@@ -956,15 +994,21 @@ impl ResourceManager {
 
     /// Check if resources can be allocated
     pub fn can_allocate(&self, requirements: &ResourceRequirements) -> bool {
-        self.available_resources.cpu_cores as f64 >= requirements.cpu &&
-        self.available_resources.memory as f64 >= requirements.memory &&
-        self.available_resources.network_bandwidth as f64 >= requirements.network
+        self.available_resources.cpu_cores as f64 >= requirements.cpu
+            && self.available_resources.memory as f64 >= requirements.memory
+            && self.available_resources.network_bandwidth as f64 >= requirements.network
     }
 
     /// Allocate resources for operation
-    pub fn allocate_resources(&mut self, operation_id: OperationId, requirements: ResourceRequirements) -> Result<AllocatedResources> {
+    pub fn allocate_resources(
+        &mut self,
+        operation_id: OperationId,
+        requirements: ResourceRequirements,
+    ) -> Result<AllocatedResources> {
         if !self.can_allocate(&requirements) {
-            return Err(OptimError::ResourceUnavailable("Insufficient resources".to_string()));
+            return Err(OptimError::ResourceUnavailable(
+                "Insufficient resources".to_string(),
+            ));
         }
 
         let allocation = AllocatedResources {
@@ -983,7 +1027,8 @@ impl ResourceManager {
         self.available_resources.network_bandwidth =
             (self.available_resources.network_bandwidth as f64 - requirements.network) as u64;
 
-        self.allocated_resources.insert(operation_id, allocation.clone());
+        self.allocated_resources
+            .insert(operation_id, allocation.clone());
         Ok(allocation)
     }
 
@@ -1208,7 +1253,8 @@ pub mod utils {
             return 0.0;
         }
 
-        let successful = records.iter()
+        let successful = records
+            .iter()
             .filter(|r| matches!(r.result, OperationResult::Success { .. }))
             .count();
 

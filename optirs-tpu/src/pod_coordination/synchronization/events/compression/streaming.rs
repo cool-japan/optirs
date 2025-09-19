@@ -107,7 +107,7 @@ impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            chunk_size: 64 * 1024, // 64KB
+            chunk_size: 64 * 1024,  // 64KB
             overlap_size: 4 * 1024, // 4KB
             mode: StreamingMode::Continuous,
             compression_threshold: 1024,
@@ -133,7 +133,7 @@ impl StreamingConfig {
     pub fn compression_optimized() -> Self {
         Self {
             enabled: true,
-            chunk_size: 32 * 1024, // 32KB
+            chunk_size: 32 * 1024,  // 32KB
             overlap_size: 8 * 1024, // 8KB
             mode: StreamingMode::Adaptive,
             compression_threshold: 512,
@@ -958,11 +958,11 @@ pub struct PerformanceTargets {
 impl Default for PerformanceTargets {
     fn default() -> Self {
         Self {
-            throughput: Some(10_000_000.0), // 10 MB/s
-            latency: Some(10.0), // 10ms
-            compression_ratio: Some(2.0), // 2:1
+            throughput: Some(10_000_000.0),        // 10 MB/s
+            latency: Some(10.0),                   // 10ms
+            compression_ratio: Some(2.0),          // 2:1
             memory_usage: Some(100 * 1024 * 1024), // 100MB
-            cpu_usage: Some(0.5), // 50%
+            cpu_usage: Some(0.5),                  // 50%
         }
     }
 }
@@ -973,9 +973,9 @@ impl PerformanceTargets {
         Self {
             throughput: Some(100_000_000.0), // 100 MB/s
             latency: None,
-            compression_ratio: Some(1.5), // 1.5:1
+            compression_ratio: Some(1.5),          // 1.5:1
             memory_usage: Some(500 * 1024 * 1024), // 500MB
-            cpu_usage: Some(0.8), // 80%
+            cpu_usage: Some(0.8),                  // 80%
         }
     }
 
@@ -984,20 +984,20 @@ impl PerformanceTargets {
         Self {
             throughput: Some(1_000_000.0), // 1 MB/s
             latency: None,
-            compression_ratio: Some(5.0), // 5:1
+            compression_ratio: Some(5.0),          // 5:1
             memory_usage: Some(200 * 1024 * 1024), // 200MB
-            cpu_usage: Some(0.9), // 90%
+            cpu_usage: Some(0.9),                  // 90%
         }
     }
 
     /// Latency-focused targets
     pub fn latency_focused() -> Self {
         Self {
-            throughput: Some(1_000_000.0), // 1 MB/s
-            latency: Some(1.0), // 1ms
-            compression_ratio: Some(1.2), // 1.2:1
+            throughput: Some(1_000_000.0),        // 1 MB/s
+            latency: Some(1.0),                   // 1ms
+            compression_ratio: Some(1.2),         // 1.2:1
             memory_usage: Some(50 * 1024 * 1024), // 50MB
-            cpu_usage: Some(0.3), // 30%
+            cpu_usage: Some(0.3),                 // 30%
         }
     }
 }

@@ -23,7 +23,7 @@ use crate::optimizers::Optimizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array1;
-/// use scirs2_optim::optimizers::{SGD, Optimizer};
+/// use optirs_core::optimizers::{SGD, Optimizer};
 ///
 /// // Initialize parameters and gradients
 /// let params = Array1::zeros(5);

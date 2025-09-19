@@ -71,7 +71,7 @@ scirs2-optim = { version = "0.1.0-beta.1", features = ["metrics_integration"] }
 Basic optimization with traditional interface:
 
 ```rust
-use scirs2_optim::{optimizers, regularizers, schedulers};
+use optirs_core::{optimizers, regularizers, schedulers};
 use scirs2_core::error::CoreResult;
 use ndarray::array;
 
@@ -167,7 +167,7 @@ fn regularization_example() -> CoreResult<()> {
 State-of-the-art optimization algorithms:
 
 ```rust
-use scirs2_optim::optimizers::{
+use optirs_core::optimizers::{
     // Traditional optimizers
     Optimizer, SGD, Adam, AdaGrad, RMSprop, AdamW,
     // State-of-the-art optimizers
@@ -187,7 +187,7 @@ use scirs2_optim::optimizers::{
 Advanced regularization techniques:
 
 ```rust
-use scirs2_optim::regularizers::{
+use optirs_core::regularizers::{
     // Weight regularization
     L1, L2, ElasticNet, Orthogonal, SpectralNorm,
     // Activation regularization
@@ -203,7 +203,7 @@ use scirs2_optim::regularizers::{
 Advanced learning rate scheduling:
 
 ```rust
-use scirs2_optim::schedulers::{
+use optirs_core::schedulers::{
     // Adaptive schedulers
     ReduceOnPlateau, CosineAnnealingWarmRestarts,
     // Cyclic schedulers
@@ -220,7 +220,7 @@ use scirs2_optim::schedulers::{
 Enterprise-grade optimization infrastructure:
 
 ```rust
-use scirs2_optim::{
+use optirs_core::{
     // Unified API (PyTorch-style)
     Parameter, OptimizerFactory, OptimizerConfig, UnifiedOptimizer,
     // Hardware-aware optimization
@@ -241,7 +241,7 @@ use scirs2_optim::{
 Automatic hyperparameter tuning and neural optimizers:
 
 ```rust
-use scirs2_optim::{
+use optirs_core::{
     HyperparameterOptimizer, MetaOptimizer, NeuralOptimizer,
     AdaptiveOptimizerSelector, OptimizerStatistics,
 };
@@ -263,7 +263,7 @@ let mut neural_optimizer = NeuralOptimizer::new(
 Specialized strategies for different domains:
 
 ```rust
-use scirs2_optim::{
+use optirs_core::{
     DomainSpecificSelector, DomainStrategy, OptimizationContext,
 };
 
@@ -292,7 +292,7 @@ let optimizer = DomainSpecificSelector::create_optimizer(
 Optimization strategies that adapt to hardware:
 
 ```rust
-use scirs2_optim::{
+use optirs_core::{
     HardwareAwareOptimizer, HardwarePlatform, PerformanceProfiler,
 };
 
@@ -317,8 +317,8 @@ let mut optimizer = HardwareAwareOptimizer::new(
 The `metrics_integration` feature provides integration with `scirs2-metrics` for metric-based optimization:
 
 ```rust
-use scirs2_optim::metrics::{MetricOptimizer, MetricScheduler, MetricBasedReduceOnPlateau};
-use scirs2_optim::optimizers::{SGD, Optimizer};
+use optirs_core::metrics::{MetricOptimizer, MetricScheduler, MetricBasedReduceOnPlateau};
+use optirs_core::optimizers::{SGD, Optimizer};
 
 // Create an SGD optimizer guided by metrics
 let mut optimizer = MetricOptimizer::new(
@@ -364,7 +364,7 @@ for epoch in 0..num_epochs {
 Bayesian optimization and neural architecture search:
 
 ```rust
-use scirs2_optim::{
+use optirs_core::{
     HyperparameterOptimizer, AcquisitionFunction, MetaOptimizer,
 };
 
@@ -393,7 +393,7 @@ let pareto_front = bayesian_optimizer.multi_objective_search(
 Production-ready distributed training:
 
 ```rust
-use scirs2_optim::{
+use optirs_core::{
     DistributedCoordinator, ParameterAverager, GradientCompressor,
     MicroBatchTrainer, GradientAccumulator,
 };
@@ -424,7 +424,7 @@ let mut trainer = MicroBatchTrainer::new(
 Example of how to use optimizers with regularizers:
 
 ```rust
-use scirs2_optim::{optimizers::adam::Adam, regularizers::l2::L2};
+use optirs_core::{optimizers::adam::Adam, regularizers::l2::L2};
 use ndarray::Array1;
 
 // Create parameters
@@ -452,7 +452,7 @@ optimizer.step(&mut params, &grads).unwrap();
 Creating a custom learning rate scheduler:
 
 ```rust
-use scirs2_optim::schedulers::Scheduler;
+use optirs_core::schedulers::Scheduler;
 use scirs2_core::error::{CoreError, CoreResult};
 
 struct CustomScheduler {

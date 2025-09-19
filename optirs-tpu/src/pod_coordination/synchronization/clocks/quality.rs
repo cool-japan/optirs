@@ -306,7 +306,9 @@ pub enum QualityAnomalyAlgorithm {
     /// Rule-based detection using predefined rules
     RuleBased { rules: Vec<String> },
     /// Hybrid detection combining multiple algorithms
-    Hybrid { algorithms: Vec<QualityAnomalyAlgorithm> },
+    Hybrid {
+        algorithms: Vec<QualityAnomalyAlgorithm>,
+    },
 }
 
 /// Anomaly response actions
@@ -675,9 +677,9 @@ pub struct DataRetention {
 impl Default for DataRetention {
     fn default() -> Self {
         Self {
-            raw_data: Duration::from_secs(86400), // 1 day
+            raw_data: Duration::from_secs(86400),          // 1 day
             aggregated_data: Duration::from_secs(2592000), // 30 days
-            summary_data: Duration::from_secs(31536000), // 1 year
+            summary_data: Duration::from_secs(31536000),   // 1 year
         }
     }
 }
@@ -704,8 +706,8 @@ impl Default for TrendAnalysis {
                 TrendDetectionMethod::MovingAverage,
             ],
             periods: vec![
-                Duration::from_secs(3600),  // 1 hour
-                Duration::from_secs(86400), // 1 day
+                Duration::from_secs(3600),   // 1 hour
+                Duration::from_secs(86400),  // 1 day
                 Duration::from_secs(604800), // 1 week
             ],
             prediction_horizon: Duration::from_secs(3600),
@@ -868,7 +870,10 @@ impl ClockQualityMonitor {
     }
 
     /// Update quality metrics
-    pub fn update_metrics(&mut self, metrics: HashMap<String, f64>) -> Result<(), QualityMonitorError> {
+    pub fn update_metrics(
+        &mut self,
+        metrics: HashMap<String, f64>,
+    ) -> Result<(), QualityMonitorError> {
         self.current_metrics = metrics.clone();
 
         let overall_score = self.calculate_quality_score(&metrics)?;
@@ -898,7 +903,10 @@ impl ClockQualityMonitor {
     }
 
     /// Calculate overall quality score
-    fn calculate_quality_score(&self, metrics: &HashMap<String, f64>) -> Result<f64, QualityMonitorError> {
+    fn calculate_quality_score(
+        &self,
+        metrics: &HashMap<String, f64>,
+    ) -> Result<f64, QualityMonitorError> {
         match &self.config.assessment.scoring.method {
             ScoringMethod::WeightedAverage => {
                 let mut weighted_sum = 0.0;
@@ -943,14 +951,16 @@ impl ClockQualityMonitor {
 
     /// Get current quality score
     fn get_current_score(&self) -> f64 {
-        self.quality_history.back()
+        self.quality_history
+            .back()
             .map(|snapshot| snapshot.overall_score)
             .unwrap_or(0.0)
     }
 
     /// Get current quality grade
     fn get_current_grade(&self) -> QualityGrade {
-        self.quality_history.back()
+        self.quality_history
+            .back()
             .map(|snapshot| snapshot.grade.clone())
             .unwrap_or(QualityGrade::Unacceptable)
     }
@@ -1097,11 +1107,21 @@ pub enum QualityMonitorError {
 impl std::fmt::Display for QualityMonitorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            QualityMonitorError::ConfigurationError(msg) => write!(f, "Quality monitor configuration error: {}", msg),
-            QualityMonitorError::MetricCalculationError(msg) => write!(f, "Quality metric calculation error: {}", msg),
-            QualityMonitorError::AssessmentError(msg) => write!(f, "Quality assessment error: {}", msg),
-            QualityMonitorError::AnomalyDetectionError(msg) => write!(f, "Quality anomaly detection error: {}", msg),
-            QualityMonitorError::ReportingError(msg) => write!(f, "Quality reporting error: {}", msg),
+            QualityMonitorError::ConfigurationError(msg) => {
+                write!(f, "Quality monitor configuration error: {}", msg)
+            }
+            QualityMonitorError::MetricCalculationError(msg) => {
+                write!(f, "Quality metric calculation error: {}", msg)
+            }
+            QualityMonitorError::AssessmentError(msg) => {
+                write!(f, "Quality assessment error: {}", msg)
+            }
+            QualityMonitorError::AnomalyDetectionError(msg) => {
+                write!(f, "Quality anomaly detection error: {}", msg)
+            }
+            QualityMonitorError::ReportingError(msg) => {
+                write!(f, "Quality reporting error: {}", msg)
+            }
         }
     }
 }
@@ -1130,7 +1150,10 @@ impl QualityAssessmentEngine {
     }
 
     /// Perform quality assessment
-    pub fn assess_quality(&mut self, data: &QualityData) -> Result<AssessmentResult, QualityMonitorError> {
+    pub fn assess_quality(
+        &mut self,
+        data: &QualityData,
+    ) -> Result<AssessmentResult, QualityMonitorError> {
         let mut results = HashMap::new();
 
         for method in &self.config.methods {
@@ -1151,7 +1174,11 @@ impl QualityAssessmentEngine {
     }
 
     /// Apply specific assessment method
-    fn apply_assessment_method(&self, method: &AssessmentMethod, data: &QualityData) -> Result<f64, QualityMonitorError> {
+    fn apply_assessment_method(
+        &self,
+        method: &AssessmentMethod,
+        data: &QualityData,
+    ) -> Result<f64, QualityMonitorError> {
         match method {
             AssessmentMethod::AllanDeviation => {
                 // Implementation would calculate Allan deviation
@@ -1177,7 +1204,10 @@ impl QualityAssessmentEngine {
     }
 
     /// Calculate overall assessment score
-    fn calculate_overall_score(&self, results: &HashMap<String, f64>) -> Result<f64, QualityMonitorError> {
+    fn calculate_overall_score(
+        &self,
+        results: &HashMap<String, f64>,
+    ) -> Result<f64, QualityMonitorError> {
         if results.is_empty() {
             return Ok(0.0);
         }

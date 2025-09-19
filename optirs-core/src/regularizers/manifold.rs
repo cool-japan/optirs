@@ -19,7 +19,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```no_run
 /// use scirs2_core::ndarray_ext::array;
-/// use scirs2_optim::regularizers::{ManifoldRegularization, Regularizer};
+/// use optirs_core::regularizers::{ManifoldRegularization, Regularizer};
 ///
 /// let mut manifold_reg = ManifoldRegularization::new(0.01);
 ///
