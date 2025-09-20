@@ -22,11 +22,7 @@ thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 log = { workspace = true }
 
-# GPU backends
-metal = { workspace = true, optional = true }
-objc2 = { workspace = true, optional = true }
-objc2-foundation = { workspace = true, optional = true }
-objc2-metal-performance-shaders = { workspace = true, optional = true }
+# Cross-platform GPU backends
 cudarc = { workspace = true, optional = true }
 opencl3 = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
@@ -36,6 +32,13 @@ pollster = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt"] }
 futures = { workspace = true }
 
+# Platform-specific GPU backends
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { version = "0.31.0", optional = true }
+objc2 = { version = "0.6.2", optional = true }
+objc2-foundation = { version = "0.3.0", optional = true }
+objc2-metal-performance-shaders = { version = "0.3.0", optional = true }
+
 [dev-dependencies]
 approx = { workspace = true }
 tokio-test = { workspace = true }
@@ -43,6 +46,6 @@ tokio-test = { workspace = true }
 [features]
 default = ["wgpu"]
 cuda = ["cudarc"]
-metal = ["dep:metal", "objc2", "objc2-foundation", "objc2-metal-performance-shaders"]
 opencl = ["opencl3"]
 wgpu = ["dep:wgpu", "pollster"]
+# Note: metal feature only available on macOS due to platform-specific dependencies
