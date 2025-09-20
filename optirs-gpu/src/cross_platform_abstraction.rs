@@ -15,7 +15,7 @@ use num_traits::Float;
 use crate::error::{OptimError, Result};
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::{GpuBackend, GpuContext};
 
 /// Unified GPU optimizer interface
@@ -822,7 +822,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossPlatformOptimizer<T> {
         };
 
         for backend in backends_to_try {
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             {
                 if let Ok(context) = GpuContext::new(backend) {
                     self.contexts.insert(backend, Arc::new(context));
@@ -853,7 +853,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossPlatformOptimizer<T> {
         backend: GpuBackend,
         context: &Arc<GpuContext>,
     ) -> Result<DeviceCapabilities> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             Ok(DeviceCapabilities {
                 name: context
@@ -871,7 +871,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossPlatformOptimizer<T> {
             })
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
         {
             Ok(DeviceCapabilities {
                 name: format!("{:?} Device (Simulated)", backend),
@@ -896,7 +896,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossPlatformOptimizer<T> {
     ) -> Vec<PrecisionType> {
         let mut precisions = vec![PrecisionType::FP32];
 
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             if context.supports_fp16().unwrap_or(false) {
                 precisions.push(PrecisionType::FP16);

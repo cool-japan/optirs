@@ -6,7 +6,7 @@ use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension};
 use num_traits::Float;
 use std::sync::Arc;
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::{GpuBackend, GpuBuffer, GpuContext, GpuError};
 
 pub mod adagrad_gpu;
@@ -424,7 +424,7 @@ impl<A: Float, D: Dimension + Send + Sync> AdvancedGpuOptimizer<A, D> {
 
     /// Initialize device information
     pub fn initialize_device_info(&mut self) -> Result<(), GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let context = self.memory.context();
 
@@ -481,7 +481,7 @@ impl<A: Float, D: Dimension + Send + Sync> AdvancedGpuOptimizer<A, D> {
         self.kernel_cache.clear();
 
         // Force garbage collection on GPU
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             self.memory.context().synchronize()?;
             self.memory.context().garbage_collect()?;
@@ -525,7 +525,7 @@ impl<A: Float, D: Dimension + Send + Sync> AdvancedGpuOptimizer<A, D> {
                     match &error {
                         GpuOptimError::GpuError(_) => {
                             // Reset GPU context and retry
-                            #[cfg(feature = "gpu")]
+                            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
                             {
                                 if let Err(_) = self.memory.context().reset() {
                                     return Err(error);
@@ -579,7 +579,7 @@ pub mod utils {
     /// Check if GPU acceleration is available for the given backend
     #[allow(dead_code)]
     pub fn is_gpu_available(backend: GpuBackend) -> bool {
-        match GpuContext::new(_backend) {
+        match GpuContext::new(backend) {
             Ok(_) => true,
             Err(_) => false,
         }
@@ -607,7 +607,7 @@ pub mod utils {
 
     /// Calculate optimal block size for GPU kernels
     #[allow(dead_code)]
-    pub fn calculate_block_size(n: usize, maxthreads: usize) -> (usize, usize) {
+    pub fn calculate_block_size(n: usize, max_threads: usize) -> (usize, usize) {
         let block_size = 256.min(max_threads);
         let grid_size = (n + block_size - 1) / block_size;
         (grid_size, block_size)
@@ -729,7 +729,7 @@ pub mod utils {
         }
 
         // Synchronize to ensure all operations complete
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             // GPU synchronization would go here
         }

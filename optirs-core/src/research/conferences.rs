@@ -331,6 +331,12 @@ pub enum DeadlineType {
     ConferenceStart,
 }
 
+impl Default for ConferenceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConferenceManager {
     /// Create a new conference manager
     pub fn new() -> Self {

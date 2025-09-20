@@ -3,6 +3,13 @@
 // Utility functions for GPU operations
 
 use crate::GpuOptimError;
+#[cfg(any(
+    feature = "cuda",
+    feature = "metal",
+    feature = "opencl",
+    feature = "wgpu"
+))]
+use scirs2_core::gpu::{GpuBackend, GpuContext};
 
 /// Round size up to next alignment boundary
 pub fn align_size(size: usize, alignment: usize) -> usize {
@@ -76,6 +83,50 @@ pub fn validate_ptr_and_size(ptr: *mut u8, size: usize) -> Result<(), GpuOptimEr
     }
 
     Ok(())
+}
+
+/// Calculate optimal block size for GPU kernels
+pub fn calculate_block_size(n: usize, max_threads: usize) -> (usize, usize) {
+    let block_size = 256.min(max_threads);
+    let grid_size = (n + block_size - 1) / block_size;
+    (grid_size, block_size)
+}
+
+/// Get the optimal GPU backend for the current system
+#[cfg(any(
+    feature = "cuda",
+    feature = "metal",
+    feature = "opencl",
+    feature = "wgpu"
+))]
+pub fn get_optimal_backend() -> GpuBackend {
+    // Try backends in order of preference
+    let backends = [
+        GpuBackend::Cuda,
+        GpuBackend::Metal,
+        GpuBackend::Rocm,
+        GpuBackend::Wgpu,
+    ];
+
+    for backend in &backends {
+        if GpuContext::new(*backend).is_ok() {
+            return *backend;
+        }
+    }
+
+    // Fallback to CPU if no GPU backend available
+    GpuBackend::Cpu
+}
+
+/// Get the optimal GPU backend for the current system (fallback for when no GPU features are enabled)
+#[cfg(not(any(
+    feature = "cuda",
+    feature = "metal",
+    feature = "opencl",
+    feature = "wgpu"
+)))]
+pub fn get_optimal_backend() -> GpuBackend {
+    GpuBackend::Cpu
 }
 
 #[cfg(test)]

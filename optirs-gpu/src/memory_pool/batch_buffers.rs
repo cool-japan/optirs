@@ -4,7 +4,7 @@ use crate::gpu::GpuOptimError;
 use super::config::LargeBatchConfig;
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::GpuContext;
 
 /// Pre-allocated batch buffer for large operations
@@ -131,7 +131,7 @@ pub struct BatchBufferManager {
     /// Configuration
     config: LargeBatchConfig,
     /// GPU context for memory operations
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
     gpu_context: Option<std::sync::Arc<GpuContext>>,
     /// Statistics
     stats: BatchBufferStats,
@@ -162,14 +162,14 @@ impl BatchBufferManager {
         Self {
             buffers: Vec::new(),
             config,
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             gpu_context: None,
             stats: BatchBufferStats::default(),
         }
     }
 
     /// Create manager with GPU context
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
     pub fn new_with_context(
         config: LargeBatchConfig,
         gpu_context: std::sync::Arc<GpuContext>,
@@ -251,7 +251,7 @@ impl BatchBufferManager {
 
         self.buffers.retain(|buffer| {
             if !buffer.in_use && buffer.is_expired(lifetime) {
-                #[cfg(feature = "gpu")]
+                #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
                 {
                     if let Some(ref context) = self.gpu_context {
                         let _ = context.free_memory(buffer.ptr as *mut std::ffi::c_void);
@@ -306,7 +306,7 @@ impl BatchBufferManager {
 
         self.buffers.retain(|buffer| {
             if !buffer.in_use {
-                #[cfg(feature = "gpu")]
+                #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
                 {
                     if let Some(ref context) = self.gpu_context {
                         let _ = context.free_memory(buffer.ptr as *mut std::ffi::c_void);
@@ -347,7 +347,7 @@ impl BatchBufferManager {
 
     /// Allocate raw memory (placeholder implementation)
     fn allocate_raw_memory(&self, size: usize) -> Result<*mut u8, GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             if let Some(ref context) = self.gpu_context {
                 return context.allocate_memory(size)

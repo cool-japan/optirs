@@ -581,8 +581,10 @@ impl ResourceManager {
     /// Collects current resource usage
     fn collect_resource_usage() -> Result<ResourceUsage, String> {
         // Simplified resource collection - in practice would use system APIs
-        let mut usage = ResourceUsage::default();
-        usage.timestamp = Instant::now();
+        let mut usage = ResourceUsage {
+            timestamp: Instant::now(),
+            ..Default::default()
+        };
 
         // Memory usage (simplified)
         let info = sysinfo::System::new_all().used_memory();

@@ -109,11 +109,10 @@ impl BackendFactory {
             backends.push(GpuBackend::Cuda);
         }
 
-        // Check ROCm availability
-        #[cfg(feature = "rocm")]
-        if RocmBackend::is_available() {
-            backends.push(GpuBackend::Rocm);
-        }
+        // ROCm support not yet implemented
+        // if RocmBackend::is_available() {
+        //     backends.push(GpuBackend::Rocm);
+        // }
 
         // Check Metal availability
         #[cfg(target_os = "macos")]
@@ -330,11 +329,8 @@ impl RocmBackend {
     }
 
     pub fn is_available() -> bool {
-        #[cfg(feature = "rocm")]
-        return true;
-
-        #[cfg(not(feature = "rocm"))]
-        return false;
+        // ROCm support not yet implemented
+        false
     }
 }
 

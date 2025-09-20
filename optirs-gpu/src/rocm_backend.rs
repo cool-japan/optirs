@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::{GpuBackend, GpuContext};
 
 /// ROCm-specific configuration
@@ -153,7 +153,7 @@ impl<A: Float + Send + Sync> RocmBackend<A> {
 
     /// Detect AMD GPU architecture for optimizations
     pub fn detect_gpu_architecture(&self) -> Result<AmdGpuArchitecture, GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             // In practice, would query hipDeviceGetAttribute
             let properties = self.get_device_properties()?;
@@ -172,7 +172,7 @@ impl<A: Float + Send + Sync> RocmBackend<A> {
             }
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
         {
             Ok(AmdGpuArchitecture::RDNA2) // Default fallback
         }
@@ -275,7 +275,7 @@ impl<A: Float + Send + Sync> RocmBackend<A> {
         data_size: usize,
         iterations: usize,
     ) -> Result<RocmKernelBenchmark, GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let start_time = std::time::Instant::now();
 
@@ -301,7 +301,7 @@ impl<A: Float + Send + Sync> RocmBackend<A> {
             })
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
         {
             Ok(RocmKernelBenchmark {
                 kernel_name: kernel_name.to_string(),

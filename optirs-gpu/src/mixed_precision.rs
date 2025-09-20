@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::{GpuBuffer, GpuContext};
 
 /// Mixed precision configuration
@@ -196,7 +196,7 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
         param_count: usize,
         gpu_config: GpuOptimizerConfig,
     ) -> Result<(), GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let context = Arc::new(GpuContext::new(gpu_config.backend)?);
 
@@ -225,7 +225,7 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
     where
         D: Dimension,
     {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             if let Some(ref context) = self.gpu_context {
                 let kernel = context.get_kernel("scale_gradients_check_overflow_f16")?;
@@ -238,7 +238,7 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
 
                 // Launch kernel
                 let (grid_size, block_size) =
-                    crate::gpu::utils::calculate_block_size(gradients.len(), 256);
+                    crate::utils::calculate_block_size(gradients.len(), 256);
                 kernel.dispatch([grid_size as u32, 1, 1]);
 
                 // Check overflow flag

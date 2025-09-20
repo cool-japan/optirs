@@ -9,7 +9,7 @@ use crate::error::Result as OptimResult;
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig, GpuOptimizerMemory};
 use crate::optimizers::{Optimizer, RMSprop};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::GpuKernelHandle;
 
 /// GPU-accelerated RMSprop optimizer
@@ -78,7 +78,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSpropGpu<A> {
         gpu_memory.allocate()?;
 
         // Load RMSprop kernel
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let kernel_name = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                 if self.cpu_optimizer.centered {
@@ -163,7 +163,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSpropGpu<A> {
         self.step_count += 1;
 
         // Set kernel parameters
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
             kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
@@ -204,7 +204,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSpropGpu<A> {
 
             // Calculate grid and block dimensions
             let (grid_size, block_size) =
-                crate::gpu::utils::calculate_block_size(params.len(), 256);
+                crate::utils::calculate_block_size(params.len(), 256);
 
             // Launch kernel
             kernel.dispatch([grid_size as u32, 1, 1]);

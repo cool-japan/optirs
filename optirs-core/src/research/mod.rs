@@ -241,7 +241,7 @@ pub enum ResearcherRole {
 }
 
 /// Contact information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContactInfo {
     /// Phone number
     pub phone: Option<String>,
@@ -622,7 +622,7 @@ impl ResearchProject {
         }
 
         if let Some(funding) = &self.funding {
-            report.push_str(&format!("\n## Funding\n\n"));
+            report.push_str("\n## Funding\n\n");
             report.push_str(&format!("**Agency**: {}\n", funding.agency));
             report.push_str(&format!("**Grant**: {}\n", funding.grant_number));
             if let Some(amount) = funding.amount {
@@ -630,7 +630,7 @@ impl ResearchProject {
             }
         }
 
-        report.push_str(&format!("\n## Progress\n\n"));
+        report.push_str("\n## Progress\n\n");
         report.push_str(&format!("**Experiments**: {}\n", self.experiments.len()));
         report.push_str(&format!("**Publications**: {}\n", self.publications.len()));
         report.push_str(&format!(
@@ -639,18 +639,6 @@ impl ResearchProject {
         ));
 
         report
-    }
-}
-
-impl Default for ContactInfo {
-    fn default() -> Self {
-        Self {
-            phone: None,
-            office_address: None,
-            mailing_address: None,
-            website: None,
-            social_media: HashMap::new(),
-        }
     }
 }
 

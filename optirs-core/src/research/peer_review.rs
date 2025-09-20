@@ -424,6 +424,12 @@ pub struct ReviewQualityMetric {
     pub calculation_method: String,
 }
 
+impl Default for PeerReviewSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeerReviewSystem {
     /// Create a new peer review system
     pub fn new() -> Self {

@@ -14,6 +14,11 @@ use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+// Type aliases for complex types to reduce complexity
+type ObjectiveFn<T> = Box<dyn Fn(&ParameterConfiguration<T>) -> Result<f64> + Send + Sync>;
+type RuleFn<T> = Box<dyn Fn(&HPOResult<T>) -> bool + Send + Sync>;
+type TestFn<T> = Box<dyn Fn(&[HPOResult<T>]) -> StatisticalTestResult + Send + Sync>;
+
 /// Privacy-preserving hyperparameter optimizer
 pub struct PrivateHyperparameterOptimizer<T: Float + Debug + Send + Sync + 'static> {
     /// Configuration for privacy-preserving hyperparameter optimization
@@ -420,7 +425,7 @@ pub enum ParameterValue<T: Float + Debug + Send + Sync + 'static> {
 /// Private objective function
 pub struct PrivateObjective<T: Float + Debug + Send + Sync + 'static> {
     /// Underlying objective function
-    objective_fn: Box<dyn Fn(&ParameterConfiguration<T>) -> Result<f64> + Send + Sync>,
+    objective_fn: ObjectiveFn<T>,
 
     /// Noise mechanism for objective evaluation
     noise_mechanism: ObjectiveNoiseMechanism<T>,
@@ -807,7 +812,7 @@ pub struct ValidationRule<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Rule function
-    pub rule_fn: Box<dyn Fn(&HPOResult<T>) -> bool + Send + Sync>,
+    pub rule_fn: RuleFn<T>,
 
     /// Rule weight
     pub weight: f64,
@@ -819,7 +824,7 @@ pub struct StatisticalTest<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Test function
-    pub test_fn: Box<dyn Fn(&[HPOResult<T>]) -> StatisticalTestResult + Send + Sync>,
+    pub test_fn: TestFn<T>,
 
     /// Significance level
     pub alpha: f64,
@@ -1002,10 +1007,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
     }
 
     /// Optimize hyperparameters with differential privacy
-    pub fn optimize(
-        &mut self,
-        objective_fn: Box<dyn Fn(&ParameterConfiguration<T>) -> Result<f64> + Send + Sync>,
-    ) -> Result<PrivateHPOResults<T>> {
+    pub fn optimize(&mut self, objective_fn: ObjectiveFn<T>) -> Result<PrivateHPOResults<T>> {
         // Set up private objective function
         self.private_objective.set_objective(objective_fn)?;
 
@@ -1595,10 +1597,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
         })
     }
 
-    pub fn set_objective(
-        &mut self,
-        objective_fn: Box<dyn Fn(&ParameterConfiguration<T>) -> Result<f64> + Send + Sync>,
-    ) -> Result<()> {
+    pub fn set_objective(&mut self, objective_fn: ObjectiveFn<T>) -> Result<()> {
         self.objective_fn = objective_fn;
         Ok(())
     }
@@ -1955,6 +1954,12 @@ impl<T: Float + Debug + Send + Sync + 'static> KernelFunction<T> {
             kernel_type: KernelType::RBF,
             parameters: vec![T::one()],
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for AcquisitionFunction<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

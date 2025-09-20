@@ -15,7 +15,7 @@ use crate::adaptive_selection::OptimizerType;
 use crate::error::{OptimError, Result};
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::{GpuBackend, GpuContext};
 
 /// Comprehensive benchmark suite for GPU optimizers
@@ -401,7 +401,7 @@ impl GpuOptimizerBenchmark {
 
         // Initialize GPU contexts for each backend
         for backend in &_config.backends {
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             {
                 if let Ok(context) = GpuContext::new(*backend) {
                     contexts.insert(*backend, Arc::new(context));
@@ -594,7 +594,7 @@ impl GpuOptimizerBenchmark {
 
     /// Sample memory usage for the given backend
     fn sample_memory_usage(&self, backend: GpuBackend) -> Result<usize> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             if let Some(context) = self.contexts.get(&backend) {
                 return Ok(context.current_memory_usage().unwrap_or(0));
@@ -605,7 +605,7 @@ impl GpuOptimizerBenchmark {
 
     /// Sample power consumption for the given backend
     fn sample_power_consumption(&self, backend: GpuBackend) -> Result<f64> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             if let Some(context) = self.contexts.get(&backend) {
                 return Ok(context.current_power_consumption().unwrap_or(0.0));

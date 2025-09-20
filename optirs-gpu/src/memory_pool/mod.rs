@@ -25,7 +25,7 @@ pub use config::LargeBatchConfig;
 
 use crate::gpu::GpuOptimError;
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::GpuContext;
 
 /// Memory alignment for GPU operations (must be power of 2)

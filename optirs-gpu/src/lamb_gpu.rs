@@ -9,7 +9,7 @@ use crate::error::Result as OptimResult;
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig, GpuOptimizerMemory};
 use crate::optimizers::{Optimizer, LAMB};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::{GpuContext, GpuKernelHandle};
 
 /// GPU-accelerated LAMB optimizer
@@ -91,7 +91,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMBGpu<A> {
         gpu_memory.allocate()?;
 
         // Load LAMB kernels
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let kernel_name = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                 "lamb_update_fused_f32"
@@ -180,7 +180,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMBGpu<A> {
         let bias_correction2 = A::one() - self.cpu_optimizer.beta2.powi(self.step_count as i32);
 
         // Set kernel parameters
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
             kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
@@ -222,7 +222,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMBGpu<A> {
 
             // Calculate grid and block dimensions
             let (grid_size, block_size) =
-                crate::gpu::utils::calculate_block_size(params.len(), 256);
+                crate::utils::calculate_block_size(params.len(), 256);
 
             // Launch kernel with shared memory for norm computation
             let shared_mem_size = (block_size / 32) * 2 * std::mem::size_of::<f32>();
@@ -260,7 +260,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMBGpu<A> {
             .ok_or(GpuOptimError::NotInitialized)?;
 
         // Load multi-GPU kernel
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let kernel_name = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                 "lamb_update_multi_gpu_f32"

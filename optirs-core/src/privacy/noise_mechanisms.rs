@@ -13,6 +13,9 @@ use std::marker::PhantomData;
 
 use crate::error::{OptimError, Result};
 
+// Type alias for complex sensitivity function type
+type SensitivityFn<T> = Box<dyn Fn(&[T]) -> T + Send + Sync>;
+
 /// Trait for differential privacy noise mechanisms
 pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 1D arrays
@@ -110,7 +113,7 @@ pub struct SparseVectorMechanism<T: Float + Debug + Send + Sync + 'static> {
 /// Smooth sensitivity mechanism
 pub struct SmoothSensitivityMechanism<T: Float + Debug + Send + Sync + 'static> {
     beta: T,
-    sensitivity_function: Box<dyn Fn(&[T]) -> T + Send + Sync>,
+    sensitivity_function: SensitivityFn<T>,
     _phantom: PhantomData<T>,
 }
 

@@ -457,6 +457,12 @@ pub struct NetworkMetrics {
     pub most_influential_authors: Vec<(String, f64)>,
 }
 
+impl Default for CitationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CitationManager {
     /// Create a new citation manager
     pub fn new() -> Self {
@@ -540,7 +546,7 @@ impl CitationManager {
                     || citation
                         .venue
                         .as_ref()
-                        .map_or(false, |venue| venue.to_lowercase().contains(&query_lower))
+                        .is_some_and(|venue| venue.to_lowercase().contains(&query_lower))
             })
             .collect()
     }

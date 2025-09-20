@@ -130,32 +130,35 @@ pub struct KFACStats<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> KFACConfig<T> {
     /// Create configuration optimized for large models
     pub fn for_large_model() -> Self {
-        let mut config = Self::default();
-        config.cov_update_freq = 20;
-        config.inv_update_freq = 200;
-        config.stat_decay = num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero());
-        config.damping = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
-        config
+        Self {
+            cov_update_freq: 20,
+            inv_update_freq: 200,
+            stat_decay: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
+            damping: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            ..Default::default()
+        }
     }
 
     /// Create configuration optimized for small models with frequent updates
     pub fn for_small_model() -> Self {
-        let mut config = Self::default();
-        config.cov_update_freq = 5;
-        config.inv_update_freq = 50;
-        config.stat_decay = num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero());
-        config.damping = num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero());
-        config
+        Self {
+            cov_update_freq: 5,
+            inv_update_freq: 50,
+            stat_decay: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            damping: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            ..Default::default()
+        }
     }
 
     /// Create configuration with conservative damping for stability
     pub fn for_stability() -> Self {
-        let mut config = Self::default();
-        config.damping = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
-        config.min_eigenvalue = num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero());
-        config.auto_damping = false;
-        config.use_tikhonov = true;
-        config
+        Self {
+            damping: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            min_eigenvalue: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            auto_damping: false,
+            use_tikhonov: true,
+            ..Default::default()
+        }
     }
 
     /// Validate configuration parameters

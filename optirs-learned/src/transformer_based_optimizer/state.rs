@@ -1080,7 +1080,7 @@ pub struct LearningSchedule<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> LearningSchedule<T> {
     pub fn new(initial_rate: T, warmup_steps: usize) -> Self {
         Self {
-            initial_rate: initial_rate,
+            initial_rate,
             current_rate: initial_rate,
             warmup_steps,
             decay_factor: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),

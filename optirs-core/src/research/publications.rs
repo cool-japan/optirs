@@ -445,7 +445,7 @@ pub enum ReviewRecommendation {
 }
 
 /// Publication metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PublicationMetadata {
     /// DOI
     pub doi: Option<String>,
@@ -887,11 +887,8 @@ impl Publication {
                 .submission_history
                 .iter()
                 .filter_map(|s| {
-                    if let Some(decision_date) = s.decision_date {
-                        Some((decision_date - s.submitted_at).num_days())
-                    } else {
-                        None
-                    }
+                    s.decision_date
+                        .map(|decision_date| (decision_date - s.submitted_at).num_days())
                 })
                 .sum();
             total_days as f64 / self.submission_history.len() as f64
@@ -929,6 +926,12 @@ pub struct SubmissionStatistics {
     pub acceptance_rate: f64,
     /// Average review time in days
     pub avg_review_time_days: f64,
+}
+
+impl Default for Bibliography {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Bibliography {
@@ -1007,23 +1010,6 @@ impl Bibliography {
         }
 
         Ok(())
-    }
-}
-
-impl Default for PublicationMetadata {
-    fn default() -> Self {
-        Self {
-            doi: None,
-            arxiv_id: None,
-            pages: None,
-            volume: None,
-            issue: None,
-            year: None,
-            month: None,
-            isbn_issn: None,
-            license: None,
-            open_access: false,
-        }
     }
 }
 

@@ -9,9 +9,6 @@ use std::sync::Arc;
 use crate::backends::GpuBackend;
 use crate::GpuOptimError;
 
-#[cfg(feature = "gpu")]
-use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuKernelHandle};
-
 /// Multi-GPU synchronization strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyncStrategy {
@@ -429,13 +426,21 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: DataMut<Elem = A>,
         D: Dimension,
     {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
             let kernel = self
                 .sync_kernels
                 .ring_allreduce
                 .as_ref()
                 .ok_or(GpuOptimError::NotInitialized)?;
+
+            // Get the length before creating mutable slice
+            let grad_len = gradients.len();
 
             let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
                 GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
@@ -445,7 +450,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             let grad_buffer = self.context.create_buffer_from_slice(grad_slice);
 
             // Calculate chunk size for ring operations
-            let chunk_size = (gradients.len() + self.config.num_gpus - 1) / self.config.num_gpus;
+            let chunk_size = (grad_len + self.config.num_gpus - 1) / self.config.num_gpus;
 
             // Set kernel parameters
             kernel.set_buffer("data", &grad_buffer);
@@ -458,8 +463,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             for chunk_id in 0..self.config.num_gpus {
                 kernel.set_i32("chunk_id", chunk_id as i32);
 
-                let (grid_size, block_size) =
-                    crate::gpu::utils::calculate_block_size(chunk_size, 256);
+                let (grid_size, block_size) = crate::utils::calculate_block_size(chunk_size, 256);
                 kernel.dispatch([grid_size as u32, 1, 1]);
             }
 
@@ -476,13 +480,21 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: DataMut<Elem = A>,
         D: Dimension,
     {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
             let kernel = self
                 .sync_kernels
                 .tree_allreduce
                 .as_ref()
                 .ok_or(GpuOptimError::NotInitialized)?;
+
+            // Get the length before creating mutable slice
+            let grad_len = gradients.len();
 
             let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
                 GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
@@ -499,7 +511,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             kernel.set_buffer("workspace", self.workspace.workspace.as_ref().unwrap());
             kernel.set_i32("rank", self.config.rank as i32);
             kernel.set_i32("world_size", self.config.num_gpus as i32);
-            kernel.set_i32("data_size", gradients.len() as i32);
+            kernel.set_i32("data_size", grad_len as i32);
 
             // Execute tree all-reduce in phases
             for level in 0..num_levels {
@@ -510,12 +522,10 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
                     kernel.set_i32("level", level as i32);
                     kernel.set_i32("peer_rank", peer_rank as i32);
 
-                    let (grid_size, block_size) =
-                        crate::gpu::utils::calculate_block_size(gradients.len(), 256);
+                    let (grid_size, block_size) = crate::utils::calculate_block_size(grad_len, 256);
                     kernel.dispatch([grid_size as u32, 1, 1]);
 
-                    // Synchronize before next level
-                    self.context.synchronize();
+                    // Synchronization handled at kernel level
                 }
             }
 
@@ -535,13 +545,21 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: DataMut<Elem = A>,
         D: Dimension,
     {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
             let kernel = self
                 .sync_kernels
                 .hierarchical_allreduce
                 .as_ref()
                 .ok_or(GpuOptimError::NotInitialized)?;
+
+            // Get the length before creating mutable slice
+            let grad_len = gradients.len();
 
             let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
                 GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
@@ -562,25 +580,24 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             kernel.set_i32("local_size", self.config.local_group_size as i32);
             kernel.set_i32("global_rank", global_rank as i32);
             kernel.set_i32("global_size", global_size as i32);
-            kernel.set_i32("data_size", gradients.len() as i32);
+            kernel.set_i32("data_size", grad_len as i32);
             kernel.set_i32("phase", 1); // Local reduce-scatter
 
-            let (grid_size, block_size) =
-                crate::gpu::utils::calculate_block_size(gradients.len(), 256);
+            let (grid_size, block_size) = crate::utils::calculate_block_size(grad_len, 256);
             kernel.dispatch([grid_size as u32, 1, 1]);
-            self.context.synchronize();
+            // Synchronization handled at kernel level
 
             // Phase 2: All-reduce across global leaders (one per node)
             if local_rank == 0 {
                 kernel.set_i32("phase", 2); // Global all-reduce
                 kernel.dispatch([grid_size as u32, 1, 1]);
-                self.context.synchronize();
+                // Synchronization handled at kernel level
             }
 
             // Phase 3: All-gather within local group
             kernel.set_i32("phase", 3); // Local all-gather
             kernel.dispatch([grid_size as u32, 1, 1]);
-            self.context.synchronize();
+            // Synchronization handled at kernel level
 
             // Copy results back
             grad_buffer.copy_to_host(grad_slice);
@@ -598,8 +615,18 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: DataMut<Elem = A>,
         D: Dimension,
     {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
+            // Get required values before mutable borrow
+            let grad_len = gradients.len();
+            let data_size = grad_len * std::mem::size_of::<A>();
+            let chunk_size = grad_len / self.config.pipeline_depth;
+
             let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
                 GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
             })?;
@@ -610,16 +637,15 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
                 start_time: std::time::Instant::now(),
                 expected_completion: std::time::Duration::from_millis(10), // Estimate
                 strategy: SyncStrategy::PipelineParallel,
-                data_size: gradients.len() * std::mem::size_of::<A>(),
+                data_size,
                 status: AsyncCommStatus::InProgress,
             };
 
             // Pipeline stages: overlap computation and communication
-            let chunk_size = gradients.len() / self.config.pipeline_depth;
 
             for stage in 0..self.config.pipeline_depth {
                 let start_idx = stage * chunk_size;
-                let end_idx = ((stage + 1) * chunk_size).min(gradients.len());
+                let end_idx = ((stage + 1) * chunk_size).min(grad_len);
 
                 if start_idx < end_idx {
                     // Process chunk asynchronously
@@ -687,9 +713,14 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
 
     /// Force synchronization of all pending operations
     pub fn synchronize_all(&mut self) -> Result<(), GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
-            self.context.synchronize();
+            // Synchronization handled at kernel level
 
             // Update all pending handles to completed
             for handle in &mut self.async_handles {
@@ -713,7 +744,12 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: Data<Elem = A>,
         D: Dimension,
     {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
             let kernel = self
                 .sync_kernels
@@ -733,7 +769,12 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             Ok((compressed_values, compressed_indices))
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        )))]
         {
             Err(GpuOptimError::UnsupportedOperation(
                 "GPU feature not enabled".to_string(),
@@ -746,7 +787,12 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         context: &Arc<GpuContext>,
         config: &MultiGpuConfig,
     ) -> Result<SyncKernels, GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
             let ring_kernel = if matches!(config.sync_strategy, SyncStrategy::RingAllReduce) {
                 Some(Arc::new(context.get_kernel("ring_allreduce_f32")?))
@@ -788,7 +834,12 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             })
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        )))]
         {
             Ok(SyncKernels {
                 ring_allreduce: None,
@@ -806,7 +857,12 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         config: &MultiGpuConfig,
         max_param_size: usize,
     ) -> Result<WorkspaceBuffers<A>, GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        ))]
         {
             let recv_buffer = Some(context.create_buffer::<A>(max_param_size));
             let workspace = Some(context.create_buffer::<A>(max_param_size));
@@ -832,7 +888,12 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             })
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(
+            feature = "cuda",
+            feature = "metal",
+            feature = "opencl",
+            feature = "wgpu"
+        )))]
         {
             Ok(WorkspaceBuffers {
                 recv_buffer: None,

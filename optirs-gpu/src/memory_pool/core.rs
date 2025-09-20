@@ -17,7 +17,7 @@ use super::{
     GPU_MEMORY_ALIGNMENT,
 };
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::GpuContext;
 
 /// CUDA memory pool
@@ -41,7 +41,7 @@ pub struct CudaMemoryPool {
     enable_defrag: bool,
 
     /// GPU context
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
     gpu_context: Option<Arc<GpuContext>>,
 
     /// Memory allocation strategy
@@ -69,7 +69,7 @@ impl CudaMemoryPool {
             max_pool_size: 2 * 1024 * 1024 * 1024, // 2GB default
             min_block_size: 256,                   // 256 bytes minimum
             enable_defrag: true,
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             gpu_context: None,
             allocation_strategy: AllocationStrategy::default(),
             adaptive_sizing: AdaptiveSizing::default(),
@@ -79,7 +79,7 @@ impl CudaMemoryPool {
     }
 
     /// Create memory pool for specific GPU
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
     pub fn new_with_gpu(gpu_id: usize) -> Result<Self, GpuOptimError> {
         let context = Arc::new(GpuContext::new_with_device(gpu_id)?);
         let large_batch_config = LargeBatchConfig::default();
@@ -208,7 +208,7 @@ impl CudaMemoryPool {
 
     /// Allocate raw memory
     fn allocate_raw_memory(&self, size: usize) -> Result<*mut u8, GpuOptimError> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             if let Some(ref context) = self.gpu_context {
                 return context.allocate_memory(size)

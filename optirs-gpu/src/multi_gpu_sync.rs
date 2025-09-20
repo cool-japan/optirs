@@ -547,7 +547,7 @@ impl MultiGpuCommunicator {
                 });
             }
 
-            #[cfg(not(feature = "gpu"))]
+            #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
             {
                 devices.push(DeviceContext {
                     device_id: device_id as i32,
@@ -562,7 +562,7 @@ impl MultiGpuCommunicator {
 
     /// Detect optimal communication backend
     fn detect_communication_backend(devices: &[DeviceContext]) -> Result<CommunicationBackend> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             // Check for NCCL support
             if devices.iter().all(|d| d.capabilities.nccl_support) {
@@ -629,7 +629,7 @@ impl MultiGpuCommunicator {
         let mut streams = Vec::new();
 
         for i in 0..num_streams {
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             {
                 // Use the first device's context for stream creation
                 let stream = CudaStream::new(&devices[0].context)?;
@@ -641,7 +641,7 @@ impl MultiGpuCommunicator {
                 });
             }
 
-            #[cfg(not(feature = "gpu"))]
+            #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
             {
                 streams.push(CommStream {
                     stream_id: i,
@@ -823,7 +823,7 @@ impl MultiGpuCommunicator {
                 );
             }
 
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             {
                 stream.stream.synchronize()?;
             }
@@ -860,13 +860,13 @@ impl MultiGpuCommunicator {
     }
 
     fn allocate_device_buffer(&self, deviceid: i32, size: usize) -> Result<*mut c_void> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             // In a real implementation, would use CUDA malloc
             Ok(ptr::null_mut()) // Placeholder
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
         {
             Ok(ptr::null_mut()) // Placeholder
         }
@@ -993,14 +993,14 @@ impl MultiGpuCommunicator {
     // Backend-specific implementations
 
     fn all_reduce_nccl(&mut self, gradientnames: &[&str]) -> Result<()> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             // NCCL all-reduce implementation
             // This would use the NCCL library for efficient all-reduce
             Ok(())
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
         {
             Err(OptimError::UnsupportedOperation(
                 "NCCL not available".to_string(),
@@ -1068,13 +1068,13 @@ impl MultiGpuCommunicator {
     }
 
     fn broadcast_nccl(&mut self, param_names: &[&str], masterrank: i32) -> Result<()> {
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             // NCCL broadcast implementation
             Ok(())
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu")))]
         {
             Err(OptimError::UnsupportedOperation(
                 "NCCL not available".to_string(),

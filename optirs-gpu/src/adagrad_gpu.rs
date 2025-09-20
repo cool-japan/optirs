@@ -9,7 +9,7 @@ use crate::error::Result as OptimResult;
 use crate::gpu::{GpuOptimError, GpuOptimizerConfig, GpuOptimizerMemory};
 use crate::optimizers::{Adagrad, Optimizer};
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::GpuKernelHandle;
 
 /// GPU-accelerated Adagrad optimizer
@@ -59,7 +59,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdagradGpu<A> {
         gpu_memory.allocate()?;
 
         // Load Adagrad kernel
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             let kernel_name = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                 "adagrad_update_f32"
@@ -137,7 +137,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdagradGpu<A> {
         self.cpu_optimizer.step_count += 1;
 
         // Set kernel parameters
-        #[cfg(feature = "gpu")]
+        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
             kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
             kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
@@ -171,7 +171,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdagradGpu<A> {
 
             // Calculate grid and block dimensions
             let (grid_size, block_size) =
-                crate::gpu::utils::calculate_block_size(params.len(), 256);
+                crate::utils::calculate_block_size(params.len(), 256);
 
             // Launch kernel
             kernel.dispatch([grid_size as u32, 1, 1]);

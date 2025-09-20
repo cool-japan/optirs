@@ -564,7 +564,7 @@ impl<
             self.current_optimizer.set_learning_rate(current_lr);
 
             // Try to transfer compatible state
-            if let Err(_) = self.current_optimizer.set_state(current_state) {
+            if self.current_optimizer.set_state(current_state).is_err() {
                 // State transfer failed, continue with fresh state
             }
 

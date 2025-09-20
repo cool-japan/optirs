@@ -152,6 +152,19 @@ pub struct CudaStream {
     pub operations: std::collections::VecDeque<CudaOperation>,
 }
 
+impl std::fmt::Debug for CudaStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CudaStream")
+            .field("handle", &format!("{:p}", self.handle))
+            .field("id", &self.id)
+            .field("priority", &self.priority)
+            .field("flags", &self.flags)
+            .field("created_at", &self.created_at)
+            .field("operations", &self.operations)
+            .finish()
+    }
+}
+
 /// CUDA stream flags
 #[derive(Debug, Clone)]
 pub struct CudaStreamFlags {

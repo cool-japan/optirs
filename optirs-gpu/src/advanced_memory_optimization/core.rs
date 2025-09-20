@@ -21,7 +21,7 @@ use super::parameter_offloading::ParameterOffloadManager;
 use super::dynamic_batching::DynamicBatchController;
 use super::pressure_monitoring::MemoryPressureMonitor;
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
 use scirs2_core::gpu::GpuContext;
 
 /// Advanced memory optimizer for large-scale training
@@ -31,7 +31,7 @@ pub struct AdvancedMemoryOptimizer<T: Float + Debug + Default + Clone + Send + S
     config: AdvancedMemoryConfig,
 
     /// GPU context (if available)
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
     gpu_context: Option<Arc<GpuContext>>,
 
     /// Memory usage tracking
@@ -101,14 +101,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
             },
             memory_tracker,
             config,
-            #[cfg(feature = "gpu")]
+            #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
             gpu_context: None,
             stats: OptimizationStats::default(),
         })
     }
 
     /// Initialize with GPU context
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
     pub fn with_gpu_context(mut self, context: Arc<GpuContext>) -> Self {
         self.gpu_context = Some(context);
         self

@@ -453,6 +453,12 @@ pub struct CommitmentScheme<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for CommitmentScheme<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> CommitmentScheme<T> {
     /// Create new commitment scheme
     pub fn new() -> Self {
@@ -475,7 +481,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CommitmentScheme<T> {
         // Convert array to bytes
         for &v in value.iter() {
             let v_bytes = v.to_f64().unwrap().to_le_bytes();
-            hasher.update(&v_bytes);
+            hasher.update(v_bytes);
         }
 
         Ok(hasher.finalize().to_vec())
@@ -489,6 +495,12 @@ pub struct VerificationParameters<T: Float + Debug + Send + Sync + 'static> {
 
     /// Parameters for proof generation
     proof_params: ProofParameters<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for VerificationParameters<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> VerificationParameters<T> {
@@ -512,7 +524,7 @@ impl<T: Float + Debug + Send + Sync + 'static> VerificationParameters<T> {
 
         for &v in aggregate.iter() {
             let v_bytes = v.to_f64().unwrap().to_le_bytes();
-            hasher.update(&v_bytes);
+            hasher.update(v_bytes);
         }
 
         Ok(hasher.finalize().to_vec())
@@ -526,6 +538,12 @@ pub struct ProofParameters<T: Float + Debug + Send + Sync + 'static> {
 
     /// Proof system parameters
     system_params: Vec<u8>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ProofParameters<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ProofParameters<T> {
@@ -554,6 +572,12 @@ pub struct HomomorphicEngine<T: Float + Debug + Send + Sync + 'static> {
 
     /// Private key (for demonstration - in practice would be distributed)
     private_key: Vec<u8>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for HomomorphicEngine<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> HomomorphicEngine<T> {
@@ -629,7 +653,7 @@ impl<T: Float + Debug + Send + Sync + 'static> HomomorphicEngine<T> {
 
         let mut hasher = Sha256::new();
         hasher.update(&self.public_key);
-        hasher.update(&value.to_f64().unwrap().to_le_bytes());
+        hasher.update(value.to_f64().unwrap().to_le_bytes());
 
         Ok(hasher.finalize().to_vec())
     }
@@ -670,6 +694,12 @@ pub struct HomomorphicParameters<T: Float + Debug + Send + Sync + 'static> {
     pub modulus: u128,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for HomomorphicParameters<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> HomomorphicParameters<T> {
     /// Create new homomorphic parameters
     pub fn new() -> Self {
@@ -703,6 +733,12 @@ pub struct ZKProofSystem<T: Float + Debug + Send + Sync + 'static> {
 
     /// Common reference string
     crs: Vec<u8>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ZKProofSystem<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ZKProofSystem<T> {
@@ -749,11 +785,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ZKProofSystem<T> {
         let mut hasher = Sha256::new();
 
         for &v in input.iter() {
-            hasher.update(&v.to_f64().unwrap().to_le_bytes());
+            hasher.update(v.to_f64().unwrap().to_le_bytes());
         }
 
         for &v in output.iter() {
-            hasher.update(&v.to_f64().unwrap().to_le_bytes());
+            hasher.update(v.to_f64().unwrap().to_le_bytes());
         }
 
         Ok(hasher.finalize().to_vec())
@@ -784,6 +820,12 @@ pub struct ZKProofParameters<T: Float + Debug + Send + Sync + 'static> {
 
     /// Circuit parameters
     pub circuit_params: Vec<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ZKProofParameters<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ZKProofParameters<T> {

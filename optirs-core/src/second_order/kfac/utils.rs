@@ -260,7 +260,7 @@ impl KFACUtils {
         let mut matrix = Array2::zeros((n, n));
 
         for i in 0..n {
-            matrix[[i, i]] = diagonal[i].clone();
+            matrix[[i, i]] = diagonal[i];
         }
 
         matrix
@@ -294,15 +294,17 @@ impl<T: Float + Debug + Send + Sync + 'static> PartialEq for OrderedFloat<T> {
 
 impl<T: Float + Debug + Send + Sync + 'static> Eq for OrderedFloat<T> {}
 
-impl<T: Float + Debug + Send + Sync + 'static> PartialOrd for OrderedFloat<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+impl<T: Float + Debug + Send + Sync + 'static> Ord for OrderedFloat<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Ord for OrderedFloat<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+impl<T: Float + Debug + Send + Sync + 'static> PartialOrd for OrderedFloat<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

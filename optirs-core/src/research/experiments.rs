@@ -626,11 +626,11 @@ impl Experiment {
         report.push_str(&format!("- **Max Epochs**: {}\n", self.config.max_epochs));
 
         report.push_str("\n## Optimizers\n\n");
-        for (name, _config) in &self.optimizer_configs {
+        for name in self.optimizer_configs.keys() {
             report.push_str(&format!("- {}\n", name));
         }
 
-        report.push_str(&format!("\n## Dataset\n\n"));
+        report.push_str("\n## Dataset\n\n");
         report.push_str(&format!("- **Name**: {}\n", self.dataset_info.name));
         report.push_str(&format!(
             "- **Samples**: {}\n",
@@ -649,7 +649,7 @@ impl Experiment {
         for result in &self.results {
             optimizer_results
                 .entry(result.optimizer_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(result);
         }
 
@@ -683,7 +683,7 @@ impl Experiment {
                     }
                 }
             }
-            report.push_str("\n");
+            report.push('\n');
         }
 
         if !self.notes.is_empty() {

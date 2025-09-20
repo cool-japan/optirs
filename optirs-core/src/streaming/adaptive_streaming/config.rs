@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Main configuration for adaptive streaming optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamingConfig {
     /// Buffer management configuration
     pub buffer_config: BufferConfig,
@@ -25,20 +25,6 @@ pub struct StreamingConfig {
     pub anomaly_config: AnomalyConfig,
     /// Learning rate adaptation configuration
     pub learning_rate_config: LearningRateConfig,
-}
-
-impl Default for StreamingConfig {
-    fn default() -> Self {
-        Self {
-            buffer_config: BufferConfig::default(),
-            drift_config: DriftConfig::default(),
-            performance_config: PerformanceConfig::default(),
-            resource_config: ResourceConfig::default(),
-            meta_learning_config: MetaLearningConfig::default(),
-            anomaly_config: AnomalyConfig::default(),
-            learning_rate_config: LearningRateConfig::default(),
-        }
-    }
 }
 
 /// Buffer management configuration

@@ -715,13 +715,11 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     fn calculate_experience_priority(&self, reward: A) -> A {
         // Higher priority for experiences with extreme rewards (positive or negative)
         let abs_reward = reward.abs();
-        let surprise = if abs_reward > A::from(0.8).unwrap() {
+        if abs_reward > A::from(0.8).unwrap() {
             A::from(1.0).unwrap()
         } else {
             abs_reward
-        };
-
-        surprise
+        }
     }
 
     /// Triggers meta-learning update
