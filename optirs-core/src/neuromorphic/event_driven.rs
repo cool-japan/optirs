@@ -250,49 +250,49 @@ pub struct EventDrivenOptimizer<T: Float + Debug + Send + Sync + 'static> {
 
 /// Event processing statistics
 #[derive(Debug, Clone)]
-struct EventStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct EventStatistics<T: Float + Debug + Send + Sync + 'static> {
     /// Total events processed
-    total_processed: usize,
+    pub total_processed: usize,
 
     /// Average processing time (ms)
-    avg_processing_time: T,
+    pub avg_processing_time: T,
 
     /// Event rate (events/second)
-    event_rate: T,
+    pub event_rate: T,
 
     /// Queue wait time (ms)
-    avg_queue_wait_time: T,
+    pub avg_queue_wait_time: T,
 
     /// Error count
-    error_count: usize,
+    pub error_count: usize,
 
     /// Last update time
-    last_update: Instant,
+    pub last_update: Instant,
 }
 
 /// System state for event-driven optimization
 #[derive(Debug, Clone)]
-struct SystemState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SystemState<T: Float + Debug + Send + Sync + 'static> {
     /// Current membrane potentials
-    membrane_potentials: Array1<T>,
+    pub membrane_potentials: Array1<T>,
 
     /// Synaptic weights
-    synaptic_weights: Array2<T>,
+    pub synaptic_weights: Array2<T>,
 
     /// Last spike times
-    last_spike_times: Array1<T>,
+    pub last_spike_times: Array1<T>,
 
     /// Refractory states
-    refractory_until: Array1<T>,
+    pub refractory_until: Array1<T>,
 
     /// Current simulation time
-    current_time: T,
+    pub current_time: T,
 
     /// Active neurons
-    active_neurons: HashSet<usize>,
+    pub active_neurons: HashSet<usize>,
 
     /// Pending weight updates
-    pending_updates: HashMap<(usize, usize), T>,
+    pub pending_updates: HashMap<(usize, usize), T>,
 }
 
 /// Event handler trait

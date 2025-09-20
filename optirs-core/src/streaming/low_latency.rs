@@ -611,10 +611,7 @@ impl<A: Float + Send + Sync + Send + Sync> GradientQuantizer<A> {
         let levels = A::from(2_u32.pow(self.bits as u32) - 1).unwrap();
         self.scale = max_val / levels;
 
-        let quantized = gradient.mapv(|x| {
-            let quantized = (x / self.scale).round() * self.scale;
-            quantized
-        });
+        let quantized = gradient.mapv(|x| (x / self.scale).round() * self.scale);
 
         Ok(quantized)
     }

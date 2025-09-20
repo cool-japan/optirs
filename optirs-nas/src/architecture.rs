@@ -329,7 +329,18 @@ impl ArchitectureSpace {
                 let from_idx = rng.gen_range(0..num_components);
                 let to_idx = rng.gen_range(0..num_components);
 
-                if from_idx != to_idx {
+                // For acyclic graphs, only allow forward connections (from lower index to higher)
+                if !self.allow_cycles {
+                    if from_idx < to_idx {
+                        connections.push(Connection {
+                            from: components[from_idx].id.clone(),
+                            to: components[to_idx].id.clone(),
+                            weight: rng.gen_range(0.1..=1.0),
+                            connection_type: ConnectionType::Gradient,
+                            enabled: true,
+                        });
+                    }
+                } else if from_idx != to_idx {
                     connections.push(Connection {
                         from: components[from_idx].id.clone(),
                         to: components[to_idx].id.clone(),
@@ -408,9 +419,15 @@ impl ArchitectureSpace {
                     enabled: true,
                 });
             } else if mutated.components.len() > self.min_components {
-                // Remove component
+                // Remove component only if we'll still have at least min_components
                 let remove_idx = rng.gen_range(0..mutated.components.len());
+                let removed_id = mutated.components[remove_idx].id.clone();
                 mutated.components.remove(remove_idx);
+
+                // Remove connections involving the removed component
+                mutated
+                    .connections
+                    .retain(|conn| conn.from != removed_id && conn.to != removed_id);
             }
         }
 
@@ -453,7 +470,11 @@ impl ArchitectureSpace {
             } else if new_components1.len() < self.min_components {
                 // Pad with random components from parents if too few
                 while new_components1.len() < self.min_components {
-                    let source = if rng.gen_bool(0.5) { &parent1.components } else { &parent2.components };
+                    let source = if rng.gen_bool(0.5) {
+                        &parent1.components
+                    } else {
+                        &parent2.components
+                    };
                     if !source.is_empty() {
                         let idx = rng.gen_range(0..source.len());
                         new_components1.push(source[idx].clone());
@@ -468,7 +489,11 @@ impl ArchitectureSpace {
             } else if new_components2.len() < self.min_components {
                 // Pad with random components from parents if too few
                 while new_components2.len() < self.min_components {
-                    let source = if rng.gen_bool(0.5) { &parent1.components } else { &parent2.components };
+                    let source = if rng.gen_bool(0.5) {
+                        &parent1.components
+                    } else {
+                        &parent2.components
+                    };
                     if !source.is_empty() {
                         let idx = rng.gen_range(0..source.len());
                         new_components2.push(source[idx].clone());
@@ -480,6 +505,20 @@ impl ArchitectureSpace {
 
             child1.components = new_components1;
             child2.components = new_components2;
+
+            // Clean up connections - remove connections to non-existent components
+            let child1_ids: std::collections::HashSet<_> =
+                child1.components.iter().map(|c| c.id.clone()).collect();
+            let child2_ids: std::collections::HashSet<_> =
+                child2.components.iter().map(|c| c.id.clone()).collect();
+
+            child1
+                .connections
+                .retain(|conn| child1_ids.contains(&conn.from) && child1_ids.contains(&conn.to));
+
+            child2
+                .connections
+                .retain(|conn| child2_ids.contains(&conn.from) && child2_ids.contains(&conn.to));
         }
 
         (child1, child2)
@@ -688,6 +727,16 @@ mod tests {
 
         assert_ne!(original.id, mutated.id);
         assert_eq!(mutated.generation, original.generation + 1);
+
+        // Debug info for failures
+        if let Err(e) = space.validate_architecture(&mutated) {
+            eprintln!("Validation failed: {}", e);
+            eprintln!("Original components: {}", original.components.len());
+            eprintln!("Mutated components: {}", mutated.components.len());
+            eprintln!("Min components: {}", space.min_components);
+            eprintln!("Max components: {}", space.max_components);
+        }
+
         assert!(space.validate_architecture(&mutated).is_ok());
     }
 

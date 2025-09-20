@@ -52,46 +52,59 @@ pub mod reproducibility;
 pub use benchmarks::*;
 pub use collaboration::*;
 pub use datasets::*;
-pub use experiments::*;
 pub use funding::*;
-pub use reproducibility::*;
+
+// Selective re-exports for experiments to avoid conflicts
+pub use experiments::{
+    CpuInfo, DataType, DatasetInfo, DatasetStatistics, EarlyStoppingConfig, Experiment,
+    ExperimentConfig, ExperimentMetadata, ExperimentNote, ExperimentResult, ExperimentRunner,
+    ExperimentStatus, ExperimentTimeline, GpuInfo, HardwareConfig as ExperimentHardwareConfig,
+    MemoryAllocationStrategy, MemoryConfig, NoteType, OptimizationMode, ParallelConfig,
+    PreprocessingStep, ReproducibilityChecklist, ReproducibilityInfo, ResourceMonitor,
+    ResourceUsage, RunStatus, SystemInfo as ExperimentSystemInfo, TrainingHistory,
+};
+
+// Selective re-exports for reproducibility to avoid conflicts
+pub use reproducibility::{
+    CpuSpec, Dependency, Difference, DifferenceCategory, EnvironmentSnapshot, GpuSpec,
+    HardwareConfig as ReproducibilityHardwareConfig, IssueSeverity, IssueType, MemorySpec,
+    ReproducibilityChecklist as ReproducibilityChecklistType, ReproducibilityConfig,
+    ReproducibilityIssue, ReproducibilityManager, ReproducibilityReport, ReproducibilityStorage,
+    SimilarityMetrics, StorageSpec, SystemInfo as ReproducibilitySystemInfo, VerificationResult,
+    VerificationStatus,
+};
 
 // Selective re-exports to avoid conflicts
 // Citations module exports
 pub use citations::{
-    CitationManager, CitationStyle as CitationStyleType, Citation,
-    InTextFormat, BibliographyFormat, NameFormat, TitleFormat, DateFormat,
-    PunctuationRules, FormattingRules, SortingRules, SortField, SortDirection,
-    Author as CitationAuthor, PublicationType as CitationPublicationType
+    Author as CitationAuthor, BibliographyFormat, Citation, CitationManager,
+    CitationStyle as CitationStyleType, DateFormat, FormattingRules, InTextFormat, NameFormat,
+    PublicationType as CitationPublicationType, PunctuationRules, SortDirection, SortField,
+    SortingRules, TitleFormat,
 };
 
 // Publications module exports
 pub use publications::{
-    Publication, Affiliation, Venue, VenueType, ManuscriptSection, SectionType,
-    Figure, FigureType, Table, Bibliography, BibTeXEntry, SubmissionRecord,
-    SubmissionStatus, Decision, ReviewerInfo,
-    Author as PublicationAuthor, AuthorPosition,
-    PublicationType as PublicationTypeEnum, PublicationStatus,
+    Affiliation, Author as PublicationAuthor, AuthorPosition, BibTeXEntry, Bibliography,
+    CitationStyle as PublicationCitationStyle, Decision, Figure, FigureType, ManuscriptSection,
+    Publication, PublicationStatus, PublicationType as PublicationTypeEnum,
     Review as PublicationReview, ReviewRecommendation as PublicationReviewRecommendation,
-    CitationStyle as PublicationCitationStyle
+    ReviewerInfo, SectionType, SubmissionRecord, SubmissionStatus, Table, Venue, VenueType,
 };
 
 // Peer review module exports
 pub use peer_review::{
-    PeerReviewSystem, ReviewSession, ReviewType, ReviewSessionStatus,
-    ReviewCriterion, PeerReview, WrittenReview, ReviewStatus, MetaReview,
-    ReviewQualityAssessment, ReviewDiscussion, Reviewer, ReviewerHistory,
-    ReviewerAvailability, ReviewerQualityMetrics, ReviewerPreferences,
-    ReviewAssignment, ReviewQualityMetric,
-    ReviewRecommendation as PeerReviewRecommendation
+    MetaReview, PeerReview, PeerReviewSystem, ReviewAssignment, ReviewCriterion, ReviewDiscussion,
+    ReviewQualityAssessment, ReviewQualityMetric, ReviewRecommendation as PeerReviewRecommendation,
+    ReviewSession, ReviewSessionStatus, ReviewStatus, ReviewType, Reviewer, ReviewerAvailability,
+    ReviewerHistory, ReviewerPreferences, ReviewerQualityMetrics, WrittenReview,
 };
 
 // Conferences module exports
 pub use conferences::{
-    Conference, ConferenceManager, ConferenceDates,
-    Submission, SubmissionStatus as ConferenceSubmissionStatus, DeadlineType, ReviewProcess,
-    ReviewFormat,
-    Review as ConferenceReview, ReviewRecommendation as ConferenceReviewRecommendation
+    Conference, ConferenceDates, ConferenceManager, DeadlineType, Review as ConferenceReview,
+    ReviewFormat, ReviewProcess, ReviewRecommendation as ConferenceReviewRecommendation,
+    Submission, SubmissionStatus as ConferenceSubmissionStatus,
 };
 
 use crate::error::{OptimError, Result};

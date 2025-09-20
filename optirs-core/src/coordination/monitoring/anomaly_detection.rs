@@ -860,10 +860,10 @@ impl<T: Float + Debug + Send + Sync + 'static> TimeSeriesAnalyzer<T> {
 
 /// Seasonal decomposition result
 #[derive(Debug)]
-struct SeasonalDecomposition<T: Float + Debug + Send + Sync + 'static> {
-    trend: Vec<T>,
-    seasonal: Vec<T>,
-    residuals: Vec<T>,
+pub struct SeasonalDecomposition<T: Float + Debug + Send + Sync + 'static> {
+    pub trend: Vec<T>,
+    pub seasonal: Vec<T>,
+    pub residuals: Vec<T>,
 }
 
 /// Frequency domain analysis for anomaly detection
@@ -1054,7 +1054,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ClassificationModel<T> {
     }
 
     fn classify(&self, features: &AnomalyFeatures<T>) -> T {
-        let feature_vec = vec![
+        let feature_vec = [
             features.statistical_score,
             features.trend_score,
             features.pattern_score,
@@ -1062,12 +1062,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ClassificationModel<T> {
             features.magnitude,
             features
                 .frequency_features
-                .get(0)
+                .first()
                 .copied()
                 .unwrap_or(T::zero()),
             features
                 .temporal_features
-                .get(0)
+                .first()
                 .copied()
                 .unwrap_or(T::zero()),
         ];
@@ -1084,7 +1084,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ClassificationModel<T> {
     }
 
     fn update(&mut self, features: &AnomalyFeatures<T>, label: bool) {
-        let feature_vec = vec![
+        let feature_vec = [
             features.statistical_score,
             features.trend_score,
             features.pattern_score,
@@ -1092,12 +1092,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ClassificationModel<T> {
             features.magnitude,
             features
                 .frequency_features
-                .get(0)
+                .first()
                 .copied()
                 .unwrap_or(T::zero()),
             features
                 .temporal_features
-                .get(0)
+                .first()
                 .copied()
                 .unwrap_or(T::zero()),
         ];

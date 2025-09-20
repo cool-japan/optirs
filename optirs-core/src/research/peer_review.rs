@@ -706,9 +706,8 @@ impl PeerReviewSystem {
         counts
             .into_iter()
             .max_by_key(|(_, count)| *count)
-            .map(|(rec, _)| rec.clone())
-            .unwrap_or(&ReviewRecommendation::BorderlineReject)
-            .clone()
+            .map(|(rec, _)| (*rec).clone())
+            .unwrap_or(ReviewRecommendation::BorderlineReject)
     }
 
     fn create_default_quality_metrics() -> Vec<ReviewQualityMetric> {

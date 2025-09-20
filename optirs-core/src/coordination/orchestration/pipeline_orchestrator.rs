@@ -2042,6 +2042,12 @@ impl ExecutionTimeline {
     }
 }
 
+impl Default for ExecutionTimeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct ExecutionContext<T: Float + Debug + Send + Sync + 'static> {
     variables: HashMap<String, T>,
@@ -2057,6 +2063,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionContext<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ExecutionContext<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct ExecutionResults<T: Float + Debug + Send + Sync + 'static> {
     stage_results: HashMap<String, StageResult<T>>,
@@ -2069,6 +2081,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionResults<T> {
             stage_results: HashMap::new(),
             final_result: None,
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ExecutionResults<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -2095,6 +2113,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ErrorTracker<T> {
             warnings: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ErrorTracker<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

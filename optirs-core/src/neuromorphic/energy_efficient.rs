@@ -671,37 +671,37 @@ pub struct EnergyEfficientOptimizer<
 
 /// Energy system state
 #[derive(Debug, Clone)]
-struct EnergySystemState<T: Float + Debug + Send + Sync + 'static> {
+pub struct EnergySystemState<T: Float + Debug + Send + Sync + 'static> {
     /// Current energy consumption (nJ)
-    current_energy: T,
+    pub current_energy: T,
 
     /// Current power consumption (nW)
-    current_power: T,
+    pub current_power: T,
 
     /// Temperature (°C)
-    temperature: T,
+    pub temperature: T,
 
     /// Active neuron count
-    active_neurons: usize,
+    pub active_neurons: usize,
 
     /// Active synapses count
-    active_synapses: usize,
+    pub active_synapses: usize,
 
     /// Current voltage (V)
-    current_voltage: T,
+    pub current_voltage: T,
 
     /// Current frequency (MHz)
-    current_frequency: T,
+    pub current_frequency: T,
 
     /// Gated regions
-    gated_regions: Vec<usize>,
+    pub gated_regions: Vec<usize>,
 
     /// Sleep mode status
-    sleep_status: SleepStatus,
+    pub sleep_status: SleepStatus,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum SleepStatus {
+pub enum SleepStatus {
     Active,
     LightSleep,
     DeepSleep,
@@ -921,28 +921,28 @@ enum ModelType {
 
 /// Workload sample for prediction
 #[derive(Debug, Clone)]
-struct WorkloadSample<T: Float + Debug + Send + Sync + 'static> {
+pub struct WorkloadSample<T: Float + Debug + Send + Sync + 'static> {
     /// Timestamp
-    timestamp: Instant,
+    pub timestamp: Instant,
 
     /// Number of active neurons
-    active_neurons: usize,
+    pub active_neurons: usize,
 
     /// Spike rate (Hz)
-    spike_rate: T,
+    pub spike_rate: T,
 
     /// Synaptic activity
-    synaptic_activity: T,
+    pub synaptic_activity: T,
 
     /// Memory access pattern
-    memory_access_pattern: MemoryAccessPattern,
+    pub memory_access_pattern: MemoryAccessPattern,
 
     /// Communication overhead
-    communication_overhead: T,
+    pub communication_overhead: T,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum MemoryAccessPattern {
+pub enum MemoryAccessPattern {
     Sequential,
     Random,
     Sparse,

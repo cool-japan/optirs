@@ -21,44 +21,35 @@ pub use resource_management::*;
 // Selective re-exports to avoid conflicts
 // Anomaly detection module exports
 pub use anomaly_detection::{
-    AnomalyDetector, AnomalyEvent, AnomalyContext,
-    AnomalyDetectionResult, MLModelMetrics,
-    EnsembleAnomalyDetector, EnsembleVotingStrategy, DetectorPerformance,
-    EnsembleConfig, AdaptiveThresholdManager, ThresholdAdaptationStrategy,
-    ThresholdPerformanceFeedback, ThresholdAdaptationParams,
-    FalsePositiveEvent, FPRateCalculator, DetectionResult,
-    FalsePositivePatterns, TemporalPattern, TemporalPatternType,
-    ContextPattern, FPMitigationStrategy, AnomalyResponseSystem,
-    ResponseAction, ResponseExecutor, PendingResponse,
-    ResponseExecution, ResponsePriority, ResponseResourceLimits,
-    ResponseEffectivenessTracker, EffectivenessMetrics,
-    ResponseOutcome, OutcomeMeasurement, TrendAnalysis,
-    TrendDirection, EscalationRule, EscalationCondition,
-    AnomalyType as AnomalyDetectionType,
-    AnomalySeverity as AnomalyDetectionSeverity,
-    DataStatistics as AnomalyDetectionDataStatistics,
-    FalsePositiveTracker as AnomalyDetectionFPTracker
+    AdaptiveThresholdManager, AnomalyContext, AnomalyDetectionResult, AnomalyDetector,
+    AnomalyEvent, AnomalyResponseSystem, AnomalySeverity as AnomalyDetectionSeverity,
+    AnomalyType as AnomalyDetectionType, ContextPattern,
+    DataStatistics as AnomalyDetectionDataStatistics, DetectionResult, DetectorPerformance,
+    EffectivenessMetrics, EnsembleAnomalyDetector, EnsembleConfig, EnsembleVotingStrategy,
+    EscalationCondition, EscalationRule, FPMitigationStrategy, FPRateCalculator,
+    FalsePositiveEvent, FalsePositivePatterns, FalsePositiveTracker as AnomalyDetectionFPTracker,
+    MLModelMetrics, OutcomeMeasurement, PendingResponse, ResponseAction,
+    ResponseEffectivenessTracker, ResponseExecution, ResponseExecutor, ResponseOutcome,
+    ResponsePriority, ResponseResourceLimits, TemporalPattern, TemporalPatternType,
+    ThresholdAdaptationParams, ThresholdAdaptationStrategy, ThresholdPerformanceFeedback,
+    TrendAnalysis, TrendDirection,
 };
 
 // Drift detection module exports
 pub use drift_detection::{
-    EnhancedDriftDetector, DriftEvent, DriftSeverity, DriftState,
-    DriftTestResult, DistributionComparison, ModelDriftResult,
-    DriftDiagnostics,
-    FalsePositiveTracker as DriftDetectionFPTracker
+    DistributionComparison, DriftDiagnostics, DriftEvent, DriftSeverity, DriftState,
+    DriftTestResult, EnhancedDriftDetector, FalsePositiveTracker as DriftDetectionFPTracker,
+    ModelDriftResult,
 };
 
 // Performance module exports
 pub use performance::{
-    PerformanceSnapshot, PerformanceMetric, PerformanceContext,
-    PerformanceTracker, PerformanceTrendAnalyzer, TrendData, TrendMethod,
-    PerformancePredictor, PredictionMethod, PredictionResult,
-    PerformanceImprovementTracker, ImprovementEvent, PlateauDetector,
-    PerformanceAnomalyDetector, MetricStatistics, PerformanceAnomaly,
-    PerformanceDiagnostics,
-    AnomalyType as PerformanceAnomalyType,
-    AnomalySeverity as PerformanceAnomalySeverity,
-    DataStatistics as PerformanceDataStatistics
+    AnomalySeverity as PerformanceAnomalySeverity, AnomalyType as PerformanceAnomalyType,
+    DataStatistics as PerformanceDataStatistics, ImprovementEvent, MetricStatistics,
+    PerformanceAnomaly, PerformanceAnomalyDetector, PerformanceContext, PerformanceDiagnostics,
+    PerformanceImprovementTracker, PerformanceMetric, PerformancePredictor, PerformanceSnapshot,
+    PerformanceTracker, PerformanceTrendAnalyzer, PlateauDetector, PredictionMethod,
+    PredictionResult, TrendData, TrendMethod,
 };
 
 // Utility functions for common configurations

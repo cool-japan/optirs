@@ -878,6 +878,14 @@ impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync + Send + Sync>
     }
 }
 
+impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync + Send + Sync> Default
+    for StreamingMetricsCollector<A>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Individual metrics sample
 #[derive(Debug, Clone)]
 pub struct MetricsSample<A: Float + Send + Sync> {

@@ -694,7 +694,7 @@ where
         // Compute adaptive learning rate (simplified)
         let base_lr = A::from(0.01).unwrap();
         let eps = A::from(1e-8).unwrap();
-        let norm_sum = acc_grads.iter().map(|&g| g).sum::<A>();
+        let norm_sum = acc_grads.iter().copied().sum::<A>();
         let adaptive_factor = (norm_sum + eps).sqrt();
 
         self.lr_adaptation_state.current_lr = base_lr / adaptive_factor;
@@ -723,7 +723,7 @@ where
         // Compute adaptive learning rate
         let base_lr = A::from(0.01).unwrap();
         let eps = A::from(1e-8).unwrap();
-        let rms = ema_grads.iter().map(|&g| g).sum::<A>().sqrt();
+        let rms = ema_grads.iter().copied().sum::<A>().sqrt();
 
         self.lr_adaptation_state.current_lr = base_lr / (rms + eps);
 
@@ -1119,9 +1119,8 @@ where
             // Compute second derivative (acceleration)
             let first_diff = last - second_last;
             let second_diff = second_last - third_last;
-            let acceleration = first_diff - second_diff;
 
-            acceleration
+            first_diff - second_diff
         } else {
             A::zero()
         };

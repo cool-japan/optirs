@@ -358,6 +358,12 @@ impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
     }
 }
 
+impl<A: Float + Send + Sync + Send + Sync> Default for DdmDetector<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Comprehensive concept drift detector
 pub struct ConceptDriftDetector<A: Float + Send + Sync> {
     /// Configuration
@@ -429,7 +435,7 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
         }
 
         // Update performance tracking
-        self.performance_tracker.update(loss, final_status.clone());
+        self.performance_tracker.update(loss, final_status);
 
         Ok(final_status)
     }
@@ -441,7 +447,7 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
         adwin: DriftStatus,
         ddm: DriftStatus,
     ) -> DriftStatus {
-        let votes = vec![ph, adwin, ddm];
+        let votes = [ph, adwin, ddm];
 
         // Count votes
         let drift_votes = votes.iter().filter(|&&s| s == DriftStatus::Drift).count();
@@ -1265,7 +1271,7 @@ pub mod advanced_drift_analysis {
             self.context_features = features.to_vec();
 
             // Simplified context classification
-            let context_id = if features.len() > 0 && features[0].value > A::from(0.5).unwrap() {
+            let context_id = if !features.is_empty() && features[0].value > A::from(0.5).unwrap() {
                 "high_activity".to_string()
             } else {
                 "low_activity".to_string()

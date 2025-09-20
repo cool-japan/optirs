@@ -690,20 +690,18 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
 
     /// Get adaptation statistics
     pub fn get_adaptation_statistics(&self) -> AdaptationStatistics<A> {
-        let mut stats = AdaptationStatistics::default();
-
-        stats.total_adaptations = self.adaptation_history.len();
-        stats.successful_adaptations = self
+        let total_adaptations = self.adaptation_history.len();
+        let successful_adaptations = self
             .adaptation_history
             .iter()
             .filter(|event| {
                 event
                     .effectiveness_score
-                    .map_or(false, |score| score > A::zero())
+                    .is_some_and(|score| score > A::zero())
             })
             .count();
 
-        if !self.adaptation_history.is_empty() {
+        let lr_volatility = if !self.adaptation_history.is_empty() {
             let lr_values: Vec<A> = self
                 .adaptation_history
                 .iter()
@@ -722,10 +720,17 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
                 .fold(A::zero(), |acc, var| acc + var)
                 / A::from(lr_values.len()).unwrap();
 
-            stats.lr_volatility = variance.sqrt();
-        }
+            variance.sqrt()
+        } else {
+            A::zero()
+        };
 
-        stats
+        AdaptationStatistics {
+            total_adaptations,
+            successful_adaptations,
+            lr_volatility,
+            ..Default::default()
+        }
     }
 
     /// Apply meta-learning adjustment to base decision
@@ -892,10 +897,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> PerformanceBasedAda
         metrics: &HashMap<String, A>,
         _step: usize,
     ) -> Result<SignalVote<A>> {
-        let loss_history = self
-            .metric_history
-            .entry("loss".to_string())
-            .or_insert_with(VecDeque::new);
+        let loss_history = self.metric_history.entry("loss".to_string()).or_default();
 
         loss_history.push_back(loss);
         if loss_history.len() > 50 {
