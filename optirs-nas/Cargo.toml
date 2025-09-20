@@ -7,7 +7,7 @@ description = "OptiRS Neural Architecture Search and hyperparameter optimization
 license.workspace = true
 repository.workspace = true
 keywords = ["nas", "neural-architecture-search", "hyperparameter", "bayesian", "evolutionary"]
-categories.workspace = true
+categories = ["science", "science::neuroscience", "algorithms"]
 
 [lints]
 workspace = true

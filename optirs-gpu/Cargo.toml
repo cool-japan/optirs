@@ -7,7 +7,7 @@ description = "OptiRS GPU acceleration and multi-GPU optimization"
 license.workspace = true
 repository.workspace = true
 keywords = ["gpu", "cuda", "metal", "opencl", "optimization"]
-categories.workspace = true
+categories = ["science", "algorithms", "hardware-support"]
 
 [lints]
 workspace = true

@@ -26,7 +26,7 @@ description = "Advanced ML optimization and hardware acceleration library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cool-japan/optirs"
 keywords = ["optimization", "machine-learning", "gpu", "tpu", "neural-architecture-search"]
-categories = ["science", "mathematics", "algorithms", "machine-learning"]
+categories = ["science", "mathematics", "algorithms", "development-tools"]
 
 [workspace.dependencies]
 # Core array computing - REMOVED: Use scirs2_core::ndarray_ext instead

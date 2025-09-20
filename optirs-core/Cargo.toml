@@ -7,7 +7,7 @@ description = "OptiRS core optimization algorithms and utilities"
 license.workspace = true
 repository.workspace = true
 keywords = ["optimization", "sgd", "adam", "adamw", "rmsprop"]
-categories.workspace = true
+categories = ["science", "mathematics", "algorithms"]
 
 [lints]
 workspace = true

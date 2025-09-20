@@ -7,7 +7,7 @@ description = "OptiRS benchmarking, profiling, and performance analysis tools"
 license.workspace = true
 repository.workspace = true
 keywords = ["benchmarking", "profiling", "performance", "regression", "monitoring"]
-categories.workspace = true
+categories = ["development-tools", "development-tools::profiling", "development-tools::testing"]
 
 [lints]
 workspace = true

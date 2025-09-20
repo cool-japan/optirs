@@ -7,7 +7,7 @@ description = "OptiRS TPU coordination and pod management"
 license.workspace = true
 repository.workspace = true
 keywords = ["tpu", "coordination", "xla", "pod", "distributed"]
-categories.workspace = true
+categories = ["science", "algorithms", "hardware-support"]
 
 [lints]
 workspace = true

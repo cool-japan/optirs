@@ -7,7 +7,7 @@ description = "OptiRS learned optimizers and meta-learning"
 license.workspace = true
 repository.workspace = true
 keywords = ["meta-learning", "learned-optimizers", "transformer", "lstm", "neural"]
-categories.workspace = true
+categories = ["science", "science::neuroscience", "algorithms"]
 
 [lints]
 workspace = true
