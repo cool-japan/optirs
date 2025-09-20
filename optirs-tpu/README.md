@@ -37,7 +37,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-tpu = "0.1.0"
+optirs-tpu = "0.1.0-beta.1"
 ```
 
 ### Prerequisites

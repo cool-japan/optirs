@@ -88,10 +88,10 @@ OptiRS extends SciRS2's scientific computing capabilities with specialized ML op
 
 ```toml
 [dependencies]
-optirs = "0.1.0"
+optirs = "0.1.0-beta.1"
 # Or specific modules:
-optirs-core = "0.1.0"
-optirs-gpu = { version = "0.1.0", features = ["cuda"] }
+optirs-core = "0.1.0-beta.1"
+optirs-gpu = { version = "0.1.0-beta.1", features = ["cuda"] }
 ```
 
 ```rust

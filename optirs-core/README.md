@@ -55,7 +55,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0"
+optirs-core = "0.1.0-beta.1"
 ```
 
 ### Basic Example
@@ -106,7 +106,7 @@ Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.1.0", features = ["parallel", "simd"] }
+optirs-core = { version = "0.1.0-beta.1", features = ["parallel", "simd"] }
 ```
 
 ## Architecture
