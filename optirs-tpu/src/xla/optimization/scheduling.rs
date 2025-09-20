@@ -305,7 +305,7 @@ pub struct MemoryResource {
 }
 
 /// Memory levels for resource management
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MemoryLevel {
     /// L1 cache
     L1Cache,
@@ -736,6 +736,9 @@ pub struct ExecutionPlan<T: Float + Debug + Send + Sync + 'static> {
 
     /// Synchronization plan
     pub synchronization_plan: SynchronizationPlan,
+
+    /// Phantom data for type parameter
+    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Scheduled operation with timing
@@ -982,6 +985,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Executi
             timeline,
             performance_predictions,
             synchronization_plan,
+            _phantom: std::marker::PhantomData,
         })
     }
 
@@ -1036,7 +1040,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Executi
 
     /// Schedule operations using critical path priority
     fn schedule_critical_path(
-        &self,
+        &mut self,
         computation: &XLAComputation<T>,
         dependency_graph: &DependencyGraph,
     ) -> Result<Vec<ScheduledOperation>> {
@@ -1496,12 +1500,13 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Perform
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ComputeCapability, HardwareTarget};
     use super::*;
 
     #[test]
     fn test_execution_scheduler_creation() {
         let config = OptimizationPipelineConfig {
-            optimization_level: super::super::XLAOptimizationLevel::O2,
+            optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
             enable_graph_optimization: true,
             enable_kernel_fusion: true,
             enable_memory_optimization: true,
@@ -1512,7 +1517,7 @@ mod tests {
                 num_cores: 4,
                 memory_capacity: 1024 * 1024 * 1024,
                 memory_bandwidth: 1600.0,
-                compute_capability: super::ComputeCapability {
+                compute_capability: ComputeCapability {
                     matrix_unit_dims: (128, 128),
                     vector_unit_width: 256,
                     supported_dtypes: vec!["F32".to_string()],

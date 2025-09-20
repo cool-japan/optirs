@@ -6,14 +6,14 @@
 //
 // Refactored for modularity and maintainability.
 
-pub mod sensors;
-pub mod cooling;
-pub mod zones;
 pub mod control;
+pub mod cooling;
 pub mod management;
+pub mod sensors;
+pub mod zones;
 
-pub use self::sensors::*;
-pub use self::cooling::*;
-pub use self::zones::*;
 pub use self::control::*;
+pub use self::cooling::*;
 pub use self::management::*;
+pub use self::sensors::*;
+pub use self::zones::*;

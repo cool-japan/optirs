@@ -83,9 +83,11 @@ impl PlatformResourceManager {
     /// Allocate resources
     pub fn allocate_resources(&mut self, required: &HashMap<ResourceType, f64>) -> Result<String> {
         if !self.check_resource_availability(required) {
-            return Err(crate::error::OptimError::InsufficientResources(
-                "Insufficient resources available".to_string(),
-            ));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Insufficient resources available",
+            )
+            .into());
         }
 
         // Update usage

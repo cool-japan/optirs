@@ -169,6 +169,23 @@ pub struct AwsConfig {
     pub max_spot_price: Option<f64>,
 }
 
+impl Default for AwsConfig {
+    fn default() -> Self {
+        Self {
+            region: "us-east-1".to_string(),
+            instance_types: HashMap::new(),
+            ami_mappings: HashMap::new(),
+            vpc_id: None,
+            subnet_id: None,
+            security_groups: Vec::new(),
+            key_pair: None,
+            iam_role: None,
+            use_spot_instances: false,
+            max_spot_price: None,
+        }
+    }
+}
+
 /// Azure configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AzureConfig {
@@ -186,6 +203,20 @@ pub struct AzureConfig {
     pub subnet: Option<String>,
     /// Network security group
     pub network_security_group: Option<String>,
+}
+
+impl Default for AzureConfig {
+    fn default() -> Self {
+        Self {
+            subscription_id: "default-subscription".to_string(),
+            resource_group: "optirs-rg".to_string(),
+            vm_sizes: HashMap::new(),
+            images: HashMap::new(),
+            vnet: None,
+            subnet: None,
+            network_security_group: None,
+        }
+    }
 }
 
 /// Azure image reference
@@ -218,6 +249,21 @@ pub struct GcpConfig {
     pub use_preemptible: bool,
 }
 
+impl Default for GcpConfig {
+    fn default() -> Self {
+        Self {
+            project_id: "default-project".to_string(),
+            zone: "us-central1-a".to_string(),
+            machine_types: HashMap::new(),
+            image_families: HashMap::new(),
+            network: None,
+            subnetwork: None,
+            service_account: None,
+            use_preemptible: false,
+        }
+    }
+}
+
 /// GitHub Actions configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubActionsConfig {
@@ -231,6 +277,18 @@ pub struct GitHubActionsConfig {
     pub secrets: Vec<String>,
     /// Matrix strategy
     pub matrix_strategy: String,
+}
+
+impl Default for GitHubActionsConfig {
+    fn default() -> Self {
+        Self {
+            repository: "org/repo".to_string(),
+            workflow_templates: HashMap::new(),
+            runner_labels: HashMap::new(),
+            secrets: Vec::new(),
+            matrix_strategy: "matrix".to_string(),
+        }
+    }
 }
 
 /// Custom cloud provider configuration
@@ -474,7 +532,7 @@ impl Default for TestMatrixConfig {
             test_scenarios: vec![TestScenario {
                 name: "unit_tests".to_string(),
                 commands: vec!["cargo test".to_string()],
-                category: TestCategory::Unit,
+                category: TestCategory::Functionality,
                 timeout: Duration::from_secs(300),
                 expected_results: HashMap::new(),
             }],
@@ -603,6 +661,183 @@ impl Default for ReportingConfig {
             include_costs: true,
             email_notifications: vec![],
             slack_webhook: None,
+        }
+    }
+}
+
+/// Compliance configuration for security and regulatory requirements
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplianceConfig {
+    /// Enable GDPR compliance checks
+    pub enable_gdpr: bool,
+    /// Enable SOC2 compliance checks
+    pub enable_soc2: bool,
+    /// Enable HIPAA compliance checks
+    pub enable_hipaa: bool,
+    /// Enable PCI-DSS compliance checks
+    pub enable_pci_dss: bool,
+    /// Custom compliance rules
+    pub custom_rules: Vec<String>,
+    /// Audit settings
+    pub audit_level: String,
+}
+
+impl Default for ComplianceConfig {
+    fn default() -> Self {
+        Self {
+            enable_gdpr: false,
+            enable_soc2: false,
+            enable_hipaa: false,
+            enable_pci_dss: false,
+            custom_rules: vec![],
+            audit_level: "basic".to_string(),
+        }
+    }
+}
+
+/// Container registry configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerRegistryConfig {
+    /// Registry URL
+    pub url: String,
+    /// Username
+    pub username: Option<String>,
+    /// Password or token
+    pub password: Option<String>,
+    /// Enable insecure registry
+    pub insecure: bool,
+    /// Registry type
+    pub registry_type: String,
+}
+
+impl Default for ContainerRegistryConfig {
+    fn default() -> Self {
+        Self {
+            url: "docker.io".to_string(),
+            username: None,
+            password: None,
+            insecure: false,
+            registry_type: "docker".to_string(),
+        }
+    }
+}
+
+/// Metrics collection configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsConfig {
+    /// Enable metrics collection
+    pub enabled: bool,
+    /// Metrics collection interval
+    pub interval: Duration,
+    /// Metrics storage backend
+    pub storage_backend: String,
+    /// Custom metrics
+    pub custom_metrics: Vec<String>,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: Duration::from_secs(30),
+            storage_backend: "memory".to_string(),
+            custom_metrics: vec![],
+        }
+    }
+}
+
+/// Monitoring configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringConfig {
+    /// Enable monitoring
+    pub enabled: bool,
+    /// Monitoring endpoints
+    pub endpoints: Vec<String>,
+    /// Alert thresholds
+    pub alert_thresholds: HashMap<String, f64>,
+    /// Health check interval
+    pub health_check_interval: Duration,
+}
+
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoints: vec![],
+            alert_thresholds: HashMap::new(),
+            health_check_interval: Duration::from_secs(60),
+        }
+    }
+}
+
+/// Network configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    /// Network mode
+    pub mode: String,
+    /// Network interfaces
+    pub interfaces: Vec<String>,
+    /// Port mappings
+    pub port_mappings: HashMap<u16, u16>,
+    /// Enable TLS
+    pub enable_tls: bool,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            mode: "bridge".to_string(),
+            interfaces: vec![],
+            port_mappings: HashMap::new(),
+            enable_tls: true,
+        }
+    }
+}
+
+/// Security configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    /// Enable security scanning
+    pub enable_scanning: bool,
+    /// Security policies
+    pub policies: Vec<String>,
+    /// Vulnerability thresholds
+    pub vulnerability_thresholds: HashMap<String, u32>,
+    /// Enable encryption
+    pub enable_encryption: bool,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            enable_scanning: true,
+            policies: vec![],
+            vulnerability_thresholds: HashMap::new(),
+            enable_encryption: true,
+        }
+    }
+}
+
+/// Storage configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// Storage backend
+    pub backend: String,
+    /// Storage capacity
+    pub capacity_gb: u64,
+    /// Storage class
+    pub storage_class: String,
+    /// Backup settings
+    pub backup_enabled: bool,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: "local".to_string(),
+            capacity_gb: 100,
+            storage_class: "standard".to_string(),
+            backup_enabled: false,
         }
     }
 }

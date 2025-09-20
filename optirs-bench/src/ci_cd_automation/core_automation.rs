@@ -4,10 +4,10 @@
 // components including test execution, performance gates, reporting, artifact management,
 // and external integrations.
 
-use crate::benchmarking::performance_regression_detector::{
+use crate::error::{OptimError, Result};
+use crate::performance_regression_detector::{
     EnvironmentInfo, PerformanceRegressionDetector, RegressionConfig,
 };
-use crate::error::{OptimError, Result};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -191,7 +191,8 @@ impl CiCdAutomation {
         }
 
         // Step 2: Test execution
-        let test_result = self.execute_step("test_execution", || self.execute_tests());
+        let execute_tests_result = self.execute_tests();
+        let test_result = self.execute_step("test_execution", || execute_tests_result);
         step_results.push(test_result.clone());
 
         let (test_results, test_statistics) = if test_result.success {
@@ -217,9 +218,9 @@ impl CiCdAutomation {
 
         // Step 3: Performance gate evaluation
         let gate_result = if !test_results.is_empty() {
-            let gate_step = self.execute_step("gate_evaluation", || {
-                self.evaluate_performance_gates(&test_results, &test_statistics)
-            });
+            let gate_evaluation_result =
+                self.evaluate_performance_gates(&test_results, &test_statistics);
+            let gate_step = self.execute_step("gate_evaluation", || gate_evaluation_result);
             step_results.push(gate_step.clone());
 
             if !gate_step.success {
@@ -248,9 +249,8 @@ impl CiCdAutomation {
         };
 
         // Step 4: Report generation
-        let report_step = self.execute_step("report_generation", || {
-            self.generate_reports(&test_results, &test_statistics)
-        });
+        let generate_reports_result = self.generate_reports(&test_results, &test_statistics);
+        let report_step = self.execute_step("report_generation", || generate_reports_result);
         step_results.push(report_step.clone());
 
         let reports = if report_step.success {
@@ -262,8 +262,8 @@ impl CiCdAutomation {
         };
 
         // Step 5: Artifact storage
-        let artifact_step =
-            self.execute_step("artifact_storage", || self.store_artifacts(&reports));
+        let store_artifacts_result = self.store_artifacts(&reports);
+        let artifact_step = self.execute_step("artifact_storage", || store_artifacts_result);
         step_results.push(artifact_step.clone());
         if !artifact_step.success {
             warnings.push(format!(
@@ -273,9 +273,10 @@ impl CiCdAutomation {
         }
 
         // Step 6: Integration notifications
-        let integration_step = self.execute_step("integration_notifications", || {
-            self.send_notifications(&test_results, &test_statistics, &gate_result)
-        });
+        let send_notifications_result =
+            self.send_notifications(&test_results, &test_statistics, &gate_result);
+        let integration_step =
+            self.execute_step("integration_notifications", || send_notifications_result);
         step_results.push(integration_step.clone());
         if !integration_step.success {
             warnings.push(format!(
@@ -340,10 +341,13 @@ impl CiCdAutomation {
     fn detect_environment() -> Result<EnvironmentInfo> {
         Ok(EnvironmentInfo {
             os: std::env::consts::OS.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
-            cpu_count: num_cpus::get(),
-            hostname: std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string()),
-            environment_vars: std::env::vars().collect(),
+            cpu_model: std::env::consts::ARCH.to_string(), // Using arch as cpu model for now
+            cpu_cores: num_cpus::get(),
+            total_memory_mb: 0, // Would need platform-specific code to get actual memory
+            gpu_info: None,     // GPU detection would require platform-specific code
+            compiler_version: "unknown".to_string(), // Would need to detect actual compiler
+            rust_version: "unknown".to_string(), // Would need to detect actual Rust version
+            env_vars: std::env::vars().collect(),
         })
     }
 
@@ -767,7 +771,7 @@ mod tests {
 
         let env_info = env.unwrap();
         assert!(!env_info.os.is_empty());
-        assert!(!env_info.arch.is_empty());
-        assert!(env_info.cpu_count > 0);
+        assert!(!env_info.cpu_model.is_empty());
+        assert!(env_info.cpu_cores > 0);
     }
 }

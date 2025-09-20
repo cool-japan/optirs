@@ -121,6 +121,9 @@ pub struct FusionCluster<T: Float + Debug + Send + Sync + 'static> {
 
     /// Execution characteristics
     pub execution_info: ClusterExecutionInfo,
+
+    /// Phantom data for type parameter
+    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Types of fusion strategies
@@ -519,15 +522,19 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
             }
         }
 
+        let estimated_benefit = self.estimate_elementwise_benefit(&cluster_ops);
+        let memory_requirements = self.estimate_memory_requirements(&cluster_ops);
+
         let cluster = FusionCluster {
             id: format!("elementwise_cluster_{}", start_op.id.0),
             operations: cluster_ops,
             inputs: inputs.into_iter().collect(),
             outputs: outputs.into_iter().collect(),
             fusion_type: FusionType::Elementwise,
-            estimated_benefit: self.estimate_elementwise_benefit(&cluster_ops),
-            memory_requirements: self.estimate_memory_requirements(&cluster_ops),
+            estimated_benefit,
+            memory_requirements,
             execution_info: ClusterExecutionInfo::default(),
+            _phantom: std::marker::PhantomData,
         };
 
         Ok(cluster)
@@ -545,11 +552,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
     }
 
     /// Find producer operation for operand
-    fn find_producer_operation(
+    fn find_producer_operation<'a>(
         &self,
         operand_id: OperandId,
-        computation: &XLAComputation<T>,
-    ) -> Option<&XLAOperation<T>> {
+        computation: &'a XLAComputation<T>,
+    ) -> Option<&'a XLAOperation<T>> {
         computation
             .operations
             .iter()
@@ -594,6 +601,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
                 performance: Default::default(),
                 memory_requirements: Default::default(),
                 source_location: None,
+                _phantom: std::marker::PhantomData,
             };
 
             computation.operations.push(fused_op);
@@ -711,23 +719,24 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> CustomF
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ComputeCapability, HardwareTarget};
     use super::*;
 
     #[test]
     fn test_kernel_fusion_engine_creation() {
         let config = OptimizationPipelineConfig {
-            optimization_level: super::super::XLAOptimizationLevel::O2,
+            optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
             enable_graph_optimization: true,
             enable_kernel_fusion: true,
             enable_memory_optimization: true,
             enable_scheduling_optimization: true,
             max_optimization_time: 300,
-            target_hardware: super::HardwareTarget {
+            target_hardware: HardwareTarget {
                 tpu_version: "v4".to_string(),
                 num_cores: 4,
                 memory_capacity: 1024 * 1024 * 1024,
                 memory_bandwidth: 1600.0,
-                compute_capability: super::ComputeCapability {
+                compute_capability: ComputeCapability {
                     matrix_unit_dims: (128, 128),
                     vector_unit_width: 256,
                     supported_dtypes: vec!["F32".to_string()],

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use super::DeviceId;
 use crate::error::{OptimError, Result};
+use scirs2_core::error::ErrorContext;
 
 /// Types of failures
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -333,7 +334,7 @@ impl FailureDetector {
         let recent_failures = self
             .failure_history
             .iter()
-            .filter(|f| f.detected_at.elapsed() < Duration::from_hours(1))
+            .filter(|f| f.detected_at.elapsed() < Duration::from_secs(3600))
             .count();
         stats.insert("recent_failure_rate".to_string(), recent_failures as f64);
 
@@ -629,10 +630,10 @@ impl FaultToleranceManager {
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok(())
         } else {
-            Err(OptimError::ConfigurationError(format!(
+            Err(OptimError::ComputationError(ErrorContext::new(format!(
                 "Checkpoint {} not found",
                 checkpoint_id
-            )))
+            ))))
         }
     }
 
@@ -686,10 +687,10 @@ impl FaultToleranceManager {
             self.failure_detector.add_device(device_id);
             Ok(())
         } else {
-            Err(OptimError::ConfigurationError(format!(
+            Err(OptimError::ComputationError(ErrorContext::new(format!(
                 "No active recovery for device {:?}",
                 device_id
-            )))
+            ))))
         }
     }
 

@@ -6,14 +6,14 @@
 //
 // Refactored for modularity and maintainability.
 
-pub mod psu;
-pub mod pdu;
 pub mod budget;
-pub mod monitoring;
 pub mod control;
+pub mod monitoring;
+pub mod pdu;
+pub mod psu;
 
-pub use self::psu::*;
-pub use self::pdu::*;
 pub use self::budget::*;
-pub use self::monitoring::*;
 pub use self::control::*;
+pub use self::monitoring::*;
+pub use self::pdu::*;
+pub use self::psu::*;

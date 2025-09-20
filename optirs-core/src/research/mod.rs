@@ -48,17 +48,51 @@ pub mod peer_review;
 pub mod publications;
 pub mod reproducibility;
 
-// Re-exports for convenience
+// Re-exports for convenience - using selective exports to avoid conflicts
 pub use benchmarks::*;
-pub use citations::*;
 pub use collaboration::*;
-pub use conferences::*;
 pub use datasets::*;
 pub use experiments::*;
 pub use funding::*;
-pub use peer_review::*;
-pub use publications::*;
 pub use reproducibility::*;
+
+// Selective re-exports to avoid conflicts
+// Citations module exports
+pub use citations::{
+    CitationManager, CitationStyle as CitationStyleType, Citation,
+    InTextFormat, BibliographyFormat, NameFormat, TitleFormat, DateFormat,
+    PunctuationRules, FormattingRules, SortingRules, SortField, SortDirection,
+    Author as CitationAuthor, PublicationType as CitationPublicationType
+};
+
+// Publications module exports
+pub use publications::{
+    Publication, Affiliation, Venue, VenueType, ManuscriptSection, SectionType,
+    Figure, FigureType, Table, Bibliography, BibTeXEntry, SubmissionRecord,
+    SubmissionStatus, Decision, ReviewerInfo,
+    Author as PublicationAuthor, AuthorPosition,
+    PublicationType as PublicationTypeEnum, PublicationStatus,
+    Review as PublicationReview, ReviewRecommendation as PublicationReviewRecommendation,
+    CitationStyle as PublicationCitationStyle
+};
+
+// Peer review module exports
+pub use peer_review::{
+    PeerReviewSystem, ReviewSession, ReviewType, ReviewSessionStatus,
+    ReviewCriterion, PeerReview, WrittenReview, ReviewStatus, MetaReview,
+    ReviewQualityAssessment, ReviewDiscussion, Reviewer, ReviewerHistory,
+    ReviewerAvailability, ReviewerQualityMetrics, ReviewerPreferences,
+    ReviewAssignment, ReviewQualityMetric,
+    ReviewRecommendation as PeerReviewRecommendation
+};
+
+// Conferences module exports
+pub use conferences::{
+    Conference, ConferenceManager, ConferenceDates,
+    Submission, SubmissionStatus as ConferenceSubmissionStatus, DeadlineType, ReviewProcess,
+    ReviewFormat,
+    Review as ConferenceReview, ReviewRecommendation as ConferenceReviewRecommendation
+};
 
 use crate::error::{OptimError, Result};
 use chrono::{DateTime, Utc};

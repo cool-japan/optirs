@@ -19,12 +19,14 @@
 //!
 //! ## Usage
 //!
-//! ```rust
-//! use scirs2_optim::tpu::pod_coordination::{
+//! ```rust,no_run
+//! # use optirs_tpu::error::Result;
+//! use optirs_tpu::pod_coordination::{
 //!     TPUPodCoordinator, PodCoordinationConfig, PodTopology,
 //!     BatchParallelizationStrategy, CommunicationPattern
 //! };
 //!
+//! # fn example() -> Result<()> {
 //! // Create coordination configuration
 //! let config = PodCoordinationConfig {
 //!     topology: PodTopology::Pod4x4,
@@ -36,16 +38,12 @@
 //! };
 //!
 //! // Initialize TPU pod coordinator
-//! let coordinator = TPUPodCoordinator::new(config)?;
+//! let coordinator = TPUPodCoordinator::<f32>::new(config)?;
 //!
-//! // Coordinate batch execution across the pod
-//! let batch_data = BatchData::default();
-//! let optimization_step = OptimizationStep::new(|partition| {
-//!     // Your optimization logic here
-//!     Ok(vec![])
-//! });
-//!
-//! let result = coordinator.coordinate_batch_execution(batch_data, optimization_step).await?;
+//! // The coordinator is now ready for use with pod coordination operations
+//! // Additional methods would be called here for actual batch processing
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Architecture Overview
@@ -62,6 +60,9 @@
 //! 8. **Resource Scheduler**: Allocates and manages resources
 //! 9. **Batch Coordinator**: Manages batch execution and pipelines
 //! 10. **Gradient Aggregator**: Aggregates gradients across devices
+
+// Common types module
+pub mod types;
 
 // Core coordination functionality
 pub mod coordination;
@@ -94,36 +95,37 @@ pub mod batch_coordination;
 pub mod gradient_aggregation;
 
 // Re-export core types and functionality
-pub use coordination::*;
-pub use topology::*;
+pub use batch_coordination::*;
 pub use communication::*;
-pub use synchronization::*;
-pub use load_balancing::*;
+pub use coordination::*;
 pub use fault_tolerance::*;
+pub use gradient_aggregation::*;
+pub use load_balancing::*;
 pub use performance::*;
 pub use resource_scheduling::*;
-pub use batch_coordination::*;
-pub use gradient_aggregation::*;
+pub use synchronization::*;
+pub use topology::*;
+pub use types::*;
 
 // Additional common imports for convenience
+use num_traits::Float;
+use scirs2_core::ndarray_ext::{Array, IxDyn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use ndarray::{Array, IxDyn};
-use num_traits::Float;
 
 use crate::error::{OptimError, Result};
+use scirs2_core::error::ErrorContext;
 
-/// Device identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DeviceId(pub usize);
+// DeviceId is imported from types module via re-export below
 
 /// Batch identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BatchId(pub u64);
 
 /// Pod topology configurations
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum PodTopology {
+    #[default]
     Single,
     Pod2x2,
     Pod4x4,
@@ -134,160 +136,69 @@ pub enum PodTopology {
 
 // Re-export key enums and structs that are commonly used together
 pub use coordination::{
-    TPUPodCoordinator,
-    PodCoordinationConfig,
-    CoordinationStrategy,
-    CommunicationPattern,
-    SynchronizationMode,
-    BatchParallelizationStrategy,
-    GradientAggregationMethod,
-    LoadBalancingStrategy,
-    MemoryManagementStrategy,
+    BatchParallelizationStrategy, CommunicationPattern, CoordinationStrategy,
+    GradientAggregationMethod, LoadBalancingStrategy, MemoryManagementStrategy,
+    PodCoordinationConfig, SynchronizationMode, TPUPodCoordinator,
 };
 
 pub use topology::{
-    TopologyManager,
-    DeviceLayout,
-    CommunicationTopology,
-    CommunicationLink,
-    LinkType,
-    CommunicationStep,
-    CommunicationStepType,
+    BandwidthMatrix, CommunicationLink, CommunicationStep, CommunicationStepType,
+    CommunicationTopology, DeviceLayout, LatencyMatrix, LinkType, RoutingTable, TopologyManager,
     TopologyProperties,
-    RoutingTable,
-    BandwidthMatrix,
-    LatencyMatrix,
 };
 
 pub use communication::{
-    CommunicationManager,
-    CommunicationId,
-    ActiveCommunication,
-    CommunicationBuffer,
-    BufferStatus,
-    CompressionInfo,
-    CompressionAlgorithm,
-    CommunicationProgress,
+    ActiveCommunication, BufferStatus, CommunicationBuffer, CommunicationId, CommunicationManager,
+    CommunicationProgress, CompressionAlgorithm, CompressionInfo,
 };
 
 pub use synchronization::{
+    BarrierId, BarrierState, BarrierType, DeviceStatus, SyncEvent, SyncEventData, SyncEventType,
     SynchronizationManager,
-    BarrierId,
-    BarrierState,
-    BarrierType,
-    SyncEvent,
-    SyncEventType,
-    SyncEventData,
-    DeviceStatus,
 };
 
 pub use load_balancing::{
-    PodLoadBalancer,
-    LoadBalancer,
-    DeviceLoad,
-    LoadSnapshot,
-    RebalancingPolicy,
-    RebalancingTrigger,
-    RebalancingAction,
-    LoadBalancingAlgorithm,
-    DeviceAvailability,
+    DeviceAvailability, DeviceLoad, LoadBalancer, LoadBalancingAlgorithm, LoadSnapshot,
+    PodLoadBalancer, RebalancingAction, RebalancingPolicy, RebalancingTrigger,
 };
 
 pub use fault_tolerance::{
-    FaultToleranceManager,
-    FailureDetector,
-    FailureType,
-    RecoveryStrategy,
-    FailureDetectionAlgorithm,
-    FailureInfo,
-    FailureStatus,
-    RecoveryAction,
-    RecoveryPriority,
-    CheckpointInfo,
-    CheckpointType,
-    RedundancyConfig,
-    RedundancyStrategy,
-    ConsistencyLevel,
-    DetectionConfig,
+    CheckpointInfo, CheckpointType, ConsistencyLevel, DetectionConfig, FailureDetectionAlgorithm,
+    FailureDetector, FailureInfo, FailureStatus, FailureType, FaultToleranceManager,
+    RecoveryAction, RecoveryPriority, RecoveryStrategy, RedundancyConfig, RedundancyStrategy,
 };
 
 pub use performance::{
-    PodPerformanceAnalyzer,
-    PodPerformanceMetrics,
-    DevicePerformanceMetrics,
-    PerformanceBenchmark,
-    PerformanceAlert,
-    AlertType,
-    AlertSeverity,
-    OptimizationRecommendation,
-    RecommendationType,
-    EffortLevel,
-    RecommendationPriority,
-    PerformanceTrend,
-    TrendDirection,
+    AlertSeverity, AlertType, DevicePerformanceMetrics, EffortLevel, OptimizationRecommendation,
+    PerformanceAlert, PerformanceBenchmark, PerformanceTrend, PodPerformanceAnalyzer,
+    PodPerformanceMetrics, RecommendationPriority, RecommendationType, TrendDirection,
 };
 
 pub use resource_scheduling::{
-    ResourceScheduler,
-    ResourceRequirements,
-    ResourcePriority,
-    ResourceAllocation,
-    SchedulingRequest,
-    RequestStatus,
-    SchedulingStrategy,
-    ResourcePoolConfig,
-    ReservationPolicy,
-    DeviceReservation,
-    ReservationType,
-    QueueMetrics,
-    AllocationMetrics,
+    AllocationMetrics, DeviceReservation, QueueMetrics, RequestStatus, ReservationPolicy,
+    ReservationType, ResourceAllocation, ResourcePoolConfig, ResourcePriority,
+    ResourceRequirements, ResourceScheduler, SchedulingRequest, SchedulingStrategy,
 };
 
 pub use batch_coordination::{
-    BatchCoordinator,
-    BatchData,
-    BatchMetadata,
-    BatchPartition,
-    PartitionId,
-    BatchExecution,
-    BatchProgress,
-    PipelineStage,
-    PipelineStageStatus,
-    DistributionStrategy,
-    CachingStrategy,
-    AggregationMethod,
-    BatchExecutionResult,
-    DeviceExecutionStatistics,
-    QualityMetrics,
-    DataPartitioning,
-    BatchPriority,
-    PartitionStatus,
+    AggregationMethod, BatchCoordinator, BatchData, BatchExecution, BatchExecutionResult,
+    BatchMetadata, BatchPartition, BatchPriority, BatchProgress, CachingStrategy, DataPartitioning,
+    DeviceExecutionStatistics, DistributionStrategy, PartitionId, PartitionStatus, PipelineStage,
+    PipelineStageStatus, QualityMetrics,
 };
 
 pub use gradient_aggregation::{
-    GradientAggregator,
-    GradientBuffer,
-    GradientBufferStatus,
-    AggregationState,
-    AggregationStatistics,
-    AggregationConfig,
-    CompressionSettings,
-    QuantizationSettings,
-    QuantizationMethod,
-    SparsificationMethod,
-    CommunicationOptimization,
-    FederatedParams,
-    LocalSGDParams,
-    SCAFFOLDParams,
-    CommunicationStats,
-    BufferMetadata,
-    CompressionParameters,
+    AggregationConfig, AggregationState, AggregationStatistics, BufferMetadata,
+    CommunicationOptimization, CommunicationStats, CompressionParameters, CompressionSettings,
+    FederatedParams, GradientAggregator, GradientBuffer, GradientBufferStatus, LocalSGDParams,
+    QuantizationMethod, QuantizationSettings, SCAFFOLDParams, SparsificationMethod,
 };
 
 /// Optimization step interface for batch execution
 pub struct OptimizationStep<T: Float> {
     /// Step function
-    pub stepfn: std::sync::Arc<dyn Fn(BatchPartition<T>) -> Result<Vec<Array<T, IxDyn>>> + Send + Sync>,
+    pub stepfn:
+        std::sync::Arc<dyn Fn(BatchPartition<T>) -> Result<Vec<Array<T, IxDyn>>> + Send + Sync>,
 }
 
 impl<T: Float> Clone for OptimizationStep<T> {
@@ -298,7 +209,16 @@ impl<T: Float> Clone for OptimizationStep<T> {
     }
 }
 
-impl<T: Float + Default + Clone + Send + Sync + std::iter::Sum + ndarray::ScalarOperand> OptimizationStep<T> {
+impl<
+        T: Float
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + std::iter::Sum
+            + scirs2_core::ndarray_ext::ScalarOperand,
+    > OptimizationStep<T>
+{
     /// Execute the optimization step
     pub async fn execute(&self, partition: BatchPartition<T>) -> Result<Vec<Array<T, IxDyn>>> {
         (self.stepfn)(partition)
@@ -476,7 +396,15 @@ impl PodCoordinationBuilder {
     }
 
     /// Build the TPU pod coordinator
-    pub fn build<T: Float + Default + Clone + Send + Sync + ndarray::ScalarOperand + std::iter::Sum>(
+    pub fn build<
+        T: Float
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + scirs2_core::ndarray_ext::ScalarOperand
+            + std::iter::Sum,
+    >(
         self,
     ) -> Result<TPUPodCoordinator<T>> {
         TPUPodCoordinator::new(self.config)
@@ -570,14 +498,14 @@ pub mod utils {
         };
 
         if config.num_devices != expected_devices {
-            return Err(OptimError::ConfigurationError(format!(
+            return Err(OptimError::ComputationError(ErrorContext::new(format!(
                 "Device count {} does not match topology {:?} (expected {})",
                 config.num_devices, config.topology, expected_devices
-            )));
+            ))));
         }
 
         // Check strategy compatibility
-        match (config.batch_strategy, config.communication_pattern) {
+        match (&config.batch_strategy, &config.communication_pattern) {
             (BatchParallelizationStrategy::DataParallel, CommunicationPattern::AllReduce) => (),
             (BatchParallelizationStrategy::ModelParallel, CommunicationPattern::AllGather) => (),
             (BatchParallelizationStrategy::PipelineParallel, CommunicationPattern::Ring) => (),
@@ -592,9 +520,9 @@ pub mod utils {
 
         // Check timeout values
         if config.operation_timeout_ms < config.heartbeat_interval_ms {
-            return Err(OptimError::ConfigurationError(
+            return Err(OptimError::ComputationError(ErrorContext::new(
                 "Operation timeout must be greater than heartbeat interval".to_string(),
-            ));
+            )));
         }
 
         Ok(())
@@ -735,7 +663,10 @@ mod tests {
 
         assert_eq!(config.topology, PodTopology::Pod4x4);
         assert_eq!(config.num_devices, 16);
-        assert_eq!(config.batch_strategy, BatchParallelizationStrategy::DataParallel);
+        assert_eq!(
+            config.batch_strategy,
+            BatchParallelizationStrategy::DataParallel
+        );
     }
 
     #[test]
@@ -774,25 +705,37 @@ mod tests {
 
     #[test]
     fn test_presets() {
-        let hp_config = presets::high_performance_data_parallel().get_config().clone();
-        assert_eq!(hp_config.coordination_strategy, CoordinationStrategy::Adaptive);
-        assert_eq!(hp_config.batch_strategy, BatchParallelizationStrategy::DataParallel);
+        let hp_config = presets::high_performance_data_parallel()
+            .get_config()
+            .clone();
+        assert_eq!(
+            hp_config.coordination_strategy,
+            CoordinationStrategy::Adaptive
+        );
+        assert_eq!(
+            hp_config.batch_strategy,
+            BatchParallelizationStrategy::DataParallel
+        );
 
         let lt_config = presets::low_latency_inference().get_config().clone();
-        assert_eq!(lt_config.coordination_strategy, CoordinationStrategy::Decentralized);
-        assert_eq!(lt_config.synchronization_mode, SynchronizationMode::Asynchronous);
+        assert_eq!(
+            lt_config.coordination_strategy,
+            CoordinationStrategy::Decentralized
+        );
+        assert_eq!(
+            lt_config.synchronization_mode,
+            SynchronizationMode::Asynchronous
+        );
     }
 
     #[tokio::test]
     async fn test_optimization_step() {
-        let step = OptimizationStep::<f32>::new(|_partition| {
-            Ok(vec![Array::ones(IxDyn(&[2, 2]))])
-        });
+        let step = OptimizationStep::<f32>::new(|_partition| Ok(vec![Array::ones(IxDyn(&[2, 2]))]));
 
         let partition = BatchPartition {
             data: Array::zeros(IxDyn(&[2, 2])),
             indices: vec![0, 1],
-            status: PartitionStatus::Assigned,
+            status: PartitionStatus::Ready,
             device: DeviceId(0),
             dependencies: Vec::new(),
             created_at: Instant::now(),

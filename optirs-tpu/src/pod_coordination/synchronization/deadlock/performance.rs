@@ -1,3 +1,4 @@
-// Performance module
+// Deadlock Performance Module
 
-use crate::pod_coordination::types::*;
+// Re-export from main performance module
+pub use crate::pod_coordination::performance::*;

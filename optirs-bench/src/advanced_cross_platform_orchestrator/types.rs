@@ -9,10 +9,49 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 // Re-export types from cross_platform_tester
-pub use crate::benchmarking::cross_platform_tester::{
-    CompatibilityIssue, PerformanceMetrics, PlatformRecommendation, PlatformTarget, TestCategory,
-    TestResult, TestStatus,
+pub use crate::cross_platform_tester::{
+    CompatibilityIssue, PerformanceMetrics, PlatformRecommendation, TestCategory, TestResult,
+    TestStatus,
 };
+
+/// Platform target for cross-platform testing
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum PlatformTarget {
+    LinuxX86_64,
+    LinuxAarch64,
+    WindowsX86_64,
+    MacOSX86_64,
+    MacOSAarch64,
+    FreeBSDX86_64,
+    OpenBSDX86_64,
+    NetBSDX86_64,
+    SolarisX86_64,
+    LinuxMips64,
+    LinuxPowerPC64,
+    LinuxS390X,
+    Custom(String),
+}
+
+impl std::fmt::Display for PlatformTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            PlatformTarget::LinuxX86_64 => "linux-x86_64",
+            PlatformTarget::LinuxAarch64 => "linux-aarch64",
+            PlatformTarget::WindowsX86_64 => "windows-x86_64",
+            PlatformTarget::MacOSX86_64 => "macos-x86_64",
+            PlatformTarget::MacOSAarch64 => "macos-aarch64",
+            PlatformTarget::FreeBSDX86_64 => "freebsd-x86_64",
+            PlatformTarget::OpenBSDX86_64 => "openbsd-x86_64",
+            PlatformTarget::NetBSDX86_64 => "netbsd-x86_64",
+            PlatformTarget::SolarisX86_64 => "solaris-x86_64",
+            PlatformTarget::LinuxMips64 => "linux-mips64",
+            PlatformTarget::LinuxPowerPC64 => "linux-powerpc64",
+            PlatformTarget::LinuxS390X => "linux-s390x",
+            PlatformTarget::Custom(name) => name,
+        };
+        write!(f, "{}", s)
+    }
+}
 
 /// Feature importance levels
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -157,7 +196,7 @@ pub enum TrendDirection {
 }
 
 /// Resource type classifications
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ResourceType {
     CPU,
     Memory,
@@ -571,25 +610,164 @@ impl Default for IssueSummary {
     }
 }
 
-impl ToString for PlatformTarget {
-    fn to_string(&self) -> String {
-        match self {
-            PlatformTarget::LinuxX86_64 => "linux-x86_64".to_string(),
-            PlatformTarget::LinuxAarch64 => "linux-aarch64".to_string(),
-            PlatformTarget::WindowsX86_64 => "windows-x86_64".to_string(),
-            PlatformTarget::MacOSX86_64 => "macos-x86_64".to_string(),
-            PlatformTarget::MacOSAarch64 => "macos-aarch64".to_string(),
-            PlatformTarget::FreeBSDX86_64 => "freebsd-x86_64".to_string(),
-            PlatformTarget::OpenBSDX86_64 => "openbsd-x86_64".to_string(),
-            PlatformTarget::NetBSDX86_64 => "netbsd-x86_64".to_string(),
-            PlatformTarget::SolarisX86_64 => "solaris-x86_64".to_string(),
-            PlatformTarget::LinuxMips64 => "linux-mips64".to_string(),
-            PlatformTarget::LinuxPowerPC64 => "linux-powerpc64".to_string(),
-            PlatformTarget::LinuxS390X => "linux-s390x".to_string(),
-            _ => format!("{:?}", self),
-        }
-    }
+/// Helper function to convert PlatformTarget to string
+pub fn platform_target_to_string(platform: &PlatformTarget) -> String {
+    format!("{:?}", platform).to_lowercase().replace("::", "-")
 }
+
+/// Cloud provider type enumeration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum CloudProviderType {
+    AWS,
+    Azure,
+    GCP,
+    GitHub,
+    Custom(String),
+}
+
+/// Compliance report for security and regulatory requirements
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplianceReport {
+    pub compliance_level: String,
+    pub violations: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub score: f64,
+    pub timestamp: SystemTime,
+}
+
+/// Cross-platform metrics aggregation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossPlatformMetrics {
+    pub platform_results: HashMap<PlatformTarget, PerformanceMetrics>,
+    pub aggregated_metrics: PerformanceMetrics,
+    pub variance_analysis: HashMap<String, f64>,
+    pub outliers: Vec<PlatformTarget>,
+}
+
+/// Cross-platform testing summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossPlatformTestingSummary {
+    pub total_platforms: usize,
+    pub successful_platforms: usize,
+    pub failed_platforms: usize,
+    pub platform_results: HashMap<PlatformTarget, TestResult>,
+    pub overall_status: TestStatus,
+    pub execution_time: Duration,
+}
+
+/// Environment variables configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentVariables {
+    pub variables: HashMap<String, String>,
+    pub secure_variables: Vec<String>,
+    pub inherited_from_host: bool,
+}
+
+/// Hardware information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareInfo {
+    pub cpu_model: String,
+    pub cpu_cores: u32,
+    pub memory_gb: u64,
+    pub gpu_info: Option<String>,
+    pub architecture: String,
+    pub features: Vec<String>,
+}
+
+/// Network port configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkPort {
+    pub port: u16,
+    pub protocol: String,
+    pub exposed: bool,
+    pub description: String,
+}
+
+/// Numerical computation result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NumericalResult {
+    pub value: f64,
+    pub precision: f64,
+    pub unit: String,
+    pub valid: bool,
+}
+
+/// Performance data structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Performance {
+    pub throughput: f64,
+    pub latency: f64,
+    pub cpu_usage: f64,
+    pub memory_usage: u64,
+    pub accuracy: Option<f64>,
+}
+
+/// Platform capabilities
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformCapabilities {
+    pub supported_features: Vec<String>,
+    pub hardware_acceleration: bool,
+    pub simd_support: Vec<String>,
+    pub max_threads: u32,
+    pub memory_limit: Option<u64>,
+}
+
+/// Platform test result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlatformTestResult {
+    pub platform: PlatformTarget,
+    pub test_results: Vec<TestResult>,
+    pub overall_status: TestStatus,
+    pub performance: Performance,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Security context for test execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityContext {
+    pub user_id: String,
+    pub group_id: String,
+    pub capabilities: Vec<String>,
+    pub security_profile: String,
+    pub read_only_filesystem: bool,
+}
+
+/// Software information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoftwareInfo {
+    pub rust_version: String,
+    pub cargo_version: String,
+    pub dependencies: HashMap<String, String>,
+    pub features: Vec<String>,
+    pub target_triple: String,
+}
+
+/// Test environment configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestEnvironment {
+    pub name: String,
+    pub platform: PlatformTarget,
+    pub hardware: HardwareInfo,
+    pub software: SoftwareInfo,
+    pub environment_variables: EnvironmentVariables,
+    pub network_config: NetworkPort,
+}
+
+/// Test execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestExecutionResult {
+    pub test_name: String,
+    pub status: TestStatus,
+    pub duration: Duration,
+    pub output: String,
+    pub error_output: String,
+    pub exit_code: Option<i32>,
+    pub metrics: HashMap<String, f64>,
+}
+
+// Note: BenchmarkResult should be imported from the main crate, not defined here
+// It's already re-exported from mod_impl.rs via the main lib.rs
 
 #[cfg(test)]
 mod tests {

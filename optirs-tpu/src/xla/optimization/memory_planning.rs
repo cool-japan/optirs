@@ -165,6 +165,9 @@ pub struct MemoryPlan<T: Float + Debug + Send + Sync + 'static> {
 
     /// Performance characteristics
     pub performance_info: MemoryPerformanceInfo,
+
+    /// Phantom data for type parameter
+    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Buffer allocation information
@@ -797,6 +800,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
             execution_order,
             total_memory,
             performance_info,
+            _phantom: std::marker::PhantomData,
         })
     }
 
@@ -1118,8 +1122,8 @@ impl MemoryAllocator {
                 access_pattern: AccessPattern::Sequential,
             })
         } else {
-            Err(OptimError::OutOfMemory(format!(
-                "Cannot allocate {} bytes",
+            Err(OptimError::from(format!(
+                "Out of memory: Cannot allocate {} bytes",
                 aligned_size
             )))
         }
@@ -1222,18 +1226,21 @@ mod tests {
 
     #[test]
     fn test_memory_planner_creation() {
-        use super::super::{super::PodTopology, TPUConfig, TPUVersion};
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
 
         let tpu_config = TPUConfig {
-            version: TPUVersion::V4,
-            topology: PodTopology {
-                num_chips: 4,
-                cores_per_chip: 2,
-                chip_interconnect: "ICI".to_string(),
-            },
-            memory_capacity: 32 * 1024 * 1024 * 1024, // 32 GB
-            memory_bandwidth: 1600.0,                 // 1.6 TB/s
-            compute_throughput: 275e12,               // 275 TOPS
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
         };
 
         let planner: MemoryPlanner<f32> = MemoryPlanner::new(tpu_config);

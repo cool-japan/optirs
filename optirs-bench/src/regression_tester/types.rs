@@ -3,8 +3,8 @@
 // This module provides all the data structures used throughout the regression testing
 // framework, including performance metrics, analysis results, and statistical types.
 
-use crate::benchmarking::regression_tester::config::TestEnvironment;
 use crate::error::Result;
+use crate::regression_tester::config::TestEnvironment;
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

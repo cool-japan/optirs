@@ -67,7 +67,7 @@ pub enum PlatformTarget {
 }
 
 /// Test categories
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TestCategory {
     /// Basic functionality tests
     Functionality,
@@ -488,7 +488,7 @@ pub trait CrossPlatformTest: Debug {
 }
 
 /// Individual test result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestResult {
     /// Test name
     pub test_name: String,
@@ -507,7 +507,7 @@ pub struct TestResult {
 }
 
 /// Test execution status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TestStatus {
     Passed,
     Failed,
@@ -517,7 +517,7 @@ pub enum TestStatus {
 }
 
 /// Performance metrics for tests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PerformanceMetrics {
     /// Throughput (operations per second)
     pub throughput: f64,
@@ -531,8 +531,20 @@ pub struct PerformanceMetrics {
     pub energy_consumption: Option<f64>,
 }
 
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self {
+            throughput: 0.0,
+            latency: 0.0,
+            memory_usage: 0,
+            cpu_usage: 0.0,
+            energy_consumption: None,
+        }
+    }
+}
+
 /// Numerical test results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NumericalResults {
     /// Computed values
     pub computed_values: Vec<f64>,
@@ -607,7 +619,7 @@ pub struct PerformanceComparison {
 }
 
 /// Compatibility issue identified during testing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompatibilityIssue {
     /// Issue type
     pub issue_type: CompatibilityIssueType,
@@ -624,7 +636,7 @@ pub struct CompatibilityIssue {
 }
 
 /// Types of compatibility issues
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CompatibilityIssueType {
     /// Numerical precision difference
     NumericalPrecision,
@@ -641,7 +653,7 @@ pub enum CompatibilityIssueType {
 }
 
 /// Issue severity levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum IssueSeverity {
     Low,
     Medium,
@@ -650,7 +662,7 @@ pub enum IssueSeverity {
 }
 
 /// Platform-specific recommendations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlatformRecommendation {
     /// Target platform
     pub platform: PlatformTarget,
@@ -665,7 +677,7 @@ pub struct PlatformRecommendation {
 }
 
 /// Types of recommendations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum RecommendationType {
     /// Optimization opportunity
     Optimization,
@@ -680,7 +692,7 @@ pub enum RecommendationType {
 }
 
 /// Recommendation priority levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum RecommendationPriority {
     Low,
     Medium,

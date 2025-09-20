@@ -48,7 +48,7 @@ impl SecurityAuditor {
     pub fn with_config(config: SecurityAuditConfig) -> Result<Self> {
         config
             .validate()
-            .map_err(|e| OptimError::InvalidConfiguration(e))?;
+            .map_err(|e| OptimError::InvalidConfig(e))?;
 
         Ok(Self {
             config: config.clone(),
@@ -471,7 +471,7 @@ impl SecurityAuditor {
     pub fn update_config(&mut self, config: SecurityAuditConfig) -> Result<()> {
         config
             .validate()
-            .map_err(|e| OptimError::InvalidConfiguration(e))?;
+            .map_err(|e| OptimError::InvalidConfig(e))?;
         self.config = config;
         Ok(())
     }
@@ -558,7 +558,7 @@ impl SecurityAuditor {
     pub fn export_json(&self) -> Result<String> {
         self.audit_results
             .to_json()
-            .map_err(|e| OptimError::SerializationError(e.to_string()))
+            .map_err(|e| OptimError::Other(e.to_string()))
     }
 }
 

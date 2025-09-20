@@ -125,7 +125,7 @@ impl PrivacyGuaranteesAnalyzer {
         self.test_cases.push(PrivacyTest {
             name: "SMC Privacy Test".to_string(),
             mechanism: PrivacyMechanism::SecureMultiParty,
-            attack_scenario: PrivacyAttackScenario::InformationLeakage,
+            attack_scenario: PrivacyAttackScenario::PropertyInference,
             expected_guarantee: PrivacyGuarantee::new(0.1, 1e-8, CompositionMethod::Advanced)
                 .with_constraint(PrivacyConstraint::MaxInformationLeakage(0.01)),
         });
@@ -175,7 +175,7 @@ impl PrivacyGuaranteesAnalyzer {
             PrivacyAttackScenario::NoiseReductionAttack => {
                 self.test_noise_reduction(test)?;
             }
-            PrivacyAttackScenario::InformationLeakage => {
+            PrivacyAttackScenario::PropertyInference => {
                 self.test_information_leakage(test)?;
             }
         }
@@ -204,8 +204,8 @@ impl PrivacyGuaranteesAnalyzer {
 
         Ok(PrivacyTestResult {
             test_name: test.name.clone(),
-            status,
-            violations: violations_for_test,
+            status: status.clone(),
+            violations: violations_for_test.clone(),
             execution_time,
             severity,
             privacy_guarantee_satisfied: status == TestStatus::Passed,

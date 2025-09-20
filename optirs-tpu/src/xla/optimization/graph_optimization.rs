@@ -213,35 +213,37 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> GraphOp
             iterations += 1;
 
             // Apply constant folding
-            let folded = self.constant_folder.apply(current_computation)?;
+            let folded = self.constant_folder.apply(current_computation.clone())?;
             if !self.computations_equal(&current_computation, &folded) {
                 changed = true;
                 current_computation = folded;
             }
 
             // Apply algebraic simplifications
-            let simplified = self.algebraic_pass.apply(current_computation)?;
+            let simplified = self.algebraic_pass.apply(current_computation.clone())?;
             if !self.computations_equal(&current_computation, &simplified) {
                 changed = true;
                 current_computation = simplified;
             }
 
             // Apply common subexpression elimination
-            let cse_result = self.cse_pass.apply(current_computation)?;
+            let cse_result = self.cse_pass.apply(current_computation.clone())?;
             if !self.computations_equal(&current_computation, &cse_result) {
                 changed = true;
                 current_computation = cse_result;
             }
 
             // Apply loop optimizations
-            let loop_optimized = self.loop_optimizer.apply(current_computation)?;
+            let loop_optimized = self.loop_optimizer.apply(current_computation.clone())?;
             if !self.computations_equal(&current_computation, &loop_optimized) {
                 changed = true;
                 current_computation = loop_optimized;
             }
 
             // Apply control flow optimizations
-            let cf_optimized = self.control_flow_optimizer.apply(current_computation)?;
+            let cf_optimized = self
+                .control_flow_optimizer
+                .apply(current_computation.clone())?;
             if !self.computations_equal(&current_computation, &cf_optimized) {
                 changed = true;
                 current_computation = cf_optimized;
@@ -299,13 +301,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Constan
                 id: super::super::frontend::graph_capture::OperationId(
                     computation.operations.len(),
                 ),
-                op_type: OperationType::Constant(value),
+                op_type: OperationType::Constant(Box::new(value) as Box<dyn std::any::Any>),
                 inputs: vec![],
                 output: operand_id,
                 attributes: Default::default(),
                 performance: Default::default(),
                 memory_requirements: Default::default(),
                 source_location: None,
+                _phantom: std::marker::PhantomData,
             };
 
             computation.operations.push(constant_op);
@@ -344,11 +347,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Constan
     }
 
     /// Find the operation that produces an operand
-    fn find_producer_operation(
+    fn find_producer_operation<'a>(
         &self,
         operand_id: OperandId,
-        computation: &XLAComputation<T>,
-    ) -> Option<&XLAOperation<T>> {
+        computation: &'a XLAComputation<T>,
+    ) -> Option<&'a XLAOperation<T>> {
         computation
             .operations
             .iter()
@@ -368,7 +371,8 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Constan
                 self.find_producer_operation(input_id, computation)
                     .and_then(|op| {
                         if let OperationType::Constant(value) = &op.op_type {
-                            Some(*value)
+                            // Try to downcast the value to type T
+                            value.downcast_ref::<T>().copied()
                         } else {
                             None
                         }
@@ -478,11 +482,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
     }
 
     /// Find producer operation by operand ID
-    fn find_producer_operation(
+    fn find_producer_operation<'a>(
         &self,
         operand_id: OperandId,
-        computation: &XLAComputation<T>,
-    ) -> Option<&XLAOperation<T>> {
+        computation: &'a XLAComputation<T>,
+    ) -> Option<&'a XLAOperation<T>> {
         computation
             .operations
             .iter()
@@ -490,11 +494,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
     }
 
     /// Find producer by output shape (simplified)
-    fn find_producer_by_shape(
+    fn find_producer_by_shape<'a>(
         &self,
         _shape: &TensorShape,
-        computation: &XLAComputation<T>,
-    ) -> Option<&XLAOperation<T>> {
+        computation: &'a XLAComputation<T>,
+    ) -> Option<&'a XLAOperation<T>> {
         // Simplified implementation - return last operation
         computation.operations.last()
     }
@@ -735,23 +739,24 @@ impl PatternMatcher {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{ComputeCapability, HardwareTarget};
     use super::*;
 
     #[test]
     fn test_constant_folding_pass() {
         let config = OptimizationPipelineConfig {
-            optimization_level: super::super::XLAOptimizationLevel::O2,
+            optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
             enable_graph_optimization: true,
             enable_kernel_fusion: true,
             enable_memory_optimization: true,
             enable_scheduling_optimization: true,
             max_optimization_time: 300,
-            target_hardware: super::HardwareTarget {
+            target_hardware: HardwareTarget {
                 tpu_version: "v4".to_string(),
                 num_cores: 4,
                 memory_capacity: 1024 * 1024 * 1024,
                 memory_bandwidth: 1600.0,
-                compute_capability: super::ComputeCapability {
+                compute_capability: ComputeCapability {
                     matrix_unit_dims: (128, 128),
                     vector_unit_width: 256,
                     supported_dtypes: vec!["F32".to_string()],

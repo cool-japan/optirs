@@ -394,7 +394,8 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
     /// Integrate runtime components
     fn integrate_runtime(&self, code: GeneratedCode) -> Result<Vec<u8>> {
         // Delegate to backend runtime integration
-        RuntimeIntegration::integrate(code, &self.config.target_tpu)
+        let mut runtime = RuntimeIntegration::new(self.config.target_tpu.clone());
+        runtime.integrate(code, &self.config.target_tpu)
     }
 
     /// Compute hash for computation
@@ -418,13 +419,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
     ) -> Result<()> {
         let mut cache = self.compilation_cache.write().unwrap();
 
+        let binary_size = binary.len();
         let cached_comp = CachedComputation {
             id: hash.clone(),
             binary,
             metadata,
             last_accessed: Instant::now(),
             access_count: 0,
-            size: binary.len(),
+            size: binary_size,
         };
 
         cache.cache.insert(hash, cached_comp);
@@ -554,7 +556,7 @@ impl Default for XLACompilerConfig {
     fn default() -> Self {
         Self {
             target_tpu: TPUConfig::default(),
-            optimization_level: XLAOptimizationLevel::O2,
+            optimization_level: XLAOptimizationLevel::Standard,
             enable_auto_tuning: true,
             compilation_timeout: 300, // 5 minutes
             max_cache_size_mb: 1024,  // 1 GB

@@ -1082,7 +1082,7 @@ pub enum RecommendationCategory {
 }
 
 /// Recommendation priorities
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum RecommendationPriority {
     High,
     Medium,

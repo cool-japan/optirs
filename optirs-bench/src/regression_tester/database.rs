@@ -3,8 +3,8 @@
 // This module handles persistence and retrieval of performance history data,
 // including database management, record storage, and history maintenance.
 
-use crate::benchmarking::regression_tester::types::{DatabaseMetadata, PerformanceRecord};
 use crate::error::Result;
+use crate::regression_tester::types::{DatabaseMetadata, PerformanceRecord};
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -251,7 +251,7 @@ impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync>
             // Remove duplicates based on timestamp and commit hash
             let mut seen = std::collections::HashSet::new();
             history.retain(|record| {
-                let key = (record.timestamp, &record.commit_hash);
+                let key = (record.timestamp, record.commit_hash.clone());
                 if seen.contains(&key) {
                     false
                 } else {
@@ -285,8 +285,8 @@ impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync> Def
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmarking::regression_tester::config::TestEnvironment;
-    use crate::benchmarking::regression_tester::types::PerformanceMetrics;
+    use crate::regression_tester::config::TestEnvironment;
+    use crate::regression_tester::types::PerformanceMetrics;
 
     fn create_test_record() -> PerformanceRecord<f64> {
         PerformanceRecord {

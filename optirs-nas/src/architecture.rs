@@ -447,6 +447,37 @@ impl ArchitectureSpace {
             let mut new_components2 = parent2.components[..crossover_point2].to_vec();
             new_components2.extend_from_slice(&parent1.components[crossover_point1..]);
 
+            // Ensure components respect min/max constraints
+            if new_components1.len() > self.max_components {
+                new_components1.truncate(self.max_components);
+            } else if new_components1.len() < self.min_components {
+                // Pad with random components from parents if too few
+                while new_components1.len() < self.min_components {
+                    let source = if rng.gen_bool(0.5) { &parent1.components } else { &parent2.components };
+                    if !source.is_empty() {
+                        let idx = rng.gen_range(0..source.len());
+                        new_components1.push(source[idx].clone());
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            if new_components2.len() > self.max_components {
+                new_components2.truncate(self.max_components);
+            } else if new_components2.len() < self.min_components {
+                // Pad with random components from parents if too few
+                while new_components2.len() < self.min_components {
+                    let source = if rng.gen_bool(0.5) { &parent1.components } else { &parent2.components };
+                    if !source.is_empty() {
+                        let idx = rng.gen_range(0..source.len());
+                        new_components2.push(source[idx].clone());
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             child1.components = new_components1;
             child2.components = new_components2;
         }

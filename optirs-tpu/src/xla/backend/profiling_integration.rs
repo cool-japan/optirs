@@ -4,7 +4,9 @@
 // running on TPU hardware, including performance counters, trace collection,
 // memory profiling, and power consumption tracking.
 
+use num_traits::Float;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::Write;
 use std::sync::{Arc, Mutex, RwLock};
@@ -783,7 +785,7 @@ pub struct PowerMonitoringSession {
 }
 
 /// Power component
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PowerComponent {
     /// CPU power
     CPU,
@@ -1239,7 +1241,7 @@ pub struct ExportStatistics {
     pub compression_ratio: f64,
 }
 
-impl<T> ProfilingIntegration<T> {
+impl<T: Float + Debug + Send + Sync + 'static> ProfilingIntegration<T> {
     /// Create new profiling integration
     pub fn new(config: &BackendConfig) -> Self {
         let profiling_config = ProfilingConfig {
@@ -1601,7 +1603,8 @@ impl ProfileExportManager {
             "{}/counters_{}.json",
             self.export_config.output_dir,
             SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)?
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_err(|e| OptimError::from(e.to_string()))?
                 .as_secs()
         );
 
@@ -1622,7 +1625,8 @@ impl ProfileExportManager {
             "{}/trace_{}.json",
             self.export_config.output_dir,
             SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)?
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_err(|e| OptimError::from(e.to_string()))?
                 .as_secs()
         );
 
@@ -1644,7 +1648,8 @@ impl ProfileExportManager {
             "{}/memory_{}.json",
             self.export_config.output_dir,
             SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)?
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_err(|e| OptimError::from(e.to_string()))?
                 .as_secs()
         );
 
@@ -1669,15 +1674,18 @@ mod tests {
         };
 
         let tpu_config = TPUConfig {
-            version: TPUVersion::V4,
-            topology: PodTopology {
-                num_chips: 4,
-                cores_per_chip: 2,
-                chip_interconnect: "ICI".to_string(),
-            },
-            memory_capacity: 32 * 1024 * 1024 * 1024,
-            memory_bandwidth: 1600.0,
-            compute_throughput: 275e12,
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
         };
 
         let backend_config = BackendConfig {

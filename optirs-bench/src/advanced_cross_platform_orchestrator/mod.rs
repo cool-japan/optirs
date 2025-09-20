@@ -48,25 +48,30 @@ pub mod orchestrator;
 pub mod resources;
 pub mod types;
 
+use std::collections::HashMap;
+
 // Re-export core configuration types
 pub use config::{
     AwsConfig, AzureConfig, BuildProfile, CloudConfig, ComplianceConfig, ContainerConfig,
     ContainerRegistryConfig, CustomCloudConfig, FeatureCombination, GcpConfig, GitHubActionsConfig,
-    MetricsConfig, MonitoringConfig, NetworkConfig, OptimizationLevel, OrchestratorConfig,
+    MetricsConfig, MonitoringConfig, NetworkConfig, OrchestratorConfig,
     PlatformResourceRequirements, PlatformSpec, ResourceLimits, SecurityConfig, StorageConfig,
     TestMatrixConfig, TestScenario,
 };
 
 // Re-export core data types
 pub use types::{
-    BenchmarkResult, CloudInstance, CloudInstanceStatus, CloudProviderType, CompatibilityIssue,
-    CompatibilityMatrix, ComplianceReport, ContainerInfo, ContainerRuntime, ContainerStats,
-    ContainerStatus, CrossPlatformMetrics, CrossPlatformTestingSummary, EnvironmentVariables,
-    HardwareInfo, NetworkPort, NumericalResult, Performance, PerformanceMetrics,
+    CloudInstance, CloudInstanceStatus, CloudProviderType, CompatibilityIssue, CompatibilityMatrix,
+    ComplianceReport, ContainerInfo, ContainerRuntime, ContainerStats, ContainerStatus,
+    CrossPlatformMetrics, CrossPlatformTestingSummary, EnvironmentVariables, HardwareInfo,
+    NetworkPort, NumericalResult, OptimizationLevel, Performance, PerformanceMetrics,
     PlatformCapabilities, PlatformTarget, PlatformTestResult, ResourceType, ResourceUsage,
     SecurityContext, SoftwareInfo, TestEnvironment, TestExecutionResult, TestMatrixEntry,
     TestResult, TestStatus,
 };
+
+// Import BenchmarkResult from the main crate
+pub use crate::BenchmarkResult;
 
 // Re-export main orchestrator
 pub use orchestrator::{
@@ -101,10 +106,11 @@ pub fn create_default_orchestrator() -> crate::error::Result<CrossPlatformOrches
 pub fn create_cloud_orchestrator() -> crate::error::Result<CrossPlatformOrchestrator> {
     let mut config = OrchestratorConfig::default();
     config.enable_cloud_testing = true;
-    config.cloud_config.enable_aws = true;
-    config.cloud_config.enable_azure = true;
-    config.cloud_config.enable_gcp = true;
-    config.cloud_config.enable_github_actions = true;
+    // Enable cloud providers by setting up basic configs
+    config.cloud_config.aws = Some(config::AwsConfig::default());
+    config.cloud_config.azure = Some(config::AzureConfig::default());
+    config.cloud_config.gcp = Some(config::GcpConfig::default());
+    config.cloud_config.github_actions = Some(config::GitHubActionsConfig::default());
 
     CrossPlatformOrchestrator::new(config)
 }
@@ -114,7 +120,7 @@ pub fn create_container_orchestrator() -> crate::error::Result<CrossPlatformOrch
     let mut config = OrchestratorConfig::default();
     config.enable_container_testing = true;
     config.container_config.runtime = ContainerRuntime::Docker;
-    config.container_config.pull_latest_images = true;
+    // Container configuration will use defaults
 
     CrossPlatformOrchestrator::new(config)
 }
@@ -133,18 +139,24 @@ pub fn create_ci_orchestrator() -> crate::error::Result<CrossPlatformOrchestrato
             target: PlatformTarget::LinuxX86_64,
             priority: 10,
             required_for_release: true,
+            is_baseline: true,
+            config: HashMap::new(),
             resource_requirements: PlatformResourceRequirements::default(),
         },
         PlatformSpec {
             target: PlatformTarget::WindowsX86_64,
             priority: 9,
             required_for_release: true,
+            is_baseline: false,
+            config: HashMap::new(),
             resource_requirements: PlatformResourceRequirements::default(),
         },
         PlatformSpec {
             target: PlatformTarget::MacOSX86_64,
             priority: 8,
             required_for_release: true,
+            is_baseline: false,
+            config: HashMap::new(),
             resource_requirements: PlatformResourceRequirements::default(),
         },
     ];
@@ -209,11 +221,12 @@ mod tests {
 
         if let Ok(orchestrator) = result {
             // Verify CI-specific configuration
-            assert!(orchestrator.config.enable_parallel_testing);
-            assert_eq!(orchestrator.config.max_concurrent_jobs, 4);
-            assert!(orchestrator.config.enable_container_testing);
-            assert!(!orchestrator.config.enable_cloud_testing);
-            assert_eq!(orchestrator.config.matrix_config.platforms.len(), 3);
+            let config = orchestrator.get_config();
+            assert!(config.enable_parallel_testing);
+            assert_eq!(config.max_concurrent_jobs, 4);
+            assert!(config.enable_container_testing);
+            assert!(!config.enable_cloud_testing);
+            assert_eq!(config.matrix_config.platforms.len(), 3);
         }
     }
 

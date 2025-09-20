@@ -9,7 +9,11 @@ use std::collections::HashMap;
 use super::config::*;
 use super::types::*;
 
+// SciRS2 Integration - Use scirs2_core for random number generation
+use scirs2_core::random::{rng, Random};
+
 /// Cloud provider trait
+#[async_trait::async_trait]
 pub trait CloudProvider: Send + Sync + std::fmt::Debug {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance>;
     async fn terminate_instance(&self, instance_id: &str) -> Result<()>;
@@ -63,8 +67,15 @@ impl CloudProvider for AwsProvider {
             .cloned()
             .unwrap_or_else(|| "t3.micro".to_string());
 
+        let instance_id = format!(
+            "i-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+        );
         let instance = CloudInstance {
-            instance_id: format!("i-{:x}", scirs2_core::random::random::<u64>()),
+            instance_id,
             provider: "aws".to_string(),
             instance_type,
             platform: platform.clone(),
@@ -115,8 +126,15 @@ impl CloudProvider for AzureProvider {
             .cloned()
             .unwrap_or_else(|| "Standard_B1s".to_string());
 
+        let instance_id = format!(
+            "vm-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+        );
         let instance = CloudInstance {
-            instance_id: format!("vm-{:x}", scirs2_core::random::random::<u64>()),
+            instance_id,
             provider: "azure".to_string(),
             instance_type: vm_size,
             platform: platform.clone(),
@@ -165,8 +183,15 @@ impl CloudProvider for GcpProvider {
             .cloned()
             .unwrap_or_else(|| "e2-micro".to_string());
 
+        let instance_id = format!(
+            "gcp-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+        );
         let instance = CloudInstance {
-            instance_id: format!("gcp-{:x}", scirs2_core::random::random::<u64>()),
+            instance_id,
             provider: "gcp".to_string(),
             instance_type: machine_type,
             platform: platform.clone(),
@@ -215,8 +240,15 @@ impl CloudProvider for GitHubActionsProvider {
             _ => "ubuntu-latest",
         };
 
+        let instance_id = format!(
+            "gh-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+        );
         let instance = CloudInstance {
-            instance_id: format!("gh-{:x}", scirs2_core::random::random::<u64>()),
+            instance_id,
             provider: "github".to_string(),
             instance_type: runner_type.to_string(),
             platform: platform.clone(),
@@ -257,8 +289,15 @@ impl CustomProvider {
 #[async_trait::async_trait]
 impl CloudProvider for CustomProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
+        let instance_id = format!(
+            "custom-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64
+        );
         let instance = CloudInstance {
-            instance_id: format!("custom-{:x}", scirs2_core::random::random::<u64>()),
+            instance_id,
             provider: self.config.name.clone(),
             instance_type: "custom".to_string(),
             platform: platform.clone(),
@@ -288,6 +327,59 @@ impl CloudProvider for CustomProvider {
 
     fn get_provider_name(&self) -> &str {
         &self.config.name
+    }
+}
+
+/// Enum wrapper for cloud providers to avoid trait object issues
+#[derive(Debug)]
+pub enum CloudProviderEnum {
+    Aws(AwsProvider),
+    Azure(AzureProvider),
+    Gcp(GcpProvider),
+    GitHub(GitHubActionsProvider),
+    Custom(CustomProvider),
+}
+
+#[async_trait::async_trait]
+impl CloudProvider for CloudProviderEnum {
+    async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
+        match self {
+            CloudProviderEnum::Aws(provider) => provider.provision_instance(platform).await,
+            CloudProviderEnum::Azure(provider) => provider.provision_instance(platform).await,
+            CloudProviderEnum::Gcp(provider) => provider.provision_instance(platform).await,
+            CloudProviderEnum::GitHub(provider) => provider.provision_instance(platform).await,
+            CloudProviderEnum::Custom(provider) => provider.provision_instance(platform).await,
+        }
+    }
+
+    async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
+        match self {
+            CloudProviderEnum::Aws(provider) => provider.terminate_instance(instance_id).await,
+            CloudProviderEnum::Azure(provider) => provider.terminate_instance(instance_id).await,
+            CloudProviderEnum::Gcp(provider) => provider.terminate_instance(instance_id).await,
+            CloudProviderEnum::GitHub(provider) => provider.terminate_instance(instance_id).await,
+            CloudProviderEnum::Custom(provider) => provider.terminate_instance(instance_id).await,
+        }
+    }
+
+    async fn get_instance_status(&self, instance_id: &str) -> Result<CloudInstanceStatus> {
+        match self {
+            CloudProviderEnum::Aws(provider) => provider.get_instance_status(instance_id).await,
+            CloudProviderEnum::Azure(provider) => provider.get_instance_status(instance_id).await,
+            CloudProviderEnum::Gcp(provider) => provider.get_instance_status(instance_id).await,
+            CloudProviderEnum::GitHub(provider) => provider.get_instance_status(instance_id).await,
+            CloudProviderEnum::Custom(provider) => provider.get_instance_status(instance_id).await,
+        }
+    }
+
+    fn get_provider_name(&self) -> &str {
+        match self {
+            CloudProviderEnum::Aws(provider) => provider.get_provider_name(),
+            CloudProviderEnum::Azure(provider) => provider.get_provider_name(),
+            CloudProviderEnum::Gcp(provider) => provider.get_provider_name(),
+            CloudProviderEnum::GitHub(provider) => provider.get_provider_name(),
+            CloudProviderEnum::Custom(provider) => provider.get_provider_name(),
+        }
     }
 }
 

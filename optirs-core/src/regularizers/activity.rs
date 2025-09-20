@@ -209,8 +209,8 @@ where
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::{Array1, Array2};
     use scirs2_autograd::ndarray::array;
+    use scirs2_core::ndarray_ext::{Array1, Array2};
 
     #[test]
     fn test_activity_regularization_creation() {

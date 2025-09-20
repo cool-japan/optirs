@@ -125,16 +125,16 @@ optirs-bench = { version = "0.1.0-beta.1", path = "./optirs-bench" }
 # Only these crates are included initially. Additional crates will be added
 # based on compilation evidence and actual usage requirements.
 #
-scirs2-core = { path = "../scirs/scirs2-core" }           # FOUNDATION - Core scientific primitives
-scirs2-optimize = { path = "../scirs/scirs2-optimize" }   # ESSENTIAL - Base optimization interfaces
-scirs2-linalg = { path = "../scirs/scirs2-linalg" }       # EVIDENCE: Matrix operations for optimization
-scirs2-autograd = { path = "../scirs/scirs2-autograd" }   # EVIDENCE: Automatic differentiation
-scirs2-neural = { path = "../scirs/scirs2-neural" }       # EVIDENCE: Neural network optimization
-scirs2-metrics = { path = "../scirs/scirs2-metrics" }     # EVIDENCE: Performance monitoring
-scirs2-stats = { path = "../scirs/scirs2-stats" }         # EVIDENCE: Statistical analysis - compilation errors show this is needed
-scirs2-signal = { path = "../scirs/scirs2-signal" }       # EVIDENCE: Signal processing - compilation errors show this is needed
-scirs2-series = { path = "../scirs/scirs2-series" }       # EVIDENCE: Time series analysis - compilation errors show this is needed
-scirs2-datasets = { path = "../scirs/scirs2-datasets" }   # EVIDENCE: Dataset handling - compilation errors show this is needed
+scirs2-core = "0.1.0-beta.2"           # FOUNDATION - Core scientific primitives
+scirs2-optimize = "0.1.0-beta.2"   # ESSENTIAL - Base optimization interfaces
+scirs2-linalg = "0.1.0-beta.2"       # EVIDENCE: Matrix operations for optimization
+scirs2-autograd = "0.1.0-beta.2"   # EVIDENCE: Automatic differentiation
+scirs2-neural = "0.1.0-beta.2"       # EVIDENCE: Neural network optimization
+scirs2-metrics = "0.1.0-beta.2"     # EVIDENCE: Performance monitoring
+scirs2-stats = "0.1.0-beta.2"         # EVIDENCE: Statistical analysis - compilation errors show this is needed
+scirs2-signal = "0.1.0-beta.2"       # EVIDENCE: Signal processing - compilation errors show this is needed
+scirs2-series = "0.1.0-beta.2"       # EVIDENCE: Time series analysis - compilation errors show this is needed
+scirs2-datasets = "0.1.0-beta.2"   # EVIDENCE: Dataset handling - compilation errors show this is needed
 
 # CONDITIONAL ADDITIONS (add only when compilation errors prove they're needed):
 # scirs2-signal = { path = "../scirs/scirs2-signal" }       # If signal processing needed

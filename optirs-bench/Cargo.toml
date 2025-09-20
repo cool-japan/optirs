@@ -26,6 +26,7 @@ log = { workspace = true }
 
 # Benchmarking
 criterion = { workspace = true }
+approx = { workspace = true }
 
 # System monitoring
 sysinfo = { workspace = true }
@@ -48,6 +49,7 @@ x509-parser = { workspace = true, optional = true }
 
 # Async support
 tokio = { workspace = true, features = ["rt"] }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -3,20 +3,37 @@
 // This module contains the primary CrossPlatformOrchestrator struct and its core
 // orchestration logic for managing distributed, cross-platform testing workflows.
 
-use crate::benchmarking::ci_cd_automation::{CiCdAutomation, CiCdAutomationConfig};
+use crate::ci_cd_automation::{CiCdAutomation, CiCdAutomationConfig};
 use crate::error::{OptimError, Result};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
 use super::aggregator::ResultAggregator;
 use super::cloud::{
-    AwsProvider, AzureProvider, CloudProvider, CustomProvider, GcpProvider, GitHubActionsProvider,
+    AwsProvider, AzureProvider, CloudProvider, CloudProviderEnum, CustomProvider, GcpProvider,
+    GitHubActionsProvider,
 };
 use super::config::*;
 use super::container::ContainerManager;
 use super::matrix::TestMatrixGenerator;
 use super::resources::PlatformResourceManager;
+use super::types::platform_target_to_string;
 use super::types::*;
+use crate::cross_platform_tester::{
+    PlatformTarget as CrossPlatformTarget, RecommendationPriority, RecommendationType,
+};
+
+/// Convert between PlatformTarget types
+fn convert_platform_target(platform: &PlatformTarget) -> CrossPlatformTarget {
+    match platform {
+        PlatformTarget::LinuxX86_64 => CrossPlatformTarget::LinuxX64,
+        PlatformTarget::LinuxAarch64 => CrossPlatformTarget::LinuxArm64,
+        PlatformTarget::WindowsX86_64 => CrossPlatformTarget::WindowsX64,
+        PlatformTarget::MacOSX86_64 => CrossPlatformTarget::MacOSX64,
+        PlatformTarget::MacOSAarch64 => CrossPlatformTarget::MacOSArm64,
+        _ => CrossPlatformTarget::LinuxX64, // Default fallback
+    }
+}
 
 /// Advanced cross-platform testing orchestrator
 #[derive(Debug)]
@@ -24,7 +41,7 @@ pub struct CrossPlatformOrchestrator {
     /// Orchestrator configuration
     config: OrchestratorConfig,
     /// Cloud provider integrations
-    cloud_providers: Vec<Box<dyn CloudProvider>>,
+    cloud_providers: Vec<CloudProviderEnum>,
     /// Container runtime manager
     container_manager: ContainerManager,
     /// Test matrix generator
@@ -37,38 +54,7 @@ pub struct CrossPlatformOrchestrator {
     ci_cd_integration: Option<CiCdAutomation>,
 }
 
-/// Cross-platform testing summary
-#[derive(Debug, Clone)]
-pub struct CrossPlatformTestingSummary {
-    /// Total platforms tested
-    pub total_platforms_tested: usize,
-    /// Total test combinations
-    pub total_test_combinations: usize,
-    /// Successful tests
-    pub successful_tests: usize,
-    /// Failed tests
-    pub failed_tests: usize,
-    /// Skipped tests
-    pub skipped_tests: usize,
-    /// Overall compatibility score
-    pub compatibility_score: f64,
-    /// Performance comparisons
-    pub performance_comparisons: HashMap<PlatformTarget, PerformanceMetrics>,
-    /// Performance trends
-    pub trends: HashMap<PlatformTarget, TrendDirection>,
-    /// Recommendations
-    pub recommendations: Vec<PlatformRecommendation>,
-    /// Resource usage
-    pub resource_usage: ResourceUsage,
-    /// Total cost
-    pub total_cost: f64,
-    /// Execution time
-    pub execution_time: Duration,
-    /// Issues summary
-    pub issues_summary: IssueSummary,
-    /// Compatibility matrix
-    pub compatibility_matrix: CompatibilityMatrix,
-}
+// CrossPlatformTestingSummary is now defined in types.rs
 
 /// Resource allocation information
 #[derive(Debug, Clone)]
@@ -179,34 +165,43 @@ impl CrossPlatformOrchestrator {
         self.cleanup_resources(&allocations).await?;
 
         // Generate comprehensive report
+        let total_platforms = matrix
+            .iter()
+            .map(|e| &e.platform)
+            .collect::<HashSet<_>>()
+            .len();
+        let successful_platforms = results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Passed))
+            .count();
+        let failed_platforms = results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Failed))
+            .count();
+
+        // Create platform results map
+        let mut platform_results = HashMap::new();
+        for result in &results {
+            if let Ok(platform) = serde_json::from_str::<PlatformTarget>(&result.test_name) {
+                platform_results.insert(platform, result.clone());
+            }
+        }
+
+        let overall_status = if failed_platforms == 0 {
+            TestStatus::Passed
+        } else if successful_platforms == 0 {
+            TestStatus::Failed
+        } else {
+            TestStatus::Skipped // Mixed results
+        };
+
         let summary = CrossPlatformTestingSummary {
-            total_platforms_tested: matrix
-                .iter()
-                .map(|e| &e.platform)
-                .collect::<HashSet<_>>()
-                .len(),
-            total_test_combinations: matrix.len(),
-            successful_tests: results
-                .iter()
-                .filter(|r| matches!(r.status, TestStatus::Passed))
-                .count(),
-            failed_tests: results
-                .iter()
-                .filter(|r| matches!(r.status, TestStatus::Failed))
-                .count(),
-            skipped_tests: results
-                .iter()
-                .filter(|r| matches!(r.status, TestStatus::Skipped))
-                .count(),
-            compatibility_score: compatibility_analysis.overall_score,
-            performance_comparisons,
-            trends,
-            recommendations,
-            resource_usage: self.resource_manager.get_total_usage(),
-            total_cost: self.resource_manager.get_total_cost(),
+            total_platforms,
+            successful_platforms,
+            failed_platforms,
+            platform_results,
+            overall_status,
             execution_time: self.resource_manager.get_total_execution_time(),
-            issues_summary: self.generate_issues_summary(&results),
-            compatibility_matrix: self.result_aggregator.get_compatibility_matrix(),
         };
 
         log::info!("✅ Cross-platform testing completed!");
@@ -214,27 +209,37 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Initialize cloud providers based on configuration
-    fn initialize_cloud_providers(config: &CloudConfig) -> Result<Vec<Box<dyn CloudProvider>>> {
-        let mut providers: Vec<Box<dyn CloudProvider>> = Vec::new();
+    fn initialize_cloud_providers(config: &CloudConfig) -> Result<Vec<CloudProviderEnum>> {
+        let mut providers: Vec<CloudProviderEnum> = Vec::new();
 
         if let Some(aws_config) = &config.aws {
-            providers.push(Box::new(AwsProvider::new(aws_config.clone())?));
+            providers.push(CloudProviderEnum::Aws(AwsProvider::new(
+                aws_config.clone(),
+            )?));
         }
 
         if let Some(azure_config) = &config.azure {
-            providers.push(Box::new(AzureProvider::new(azure_config.clone())?));
+            providers.push(CloudProviderEnum::Azure(AzureProvider::new(
+                azure_config.clone(),
+            )?));
         }
 
         if let Some(gcp_config) = &config.gcp {
-            providers.push(Box::new(GcpProvider::new(gcp_config.clone())?));
+            providers.push(CloudProviderEnum::Gcp(GcpProvider::new(
+                gcp_config.clone(),
+            )?));
         }
 
         if let Some(github_config) = &config.github_actions {
-            providers.push(Box::new(GitHubActionsProvider::new(github_config.clone())?));
+            providers.push(CloudProviderEnum::GitHub(GitHubActionsProvider::new(
+                github_config.clone(),
+            )?));
         }
 
         for custom_config in &config.custom_providers {
-            providers.push(Box::new(CustomProvider::new(custom_config.clone())?));
+            providers.push(CloudProviderEnum::Custom(CustomProvider::new(
+                custom_config.clone(),
+            )?));
         }
 
         Ok(providers)
@@ -248,7 +253,11 @@ impl CrossPlatformOrchestrator {
         let mut allocations = HashMap::new();
 
         for entry in matrix {
-            let allocation_id = format!("{}_{}", entry.platform.to_string(), entry.priority);
+            let allocation_id = format!(
+                "{}_{}",
+                platform_target_to_string(&entry.platform),
+                entry.priority
+            );
 
             if self.config.enable_cloud_testing {
                 if let Some(provider) = self.find_provider_for_platform(&entry.platform) {
@@ -311,7 +320,11 @@ impl CrossPlatformOrchestrator {
             let mut handles = Vec::new();
 
             for entry in chunk {
-                let allocation_id = format!("{}_{}", entry.platform.to_string(), entry.priority);
+                let allocation_id = format!(
+                    "{}_{}",
+                    platform_target_to_string(&entry.platform),
+                    entry.priority
+                );
                 if let Some(allocation) = allocations.get(&allocation_id) {
                     let handle = self.execute_matrix_entry(entry, allocation).await;
                     handles.push(handle);
@@ -336,7 +349,11 @@ impl CrossPlatformOrchestrator {
         let mut results = Vec::new();
 
         for entry in matrix {
-            let allocation_id = format!("{}_{}", entry.platform.to_string(), entry.priority);
+            let allocation_id = format!(
+                "{}_{}",
+                platform_target_to_string(&entry.platform),
+                entry.priority
+            );
             if let Some(allocation) = allocations.get(&allocation_id) {
                 let result = self.execute_matrix_entry(entry, allocation).await?;
                 results.push(result);
@@ -453,10 +470,7 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Find cloud provider for platform
-    fn find_provider_for_platform(
-        &self,
-        platform: &PlatformTarget,
-    ) -> Option<&Box<dyn CloudProvider>> {
+    fn find_provider_for_platform(&self, platform: &PlatformTarget) -> Option<&CloudProviderEnum> {
         // Simple provider selection logic
         self.cloud_providers.first()
     }
@@ -584,15 +598,19 @@ impl CrossPlatformOrchestrator {
         for (platform, score) in &compatibility.platform_scores {
             if *score < 80.0 {
                 recommendations.push(PlatformRecommendation {
-                    platform: platform.clone(),
-                    recommendation_type: "Performance".to_string(),
+                    platform: convert_platform_target(platform),
+                    recommendation_type: RecommendationType::Optimization,
                     description: format!(
                         "Platform {} has low compatibility score: {:.1}%",
-                        platform.to_string(),
+                        platform_target_to_string(platform),
                         score
                     ),
-                    priority: if *score < 50.0 { 1 } else { 2 },
-                    estimated_effort: "Medium".to_string(),
+                    priority: if *score < 50.0 {
+                        RecommendationPriority::High
+                    } else {
+                        RecommendationPriority::Medium
+                    },
+                    estimated_impact: 100.0 - score,
                 });
             }
         }
@@ -664,6 +682,136 @@ impl CrossPlatformOrchestrator {
     /// Get result aggregator
     pub fn get_result_aggregator(&self) -> &ResultAggregator {
         &self.result_aggregator
+    }
+}
+
+/// Execution context for test runs
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    pub platform: PlatformTarget,
+    pub environment: HashMap<String, String>,
+    pub resource_allocation: ResourceAllocation,
+    pub timeout: Duration,
+    pub retry_count: usize,
+}
+
+/// Cloud-based test executor
+#[derive(Debug)]
+pub struct CloudTestExecutor {
+    pub provider: String,
+    pub region: String,
+    pub instance_type: String,
+    pub context: ExecutionContext,
+}
+
+impl CloudTestExecutor {
+    pub fn new(
+        provider: String,
+        region: String,
+        instance_type: String,
+        context: ExecutionContext,
+    ) -> Self {
+        Self {
+            provider,
+            region,
+            instance_type,
+            context,
+        }
+    }
+
+    pub async fn execute_test(&self, test_name: &str) -> Result<String> {
+        // Implementation would interact with cloud provider APIs
+        Ok(format!(
+            "Executed {} on {} in {}",
+            test_name, self.instance_type, self.region
+        ))
+    }
+}
+
+/// Container-based test executor
+#[derive(Debug)]
+pub struct ContainerTestExecutor {
+    pub image: String,
+    pub runtime: String,
+    pub context: ExecutionContext,
+}
+
+impl ContainerTestExecutor {
+    pub fn new(image: String, runtime: String, context: ExecutionContext) -> Self {
+        Self {
+            image,
+            runtime,
+            context,
+        }
+    }
+
+    pub async fn execute_test(&self, test_name: &str) -> Result<String> {
+        // Implementation would run tests in containers
+        Ok(format!(
+            "Executed {} in container {}",
+            test_name, self.image
+        ))
+    }
+}
+
+/// Platform-specific test executor
+#[derive(Debug)]
+pub struct PlatformTestExecutor {
+    pub platform: PlatformTarget,
+    pub context: ExecutionContext,
+}
+
+impl PlatformTestExecutor {
+    pub fn new(platform: PlatformTarget, context: ExecutionContext) -> Self {
+        Self { platform, context }
+    }
+
+    pub async fn execute_test(&self, test_name: &str) -> Result<String> {
+        // Implementation would run tests on specific platforms
+        Ok(format!("Executed {} on {:?}", test_name, self.platform))
+    }
+}
+
+/// Generic test executor trait
+#[async_trait::async_trait]
+pub trait TestExecutor {
+    async fn execute(&self, test_name: &str, context: &ExecutionContext) -> Result<String>;
+    fn get_platform(&self) -> PlatformTarget;
+    fn supports_parallel_execution(&self) -> bool {
+        true
+    }
+}
+
+#[async_trait::async_trait]
+impl TestExecutor for CloudTestExecutor {
+    async fn execute(&self, test_name: &str, _context: &ExecutionContext) -> Result<String> {
+        self.execute_test(test_name).await
+    }
+
+    fn get_platform(&self) -> PlatformTarget {
+        self.context.platform.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl TestExecutor for ContainerTestExecutor {
+    async fn execute(&self, test_name: &str, _context: &ExecutionContext) -> Result<String> {
+        self.execute_test(test_name).await
+    }
+
+    fn get_platform(&self) -> PlatformTarget {
+        self.context.platform.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl TestExecutor for PlatformTestExecutor {
+    async fn execute(&self, test_name: &str, _context: &ExecutionContext) -> Result<String> {
+        self.execute_test(test_name).await
+    }
+
+    fn get_platform(&self) -> PlatformTarget {
+        self.context.platform.clone()
     }
 }
 

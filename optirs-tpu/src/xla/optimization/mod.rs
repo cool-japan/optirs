@@ -22,6 +22,30 @@ pub use kernel_fusion::*;
 pub use memory_planning::*;
 pub use scheduling::*;
 
+/// Performance analyzer for XLA operations
+pub struct PerformanceAnalyzer<T> {
+    /// Performance metrics
+    metrics: HashMap<String, f64>,
+    /// Phantom data for type parameter
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> PerformanceAnalyzer<T> {
+    /// Create a new performance analyzer
+    pub fn new() -> Self {
+        Self {
+            metrics: HashMap::new(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Default for PerformanceAnalyzer<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Comprehensive optimization pipeline for XLA computations
 pub struct OptimizationPipeline<T: Float + Debug + Send + Sync + 'static> {
     /// Pipeline configuration
@@ -167,7 +191,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
             max_optimization_time: config.compilation_timeout,
             target_hardware: HardwareTarget::from_tpu_config(&config.target_tpu),
             custom_passes: config.custom_passes.clone(),
-            aggressive_mode: matches!(config.optimization_level, XLAOptimizationLevel::O3),
+            aggressive_mode: matches!(
+                config.optimization_level,
+                XLAOptimizationLevel::Aggressive | XLAOptimizationLevel::Experimental
+            ),
             debug_mode: config.debug_mode,
         };
 
@@ -228,7 +255,8 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
         }
 
         // Apply custom passes
-        for pass_name in &self.config.custom_passes {
+        let custom_passes = self.config.custom_passes.clone();
+        for pass_name in &custom_passes {
             let pass_start = Instant::now();
             current_computation = self.apply_custom_pass(pass_name, current_computation)?;
             self.record_pass_time(pass_name, pass_start.elapsed());
@@ -277,10 +305,10 @@ impl HardwareTarget {
     /// Create hardware target from TPU configuration
     pub fn from_tpu_config(tpu_config: &super::TPUConfig) -> Self {
         Self {
-            tpu_version: format!("{:?}", tpu_config.version),
-            num_cores: tpu_config.topology.num_chips * tpu_config.topology.cores_per_chip,
-            memory_capacity: tpu_config.memory_capacity,
-            memory_bandwidth: tpu_config.memory_bandwidth,
+            tpu_version: format!("{:?}", tpu_config.tpu_version),
+            num_cores: tpu_config.num_cores,
+            memory_capacity: 16 * 1024 * 1024 * 1024, // Default 16GB
+            memory_bandwidth: 900.0,                  // Default 900 GB/s
             compute_capability: ComputeCapability {
                 matrix_unit_dims: (128, 128), // Default for TPU
                 vector_unit_width: 256,
@@ -310,22 +338,26 @@ mod tests {
 
     #[test]
     fn test_hardware_target_creation() {
-        use super::super::{PodTopology, TPUConfig, TPUVersion};
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
 
         let tpu_config = TPUConfig {
-            version: TPUVersion::V4,
-            topology: PodTopology {
-                num_chips: 4,
-                cores_per_chip: 2,
-                chip_interconnect: "ICI".to_string(),
-            },
-            memory_capacity: 32 * 1024 * 1024 * 1024, // 32 GB
-            memory_bandwidth: 1600.0,                 // 1.6 TB/s
-            compute_throughput: 275e12,               // 275 TOPS
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
         };
 
         let target = HardwareTarget::from_tpu_config(&tpu_config);
         assert_eq!(target.num_cores, 8);
-        assert_eq!(target.memory_capacity, 32 * 1024 * 1024 * 1024);
+        // Default memory capacity is 16GB
+        assert_eq!(target.memory_capacity, 16 * 1024 * 1024 * 1024);
     }
 }

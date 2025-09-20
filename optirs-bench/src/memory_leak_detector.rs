@@ -370,7 +370,7 @@ pub enum RecommendationType {
 }
 
 /// Recommendation priority levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum RecommendationPriority {
     Critical,
     High,
@@ -430,7 +430,7 @@ impl MemoryLeakDetector {
 
         // Add advanced leak detectors
         if self.config.enable_real_time_monitoring {
-            use crate::benchmarking::advanced_leak_detectors::{
+            use crate::advanced_leak_detectors::{
                 ReferenceCountingConfig, ReferenceCountingDetector,
             };
             let ref_counting_config = ReferenceCountingConfig::default();

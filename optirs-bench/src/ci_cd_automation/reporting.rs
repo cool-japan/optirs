@@ -534,15 +534,17 @@ impl ReportGenerator {
         };
 
         let json_content = serde_json::to_string_pretty(&report_data).map_err(|e| {
-            OptimError::Serialization(format!("Failed to serialize JSON report: {}", e))
+            OptimError::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize JSON report: {}", e),
+            ))
         })?;
 
         fs::create_dir_all(output_dir).map_err(|e| {
             OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
         })?;
 
-        fs::write(&report_path, json_content)
-            .map_err(|e| OptimError::IO(format!("Failed to write JSON report: {}", e)))?;
+        fs::write(&report_path, json_content).map_err(|e| OptimError::IO(e))?;
 
         Ok(GeneratedReport {
             report_type: ReportType::JSON,
@@ -569,8 +571,7 @@ impl ReportGenerator {
             OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
         })?;
 
-        fs::write(&report_path, xml_content)
-            .map_err(|e| OptimError::IO(format!("Failed to write JUnit report: {}", e)))?;
+        fs::write(&report_path, xml_content).map_err(|e| OptimError::IO(e))?;
 
         Ok(GeneratedReport {
             report_type: ReportType::JUnit,
@@ -597,8 +598,7 @@ impl ReportGenerator {
             OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
         })?;
 
-        fs::write(&report_path, markdown_content)
-            .map_err(|e| OptimError::IO(format!("Failed to write Markdown report: {}", e)))?;
+        fs::write(&report_path, markdown_content).map_err(|e| OptimError::IO(e))?;
 
         Ok(GeneratedReport {
             report_type: ReportType::Markdown,
@@ -632,7 +632,7 @@ impl ReportGenerator {
             &report_path,
             format!("<!-- PDF Report Content -->\n{}", html_content),
         )
-        .map_err(|e| OptimError::IO(format!("Failed to write PDF report: {}", e)))?;
+        .map_err(|e| OptimError::IO(e))?;
 
         Ok(GeneratedReport {
             report_type: ReportType::PDF,
@@ -889,8 +889,7 @@ impl ReportGenerator {
     /// Load HTML template
     fn load_html_template(&self) -> Result<String> {
         if let Some(template_path) = &self.config.templates.html_template_path {
-            fs::read_to_string(template_path)
-                .map_err(|e| OptimError::IO(format!("Failed to read HTML template: {}", e)))
+            fs::read_to_string(template_path).map_err(|e| OptimError::IO(e))
         } else {
             Ok(self.get_default_html_template())
         }
@@ -1167,8 +1166,7 @@ impl TemplateEngine {
 
     /// Load template from file
     pub fn load_template(&mut self, name: &str, path: &Path) -> Result<()> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| OptimError::IO(format!("Failed to load template: {}", e)))?;
+        let content = fs::read_to_string(path).map_err(|e| OptimError::IO(e))?;
         self.templates.insert(name.to_string(), content);
         Ok(())
     }
@@ -1273,7 +1271,7 @@ impl Default for AnimationConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmarking::ci_cd_automation::test_execution::TestSuiteStatistics;
+    use crate::ci_cd_automation::test_execution::TestSuiteStatistics;
     use std::time::Duration;
 
     #[test]

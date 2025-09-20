@@ -4,11 +4,9 @@
 // through multiple channels (email, Slack, GitHub issues) when performance
 // regressions are detected.
 
-use crate::benchmarking::regression_tester::config::{
-    Alert, AlertConfig, AlertSeverity, AlertStatus,
-};
-use crate::benchmarking::regression_tester::types::RegressionResult;
 use crate::error::Result;
+use crate::regression_tester::config::{Alert, AlertConfig, AlertSeverity, AlertStatus};
+use crate::regression_tester::types::RegressionResult;
 use num_traits::Float;
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -398,16 +396,32 @@ impl AlertSystem {
 
     /// Clear old alerts from history
     pub fn cleanup_old_alerts(&mut self, max_age: Duration) -> usize {
-        let cutoff_time = SystemTime::now()
+        let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs()
-            .saturating_sub(max_age.as_secs());
+            .as_secs();
+        let cutoff_time = now.saturating_sub(max_age.as_secs());
+
+        // Debug output
+        println!(
+            "Cleanup: now = {}, max_age = {} secs, cutoff_time = {}",
+            now,
+            max_age.as_secs(),
+            cutoff_time
+        );
 
         let original_len = self.alert_history.len();
-        self.alert_history
-            .retain(|alert| alert.timestamp >= cutoff_time);
-        original_len - self.alert_history.len()
+        self.alert_history.retain(|alert| {
+            let keep = alert.timestamp >= cutoff_time;
+            println!(
+                "Alert timestamp {}: {} >= {} = {}",
+                alert.timestamp, alert.timestamp, cutoff_time, keep
+            );
+            keep
+        });
+        let removed = original_len - self.alert_history.len();
+        println!("Removed {} alerts", removed);
+        removed
     }
 
     /// Get statistics about alerts
@@ -469,7 +483,7 @@ pub struct SeverityCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmarking::regression_tester::types::{
+    use crate::regression_tester::types::{
         ChangePointAnalysis, OutlierAnalysis, RegressionAnalysis, StatisticalTestResult,
         TrendAnalysis, TrendDirection,
     };
@@ -531,7 +545,7 @@ mod tests {
     #[test]
     fn test_send_alert_below_threshold() {
         let mut alert_system = AlertSystem::new();
-        let regression = create_test_regression(0.1, "test_low_severity");
+        let regression = create_test_regression(0.01, "test_low_severity"); // Below default threshold of 0.05
 
         let result = alert_system.send_alert(&regression);
         assert!(result.is_ok());
@@ -637,8 +651,9 @@ mod tests {
 
         assert_eq!(alert_system.alert_history().len(), 5);
 
-        // Cleanup alerts older than 0 seconds (should remove all)
-        let removed = alert_system.cleanup_old_alerts(Duration::from_secs(0));
+        // Wait longer than the cleanup duration to ensure alerts are "old"
+        std::thread::sleep(Duration::from_secs(2));
+        let removed = alert_system.cleanup_old_alerts(Duration::from_secs(1));
         assert_eq!(removed, 5);
         assert_eq!(alert_system.alert_history().len(), 0);
     }

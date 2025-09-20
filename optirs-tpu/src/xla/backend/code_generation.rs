@@ -171,7 +171,7 @@ pub struct TPURegister {
 }
 
 /// Types of TPU registers
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RegisterType {
     /// Matrix registers (for matrix operations)
     Matrix,
@@ -306,13 +306,13 @@ pub struct KernelGenerator<T: Float + Debug + Send + Sync + 'static> {
     templates: HashMap<String, KernelTemplate>,
 
     /// Kernel optimization passes
-    optimization_passes: Vec<KernelOptimizationPass>,
+    optimization_passes: Vec<Box<dyn KernelOptimizationPass>>,
 
     _phantom: std::marker::PhantomData<T>,
 }
 
 /// TPU kernel representation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TPUKernel {
     /// Kernel name
     pub name: String,
@@ -334,7 +334,7 @@ pub struct TPUKernel {
 }
 
 /// Kernel parameter
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KernelParameter {
     /// Parameter name
     pub name: String,
@@ -350,7 +350,7 @@ pub struct KernelParameter {
 }
 
 /// Parameter types
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParameterType {
     /// Input tensor
     InputTensor(TensorShape, DataType),
@@ -366,7 +366,7 @@ pub enum ParameterType {
 }
 
 /// Access patterns for parameters
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AccessPattern {
     /// Read-only access
     ReadOnly,
@@ -382,7 +382,7 @@ pub enum AccessPattern {
 }
 
 /// Register requirements for kernel
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RegisterRequirements {
     /// Matrix registers needed
     pub matrix_registers: usize,
@@ -398,7 +398,7 @@ pub struct RegisterRequirements {
 }
 
 /// Kernel performance characteristics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct KernelPerformance {
     /// Estimated cycles
     pub estimated_cycles: u64,
@@ -691,29 +691,34 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
 
         // Generate kernel code
         for kernel in kernels {
-            writeln!(kernel_code, "// Kernel: {}", kernel.name)?;
-            writeln!(kernel_code, "kernel {} {{", kernel.name)?;
+            writeln!(kernel_code, "// Kernel: {}", kernel.name)
+                .map_err(|e| OptimError::from(e.to_string()))?;
+            writeln!(kernel_code, "kernel {} {{", kernel.name)
+                .map_err(|e| OptimError::from(e.to_string()))?;
 
             for instruction in &kernel.instructions {
                 let asm_code = self.generate_assembly(instruction)?;
-                writeln!(kernel_code, "  {}", asm_code)?;
+                writeln!(kernel_code, "  {}", asm_code)
+                    .map_err(|e| OptimError::from(e.to_string()))?;
             }
 
-            writeln!(kernel_code, "}}")?;
-            writeln!(kernel_code)?;
+            writeln!(kernel_code, "}}").map_err(|e| OptimError::from(e.to_string()))?;
+            writeln!(kernel_code).map_err(|e| OptimError::from(e.to_string()))?;
         }
 
         // Generate initialization code
-        writeln!(init_code, "// Initialization")?;
-        writeln!(init_code, "init_tpu();")?;
+        writeln!(init_code, "// Initialization").map_err(|e| OptimError::from(e.to_string()))?;
+        writeln!(init_code, "init_tpu();").map_err(|e| OptimError::from(e.to_string()))?;
 
         // Generate cleanup code
-        writeln!(cleanup_code, "// Cleanup")?;
-        writeln!(cleanup_code, "cleanup_tpu();")?;
+        writeln!(cleanup_code, "// Cleanup").map_err(|e| OptimError::from(e.to_string()))?;
+        writeln!(cleanup_code, "cleanup_tpu();").map_err(|e| OptimError::from(e.to_string()))?;
 
         // Generate memory management code
-        writeln!(memory_code, "// Memory management")?;
-        writeln!(memory_code, "allocate_buffers();")?;
+        writeln!(memory_code, "// Memory management")
+            .map_err(|e| OptimError::from(e.to_string()))?;
+        writeln!(memory_code, "allocate_buffers();")
+            .map_err(|e| OptimError::from(e.to_string()))?;
 
         Ok(GeneratedCode {
             kernel_code,
@@ -729,33 +734,36 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
 
         match &instruction.opcode {
             TPUOpcode::MatMul => {
-                write!(asm, "matmul")?;
+                write!(asm, "matmul").map_err(|e| OptimError::from(e.to_string()))?;
             }
             TPUOpcode::VectorAdd => {
-                write!(asm, "vadd")?;
+                write!(asm, "vadd").map_err(|e| OptimError::from(e.to_string()))?;
             }
             TPUOpcode::Load => {
-                write!(asm, "load")?;
+                write!(asm, "load").map_err(|e| OptimError::from(e.to_string()))?;
             }
             TPUOpcode::Store => {
-                write!(asm, "store")?;
+                write!(asm, "store").map_err(|e| OptimError::from(e.to_string()))?;
             }
             _ => {
-                write!(asm, "{:?}", instruction.opcode)?;
+                write!(asm, "{:?}", instruction.opcode)
+                    .map_err(|e| OptimError::from(e.to_string()))?;
             }
         }
 
         // Add operands
         for (i, operand) in instruction.operands.iter().enumerate() {
             if i > 0 {
-                write!(asm, ",")?;
+                write!(asm, ",").map_err(|e| OptimError::from(e.to_string()))?;
             }
-            write!(asm, " {}", self.format_operand(operand)?)?;
+            write!(asm, " {}", self.format_operand(operand)?)
+                .map_err(|e| OptimError::from(e.to_string()))?;
         }
 
         // Add result
         if let Some(result) = &instruction.result {
-            write!(asm, " -> {}", self.format_register(result)?)?;
+            write!(asm, " -> {}", self.format_register(result)?)
+                .map_err(|e| OptimError::from(e.to_string()))?;
         }
 
         Ok(asm)
@@ -766,9 +774,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
         match operand {
             TPUOperand::Register(reg) => self.format_register(reg),
             TPUOperand::Immediate(val) => Ok(format!("#{}", val)),
-            TPUOperand::Memory(addr) => {
-                Ok(format!("[{}]", self.format_memory_address(addr)?))
-            }
+            TPUOperand::Memory(addr) => Ok(format!("[{}]", self.format_memory_address(addr)?)),
             TPUOperand::Label(label) => Ok(label.clone()),
         }
     }
@@ -790,26 +796,28 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
         let mut addr_str = String::new();
 
         if let Some(base) = &address.base {
-            write!(addr_str, "{}", self.format_register(base)?)?;
+            write!(addr_str, "{}", self.format_register(base)?)
+                .map_err(|e| OptimError::from(e.to_string()))?;
         }
 
         if address.offset != 0 {
             if !addr_str.is_empty() {
-                write!(addr_str, "+")?;
+                write!(addr_str, "+").map_err(|e| OptimError::from(e.to_string()))?;
             }
-            write!(addr_str, "{}", address.offset)?;
+            write!(addr_str, "{}", address.offset).map_err(|e| OptimError::from(e.to_string()))?;
         }
 
         if let Some(index) = &address.index {
             if !addr_str.is_empty() {
-                write!(addr_str, "+")?;
+                write!(addr_str, "+").map_err(|e| OptimError::from(e.to_string()))?;
             }
             write!(
                 addr_str,
                 "{}*{}",
                 self.format_register(index)?,
                 address.scale
-            )?;
+            )
+            .map_err(|e| OptimError::from(e.to_string()))?;
         }
 
         Ok(addr_str)
@@ -1053,7 +1061,7 @@ impl RegisterAllocator {
     }
 
     /// Allocate registers for instructions
-    pub fn allocate_registers(
+    pub fn allocate_registers<T: Float + Debug + Send + Sync + 'static>(
         &mut self,
         _instructions: &[TPUInstruction],
         _memory_plan: &MemoryPlan<T>,
@@ -1124,15 +1132,18 @@ mod tests {
         use super::super::super::{super::PodTopology, TPUConfig, TPUVersion};
 
         let tpu_config = TPUConfig {
-            version: TPUVersion::V4,
-            topology: PodTopology {
-                num_chips: 4,
-                cores_per_chip: 2,
-                chip_interconnect: "ICI".to_string(),
-            },
-            memory_capacity: 32 * 1024 * 1024 * 1024,
-            memory_bandwidth: 1600.0,
-            compute_throughput: 275e12,
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
         };
 
         let generator: TPUCodeGenerator<f32> = TPUCodeGenerator::new(tpu_config);

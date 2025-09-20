@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use super::super::{GeneratedCode, TPUConfig, TPUVersion};
 use crate::error::{OptimError, Result};
+use crate::main_types::PodTopology;
 
 /// Runtime integration manager
 pub struct RuntimeIntegration {
@@ -978,7 +979,7 @@ impl RuntimeIntegration {
                 compilation_time: Instant::now(),
                 compiler_version: "1.0.0".to_string(),
                 target_requirements: TargetRequirements {
-                    min_tpu_version: self.target_config.version.clone(),
+                    min_tpu_version: self.target_config.tpu_version.clone(),
                     required_memory: 1024 * 1024, // 1MB
                     required_features: vec!["matmul".to_string()],
                     optional_features: vec![],
@@ -1008,14 +1009,23 @@ impl DeviceManager {
         let mut devices = Vec::new();
 
         // Create virtual devices based on target config
-        for i in 0..target_config.topology.num_chips {
+        // Determine number of chips based on pod topology
+        let num_chips = match target_config.pod_topology {
+            PodTopology::Single => 1,
+            PodTopology::Pod2x2 => 4,
+            PodTopology::Pod4x4 => 16,
+            PodTopology::Pod8x8 => 64,
+            PodTopology::Pod16x16 => 256,
+            PodTopology::Pod32x32 => 1024,
+        };
+
+        for i in 0..num_chips {
             devices.push(TPUDevice {
                 id: i,
                 device_type: TPUDeviceType::SingleChip,
-                version: target_config.version.clone(),
-                memory_capacity: target_config.memory_capacity / target_config.topology.num_chips,
-                compute_throughput: target_config.compute_throughput
-                    / target_config.topology.num_chips as f64,
+                version: target_config.tpu_version.clone(),
+                memory_capacity: 16 * 1024 * 1024 * 1024 / num_chips, // Default 16GB per chip
+                compute_throughput: 420.0 / num_chips as f64,         // Default 420 TFLOPS total
                 state: DeviceState::Available,
                 last_health_check: Instant::now(),
             });
@@ -1148,18 +1158,21 @@ mod tests {
 
     #[test]
     fn test_runtime_integration_creation() {
-        use super::super::super::{super::PodTopology, TPUConfig, TPUVersion};
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
 
         let tpu_config = TPUConfig {
-            version: TPUVersion::V4,
-            topology: PodTopology {
-                num_chips: 4,
-                cores_per_chip: 2,
-                chip_interconnect: "ICI".to_string(),
-            },
-            memory_capacity: 32 * 1024 * 1024 * 1024,
-            memory_bandwidth: 1600.0,
-            compute_throughput: 275e12,
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
         };
 
         let runtime = RuntimeIntegration::new(tpu_config);
@@ -1170,22 +1183,26 @@ mod tests {
 
     #[test]
     fn test_device_manager_creation() {
-        use super::super::super::{super::PodTopology, TPUConfig, TPUVersion};
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
 
         let tpu_config = TPUConfig {
-            version: TPUVersion::V4,
-            topology: PodTopology {
-                num_chips: 2,
-                cores_per_chip: 4,
-                chip_interconnect: "ICI".to_string(),
-            },
-            memory_capacity: 16 * 1024 * 1024 * 1024,
-            memory_bandwidth: 800.0,
-            compute_throughput: 150e12,
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
         };
 
         let device_manager = DeviceManager::new(&tpu_config);
-        assert_eq!(device_manager.available_devices.len(), 2);
+        // Pod2x2 topology creates 4 devices (2x2 grid)
+        assert_eq!(device_manager.available_devices.len(), 4);
 
         for device in &device_manager.available_devices {
             assert!(matches!(device.state, DeviceState::Available));

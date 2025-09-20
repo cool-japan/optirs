@@ -279,6 +279,12 @@ impl From<statistics::StatisticsError> for ClockSynchronizationError {
     }
 }
 
+impl From<scirs2_core::CoreError> for ClockSynchronizationError {
+    fn from(err: scirs2_core::CoreError) -> Self {
+        ClockSynchronizationError::SystemError(err.to_string())
+    }
+}
+
 /// Builder for configuring clock synchronization
 ///
 /// Provides a fluent interface for configuring the various aspects
@@ -374,7 +380,8 @@ impl ClockSynchronizationBuilder {
         let core_config = self.core_config.unwrap_or_default();
 
         // Create and configure the synchronization manager
-        let mut manager = ClockSynchronizationManager::new(core_config)?;
+        let mut manager = ClockSynchronizationManager::new();
+        manager.config = core_config;
 
         // Configure protocols
         for protocol in self.protocol_configs {
@@ -383,7 +390,7 @@ impl ClockSynchronizationBuilder {
 
         // Configure sources
         for source in self.source_configs {
-            manager.add_time_source(sources::ClockSource::from_time_source(source))?;
+            manager.add_time_source(source)?;
         }
 
         // Apply additional configurations
@@ -432,22 +439,16 @@ pub mod utils {
         let mut builder = ClockSynchronizationBuilder::new();
 
         // Add NTP protocol
-        builder = builder.with_protocol(protocols::ClockSyncProtocol::NTP {
-            version: 4,
-            servers: ntp_servers,
-            authentication: false,
-        });
+        builder = builder.with_protocol(protocols::ClockSyncProtocol::NTP);
 
         // Add network time sources
-        for (i, server) in builder.source_configs.iter().enumerate() {
-            if let sources::TimeSource::Network { server, .. } = server {
-                builder = builder.with_source(sources::TimeSource::Network {
-                    server: server.clone(),
-                    port: 123,
-                    protocol: network::NetworkTimeProtocol::NTP,
-                    authentication: None,
-                });
-            }
+        let source_count = builder.source_configs.len();
+        for _ in 0..source_count {
+            // Add NTP source
+            let source = sources::TimeSource {
+                source_type: sources::ClockSource::NTP,
+            };
+            builder = builder.with_source(source);
         }
 
         // Enable basic monitoring
@@ -467,9 +468,10 @@ pub mod utils {
         builder = builder.with_gps_config(gps_config.clone());
 
         // Add GPS time source
-        builder = builder.with_source(sources::TimeSource::GPS {
-            receiver_config: gps_config,
-        });
+        let source = sources::TimeSource {
+            source_type: sources::ClockSource::GPS,
+        };
+        builder = builder.with_source(source);
 
         // Enable comprehensive monitoring for GPS
         builder = builder.with_quality_config(quality::QualityMonitoringConfig::default());
@@ -484,28 +486,13 @@ pub mod utils {
         let mut builder = ClockSynchronizationBuilder::new();
 
         // Use PTP for high precision
-        builder = builder.with_protocol(protocols::ClockSyncProtocol::PTP {
-            version: protocols::PtpVersion::V2,
-            domain: 0,
-            transport: protocols::PtpTransport::Ethernet,
-            profile: protocols::PtpProfile::Default,
-        });
+        builder = builder.with_protocol(protocols::ClockSyncProtocol::PTP);
 
         // Add atomic clock source
-        builder = builder.with_source(sources::TimeSource::AtomicClock {
-            clock_type: sources::AtomicClockType::Cesium {
-                frequency: 9192631770.0,
-                stability: 1e-15,
-            },
-            calibration: sources::ClockCalibration {
-                frequency: Duration::from_secs(3600),
-                reference: sources::CalibrationReference::PrimaryStandard {
-                    standard: "NIST-F1".to_string(),
-                },
-                method: sources::CalibrationMethod::DirectComparison,
-                accuracy: 1e-15,
-            },
-        });
+        let source = sources::TimeSource {
+            source_type: sources::ClockSource::Atomic,
+        };
+        builder = builder.with_source(source);
 
         // Enable all monitoring and compensation
         builder = builder.with_quality_config(quality::QualityMonitoringConfig::default());
@@ -549,7 +536,7 @@ pub mod utils {
         offset: ClockOffset,
         requirements: &quality::ClockAccuracyRequirements,
     ) -> bool {
-        offset <= requirements.max_skew
+        offset.offset_ns.abs() as f64 <= requirements.max_drift_ppm
     }
 
     /// Calculate quality score from multiple metrics
@@ -593,11 +580,7 @@ mod tests {
     #[test]
     fn test_builder_pattern() {
         let builder =
-            ClockSynchronizationBuilder::new().with_protocol(protocols::ClockSyncProtocol::NTP {
-                version: 4,
-                servers: vec!["pool.ntp.org".to_string()],
-                authentication: false,
-            });
+            ClockSynchronizationBuilder::new().with_protocol(protocols::ClockSyncProtocol::NTP);
 
         // Builder should be constructible
         assert!(builder.protocol_configs.len() == 1);
@@ -605,9 +588,10 @@ mod tests {
 
     #[test]
     fn test_error_conversions() {
-        let core_error = core::ClockSynchronizationError::ConfigurationError("test".to_string());
+        let core_error = core::ClockSynchronizationError;
         let sync_error: ClockSynchronizationError = core_error.into();
 
+        // The conversion should work
         match sync_error {
             ClockSynchronizationError::CoreError(_) => {}
             _ => panic!("Error conversion failed"),
@@ -626,6 +610,6 @@ mod tests {
         metrics.insert("accuracy".to_string(), 0.9);
         metrics.insert("stability".to_string(), 0.8);
         let score = utils::calculate_quality_score(&metrics);
-        assert_eq!(score, 0.85);
+        assert!((score - 0.85).abs() < 1e-10);
     }
 }

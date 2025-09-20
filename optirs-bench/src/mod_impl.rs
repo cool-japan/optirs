@@ -4,24 +4,8 @@
 // and visualization of optimization behavior, including cross-framework comparisons
 // with PyTorch and TensorFlow optimizers.
 
-use optirs_core::error::{OptimError, Result};
-
-pub mod advanced_leak_detectors;
-pub mod advanced_memory_leak_detector;
-pub mod automated_test_runners;
-pub mod ci_cd_automation;
-pub mod comprehensive_security_auditor;
-pub mod cross_framework;
-pub mod cross_platform_tester;
-pub mod documentation_analyzer;
-pub mod enhanced_memory_monitor;
-pub mod memory_leak_detector;
-pub mod memory_optimizer;
-pub mod performance_profiler;
-pub mod performance_regression_detector;
-pub mod regression_tester;
-pub mod security_auditor;
 use num_traits::Float;
+use optirs_core::error::{OptimError, Result};
 use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use std::collections::VecDeque;
 use std::fmt::Debug;

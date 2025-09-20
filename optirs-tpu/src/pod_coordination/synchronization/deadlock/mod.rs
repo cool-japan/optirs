@@ -119,14 +119,16 @@ pub fn create_detector_with_config(
 
 /// Create a new dependency graph
 pub fn create_dependency_graph() -> crate::error::Result<DependencyGraph> {
-    DependencyGraph::new()
+    Ok(DependencyGraph::new())
 }
 
 /// Create a new recovery system
 pub fn create_recovery_system(
     config: DeadlockRecovery,
 ) -> crate::error::Result<DeadlockRecoverySystem> {
-    DeadlockRecoverySystem::new(config)
+    let mut system = DeadlockRecoverySystem::new();
+    system.recovery = config;
+    Ok(system)
 }
 
 // Implementation from the original file that needs to be preserved
@@ -135,7 +137,7 @@ impl DeadlockDetector {
     pub fn new() -> crate::error::Result<Self> {
         Ok(Self {
             config: DeadlockDetectionConfig::default(),
-            dependency_graph: DependencyGraph::new()?,
+            dependency_graph: DependencyGraph::new(),
             detection_state: DetectionState {
                 status: DetectionStatus::Idle,
                 last_detection: std::time::Instant::now(),
@@ -143,8 +145,8 @@ impl DeadlockDetector {
                 history: Vec::new(),
             },
             statistics: DeadlockStatistics::default(),
-            prevention_system: prevention::DeadlockPreventionSystem::new()?,
-            recovery_system: recovery::DeadlockRecoverySystem::new(DeadlockRecovery::default())?,
+            prevention_system: prevention::DeadlockPreventionSystem::new(),
+            recovery_system: recovery::DeadlockRecoverySystem::new(),
         })
     }
 
@@ -157,7 +159,7 @@ impl DeadlockDetector {
         if self.dependency_graph.has_cycle() {
             self.detection_state.status = DetectionStatus::DeadlockDetected;
             self.detection_state.active_deadlocks += 1;
-            self.statistics.deadlocks_detected += 1;
+            self.statistics.detection_count += 1;
 
             // Return detected deadlock IDs (simplified)
             Ok(vec!["deadlock_1".to_string()])
@@ -170,52 +172,86 @@ impl DeadlockDetector {
     /// Add a resource dependency
     pub fn add_dependency(&mut self, source: String, target: String) -> crate::error::Result<()> {
         use graph::{DependencyEdge, EdgeMetadata, EdgeType};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Convert strings to u64 IDs using hash
+        let mut hasher = DefaultHasher::new();
+        source.hash(&mut hasher);
+        let source_id = hasher.finish();
+
+        let mut hasher = DefaultHasher::new();
+        target.hash(&mut hasher);
+        let target_id = hasher.finish();
 
         // Add nodes if they don't exist
-        if !self.dependency_graph.nodes.contains_key(&source) {
+        if !self
+            .dependency_graph
+            .nodes
+            .iter()
+            .any(|n| n.id == source_id)
+        {
             let node = graph::GraphNode {
-                id: source.clone(),
+                id: source_id,
                 node_type: graph::NodeType::Process,
                 state: graph::NodeState::Active,
-                metadata: graph::NodeMetadata::default(),
+                metadata: graph::GraphMetadata::default(),
                 timestamp: std::time::Instant::now(),
             };
-            self.dependency_graph.add_node(node)?;
+            self.dependency_graph.add_node(node);
         }
 
-        if !self.dependency_graph.nodes.contains_key(&target) {
+        if !self
+            .dependency_graph
+            .nodes
+            .iter()
+            .any(|n| n.id == target_id)
+        {
             let node = graph::GraphNode {
-                id: target.clone(),
+                id: target_id,
                 node_type: graph::NodeType::Resource,
                 state: graph::NodeState::Active,
-                metadata: graph::NodeMetadata::default(),
+                metadata: graph::GraphMetadata::default(),
                 timestamp: std::time::Instant::now(),
             };
-            self.dependency_graph.add_node(node)?;
+            self.dependency_graph.add_node(node);
         }
 
         // Add the edge
         let edge = DependencyEdge {
-            source: source.clone(),
-            target: target.clone(),
+            from: source_id,
+            to: target_id,
+            source: source_id,
+            target: target_id,
             edge_type: EdgeType::WaitsFor,
             weight: 1.0,
             timestamp: std::time::Instant::now(),
             metadata: EdgeMetadata::default(),
         };
 
-        self.dependency_graph.add_edge(edge)?;
+        self.dependency_graph.add_edge(edge);
         Ok(())
     }
 
     /// Remove a resource dependency
     pub fn remove_dependency(&mut self, source: &str, target: &str) -> crate::error::Result<()> {
-        if let Some(edges) = self.dependency_graph.edges.get_mut(source) {
-            edges.retain(|edge| edge.target != target);
-            if edges.is_empty() {
-                self.dependency_graph.edges.remove(source);
-            }
-        }
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Convert strings to u64 IDs using hash
+        let mut hasher = DefaultHasher::new();
+        source.hash(&mut hasher);
+        let source_id = hasher.finish();
+
+        let mut hasher = DefaultHasher::new();
+        target.hash(&mut hasher);
+        let target_id = hasher.finish();
+
+        // Remove edges that match the source and target
+        self.dependency_graph
+            .edges
+            .retain(|edge| !(edge.source == source_id && edge.target == target_id));
+
         Ok(())
     }
 

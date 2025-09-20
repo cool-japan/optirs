@@ -3,12 +3,12 @@
 // This module provides various algorithms for detecting performance regressions,
 // including statistical tests, sliding window analysis, and change point detection.
 
-use crate::benchmarking::regression_tester::types::{
+use crate::error::Result;
+use crate::regression_tester::types::{
     ChangePointAnalysis, OutlierAnalysis, OutlierType, PerformanceBaseline, PerformanceMetrics,
     PerformanceRecord, RegressionAnalysis, RegressionDetector, RegressionResult,
     StatisticalTestResult, TrendAnalysis, TrendDirection,
 };
-use crate::error::Result;
 use num_traits::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -519,8 +519,8 @@ fn erf(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmarking::regression_tester::config::TestEnvironment;
-    use crate::benchmarking::regression_tester::types::{
+    use crate::regression_tester::config::TestEnvironment;
+    use crate::regression_tester::types::{
         BaselineStatistics, ConfidenceIntervals, ConvergenceMetrics, ConvergenceStatistics,
         EfficiencyMetrics, EfficiencyStatistics, FragmentationStatistics, MemoryMetrics,
         MemoryStatistics, PerformanceMetrics, TimingMetrics, TimingStatistics,
@@ -741,11 +741,11 @@ mod tests {
     #[test]
     fn test_detector_configuration() {
         let detector = StatisticalTestDetector::with_alpha(0.01);
-        let config = detector.config();
+        let config = <StatisticalTestDetector as crate::regression_tester::types::RegressionDetector<f64>>::config(&detector);
         assert_eq!(config.get("alpha"), Some(&"0.01".to_string()));
 
         let detector = SlidingWindowDetector::with_params(20, 10.0);
-        let config = detector.config();
+        let config = <SlidingWindowDetector as crate::regression_tester::types::RegressionDetector<f64>>::config(&detector);
         assert_eq!(config.get("window_size"), Some(&"20".to_string()));
         assert_eq!(config.get("threshold"), Some(&"10".to_string()));
     }

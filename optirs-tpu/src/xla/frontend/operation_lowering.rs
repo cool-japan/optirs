@@ -316,7 +316,9 @@ impl OperationLowering {
     }
 
     /// Lower high-level operations to XLA primitives
-    pub fn lower_operations<T: Float + Default + std::fmt::Debug + Clone>(
+    pub fn lower_operations<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         computation: XLAComputation<T>,
     ) -> Result<XLAComputation<T>> {
         let lowering = Self::new();
@@ -334,7 +336,7 @@ impl OperationLowering {
     }
 
     /// Lower entire computation
-    fn lower_computation<T: Float + Default + std::fmt::Debug + Clone>(
+    fn lower_computation<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
         context: &mut LoweringContext<T>,
     ) -> Result<XLAComputation<T>> {
@@ -352,7 +354,7 @@ impl OperationLowering {
     }
 
     /// Lower individual operation
-    fn lower_operation<T: Float + Default + std::fmt::Debug + Clone>(
+    fn lower_operation<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
         operation: &XLAOperation<T>,
         context: &LoweringContext<T>,
@@ -398,7 +400,9 @@ impl OperationLowering {
     }
 
     /// Apply decomposition pattern
-    fn apply_decomposition_pattern<T: Float + Default + std::fmt::Debug + Clone>(
+    fn apply_decomposition_pattern<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         operation: &XLAOperation<T>,
         pattern: &DecompositionPattern,
@@ -416,7 +420,9 @@ impl OperationLowering {
     }
 
     /// Apply primitive mapping
-    fn apply_primitive_mapping<T: Float + Default + std::fmt::Debug + Clone>(
+    fn apply_primitive_mapping<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         operation: &XLAOperation<T>,
         _primitives: &[PrimitiveOperation],
@@ -427,7 +433,9 @@ impl OperationLowering {
     }
 
     /// Instantiate operation template
-    fn instantiate_template<T: Float + Default + std::fmt::Debug + Clone>(
+    fn instantiate_template<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         source_op: &XLAOperation<T>,
         template: &OperationTemplate,

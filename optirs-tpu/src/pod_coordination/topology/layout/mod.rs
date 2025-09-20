@@ -4,14 +4,14 @@
 // including physical layout, thermal management, power distribution, logical topology,
 // and layout algorithms.
 
-pub mod physical;
-pub mod thermal;
-pub mod power;
-pub mod logical;
 pub mod algorithms;
+pub mod logical;
+pub mod physical;
+pub mod power;
+pub mod thermal;
 
-pub use self::physical::*;
-pub use self::thermal::*;
-pub use self::power::*;
-pub use self::logical::*;
 pub use self::algorithms::*;
+pub use self::logical::*;
+pub use self::physical::*;
+pub use self::power::*;
+pub use self::thermal::*;

@@ -240,7 +240,7 @@ pub struct DynamicShapeTemplate {
 }
 
 /// Shape inference options
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ShapeInferenceOptions {
     /// Allow dynamic shapes
     pub allow_dynamic_shapes: bool,
@@ -331,7 +331,7 @@ impl ShapeInference {
     }
 
     /// Infer shapes for entire computation
-    pub fn infer_shapes<T: Float + Default + std::fmt::Debug + Clone>(
+    pub fn infer_shapes<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         computation: XLAComputation<T>,
     ) -> Result<XLAComputation<T>> {
         let mut inference = Self::new();
@@ -349,7 +349,7 @@ impl ShapeInference {
     }
 
     /// Run shape inference on computation
-    fn run_inference<T: Float + Default + std::fmt::Debug + Clone>(
+    fn run_inference<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &mut self,
         context: &mut ShapeInferenceContext<T>,
     ) -> Result<XLAComputation<T>> {
@@ -360,7 +360,9 @@ impl ShapeInference {
         for iteration in 0..context.options.max_iterations {
             let mut changed = false;
 
-            for operation in &context.computation.operations {
+            // Collect operations to avoid borrow conflict
+            let operations = context.computation.operations.clone();
+            for operation in &operations {
                 if self.infer_operation_shape(operation, context)? {
                     changed = true;
                 }
@@ -379,7 +381,9 @@ impl ShapeInference {
     }
 
     /// Initialize shapes from computation inputs
-    fn initialize_input_shapes<T: Float + Default + std::fmt::Debug + Clone>(
+    fn initialize_input_shapes<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         context: &mut ShapeInferenceContext<T>,
     ) -> Result<()> {
@@ -407,7 +411,9 @@ impl ShapeInference {
     }
 
     /// Infer shape for single operation
-    fn infer_operation_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_operation_shape<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         operation: &XLAOperation<T>,
         context: &mut ShapeInferenceContext<T>,
@@ -447,13 +453,35 @@ impl ShapeInference {
             OperationType::Convolution(conv_config) => {
                 self.infer_convolution_shape(conv_config, &input_shapes, context)?
             }
-            OperationType::Constant(value) => self.infer_constant_shape(value, context)?,
+            OperationType::Constant(_value) => {
+                // For constants, we infer a scalar shape
+                // The actual value doesn't affect the shape
+                InferredShape {
+                    static_shape: Some(TensorShape {
+                        dimensions: vec![],
+                        dynamic_dimensions: vec![],
+                        element_count: 1,
+                        tuple_shapes: vec![],
+                    }),
+                    dynamic_shape: None,
+                    confidence: 1.0,
+                    inference_method: "Direct".to_string(),
+                    alternatives: vec![],
+                }
+            }
             _ => {
                 // Default inference - use first input shape
                 if let Some(Some(first_input)) = input_shapes.first() {
-                    first_input.clone()
+                    (*first_input).clone()
                 } else {
-                    return Ok(false);
+                    // Return unknown shape with low confidence
+                    InferredShape {
+                        static_shape: None,
+                        dynamic_shape: None,
+                        confidence: 0.0,
+                        inference_method: "Unknown".to_string(),
+                        alternatives: vec![],
+                    }
                 }
             }
         };
@@ -465,13 +493,15 @@ impl ShapeInference {
     }
 
     /// Infer shape for elementwise operations
-    fn infer_elementwise_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_elementwise_shape<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         input_shapes: &[Option<&InferredShape>],
         _context: &ShapeInferenceContext<T>,
     ) -> Result<InferredShape> {
         if input_shapes.len() != 2 {
-            return Err(OptimError::InvalidShape(
+            return Err(OptimError::from(
                 "Elementwise operations require exactly 2 inputs".to_string(),
             ));
         }
@@ -503,13 +533,13 @@ impl ShapeInference {
     }
 
     /// Infer shape for dot product operations
-    fn infer_dot_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_dot_shape<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
         input_shapes: &[Option<&InferredShape>],
         _context: &ShapeInferenceContext<T>,
     ) -> Result<InferredShape> {
         if input_shapes.len() != 2 {
-            return Err(OptimError::InvalidShape(
+            return Err(OptimError::from(
                 "Dot operations require exactly 2 inputs".to_string(),
             ));
         }
@@ -521,7 +551,7 @@ impl ShapeInference {
             // Matrix multiplication: [M, K] x [K, N] -> [M, N]
             if static1.dimensions.len() == 2 && static2.dimensions.len() == 2 {
                 if static1.dimensions[1] != static2.dimensions[0] {
-                    return Err(OptimError::InvalidShape(format!(
+                    return Err(OptimError::from(format!(
                         "Incompatible dimensions for dot product: {} vs {}",
                         static1.dimensions[1], static2.dimensions[0]
                     )));
@@ -542,7 +572,7 @@ impl ShapeInference {
                     alternatives: vec![],
                 })
             } else {
-                Err(OptimError::InvalidShape(
+                Err(OptimError::from(
                     "Dot product requires 2D tensors".to_string(),
                 ))
             }
@@ -559,7 +589,7 @@ impl ShapeInference {
     }
 
     /// Infer shape for reshape operations
-    fn infer_reshape_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_reshape_shape<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
         _operation: &XLAOperation<T>,
         input_shapes: &[Option<&InferredShape>],
@@ -567,16 +597,16 @@ impl ShapeInference {
     ) -> Result<InferredShape> {
         if let Some(Some(input_shape)) = input_shapes.first() {
             // For now, return the input shape (reshape target would be in attributes)
-            Ok(input_shape.clone())
+            Ok((*input_shape).clone())
         } else {
-            Err(OptimError::InvalidShape(
-                "Reshape requires input shape".to_string(),
-            ))
+            Err(OptimError::from("Reshape requires input shape".to_string()))
         }
     }
 
     /// Infer shape for transpose operations
-    fn infer_transpose_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_transpose_shape<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         _operation: &XLAOperation<T>,
         input_shapes: &[Option<&InferredShape>],
@@ -608,17 +638,17 @@ impl ShapeInference {
                     alternatives: vec![],
                 })
             } else {
-                Ok(input_shape.clone())
+                Ok((*input_shape).clone())
             }
         } else {
-            Err(OptimError::InvalidShape(
+            Err(OptimError::from(
                 "Transpose requires input shape".to_string(),
             ))
         }
     }
 
     /// Infer shape for reduction operations
-    fn infer_reduce_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_reduce_shape<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
         reduce_op: &ReduceOperation,
         input_shapes: &[Option<&InferredShape>],
@@ -658,17 +688,17 @@ impl ShapeInference {
                     alternatives: vec![],
                 })
             } else {
-                Ok(input_shape.clone())
+                Ok((*input_shape).clone())
             }
         } else {
-            Err(OptimError::InvalidShape(
-                "Reduce requires input shape".to_string(),
-            ))
+            Err(OptimError::from("Reduce requires input shape".to_string()))
         }
     }
 
     /// Infer shape for convolution operations  
-    fn infer_convolution_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_convolution_shape<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         _conv_config: &ConvolutionConfig,
         input_shapes: &[Option<&InferredShape>],
@@ -676,16 +706,18 @@ impl ShapeInference {
     ) -> Result<InferredShape> {
         // Simplified convolution shape inference
         if let Some(Some(input_shape)) = input_shapes.first() {
-            Ok(input_shape.clone())
+            Ok((*input_shape).clone())
         } else {
-            Err(OptimError::InvalidShape(
+            Err(OptimError::from(
                 "Convolution requires input shape".to_string(),
             ))
         }
     }
 
     /// Infer shape for constant operations
-    fn infer_constant_shape<T: Float + Default + std::fmt::Debug + Clone>(
+    fn infer_constant_shape<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         _value: &T,
         _context: &ShapeInferenceContext<T>,
@@ -734,7 +766,7 @@ impl ShapeInference {
             } else if dim2 == 1 {
                 result_dims.push(dim1);
             } else {
-                return Err(OptimError::InvalidShape(format!(
+                return Err(OptimError::from(format!(
                     "Incompatible dimensions for broadcasting: {} vs {}",
                     dim1, dim2
                 )));
@@ -753,7 +785,9 @@ impl ShapeInference {
     }
 
     /// Validate all constraints
-    fn validate_constraints<T: Float + Default + std::fmt::Debug + Clone>(
+    fn validate_constraints<
+        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
+    >(
         &self,
         _context: &ShapeInferenceContext<T>,
     ) -> Result<()> {
@@ -762,7 +796,7 @@ impl ShapeInference {
     }
 
     /// Finalize shapes and update computation
-    fn finalize_shapes<T: Float + Default + std::fmt::Debug + Clone>(
+    fn finalize_shapes<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
         context: &mut ShapeInferenceContext<T>,
     ) -> Result<XLAComputation<T>> {
@@ -868,7 +902,7 @@ mod tests {
         };
 
         let input_shapes = vec![Some(&shape1), Some(&shape2)];
-        let context = ShapeInferenceContext {
+        let context: ShapeInferenceContext<f32> = ShapeInferenceContext {
             computation: XLAComputation {
                 id: super::super::graph_capture::ComputationId(0),
                 operations: vec![],

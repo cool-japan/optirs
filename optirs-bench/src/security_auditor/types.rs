@@ -12,7 +12,7 @@ use std::time::Duration;
 // =============================================================================
 
 /// Test execution status
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TestStatus {
     /// Test passed (no vulnerability)
     Passed,
@@ -27,7 +27,9 @@ pub enum TestStatus {
 }
 
 /// Severity levels for vulnerabilities
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum SeverityLevel {
     /// Low severity
     Low,
@@ -40,7 +42,7 @@ pub enum SeverityLevel {
 }
 
 /// Impact levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ImpactLevel {
     None,
     Low,
@@ -49,7 +51,7 @@ pub enum ImpactLevel {
 }
 
 /// Complexity levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ComplexityLevel {
     Low,
     Medium,
@@ -57,7 +59,7 @@ pub enum ComplexityLevel {
 }
 
 /// Privilege levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PrivilegeLevel {
     None,
     Low,
@@ -65,7 +67,7 @@ pub enum PrivilegeLevel {
 }
 
 /// Accessibility levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AccessibilityLevel {
     Local,
     Adjacent,
@@ -74,7 +76,7 @@ pub enum AccessibilityLevel {
 }
 
 /// Types of vulnerabilities
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum VulnerabilityType {
     /// Input validation bypass
     InputValidationBypass,
@@ -95,7 +97,7 @@ pub enum VulnerabilityType {
 }
 
 /// Detected vulnerability information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Vulnerability {
     /// Vulnerability type
     pub vulnerability_type: VulnerabilityType,
@@ -112,7 +114,7 @@ pub struct Vulnerability {
 }
 
 /// Impact assessment for vulnerabilities
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImpactAssessment {
     /// Confidentiality impact
     pub confidentiality: ImpactLevel,
@@ -125,7 +127,7 @@ pub struct ImpactAssessment {
 }
 
 /// Exploitability assessment
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExploitabilityAssessment {
     /// Attack complexity
     pub attack_complexity: ComplexityLevel,
@@ -138,7 +140,7 @@ pub struct ExploitabilityAssessment {
 }
 
 /// Statistics on detected vulnerabilities
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VulnerabilityStatistics {
     /// Total tests executed
     pub total_tests: usize,
@@ -161,7 +163,7 @@ pub struct VulnerabilityStatistics {
 // =============================================================================
 
 /// Categories of validation tests
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ValidationCategory {
     /// Malformed input detection
     MalformedInput,
@@ -178,7 +180,7 @@ pub enum ValidationCategory {
 }
 
 /// Types of attack vectors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AttackVector {
     /// NaN/Infinity injection
     NaNInjection,
@@ -199,7 +201,7 @@ pub enum AttackVector {
 }
 
 /// Expected behavior for security tests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ExpectedBehavior {
     /// Should reject input with specific error
     RejectWithError(String),
@@ -212,7 +214,7 @@ pub enum ExpectedBehavior {
 }
 
 /// Types of test payloads
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PayloadType {
     /// NaN values
     NaNPayload,
@@ -231,7 +233,7 @@ pub enum PayloadType {
 }
 
 /// Individual input validation test
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InputValidationTest {
     /// Test name
     pub name: String,
@@ -248,7 +250,7 @@ pub struct InputValidationTest {
 }
 
 /// Result of a validation test
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ValidationTestResult {
     /// Test name
     pub test_name: String,
@@ -271,7 +273,7 @@ pub struct ValidationTestResult {
 // =============================================================================
 
 /// Privacy mechanisms
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PrivacyMechanism {
     /// Differential privacy
     DifferentialPrivacy,
@@ -284,7 +286,7 @@ pub enum PrivacyMechanism {
 }
 
 /// Privacy attack scenarios
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PrivacyAttackScenario {
     /// Membership inference attack
     MembershipInference,
@@ -301,7 +303,7 @@ pub enum PrivacyAttackScenario {
 }
 
 /// Composition methods for privacy
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CompositionMethod {
     Basic,
     Advanced,
@@ -311,7 +313,7 @@ pub enum CompositionMethod {
 }
 
 /// Privacy constraints
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PrivacyConstraint {
     /// Maximum information leakage
     MaxInformationLeakage(f64),
@@ -322,7 +324,7 @@ pub enum PrivacyConstraint {
 }
 
 /// Privacy guarantee specifications
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrivacyGuarantee {
     /// Epsilon parameter
     pub epsilon: f64,
@@ -335,7 +337,7 @@ pub struct PrivacyGuarantee {
 }
 
 /// Privacy security test
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrivacyTest {
     /// Test name
     pub name: String,
@@ -348,7 +350,7 @@ pub struct PrivacyTest {
 }
 
 /// Types of privacy violations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PrivacyViolationType {
     /// Budget exceeded
     BudgetExceeded,
@@ -363,7 +365,7 @@ pub enum PrivacyViolationType {
 }
 
 /// Privacy parameter violations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrivacyParameterViolation {
     /// Expected epsilon
     pub expected_epsilon: f64,
@@ -378,7 +380,7 @@ pub struct PrivacyParameterViolation {
 }
 
 /// Privacy violation detection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrivacyViolation {
     /// Violation type
     pub violation_type: PrivacyViolationType,
@@ -391,7 +393,7 @@ pub struct PrivacyViolation {
 }
 
 /// Budget status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum BudgetStatus {
     Healthy,
     Warning,
@@ -400,7 +402,7 @@ pub enum BudgetStatus {
 }
 
 /// Budget verification result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BudgetVerificationResult {
     /// Test name
     pub test_name: String,
@@ -419,7 +421,7 @@ pub struct BudgetVerificationResult {
 // =============================================================================
 
 /// Memory vulnerability types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MemoryVulnerabilityType {
     /// Buffer overflow
     BufferOverflow,
@@ -436,7 +438,7 @@ pub enum MemoryVulnerabilityType {
 }
 
 /// Memory test scenarios
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MemoryTestScenario {
     /// Large array allocation
     LargeArrayAllocation,
@@ -449,7 +451,7 @@ pub enum MemoryTestScenario {
 }
 
 /// Memory safety test
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemorySafetyTest {
     /// Test name
     pub name: String,
@@ -460,7 +462,7 @@ pub struct MemorySafetyTest {
 }
 
 /// Memory issue types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MemoryIssueType {
     Leak,
     Corruption,
@@ -470,7 +472,7 @@ pub enum MemoryIssueType {
 }
 
 /// Memory location information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryLocation {
     /// Function name
     pub function: String,
@@ -481,7 +483,7 @@ pub struct MemoryLocation {
 }
 
 /// Memory issue detection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryIssue {
     /// Issue type
     pub issue_type: MemoryIssueType,

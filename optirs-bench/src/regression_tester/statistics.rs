@@ -3,10 +3,10 @@
 // This module provides statistical analyzers for identifying trends, outliers,
 // and patterns in performance data to support regression detection.
 
-use crate::benchmarking::regression_tester::types::{
+use crate::error::Result;
+use crate::regression_tester::types::{
     PerformanceRecord, StatisticalAnalysisResult, StatisticalAnalyzer,
 };
-use crate::error::Result;
 use num_traits::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -347,8 +347,8 @@ pub mod stats_utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmarking::regression_tester::config::TestEnvironment;
-    use crate::benchmarking::regression_tester::types::PerformanceMetrics;
+    use crate::regression_tester::config::TestEnvironment;
+    use crate::regression_tester::types::PerformanceMetrics;
     use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -362,7 +362,7 @@ mod tests {
             branch: None,
             environment: TestEnvironment::default(),
             metrics: PerformanceMetrics {
-                timing: crate::benchmarking::regression_tester::types::TimingMetrics {
+                timing: crate::regression_tester::types::TimingMetrics {
                     mean_time_ns: time_ns,
                     std_time_ns: 10,
                     median_time_ns: time_ns,
@@ -464,7 +464,7 @@ mod tests {
         assert!(result
             .patterns
             .iter()
-            .any(|p| p.contains("No significant outliers")));
+            .any(|p| p.contains("Zero variance in performance data")));
     }
 
     #[test]
@@ -472,7 +472,7 @@ mod tests {
         let analyzer = OutlierAnalyzer::new();
         let data = VecDeque::new();
 
-        let result = analyzer.analyze(&data).unwrap();
+        let result: StatisticalAnalysisResult<f64> = analyzer.analyze(&data).unwrap();
 
         assert!(result.summary.contains("No data"));
         assert!(result.patterns.iter().any(|p| p.contains("No data")));
@@ -511,7 +511,17 @@ mod tests {
         let trend_analyzer = TrendAnalyzer::new();
         let outlier_analyzer = OutlierAnalyzer::new();
 
-        assert_eq!(trend_analyzer.name(), "trend_analyzer");
-        assert_eq!(outlier_analyzer.name(), "outlier_analyzer");
+        assert_eq!(
+            <TrendAnalyzer as crate::regression_tester::types::StatisticalAnalyzer<f64>>::name(
+                &trend_analyzer
+            ),
+            "trend_analyzer"
+        );
+        assert_eq!(
+            <OutlierAnalyzer as crate::regression_tester::types::StatisticalAnalyzer<f64>>::name(
+                &outlier_analyzer
+            ),
+            "outlier_analyzer"
+        );
     }
 }

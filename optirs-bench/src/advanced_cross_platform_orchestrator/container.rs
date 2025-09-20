@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use super::config::*;
+use super::types::platform_target_to_string;
 use super::types::*;
 
 /// Container manager for cross-platform testing
@@ -98,7 +99,7 @@ impl ContainerRuntimeTrait for DockerRuntime {
     fn create_container(&self, platform: &PlatformTarget, image: &str) -> Result<ContainerInfo> {
         let container_id = format!(
             "test_{}_{}",
-            platform.to_string(),
+            platform_target_to_string(platform),
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -179,7 +180,7 @@ impl ContainerRuntimeTrait for PodmanRuntime {
     fn create_container(&self, platform: &PlatformTarget, image: &str) -> Result<ContainerInfo> {
         let container_id = format!(
             "test_{}_{}",
-            platform.to_string(),
+            platform_target_to_string(platform),
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()

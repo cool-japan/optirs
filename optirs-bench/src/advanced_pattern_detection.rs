@@ -7,6 +7,7 @@ use crate::error::{OptimError, Result};
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::f64::consts::PI;
 
 /// Advanced-advanced pattern detector using ML and signal processing
 #[derive(Debug)]
@@ -568,8 +569,8 @@ impl AdvancedPatternDetector {
     /// Create a new advanced pattern detector
     pub fn new(config: AdvancedPatternConfig) -> Result<Self> {
         Ok(Self {
-            _config: config.clone(),
-            pattern_classifier: PatternClassifier::new(_config.learning_rate)?,
+            config: config.clone(),
+            pattern_classifier: PatternClassifier::new(config.learning_rate)?,
             signal_processor: SignalProcessor::new()?,
             statistical_analyzer: AdvancedStatisticalAnalyzer::new()?,
             pattern_database: PatternDatabase::new(),
@@ -579,24 +580,24 @@ impl AdvancedPatternDetector {
 
     /// Detect patterns in memory usage data using advanced algorithms
     pub fn detect_patterns(&mut self, memorydata: &[f64]) -> Result<Vec<AdvancedMemoryPattern>> {
-        if memory_data.len() < self.config.min_pattern_length {
+        if memorydata.len() < self.config.min_pattern_length {
             return Ok(Vec::new());
         }
 
         let mut detected_patterns = Vec::new();
 
         // Extract features from memory _data
-        let features = self.feature_extractor.extract_features(memory_data)?;
+        let features = self.feature_extractor.extract_features(memorydata)?;
 
         // Signal processing analysis
         if self.config.enable_signal_processing {
-            let signal_patterns = self.signal_processor.analyze_signal(memory_data)?;
+            let signal_patterns = self.signal_processor.analyze_signal(memorydata)?;
             detected_patterns.extend(signal_patterns);
         }
 
         // Statistical pattern matching
         if self.config.enable_statistical_matching {
-            let statistical_patterns = self.statistical_analyzer.analyze_patterns(memory_data)?;
+            let statistical_patterns = self.statistical_analyzer.analyze_patterns(memorydata)?;
             detected_patterns.extend(statistical_patterns);
         }
 
@@ -614,12 +615,12 @@ impl AdvancedPatternDetector {
 
         // Generate anomaly scores
         if self.config.enable_anomaly_scoring {
-            self.compute_anomaly_scores(&mut refined_patterns.clone(), memory_data)?;
+            self.compute_anomaly_scores(&mut refined_patterns.clone(), memorydata)?;
         }
 
         // Trend forecasting
         if self.config.enable_trend_forecasting {
-            self.add_trend_forecasts(&mut refined_patterns.clone(), memory_data)?;
+            self.add_trend_forecasts(&mut refined_patterns.clone(), memorydata)?;
         }
 
         Ok(refined_patterns)
@@ -741,7 +742,11 @@ impl AdvancedPatternDetector {
         pattern_group: Vec<&AdvancedMemoryPattern>,
     ) -> Result<AdvancedMemoryPattern> {
         if pattern_group.is_empty() {
-            return Err(OptimError::InvalidInput("Empty pattern _group".to_string()));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Empty pattern group",
+            )
+            .into());
         }
 
         if pattern_group.len() == 1 {
@@ -861,9 +866,9 @@ impl AdvancedPatternDetector {
 
         let patterns_to_remove_count =
             self.pattern_database.patterns.len() - self.config.max_patterns_stored;
-        for (id_) in patterns_to_remove.iter().take(patterns_to_remove_count) {
-            self.pattern_database.patterns.remove(id);
-            self.pattern_database.frequency_stats.remove(id);
+        for (id_, _) in patterns_to_remove.iter().take(patterns_to_remove_count) {
+            self.pattern_database.patterns.remove(id_);
+            self.pattern_database.frequency_stats.remove(id_);
         }
 
         Ok(())
@@ -873,7 +878,7 @@ impl AdvancedPatternDetector {
     fn compute_anomaly_scores(
         &self,
         patterns: &mut Vec<AdvancedMemoryPattern>,
-        memory_data: &[f64],
+        memorydata: &[f64],
     ) -> Result<()> {
         for pattern in patterns {
             // Compute anomaly score based on historical _data
@@ -888,17 +893,17 @@ impl AdvancedPatternDetector {
     fn add_trend_forecasts(
         &self,
         patterns: &mut Vec<AdvancedMemoryPattern>,
-        memory_data: &[f64],
+        memorydata: &[f64],
     ) -> Result<()> {
         for pattern in patterns {
             // Simple linear trend forecasting
-            if memory_data.len() >= 2 {
-                let n = memory_data.len();
-                let last_values = &memory_data[n.saturating_sub(10)..];
+            if memorydata.len() >= 2 {
+                let n = memorydata.len();
+                let last_values = &memorydata[n.saturating_sub(10)..];
 
-                if let Some((slope_)) = self.calculate_linear_trend(last_values) {
-                    pattern.trend.direction = slope.signum();
-                    pattern.trend.strength = slope.abs().min(1.0);
+                if let Some((slope_, _)) = self.calculate_linear_trend(last_values) {
+                    pattern.trend.direction = slope_.signum();
+                    pattern.trend.strength = slope_.abs().min(1.0);
                     pattern.trend.acceleration = 0.0; // Would be computed from second derivative
                 }
             }
@@ -936,7 +941,7 @@ impl AdvancedPatternDetector {
     /// Get historical mean for pattern type
     fn get_historical_pattern_mean(&self, patterntype: &AdvancedPatternType) -> Result<f64> {
         // Simplified implementation - would use actual historical data
-        match pattern_type {
+        match patterntype {
             AdvancedPatternType::LinearGrowth { .. } => Ok(0.5),
             AdvancedPatternType::ExponentialGrowth { .. } => Ok(0.3),
             AdvancedPatternType::Periodic { .. } => Ok(0.7),
@@ -953,7 +958,7 @@ impl PatternClassifier {
         Ok(Self {
             weights: vec![vec![0.0; 50]; 10], // 10 output classes, 50 input features
             biases: vec![0.0; 10],
-            learning_rate,
+            learning_rate: _learningrate,
             training_data: Vec::new(),
         })
     }
@@ -1022,7 +1027,7 @@ impl PatternClassifier {
         };
 
         Ok(AdvancedMemoryPattern {
-            _id: format!("ml_pattern_{}", class_id),
+            id: format!("ml_pattern_{}", class_id),
             pattern_type,
             confidence,
             signature: features.to_vec(),
@@ -1182,7 +1187,7 @@ impl FFTProcessor {
         freq_mag_pairs
             .iter()
             .take(5)
-            .map(|(i_)| *i as f64 / spectrum.len() as f64)
+            .map(|(i_, _)| *i_ as f64 / spectrum.len() as f64)
             .collect()
     }
 }

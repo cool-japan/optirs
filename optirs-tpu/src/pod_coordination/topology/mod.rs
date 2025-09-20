@@ -1,14 +1,9 @@
-// Topology management module for TPU pod coordination
-//
-// This module provides comprehensive topology management functionality including:
-// - Device layout and placement optimization
-// - Communication topology and network management
-// - Power distribution and thermal management
-// - Graph-based topology algorithms
-// - Multi-objective optimization strategies
-// - Centralized coordination and monitoring
+// Topology Module
 
-// Module declarations
+use crate::pod_coordination::types::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
 pub mod communication;
 pub mod config;
 pub mod core;
@@ -20,44 +15,88 @@ pub mod network;
 pub mod optimization;
 pub mod power;
 pub mod power_management;
-pub mod traffic;
 
-// Re-exports
+pub use communication::*;
 pub use config::*;
-pub use core::{TopologyEventManager, TopologyManager, TopologyPerformanceMonitor};
-pub use device_layout::{
-    DeviceCapabilities, DeviceConfig, DeviceGroup, DeviceInfo, DeviceLayoutManager, DeviceNode,
-    LayoutOptimizer, LayoutStatistics, LogicalLayout, PhysicalLayout, PlacementPolicy,
-    ThermalStatus, ThermalZone,
-};
-pub use power_management::{
-    EnergyHarvesting, PowerBudget, PowerConfiguration, PowerDistribution, PowerDistributionUnit,
-    PowerEfficiencyManager, PowerManagementSystem, PowerMonitoring, PowerRequirements, PowerSupply,
-    ThermalManagement,
-};
-pub use graph_management::{
-    CentralityAlgorithms, ClusteringAlgorithms, CommunityDetection, GraphAlgorithms, GraphEdge,
-    GraphMetrics, GraphNode, GraphOptimization, GraphPartitioning, GraphStatistics, GraphTraversal,
-    TopologyGraph, TopologyGraphBuilder,
-};
-pub use communication::{
-    CommunicationChannel, CommunicationInterface, CommunicationLink, CommunicationPath,
-    CommunicationPattern, CommunicationQoS, CommunicationRouting, CommunicationTopology,
-};
-pub use optimization::{
-    LayoutOptimizationAlgorithm, LayoutOptimizationObjective, LayoutOptimizerConfig,
-    NetworkFlowOptimizer, OptimizationConstraint, OptimizationObjective, OptimizationResult,
-    PowerAwareOptimizer, TopologyOptimizer,
-};
+pub use core::*;
+pub use device_layout::*;
+pub use graph_management::*;
+pub use monitoring::*;
+pub use network::*;
+pub use optimization::*;
+pub use power::*;
+pub use power_management::*;
 
-// Type imports
-use crate::pod_coordination::types::*;
+// Define missing types
+pub type BandwidthMatrix = HashMap<(DeviceId, DeviceId), f64>;
+pub type LatencyMatrix = HashMap<(DeviceId, DeviceId), f64>;
 
-// Statistics structure
+#[derive(Debug, Clone, Default)]
+pub struct CommunicationStep {
+    pub step_type: CommunicationStepType,
+    pub devices: Vec<DeviceId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CommunicationStepType {
+    Send,
+    Receive,
+    Broadcast,
+    AllReduce,
+}
+
+impl Default for CommunicationStepType {
+    fn default() -> Self {
+        Self::Send
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DeviceLayout {
+    pub devices: Vec<DeviceId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LinkType {
+    Direct,
+    Switch,
+    Hierarchical,
+}
+
+impl Default for LinkType {
+    fn default() -> Self {
+        Self::Direct
+    }
+}
+
+pub type RoutingTable = HashMap<(DeviceId, DeviceId), Vec<DeviceId>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct TopologyProperties {
+    pub diameter: usize,
+    pub bisection_bandwidth: f64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TopologyStatistics {
-    pub device_count: usize,
-    pub connection_count: usize,
-    pub average_latency: f64,
-    pub total_bandwidth: f64,
+    pub total_links: usize,
+    pub avg_latency_ms: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CommunicationTopology {
+    pub bandwidth_matrix: BandwidthMatrix,
+    pub latency_matrix: LatencyMatrix,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CommunicationLink {
+    pub source: DeviceId,
+    pub target: DeviceId,
+    pub link_type: LinkType,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TopologyManager {
+    pub topology: CommunicationTopology,
 }

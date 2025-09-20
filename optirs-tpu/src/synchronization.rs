@@ -223,7 +223,7 @@ pub enum OperationStatus {
 }
 
 /// Trait for collective operation handlers
-pub trait CollectiveHandler: Send + Sync {
+pub trait CollectiveHandler: Send + Sync + std::fmt::Debug {
     /// Execute collective operation
     fn execute(
         &self,
@@ -239,7 +239,7 @@ pub trait CollectiveHandler: Send + Sync {
 }
 
 /// Synchronization statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SynchronizationStats {
     /// Total number of barriers created
     pub barriers_created: u64,
@@ -479,7 +479,8 @@ impl SynchronizationManager {
 
     /// Get current synchronization statistics
     pub fn get_statistics(&self) -> SynchronizationStats {
-        self.stats.lock().unwrap().clone()
+        let stats = self.stats.lock().unwrap();
+        (*stats).clone()
     }
 
     /// Cancel all active barriers

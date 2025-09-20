@@ -4,10 +4,10 @@
 // including test suite management, performance test cases, test execution contexts,
 // and result handling.
 
-use crate::benchmarking::performance_regression_detector::{
+use crate::error::{OptimError, Result};
+use crate::performance_regression_detector::{
     EnvironmentInfo, MetricType, MetricValue, PerformanceMeasurement, TestConfiguration,
 };
-use crate::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -398,7 +398,7 @@ pub struct CiCdTestResult {
 }
 
 /// Test execution status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TestExecutionStatus {
     /// Test passed successfully
     Passed,
@@ -798,11 +798,44 @@ impl PerformanceTestSuite {
         let result = self.execute_simple_loop_benchmark(iterations);
         let duration = start.elapsed();
 
+        let mut metrics = HashMap::new();
+        metrics.insert(
+            crate::performance_regression_detector::MetricType::ExecutionTime,
+            MetricValue {
+                value: duration.as_secs_f64(),
+                std_dev: None,
+                sample_count: 1,
+                min_value: duration.as_secs_f64(),
+                max_value: duration.as_secs_f64(),
+                percentiles: None,
+            },
+        );
+
         let measurement = PerformanceMeasurement {
-            metric_type: MetricType::ExecutionTime,
-            value: MetricValue::Duration(duration),
             timestamp: SystemTime::now(),
-            tags: test_case.tags.clone(),
+            commithash: "unknown".to_string(), // Would need git integration
+            branch: "unknown".to_string(),     // Would need git integration
+            build_config: "unknown".to_string(), // Would need build config detection
+            environment: crate::performance_regression_detector::EnvironmentInfo {
+                os: std::env::consts::OS.to_string(),
+                cpu_model: std::env::consts::ARCH.to_string(),
+                cpu_cores: num_cpus::get(),
+                total_memory_mb: 0,
+                gpu_info: None,
+                compiler_version: "unknown".to_string(),
+                rust_version: "unknown".to_string(),
+                env_vars: HashMap::new(),
+            },
+            metrics,
+            test_config: crate::performance_regression_detector::TestConfiguration {
+                test_name: test_case.name.clone(),
+                parameters: test_case.parameters.clone(),
+                dataset_size: None,
+                iterations: Some(1),
+                batch_size: None,
+                precision: "f64".to_string(),
+            },
+            metadata: HashMap::new(),
         };
 
         let output = format!("Criterion benchmark completed in {:?}", duration);
@@ -959,11 +992,45 @@ impl PerformanceTestSuite {
             if line.contains("time:") || line.contains("duration:") {
                 if let Some(duration_str) = self.extract_duration_from_line(line) {
                     if let Ok(duration) = duration_str.parse::<f64>() {
+                        let mut metrics = HashMap::new();
+                        metrics.insert(
+                            crate::performance_regression_detector::MetricType::ExecutionTime,
+                            MetricValue {
+                                value: duration,
+                                std_dev: None,
+                                sample_count: 1,
+                                min_value: duration,
+                                max_value: duration,
+                                percentiles: None,
+                            },
+                        );
+
                         measurements.push(PerformanceMeasurement {
-                            metric_type: MetricType::ExecutionTime,
-                            value: MetricValue::Duration(Duration::from_secs_f64(duration)),
                             timestamp: SystemTime::now(),
-                            tags: test_case.tags.clone(),
+                            commithash: "unknown".to_string(),
+                            branch: "unknown".to_string(),
+                            build_config: "unknown".to_string(),
+                            environment: crate::performance_regression_detector::EnvironmentInfo {
+                                os: std::env::consts::OS.to_string(),
+                                cpu_model: std::env::consts::ARCH.to_string(),
+                                cpu_cores: num_cpus::get(),
+                                total_memory_mb: 0,
+                                gpu_info: None,
+                                compiler_version: "unknown".to_string(),
+                                rust_version: "unknown".to_string(),
+                                env_vars: HashMap::new(),
+                            },
+                            metrics,
+                            test_config:
+                                crate::performance_regression_detector::TestConfiguration {
+                                    test_name: test_case.name.clone(),
+                                    parameters: test_case.parameters.clone(),
+                                    dataset_size: None,
+                                    iterations: Some(1),
+                                    batch_size: None,
+                                    precision: "f64".to_string(),
+                                },
+                            metadata: HashMap::new(),
                         });
                     }
                 }
@@ -972,11 +1039,44 @@ impl PerformanceTestSuite {
 
         // If no measurements found, create a default one
         if measurements.is_empty() {
+            let mut metrics = HashMap::new();
+            metrics.insert(
+                crate::performance_regression_detector::MetricType::ExecutionTime,
+                MetricValue {
+                    value: 1.0, // Default 1 second
+                    std_dev: None,
+                    sample_count: 1,
+                    min_value: 1.0,
+                    max_value: 1.0,
+                    percentiles: None,
+                },
+            );
+
             measurements.push(PerformanceMeasurement {
-                metric_type: MetricType::ExecutionTime,
-                value: MetricValue::Duration(Duration::from_secs(1)),
                 timestamp: SystemTime::now(),
-                tags: test_case.tags.clone(),
+                commithash: "unknown".to_string(),
+                branch: "unknown".to_string(),
+                build_config: "unknown".to_string(),
+                environment: crate::performance_regression_detector::EnvironmentInfo {
+                    os: std::env::consts::OS.to_string(),
+                    cpu_model: std::env::consts::ARCH.to_string(),
+                    cpu_cores: num_cpus::get(),
+                    total_memory_mb: 0,
+                    gpu_info: None,
+                    compiler_version: "unknown".to_string(),
+                    rust_version: "unknown".to_string(),
+                    env_vars: HashMap::new(),
+                },
+                metrics,
+                test_config: crate::performance_regression_detector::TestConfiguration {
+                    test_name: test_case.name.clone(),
+                    parameters: test_case.parameters.clone(),
+                    dataset_size: None,
+                    iterations: Some(1),
+                    batch_size: None,
+                    precision: "f64".to_string(),
+                },
+                metadata: HashMap::new(),
             });
         }
 
@@ -1056,23 +1156,30 @@ impl PerformanceTestSuite {
             environment: self.gather_environment_info()?,
             git_info: self.gather_git_info().ok(),
             ci_context: self.context.clone(),
-            test_config: TestConfiguration {
+            test_config: crate::performance_regression_detector::TestConfiguration {
                 test_name: test_case.name.clone(),
+                parameters: test_case.parameters.clone(),
+                dataset_size: None,
                 iterations: Some(test_case.iterations),
-                warmup_iterations: test_case.warmup_iterations,
-                timeout: test_case.timeout.map(Duration::from_secs),
+                batch_size: None,
+                precision: "f64".to_string(),
             },
         })
     }
 
     /// Gather environment information
-    fn gather_environment_info(&self) -> Result<EnvironmentInfo> {
-        Ok(EnvironmentInfo {
+    fn gather_environment_info(
+        &self,
+    ) -> Result<crate::performance_regression_detector::EnvironmentInfo> {
+        Ok(crate::performance_regression_detector::EnvironmentInfo {
             os: std::env::consts::OS.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
-            cpu_count: num_cpus::get(),
-            hostname: std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string()),
-            environment_vars: std::env::vars().collect(),
+            cpu_model: std::env::consts::ARCH.to_string(),
+            cpu_cores: num_cpus::get(),
+            total_memory_mb: 0, // Would need platform-specific code
+            gpu_info: None,
+            compiler_version: "unknown".to_string(),
+            rust_version: "unknown".to_string(),
+            env_vars: std::env::vars().collect(),
         })
     }
 
@@ -1180,7 +1287,7 @@ impl PerformanceTestSuite {
 }
 
 /// Test suite execution statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestSuiteStatistics {
     /// Total number of tests
     pub total_tests: usize,

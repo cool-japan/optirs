@@ -4,17 +4,18 @@
 // and validation capabilities for CI/CD automation, ensuring performance
 // regressions are caught before deployment.
 
-use crate::benchmarking::performance_regression_detector::{
-    MetricType, MetricValue, PerformanceMeasurement,
-};
 use crate::error::{OptimError, Result};
+use crate::performance_regression_detector::{
+    MetricType as RegressionMetricType, MetricValue, PerformanceMeasurement,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use super::config::{
     ComparisonOperator, GateEvaluationStrategy, GateFailureAction, GateFailureHandling,
-    GateFailureNotificationConfig, GateSeverity, GateType, MetricGate, PerformanceGatesConfig,
+    GateFailureNotificationConfig, GateSeverity, GateType, MetricGate, MetricType,
+    PerformanceGatesConfig,
 };
 use super::test_execution::{CiCdTestResult, TestSuiteStatistics};
 

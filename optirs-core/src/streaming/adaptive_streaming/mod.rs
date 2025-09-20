@@ -11,15 +11,55 @@ pub mod optimizer;
 pub mod performance;
 pub mod resource_management;
 
-// Simplified exports to avoid import conflicts during refactoring
-pub use anomaly_detection::*;
+// Selective exports to avoid import conflicts
 pub use buffering::*;
 pub use config::*;
-pub use drift_detection::*;
 pub use meta_learning::*;
 pub use optimizer::*;
-pub use performance::*;
 pub use resource_management::*;
+
+// Selective re-exports to avoid conflicts
+// Anomaly detection module exports
+pub use anomaly_detection::{
+    AnomalyDetector, AnomalyEvent, AnomalyContext,
+    AnomalyDetectionResult, MLModelMetrics,
+    EnsembleAnomalyDetector, EnsembleVotingStrategy, DetectorPerformance,
+    EnsembleConfig, AdaptiveThresholdManager, ThresholdAdaptationStrategy,
+    ThresholdPerformanceFeedback, ThresholdAdaptationParams,
+    FalsePositiveEvent, FPRateCalculator, DetectionResult,
+    FalsePositivePatterns, TemporalPattern, TemporalPatternType,
+    ContextPattern, FPMitigationStrategy, AnomalyResponseSystem,
+    ResponseAction, ResponseExecutor, PendingResponse,
+    ResponseExecution, ResponsePriority, ResponseResourceLimits,
+    ResponseEffectivenessTracker, EffectivenessMetrics,
+    ResponseOutcome, OutcomeMeasurement, TrendAnalysis,
+    TrendDirection, EscalationRule, EscalationCondition,
+    AnomalyType as AnomalyDetectionType,
+    AnomalySeverity as AnomalyDetectionSeverity,
+    DataStatistics as AnomalyDetectionDataStatistics,
+    FalsePositiveTracker as AnomalyDetectionFPTracker
+};
+
+// Drift detection module exports
+pub use drift_detection::{
+    EnhancedDriftDetector, DriftEvent, DriftSeverity, DriftState,
+    DriftTestResult, DistributionComparison, ModelDriftResult,
+    DriftDiagnostics,
+    FalsePositiveTracker as DriftDetectionFPTracker
+};
+
+// Performance module exports
+pub use performance::{
+    PerformanceSnapshot, PerformanceMetric, PerformanceContext,
+    PerformanceTracker, PerformanceTrendAnalyzer, TrendData, TrendMethod,
+    PerformancePredictor, PredictionMethod, PredictionResult,
+    PerformanceImprovementTracker, ImprovementEvent, PlateauDetector,
+    PerformanceAnomalyDetector, MetricStatistics, PerformanceAnomaly,
+    PerformanceDiagnostics,
+    AnomalyType as PerformanceAnomalyType,
+    AnomalySeverity as PerformanceAnomalySeverity,
+    DataStatistics as PerformanceDataStatistics
+};
 
 // Utility functions for common configurations
 pub fn create_default_optimizer<A, D>(

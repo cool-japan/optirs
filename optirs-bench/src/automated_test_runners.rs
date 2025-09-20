@@ -4,7 +4,7 @@
 // integration systems, with support for parallel execution, resource management,
 // and comprehensive result reporting across multiple platforms.
 
-use crate::benchmarking::cross_platform_tester::{
+use crate::cross_platform_tester::{
     CrossPlatformConfig, CrossPlatformTestReport, CrossPlatformTester, PerformanceThresholds,
     PlatformTarget, TestCategory,
 };

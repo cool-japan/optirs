@@ -4,8 +4,8 @@
 // machine learning-based anomaly detection, system profiling integration,
 // and intelligent alert generation for production environments.
 
-use crate::benchmarking::memory_leak_detector::{MemoryLeakDetector, MemoryUsageSnapshot};
 use crate::error::{OptimError, Result};
+use crate::memory_leak_detector::{MemoryLeakDetector, MemoryUsageSnapshot};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
@@ -885,7 +885,7 @@ pub struct EnhancedMonitoringReport {
     /// Report timestamp
     pub timestamp: u64,
     /// Base memory optimization report
-    pub base_report: crate::benchmarking::memory_leak_detector::MemoryOptimizationReport,
+    pub base_report: crate::memory_leak_detector::MemoryOptimizationReport,
     /// Machine learning insights
     pub ml_insights: Option<MLInsights>,
     /// System profiling data
@@ -1176,7 +1176,7 @@ pub enum RecommendationCategory {
 }
 
 /// Recommendation priority
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum RecommendationPriority {
     Critical,
     High,
@@ -1551,7 +1551,7 @@ impl Default for SystemMemoryInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmarking::memory_leak_detector::MemoryDetectionConfig;
+    use crate::memory_leak_detector::MemoryDetectionConfig;
 
     #[test]
     fn test_enhanced_monitor_creation() {

@@ -270,10 +270,7 @@ impl Default for DeadlockDetectionConfig {
     fn default() -> Self {
         Self {
             enable: true,
-            algorithm: super::algorithms::DeadlockDetectionAlgorithm::WaitForGraph {
-                cycle_detection: super::algorithms::CycleDetectionMethod::DepthFirstSearch,
-                optimization: super::algorithms::GraphOptimization::default(),
-            },
+            algorithm: super::algorithms::DeadlockDetectionAlgorithm::WaitForGraph,
             frequency: Duration::from_millis(100),
             sensitivity: DeadlockSensitivity::default(),
             prevention: super::prevention::DeadlockPrevention::default(),

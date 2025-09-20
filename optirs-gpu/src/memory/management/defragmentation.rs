@@ -516,7 +516,7 @@ impl CompactionStrategy for SlidingCompactionStrategy {
         self.stats.average_efficiency =
             (self.stats.average_efficiency * (self.stats.executions - 1) as f64 + efficiency)
                 / self.stats.executions as f64;
-        self.stats.success_rate = self.stats.executions as f64 / self.stats.executions as f64; // All successful for now
+        self.stats.success_rate = 1.0; // All successful for now
 
         Ok(CompactionResult {
             bytes_moved,

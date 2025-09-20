@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::types::*;
 
 /// Comprehensive security audit results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SecurityAuditResults {
     /// Test execution summary
     pub execution_summary: ExecutionSummary,
@@ -32,7 +32,7 @@ pub struct SecurityAuditResults {
 }
 
 /// Test execution summary
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionSummary {
     /// Total tests executed
     pub total_tests: usize,
@@ -49,7 +49,7 @@ pub struct ExecutionSummary {
 }
 
 /// Vulnerability summary across all analyzers
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VulnerabilitySummary {
     /// Total vulnerabilities found
     pub total_vulnerabilities: usize,
@@ -68,7 +68,7 @@ pub struct VulnerabilitySummary {
 }
 
 /// Privacy analysis results summary
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrivacyAnalysisResults {
     /// Privacy tests executed
     pub tests_executed: usize,
@@ -83,7 +83,7 @@ pub struct PrivacyAnalysisResults {
 }
 
 /// Memory analysis results summary
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryAnalysisResults {
     /// Memory tests executed
     pub tests_executed: usize,
@@ -98,7 +98,7 @@ pub struct MemoryAnalysisResults {
 }
 
 /// Individual security finding
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
     /// Finding identifier
     pub id: String,
@@ -119,7 +119,7 @@ pub struct Finding {
 }
 
 /// Overall risk assessment
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RiskAssessment {
     /// Overall risk level
     pub overall_risk: RiskLevel,
@@ -132,7 +132,7 @@ pub struct RiskAssessment {
 }
 
 /// Risk levels
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RiskLevel {
     Low,
     Medium,
@@ -141,7 +141,7 @@ pub enum RiskLevel {
 }
 
 /// Individual risk factor
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RiskFactor {
     /// Risk factor name
     pub name: String,
@@ -154,7 +154,7 @@ pub struct RiskFactor {
 }
 
 /// Compliance status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ComplianceStatus {
     /// Overall compliance score (0-100)
     pub score: f64,
@@ -167,7 +167,7 @@ pub struct ComplianceStatus {
 }
 
 /// Priority action for risk mitigation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PriorityAction {
     /// Action description
     pub action: String,
@@ -182,7 +182,7 @@ pub struct PriorityAction {
 }
 
 /// Effort levels for remediation actions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum EffortLevel {
     Low,
     Medium,

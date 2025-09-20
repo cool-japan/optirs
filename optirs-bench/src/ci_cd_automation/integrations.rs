@@ -251,7 +251,7 @@ pub enum NotificationPriority {
 }
 
 /// Integration status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IntegrationStatus {
     /// Integration is healthy
     Healthy,
@@ -462,22 +462,22 @@ impl IntegrationManager {
     /// Send notification to all configured integrations
     pub fn send_notification(&mut self, notification: &IntegrationNotification) -> Result<()> {
         // Send to GitHub
-        if let Some(github_client) = &mut self.github_client {
-            if self.should_send_to_github(&notification.notification_type) {
+        if self.should_send_to_github(&notification.notification_type) {
+            if let Some(github_client) = &mut self.github_client {
                 github_client.send_notification(notification)?;
             }
         }
 
         // Send to Slack
-        if let Some(slack_client) = &mut self.slack_client {
-            if self.should_send_to_slack(&notification.notification_type) {
+        if self.should_send_to_slack(&notification.notification_type) {
+            if let Some(slack_client) = &mut self.slack_client {
                 slack_client.send_notification(notification)?;
             }
         }
 
         // Send to Email
-        if let Some(email_client) = &mut self.email_client {
-            if self.should_send_to_email(&notification.notification_type) {
+        if self.should_send_to_email(&notification.notification_type) {
+            if let Some(email_client) = &mut self.email_client {
                 email_client.send_notification(notification)?;
             }
         }

@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::fmt::Debug;
 // Computation graph capture for XLA compilation
 //
@@ -30,6 +31,9 @@ pub struct ComputationGraphBuilder<T: Float + Debug + Send + Sync + 'static> {
 
     /// Performance hints
     performance_hints: HashMap<String, PerformanceHint>,
+
+    /// Phantom data for type parameter
+    pub _phantom: std::marker::PhantomData<T>,
 }
 
 /// XLA computation representation
@@ -91,10 +95,13 @@ pub struct XLAOperation<T: Float + Debug + Send + Sync + 'static> {
 
     /// Source location (for debugging)
     pub source_location: Option<SourceLocation>,
+
+    /// Phantom data for type parameter
+    pub _phantom: std::marker::PhantomData<T>,
 }
 
 /// Types of XLA operations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum OperationType {
     // Elementwise operations
     Add,
@@ -111,6 +118,26 @@ pub enum OperationType {
     Square,
     Sign,
     Negate,
+    Sin,
+    Cos,
+    Tanh,
+    Ceil,
+    Floor,
+    Round,
+
+    // Logical operations
+    Not,
+    And,
+    Or,
+    Xor,
+
+    // Comparison operations
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 
     // Array operations
     Reshape,
@@ -119,6 +146,10 @@ pub enum OperationType {
     DynamicSlice,
     Pad,
     Reverse,
+    Broadcast,
+    Concatenate,
+    Gather,
+    Scatter,
 
     // Reduction operations
     Reduce(ReduceOperation),
@@ -128,6 +159,7 @@ pub enum OperationType {
     // Linear algebra
     Dot,
     DotGeneral,
+    MatMul,
     Convolution(ConvolutionConfig),
 
     // Control flow
@@ -139,6 +171,11 @@ pub enum OperationType {
     AllGather,
     AllToAll,
     CollectivePermute,
+    ReduceScatter,
+
+    // Deep learning operations
+    BatchNorm,
+    Dropout,
 
     // Memory operations
     Copy,
@@ -146,7 +183,7 @@ pub enum OperationType {
     GetTupleElement,
 
     // Special operations
-    Constant(T),
+    Constant(Box<dyn Any>),
     Parameter,
     Iota,
 
@@ -154,8 +191,134 @@ pub enum OperationType {
     Custom(CustomOperation),
 }
 
+impl std::hash::Hash for OperationType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use OperationType::*;
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Constant(_) => {
+                // Don't hash the Any content
+            }
+            Reduce(r) => r.function.hash(state),
+            AllReduce(a) => a.function.hash(state),
+            Convolution(c) => {
+                c.strides.hash(state);
+                // Hash other fields if they implement Hash
+            }
+            Custom(c) => c.name.hash(state),
+            _ => {}
+        }
+    }
+}
+
+impl PartialEq for OperationType {
+    fn eq(&self, other: &Self) -> bool {
+        use OperationType::*;
+        match (self, other) {
+            (Add, Add) | (Multiply, Multiply) | (Subtract, Subtract) | (Divide, Divide) => true,
+            (Maximum, Maximum) | (Minimum, Minimum) | (Abs, Abs) | (Exp, Exp) => true,
+            (Log, Log) | (Sqrt, Sqrt) | (Rsqrt, Rsqrt) | (Square, Square) => true,
+            (Sign, Sign) | (Negate, Negate) | (Sin, Sin) | (Cos, Cos) => true,
+            (Tanh, Tanh) | (Ceil, Ceil) | (Floor, Floor) | (Round, Round) => true,
+            (Not, Not) | (And, And) | (Or, Or) | (Xor, Xor) => true,
+            (Equal, Equal) | (NotEqual, NotEqual) | (Less, Less) | (LessEqual, LessEqual) => true,
+            (Greater, Greater) | (GreaterEqual, GreaterEqual) => true,
+            (Reshape, Reshape) | (Transpose, Transpose) | (Slice, Slice) => true,
+            (DynamicSlice, DynamicSlice) | (Pad, Pad) | (Reverse, Reverse) => true,
+            (Broadcast, Broadcast) | (Concatenate, Concatenate) => true,
+            (Gather, Gather) | (Scatter, Scatter) => true,
+            (Dot, Dot) | (DotGeneral, DotGeneral) | (MatMul, MatMul) => true,
+            (Conditional, Conditional) | (While, While) | (Call, Call) => true,
+            (AllGather, AllGather)
+            | (AllToAll, AllToAll)
+            | (CollectivePermute, CollectivePermute) => true,
+            (ReduceScatter, ReduceScatter) | (BatchNorm, BatchNorm) | (Dropout, Dropout) => true,
+            (Copy, Copy) | (Tuple, Tuple) | (GetTupleElement, GetTupleElement) => true,
+            (Parameter, Parameter) | (Iota, Iota) | (ReduceWindow, ReduceWindow) => true,
+            (Reduce(a), Reduce(b)) => a == b,
+            (AllReduce(a), AllReduce(b)) => a == b,
+            (Convolution(a), Convolution(b)) => a == b,
+            (Custom(a), Custom(b)) => a == b,
+            (Constant(_), Constant(_)) => false, // Can't compare Box<dyn Any>
+            _ => false,
+        }
+    }
+}
+
+impl Eq for OperationType {}
+
+impl Clone for OperationType {
+    fn clone(&self) -> Self {
+        match self {
+            OperationType::Add => OperationType::Add,
+            OperationType::Multiply => OperationType::Multiply,
+            OperationType::Subtract => OperationType::Subtract,
+            OperationType::Divide => OperationType::Divide,
+            OperationType::Maximum => OperationType::Maximum,
+            OperationType::Minimum => OperationType::Minimum,
+            OperationType::Abs => OperationType::Abs,
+            OperationType::Exp => OperationType::Exp,
+            OperationType::Log => OperationType::Log,
+            OperationType::Sqrt => OperationType::Sqrt,
+            OperationType::Rsqrt => OperationType::Rsqrt,
+            OperationType::Square => OperationType::Square,
+            OperationType::Sign => OperationType::Sign,
+            OperationType::Negate => OperationType::Negate,
+            OperationType::Sin => OperationType::Sin,
+            OperationType::Cos => OperationType::Cos,
+            OperationType::Tanh => OperationType::Tanh,
+            OperationType::Ceil => OperationType::Ceil,
+            OperationType::Floor => OperationType::Floor,
+            OperationType::Round => OperationType::Round,
+            OperationType::Not => OperationType::Not,
+            OperationType::And => OperationType::And,
+            OperationType::Or => OperationType::Or,
+            OperationType::Xor => OperationType::Xor,
+            OperationType::Equal => OperationType::Equal,
+            OperationType::NotEqual => OperationType::NotEqual,
+            OperationType::Less => OperationType::Less,
+            OperationType::LessEqual => OperationType::LessEqual,
+            OperationType::Greater => OperationType::Greater,
+            OperationType::GreaterEqual => OperationType::GreaterEqual,
+            OperationType::MatMul => OperationType::MatMul,
+            OperationType::Dot => OperationType::Dot,
+            OperationType::Transpose => OperationType::Transpose,
+            OperationType::Reshape => OperationType::Reshape,
+            OperationType::Broadcast => OperationType::Broadcast,
+            OperationType::Slice => OperationType::Slice,
+            OperationType::Concatenate => OperationType::Concatenate,
+            OperationType::Gather => OperationType::Gather,
+            OperationType::Scatter => OperationType::Scatter,
+            OperationType::Reduce(r) => OperationType::Reduce(r.clone()),
+            OperationType::AllReduce(a) => OperationType::AllReduce(a.clone()),
+            OperationType::AllGather => OperationType::AllGather,
+            OperationType::AllToAll => OperationType::AllToAll,
+            OperationType::CollectivePermute => OperationType::CollectivePermute,
+            OperationType::ReduceScatter => OperationType::ReduceScatter,
+            OperationType::Convolution(c) => OperationType::Convolution(c.clone()),
+            OperationType::BatchNorm => OperationType::BatchNorm,
+            OperationType::Dropout => OperationType::Dropout,
+            OperationType::Constant(_) => OperationType::Constant(Box::new(())),
+            OperationType::Parameter => OperationType::Parameter,
+            OperationType::Iota => OperationType::Iota,
+            OperationType::Custom(c) => OperationType::Custom(c.clone()),
+            OperationType::DynamicSlice => OperationType::DynamicSlice,
+            OperationType::Pad => OperationType::Pad,
+            OperationType::Reverse => OperationType::Reverse,
+            OperationType::ReduceWindow => OperationType::ReduceWindow,
+            OperationType::DotGeneral => OperationType::DotGeneral,
+            OperationType::Conditional => OperationType::Conditional,
+            OperationType::While => OperationType::While,
+            OperationType::Call => OperationType::Call,
+            OperationType::Copy => OperationType::Copy,
+            OperationType::Tuple => OperationType::Tuple,
+            OperationType::GetTupleElement => OperationType::GetTupleElement,
+        }
+    }
+}
+
 /// Reduce operation configuration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct ReduceOperation {
     /// Reduction function
     pub function: ReductionFunction,
@@ -168,7 +331,7 @@ pub struct ReduceOperation {
 }
 
 /// Reduction functions
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum ReductionFunction {
     Add,
     Multiply,
@@ -180,7 +343,7 @@ pub enum ReductionFunction {
 }
 
 /// All-reduce operation configuration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct AllReduceOperation {
     /// Reduction function
     pub function: ReductionFunction,
@@ -190,7 +353,7 @@ pub struct AllReduceOperation {
 }
 
 /// Convolution configuration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct ConvolutionConfig {
     /// Window strides
     pub strides: Vec<usize>,
@@ -209,7 +372,7 @@ pub struct ConvolutionConfig {
 }
 
 /// Padding configuration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum PaddingConfig {
     Valid,
     Same,
@@ -217,7 +380,7 @@ pub enum PaddingConfig {
 }
 
 /// Custom operation definition
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomOperation {
     /// Operation name
     pub name: String,
@@ -227,6 +390,20 @@ pub struct CustomOperation {
 
     /// Backend configuration
     pub backend_config: Option<String>,
+}
+
+impl std::hash::Hash for CustomOperation {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        // Hash the HashMap as a sorted list of pairs
+        let mut attrs: Vec<_> = self.custom_attributes.iter().collect();
+        attrs.sort_by_key(|&(k, _)| k);
+        for (k, v) in attrs {
+            k.hash(state);
+            v.hash(state);
+        }
+        self.backend_config.hash(state);
+    }
 }
 
 /// Operand in the computation
@@ -246,6 +423,9 @@ pub struct Operand<T: Float + Debug + Send + Sync + 'static> {
 
     /// Operand metadata
     pub metadata: OperandMetadata,
+
+    /// Phantom data for type parameter
+    pub _phantom: std::marker::PhantomData<T>,
 }
 
 /// Operand identifier
@@ -301,7 +481,7 @@ pub enum MemorySpace {
 }
 
 /// Data types supported by XLA
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub enum DataType {
     F16,
     F32,
@@ -460,6 +640,9 @@ pub struct InputSpecification<T: Float + Debug + Send + Sync + 'static> {
 
     /// Layout hint
     pub layout_hint: Option<Layout>,
+
+    /// Phantom data for type parameter
+    pub _phantom: std::marker::PhantomData<T>,
 }
 
 /// Output specification
@@ -476,6 +659,9 @@ pub struct OutputSpecification<T: Float + Debug + Send + Sync + 'static> {
 
     /// Layout requirement
     pub layout: Layout,
+
+    /// Phantom data for type parameter
+    pub _phantom: std::marker::PhantomData<T>,
 }
 
 /// Computation metadata
@@ -660,6 +846,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             operation_registry: HashMap::new(),
             validation_rules: Vec::new(),
             performance_hints: HashMap::new(),
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -702,6 +889,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             layout: Layout::default(),
             dtype: DataType::F32, // Default type
             metadata: OperandMetadata::default(),
+            _phantom: std::marker::PhantomData,
         };
 
         computation
@@ -712,12 +900,13 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         let operation = XLAOperation {
             id: op_id,
             op_type,
-            inputs,
+            inputs: inputs.clone(),
             output: output_operand_id,
             attributes: OperationAttributes::default(),
             performance: OperationPerformanceCharacteristics::default(),
             memory_requirements: OperationMemoryRequirements::default(),
             source_location: None,
+            _phantom: std::marker::PhantomData,
         };
 
         computation.operations.push(operation);
@@ -760,7 +949,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         for operation in &computation.operations {
             if !visited.contains(&operation.id) {
                 if self.has_cycle_util(computation, operation.id, &mut visited, &mut rec_stack)? {
-                    return Err(OptimError::InvalidGraph(
+                    return Err(OptimError::from(
                         "Cycle detected in computation graph".to_string(),
                     ));
                 }
@@ -855,9 +1044,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         }
 
         if result.len() != computation.operations.len() {
-            return Err(OptimError::InvalidGraph(
-                "Graph contains cycles".to_string(),
-            ));
+            return Err(OptimError::from("Graph contains cycles".to_string()));
         }
 
         Ok(result)

@@ -288,7 +288,7 @@ pub struct UploadProgress {
 }
 
 /// Upload status
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UploadStatus {
     /// Upload queued
     Queued,
@@ -631,7 +631,10 @@ impl ArtifactManager {
     ) -> Result<String> {
         // Validate file exists
         if !local_path.exists() {
-            return Err(OptimError::IO(format!("File not found: {:?}", local_path)));
+            return Err(OptimError::IO(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("File not found: {:?}", local_path),
+            )));
         }
 
         // Create artifact metadata
@@ -672,8 +675,7 @@ impl ArtifactManager {
         // Check cache first
         if let Some(cached_path) = self.download_manager.check_cache(remote_key)? {
             if cached_path != local_path {
-                fs::copy(&cached_path, local_path)
-                    .map_err(|e| OptimError::IO(format!("Failed to copy from cache: {}", e)))?;
+                fs::copy(&cached_path, local_path).map_err(|e| OptimError::IO(e))?;
             }
             return Ok(());
         }
@@ -767,12 +769,11 @@ impl ArtifactManager {
     fn compute_file_checksum(&self, path: &Path, algorithm: ChecksumAlgorithm) -> Result<String> {
         use std::io::Read;
 
-        let mut file = fs::File::open(path)
-            .map_err(|e| OptimError::IO(format!("Failed to open file for checksum: {}", e)))?;
+        let mut file = fs::File::open(path).map_err(|e| OptimError::IO(e))?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)
-            .map_err(|e| OptimError::IO(format!("Failed to read file for checksum: {}", e)))?;
+            .map_err(|e| OptimError::IO(e))?;
 
         let checksum = match algorithm {
             ChecksumAlgorithm::SHA256 => {
@@ -833,14 +834,12 @@ impl ArtifactStorage for LocalArtifactStorage {
         // Create parent directories if needed
         if let Some(parent) = dest_path.parent() {
             if self.config.create_dirs {
-                fs::create_dir_all(parent)
-                    .map_err(|e| OptimError::IO(format!("Failed to create directories: {}", e)))?;
+                fs::create_dir_all(parent).map_err(|e| OptimError::IO(e))?;
             }
         }
 
         // Copy file
-        fs::copy(local_path, &dest_path)
-            .map_err(|e| OptimError::IO(format!("Failed to copy file: {}", e)))?;
+        fs::copy(local_path, &dest_path).map_err(|e| OptimError::IO(e))?;
 
         // Set permissions if configured
         if let Some(permissions) = self.config.file_permissions {
@@ -860,21 +859,18 @@ impl ArtifactStorage for LocalArtifactStorage {
         let source_path = self.base_path.join(remote_key);
 
         if !source_path.exists() {
-            return Err(OptimError::IO(format!(
-                "Remote file not found: {}",
-                remote_key
+            return Err(OptimError::IO(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Remote file not found: {}", remote_key),
             )));
         }
 
         // Create parent directories for local path
         if let Some(parent) = local_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                OptimError::IO(format!("Failed to create local directories: {}", e))
-            })?;
+            fs::create_dir_all(parent).map_err(|e| OptimError::IO(e))?;
         }
 
-        fs::copy(&source_path, local_path)
-            .map_err(|e| OptimError::IO(format!("Failed to download file: {}", e)))?;
+        fs::copy(&source_path, local_path).map_err(|e| OptimError::IO(e))?;
 
         Ok(())
     }
@@ -883,8 +879,7 @@ impl ArtifactStorage for LocalArtifactStorage {
         let file_path = self.base_path.join(remote_key);
 
         if file_path.exists() {
-            fs::remove_file(&file_path)
-                .map_err(|e| OptimError::IO(format!("Failed to delete file: {}", e)))?;
+            fs::remove_file(&file_path).map_err(|e| OptimError::IO(e))?;
         }
 
         Ok(())
@@ -909,8 +904,7 @@ impl ArtifactStorage for LocalArtifactStorage {
 
     fn get_metadata(&self, remote_key: &str) -> Result<ArtifactMetadata> {
         let file_path = self.base_path.join(remote_key);
-        let metadata = fs::metadata(&file_path)
-            .map_err(|e| OptimError::IO(format!("Failed to get file metadata: {}", e)))?;
+        let metadata = fs::metadata(&file_path).map_err(|e| OptimError::IO(e))?;
 
         let filename = file_path
             .file_name()
@@ -972,23 +966,19 @@ impl ArtifactStorage for LocalArtifactStorage {
         // For local storage, just check if base path exists and is accessible
         if !self.base_path.exists() {
             if self.config.create_dirs {
-                fs::create_dir_all(&self.base_path).map_err(|e| {
-                    OptimError::IO(format!("Failed to create base directory: {}", e))
-                })?;
+                fs::create_dir_all(&self.base_path).map_err(|e| OptimError::IO(e))?;
             } else {
-                return Err(OptimError::IO(format!(
-                    "Base path does not exist: {:?}",
-                    self.base_path
+                return Err(OptimError::IO(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Base path does not exist: {:?}", self.base_path),
                 )));
             }
         }
 
         // Test write access
         let test_file = self.base_path.join(".write_test");
-        fs::write(&test_file, "test")
-            .map_err(|e| OptimError::IO(format!("No write access to storage: {}", e)))?;
-        fs::remove_file(&test_file)
-            .map_err(|e| OptimError::IO(format!("Failed to clean up test file: {}", e)))?;
+        fs::write(&test_file, "test").map_err(|e| OptimError::IO(e))?;
+        fs::remove_file(&test_file).map_err(|e| OptimError::IO(e))?;
 
         Ok(())
     }
@@ -1011,9 +1001,12 @@ impl LocalArtifactStorage {
             let path = entry.path();
 
             if path.is_file() {
-                let relative_path = path
-                    .strip_prefix(&self.base_path)
-                    .map_err(|e| OptimError::IO(format!("Failed to get relative path: {}", e)))?;
+                let relative_path = path.strip_prefix(&self.base_path).map_err(|e| {
+                    OptimError::IO(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("Failed to get relative path: {}", e),
+                    ))
+                })?;
 
                 let key = relative_path.to_string_lossy().to_string();
 
