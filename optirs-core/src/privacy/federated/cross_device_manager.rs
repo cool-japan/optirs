@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 /// Cross-device privacy configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CrossDeviceConfig {
     /// User-level privacy guarantees
     pub user_level_privacy: bool,
@@ -50,8 +50,9 @@ pub struct DeviceProfile<T: Float + Debug + Send + Sync + 'static> {
 }
 
 /// Device types for privacy analysis
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Default)]
 pub enum DeviceType {
+    #[default]
     Mobile,
     Desktop,
     IoT,
@@ -106,7 +107,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossDevicePrivacyManager<T> {
         // Record temporal event
         self.temporal_correlations
             .entry(clientid)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(TemporalEvent {
                 timestamp: round as u64, // Simplified timestamp
                 event_type: TemporalEventType::ClientParticipation,
@@ -167,23 +168,6 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossDevicePrivacyManager<T> {
     }
 }
 
-impl Default for CrossDeviceConfig {
-    fn default() -> Self {
-        Self {
-            user_level_privacy: false,
-            device_clustering: false,
-            temporal_privacy: false,
-            geographic_privacy: false,
-            demographic_privacy: false,
-        }
-    }
-}
-
-impl Default for DeviceType {
-    fn default() -> Self {
-        DeviceType::Mobile
-    }
-}
 
 #[cfg(test)]
 mod tests {

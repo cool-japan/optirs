@@ -111,6 +111,12 @@ pub struct CoordinatorState<T: Float + Debug + Send + Sync + 'static> {
     pub total_experiments_completed: usize,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for CoordinatorState<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> CoordinatorState<T> {
     pub fn new() -> Self {
         Self {
@@ -208,11 +214,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
         let convergence_detector = ConvergenceDetector::new(config.convergence_criteria.clone());
 
-        let anomaly_detector = if config.enable_anomaly_detection {
-            AnomalyDetector::new(AnomalyConfig::default())
-        } else {
-            AnomalyDetector::new(AnomalyConfig::default())
-        };
+        let anomaly_detector = AnomalyDetector::new(AnomalyConfig::default());
 
         Self {
             scheduler,
@@ -722,7 +724,7 @@ pub struct MonitoringResult<T: Float + Debug + Send + Sync + 'static> {
 pub enum MonitoringAlert<T: Float + Debug + Send + Sync + 'static> {
     Convergence(ConvergenceResult<T>),
     Anomaly(AnomalyResult<T>),
-    Performance(PerformanceAlert<T>),
+    Performance(Box<PerformanceAlert<T>>),
     Resource(String),
 }
 

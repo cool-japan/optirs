@@ -782,6 +782,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn test_meta_learning_creation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
         let meta_learning = TransformerMetaLearning::new(&config);

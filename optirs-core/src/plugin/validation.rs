@@ -12,6 +12,12 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
+/// Type alias for objective function
+type ObjectiveFn<A> = Box<dyn Fn(&Array1<A>) -> A + Send + Sync>;
+
+/// Type alias for gradient function
+type GradientFn<A> = Box<dyn Fn(&Array1<A>) -> Array1<A> + Send + Sync>;
+
 /// Comprehensive plugin validation framework
 #[derive(Debug)]
 pub struct PluginValidationFramework<A: Float> {
@@ -448,9 +454,9 @@ pub struct TestProblem<A: Float + std::fmt::Debug> {
     /// Initial parameters
     pub initial_params: Array1<A>,
     /// Objective function
-    pub objective_fn: Box<dyn Fn(&Array1<A>) -> A + Send + Sync>,
+    pub objective_fn: ObjectiveFn<A>,
     /// Gradient function
-    pub gradient_fn: Box<dyn Fn(&Array1<A>) -> Array1<A> + Send + Sync>,
+    pub gradient_fn: GradientFn<A>,
     /// Known optimal value
     pub optimal_value: Option<A>,
     /// Maximum iterations

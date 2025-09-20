@@ -1348,7 +1348,7 @@ impl Default for AlertAggregation {
 }
 
 /// Aggregation strategies
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AggregationStrategy {
     /// No aggregation
     None,
@@ -1357,17 +1357,13 @@ pub enum AggregationStrategy {
     Count,
 
     /// Time-based aggregation
+    #[default]
     TimeBased,
 
     /// Rule-based aggregation
     RuleBased,
 }
 
-impl Default for AggregationStrategy {
-    fn default() -> Self {
-        AggregationStrategy::TimeBased
-    }
-}
 
 /// Deduplication settings
 #[derive(Debug, Clone)]
@@ -1503,7 +1499,7 @@ pub enum RotationStrategy {
 }
 
 /// Security settings
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SecuritySettings {
     /// Authentication settings
     pub authentication: AuthenticationSettings,
@@ -1786,16 +1782,6 @@ impl Default for CompressionSettings {
     }
 }
 
-impl Default for SecuritySettings {
-    fn default() -> Self {
-        Self {
-            authentication: AuthenticationSettings::default(),
-            authorization: AuthorizationSettings::default(),
-            encryption: EncryptionSettings::default(),
-            audit: AuditSettings::default(),
-        }
-    }
-}
 
 impl Default for AuthenticationSettings {
     fn default() -> Self {

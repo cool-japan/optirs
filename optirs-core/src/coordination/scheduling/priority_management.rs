@@ -1494,6 +1494,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityManager
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for PriorityQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityQueue<T> {
     pub fn new() -> Self {
         Self {
@@ -1547,9 +1553,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Eq for PriorityItem<T> {}
 
 impl<T: Float + Debug + Send + Sync + 'static> PartialOrd for PriorityItem<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.priority
-            .composite_score
-            .partial_cmp(&other.priority.composite_score)
+        Some(self.cmp(other))
     }
 }
 
@@ -1687,6 +1691,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityAnalyti
             real_time_metrics: HashMap::new(),
             dashboard: AnalyticsDashboard::new(),
         })
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for AnalyticsDashboard<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

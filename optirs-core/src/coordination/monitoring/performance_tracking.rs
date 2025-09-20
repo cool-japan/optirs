@@ -1419,9 +1419,10 @@ impl Default for CompressionSettings {
 }
 
 /// Partitioning strategies
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PartitioningStrategy {
     /// Time-based partitioning
+    #[default]
     TimeBased,
 
     /// Metric-based partitioning
@@ -1434,11 +1435,6 @@ pub enum PartitioningStrategy {
     Custom,
 }
 
-impl Default for PartitioningStrategy {
-    fn default() -> Self {
-        PartitioningStrategy::TimeBased
-    }
-}
 
 /// Index configuration
 #[derive(Debug, Clone)]
@@ -1464,8 +1460,9 @@ impl Default for IndexConfiguration {
 }
 
 /// Index types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IndexType {
+    #[default]
     BTree,
     Hash,
     Bitmap,
@@ -1473,11 +1470,6 @@ pub enum IndexType {
     Custom,
 }
 
-impl Default for IndexType {
-    fn default() -> Self {
-        IndexType::BTree
-    }
-}
 
 /// Storage statistics
 #[derive(Debug, Clone)]

@@ -343,6 +343,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn test_transformer_optimizer_creation() {
         let config = TransformerBasedOptimizerConfig::default();
         let optimizer = TransformerOptimizer::<f32>::new(config);

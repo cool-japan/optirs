@@ -546,6 +546,12 @@ impl ContextualAnalyzer {
     }
 }
 
+impl Default for ContextualAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextModel {
     /// Create a new context model
     pub fn new() -> Self {
@@ -553,6 +559,12 @@ impl ContextModel {
             model_parameters: HashMap::new(),
             adaptation_learning_rate: 0.01,
         }
+    }
+}
+
+impl Default for ContextModel {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -589,6 +601,12 @@ impl FairnessMonitor {
             weights.insert(clientid.clone(), weight);
         }
         weights
+    }
+}
+
+impl Default for FairnessMonitor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -637,6 +655,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ClusteringEngin
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for ClusteringEngine<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> AdaptationTracker<T> {
     /// Create a new adaptation tracker
     pub fn new() -> Self {
@@ -644,6 +668,12 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptationTracker<T> {
             adaptation_history: HashMap::new(),
             convergence_metrics: HashMap::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for AdaptationTracker<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -655,6 +685,12 @@ impl GlobalBudgetTracker {
             consumption_history: VecDeque::with_capacity(1000),
             allocation_strategy: BudgetAllocationStrategy::Uniform,
         }
+    }
+}
+
+impl Default for GlobalBudgetTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -677,6 +713,12 @@ impl<T: Float + Debug + Send + Sync + 'static> TaskDetector<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for TaskDetector<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransmissionScheduler {
     /// Create a new transmission scheduler
     pub fn new() -> Self {
@@ -684,6 +726,12 @@ impl TransmissionScheduler {
             schedule_queue: VecDeque::new(),
             priority_weights: HashMap::new(),
         }
+    }
+}
+
+impl Default for TransmissionScheduler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -697,6 +745,12 @@ impl QualityController {
     }
 }
 
+impl Default for QualityController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceMonitor {
     /// Create a new performance monitor
     pub fn new() -> Self {
@@ -705,6 +759,12 @@ impl PerformanceMonitor {
             throughput_measurements: VecDeque::with_capacity(1000),
             quality_violations: 0,
         }
+    }
+}
+
+impl Default for PerformanceMonitor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

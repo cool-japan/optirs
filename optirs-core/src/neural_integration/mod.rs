@@ -1173,8 +1173,8 @@ pub mod architecture_aware {
             let layer_rules: Vec<(LayerId, LayerOptimizationRule<A>)> = self
                 .param_manager
                 .get_all_parameters()
-                .iter()
-                .map(|(_param_id, metadata)| {
+                .values()
+                .map(|metadata| {
                     let mut rule = LayerOptimizationRule::default();
 
                     // Determine learning rate multiplier based on parameter tags
@@ -1341,8 +1341,8 @@ pub mod architecture_aware {
             let layer_rules: Vec<(LayerId, LayerOptimizationRule<A>)> = self
                 .param_manager
                 .get_all_parameters()
-                .iter()
-                .map(|(_param_id, metadata)| {
+                .values()
+                .map(|metadata| {
                     let mut rule = LayerOptimizationRule::default();
 
                     if metadata.tags.contains(&"recurrent".to_string()) {

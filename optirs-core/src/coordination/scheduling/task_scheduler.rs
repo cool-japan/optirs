@@ -891,7 +891,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceRequire
 
         self.resource_history
             .entry(completed_task.task.task_type.clone())
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_back(record);
 
         Ok(())

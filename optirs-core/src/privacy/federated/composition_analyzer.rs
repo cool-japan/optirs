@@ -8,7 +8,7 @@ use crate::error::{OptimError, Result};
 use std::collections::HashMap;
 
 /// Federated composition methods
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum FederatedCompositionMethod {
     /// Basic composition
     Basic,
@@ -17,6 +17,7 @@ pub enum FederatedCompositionMethod {
     AdvancedComposition,
 
     /// Moments accountant for federated setting
+    #[default]
     FederatedMomentsAccountant,
 
     /// Renyi differential privacy
@@ -105,7 +106,7 @@ impl FederatedCompositionAnalyzer {
     pub fn add_client_composition(&mut self, client_id: String, composition: ClientComposition) {
         self.client_compositions
             .entry(client_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(composition);
     }
 
@@ -168,12 +169,6 @@ impl FederatedCompositionAnalyzer {
     /// Set composition method
     pub fn set_method(&mut self, method: FederatedCompositionMethod) {
         self.method = method;
-    }
-}
-
-impl Default for FederatedCompositionMethod {
-    fn default() -> Self {
-        FederatedCompositionMethod::FederatedMomentsAccountant
     }
 }
 

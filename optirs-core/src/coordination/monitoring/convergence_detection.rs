@@ -654,7 +654,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
 
         // Adjust score based on improvement history
-        if state.improvement_history.len() > 0 {
+        if !state.improvement_history.is_empty() {
             let recent_improvements = state
                 .improvement_history
                 .iter()
@@ -754,7 +754,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
 
         let recent_window = 3.min(data.len());
-        let recent_slope = if recent_window >= 2 {
+
+        if recent_window >= 2 {
             let start_idx = data.len() - recent_window;
             let end_val = data[data.len() - 1];
             let start_val = data[start_idx];
@@ -762,9 +763,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
                 / num_traits::cast::cast(recent_window - 1).unwrap_or_else(|| T::zero())
         } else {
             T::zero()
-        };
-
-        recent_slope
+        }
     }
 }
 
@@ -988,8 +987,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
             .fold(T::zero(), |acc, x| acc + x)
             / T::from(recent_values.len()).unwrap();
 
-        let stability = (-variance.sqrt()).exp();
-        stability
+        (-variance.sqrt()).exp()
     }
 
     fn compute_progress_ratio(&self, state: &ConvergenceState<T>) -> T {

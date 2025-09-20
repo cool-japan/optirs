@@ -1173,7 +1173,7 @@ impl PluginLoader {
     ) -> Result<HttpDownloadResult> {
         println!("🌐 Downloading plugin from URL: {}", url);
 
-        let filename = url.split('/').last().unwrap_or("plugin.bin");
+        let filename = url.split('/').next_back().unwrap_or("plugin.bin");
         let file_path = temp_dir.join(filename);
 
         // Simulate HTTP download
@@ -1285,7 +1285,7 @@ impl DependencyGraph {
         for dep in dependencies {
             self.dependents
                 .entry(dep.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(name.to_string());
         }
     }
@@ -1462,7 +1462,7 @@ impl SecurityManager {
             score -= 0.3;
         }
 
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 
     fn calculate_plugin_hash(&self, path: &Path) -> Result<String> {

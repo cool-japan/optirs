@@ -110,7 +110,7 @@ pub struct PluginInfo {
 }
 
 /// Plugin capabilities and features
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginCapabilities {
     /// Supports sparse gradients
     pub sparse_gradients: bool,
@@ -223,7 +223,7 @@ pub enum ConfigValue {
 }
 
 /// Optimizer state for serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OptimizerState {
     /// Internal state vectors
     pub state_vectors: HashMap<String, Vec<f64>>,
@@ -506,26 +506,6 @@ impl Default for PluginInfo {
     }
 }
 
-impl Default for PluginCapabilities {
-    fn default() -> Self {
-        Self {
-            sparse_gradients: false,
-            parameter_groups: false,
-            momentum: false,
-            adaptive_learning_rate: false,
-            weight_decay: false,
-            gradient_clipping: false,
-            batch_processing: false,
-            state_serialization: false,
-            thread_safe: false,
-            memory_efficient: false,
-            gpu_support: false,
-            simd_optimized: false,
-            custom_loss_functions: false,
-            regularization: false,
-        }
-    }
-}
 
 impl Default for OptimizerConfig {
     fn default() -> Self {
@@ -539,15 +519,6 @@ impl Default for OptimizerConfig {
     }
 }
 
-impl Default for OptimizerState {
-    fn default() -> Self {
-        Self {
-            state_vectors: HashMap::new(),
-            step_count: 0,
-            custom_state: HashMap::new(),
-        }
-    }
-}
 
 /// Utility functions for plugin development
 /// Create a basic plugin info structure

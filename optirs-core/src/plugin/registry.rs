@@ -168,7 +168,7 @@ pub trait RegistryEventListener: Debug + Send + Sync {
 }
 
 /// Plugin search query
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PluginQuery {
     /// Plugin name pattern
     pub name_pattern: Option<String>,
@@ -326,11 +326,11 @@ impl PluginRegistry {
         let optimizer = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
             let opt = registration.factory.create_f32(config)?;
             // This is safe because we checked the type
-            unsafe { std::mem::transmute(opt) }
+            unsafe { std::mem::transmute::<Box<dyn OptimizerPlugin<f32>>, Box<dyn OptimizerPlugin<A>>>(opt) }
         } else if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f64>() {
             let opt = registration.factory.create_f64(config)?;
             // This is safe because we checked the type
-            unsafe { std::mem::transmute(opt) }
+            unsafe { std::mem::transmute::<Box<dyn OptimizerPlugin<f64>>, Box<dyn OptimizerPlugin<A>>>(opt) }
         } else {
             return Err(OptimError::UnsupportedDataType(format!(
                 "Type {} not supported",
@@ -581,19 +581,6 @@ impl Default for RegistryConfig {
     }
 }
 
-impl Default for PluginQuery {
-    fn default() -> Self {
-        Self {
-            name_pattern: None,
-            category: None,
-            required_capabilities: Vec::new(),
-            data_types: Vec::new(),
-            version_requirements: None,
-            tags: Vec::new(),
-            limit: None,
-        }
-    }
-}
 
 // Helper macro for registering plugins
 #[macro_export]
@@ -606,6 +593,12 @@ macro_rules! register_optimizer_plugin {
 // Builder pattern for plugin queries
 pub struct PluginQueryBuilder {
     query: PluginQuery,
+}
+
+impl Default for PluginQueryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PluginQueryBuilder {

@@ -57,7 +57,7 @@ pub enum SeedSharingMethod {
 pub struct SecureAggregator<T: Float + Debug + Send + Sync + 'static> {
     config: SecureAggregationConfig,
     client_masks: HashMap<String, Array1<T>>,
-    shared_randomness: Arc<std::sync::Mutex<Random>>,
+    shared_randomness: Arc<std::sync::Mutex<u64>>,
     aggregation_threshold: usize,
     round_keys: Vec<u64>,
 }
@@ -79,7 +79,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
         Ok(Self {
             config,
             client_masks: HashMap::new(),
-            shared_randomness: Arc::new(std::sync::Mutex::new(Random::default())),
+            shared_randomness: Arc::new(std::sync::Mutex::new(0u64)),
             aggregation_threshold: min_clients,
             round_keys: Vec::new(),
         })
@@ -87,12 +87,14 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
 
     pub fn prepare_round(&mut self, selectedclients: &[String]) -> Result<SecureAggregationPlan> {
         // Generate round-specific keys
-        let round_seed = self.shared_randomness.lock().unwrap().random_f64() as u64;
+        let mut seed = self.shared_randomness.lock().unwrap();
+        *seed = seed.wrapping_add(1);
+        let round_seed = *seed;
         self.round_keys.push(round_seed);
 
         // Generate client masks (simplified)
         self.client_masks.clear();
-        for (_i, clientid) in selectedclients.iter().enumerate() {
+        for clientid in selectedclients.iter() {
             let mut client_rng = Random::default();
             let mask_size = self.config.masking_dimension;
 

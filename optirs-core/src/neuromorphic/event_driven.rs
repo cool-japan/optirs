@@ -814,11 +814,9 @@ impl<
             if self.config.event_batching {
                 let batch_size = self.config.batch_size.min(self.event_queue.len());
                 processed_count += self.process_event_batch(batch_size)?;
-            } else {
-                if let Some(entry) = self.event_queue.pop() {
-                    self.process_single_event(&entry.event)?;
-                    processed_count += 1;
-                }
+            } else if let Some(entry) = self.event_queue.pop() {
+                self.process_single_event(&entry.event)?;
+                processed_count += 1;
             }
         }
 
@@ -874,7 +872,7 @@ impl<
         );
 
         // Update energy consumption
-        self.metrics.energy_consumption = self.metrics.energy_consumption + event.energy_cost;
+        self.metrics.energy_consumption += event.energy_cost;
 
         Ok(())
     }
@@ -885,8 +883,7 @@ impl<
             EventType::ExternalStimulus => {
                 // Apply external stimulus to neuron
                 if event.source_neuron < self.system_state.membrane_potentials.len() {
-                    self.system_state.membrane_potentials[event.source_neuron] =
-                        self.system_state.membrane_potentials[event.source_neuron] + event.value;
+                    self.system_state.membrane_potentials[event.source_neuron] += event.value;
                 }
             }
             EventType::TimerEvent => {

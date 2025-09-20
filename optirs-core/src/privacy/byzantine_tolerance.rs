@@ -11,6 +11,9 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+/// Type alias for validation rule function
+type RuleFn<T> = Box<dyn Fn(&Array1<T>) -> bool + Send + Sync>;
+
 /// Byzantine fault tolerant aggregator
 pub struct ByzantineTolerantAggregator<T: Float + Debug + Send + Sync + 'static> {
     /// Configuration for Byzantine tolerance
@@ -265,7 +268,7 @@ pub struct VerificationRule<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Rule function
-    pub rule_fn: Box<dyn Fn(&Array1<T>) -> bool + Send + Sync>,
+    pub rule_fn: RuleFn<T>,
 
     /// Rule weight in verification
     pub weight: f64,
@@ -761,7 +764,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             let reputation = self
                 .reputation_scores
                 .entry(participant_id.clone())
-                .or_insert_with(|| ReputationScore::new());
+                .or_default();
 
             reputation.successful_aggregations += 1;
             reputation.score = (reputation.score * 0.9 + 0.1).min(1.0);
@@ -779,7 +782,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             let reputation = self
                 .reputation_scores
                 .entry(participant_id.clone())
-                .or_insert_with(|| ReputationScore::new());
+                .or_default();
 
             reputation.detected_anomalies += 1;
             reputation.score = (reputation.score * 0.5).max(0.0);
@@ -1123,6 +1126,12 @@ pub struct ByzantineAggregationResult<T: Float + Debug + Send + Sync + 'static> 
     pub confidence_score: f64,
 }
 
+impl Default for ReputationScore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReputationScore {
     /// Create new reputation score with default values
     pub fn new() -> Self {
@@ -1217,6 +1226,12 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand> Default for GradientStatistics<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
     GradientStatistics<T>
 {
@@ -1247,7 +1262,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
         }
 
         // Initialize mean if this is the first gradient
-        if self.mean.len() == 0 {
+        if self.mean.is_empty() {
             self.mean = gradient.clone();
         } else if self.mean.len() == gradient.len() {
             // Update running mean
@@ -1256,6 +1271,12 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
         }
 
         Ok(())
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for PatternModel<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1394,6 +1415,12 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticalAnalysis<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for StatisticalMeasures<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> StatisticalMeasures<T> {
     /// Create new statistical measures
     pub fn new() -> Self {
@@ -1408,17 +1435,20 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticalMeasures<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for GradientVerifier<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> GradientVerifier<T> {
     /// Create new gradient verifier
     pub fn new() -> Self {
-        let mut verification_rules = Vec::new();
-
-        // Add some basic verification rules
-        verification_rules.push(VerificationRule {
+        let verification_rules = vec![VerificationRule {
             name: "Finite values".to_string(),
             rule_fn: Box::new(|gradient: &Array1<T>| gradient.iter().all(|&x| x.is_finite())),
             weight: 1.0,
-        });
+        }];
 
         Self {
             expected_properties: GradientProperties::new(),
@@ -1452,6 +1482,12 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientVerifier<T> {
             rule_scores,
             passed: overall_score >= 0.8,
         })
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for GradientProperties<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

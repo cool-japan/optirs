@@ -282,6 +282,18 @@ pub mod utils {
 pub mod fused {
     use super::*;
 
+    /// Adam optimizer configuration
+    #[derive(Debug, Clone, Copy)]
+    pub struct AdamConfig<A> {
+        pub lr: A,
+        pub beta1: A,
+        pub beta2: A,
+        pub epsilon: A,
+        pub bias1: A,
+        pub bias2: A,
+        pub weight_decay: Option<A>,
+    }
+
     /// Fused Adam update operation: combines momentum, variance, and parameter update in one pass
     ///
     /// This operation fuses all Adam computations into a single loop iteration,
@@ -291,43 +303,37 @@ pub mod fused {
         gradients: &Array<A, D>,
         m: &mut Array<A, D>,
         v: &mut Array<A, D>,
-        lr: A,
-        beta1: A,
-        beta2: A,
-        epsilon: A,
-        bias1: A,
-        bias2: A,
-        weight_decay: Option<A>,
+        config: AdamConfig<A>,
     ) where
         A: Float + ScalarOperand,
         D: Dimension,
     {
         let one = A::one();
-        let one_minus_beta1 = one - beta1;
-        let one_minus_beta2 = one - beta2;
+        let one_minus_beta1 = one - config.beta1;
+        let one_minus_beta2 = one - config.beta2;
 
-        if let Some(wd) = weight_decay {
+        if let Some(wd) = config.weight_decay {
             // Fused Adam with weight _decay
             for ((((p, &g), m_val), v_val), bias_corrected) in params
                 .iter_mut()
                 .zip(gradients.iter())
                 .zip(m.iter_mut())
                 .zip(v.iter_mut())
-                .zip(std::iter::repeat((bias1, bias2)))
+                .zip(std::iter::repeat((config.bias1, config.bias2)))
             {
                 // Apply weight _decay to gradient
                 let g_with_decay = g + *p * wd;
 
                 // Update momentum
-                *m_val = beta1 * *m_val + one_minus_beta1 * g_with_decay;
+                *m_val = config.beta1 * *m_val + one_minus_beta1 * g_with_decay;
 
                 // Update variance
-                *v_val = beta2 * *v_val + one_minus_beta2 * g_with_decay * g_with_decay;
+                *v_val = config.beta2 * *v_val + one_minus_beta2 * g_with_decay * g_with_decay;
 
                 // Bias-corrected estimates and parameter update
                 let m_hat = *m_val / bias_corrected.0;
                 let v_hat = *v_val / bias_corrected.1;
-                *p = *p - lr * m_hat / (v_hat.sqrt() + epsilon);
+                *p = *p - config.lr * m_hat / (v_hat.sqrt() + config.epsilon);
             }
         } else {
             // Fused Adam without weight _decay
@@ -336,18 +342,18 @@ pub mod fused {
                 .zip(gradients.iter())
                 .zip(m.iter_mut())
                 .zip(v.iter_mut())
-                .zip(std::iter::repeat((bias1, bias2)))
+                .zip(std::iter::repeat((config.bias1, config.bias2)))
             {
                 // Update momentum
-                *m_val = beta1 * *m_val + one_minus_beta1 * g;
+                *m_val = config.beta1 * *m_val + one_minus_beta1 * g;
 
                 // Update variance
-                *v_val = beta2 * *v_val + one_minus_beta2 * g * g;
+                *v_val = config.beta2 * *v_val + one_minus_beta2 * g * g;
 
                 // Bias-corrected estimates and parameter update
                 let m_hat = *m_val / bias_corrected.0;
                 let v_hat = *v_val / bias_corrected.1;
-                *p = *p - lr * m_hat / (v_hat.sqrt() + epsilon);
+                *p = *p - config.lr * m_hat / (v_hat.sqrt() + config.epsilon);
             }
         }
     }

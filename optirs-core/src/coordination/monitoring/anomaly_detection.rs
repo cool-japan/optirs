@@ -1334,7 +1334,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         let subsample_size = (values.len() / 2).max(8);
 
         for _ in 0..num_trees {
-            let score = self.isolation_tree_score(value, values, subsample_size, 0);
+            let score = Self::isolation_tree_score(value, values, subsample_size, 0);
             random_scores.push(score);
         }
 
@@ -1348,7 +1348,6 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
     }
 
     fn isolation_tree_score(
-        &self,
         value: T,
         values: &[T],
         max_depth: usize,
@@ -1377,7 +1376,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
                 .cloned()
                 .collect();
             if !left_values.is_empty() {
-                self.isolation_tree_score(value, &left_values, max_depth, current_depth + 1)
+                Self::isolation_tree_score(value, &left_values, max_depth, current_depth + 1)
             } else {
                 num_traits::cast::cast(current_depth + 1).unwrap_or_else(|| T::zero())
                     / num_traits::cast::cast(max_depth).unwrap_or_else(|| T::zero())
@@ -1389,7 +1388,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
                 .cloned()
                 .collect();
             if !right_values.is_empty() {
-                self.isolation_tree_score(value, &right_values, max_depth, current_depth + 1)
+                Self::isolation_tree_score(value, &right_values, max_depth, current_depth + 1)
             } else {
                 num_traits::cast::cast(current_depth + 1).unwrap_or_else(|| T::zero())
                     / num_traits::cast::cast(max_depth).unwrap_or_else(|| T::zero())
@@ -1655,7 +1654,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyReporter<T> {
         // Update alert history
         self.alert_history
             .entry(result.anomaly_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(now);
 
         self.last_alert_times

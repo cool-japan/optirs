@@ -12,6 +12,33 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Type alias for verification function
+type VerifyFn<T> = Box<dyn Fn(&Array1<T>, &PrivacyContext) -> VerificationResult + Send + Sync>;
+
+/// Type alias for proof generation function
+type ProofGenerateFn<T> = Box<dyn Fn(&Array1<T>) -> Result<Vec<u8>> + Send + Sync>;
+
+/// Type alias for proof verification function
+type ProofVerifyFn<T> = Box<dyn Fn(&[u8], &Array1<T>) -> bool + Send + Sync>;
+
+/// Type alias for transition logic function
+type TransitionLogicFn<T> = Box<dyn Fn(&SystemState<T>) -> Vec<SystemState<T>> + Send + Sync>;
+
+/// Type alias for axiom verification function
+type AxiomVerifyFn<T> = Box<dyn Fn(&Array1<T>) -> bool + Send + Sync>;
+
+/// Type alias for proof strategy application function
+type ProofStrategyApplyFn<T> = Box<dyn Fn(&Array1<T>, &[Axiom<T>]) -> ProofResult + Send + Sync>;
+
+/// Type alias for cryptographic proof generation function
+type CryptoProofGenerateFn<T> = Box<dyn Fn(&Array1<T>, &CryptographicKeys) -> Result<CryptographicProof> + Send + Sync>;
+
+/// Type alias for cryptographic proof verification function
+type CryptoProofVerifyFn<T> = Box<dyn Fn(&CryptographicProof, &Array1<T>, &CryptographicKeys) -> bool + Send + Sync>;
+
+/// Type alias for compliance assessment function
+type ComplianceAssessmentFn = Box<dyn Fn(&AuditEvent) -> ComplianceAssessment + Send + Sync>;
+
 /// Enhanced audit system for privacy-preserving optimization
 pub struct EnhancedAuditSystem<T: Float + Debug + Send + Sync + 'static> {
     /// Configuration for audit system
@@ -496,7 +523,7 @@ pub struct FormalVerificationRule<T: Float + Debug + Send + Sync + 'static> {
     pub specification: String,
 
     /// Verification function
-    pub verify_fn: Box<dyn Fn(&Array1<T>, &PrivacyContext) -> VerificationResult + Send + Sync>,
+    pub verify_fn: VerifyFn<T>,
 
     /// Rule criticality
     pub criticality: VerificationCriticality,
@@ -549,10 +576,10 @@ pub struct ProofAlgorithm<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Proof generation function
-    pub generate_fn: Box<dyn Fn(&Array1<T>) -> Result<Vec<u8>> + Send + Sync>,
+    pub generate_fn: ProofGenerateFn<T>,
 
     /// Proof verification function
-    pub verify_fn: Box<dyn Fn(&[u8], &Array1<T>) -> bool + Send + Sync>,
+    pub verify_fn: ProofVerifyFn<T>,
 }
 
 /// Model checker for system properties
@@ -592,7 +619,7 @@ pub struct TransitionFunction<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Transition logic
-    pub logic: Box<dyn Fn(&SystemState<T>) -> Vec<SystemState<T>> + Send + Sync>,
+    pub logic: TransitionLogicFn<T>,
 }
 
 /// System property for model checking
@@ -642,7 +669,7 @@ pub struct Axiom<T: Float + Debug + Send + Sync + 'static> {
     pub statement: String,
 
     /// Axiom verification function
-    pub verify_fn: Box<dyn Fn(&Array1<T>) -> bool + Send + Sync>,
+    pub verify_fn: AxiomVerifyFn<T>,
 }
 
 /// Proof strategy for theorem proving
@@ -651,7 +678,7 @@ pub struct ProofStrategy<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Strategy application function
-    pub apply_fn: Box<dyn Fn(&Array1<T>, &[Axiom<T>]) -> ProofResult + Send + Sync>,
+    pub apply_fn: ProofStrategyApplyFn<T>,
 }
 
 /// Result of theorem proving
@@ -870,12 +897,10 @@ pub struct CryptographicProofType<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
 
     /// Proof generation function
-    pub generate_fn:
-        Box<dyn Fn(&Array1<T>, &CryptographicKeys) -> Result<CryptographicProof> + Send + Sync>,
+    pub generate_fn: CryptoProofGenerateFn<T>,
 
     /// Proof verification function
-    pub verify_fn:
-        Box<dyn Fn(&CryptographicProof, &Array1<T>, &CryptographicKeys) -> bool + Send + Sync>,
+    pub verify_fn: CryptoProofVerifyFn<T>,
 }
 
 /// Cryptographic keys for proof generation
@@ -930,8 +955,7 @@ pub struct RegulationChecker {
     pub rules: Vec<ComplianceRule>,
 
     /// Assessment functions
-    pub assessment_fns:
-        HashMap<String, Box<dyn Fn(&AuditEvent) -> ComplianceAssessment + Send + Sync>>,
+    pub assessment_fns: HashMap<String, ComplianceAssessmentFn>,
 }
 
 /// Compliance assessment result
@@ -1372,7 +1396,7 @@ impl<T: Float + Debug + Send + Sync + 'static> EnhancedAuditSystem<T> {
 
         let mut hasher = Sha256::new();
         hasher.update(event.id.as_bytes());
-        hasher.update(&event.timestamp.to_le_bytes());
+        hasher.update(event.timestamp.to_le_bytes());
         hasher.update(serde_json::to_string(&event.event_type).unwrap().as_bytes());
         hasher.update(event.actor.as_bytes());
 
@@ -1400,7 +1424,7 @@ impl AuditTrail {
         let event_index = self.events.len();
         self.event_index
             .entry(event.actor.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(event_index);
 
         // Store event
@@ -1645,6 +1669,12 @@ impl Default for ComplianceMonitor {
     }
 }
 
+impl Default for AuditTrail {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> FormalVerificationEngine<T> {
     pub fn new() -> Self {
         Self {
@@ -1710,6 +1740,12 @@ impl<T: Float + Debug + Send + Sync + 'static> SystemModel<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for FormalVerificationEngine<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> Default for SystemModel<T> {
     fn default() -> Self {
         Self::new()
@@ -1722,6 +1758,12 @@ impl<T: Float + Debug + Send + Sync + 'static> TheoremProver<T> {
             axioms: Vec::new(),
             strategies: Vec::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for TheoremProver<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1755,6 +1797,12 @@ impl PrivacyBudgetTracker {
     }
 }
 
+impl Default for PrivacyBudgetTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BudgetForecastingModel {
     pub fn new() -> Self {
         Self {
@@ -1764,12 +1812,24 @@ impl BudgetForecastingModel {
     }
 }
 
+impl Default for BudgetForecastingModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PredictionModel {
     pub fn new() -> Self {
         Self {
             parameters: Vec::new(),
             model_type: ModelType::LinearRegression,
         }
+    }
+}
+
+impl Default for PredictionModel {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1793,6 +1853,12 @@ impl<T: Float + Debug + Send + Sync + 'static> CryptographicProofGenerator<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for CryptographicProofGenerator<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CryptographicKeys {
     pub fn new() -> Self {
         Self {
@@ -1800,6 +1866,12 @@ impl CryptographicKeys {
             verification_keys: HashMap::new(),
             encryption_keys: HashMap::new(),
         }
+    }
+}
+
+impl Default for CryptographicKeys {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1836,6 +1908,12 @@ impl RegulatoryComplianceChecker {
     }
 }
 
+impl Default for RegulatoryComplianceChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MonitoringDashboard {
     pub fn new() -> Self {
         Self {
@@ -1863,6 +1941,12 @@ impl MonitoringDashboard {
         }
 
         Ok(())
+    }
+}
+
+impl Default for MonitoringDashboard {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -529,7 +529,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
             sparsity_threshold: T::from(0.01).unwrap(),
             sparse_matrices: HashMap::new(),
             sparsity_patterns: vec![SparsityPattern::MagnitudeBased],
-            compression_algorithms: vec![CompressionAlgorithm::CSR],
+            compression_algorithms: vec![CompressionAlgorithm::Csr],
             dynamic_adaptation: true,
         }
     }
@@ -607,19 +607,19 @@ enum SparsityPattern {
 #[derive(Debug, Clone, Copy)]
 enum CompressionAlgorithm {
     /// Compressed Sparse Row (CSR)
-    CSR,
+    Csr,
 
     /// Compressed Sparse Column (CSC)
-    CSC,
+    Csc,
 
     /// Block Sparse Row (BSR)
-    BSR,
+    Bsr,
 
     /// Coordinate format (COO)
-    COO,
+    Coo,
 
     /// Dictionary of Keys (DOK)
-    DOK,
+    Dok,
 }
 
 /// Energy-efficient optimizer
