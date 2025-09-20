@@ -25,7 +25,7 @@ authors = ["OptiRS Team"]
 description = "Advanced ML optimization and hardware acceleration library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cool-japan/optirs"
-keywords = ["optimization", "machine-learning", "gpu", "tpu", "neural-architecture-search"]
+keywords = ["optimization", "machine-learning", "gpu", "tpu", "neural-architecture"]
 categories = ["science", "mathematics", "algorithms", "development-tools"]
 
 [workspace.dependencies]
