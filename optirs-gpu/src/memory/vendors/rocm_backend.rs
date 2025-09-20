@@ -562,15 +562,22 @@ impl HipStreamManager {
 
     /// Synchronize stream
     pub fn synchronize_stream(&mut self, stream_id: u32) -> Result<(), RocmError> {
+        // First, collect all operations from the stream
+        let mut operations = Vec::new();
         if let Some(stream) = self.streams.iter_mut().find(|s| s.id == stream_id) {
-            // Process all operations in stream
             while let Some(operation) = stream.operations.pop_front() {
-                self.execute_operation(operation)?;
+                operations.push(operation);
             }
-            Ok(())
         } else {
-            Err(RocmError::InvalidStream("Stream not found".to_string()))
+            return Err(RocmError::InvalidStream("Stream not found".to_string()));
         }
+
+        // Now execute all operations
+        for operation in operations {
+            self.execute_operation(operation)?;
+        }
+
+        Ok(())
     }
 
     fn execute_operation(&self, operation: HipOperation) -> Result<(), RocmError> {
@@ -716,7 +723,7 @@ impl RocmMemoryBackend {
             }
         } else {
             // Direct allocation
-            self.direct_allocate(size, memory_type)?
+            self.direct_allocate(size, memory_type.clone())?
         };
 
         // Update statistics

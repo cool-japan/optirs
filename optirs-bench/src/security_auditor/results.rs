@@ -256,9 +256,7 @@ impl SecurityAuditResults {
     pub fn generate_executive_summary(&self) -> String {
         let mut summary = String::new();
 
-        summary.push_str(&format!(
-            "Security Audit Summary\n====================\n\n"
-        ));
+        summary.push_str(&format!("Security Audit Summary\n====================\n\n"));
 
         summary.push_str(&format!(
             "Overall Security Score: {:.1}/100\n",
@@ -274,7 +272,9 @@ impl SecurityAuditResults {
             "Test Execution: {}/{} passed ({:.1}% success rate)\n",
             self.execution_summary.tests_passed,
             self.execution_summary.total_tests,
-            (self.execution_summary.tests_passed as f64 / self.execution_summary.total_tests as f64) * 100.0
+            (self.execution_summary.tests_passed as f64
+                / self.execution_summary.total_tests as f64)
+                * 100.0
         ));
 
         summary.push_str(&format!(

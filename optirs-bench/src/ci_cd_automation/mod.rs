@@ -46,59 +46,57 @@
 // let results = automation.run_automated_tests().await?;
 // ```
 
-pub mod config;
-pub mod test_execution;
-pub mod reporting;
 pub mod artifact_management;
+pub mod config;
+pub mod core_automation;
 pub mod integrations;
 pub mod performance_gates;
-pub mod core_automation;
+pub mod reporting;
+pub mod test_execution;
 
 // Re-export all public types and functions
 
 // Configuration types and enums
 pub use config::{
-    CiCdAutomationConfig, CiCdPlatform, TestExecutionConfig, BaselineManagementConfig,
-    ReportingConfig, ArtifactStorageConfig, IntegrationConfig, PerformanceGatesConfig,
-    PlatformSpecificConfig, ResourceLimits, CronSchedule, BaselineStorageConfig,
-    EncryptionConfig, KeyManagementConfig, CompressionConfig, BaselineValidationConfig,
-    ReportTemplateConfig, ReportStylingConfig, ReportDistributionConfig,
-    GitHubIntegration, SlackIntegration, EmailIntegration, WebhookIntegration,
-    MetricGate, GateFailureHandling, BaselineStorageProvider, TestIsolationLevel,
-    EncryptionAlgorithm, MetricType, GateType, ComparisonOperator, GateSeverity,
+    ArtifactStorageConfig, BaselineManagementConfig, BaselineStorageConfig,
+    BaselineStorageProvider, BaselineValidationConfig, CiCdAutomationConfig, CiCdPlatform,
+    ComparisonOperator, CompressionConfig, CronSchedule, EmailIntegration, EncryptionAlgorithm,
+    EncryptionConfig, GateFailureHandling, GateSeverity, GateType, GitHubIntegration,
+    IntegrationConfig, KeyManagementConfig, MetricGate, MetricType, PerformanceGatesConfig,
+    PlatformSpecificConfig, ReportDistributionConfig, ReportStylingConfig, ReportTemplateConfig,
+    ReportingConfig, ResourceLimits, SlackIntegration, TestExecutionConfig, TestIsolationLevel,
+    WebhookIntegration,
 };
 
 // Test execution types and functionality
 pub use test_execution::{
-    PerformanceTestSuite, PerformanceTestCase, TestSuiteConfig, CiCdContext,
-    CiCdTestResult, TestExecutor, ParallelExecutionConfig, ResourceAllocationConfig,
-    ResourceMonitoringConfig, TestFilteringConfig, TestRetryConfig, EnvironmentRequirements,
-    SoftwareDependency, NetworkAccessRequirements, BaselineMetrics, MetricBaseline,
-    ResourceUsageReport, ResourceSnapshot, TestExecutionMetadata, GitInfo,
-    PullRequestInfo, RegressionAnalysisResult, TestSuiteStatistics, TestCategory,
-    TestGroupingStrategy, TestFailureType, DependencySource, TestExecutionStatus,
-    TriggerEvent,
+    BaselineMetrics, CiCdContext, CiCdTestResult, DependencySource, EnvironmentRequirements,
+    GitInfo, MetricBaseline, NetworkAccessRequirements, ParallelExecutionConfig,
+    PerformanceTestCase, PerformanceTestSuite, PullRequestInfo, RegressionAnalysisResult,
+    ResourceAllocationConfig, ResourceMonitoringConfig, ResourceSnapshot, ResourceUsageReport,
+    SoftwareDependency, TestCategory, TestExecutionMetadata, TestExecutionStatus, TestExecutor,
+    TestFailureType, TestFilteringConfig, TestGroupingStrategy, TestRetryConfig, TestSuiteConfig,
+    TestSuiteStatistics, TriggerEvent,
 };
 
 // Reporting types and functionality
 pub use reporting::{
-    ReportGenerator, TemplateEngine, TemplateFunction, GeneratedReport, ReportMetadata,
-    GeneratorInfo, ReportSummary, ChartData, DataSeries, DataPoint, SeriesStyle,
-    ChartConfig, AxisConfig, LegendConfig, GridConfig, AnimationConfig,
-    PerformanceTrendAnalysis, TrendDataPoint, JsonReportData, ReportType, ChartType,
-    DataValue, StrokeStyle, ScaleType, LegendPosition, LegendOrientation,
-    EasingFunction, TrendDirection,
+    AnimationConfig, AxisConfig, ChartConfig, ChartData, ChartType, DataPoint, DataSeries,
+    DataValue, EasingFunction, GeneratedReport, GeneratorInfo, GridConfig, JsonReportData,
+    LegendConfig, LegendOrientation, LegendPosition, PerformanceTrendAnalysis, ReportGenerator,
+    ReportMetadata, ReportSummary, ReportType, ScaleType, SeriesStyle, StrokeStyle, TemplateEngine,
+    TemplateFunction, TrendDataPoint, TrendDirection,
 };
 
 // Artifact management types and functionality
 pub use artifact_management::{
-    ArtifactManager, ArtifactStorage, ArtifactRegistry, ArtifactRecord, RegistryMetadata,
-    RegistryStatistics, ArtifactInfo, ArtifactMetadata, CompressionInfo, EncryptionInfo,
-    StorageStatistics, UploadManager, UploadTask, UploadProgress, UploadTaskConfig,
-    UploadResult, DownloadManager, DownloadCache, CacheEntry, CacheStatistics,
-    DownloadTask, DownloadProgress, RetentionManager, CleanupScheduler, CleanupRule,
-    CleanupResult, LocalArtifactStorage, LocalStorageConfig, ArtifactStatus,
-    ChecksumAlgorithm, UploadStatus, DownloadStatus, CleanupCondition, CleanupAction,
+    ArtifactInfo, ArtifactManager, ArtifactMetadata, ArtifactRecord, ArtifactRegistry,
+    ArtifactStatus, ArtifactStorage, CacheEntry, CacheStatistics, ChecksumAlgorithm, CleanupAction,
+    CleanupCondition, CleanupResult, CleanupRule, CleanupScheduler, CompressionInfo, DownloadCache,
+    DownloadManager, DownloadProgress, DownloadStatus, DownloadTask, EncryptionInfo,
+    LocalArtifactStorage, LocalStorageConfig, RegistryMetadata, RegistryStatistics,
+    RetentionManager, StorageStatistics, UploadManager, UploadProgress, UploadResult, UploadStatus,
+    UploadTask, UploadTaskConfig,
 };
 
 // Integration types and functionality

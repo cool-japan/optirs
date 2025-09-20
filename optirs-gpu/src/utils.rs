@@ -2,6 +2,8 @@
 
 // Utility functions for GPU operations
 
+use crate::GpuOptimError;
+
 /// Round size up to next alignment boundary
 pub fn align_size(size: usize, alignment: usize) -> usize {
     if alignment == 0 || !alignment.is_power_of_two() {

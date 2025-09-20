@@ -56,7 +56,9 @@ impl AwsProvider {
 #[async_trait::async_trait]
 impl CloudProvider for AwsProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let instance_type = self.config.instance_types
+        let instance_type = self
+            .config
+            .instance_types
             .get(platform)
             .cloned()
             .unwrap_or_else(|| "t3.micro".to_string());
@@ -106,7 +108,9 @@ impl AzureProvider {
 #[async_trait::async_trait]
 impl CloudProvider for AzureProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let vm_size = self.config.vm_sizes
+        let vm_size = self
+            .config
+            .vm_sizes
             .get(platform)
             .cloned()
             .unwrap_or_else(|| "Standard_B1s".to_string());
@@ -154,7 +158,9 @@ impl GcpProvider {
 #[async_trait::async_trait]
 impl CloudProvider for GcpProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let machine_type = self.config.machine_types
+        let machine_type = self
+            .config
+            .machine_types
             .get(platform)
             .cloned()
             .unwrap_or_else(|| "e2-micro".to_string());
@@ -305,7 +311,10 @@ mod tests {
         };
 
         let provider = AwsProvider::new(config).unwrap();
-        let instance = provider.provision_instance(&PlatformTarget::LinuxX86_64).await.unwrap();
+        let instance = provider
+            .provision_instance(&PlatformTarget::LinuxX86_64)
+            .await
+            .unwrap();
 
         assert_eq!(instance.provider, "aws");
         assert_eq!(instance.platform, PlatformTarget::LinuxX86_64);
@@ -323,7 +332,10 @@ mod tests {
         };
 
         let provider = GitHubActionsProvider::new(config).unwrap();
-        let instance = provider.provision_instance(&PlatformTarget::LinuxX86_64).await.unwrap();
+        let instance = provider
+            .provision_instance(&PlatformTarget::LinuxX86_64)
+            .await
+            .unwrap();
 
         assert_eq!(instance.provider, "github");
         assert_eq!(instance.cost_per_hour, 0.0);

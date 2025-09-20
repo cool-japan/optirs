@@ -76,17 +76,15 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for TrendAnalyzer {
         let mean_x = x_sum / n;
         let mean_y = y_sum / n;
 
-        let numerator: f64 = times.iter().enumerate()
+        let numerator: f64 = times
+            .iter()
+            .enumerate()
             .map(|(i, &y)| (i as f64 - mean_x) * (y - mean_y))
             .sum();
 
-        let denominator_x: f64 = (0..times.len())
-            .map(|i| (i as f64 - mean_x).powi(2))
-            .sum();
+        let denominator_x: f64 = (0..times.len()).map(|i| (i as f64 - mean_x).powi(2)).sum();
 
-        let denominator_y: f64 = times.iter()
-            .map(|&y| (y - mean_y).powi(2))
-            .sum();
+        let denominator_y: f64 = times.iter().map(|&y| (y - mean_y).powi(2)).sum();
 
         let correlation = if denominator_x > 0.0 && denominator_y > 0.0 {
             numerator / (denominator_x * denominator_y).sqrt()
@@ -191,9 +189,8 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
 
         // Calculate statistical measures
         let mean = times.iter().sum::<f64>() / times.len() as f64;
-        let variance = times.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / (times.len() - 1) as f64;
+        let variance =
+            times.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (times.len() - 1) as f64;
         let std_dev = variance.sqrt();
 
         // Prevent division by zero
@@ -255,7 +252,11 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
             vec!["No significant outliers detected".to_string()]
         } else {
             let mut patterns = vec![
-                format!("{} potential outliers found ({:.1}% of data)", outliers.len(), outlier_percentage),
+                format!(
+                    "{} potential outliers found ({:.1}% of data)",
+                    outliers.len(),
+                    outlier_percentage
+                ),
                 format!("Outlier severity: {}", severity),
                 format!("Mean: {:.2}, Std Dev: {:.2}", mean, std_dev),
                 format!("IQR: {:.2} (Q1: {:.2}, Q3: {:.2})", iqr, q1, q3),
@@ -265,7 +266,10 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
                 patterns.push(format!("{} severe outliers (|z| > 3.0)", severe_outliers));
             }
             if moderate_outliers > 0 {
-                patterns.push(format!("{} moderate outliers ({:.1} < |z| <= 3.0)", moderate_outliers, self.z_threshold));
+                patterns.push(format!(
+                    "{} moderate outliers ({:.1} < |z| <= 3.0)",
+                    moderate_outliers, self.z_threshold
+                ));
             }
 
             patterns
@@ -274,7 +278,9 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
         Ok(StatisticalAnalysisResult {
             summary: format!(
                 "Outlier analysis: {} outliers detected ({:.1}% of data, {} severity)",
-                outliers.len(), outlier_percentage, severity
+                outliers.len(),
+                outlier_percentage,
+                severity
             ),
             tests: vec![],
             patterns,
@@ -331,9 +337,7 @@ pub mod stats_utils {
         sorted_data.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let median_val = median(&sorted_data);
 
-        let mut deviations: Vec<f64> = data.iter()
-            .map(|&x| (x - median_val).abs())
-            .collect();
+        let mut deviations: Vec<f64> = data.iter().map(|&x| (x - median_val).abs()).collect();
         deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         median(&deviations)
@@ -436,7 +440,7 @@ mod tests {
 
         // Add outliers
         data.push_back(create_test_record(2000)); // High outlier
-        data.push_back(create_test_record(500));  // Low outlier
+        data.push_back(create_test_record(500)); // Low outlier
 
         let result = analyzer.analyze(&data).unwrap();
 
@@ -457,7 +461,10 @@ mod tests {
         let result = analyzer.analyze(&data).unwrap();
 
         assert_eq!(result.anomalies.len(), 0);
-        assert!(result.patterns.iter().any(|p| p.contains("No significant outliers")));
+        assert!(result
+            .patterns
+            .iter()
+            .any(|p| p.contains("No significant outliers")));
     }
 
     #[test]

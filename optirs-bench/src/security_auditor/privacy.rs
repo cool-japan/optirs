@@ -70,7 +70,11 @@ impl PrivacyGuaranteesAnalyzer {
             name: "Membership Inference Attack".to_string(),
             mechanism: PrivacyMechanism::DifferentialPrivacy,
             attack_scenario: PrivacyAttackScenario::MembershipInference,
-            expected_guarantee: PrivacyGuarantee::new(1.0, 1e-5, CompositionMethod::MomentsAccountant),
+            expected_guarantee: PrivacyGuarantee::new(
+                1.0,
+                1e-5,
+                CompositionMethod::MomentsAccountant,
+            ),
         });
 
         // Budget exhaustion attack test
@@ -78,7 +82,11 @@ impl PrivacyGuaranteesAnalyzer {
             name: "Budget Exhaustion Attack".to_string(),
             mechanism: PrivacyMechanism::DifferentialPrivacy,
             attack_scenario: PrivacyAttackScenario::BudgetExhaustionAttack,
-            expected_guarantee: PrivacyGuarantee::new(1.0, 1e-5, CompositionMethod::MomentsAccountant),
+            expected_guarantee: PrivacyGuarantee::new(
+                1.0,
+                1e-5,
+                CompositionMethod::MomentsAccountant,
+            ),
         });
 
         // Model inversion attack test
@@ -175,7 +183,9 @@ impl PrivacyGuaranteesAnalyzer {
         let execution_time = start_time.elapsed();
 
         // Check if any violations were detected for this test
-        let violations_for_test: Vec<_> = self.violations.iter()
+        let violations_for_test: Vec<_> = self
+            .violations
+            .iter()
             .filter(|v| self.violation_matches_test(v, test))
             .cloned()
             .collect();
@@ -271,9 +281,7 @@ impl PrivacyGuaranteesAnalyzer {
                     violation_magnitude: 0.3,
                 },
                 confidence: 0.68,
-                evidence: vec![
-                    "Dataset properties can be inferred from model behavior".to_string(),
-                ],
+                evidence: vec!["Dataset properties can be inferred from model behavior".to_string()],
             };
 
             self.violations.push(violation);
@@ -333,17 +341,26 @@ impl PrivacyGuaranteesAnalyzer {
                 Some(0)
             },
             recommendations: match budget_status {
-                BudgetStatus::Exhausted => vec!["Privacy budget exhausted - stop processing".to_string()],
-                BudgetStatus::Critical => vec!["Reduce noise multiplier or increase epsilon".to_string()],
+                BudgetStatus::Exhausted => {
+                    vec!["Privacy budget exhausted - stop processing".to_string()]
+                }
+                BudgetStatus::Critical => {
+                    vec!["Reduce noise multiplier or increase epsilon".to_string()]
+                }
                 BudgetStatus::Warning => vec!["Monitor budget usage closely".to_string()],
-                BudgetStatus::Healthy => vec!["Budget usage is within acceptable limits".to_string()],
+                BudgetStatus::Healthy => {
+                    vec!["Budget usage is within acceptable limits".to_string()]
+                }
             },
         };
 
         self.budget_verification.push(verification_result);
 
         // Create violation if budget is critical or exhausted
-        if matches!(budget_status, BudgetStatus::Critical | BudgetStatus::Exhausted) {
+        if matches!(
+            budget_status,
+            BudgetStatus::Critical | BudgetStatus::Exhausted
+        ) {
             let violation = PrivacyViolation {
                 violation_type: PrivacyViolationType::BudgetExceeded,
                 detected_params: PrivacyParameterViolation {
@@ -351,11 +368,14 @@ impl PrivacyGuaranteesAnalyzer {
                     actual_epsilon: current_epsilon_used,
                     expected_delta: test.expected_guarantee.delta,
                     actual_delta: test.expected_guarantee.delta,
-                    violation_magnitude: (current_epsilon_used - test.expected_guarantee.epsilon).abs(),
+                    violation_magnitude: (current_epsilon_used - test.expected_guarantee.epsilon)
+                        .abs(),
                 },
                 confidence: 1.0,
-                evidence: vec![format!("Privacy budget usage: {:.2}%",
-                    (current_epsilon_used / test.expected_guarantee.epsilon) * 100.0)],
+                evidence: vec![format!(
+                    "Privacy budget usage: {:.2}%",
+                    (current_epsilon_used / test.expected_guarantee.epsilon) * 100.0
+                )],
             };
 
             self.violations.push(violation);
@@ -448,7 +468,11 @@ impl PrivacyGuaranteesAnalyzer {
     }
 
     /// Generate privacy-specific recommendations
-    fn generate_privacy_recommendations(&self, test: &PrivacyTest, violations: &[PrivacyViolation]) -> Vec<String> {
+    fn generate_privacy_recommendations(
+        &self,
+        test: &PrivacyTest,
+        violations: &[PrivacyViolation],
+    ) -> Vec<String> {
         if violations.is_empty() {
             return vec!["Privacy guarantees satisfied".to_string()];
         }
@@ -458,16 +482,23 @@ impl PrivacyGuaranteesAnalyzer {
         for violation in violations {
             match violation.violation_type {
                 PrivacyViolationType::MembershipDisclosure => {
-                    recommendations.push("Increase noise multiplier or reduce model complexity".to_string());
-                    recommendations.push("Consider using stronger differential privacy parameters".to_string());
+                    recommendations
+                        .push("Increase noise multiplier or reduce model complexity".to_string());
+                    recommendations.push(
+                        "Consider using stronger differential privacy parameters".to_string(),
+                    );
                 }
                 PrivacyViolationType::InformationLeakage => {
-                    recommendations.push("Implement gradient clipping to reduce information leakage".to_string());
+                    recommendations.push(
+                        "Implement gradient clipping to reduce information leakage".to_string(),
+                    );
                     recommendations.push("Use secure aggregation protocols".to_string());
                 }
                 PrivacyViolationType::BudgetExceeded => {
-                    recommendations.push("Stop processing to avoid further budget consumption".to_string());
-                    recommendations.push("Reset privacy budget or increase epsilon parameter".to_string());
+                    recommendations
+                        .push("Stop processing to avoid further budget consumption".to_string());
+                    recommendations
+                        .push("Reset privacy budget or increase epsilon parameter".to_string());
                 }
                 PrivacyViolationType::InsufficientNoise => {
                     recommendations.push("Increase noise scale parameter".to_string());
@@ -492,7 +523,8 @@ impl PrivacyGuaranteesAnalyzer {
                 recommendations.push("Implement secure multi-party computation".to_string());
             }
             PrivacyMechanism::SecureMultiParty => {
-                recommendations.push("Audit protocol implementation for side-channel leaks".to_string());
+                recommendations
+                    .push("Audit protocol implementation for side-channel leaks".to_string());
             }
         }
 
@@ -505,23 +537,33 @@ impl PrivacyGuaranteesAnalyzer {
     fn update_audit_statistics(&mut self) {
         let total_tests = self.test_cases.len();
         let violations_detected = self.violations.len();
-        let budget_violations = self.budget_verification
+        let budget_violations = self
+            .budget_verification
             .iter()
-            .filter(|b| matches!(b.budget_status, BudgetStatus::Critical | BudgetStatus::Exhausted))
+            .filter(|b| {
+                matches!(
+                    b.budget_status,
+                    BudgetStatus::Critical | BudgetStatus::Exhausted
+                )
+            })
             .count();
 
         let (avg_epsilon_violation, avg_delta_violation) = if !self.violations.is_empty() {
-            let total_epsilon: f64 = self.violations
+            let total_epsilon: f64 = self
+                .violations
                 .iter()
                 .map(|v| v.detected_params.violation_magnitude)
                 .sum();
-            let total_delta: f64 = self.violations
+            let total_delta: f64 = self
+                .violations
                 .iter()
                 .map(|v| (v.detected_params.actual_delta - v.detected_params.expected_delta).abs())
                 .sum();
 
-            (total_epsilon / self.violations.len() as f64,
-             total_delta / self.violations.len() as f64)
+            (
+                total_epsilon / self.violations.len() as f64,
+                total_delta / self.violations.len() as f64,
+            )
         } else {
             (0.0, 0.0)
         };
@@ -536,15 +578,13 @@ impl PrivacyGuaranteesAnalyzer {
         let most_common_violation = violation_counts
             .iter()
             .max_by_key(|(_, &count)| count)
-            .and_then(|(type_name, _)| {
-                match type_name.as_str() {
-                    "MembershipDisclosure" => Some(PrivacyViolationType::MembershipDisclosure),
-                    "InformationLeakage" => Some(PrivacyViolationType::InformationLeakage),
-                    "BudgetExceeded" => Some(PrivacyViolationType::BudgetExceeded),
-                    "InsufficientNoise" => Some(PrivacyViolationType::InsufficientNoise),
-                    "CorrelationExposure" => Some(PrivacyViolationType::CorrelationExposure),
-                    _ => None,
-                }
+            .and_then(|(type_name, _)| match type_name.as_str() {
+                "MembershipDisclosure" => Some(PrivacyViolationType::MembershipDisclosure),
+                "InformationLeakage" => Some(PrivacyViolationType::InformationLeakage),
+                "BudgetExceeded" => Some(PrivacyViolationType::BudgetExceeded),
+                "InsufficientNoise" => Some(PrivacyViolationType::InsufficientNoise),
+                "CorrelationExposure" => Some(PrivacyViolationType::CorrelationExposure),
+                _ => None,
             });
 
         self.audit_stats = PrivacyAuditStatistics {

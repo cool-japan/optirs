@@ -1,17 +1,19 @@
 // Multi-GPU synchronization support for distributed training
 
 use num_traits::Float;
+use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuDataType, GpuKernelHandle};
 use scirs2_core::ndarray_ext::{ArrayBase, Data, DataMut, Dimension};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::backends::GpuBackend;
+use crate::GpuOptimError;
 
 #[cfg(feature = "gpu")]
 use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuKernelHandle};
 
 /// Multi-GPU synchronization strategy
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyncStrategy {
     /// Ring all-reduce (efficient for large tensors)
     RingAllReduce,
@@ -72,7 +74,7 @@ impl Default for MultiGpuConfig {
 }
 
 /// Multi-GPU synchronization manager
-pub struct MultiGpuSync<A: Float> {
+pub struct MultiGpuSync<A: Float + GpuDataType> {
     /// GPU context
     context: Arc<GpuContext>,
     /// Configuration
@@ -103,7 +105,7 @@ struct SyncKernels {
 }
 
 /// Workspace buffers for synchronization
-struct WorkspaceBuffers<A: Float> {
+struct WorkspaceBuffers<A: Float + GpuDataType> {
     recv_buffer: Option<GpuBuffer<A>>,
     workspace: Option<GpuBuffer<A>>,
     compressed_values: Option<GpuBuffer<A>>,
@@ -141,11 +143,11 @@ impl CommunicationPerformanceMonitor {
     }
 
     fn record_communication(&mut self, strategy: SyncStrategy, data_bytes: u64, timeus: u64) {
-        self.total_comm_time_us += time_us;
+        self.total_comm_time_us += timeus;
         self.total_data_bytes += data_bytes;
         self.comm_operations += 1;
 
-        let bandwidth_gb_s = (data_bytes as f64) / (time_us as f64 / 1_000_000.0) / 1e9;
+        let bandwidth_gb_s = (data_bytes as f64) / (timeus as f64 / 1_000_000.0) / 1e9;
         self.bandwidth_history.push_back(bandwidth_gb_s);
 
         if self.bandwidth_history.len() > 1000 {
@@ -157,7 +159,7 @@ impl CommunicationPerformanceMonitor {
             .strategy_performance
             .entry(strategy)
             .or_insert_with(StrategyPerformanceMetrics::new);
-        metrics.update(bandwidth_gb_s, time_us);
+        metrics.update(bandwidth_gb_s, timeus);
     }
 
     fn get_average_bandwidth(&self) -> f64 {
@@ -173,7 +175,7 @@ impl CommunicationPerformanceMonitor {
         let mut best_score = 0.0;
 
         for (strategy, metrics) in &self.strategy_performance {
-            let score = metrics.calculate_score(tensor_size);
+            let score = metrics.calculate_score(tensorsize);
             if score > best_score {
                 best_score = score;
                 best_strategy = *strategy;
@@ -205,7 +207,7 @@ impl StrategyPerformanceMetrics {
 
     fn update(&mut self, bandwidth_gb_s: f64, latencyus: u64) {
         self.bandwidth_samples.push_back(bandwidth_gb_s);
-        self.latency_samples.push_back(latency_us);
+        self.latency_samples.push_back(latencyus);
 
         if self.bandwidth_samples.len() > 100 {
             self.bandwidth_samples.pop_front();
@@ -223,7 +225,7 @@ impl StrategyPerformanceMetrics {
 
     fn calculate_score(&self, tensorsize: usize) -> f64 {
         // Higher score for better efficiency, adjusted for tensor _size
-        let size_factor = if tensor_size > 1000000 { 2.0 } else { 1.0 }; // Favor strategies for large tensors
+        let size_factor = if tensorsize > 1000000 { 2.0 } else { 1.0 }; // Favor strategies for large tensors
         self.efficiency_score * size_factor
     }
 }
@@ -255,7 +257,7 @@ impl AdaptiveCommunicationSelector {
     }
 
     fn should_evaluate_strategy(&self, currentstep: usize) -> bool {
-        current_step - self.last_switch_step >= self.switch_cooldown
+        currentstep - self.last_switch_step >= self.switch_cooldown
     }
 
     fn evaluate_and_switch(
@@ -328,7 +330,7 @@ pub struct CommunicationPerformanceStats {
     pub step_count: usize,
 }
 
-impl<A: Float + Send + Sync> MultiGpuSync<A> {
+impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
     /// Create a new multi-GPU synchronization manager
     pub fn new(
         context: Arc<GpuContext>,
@@ -853,11 +855,11 @@ pub struct MultiGpuSetup {
 
 impl MultiGpuSetup {
     /// Initialize multi-GPU setup
-    pub fn new(_num_gpus: usize, max_paramsize: usize) -> Result<Self, GpuOptimError> {
+    pub fn new(num_gpus: usize, max_param_size: usize) -> Result<Self, GpuOptimError> {
         let mut contexts = Vec::new();
         let mut sync_managers = Vec::new();
 
-        for rank in 0.._num_gpus {
+        for rank in 0..num_gpus {
             // Create GPU context for each device
             let context = Arc::new(GpuContext::new(scirs2_core::gpu::GpuBackend::Cuda)?);
 

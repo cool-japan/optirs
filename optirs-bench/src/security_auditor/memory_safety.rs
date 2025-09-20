@@ -153,7 +153,9 @@ impl MemorySafetyAnalyzer {
         let execution_time = start_time.elapsed();
 
         // Check for memory issues related to this test
-        let test_issues: Vec<_> = self.memory_issues.iter()
+        let test_issues: Vec<_> = self
+            .memory_issues
+            .iter()
             .rev()
             .take(1) // Take the most recent issue
             .cloned()
@@ -201,7 +203,10 @@ impl MemorySafetyAnalyzer {
             let issue = MemoryIssue {
                 issue_type: MemoryIssueType::Leak,
                 severity: SeverityLevel::Medium,
-                description: format!("Large allocation of {} bytes may indicate memory leak", large_size),
+                description: format!(
+                    "Large allocation of {} bytes may indicate memory leak",
+                    large_size
+                ),
                 stack_trace: Some("test_large_array_allocation".to_string()),
                 memory_location: Some(MemoryLocation {
                     function: test.name.clone(),
@@ -296,7 +301,8 @@ impl MemorySafetyAnalyzer {
         match test.vulnerability_type {
             MemoryVulnerabilityType::MemoryLeak => {
                 recommendations.push("Implement proper cleanup in drop handlers".to_string());
-                recommendations.push("Use RAII patterns for automatic resource management".to_string());
+                recommendations
+                    .push("Use RAII patterns for automatic resource management".to_string());
             }
             MemoryVulnerabilityType::BufferOverflow => {
                 recommendations.push("Use bounds checking for array accesses".to_string());
@@ -304,10 +310,12 @@ impl MemorySafetyAnalyzer {
             }
             MemoryVulnerabilityType::StackOverflow => {
                 recommendations.push("Limit recursion depth".to_string());
-                recommendations.push("Consider iterative alternatives to recursive algorithms".to_string());
+                recommendations
+                    .push("Consider iterative alternatives to recursive algorithms".to_string());
             }
             MemoryVulnerabilityType::UseAfterFree => {
-                recommendations.push("Use Rust's ownership system to prevent use-after-free".to_string());
+                recommendations
+                    .push("Use Rust's ownership system to prevent use-after-free".to_string());
             }
             MemoryVulnerabilityType::DoubleFree => {
                 recommendations.push("Avoid manual memory management where possible".to_string());

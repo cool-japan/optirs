@@ -22,7 +22,9 @@ pub struct PerformanceDatabase<A: Float> {
     metadata: DatabaseMetadata,
 }
 
-impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> PerformanceDatabase<A> {
+impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync>
+    PerformanceDatabase<A>
+{
     /// Create a new empty performance database
     pub fn new() -> Self {
         Self {
@@ -158,7 +160,10 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Per
     }
 
     /// Get records for a specific commit hash
-    pub fn get_records_by_commit(&self, commit_hash: &str) -> Vec<(&String, &PerformanceRecord<A>)> {
+    pub fn get_records_by_commit(
+        &self,
+        commit_hash: &str,
+    ) -> Vec<(&String, &PerformanceRecord<A>)> {
         let mut results = Vec::new();
         for (key, history) in &self.history {
             for record in history {
@@ -269,7 +274,9 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Per
     }
 }
 
-impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Default for PerformanceDatabase<A> {
+impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync> Default
+    for PerformanceDatabase<A>
+{
     fn default() -> Self {
         Self::new()
     }

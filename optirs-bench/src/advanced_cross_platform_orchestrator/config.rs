@@ -458,35 +458,26 @@ impl Default for TestMatrixConfig {
                 },
             ],
             rust_versions: vec!["stable".to_string(), "beta".to_string()],
-            feature_combinations: vec![
-                FeatureCombination {
-                    name: "default".to_string(),
-                    enabled_features: vec!["default".to_string()],
-                    disabled_features: vec![],
-                    importance: FeatureImportance::Critical,
-                },
-            ],
-            optimization_levels: vec![
-                OptimizationLevel::Debug,
-                OptimizationLevel::Release,
-            ],
-            build_profiles: vec![
-                BuildProfile {
-                    name: "test".to_string(),
-                    settings: HashMap::new(),
-                    env_vars: HashMap::new(),
-                    rustflags: vec![],
-                },
-            ],
-            test_scenarios: vec![
-                TestScenario {
-                    name: "unit_tests".to_string(),
-                    commands: vec!["cargo test".to_string()],
-                    category: TestCategory::Unit,
-                    timeout: Duration::from_secs(300),
-                    expected_results: HashMap::new(),
-                },
-            ],
+            feature_combinations: vec![FeatureCombination {
+                name: "default".to_string(),
+                enabled_features: vec!["default".to_string()],
+                disabled_features: vec![],
+                importance: FeatureImportance::Critical,
+            }],
+            optimization_levels: vec![OptimizationLevel::Debug, OptimizationLevel::Release],
+            build_profiles: vec![BuildProfile {
+                name: "test".to_string(),
+                settings: HashMap::new(),
+                env_vars: HashMap::new(),
+                rustflags: vec![],
+            }],
+            test_scenarios: vec![TestScenario {
+                name: "unit_tests".to_string(),
+                commands: vec!["cargo test".to_string()],
+                category: TestCategory::Unit,
+                timeout: Duration::from_secs(300),
+                expected_results: HashMap::new(),
+            }],
         }
     }
 }

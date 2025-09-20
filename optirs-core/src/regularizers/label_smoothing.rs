@@ -20,7 +20,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::array;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::LabelSmoothing;
 ///
 /// let label_smooth = LabelSmoothing::new(0.1, 3).unwrap();
@@ -183,7 +183,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_label_smoothing_creation() {

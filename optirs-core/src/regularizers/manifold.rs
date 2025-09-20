@@ -18,7 +18,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```no_run
-/// use scirs2_core::ndarray_ext::array;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::{ManifoldRegularization, Regularizer};
 ///
 /// let mut manifold_reg = ManifoldRegularization::new(0.01);
@@ -186,7 +186,7 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_manifold_creation() {

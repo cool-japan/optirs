@@ -4,7 +4,7 @@
 // SciRS2 integration policy compliance.
 
 // Re-export from scirs2-core for SciRS2 compliance
-pub use scirs2_core::error::{CoreError as OptimError, Result};
+pub use scirs2_core::error::{CoreError as OptimError, CoreResult as Result};
 
 // TPU-specific error types
 #[derive(Debug, thiserror::Error)]

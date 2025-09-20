@@ -90,7 +90,9 @@ impl InputValidationAnalyzer {
             description: "Tests handling of negative learning rates".to_string(),
             category: ValidationCategory::MalformedInput,
             attack_vector: AttackVector::ExtremeValues,
-            expected_behavior: ExpectedBehavior::RejectWithError("Negative learning rate".to_string()),
+            expected_behavior: ExpectedBehavior::RejectWithError(
+                "Negative learning rate".to_string(),
+            ),
             payload_generator: PayloadType::NegativeLearningRate,
         });
 
@@ -171,30 +173,14 @@ impl InputValidationAnalyzer {
 
         // Simulate test execution based on attack vector and payload
         let (status, vulnerability, error_message) = match &test.attack_vector {
-            AttackVector::NaNInjection => {
-                self.simulate_nan_injection_test()
-            },
-            AttackVector::ExtremeValues => {
-                self.simulate_extreme_values_test()
-            },
-            AttackVector::DimensionMismatch => {
-                self.simulate_dimension_mismatch_test()
-            },
-            AttackVector::EmptyArrays => {
-                self.simulate_empty_arrays_test()
-            },
-            AttackVector::NegativeDimensions => {
-                self.simulate_negative_dimensions_test()
-            },
-            AttackVector::MalformedGradients => {
-                self.simulate_malformed_gradients_test()
-            },
-            AttackVector::PrivacyParameterAttack => {
-                self.simulate_privacy_parameter_attack_test()
-            },
-            AttackVector::MemoryExhaustionAttack => {
-                self.simulate_memory_exhaustion_test()
-            },
+            AttackVector::NaNInjection => self.simulate_nan_injection_test(),
+            AttackVector::ExtremeValues => self.simulate_extreme_values_test(),
+            AttackVector::DimensionMismatch => self.simulate_dimension_mismatch_test(),
+            AttackVector::EmptyArrays => self.simulate_empty_arrays_test(),
+            AttackVector::NegativeDimensions => self.simulate_negative_dimensions_test(),
+            AttackVector::MalformedGradients => self.simulate_malformed_gradients_test(),
+            AttackVector::PrivacyParameterAttack => self.simulate_privacy_parameter_attack_test(),
+            AttackVector::MemoryExhaustionAttack => self.simulate_memory_exhaustion_test(),
         };
 
         let execution_time = start_time.elapsed();
@@ -246,7 +232,11 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("NaN values accepted without validation".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("NaN values accepted without validation".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
@@ -273,20 +263,27 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Extreme values cause numerical overflow".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Extreme values cause numerical overflow".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
     }
 
     /// Simulate dimension mismatch test
-    fn simulate_dimension_mismatch_test(&self) -> (TestStatus, Option<Vulnerability>, Option<String>) {
+    fn simulate_dimension_mismatch_test(
+        &self,
+    ) -> (TestStatus, Option<Vulnerability>, Option<String>) {
         if self.should_detect_vulnerability(0.4) {
             let vulnerability = Vulnerability {
                 vulnerability_type: VulnerabilityType::BufferOverflow,
                 cvss_score: 7.2,
                 description: "Dimension validation bypass leading to buffer overflow".to_string(),
-                proof_of_concept: "Provided mismatched array dimensions bypassing validation".to_string(),
+                proof_of_concept: "Provided mismatched array dimensions bypassing validation"
+                    .to_string(),
                 impact: ImpactAssessment {
                     confidentiality: ImpactLevel::Medium,
                     integrity: ImpactLevel::High,
@@ -300,7 +297,11 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Dimension mismatch not properly validated".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Dimension mismatch not properly validated".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
@@ -313,7 +314,8 @@ impl InputValidationAnalyzer {
                 vulnerability_type: VulnerabilityType::DenialOfService,
                 cvss_score: 4.0,
                 description: "Empty arrays cause application crash".to_string(),
-                proof_of_concept: "Provided zero-length arrays causing division by zero".to_string(),
+                proof_of_concept: "Provided zero-length arrays causing division by zero"
+                    .to_string(),
                 impact: ImpactAssessment {
                     confidentiality: ImpactLevel::None,
                     integrity: ImpactLevel::Low,
@@ -327,20 +329,27 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Empty arrays not handled gracefully".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Empty arrays not handled gracefully".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
     }
 
     /// Simulate negative dimensions test
-    fn simulate_negative_dimensions_test(&self) -> (TestStatus, Option<Vulnerability>, Option<String>) {
+    fn simulate_negative_dimensions_test(
+        &self,
+    ) -> (TestStatus, Option<Vulnerability>, Option<String>) {
         if self.should_detect_vulnerability(0.35) {
             let vulnerability = Vulnerability {
                 vulnerability_type: VulnerabilityType::InputValidationBypass,
                 cvss_score: 5.8,
                 description: "Negative dimensions bypass validation checks".to_string(),
-                proof_of_concept: "Provided negative array dimensions causing unexpected behavior".to_string(),
+                proof_of_concept: "Provided negative array dimensions causing unexpected behavior"
+                    .to_string(),
                 impact: ImpactAssessment {
                     confidentiality: ImpactLevel::Low,
                     integrity: ImpactLevel::Medium,
@@ -354,20 +363,27 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Negative dimensions not validated".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Negative dimensions not validated".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
     }
 
     /// Simulate malformed gradients test
-    fn simulate_malformed_gradients_test(&self) -> (TestStatus, Option<Vulnerability>, Option<String>) {
+    fn simulate_malformed_gradients_test(
+        &self,
+    ) -> (TestStatus, Option<Vulnerability>, Option<String>) {
         if self.should_detect_vulnerability(0.3) {
             let vulnerability = Vulnerability {
                 vulnerability_type: VulnerabilityType::MemoryCorruption,
                 cvss_score: 8.1,
                 description: "Malformed gradients cause memory corruption".to_string(),
-                proof_of_concept: "Injected malformed gradient arrays with invalid pointers".to_string(),
+                proof_of_concept: "Injected malformed gradient arrays with invalid pointers"
+                    .to_string(),
                 impact: ImpactAssessment {
                     confidentiality: ImpactLevel::High,
                     integrity: ImpactLevel::High,
@@ -381,20 +397,28 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Malformed gradients cause memory corruption".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Malformed gradients cause memory corruption".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
     }
 
     /// Simulate privacy parameter attack test
-    fn simulate_privacy_parameter_attack_test(&self) -> (TestStatus, Option<Vulnerability>, Option<String>) {
+    fn simulate_privacy_parameter_attack_test(
+        &self,
+    ) -> (TestStatus, Option<Vulnerability>, Option<String>) {
         if self.should_detect_vulnerability(0.4) {
             let vulnerability = Vulnerability {
                 vulnerability_type: VulnerabilityType::PrivacyViolation,
                 cvss_score: 7.5,
-                description: "Privacy parameters can be manipulated to reduce protection".to_string(),
-                proof_of_concept: "Modified epsilon/delta parameters bypassing privacy guarantees".to_string(),
+                description: "Privacy parameters can be manipulated to reduce protection"
+                    .to_string(),
+                proof_of_concept: "Modified epsilon/delta parameters bypassing privacy guarantees"
+                    .to_string(),
                 impact: ImpactAssessment {
                     confidentiality: ImpactLevel::High,
                     integrity: ImpactLevel::Medium,
@@ -408,14 +432,20 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Privacy parameters not properly validated".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Privacy parameters not properly validated".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
     }
 
     /// Simulate memory exhaustion test
-    fn simulate_memory_exhaustion_test(&self) -> (TestStatus, Option<Vulnerability>, Option<String>) {
+    fn simulate_memory_exhaustion_test(
+        &self,
+    ) -> (TestStatus, Option<Vulnerability>, Option<String>) {
         if self.should_detect_vulnerability(0.2) {
             let vulnerability = Vulnerability {
                 vulnerability_type: VulnerabilityType::DenialOfService,
@@ -435,7 +465,11 @@ impl InputValidationAnalyzer {
                     attack_vector: AccessibilityLevel::Network,
                 },
             };
-            (TestStatus::Failed, Some(vulnerability), Some("Memory exhaustion protection insufficient".to_string()))
+            (
+                TestStatus::Failed,
+                Some(vulnerability),
+                Some("Memory exhaustion protection insufficient".to_string()),
+            )
         } else {
             (TestStatus::Passed, None, None)
         }
@@ -550,7 +584,10 @@ impl InputValidationAnalyzer {
 
     /// Get test results by severity
     pub fn get_results_by_severity(&self, severity: SeverityLevel) -> Vec<&ValidationTestResult> {
-        self.results.iter().filter(|r| r.severity == severity).collect()
+        self.results
+            .iter()
+            .filter(|r| r.severity == severity)
+            .collect()
     }
 
     /// Clear all results

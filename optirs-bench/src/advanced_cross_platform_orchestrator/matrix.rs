@@ -4,8 +4,8 @@
 // Rust versions, features, and optimization levels for thorough testing.
 
 use crate::error::Result;
-use std::time::Duration;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::config::*;
 use super::types::*;
@@ -47,7 +47,7 @@ impl TestMatrixGenerator {
                                     required_for_release: platform_spec.required_for_release,
                                     estimated_duration: scenario.timeout,
                                     resource_requirements: self.calculate_resource_requirements(
-                                        &platform_spec.resource_requirements
+                                        &platform_spec.resource_requirements,
                                     ),
                                 };
 
@@ -88,10 +88,15 @@ impl TestMatrixGenerator {
     }
 
     /// Filter matrix by criteria
-    pub fn filter_matrix(&self, matrix: Vec<TestMatrixEntry>, filter: MatrixFilter) -> Vec<TestMatrixEntry> {
-        matrix.into_iter().filter(|entry| {
-            self.matches_filter(entry, &filter)
-        }).collect()
+    pub fn filter_matrix(
+        &self,
+        matrix: Vec<TestMatrixEntry>,
+        filter: MatrixFilter,
+    ) -> Vec<TestMatrixEntry> {
+        matrix
+            .into_iter()
+            .filter(|entry| self.matches_filter(entry, &filter))
+            .collect()
     }
 
     /// Check if entry matches filter
@@ -118,7 +123,8 @@ impl TestMatrixGenerator {
     /// Get matrix statistics
     pub fn get_matrix_statistics(&self, matrix: &[TestMatrixEntry]) -> MatrixStatistics {
         let total_entries = matrix.len();
-        let total_platforms = matrix.iter()
+        let total_platforms = matrix
+            .iter()
             .map(|e| &e.platform)
             .collect::<std::collections::HashSet<_>>()
             .len();
@@ -128,9 +134,7 @@ impl TestMatrixGenerator {
             *platform_counts.entry(entry.platform.clone()).or_insert(0) += 1;
         }
 
-        let estimated_total_time: Duration = matrix.iter()
-            .map(|e| e.estimated_duration)
-            .sum();
+        let estimated_total_time: Duration = matrix.iter().map(|e| e.estimated_duration).sum();
 
         MatrixStatistics {
             total_entries,

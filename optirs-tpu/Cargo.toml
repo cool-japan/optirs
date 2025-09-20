@@ -19,6 +19,7 @@ scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
 # ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
 num-traits = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 log = { workspace = true }

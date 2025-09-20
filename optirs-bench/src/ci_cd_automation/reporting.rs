@@ -13,12 +13,12 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use super::config::{
-    ChartStyleConfig, ColorTheme, ReportingConfig, ReportTemplateConfig,
-    ReportStylingConfig, ReportDistributionConfig
+    ChartStyleConfig, ColorTheme, ReportDistributionConfig, ReportStylingConfig,
+    ReportTemplateConfig, ReportingConfig,
 };
 use super::test_execution::{
-    CiCdTestResult, TestExecutionStatus, TestSuiteStatistics,
-    ResourceUsageReport, RegressionAnalysisResult
+    CiCdTestResult, RegressionAnalysisResult, ResourceUsageReport, TestExecutionStatus,
+    TestSuiteStatistics,
 };
 
 /// Report generator for CI/CD automation results
@@ -472,27 +472,37 @@ impl ReportGenerator {
         // Prepare template variables
         let mut variables = HashMap::new();
         variables.insert("title".to_string(), "Performance Test Report".to_string());
-        variables.insert("total_tests".to_string(), statistics.total_tests.to_string());
+        variables.insert(
+            "total_tests".to_string(),
+            statistics.total_tests.to_string(),
+        );
         variables.insert("passed_tests".to_string(), statistics.passed.to_string());
         variables.insert("failed_tests".to_string(), statistics.failed.to_string());
-        variables.insert("success_rate".to_string(), format!("{:.1}%", statistics.success_rate * 100.0));
+        variables.insert(
+            "success_rate".to_string(),
+            format!("{:.1}%", statistics.success_rate * 100.0),
+        );
 
         // Generate chart data
         let charts = self.generate_chart_data(test_results, statistics)?;
 
         // Load and process template
         let template = self.load_html_template()?;
-        let content = self.template_engine.process_template(&template, &variables)?;
+        let content = self
+            .template_engine
+            .process_template(&template, &variables)?;
 
         // Include charts and styling
         let styled_content = self.apply_html_styling(&content, &charts)?;
 
         // Write to file
-        fs::create_dir_all(output_dir)
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to create output directory: {}", e)))?;
+        fs::create_dir_all(output_dir).map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
+        })?;
 
-        fs::write(&report_path, styled_content)
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to write HTML report: {}", e)))?;
+        fs::write(&report_path, styled_content).map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to write HTML report: {}", e))
+        })?;
 
         Ok(GeneratedReport {
             report_type: ReportType::HTML,
@@ -523,11 +533,13 @@ impl ReportGenerator {
             generated_at: SystemTime::now(),
         };
 
-        let json_content = serde_json::to_string_pretty(&report_data)
-            .map_err(|e| OptimError::Serialization(format!("Failed to serialize JSON report: {}", e)))?;
+        let json_content = serde_json::to_string_pretty(&report_data).map_err(|e| {
+            OptimError::Serialization(format!("Failed to serialize JSON report: {}", e))
+        })?;
 
-        fs::create_dir_all(output_dir)
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to create output directory: {}", e)))?;
+        fs::create_dir_all(output_dir).map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
+        })?;
 
         fs::write(&report_path, json_content)
             .map_err(|e| OptimError::IO(format!("Failed to write JSON report: {}", e)))?;
@@ -553,8 +565,9 @@ impl ReportGenerator {
 
         let xml_content = self.create_junit_xml(test_results, statistics)?;
 
-        fs::create_dir_all(output_dir)
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to create output directory: {}", e)))?;
+        fs::create_dir_all(output_dir).map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
+        })?;
 
         fs::write(&report_path, xml_content)
             .map_err(|e| OptimError::IO(format!("Failed to write JUnit report: {}", e)))?;
@@ -580,8 +593,9 @@ impl ReportGenerator {
 
         let markdown_content = self.create_markdown_content(test_results, statistics)?;
 
-        fs::create_dir_all(output_dir)
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to create output directory: {}", e)))?;
+        fs::create_dir_all(output_dir).map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
+        })?;
 
         fs::write(&report_path, markdown_content)
             .map_err(|e| OptimError::IO(format!("Failed to write Markdown report: {}", e)))?;
@@ -610,11 +624,15 @@ impl ReportGenerator {
 
         // In a real implementation, this would use a PDF generation library
         // For now, just write the HTML content with a .pdf extension as a placeholder
-        fs::create_dir_all(output_dir)
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to create output directory: {}", e)))?;
+        fs::create_dir_all(output_dir).map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
+        })?;
 
-        fs::write(&report_path, format!("<!-- PDF Report Content -->\n{}", html_content))
-            .map_err(|e| OptimError::IO(format!("Failed to write PDF report: {}", e)))?;
+        fs::write(
+            &report_path,
+            format!("<!-- PDF Report Content -->\n{}", html_content),
+        )
+        .map_err(|e| OptimError::IO(format!("Failed to write PDF report: {}", e)))?;
 
         Ok(GeneratedReport {
             report_type: ReportType::PDF,
@@ -627,7 +645,11 @@ impl ReportGenerator {
     }
 
     /// Generate chart data for visualizations
-    fn generate_chart_data(&self, test_results: &[CiCdTestResult], _statistics: &TestSuiteStatistics) -> Result<Vec<ChartData>> {
+    fn generate_chart_data(
+        &self,
+        test_results: &[CiCdTestResult],
+        _statistics: &TestSuiteStatistics,
+    ) -> Result<Vec<ChartData>> {
         let mut charts = Vec::new();
 
         // Test results pie chart
@@ -684,7 +706,10 @@ impl ReportGenerator {
     }
 
     /// Create performance timeline chart
-    fn create_performance_timeline_chart(&self, test_results: &[CiCdTestResult]) -> Result<ChartData> {
+    fn create_performance_timeline_chart(
+        &self,
+        test_results: &[CiCdTestResult],
+    ) -> Result<ChartData> {
         let mut data_points = Vec::new();
 
         for result in test_results {
@@ -722,14 +747,20 @@ impl ReportGenerator {
             memory_points.push(DataPoint {
                 x: DataValue::String(result.test_name.clone()),
                 y: DataValue::Number(result.resource_usage.peak_memory_mb),
-                label: Some(format!("{}: {:.1} MB", result.test_name, result.resource_usage.peak_memory_mb)),
+                label: Some(format!(
+                    "{}: {:.1} MB",
+                    result.test_name, result.resource_usage.peak_memory_mb
+                )),
                 metadata: HashMap::new(),
             });
 
             cpu_points.push(DataPoint {
                 x: DataValue::String(result.test_name.clone()),
                 y: DataValue::Number(result.resource_usage.peak_cpu_percent),
-                label: Some(format!("{}: {:.1}%", result.test_name, result.resource_usage.peak_cpu_percent)),
+                label: Some(format!(
+                    "{}: {:.1}%",
+                    result.test_name, result.resource_usage.peak_cpu_percent
+                )),
                 metadata: HashMap::new(),
             });
         }
@@ -758,7 +789,10 @@ impl ReportGenerator {
     }
 
     /// Analyze performance trends
-    fn analyze_performance_trends(&self, test_results: &[CiCdTestResult]) -> Result<Vec<PerformanceTrendAnalysis>> {
+    fn analyze_performance_trends(
+        &self,
+        test_results: &[CiCdTestResult],
+    ) -> Result<Vec<PerformanceTrendAnalysis>> {
         let mut trends = Vec::new();
 
         // Execution time trend
@@ -773,7 +807,10 @@ impl ReportGenerator {
     }
 
     /// Analyze execution time trend
-    fn analyze_execution_time_trend(&self, test_results: &[CiCdTestResult]) -> Result<PerformanceTrendAnalysis> {
+    fn analyze_execution_time_trend(
+        &self,
+        test_results: &[CiCdTestResult],
+    ) -> Result<PerformanceTrendAnalysis> {
         let mut data_points = Vec::new();
 
         for result in test_results {
@@ -789,10 +826,18 @@ impl ReportGenerator {
 
         // Simple trend analysis
         let trend_direction = if data_points.len() >= 2 {
-            let first_half_avg = data_points.iter().take(data_points.len() / 2)
-                .map(|p| p.value).sum::<f64>() / (data_points.len() / 2) as f64;
-            let second_half_avg = data_points.iter().skip(data_points.len() / 2)
-                .map(|p| p.value).sum::<f64>() / (data_points.len() - data_points.len() / 2) as f64;
+            let first_half_avg = data_points
+                .iter()
+                .take(data_points.len() / 2)
+                .map(|p| p.value)
+                .sum::<f64>()
+                / (data_points.len() / 2) as f64;
+            let second_half_avg = data_points
+                .iter()
+                .skip(data_points.len() / 2)
+                .map(|p| p.value)
+                .sum::<f64>()
+                / (data_points.len() - data_points.len() / 2) as f64;
 
             if second_half_avg > first_half_avg * 1.1 {
                 TrendDirection::Degrading
@@ -808,7 +853,7 @@ impl ReportGenerator {
         Ok(PerformanceTrendAnalysis {
             metric_name: "Execution Time".to_string(),
             trend_direction,
-            trend_strength: 0.7, // Simplified
+            trend_strength: 0.7,            // Simplified
             statistical_significance: 0.95, // Simplified
             data_points,
             summary: "Execution time trend analysis based on recent test runs".to_string(),
@@ -816,7 +861,10 @@ impl ReportGenerator {
     }
 
     /// Analyze memory usage trend
-    fn analyze_memory_usage_trend(&self, test_results: &[CiCdTestResult]) -> Result<PerformanceTrendAnalysis> {
+    fn analyze_memory_usage_trend(
+        &self,
+        test_results: &[CiCdTestResult],
+    ) -> Result<PerformanceTrendAnalysis> {
         let mut data_points = Vec::new();
 
         for result in test_results {
@@ -907,7 +955,8 @@ impl ReportGenerator {
 
         // Add timestamp
         if let Ok(timestamp) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-            styled_content = styled_content.replace("{{timestamp}}", &format!("{}", timestamp.as_secs()));
+            styled_content =
+                styled_content.replace("{{timestamp}}", &format!("{}", timestamp.as_secs()));
         }
 
         // Add charts
@@ -938,7 +987,11 @@ impl ReportGenerator {
     }
 
     /// Create JUnit XML content
-    fn create_junit_xml(&self, test_results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<String> {
+    fn create_junit_xml(
+        &self,
+        test_results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<String> {
         let mut xml = String::new();
         xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         xml.push_str(&format!(
@@ -986,19 +1039,32 @@ impl ReportGenerator {
     }
 
     /// Create Markdown content
-    fn create_markdown_content(&self, test_results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<String> {
+    fn create_markdown_content(
+        &self,
+        test_results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<String> {
         let mut markdown = String::new();
 
         markdown.push_str("# Performance Test Report\n\n");
-        markdown.push_str(&format!("Generated on: {}\n\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
+        markdown.push_str(&format!(
+            "Generated on: {}\n\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ));
 
         markdown.push_str("## Summary\n\n");
         markdown.push_str(&format!("- **Total Tests**: {}\n", statistics.total_tests));
         markdown.push_str(&format!("- **Passed**: {}\n", statistics.passed));
         markdown.push_str(&format!("- **Failed**: {}\n", statistics.failed));
         markdown.push_str(&format!("- **Skipped**: {}\n", statistics.skipped));
-        markdown.push_str(&format!("- **Success Rate**: {:.1}%\n", statistics.success_rate * 100.0));
-        markdown.push_str(&format!("- **Total Duration**: {:.2}s\n\n", statistics.total_duration.as_secs_f64()));
+        markdown.push_str(&format!(
+            "- **Success Rate**: {:.1}%\n",
+            statistics.success_rate * 100.0
+        ));
+        markdown.push_str(&format!(
+            "- **Total Duration**: {:.2}s\n\n",
+            statistics.total_duration.as_secs_f64()
+        ));
 
         markdown.push_str("## Test Results\n\n");
         markdown.push_str("| Test Name | Status | Duration | Memory (MB) | CPU (%) |\n");
@@ -1019,13 +1085,20 @@ impl ReportGenerator {
     }
 
     /// Create PDF HTML content
-    fn create_pdf_html_content(&self, test_results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<String> {
+    fn create_pdf_html_content(
+        &self,
+        test_results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<String> {
         // Create a PDF-optimized HTML version
         let mut html = String::new();
         html.push_str("<!DOCTYPE html><html><head><title>Performance Report</title></head><body>");
         html.push_str(&format!("<h1>Performance Test Report</h1>"));
         html.push_str(&format!("<p>Total Tests: {}</p>", statistics.total_tests));
-        html.push_str(&format!("<p>Success Rate: {:.1}%</p>", statistics.success_rate * 100.0));
+        html.push_str(&format!(
+            "<p>Success Rate: {:.1}%</p>",
+            statistics.success_rate * 100.0
+        ));
         html.push_str("</body></html>");
         Ok(html)
     }
@@ -1076,7 +1149,11 @@ impl TemplateEngine {
     }
 
     /// Process a template with variables
-    pub fn process_template(&self, template: &str, variables: &HashMap<String, String>) -> Result<String> {
+    pub fn process_template(
+        &self,
+        template: &str,
+        variables: &HashMap<String, String>,
+    ) -> Result<String> {
         let mut result = template.to_string();
 
         // Simple variable substitution

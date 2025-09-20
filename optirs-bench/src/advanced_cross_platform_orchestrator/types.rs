@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime};
 
 // Re-export types from cross_platform_tester
 pub use crate::benchmarking::cross_platform_tester::{
-    PlatformTarget, TestCategory, TestResult, TestStatus, PerformanceMetrics,
-    CompatibilityIssue, PlatformRecommendation
+    CompatibilityIssue, PerformanceMetrics, PlatformRecommendation, PlatformTarget, TestCategory,
+    TestResult, TestStatus,
 };
 
 /// Feature importance levels
@@ -36,11 +36,20 @@ pub enum OptimizationLevel {
 /// Cloud authentication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CloudAuthConfig {
-    ApiKey { key: String },
-    OAuth { client_id: String, client_secret: String },
-    ServiceAccount { key_file: PathBuf },
+    ApiKey {
+        key: String,
+    },
+    OAuth {
+        client_id: String,
+        client_secret: String,
+    },
+    ServiceAccount {
+        key_file: PathBuf,
+    },
     None,
-    Custom { config: HashMap<String, String> },
+    Custom {
+        config: HashMap<String, String>,
+    },
 }
 
 /// Container runtime options

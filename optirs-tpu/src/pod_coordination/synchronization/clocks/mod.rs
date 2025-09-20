@@ -45,7 +45,7 @@
 // Basic usage of the clock synchronization system:
 //
 // ```rust
-// use crate::tpu::pod_coordination::synchronization::clocks::{
+// use crate::pod_coordination::synchronization::clocks::{
 //     ClockSynchronizationManager, ClockSynchronizationConfig
 // };
 //

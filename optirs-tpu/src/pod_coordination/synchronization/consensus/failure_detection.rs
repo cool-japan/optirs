@@ -4,7 +4,7 @@
 // consensus systems, including device health monitoring, network failure detection,
 // and recovery coordination.
 
-use crate::tpu::pod_coordination::types::*;
+use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -1071,79 +1071,6 @@ impl Default for FailureDetectionStatistics {
     }
 }
 
-// Stub implementations for referenced types that would be defined elsewhere
-use crate::tpu::pod_coordination::types::{
-    // Configuration types
-    AdaptiveHeartbeatConfig,
-    AlertConfig,
-    AnalysisReportingConfig,
-    AutomaticRecoveryConfig,
-    BandwidthMonitoringConfig,
-    BatchingConfig,
-    ConfidenceScoreStats,
-    ConnectionMonitoringConfig,
-    ConnectionRetryPolicy,
-    ConnectionValidationConfig,
-    DataCollectionStats,
-    DetectionLatencyStats,
-    DeviceHealthConfig,
-    DeviceHealthMonitor,
-    EarlyStoppingConfig,
-    EnvironmentalMonitor,
-    EnvironmentalMonitoringConfig,
-    FailureClassificationConfig,
-    FailureIndicators,
-    FailurePatternAnalysisConfig,
-    FailurePredictionConfig,
-    GossipFailureDetectionConfig,
-    GossipFailureDetector,
-    HealthScoringConfig,
-    HeartbeatPayload,
-    HeartbeatPayloadConfig,
-    HeartbeatTransmissionConfig,
-    HierarchicalFailureDetectionConfig,
-    HierarchicalFailureDetector,
-    HistoricalAnalysisConfig,
-    HybridDetectionConfig,
-    HybridDetector,
-    HybridRecoveryConfig,
-    LatencyMonitoringConfig,
-    MLBasedDetectionConfig,
-    MLBasedDetector,
-    ManualRecoveryConfig,
-    MemoryLeakDetectionConfig,
-    MonitorStatistics,
-    MulticastConfig,
-    NetworkFeatures,
-    NetworkMonitor,
-    NetworkStatistics,
-    PerformanceMetrics,
-    PerformanceMonitor,
-    PerformanceMonitoringConfig,
-    PerformanceOptimization,
-    PhiAccrualConfig,
-    PhiAccrualDetector,
-    QoSMonitoringConfig,
-    RecoveryMonitoringConfig,
-    RecoveryOrchestrationConfig,
-    RecoveryPrioritizationConfig,
-    RecoveryStrategies,
-    RecoveryValidationConfig,
-    ReliabilityLevel,
-    ResourceFeatures,
-    ResourceMonitor,
-    ResourceMonitoringConfig,
-    ResourceUsage,
-    ResourceUtilization,
-    RetryConfig,
-    RingFailureDetectionConfig,
-    RingFailureDetector,
-    RootCauseAnalysisConfig,
-    SensorMonitoringConfig,
-    StatisticalFeatures,
-    TimeWindowFeatures,
-    TopologyMonitoringConfig,
-    // Additional specific types
-    UtilizationThresholds,
-};
+// Note: Types are defined locally in this file, not imported from types module
+// to avoid circular dependencies and duplicate definitions
 use uuid;

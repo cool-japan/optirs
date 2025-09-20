@@ -20,7 +20,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::array;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::{WeightStandardization, Regularizer};
 ///
 /// let weight_std = WeightStandardization::new(1e-5);
@@ -294,7 +294,7 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_weight_standardization_creation() {

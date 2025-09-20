@@ -33,6 +33,9 @@ log = { workspace = true }
 rustc-hash = { workspace = true }
 smallvec = { workspace = true }
 
+# System information
+num_cpus = { workspace = true }
+
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }

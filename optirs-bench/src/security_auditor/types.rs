@@ -529,7 +529,10 @@ impl VulnerabilityStatistics {
                 self.tests_failed += 1;
 
                 // Update severity statistics
-                *self.vulnerabilities_by_severity.entry(result.severity.clone()).or_insert(0) += 1;
+                *self
+                    .vulnerabilities_by_severity
+                    .entry(result.severity.clone())
+                    .or_insert(0) += 1;
 
                 // Update type statistics if vulnerability detected
                 if let Some(vulnerability) = &result.vulnerability_detected {
@@ -552,12 +555,18 @@ impl VulnerabilityStatistics {
 
     /// Get critical vulnerability count
     pub fn critical_vulnerabilities(&self) -> usize {
-        self.vulnerabilities_by_severity.get(&SeverityLevel::Critical).copied().unwrap_or(0)
+        self.vulnerabilities_by_severity
+            .get(&SeverityLevel::Critical)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Get high severity vulnerability count
     pub fn high_vulnerabilities(&self) -> usize {
-        self.vulnerabilities_by_severity.get(&SeverityLevel::High).copied().unwrap_or(0)
+        self.vulnerabilities_by_severity
+            .get(&SeverityLevel::High)
+            .copied()
+            .unwrap_or(0)
     }
 }
 

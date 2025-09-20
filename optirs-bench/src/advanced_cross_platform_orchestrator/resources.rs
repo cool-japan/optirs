@@ -72,11 +72,11 @@ impl PlatformResourceManager {
             ResourceType::CPU => self.usage_tracker.current_usage.cpu_usage + amount < 100.0,
             ResourceType::Memory => {
                 let current_mb = self.usage_tracker.current_usage.memory_usage;
-                current_mb + amount as usize < self.limits.max_memory_usage
+                current_mb + (amount as usize) < self.limits.max_memory_usage
             }
             ResourceType::Storage => amount < self.limits.max_disk_usage as f64,
             ResourceType::Network => true, // Simplified
-            ResourceType::GPU => true, // Simplified
+            ResourceType::GPU => true,     // Simplified
         }
     }
 
@@ -84,7 +84,7 @@ impl PlatformResourceManager {
     pub fn allocate_resources(&mut self, required: &HashMap<ResourceType, f64>) -> Result<String> {
         if !self.check_resource_availability(required) {
             return Err(crate::error::OptimError::InsufficientResources(
-                "Insufficient resources available".to_string()
+                "Insufficient resources available".to_string(),
             ));
         }
 
@@ -102,17 +102,27 @@ impl PlatformResourceManager {
         }
 
         // Generate allocation ID
-        let allocation_id = format!("alloc_{}", SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs());
+        let allocation_id = format!(
+            "alloc_{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
 
         Ok(allocation_id)
     }
 
     /// Track cost
-    pub fn track_cost(&mut self, provider: &str, resource_type: &str, cost: f64, description: &str) {
-        self.cost_tracker.add_cost(provider, resource_type, cost, description);
+    pub fn track_cost(
+        &mut self,
+        provider: &str,
+        resource_type: &str,
+        cost: f64,
+        description: &str,
+    ) {
+        self.cost_tracker
+            .add_cost(provider, resource_type, cost, description);
     }
 
     /// Get total resource usage
@@ -132,7 +142,9 @@ impl PlatformResourceManager {
 
     /// Get total execution time
     pub fn get_total_execution_time(&self) -> Duration {
-        SystemTime::now().duration_since(self.start_time).unwrap_or_default()
+        SystemTime::now()
+            .duration_since(self.start_time)
+            .unwrap_or_default()
     }
 
     /// Update resource usage
@@ -178,7 +190,10 @@ impl CostTracker {
 
     fn add_cost(&mut self, provider: &str, resource_type: &str, cost: f64, description: &str) {
         self.total_cost += cost;
-        *self.cost_by_provider.entry(provider.to_string()).or_insert(0.0) += cost;
+        *self
+            .cost_by_provider
+            .entry(provider.to_string())
+            .or_insert(0.0) += cost;
 
         let entry = CostEntry {
             timestamp: SystemTime::now(),

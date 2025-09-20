@@ -491,9 +491,15 @@ mod tests {
 
     #[test]
     fn test_trend_direction_variants() {
-        assert!(matches!(TrendDirection::Improving, TrendDirection::Improving));
+        assert!(matches!(
+            TrendDirection::Improving,
+            TrendDirection::Improving
+        ));
         assert!(matches!(TrendDirection::Stable, TrendDirection::Stable));
-        assert!(matches!(TrendDirection::Degrading, TrendDirection::Degrading));
+        assert!(matches!(
+            TrendDirection::Degrading,
+            TrendDirection::Degrading
+        ));
         assert!(matches!(TrendDirection::Volatile, TrendDirection::Volatile));
     }
 

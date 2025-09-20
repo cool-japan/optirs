@@ -13,9 +13,8 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use super::config::{
-    PerformanceGatesConfig, MetricGate, GateType, ComparisonOperator,
-    GateSeverity, GateEvaluationStrategy, GateFailureHandling,
-    GateFailureAction, GateFailureNotificationConfig
+    ComparisonOperator, GateEvaluationStrategy, GateFailureAction, GateFailureHandling,
+    GateFailureNotificationConfig, GateSeverity, GateType, MetricGate, PerformanceGatesConfig,
 };
 use super::test_execution::{CiCdTestResult, TestSuiteStatistics};
 
@@ -535,11 +534,8 @@ impl PerformanceGateEvaluator {
             }
 
             if let Some(current_value) = current_metrics.get(metric_type) {
-                let gate_result = self.evaluate_individual_gate(
-                    metric_type,
-                    *current_value,
-                    gate_config,
-                )?;
+                let gate_result =
+                    self.evaluate_individual_gate(metric_type, *current_value, gate_config)?;
 
                 if gate_result.status == GateStatus::Failed {
                     overall_status = match overall_status {
@@ -571,7 +567,9 @@ impl PerformanceGateEvaluator {
             gate_results: gate_results.clone(),
             summary: summary.clone(),
             actions_taken,
-            evaluation_duration: SystemTime::now().duration_since(start_time).unwrap_or_default(),
+            evaluation_duration: SystemTime::now()
+                .duration_since(start_time)
+                .unwrap_or_default(),
         };
 
         // Store evaluation result
@@ -592,7 +590,10 @@ impl PerformanceGateEvaluator {
     }
 
     /// Extract performance metrics from test results
-    fn extract_metrics_from_results(&self, test_results: &[CiCdTestResult]) -> Result<HashMap<MetricType, f64>> {
+    fn extract_metrics_from_results(
+        &self,
+        test_results: &[CiCdTestResult],
+    ) -> Result<HashMap<MetricType, f64>> {
         let mut metrics = HashMap::new();
 
         // Calculate aggregate metrics
@@ -605,7 +606,8 @@ impl PerformanceGateEvaluator {
                 .collect();
 
             if !execution_times.is_empty() {
-                let avg_execution_time = execution_times.iter().sum::<f64>() / execution_times.len() as f64;
+                let avg_execution_time =
+                    execution_times.iter().sum::<f64>() / execution_times.len() as f64;
                 metrics.insert(MetricType::ExecutionTime, avg_execution_time);
             }
 
@@ -653,9 +655,18 @@ impl PerformanceGateEvaluator {
         let threshold_value = self.calculate_threshold(baseline_value, gate_config);
 
         let status = match gate_config.gate_type {
-            GateType::Absolute => self.evaluate_absolute_gate(current_value, threshold_value, &gate_config.operator),
-            GateType::Relative => self.evaluate_relative_gate(current_value, baseline_value, gate_config.threshold, &gate_config.operator),
-            GateType::Statistical => self.evaluate_statistical_gate(metric_type, current_value, baseline_value)?,
+            GateType::Absolute => {
+                self.evaluate_absolute_gate(current_value, threshold_value, &gate_config.operator)
+            }
+            GateType::Relative => self.evaluate_relative_gate(
+                current_value,
+                baseline_value,
+                gate_config.threshold,
+                &gate_config.operator,
+            ),
+            GateType::Statistical => {
+                self.evaluate_statistical_gate(metric_type, current_value, baseline_value)?
+            }
             GateType::Trend => self.evaluate_trend_gate(metric_type, current_value)?,
         };
 
@@ -666,7 +677,12 @@ impl PerformanceGateEvaluator {
         };
 
         let failure_reason = if status == GateStatus::Failed {
-            Some(self.create_failure_reason(metric_type, current_value, threshold_value, &gate_config.operator))
+            Some(self.create_failure_reason(
+                metric_type,
+                current_value,
+                threshold_value,
+                &gate_config.operator,
+            ))
         } else {
             None
         };
@@ -684,7 +700,12 @@ impl PerformanceGateEvaluator {
     }
 
     /// Evaluate absolute threshold gate
-    fn evaluate_absolute_gate(&self, current_value: f64, threshold: f64, operator: &ComparisonOperator) -> GateStatus {
+    fn evaluate_absolute_gate(
+        &self,
+        current_value: f64,
+        threshold: f64,
+        operator: &ComparisonOperator,
+    ) -> GateStatus {
         let passed = match operator {
             ComparisonOperator::LessThan => current_value < threshold,
             ComparisonOperator::LessThanOrEqual => current_value <= threshold,
@@ -702,7 +723,13 @@ impl PerformanceGateEvaluator {
     }
 
     /// Evaluate relative threshold gate
-    fn evaluate_relative_gate(&self, current_value: f64, baseline_value: f64, threshold: f64, operator: &ComparisonOperator) -> GateStatus {
+    fn evaluate_relative_gate(
+        &self,
+        current_value: f64,
+        baseline_value: f64,
+        threshold: f64,
+        operator: &ComparisonOperator,
+    ) -> GateStatus {
         if baseline_value == 0.0 {
             return GateStatus::Error;
         }
@@ -723,7 +750,12 @@ impl PerformanceGateEvaluator {
     }
 
     /// Evaluate statistical significance gate
-    fn evaluate_statistical_gate(&self, metric_type: &MetricType, current_value: f64, baseline_value: f64) -> Result<GateStatus> {
+    fn evaluate_statistical_gate(
+        &self,
+        metric_type: &MetricType,
+        current_value: f64,
+        baseline_value: f64,
+    ) -> Result<GateStatus> {
         // Simplified statistical test - in reality, this would use proper statistical methods
         let difference = (current_value - baseline_value).abs();
         let relative_difference = if baseline_value != 0.0 {
@@ -733,7 +765,8 @@ impl PerformanceGateEvaluator {
         };
 
         // Simple threshold-based evaluation (would use t-test, Mann-Whitney U, etc. in practice)
-        if relative_difference > 0.1 { // 10% difference threshold
+        if relative_difference > 0.1 {
+            // 10% difference threshold
             Ok(GateStatus::Failed)
         } else {
             Ok(GateStatus::Passed)
@@ -741,7 +774,11 @@ impl PerformanceGateEvaluator {
     }
 
     /// Evaluate trend-based gate
-    fn evaluate_trend_gate(&self, metric_type: &MetricType, current_value: f64) -> Result<GateStatus> {
+    fn evaluate_trend_gate(
+        &self,
+        metric_type: &MetricType,
+        current_value: f64,
+    ) -> Result<GateStatus> {
         if let Some(trend) = self.trend_analyzer.detected_trends.get(metric_type) {
             match trend.direction {
                 TrendDirection::Degrading if trend.strength > 0.7 => Ok(GateStatus::Failed),
@@ -771,7 +808,13 @@ impl PerformanceGateEvaluator {
     }
 
     /// Create failure reason message
-    fn create_failure_reason(&self, metric_type: &MetricType, current_value: f64, threshold: f64, operator: &ComparisonOperator) -> String {
+    fn create_failure_reason(
+        &self,
+        metric_type: &MetricType,
+        current_value: f64,
+        threshold: f64,
+        operator: &ComparisonOperator,
+    ) -> String {
         format!(
             "{:?} value {:.2} does not satisfy {:?} {:.2}",
             metric_type, current_value, operator, threshold
@@ -779,7 +822,12 @@ impl PerformanceGateEvaluator {
     }
 
     /// Create detailed evaluation information
-    fn create_evaluation_details(&self, metric_type: &MetricType, current_value: f64, baseline_value: f64) -> Result<GateEvaluationDetails> {
+    fn create_evaluation_details(
+        &self,
+        metric_type: &MetricType,
+        current_value: f64,
+        baseline_value: f64,
+    ) -> Result<GateEvaluationDetails> {
         Ok(GateEvaluationDetails {
             evaluation_method: "threshold_comparison".to_string(),
             statistical_tests: Vec::new(), // Would include actual test results
@@ -791,16 +839,33 @@ impl PerformanceGateEvaluator {
     }
 
     /// Create evaluation summary
-    fn create_evaluation_summary(&self, gate_results: &[IndividualGateResult]) -> GateEvaluationSummary {
+    fn create_evaluation_summary(
+        &self,
+        gate_results: &[IndividualGateResult],
+    ) -> GateEvaluationSummary {
         let total_gates = gate_results.len();
-        let gates_passed = gate_results.iter().filter(|r| r.status == GateStatus::Passed).count();
-        let gates_failed = gate_results.iter().filter(|r| r.status == GateStatus::Failed).count();
-        let gates_warnings = gate_results.iter().filter(|r| r.status == GateStatus::Warning).count();
-        let gates_skipped = gate_results.iter().filter(|r| r.status == GateStatus::Skipped).count();
-        let critical_failures = gate_results.iter()
+        let gates_passed = gate_results
+            .iter()
+            .filter(|r| r.status == GateStatus::Passed)
+            .count();
+        let gates_failed = gate_results
+            .iter()
+            .filter(|r| r.status == GateStatus::Failed)
+            .count();
+        let gates_warnings = gate_results
+            .iter()
+            .filter(|r| r.status == GateStatus::Warning)
+            .count();
+        let gates_skipped = gate_results
+            .iter()
+            .filter(|r| r.status == GateStatus::Skipped)
+            .count();
+        let critical_failures = gate_results
+            .iter()
             .filter(|r| r.status == GateStatus::Failed && r.severity == GateSeverity::Critical)
             .count();
-        let improvements_detected = gate_results.iter()
+        let improvements_detected = gate_results
+            .iter()
             .filter(|r| r.percentage_deviation < -5.0) // 5% improvement threshold
             .count();
 
@@ -827,7 +892,10 @@ impl PerformanceGateEvaluator {
     }
 
     /// Handle gate failures
-    fn handle_gate_failures(&mut self, gate_results: &[IndividualGateResult]) -> Result<Vec<GateAction>> {
+    fn handle_gate_failures(
+        &mut self,
+        gate_results: &[IndividualGateResult],
+    ) -> Result<Vec<GateAction>> {
         let mut actions = Vec::new();
 
         // Determine action based on configuration
@@ -840,8 +908,13 @@ impl PerformanceGateEvaluator {
 
         let action = GateAction {
             action_type,
-            description: format!("Gate failure action triggered for {} failed gates",
-                gate_results.iter().filter(|r| r.status == GateStatus::Failed).count()),
+            description: format!(
+                "Gate failure action triggered for {} failed gates",
+                gate_results
+                    .iter()
+                    .filter(|r| r.status == GateStatus::Failed)
+                    .count()
+            ),
             timestamp: SystemTime::now(),
             result: ActionResult::Success, // Simplified
         };
@@ -849,9 +922,10 @@ impl PerformanceGateEvaluator {
         actions.push(action);
 
         // Send notifications if configured
-        if self.config.failure_handling.notifications.send_email ||
-           self.config.failure_handling.notifications.send_slack ||
-           self.config.failure_handling.notifications.send_webhooks {
+        if self.config.failure_handling.notifications.send_email
+            || self.config.failure_handling.notifications.send_slack
+            || self.config.failure_handling.notifications.send_webhooks
+        {
             let notification_action = GateAction {
                 action_type: GateActionType::SendNotification,
                 description: "Notification sent for gate failures".to_string(),
@@ -876,7 +950,10 @@ impl PerformanceGateEvaluator {
                 baseline_value,
                 percentage_change: result.percentage_deviation,
                 evaluated_at: SystemTime::now(),
-                gate_config: self.config.metric_gates.get(&result.metric_type)
+                gate_config: self
+                    .config
+                    .metric_gates
+                    .get(&result.metric_type)
                     .cloned()
                     .unwrap_or_else(|| MetricGate {
                         gate_type: GateType::Absolute,
@@ -888,7 +965,8 @@ impl PerformanceGateEvaluator {
                 evaluation_details: result.details.clone(),
             };
 
-            self.gate_states.insert(result.metric_type.clone(), gate_state);
+            self.gate_states
+                .insert(result.metric_type.clone(), gate_state);
         }
 
         Ok(())
@@ -932,7 +1010,10 @@ impl PerformanceGateEvaluator {
                     alert_type: AlertType::GateFailure,
                     severity: alert_severity,
                     title: format!("Performance Gate Failed: {:?}", result.metric_type),
-                    description: result.failure_reason.clone().unwrap_or_else(|| "Gate failed".to_string()),
+                    description: result
+                        .failure_reason
+                        .clone()
+                        .unwrap_or_else(|| "Gate failed".to_string()),
                     affected_metrics: vec![result.metric_type.clone()],
                     timestamp: SystemTime::now(),
                     status: AlertStatus::Active,
@@ -980,7 +1061,8 @@ impl PerformanceTrendAnalyzer {
         // Keep only recent data points
         let max_points = self.config.window_size * 2;
         if self.performance_history.len() > max_points {
-            self.performance_history.drain(0..self.performance_history.len() - max_points);
+            self.performance_history
+                .drain(0..self.performance_history.len() - max_points);
         }
 
         Ok(())
@@ -988,13 +1070,15 @@ impl PerformanceTrendAnalyzer {
 
     /// Analyze trends in performance data
     pub fn analyze_trends(&mut self) -> Result<()> {
-        let metrics: std::collections::HashSet<MetricType> = self.performance_history
+        let metrics: std::collections::HashSet<MetricType> = self
+            .performance_history
             .iter()
             .map(|dp| dp.metric_type.clone())
             .collect();
 
         for metric_type in metrics {
-            let metric_data: Vec<&PerformanceDataPoint> = self.performance_history
+            let metric_data: Vec<&PerformanceDataPoint> = self
+                .performance_history
                 .iter()
                 .filter(|dp| dp.metric_type == metric_type)
                 .collect();
@@ -1018,7 +1102,11 @@ impl PerformanceTrendAnalyzer {
 
         let sum_x = x_values.iter().sum::<f64>();
         let sum_y = values.iter().sum::<f64>();
-        let sum_xy = x_values.iter().zip(values.iter()).map(|(x, y)| x * y).sum::<f64>();
+        let sum_xy = x_values
+            .iter()
+            .zip(values.iter())
+            .map(|(x, y)| x * y)
+            .sum::<f64>();
         let sum_x2 = x_values.iter().map(|x| x * x).sum::<f64>();
 
         let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
@@ -1039,7 +1127,12 @@ impl PerformanceTrendAnalyzer {
             strength,
             significance: 0.8, // Simplified
             slope,
-            duration: data.last().unwrap().timestamp.duration_since(data[0].timestamp).unwrap_or_default(),
+            duration: data
+                .last()
+                .unwrap()
+                .timestamp
+                .duration_since(data[0].timestamp)
+                .unwrap_or_default(),
             confidence_interval: (slope - 0.1, slope + 0.1), // Simplified
             last_updated: SystemTime::now(),
         })

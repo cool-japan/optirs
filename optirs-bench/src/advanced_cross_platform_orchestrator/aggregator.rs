@@ -34,13 +34,17 @@ impl ResultAggregator {
     /// Update compatibility matrix
     fn update_compatibility_matrix(&mut self) -> Result<()> {
         let mut platform_results: HashMap<PlatformTarget, Vec<TestResult>> = HashMap::new();
-        let mut performance_comparison: HashMap<PlatformTarget, PerformanceMetrics> = HashMap::new();
+        let mut performance_comparison: HashMap<PlatformTarget, PerformanceMetrics> =
+            HashMap::new();
 
         // Group results by platform
         for result in &self.results {
             // Extract platform from test name (simplified)
             if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
-                platform_results.entry(platform.clone()).or_insert_with(Vec::new).push(result.clone());
+                platform_results
+                    .entry(platform.clone())
+                    .or_insert_with(Vec::new)
+                    .push(result.clone());
 
                 // Update performance comparison
                 performance_comparison.insert(platform, result.performance_metrics.clone());
@@ -49,7 +53,11 @@ impl ResultAggregator {
 
         // Calculate overall compatibility score
         let total_tests = self.results.len();
-        let passed_tests = self.results.iter().filter(|r| matches!(r.status, TestStatus::Passed)).count();
+        let passed_tests = self
+            .results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Passed))
+            .count();
         let compatibility_score = if total_tests > 0 {
             passed_tests as f64 / total_tests as f64 * 100.0
         } else {
@@ -93,9 +101,21 @@ impl ResultAggregator {
     /// Generate summary statistics
     pub fn get_summary_statistics(&self) -> AggregationStatistics {
         let total_tests = self.results.len();
-        let passed_tests = self.results.iter().filter(|r| matches!(r.status, TestStatus::Passed)).count();
-        let failed_tests = self.results.iter().filter(|r| matches!(r.status, TestStatus::Failed)).count();
-        let skipped_tests = self.results.iter().filter(|r| matches!(r.status, TestStatus::Skipped)).count();
+        let passed_tests = self
+            .results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Passed))
+            .count();
+        let failed_tests = self
+            .results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Failed))
+            .count();
+        let skipped_tests = self
+            .results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Skipped))
+            .count();
 
         let mut platform_counts = HashMap::new();
         for result in &self.results {
@@ -110,7 +130,11 @@ impl ResultAggregator {
             failed_tests,
             skipped_tests,
             platform_counts,
-            overall_success_rate: if total_tests > 0 { passed_tests as f64 / total_tests as f64 } else { 0.0 },
+            overall_success_rate: if total_tests > 0 {
+                passed_tests as f64 / total_tests as f64
+            } else {
+                0.0
+            },
         }
     }
 }

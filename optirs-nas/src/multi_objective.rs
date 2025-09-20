@@ -12,12 +12,13 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use super::{
-    ConstraintHandlingMethod, DiversityStrategy, EvaluationMetric, MultiObjectiveAlgorithm,
-    MultiObjectiveConfig, ObjectiveConfig, ObjectivePriority, ObjectiveType, OptimizationDirection,
+use crate::error::{OptimError, Result};
+use crate::nas_engine::{
+    ConstraintHandlingMethod, DiversityStrategy, MultiObjectiveAlgorithm, MultiObjectiveConfig,
+    ObjectiveConfig, ObjectivePriority, ObjectiveType, OptimizationDirection,
     OptimizerArchitecture, SearchResult, UserPreferences,
 };
-use crate::error::{OptimError, Result};
+use crate::EvaluationMetric;
 
 /// Base trait for multi-objective optimizers
 pub trait MultiObjectiveOptimizer<T: Float + Debug + Send + Sync + 'static>: Send + Sync {
@@ -748,34 +749,31 @@ impl<
 
     /// Generate random architecture (placeholder)
     fn generate_random_architecture(&self) -> Result<OptimizerArchitecture<T>> {
-        use super::architecture_space::{ComponentType, OptimizerComponent};
-
         // Simplified random architecture generation
-        let component = OptimizerComponent {
-            component_type: ComponentType::Adam,
-            hyperparameters: {
-                let mut params = HashMap::new();
-                params.insert(
-                    "learning_rate".to_string(),
-                    num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-                );
-                params.insert(
-                    "beta1".to_string(),
-                    num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                );
-                params.insert(
-                    "beta2".to_string(),
-                    num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()),
-                );
-                params
-            },
-            connections: Vec::new(),
-        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "learning_rate".to_string(),
+            num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+        );
+        parameters.insert(
+            "beta1".to_string(),
+            num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+        );
+        parameters.insert(
+            "beta2".to_string(),
+            num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()),
+        );
 
         Ok(OptimizerArchitecture {
-            components: vec![component],
+            components: vec!["Adam".to_string()],
+            parameters: parameters.clone(),
             connections: Vec::new(),
             metadata: HashMap::new(),
+            hyperparameters: parameters,
+            architecture_id: format!(
+                "arch_{}",
+                scirs2_core::random::Random::default().gen::<u32>()
+            ),
         })
     }
 
@@ -1192,14 +1190,22 @@ impl<
                 let mut objectives = Vec::new();
                 for obj_config in &self.config.objectives {
                     let metric = match obj_config.objective_type {
+                        ObjectiveType::Accuracy => EvaluationMetric::Accuracy,
+                        ObjectiveType::Loss => EvaluationMetric::FinalPerformance,
+                        ObjectiveType::TrainingTime => EvaluationMetric::TrainingTime,
+                        ObjectiveType::InferenceTime => EvaluationMetric::ComputationTime,
+                        ObjectiveType::MemoryUsage => EvaluationMetric::MemoryUsage,
+                        ObjectiveType::EnergyConsumption => EvaluationMetric::ComputationTime,
+                        ObjectiveType::ModelSize => EvaluationMetric::MemoryUsage,
                         ObjectiveType::Performance => EvaluationMetric::FinalPerformance,
                         ObjectiveType::Efficiency => EvaluationMetric::ComputationalEfficiency,
-                        ObjectiveType::Robustness => EvaluationMetric::FinalPerformance,
+                        ObjectiveType::Robustness => EvaluationMetric::Robustness,
                         ObjectiveType::Interpretability => EvaluationMetric::FinalPerformance,
                         ObjectiveType::Fairness => EvaluationMetric::FinalPerformance,
                         ObjectiveType::Privacy => EvaluationMetric::FinalPerformance,
                         ObjectiveType::Sustainability => EvaluationMetric::ComputationalEfficiency,
                         ObjectiveType::Cost => EvaluationMetric::ComputationalEfficiency,
+                        ObjectiveType::Custom(_) => EvaluationMetric::FinalPerformance,
                     };
 
                     let value = result
@@ -1316,19 +1322,24 @@ impl<
         offspring.id = format!("offspring_{}", self.rng.gen_range(0..u32::MAX));
 
         // Randomly mix hyperparameters
-        if !parent1.architecture.components.is_empty()
-            && !parent2.architecture.components.is_empty()
-        {
-            for (key, value) in &parent1.architecture.components[0].hyperparameters {
-                if self.rng.gen_range(0.0..1.0) < 0.5 {
-                    if let Some(parent2_value) =
-                        parent2.architecture.components[0].hyperparameters.get(key)
-                    {
-                        offspring.architecture.components[0]
-                            .hyperparameters
-                            .insert(key.clone(), *parent2_value);
-                    }
+        for (key, value) in &parent1.architecture.parameters {
+            if self.rng.gen_range(0.0..1.0) < 0.5 {
+                if let Some(parent2_value) = parent2.architecture.parameters.get(key) {
+                    offspring
+                        .architecture
+                        .parameters
+                        .insert(key.clone(), *parent2_value);
+                } else {
+                    offspring
+                        .architecture
+                        .parameters
+                        .insert(key.clone(), *value);
                 }
+            } else {
+                offspring
+                    .architecture
+                    .parameters
+                    .insert(key.clone(), *value);
             }
         }
 
@@ -1337,16 +1348,11 @@ impl<
 
     fn mutate(&mut self, individual: &mut Individual<T>) -> Result<()> {
         // Simplified mutation - in practice would be more sophisticated
-        if !individual.architecture.components.is_empty() {
-            for (_key, value) in individual.architecture.components[0]
-                .hyperparameters
-                .iter_mut()
-            {
-                if self.rng.gen_range(0.0..1.0) < 0.1 {
-                    // 10% mutation rate per parameter
-                    let noise = T::from(self.rng.gen_range(-0.05..0.05)).unwrap(); // ±5% noise
-                    *value = *value + noise;
-                }
+        for (_key, value) in individual.architecture.parameters.iter_mut() {
+            if self.rng.gen_range(0.0..1.0) < 0.1 {
+                // 10% mutation rate per parameter
+                let noise = T::from(self.rng.gen_range(-0.05..0.05)).unwrap(); // ±5% noise
+                *value = *value + noise;
             }
         }
 
@@ -1399,37 +1405,6 @@ impl<T: Float + Debug + Default + Send + Sync> Default for MultiObjectiveStatist
             convergence_history: Vec::new(),
             diversity_history: Vec::new(),
             algorithm_metrics: HashMap::new(),
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + Send + Sync> Default for MultiObjectiveConfig<T> {
-    fn default() -> Self {
-        Self {
-            objectives: vec![
-                ObjectiveConfig {
-                    name: "performance".to_string(),
-                    objective_type: ObjectiveType::Performance,
-                    direction: OptimizationDirection::Maximize,
-                    weight: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-                    priority: ObjectivePriority::High,
-                    tolerance: None,
-                },
-                ObjectiveConfig {
-                    name: "efficiency".to_string(),
-                    objective_type: ObjectiveType::Efficiency,
-                    direction: OptimizationDirection::Maximize,
-                    weight: num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
-                    priority: ObjectivePriority::Medium,
-                    tolerance: None,
-                },
-            ],
-            algorithm: MultiObjectiveAlgorithm::NSGA2,
-            pareto_front_size: 50,
-            enable_preferences: false,
-            user_preferences: None,
-            diversity_strategy: DiversityStrategy::CrowdingDistance,
-            constraint_handling: ConstraintHandlingMethod::PenaltyFunction,
         }
     }
 }
@@ -1487,7 +1462,7 @@ mod tests {
                 direction: OptimizationDirection::Minimize,
                 weight: 0.5,
                 priority: ObjectivePriority::High,
-                tolerance: None,
+                normalization_bounds: None,
             },
             ObjectiveConfig {
                 name: "obj2".to_string(),
@@ -1495,7 +1470,7 @@ mod tests {
                 direction: OptimizationDirection::Minimize,
                 weight: 0.5,
                 priority: ObjectivePriority::High,
-                tolerance: None,
+                normalization_bounds: None,
             },
         ];
 

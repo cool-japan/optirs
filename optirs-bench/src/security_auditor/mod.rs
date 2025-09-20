@@ -9,18 +9,18 @@ use std::time::{Duration, Instant};
 
 // Re-export all public items from submodules
 pub mod config;
-pub mod types;
 pub mod input_validation;
-pub mod privacy;
 pub mod memory_safety;
+pub mod privacy;
 pub mod results;
+pub mod types;
 
 pub use config::*;
-pub use types::*;
 pub use input_validation::*;
-pub use privacy::*;
 pub use memory_safety::*;
+pub use privacy::*;
 pub use results::*;
+pub use types::*;
 
 /// Comprehensive security auditor for optimizers
 #[derive(Debug)]
@@ -46,7 +46,9 @@ impl SecurityAuditor {
 
     /// Create a security auditor with specific configuration
     pub fn with_config(config: SecurityAuditConfig) -> Result<Self> {
-        config.validate().map_err(|e| OptimError::InvalidConfiguration(e))?;
+        config
+            .validate()
+            .map_err(|e| OptimError::InvalidConfiguration(e))?;
 
         Ok(Self {
             config: config.clone(),
@@ -95,8 +97,14 @@ impl SecurityAuditor {
         if self.config.enable_input_validation {
             let validation_results = self.input_validator.run_all_tests()?;
             total_tests += validation_results.len();
-            total_passed += validation_results.iter().filter(|r| r.status == TestStatus::Passed).count();
-            total_failed += validation_results.iter().filter(|r| r.status == TestStatus::Failed).count();
+            total_passed += validation_results
+                .iter()
+                .filter(|r| r.status == TestStatus::Passed)
+                .count();
+            total_failed += validation_results
+                .iter()
+                .filter(|r| r.status == TestStatus::Failed)
+                .count();
 
             self.process_validation_results(&validation_results);
         }
@@ -105,8 +113,14 @@ impl SecurityAuditor {
         if self.config.enable_privacy_analysis {
             let privacy_results = self.privacy_analyzer.run_all_tests()?;
             total_tests += privacy_results.len();
-            total_passed += privacy_results.iter().filter(|r| r.status == TestStatus::Passed).count();
-            total_failed += privacy_results.iter().filter(|r| r.status == TestStatus::Failed).count();
+            total_passed += privacy_results
+                .iter()
+                .filter(|r| r.status == TestStatus::Passed)
+                .count();
+            total_failed += privacy_results
+                .iter()
+                .filter(|r| r.status == TestStatus::Failed)
+                .count();
 
             self.process_privacy_results(&privacy_results);
         }
@@ -115,8 +129,14 @@ impl SecurityAuditor {
         if self.config.enable_memory_safety {
             let memory_results = self.memory_analyzer.run_all_tests()?;
             total_tests += memory_results.len();
-            total_passed += memory_results.iter().filter(|r| r.status == TestStatus::Passed).count();
-            total_failed += memory_results.iter().filter(|r| r.status == TestStatus::Failed).count();
+            total_passed += memory_results
+                .iter()
+                .filter(|r| r.status == TestStatus::Passed)
+                .count();
+            total_failed += memory_results
+                .iter()
+                .filter(|r| r.status == TestStatus::Failed)
+                .count();
 
             self.process_memory_results(&memory_results);
         }
@@ -168,7 +188,9 @@ impl SecurityAuditor {
 
         // Update vulnerability statistics from input validation
         let stats = self.input_validator.get_statistics();
-        self.audit_results.vulnerability_summary.total_vulnerabilities += stats.tests_failed;
+        self.audit_results
+            .vulnerability_summary
+            .total_vulnerabilities += stats.tests_failed;
     }
 
     /// Process privacy analysis results into audit findings
@@ -184,7 +206,10 @@ impl SecurityAuditor {
                 violation_count += 1;
                 total_epsilon_violation += violation.detected_params.violation_magnitude;
 
-                if matches!(violation.violation_type, PrivacyViolationType::BudgetExceeded) {
+                if matches!(
+                    violation.violation_type,
+                    PrivacyViolationType::BudgetExceeded
+                ) {
                     budget_violations += 1;
                 }
 
@@ -193,7 +218,10 @@ impl SecurityAuditor {
                     "Privacy".to_string(),
                     result.severity.clone(),
                     format!("Privacy Violation: {:?}", violation.violation_type),
-                    format!("Privacy violation detected with confidence {:.2}", violation.confidence),
+                    format!(
+                        "Privacy violation detected with confidence {:.2}",
+                        violation.confidence
+                    ),
                 );
 
                 self.audit_results.add_finding(finding);
@@ -213,7 +241,9 @@ impl SecurityAuditor {
             most_common_violation: None, // Could be computed from violation types
         });
 
-        self.audit_results.vulnerability_summary.total_vulnerabilities += privacy_violations;
+        self.audit_results
+            .vulnerability_summary
+            .total_vulnerabilities += privacy_violations;
     }
 
     /// Process memory safety results into audit findings
@@ -251,7 +281,9 @@ impl SecurityAuditor {
             most_common_issue: None, // Could be computed from issue types
         });
 
-        self.audit_results.vulnerability_summary.total_vulnerabilities += issues_detected;
+        self.audit_results
+            .vulnerability_summary
+            .total_vulnerabilities += issues_detected;
     }
 
     /// Update vulnerability summary across all analyzers
@@ -292,7 +324,8 @@ impl SecurityAuditor {
 
     /// Update risk assessment based on findings
     fn update_risk_assessment(&mut self) {
-        let overall_risk = RiskLevel::from_security_score(self.audit_results.overall_security_score);
+        let overall_risk =
+            RiskLevel::from_security_score(self.audit_results.overall_security_score);
 
         // Generate risk factors
         let mut risk_factors = Vec::new();
@@ -302,7 +335,9 @@ impl SecurityAuditor {
                 name: "Critical Vulnerabilities".to_string(),
                 impact: ImpactLevel::High,
                 likelihood: 0.8,
-                vulnerabilities: vec!["Critical security flaws require immediate attention".to_string()],
+                vulnerabilities: vec![
+                    "Critical security flaws require immediate attention".to_string()
+                ],
             });
         }
 
@@ -369,36 +404,57 @@ impl SecurityAuditor {
         let mut recommendations = Vec::new();
 
         // General recommendations based on findings
-        if self.audit_results.vulnerability_summary.total_vulnerabilities > 0 {
-            recommendations.push("Implement comprehensive input validation for all user inputs".to_string());
-            recommendations.push("Establish regular security testing and code review processes".to_string());
+        if self
+            .audit_results
+            .vulnerability_summary
+            .total_vulnerabilities
+            > 0
+        {
+            recommendations
+                .push("Implement comprehensive input validation for all user inputs".to_string());
+            recommendations
+                .push("Establish regular security testing and code review processes".to_string());
         }
 
         if self.audit_results.vulnerability_summary.critical_count > 0 {
-            recommendations.push("Immediately address all critical vulnerabilities before production deployment".to_string());
+            recommendations.push(
+                "Immediately address all critical vulnerabilities before production deployment"
+                    .to_string(),
+            );
         }
 
         if let Some(privacy) = &self.audit_results.privacy_results {
             if privacy.violations_detected > 0 {
-                recommendations.push("Review and strengthen privacy guarantees and differential privacy parameters".to_string());
-                recommendations.push("Implement privacy budget monitoring and enforcement".to_string());
+                recommendations.push(
+                    "Review and strengthen privacy guarantees and differential privacy parameters"
+                        .to_string(),
+                );
+                recommendations
+                    .push("Implement privacy budget monitoring and enforcement".to_string());
             }
         }
 
         if let Some(memory) = &self.audit_results.memory_results {
             if memory.issues_detected > 0 {
                 recommendations.push("Implement memory usage monitoring and limits".to_string());
-                recommendations.push("Review memory management patterns and fix detected leaks".to_string());
+                recommendations
+                    .push("Review memory management patterns and fix detected leaks".to_string());
             }
         }
 
         // Configuration-specific recommendations
         if !self.config.enable_crypto_analysis {
-            recommendations.push("Consider enabling cryptographic security analysis for comprehensive coverage".to_string());
+            recommendations.push(
+                "Consider enabling cryptographic security analysis for comprehensive coverage"
+                    .to_string(),
+            );
         }
 
         if !self.config.enable_numerical_analysis {
-            recommendations.push("Enable numerical stability analysis to detect potential computation issues".to_string());
+            recommendations.push(
+                "Enable numerical stability analysis to detect potential computation issues"
+                    .to_string(),
+            );
         }
 
         recommendations.sort();
@@ -413,7 +469,9 @@ impl SecurityAuditor {
 
     /// Update the audit configuration
     pub fn update_config(&mut self, config: SecurityAuditConfig) -> Result<()> {
-        config.validate().map_err(|e| OptimError::InvalidConfiguration(e))?;
+        config
+            .validate()
+            .map_err(|e| OptimError::InvalidConfiguration(e))?;
         self.config = config;
         Ok(())
     }
@@ -451,7 +509,10 @@ impl SecurityAuditor {
         let mut report = String::new();
 
         report.push_str("# Security Audit Report\n\n");
-        report.push_str(&format!("Generated: {:?}\n\n", self.audit_results.audit_timestamp));
+        report.push_str(&format!(
+            "Generated: {:?}\n\n",
+            self.audit_results.audit_timestamp
+        ));
 
         // Executive Summary
         report.push_str("## Executive Summary\n\n");
@@ -464,7 +525,11 @@ impl SecurityAuditor {
             for (category, findings) in &self.audit_results.findings_by_category {
                 report.push_str(&format!("### {}\n\n", category));
                 for finding in findings {
-                    report.push_str(&format!("**{}** ({})\n", finding.title, format!("{:?}", finding.severity)));
+                    report.push_str(&format!(
+                        "**{}** ({})\n",
+                        finding.title,
+                        format!("{:?}", finding.severity)
+                    ));
                     report.push_str(&format!("{}\n\n", finding.description));
                     if !finding.recommendations.is_empty() {
                         report.push_str("Recommendations:\n");

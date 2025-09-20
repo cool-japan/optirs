@@ -22,6 +22,10 @@ pub enum OptimError {
     ConvergenceFailure(String),
     /// Invalid parameter
     InvalidParameter(String),
+    /// Configuration error
+    ConfigurationError(String),
+    /// Resource limit exceeded
+    ResourceLimitExceeded(String),
 }
 
 impl fmt::Display for OptimError {
@@ -37,6 +41,8 @@ impl fmt::Display for OptimError {
             }
             OptimError::ConvergenceFailure(msg) => write!(f, "Convergence failure: {}", msg),
             OptimError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
+            OptimError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
+            OptimError::ResourceLimitExceeded(msg) => write!(f, "Resource limit exceeded: {}", msg),
         }
     }
 }

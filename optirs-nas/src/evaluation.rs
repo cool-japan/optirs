@@ -11,16 +11,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime};
 
-use super::{
-    EvaluationConfig, EvaluationMetric, EvaluationResults, OptimizerArchitecture, ResourceUsage,
-};
+use super::{EvaluationConfig, EvaluationMetric, OptimizerArchitecture, ResourceUsage};
 #[allow(unused_imports)]
 use crate::error::Result;
+use crate::nas_engine::results::EvaluationResults;
 
 /// Performance evaluator for optimizer architectures
 pub struct PerformanceEvaluator<T: Float + Debug + Send + Sync + 'static> {
     /// Evaluation configuration
-    config: EvaluationConfig<T>,
+    config: EvaluationConfig,
 
     /// Benchmark suite
     benchmark_suite: BenchmarkSuite<T>,
@@ -1146,7 +1145,7 @@ pub enum MultipleComparisonCorrection {
 #[derive(Debug)]
 pub struct ResourceMonitor<T: Float + Debug + Send + Sync + 'static> {
     /// Current resource usage
-    current_usage: ResourceUsage<T>,
+    current_usage: ResourceUsage,
 
     /// Resource usage history
     usage_history: VecDeque<ResourceUsageSnapshot<T>>,
@@ -1275,7 +1274,7 @@ pub struct TestResult<T: Float + Debug + Send + Sync + 'static> {
     pub execution_time: Duration,
 
     /// Resource usage
-    pub resource_usage: ResourceUsage<T>,
+    pub resource_usage: ResourceUsage,
 
     /// Additional metrics
     pub metrics: HashMap<String, T>,
@@ -1350,7 +1349,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     PerformanceEvaluator<T>
 {
     /// Create new performance evaluator
-    pub fn new(config: EvaluationConfig<T>) -> Result<Self> {
+    pub fn new(config: EvaluationConfig) -> Result<Self> {
         Ok(Self {
             benchmark_suite: BenchmarkSuite::new()?,
             predictor: None,
@@ -1380,8 +1379,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     /// Evaluate an optimizer architecture
     pub fn evaluate_architecture(
         &mut self,
-        architecture: &OptimizerArchitecture<T>,
-    ) -> Result<EvaluationResults<T>> {
+        architecture: &OptimizerArchitecture,
+    ) -> Result<crate::nas_engine::EvaluationResults<T>> {
         let start_time = Instant::now();
 
         // Check cache first
@@ -1424,13 +1423,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
 
         let evaluation_time = start_time.elapsed();
 
-        let results = EvaluationResults {
+        let results = crate::nas_engine::EvaluationResults {
             metric_scores,
             overall_score,
             confidence_intervals,
             evaluation_time,
             success: true,
             error_message: None,
+            cv_results: None,
+            benchmark_results: std::collections::HashMap::new(),
+            training_trajectory: Vec::new(),
         };
 
         // Cache results
@@ -1439,10 +1441,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         Ok(results)
     }
 
-    fn generate_cache_key(&self, architecture: &OptimizerArchitecture<T>) -> String {
+    fn generate_cache_key(&self, architecture: &OptimizerArchitecture) -> String {
         // Generate a unique key for the architecture
         // This is simplified - in practice would use better hashing
-        format!("arch_{}", architecture.components.len())
+        format!("arch_{}", architecture.structure.len())
     }
 
     fn aggregate_benchmark_scores(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -1488,23 +1490,25 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     fn compute_memory_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
         let avg_memory = results
             .iter()
-            .map(|r| r.resource_usage.memory_gb.to_f64().unwrap_or(1.0))
+            .map(|r| r.resource_usage.memory_gb)
             .sum::<f64>()
             / results.len() as f64;
 
         // Efficiency as inverse of memory usage
-        Ok(T::from(1.0 / (avg_memory + 1e-6)).unwrap())
+        let efficiency = 1.0 / (avg_memory + 1e-6);
+        Ok(num_traits::cast::cast(efficiency).unwrap_or_else(|| T::zero()))
     }
 
     fn compute_computational_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
         let avg_cpu_time = results
             .iter()
-            .map(|r| r.resource_usage.cpu_time_seconds.to_f64().unwrap_or(1.0))
+            .map(|r| r.resource_usage.cpu_time_seconds)
             .sum::<f64>()
             / results.len() as f64;
 
         // Efficiency as inverse of CPU time
-        Ok(T::from(1.0 / (avg_cpu_time + 1e-6)).unwrap())
+        let efficiency = 1.0 / (avg_cpu_time + 1e-6);
+        Ok(num_traits::cast::cast(efficiency).unwrap_or_else(|| T::zero()))
     }
 }
 
@@ -1527,7 +1531,7 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
         })
     }
 
-    fn initialize(&mut self, config: &EvaluationConfig<T>) -> Result<()> {
+    fn initialize(&mut self, config: &EvaluationConfig) -> Result<()> {
         // Initialize standard benchmarks
         self.add_standard_benchmarks()?;
         Ok(())
@@ -1589,7 +1593,7 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
 
     fn run_benchmarks(
         &mut self,
-        architecture: &OptimizerArchitecture<T>,
+        architecture: &OptimizerArchitecture,
     ) -> Result<Vec<TestResult<T>>> {
         let mut results = Vec::new();
 
@@ -1630,12 +1634,15 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
             percentile_rank: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), // Simplified percentile
             execution_time,
             resource_usage: ResourceUsage {
-                memory_gb: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                cpu_time_seconds: T::from(execution_time.as_secs_f64()).unwrap(),
-                gpu_time_seconds: T::zero(),
-                energy_kwh: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-                cost_usd: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-                network_gb: T::zero(),
+                memory_usage: 100_000, // 100KB as default
+                compute_time: execution_time.as_secs_f64(),
+                energy_consumption: 0.001, // 1mJ as default
+                memory_gb: 0.1,
+                cpu_time_seconds: execution_time.as_secs_f64(),
+                gpu_time_seconds: 0.0,
+                energy_kwh: 0.001,
+                cost_usd: 0.01,
+                network_gb: 0.0,
             },
             metrics: HashMap::new(),
         })
@@ -1643,7 +1650,7 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
 }
 
 impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
-    pub fn new(config: &EvaluationConfig<T>) -> Result<Self> {
+    pub fn new(config: &EvaluationConfig) -> Result<Self> {
         Ok(Self {
             predictor_model: PredictorModel::new()?,
             feature_extractor: FeatureExtractor::new()?,
@@ -1655,16 +1662,19 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
 
     pub fn predict_performance(
         &self,
-        architecture: &OptimizerArchitecture<T>,
-    ) -> Result<EvaluationResults<T>> {
+        architecture: &OptimizerArchitecture,
+    ) -> Result<crate::nas_engine::EvaluationResults<T>> {
         // Simple placeholder implementation
-        Ok(EvaluationResults {
+        Ok(crate::nas_engine::EvaluationResults {
             metric_scores: std::collections::HashMap::new(),
             overall_score: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
             confidence_intervals: std::collections::HashMap::new(),
             evaluation_time: std::time::Duration::from_millis(100),
             success: true,
             error_message: None,
+            cv_results: None,
+            benchmark_results: std::collections::HashMap::new(),
+            training_trajectory: Vec::new(),
         })
     }
 
@@ -1763,12 +1773,15 @@ impl<T: Float + Debug + Default + Send + Sync> ResourceMonitor<T> {
     fn new() -> Self {
         Self {
             current_usage: ResourceUsage {
-                memory_gb: T::zero(),
-                cpu_time_seconds: T::zero(),
-                gpu_time_seconds: T::zero(),
-                energy_kwh: T::zero(),
-                cost_usd: T::zero(),
-                network_gb: T::zero(),
+                memory_usage: 0,
+                compute_time: 0.0,
+                energy_consumption: 0.0,
+                memory_gb: 0.0,
+                cpu_time_seconds: 0.0,
+                gpu_time_seconds: 0.0,
+                energy_kwh: 0.0,
+                cost_usd: 0.0,
+                network_gb: 0.0,
             },
             usage_history: VecDeque::new(),
             limits: ResourceLimits {
@@ -1963,12 +1976,15 @@ mod tests {
         assert_eq!(cache.metadata.total_entries, 0);
 
         let results = EvaluationResults {
-            metric_scores: HashMap::new(),
-            overall_score: 0.5,
-            confidence_intervals: HashMap::new(),
-            evaluation_time: Duration::from_secs(1),
+            metric_scores: std::collections::HashMap::new(),
+            overall_score: 0.95,
+            confidence_intervals: std::collections::HashMap::new(),
+            evaluation_time: std::time::Duration::from_secs(100),
             success: true,
             error_message: None,
+            cv_results: None,
+            benchmark_results: std::collections::HashMap::new(),
+            training_trajectory: vec![],
         };
 
         cache.insert("test_key".to_string(), results);

@@ -77,6 +77,64 @@ pub enum ComponentType {
     BatchNorm,
     /// Dropout regularization
     Dropout,
+    /// LAMB optimizer
+    LAMB,
+    /// LARS optimizer
+    LARS,
+    /// Lion optimizer
+    Lion,
+    /// RAdam optimizer
+    RAdam,
+    /// Lookahead optimizer
+    Lookahead,
+    /// SAM optimizer
+    SAM,
+    /// L-BFGS optimizer
+    LBFGS,
+    /// Sparse Adam optimizer
+    SparseAdam,
+    /// Grouped Adam optimizer
+    GroupedAdam,
+    /// MAML optimizer
+    MAML,
+    /// L1 regularizer
+    L1Regularizer,
+    /// L2 regularizer
+    L2Regularizer,
+    /// Elastic Net regularizer
+    ElasticNetRegularizer,
+    /// Dropout regularizer
+    DropoutRegularizer,
+    /// Weight decay
+    WeightDecay,
+    /// Adaptive learning rate
+    AdaptiveLR,
+    /// Adaptive momentum
+    AdaptiveMomentum,
+    /// Adaptive regularization
+    AdaptiveRegularization,
+    /// LSTM optimizer
+    LSTMOptimizer,
+    /// Transformer optimizer
+    TransformerOptimizer,
+    /// Attention optimizer
+    AttentionOptimizer,
+    /// Meta SGD
+    MetaSGD,
+    /// Constant learning rate
+    ConstantLR,
+    /// Exponential learning rate
+    ExponentialLR,
+    /// Step learning rate
+    StepLR,
+    /// Cosine annealing learning rate
+    CosineAnnealingLR,
+    /// One cycle learning rate
+    OneCycleLR,
+    /// Cyclic learning rate
+    CyclicLR,
+    /// Reptile optimizer
+    Reptile,
     /// Custom component
     Custom,
 }
@@ -230,7 +288,7 @@ impl ArchitectureSpace {
     /// Generate a random architecture within this search space
     pub fn generate_random_architecture(&self) -> Architecture {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::thread_rng();
+        let mut rng = scirs2_core::random::Random::default();
 
         let num_components = rng.gen_range(self.min_components..=self.max_components);
         let mut components = Vec::new();
@@ -300,7 +358,7 @@ impl ArchitectureSpace {
         mutation_rate: f64,
     ) -> Architecture {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::thread_rng();
+        let mut rng = scirs2_core::random::Random::default();
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}_mut", architecture.id, rng.gen::<u32>());
         mutated.generation = architecture.generation + 1;
@@ -366,7 +424,7 @@ impl ArchitectureSpace {
         parent2: &Architecture,
     ) -> (Architecture, Architecture) {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::thread_rng();
+        let mut rng = scirs2_core::random::Random::default();
 
         let mut child1 = parent1.clone();
         let mut child2 = parent2.clone();
@@ -535,6 +593,35 @@ impl fmt::Display for ComponentType {
             ComponentType::GradientClipping => write!(f, "GradientClipping"),
             ComponentType::BatchNorm => write!(f, "BatchNorm"),
             ComponentType::Dropout => write!(f, "Dropout"),
+            ComponentType::LAMB => write!(f, "LAMB"),
+            ComponentType::LARS => write!(f, "LARS"),
+            ComponentType::Lion => write!(f, "Lion"),
+            ComponentType::RAdam => write!(f, "RAdam"),
+            ComponentType::Lookahead => write!(f, "Lookahead"),
+            ComponentType::SAM => write!(f, "SAM"),
+            ComponentType::LBFGS => write!(f, "LBFGS"),
+            ComponentType::SparseAdam => write!(f, "SparseAdam"),
+            ComponentType::GroupedAdam => write!(f, "GroupedAdam"),
+            ComponentType::MAML => write!(f, "MAML"),
+            ComponentType::L1Regularizer => write!(f, "L1Regularizer"),
+            ComponentType::L2Regularizer => write!(f, "L2Regularizer"),
+            ComponentType::ElasticNetRegularizer => write!(f, "ElasticNetRegularizer"),
+            ComponentType::DropoutRegularizer => write!(f, "DropoutRegularizer"),
+            ComponentType::WeightDecay => write!(f, "WeightDecay"),
+            ComponentType::AdaptiveLR => write!(f, "AdaptiveLR"),
+            ComponentType::AdaptiveMomentum => write!(f, "AdaptiveMomentum"),
+            ComponentType::AdaptiveRegularization => write!(f, "AdaptiveRegularization"),
+            ComponentType::LSTMOptimizer => write!(f, "LSTMOptimizer"),
+            ComponentType::TransformerOptimizer => write!(f, "TransformerOptimizer"),
+            ComponentType::AttentionOptimizer => write!(f, "AttentionOptimizer"),
+            ComponentType::MetaSGD => write!(f, "MetaSGD"),
+            ComponentType::ConstantLR => write!(f, "ConstantLR"),
+            ComponentType::ExponentialLR => write!(f, "ExponentialLR"),
+            ComponentType::StepLR => write!(f, "StepLR"),
+            ComponentType::CosineAnnealingLR => write!(f, "CosineAnnealingLR"),
+            ComponentType::OneCycleLR => write!(f, "OneCycleLR"),
+            ComponentType::CyclicLR => write!(f, "CyclicLR"),
+            ComponentType::Reptile => write!(f, "Reptile"),
             ComponentType::Custom => write!(f, "Custom"),
         }
     }

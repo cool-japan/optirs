@@ -856,6 +856,7 @@ impl GarbageCollectionEngine {
             )));
         }
 
+        let gc_threshold = config.gc_threshold;
         Self {
             config,
             stats: GCStats::default(),
@@ -873,7 +874,7 @@ impl GarbageCollectionEngine {
                     memory_pressure: 0.0,
                 },
                 trigger_conditions: vec![
-                    GCTrigger::MemoryThreshold(config.gc_threshold),
+                    GCTrigger::MemoryThreshold(gc_threshold),
                     GCTrigger::TimeInterval(Duration::from_secs(30)),
                 ],
             },
@@ -965,9 +966,34 @@ impl GarbageCollectionEngine {
     pub fn collect(&mut self) -> Result<Vec<GCResult>, GCError> {
         let mut results = Vec::new();
 
-        for (region_addr, region) in &mut self.memory_regions {
-            // Select appropriate collector
-            let collector_index = self.select_collector(region)?;
+        // First, collect collector indices for each region
+        let collector_indices: Result<Vec<(usize, usize)>, GCError> = self
+            .memory_regions
+            .iter()
+            .map(|(addr, region)| {
+                let collector_index = self.select_collector(region)?;
+                Ok((*addr, collector_index))
+            })
+            .collect();
+
+        let collector_indices = collector_indices?;
+
+        // Now perform collections
+        for (region_addr, collector_index) in collector_indices {
+            // Calculate utilization before getting mutable reference
+            let utilization = {
+                let region = self
+                    .memory_regions
+                    .get(&region_addr)
+                    .ok_or_else(|| GCError::InvalidRegion("Region not found".to_string()))?;
+                self.calculate_region_utilization(region)
+            };
+
+            let region = self
+                .memory_regions
+                .get_mut(&region_addr)
+                .ok_or_else(|| GCError::InvalidRegion("Region not found".to_string()))?;
+
             let collector = &mut self.collectors[collector_index];
 
             // Perform collection
@@ -976,7 +1002,7 @@ impl GarbageCollectionEngine {
             // Update region state
             region.last_collection = Some(Instant::now());
             region.collection_count += 1;
-            region.utilization = self.calculate_region_utilization(region);
+            region.utilization = utilization;
 
             // Update global statistics
             self.stats.total_cycles += 1;
@@ -1069,14 +1095,22 @@ impl GarbageCollectionEngine {
 
     /// Force collection on specific region
     pub fn force_collect_region(&mut self, region_addr: usize) -> Result<GCResult, GCError> {
+        // First get collector index with immutable borrow
+        let collector_index = {
+            let region = self
+                .memory_regions
+                .get(&region_addr)
+                .ok_or_else(|| GCError::RegionNotFound("Region not found".to_string()))?;
+            self.select_collector(region)?
+        };
+
+        // Now get mutable reference and perform collection
         let region = self
             .memory_regions
             .get_mut(&region_addr)
             .ok_or_else(|| GCError::RegionNotFound("Region not found".to_string()))?;
 
-        let collector_index = self.select_collector(region)?;
         let collector = &mut self.collectors[collector_index];
-
         collector.collect(region, &mut self.reference_tracker)
     }
 
@@ -1111,6 +1145,7 @@ pub enum GCError {
     NoSuitableCollector(String),
     ConfigurationError(String),
     InternalError(String),
+    InvalidRegion(String),
 }
 
 impl std::fmt::Display for GCError {
@@ -1123,6 +1158,7 @@ impl std::fmt::Display for GCError {
             GCError::NoSuitableCollector(msg) => write!(f, "No suitable collector: {}", msg),
             GCError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
             GCError::InternalError(msg) => write!(f, "Internal error: {}", msg),
+            GCError::InvalidRegion(msg) => write!(f, "Invalid region: {}", msg),
         }
     }
 }

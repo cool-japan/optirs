@@ -14,20 +14,25 @@ pub mod vendors;
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 // Re-export key types from submodules
 pub use allocation::{
-    AllocationStats, AllocationStrategy, AllocationStrategyManager, ArenaAllocator, BuddyAllocator,
-    SlabAllocator, UnifiedAllocator, UnifiedConfig,
+    AllocationStrategy, AllocationStrategyManager, AllocatorType, ArenaAllocator, BuddyAllocator,
+    MemoryPool, SlabAllocator, UnifiedAllocator, UnifiedConfig,
 };
+
+use allocation::strategies::AllocationStats;
 
 pub use management::{
     AccessType, DefragmentationEngine, EvictionEngine, GarbageCollectionEngine,
     IntegratedMemoryManager, ManagementStats, MemoryManagementConfig, MemoryManagementError,
-    PrefetchingEngine,
+    MemoryRegion, PrefetchingEngine,
 };
+
+use management::eviction_policies::{CacheObject, ObjectPriority, ObjectType, RegionType};
 
 pub use vendors::{
     CudaConfig, CudaError, CudaMemoryBackend, CudaMemoryType, GpuBackendFactory, GpuVendor,
@@ -93,7 +98,7 @@ impl Default for GpuMemorySystemConfig {
         let vendor = GpuBackendFactory::get_preferred_vendor();
         Self {
             vendor_config: GpuBackendFactory::create_default_config(vendor),
-            allocation_config: AllocationConfig::default(),
+            allocation_config: UnifiedConfig::default(),
             management_config: MemoryManagementConfig::default(),
             system_config: SystemConfig::default(),
         }
@@ -105,7 +110,7 @@ pub struct GpuMemorySystem {
     /// GPU backend
     gpu_backend: UnifiedGpuBackend,
     /// Allocation engine
-    allocation_engine: AllocationEngine,
+    allocation_engine: UnifiedAllocator,
     /// Memory management system
     memory_manager: IntegratedMemoryManager,
     /// System configuration
@@ -155,10 +160,28 @@ impl GpuMemorySystem {
     /// Create new GPU memory system
     pub fn new(config: GpuMemorySystemConfig) -> Result<Self, GpuMemorySystemError> {
         // Initialize GPU backend
-        let gpu_backend = UnifiedGpuBackend::new(config.vendor_config.clone())?;
+        let mut gpu_backend = UnifiedGpuBackend::new(config.vendor_config.clone())?;
 
-        // Initialize allocation engine
-        let allocation_engine = AllocationEngine::new(config.allocation_config.clone());
+        // Allocate memory pool from GPU backend
+        let mut total_size =
+            (config.system_config.memory_budget * gpu_backend.get_total_memory() as f64) as usize;
+
+        // Round to nearest power of 2 if buddy allocator is enabled
+        if config.allocation_config.enable_buddy {
+            total_size = total_size.next_power_of_two();
+        }
+
+        let base_ptr = gpu_backend
+            .allocate(total_size)
+            .map_err(|e| GpuMemorySystemError::BackendError(e))?;
+
+        // Initialize allocation engine with GPU memory
+        let allocation_engine = UnifiedAllocator::new(
+            unsafe { NonNull::new_unchecked(base_ptr as *mut u8) },
+            total_size,
+            config.allocation_config.clone(),
+        )
+        .map_err(|e| GpuMemorySystemError::AllocationError(format!("{:?}", e)))?;
 
         // Initialize memory manager
         let memory_manager = IntegratedMemoryManager::new(config.management_config.clone());
@@ -191,8 +214,8 @@ impl GpuMemorySystem {
             self.monitoring_enabled = true;
         }
 
-        // Initialize allocation engine
-        self.allocation_engine.initialize()?;
+        // TODO: Implement initialize method in UnifiedAllocator
+        // self.allocation_engine.initialize()?;
 
         Ok(())
     }
@@ -209,9 +232,12 @@ impl GpuMemorySystem {
         let allocator_type = self.choose_allocator(size);
 
         // Allocate using allocation engine
-        let ptr = self
-            .allocation_engine
-            .allocate(size, allocator_type, alignment)?;
+        let ptr_nonnull =
+            self.allocation_engine
+                .allocate(size, allocator_type.clone(), alignment)?;
+
+        // Convert NonNull<u8> to *mut c_void
+        let ptr = ptr_nonnull.as_ptr() as *mut c_void;
 
         // Create allocation record
         let allocation = MemoryAllocation {
@@ -270,7 +296,7 @@ impl GpuMemorySystem {
             .ok_or_else(|| GpuMemorySystemError::InvalidPointer("Pointer not found".to_string()))?;
 
         let old_size = allocation.size;
-        let allocator_type = allocation.allocator_type;
+        let allocator_type = allocation.allocator_type.clone();
 
         // Try in-place reallocation first
         if let Ok(new_ptr) = self
@@ -335,7 +361,22 @@ impl GpuMemorySystem {
         self.stats.vendor_stats = self.gpu_backend.get_memory_stats();
 
         // Update allocation stats
-        self.stats.allocation_stats = self.allocation_engine.get_stats();
+        let unified_stats = self.allocation_engine.get_stats();
+        self.stats.allocation_stats = AllocationStats {
+            total_allocations: unified_stats.total_allocations,
+            total_deallocations: unified_stats.total_deallocations,
+            cache_hits: unified_stats.routing_cache_hits,
+            cache_misses: unified_stats.routing_decisions - unified_stats.routing_cache_hits,
+            fragmentation_events: 0, // TODO: Track fragmentation events in UnifiedAllocator
+            total_allocated_bytes: unified_stats.bytes_allocated,
+            peak_allocated_bytes: unified_stats.peak_memory_usage as u64,
+            average_allocation_size: if unified_stats.total_allocations > 0 {
+                (unified_stats.bytes_allocated as f64) / (unified_stats.total_allocations as f64)
+            } else {
+                0.0
+            },
+            allocation_latency_ms: unified_stats.average_allocation_time_ns / 1_000_000.0,
+        };
 
         // Update management stats
         self.stats.management_stats = self.memory_manager.get_stats().clone();
@@ -365,16 +406,33 @@ impl GpuMemorySystem {
             .iter()
             .enumerate()
             .map(|(i, (ptr, alloc))| {
-                (
-                    i,
-                    management::MemoryRegion {
-                        id: i,
-                        start_addr: *ptr as usize,
+                let mut objects = HashMap::new();
+                objects.insert(
+                    *ptr as usize,
+                    CacheObject {
+                        address: *ptr as usize,
                         size: alloc.size,
-                        allocated: true,
-                        last_access: alloc.last_accessed,
-                        access_count: alloc.access_count,
-                        allocator_type: format!("{:?}", alloc.allocator_type),
+                        created_at: alloc.allocated_at,
+                        last_access: alloc.last_accessed.unwrap_or(alloc.allocated_at),
+                        access_count: alloc.access_count as u32,
+                        access_frequency: alloc.access_count as f64,
+                        priority: ObjectPriority::Normal,
+                        kernel_context: None,
+                        object_type: ObjectType::Data,
+                        eviction_cost: 1.0,
+                        replacement_cost: 1.0,
+                    },
+                );
+
+                (
+                    *ptr as usize,
+                    management::MemoryRegion {
+                        base_addr: *ptr as usize,
+                        size: alloc.size,
+                        objects,
+                        region_type: RegionType::Buffer,
+                        pressure: 0.0,
+                        last_eviction: None,
                     },
                 )
             })
@@ -411,16 +469,33 @@ impl GpuMemorySystem {
                 .iter()
                 .enumerate()
                 .map(|(i, (ptr, alloc))| {
-                    (
-                        i,
-                        management::MemoryRegion {
-                            id: i,
-                            start_addr: *ptr as usize,
+                    let mut objects = HashMap::new();
+                    objects.insert(
+                        *ptr as usize,
+                        CacheObject {
+                            address: *ptr as usize,
                             size: alloc.size,
-                            allocated: true,
-                            last_access: alloc.last_accessed,
-                            access_count: alloc.access_count,
-                            allocator_type: format!("{:?}", alloc.allocator_type),
+                            created_at: alloc.allocated_at,
+                            last_access: alloc.last_accessed.unwrap_or(alloc.allocated_at),
+                            access_count: alloc.access_count as u32,
+                            access_frequency: alloc.access_count as f64,
+                            priority: ObjectPriority::Normal,
+                            kernel_context: None,
+                            object_type: ObjectType::Data,
+                            eviction_cost: 1.0,
+                            replacement_cost: 1.0,
+                        },
+                    );
+
+                    (
+                        *ptr as usize,
+                        management::MemoryRegion {
+                            base_addr: *ptr as usize,
+                            size: alloc.size,
+                            objects,
+                            region_type: RegionType::Buffer,
+                            pressure: 0.0,
+                            last_eviction: None,
                         },
                     )
                 })

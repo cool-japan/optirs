@@ -13,23 +13,21 @@ pub mod statistics;
 pub mod types;
 
 // Re-export commonly used types and functions
-pub use alerts::{AlertSystem, AlertStatistics, SeverityCounts};
+pub use alerts::{AlertStatistics, AlertSystem, SeverityCounts};
 pub use config::{
     Alert, AlertConfig, AlertSeverity, AlertStatus, CiReportFormat, RegressionConfig,
     TestEnvironment,
 };
 pub use database::PerformanceDatabase;
-pub use detectors::{
-    ChangePointDetector, SlidingWindowDetector, StatisticalTestDetector,
-};
+pub use detectors::{ChangePointDetector, SlidingWindowDetector, StatisticalTestDetector};
 pub use statistics::{OutlierAnalyzer, TrendAnalyzer};
 pub use types::{
     BaselineStatistics, ChangePointAnalysis, ConfidenceIntervals, ConvergenceMetrics,
     ConvergenceStatistics, DatabaseMetadata, EfficiencyMetrics, EfficiencyStatistics,
     FragmentationStatistics, MemoryMetrics, MemoryStatistics, OutlierAnalysis, OutlierType,
     PerformanceBaseline, PerformanceMetrics, PerformanceRecord, RegressionAnalysis,
-    RegressionDetector, RegressionResult, StatisticalAnalysisResult, StatisticalAnalyzer, StatisticalTestResult, TimingMetrics,
-    TimingStatistics, TrendAnalysis, TrendDirection,
+    RegressionDetector, RegressionResult, StatisticalAnalysisResult, StatisticalAnalyzer,
+    StatisticalTestResult, TimingMetrics, TimingStatistics, TrendAnalysis, TrendDirection,
 };
 
 // For now, we'll include a simplified main framework here
@@ -120,7 +118,7 @@ pub struct CiTestResult {
     pub regression_count: usize,
 }
 
-impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> RegressionTester<A> {
+impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync> RegressionTester<A> {
     /// Create a new regression tester
     pub fn new(config: RegressionConfig) -> Result<Self> {
         // Ensure baseline directory exists
@@ -165,8 +163,7 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Reg
             .detection_algorithms
             .contains(&"sliding_window".to_string())
         {
-            self.detectors
-                .push(Box::new(SlidingWindowDetector::new()));
+            self.detectors.push(Box::new(SlidingWindowDetector::new()));
         }
 
         // Add change point detector
@@ -175,8 +172,7 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Reg
             .detection_algorithms
             .contains(&"change_point".to_string())
         {
-            self.detectors
-                .push(Box::new(ChangePointDetector::new()));
+            self.detectors.push(Box::new(ChangePointDetector::new()));
         }
 
         // Add default statistical analyzers
@@ -275,9 +271,10 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Reg
             regression_count: regressions.len(),
             regressions,
             metrics,
-            baseline_comparison: self.baselines.get(key).map(|baseline| {
-                self.compare_with_baseline(&metrics, baseline)
-            }),
+            baseline_comparison: self
+                .baselines
+                .get(key)
+                .map(|baseline| self.compare_with_baseline(&metrics, baseline)),
         })
     }
 
@@ -328,7 +325,8 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Reg
         metrics: &PerformanceMetrics<A>,
         baseline: &PerformanceBaseline<A>,
     ) -> BaselineComparison {
-        let timing_change = ((metrics.timing.mean_time_ns as f64 - baseline.baseline_stats.timing.mean)
+        let timing_change = ((metrics.timing.mean_time_ns as f64
+            - baseline.baseline_stats.timing.mean)
             / baseline.baseline_stats.timing.mean)
             * 100.0;
 
@@ -438,9 +436,15 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Reg
                 },
             },
             confidence_intervals: ConfidenceIntervals {
-                timing_ci_95: (timing_mean - 1.96 * timing_std, timing_mean + 1.96 * timing_std),
+                timing_ci_95: (
+                    timing_mean - 1.96 * timing_std,
+                    timing_mean + 1.96 * timing_std,
+                ),
                 memory_ci_95: (memory_mean * 0.9, memory_mean * 1.1),
-                timing_ci_99: (timing_mean - 2.58 * timing_std, timing_mean + 2.58 * timing_std),
+                timing_ci_99: (
+                    timing_mean - 2.58 * timing_std,
+                    timing_mean + 2.58 * timing_std,
+                ),
                 memory_ci_99: (memory_mean * 0.85, memory_mean * 1.15),
             },
             sample_count: history.len(),
@@ -542,7 +546,10 @@ impl<A: Float + Debug + Serialize + for<'de + Send + Sync> Deserialize<'de>> Reg
     }
 
     /// Generate GitHub Actions report (simplified)
-    fn generate_github_actions_report(&self, results: &[RegressionTestResult<A>]) -> Result<String> {
+    fn generate_github_actions_report(
+        &self,
+        results: &[RegressionTestResult<A>],
+    ) -> Result<String> {
         let failed_results: Vec<_> = results.iter().filter(|r| r.status == "failed").collect();
 
         if failed_results.is_empty() {

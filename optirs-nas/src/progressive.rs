@@ -125,7 +125,7 @@ pub struct ProgressionRecord<T: Float + Debug + Send + Sync + 'static> {
 
 impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
     /// Create new progressive NAS
-    pub fn new(config: &NASConfig<T>) -> Result<Self> {
+    pub fn new(config: &NASConfig) -> Result<Self> {
         let progression_strategy = match config.search_budget {
             budget if budget < 50 => ProgressionStrategy::TimeBased(Duration::from_secs(300)),
             budget if budget < 200 => ProgressionStrategy::BudgetBased(budget / 4),
@@ -411,11 +411,11 @@ mod tests {
 
     #[test]
     fn test_progressive_nas_creation() {
-        let config = NASConfig::<f64>::default();
+        let config = NASConfig::default();
         let progressive_nas = ProgressiveNAS::new(&config);
         assert!(progressive_nas.is_ok());
 
-        let nas = progressive_nas.unwrap();
+        let nas: ProgressiveNAS<f64> = progressive_nas.unwrap();
         assert_eq!(nas.current_phase, SearchPhase::Initial);
     }
 

@@ -171,7 +171,7 @@ pub enum KernelError {
 }
 
 /// Trait for backend-specific kernel compilation
-pub trait KernelCompiler: Send + Sync {
+pub trait KernelCompiler: Send + Sync + std::fmt::Debug {
     /// Compile kernel source code for the target backend
     fn compile_kernel(
         &self,

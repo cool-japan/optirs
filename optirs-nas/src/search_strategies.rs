@@ -10,11 +10,12 @@ use scirs2_core::random::{Random, Rng as SCRRng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use super::{
-    ComponentType, EvaluationMetric, OptimizerArchitecture, SearchResult, SearchSpaceConfig,
-};
+use crate::architecture::{ComponentPosition, ComponentType};
 #[allow(unused_imports)]
 use crate::error::Result;
+use crate::nas_engine::config::{ComponentType as ConfigComponentType, ParameterRange};
+use crate::nas_engine::{OptimizerArchitecture, SearchResult, SearchSpaceConfig};
+use crate::EvaluationMetric;
 
 /// Base trait for all search strategies
 pub trait SearchStrategy<T: Float + Debug + Send + Sync + 'static>: Send + Sync {
@@ -50,7 +51,7 @@ pub struct SearchStrategyStatistics<T: Float + Debug + Send + Sync + 'static> {
 }
 
 /// Random search baseline strategy
-pub struct RandomSearch<T: Float + Debug + std::iter::Sum> {
+pub struct RandomSearch<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> {
     rng: Random<scirs2_core::random::rngs::StdRng>,
     statistics: SearchStrategyStatistics<T>,
     searchspace: Option<SearchSpaceConfig>,
@@ -287,8 +288,9 @@ pub struct BaselineOptimizer<T: Float + Debug + Send + Sync + 'static> {
     velocity: Vec<Array2<T>>,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::iter::Sum>
-    RandomSearch<T>
+impl<
+        T: Float + Debug + Default + Clone + Send + Sync + 'static + std::fmt::Debug + std::iter::Sum,
+    > RandomSearch<T>
 {
     pub fn new(seed: Option<u64>) -> Self {
         let rng = if let Some(seed) = seed {
@@ -305,8 +307,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::iter::Sum>
-    SearchStrategy<T> for RandomSearch<T>
+impl<
+        T: Float + Debug + Default + Clone + Send + Sync + 'static + std::fmt::Debug + std::iter::Sum,
+    > SearchStrategy<T> for RandomSearch<T>
 {
     fn initialize(&mut self, searchspace: &SearchSpaceConfig) -> Result<()> {
         self.searchspace = Some(searchspace.clone());
@@ -318,52 +321,44 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         searchspace: &SearchSpaceConfig,
         _history: &VecDeque<SearchResult<T>>,
     ) -> Result<OptimizerArchitecture<T>> {
-        use crate::neural_architecture_search::OptimizerComponent;
+        use crate::architecture::OptimizerComponent;
 
         // Randomly select number of components
         let num_components = self.rng.gen_range(1..5);
         let mut components = Vec::new();
 
-        for _ in 0..num_components {
+        for idx in 0..num_components {
             // Randomly select component type
-            let component_config = &searchspace.optimizer_components[self
-                .rng
-                .gen_range(0..searchspace.optimizer_components.len())];
+            let component_config =
+                &searchspace.components[self.rng.gen_range(0..searchspace.components.len())];
 
             let mut hyperparameters = HashMap::new();
 
             // Randomly sample hyperparameters
             for (param_name, param_range) in &component_config.hyperparameter_ranges {
                 let value = match param_range {
-                    super::ParameterRange::Continuous(min, max) => {
-                        let val = self.rng.gen_range(*min..*max);
-                        num_traits::cast::cast(val).unwrap_or_else(|| T::zero())
-                    }
-                    super::ParameterRange::LogUniform(min, max) => {
+                    ParameterRange::Continuous(min, max) => self.rng.gen_range(*min..*max),
+                    ParameterRange::LogUniform(min, max) => {
                         let log_min = min.ln();
                         let log_max = max.ln();
                         let log_val = self.rng.gen_range(log_min..log_max);
-                        T::from(log_val.exp()).unwrap()
+                        log_val.exp()
                     }
-                    super::ParameterRange::Integer(min, max) => {
-                        let val = self.rng.gen_range(*min..*max) as f64;
-                        num_traits::cast::cast(val).unwrap_or_else(|| T::zero())
-                    }
-                    super::ParameterRange::Boolean => {
-                        let val = if self.rng.random_f64() < 0.5 {
+                    ParameterRange::Integer(min, max) => self.rng.gen_range(*min..*max) as f64,
+                    ParameterRange::Boolean => {
+                        if self.rng.random_f64() < 0.5 {
                             1.0
                         } else {
                             0.0
-                        };
-                        num_traits::cast::cast(val).unwrap_or_else(|| T::zero())
+                        }
                     }
-                    super::ParameterRange::Discrete(values) => {
-                        let idx = self.rng.gen_range(0..values.len());
-                        num_traits::cast::cast(values[idx]).unwrap_or_else(|| T::zero())
+                    ParameterRange::Discrete(values) => {
+                        let value_idx = self.rng.gen_range(0..values.len());
+                        values[value_idx]
                     }
-                    super::ParameterRange::Categorical(_values) => {
+                    ParameterRange::Categorical(_values) => {
                         // For categorical, we'll use index as value
-                        num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero())
+                        0.0
                         // Simplified
                     }
                 };
@@ -371,19 +366,46 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                 hyperparameters.insert(param_name.clone(), value);
             }
 
+            let component_type = match component_config.component_type {
+                ConfigComponentType::SGD => ComponentType::SGD,
+                ConfigComponentType::Adam => ComponentType::Adam,
+                ConfigComponentType::AdamW => ComponentType::AdamW,
+                ConfigComponentType::RMSprop => ComponentType::RMSprop,
+                ConfigComponentType::AdaGrad => ComponentType::AdaGrad,
+                ConfigComponentType::AdaDelta => ComponentType::AdaDelta,
+                ConfigComponentType::LBFGS => ComponentType::LBFGS,
+                ConfigComponentType::Momentum => ComponentType::Momentum,
+                ConfigComponentType::Nesterov => ComponentType::Nesterov,
+                ConfigComponentType::Custom(_) => ComponentType::Custom,
+                _ => ComponentType::Adam, // Default fallback
+            };
+
             components.push(OptimizerComponent {
-                component_type: component_config.componenttype.clone(),
+                id: format!("comp_{}", idx),
+                component_type,
                 hyperparameters,
-                connections: Vec::new(),
+                enabled: true,
+                position: ComponentPosition {
+                    layer: 0,
+                    index: idx as u32,
+                    x: 0.0,
+                    y: 0.0,
+                },
             });
         }
 
         self.statistics.total_architectures_generated += 1;
 
         Ok(OptimizerArchitecture {
-            components,
+            components: components
+                .into_iter()
+                .map(|c| format!("{:?}", c.component_type))
+                .collect(),
+            parameters: HashMap::new(),
             connections: Vec::new(),
             metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: format!("arch_{}", self.rng.gen::<u32>()),
         })
     }
 
@@ -489,7 +511,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         for i in 0..max_len {
             let component = if i < parent1.components.len() && i < parent2.components.len() {
                 // Crossover between components
-                if scirs2_core::random::random::<f64>() < 0.5 {
+                if scirs2_core::random::Random::default().gen::<f64>() < 0.5 {
                     parent1.components[i].clone()
                 } else {
                     parent2.components[i].clone()
@@ -503,10 +525,25 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             child_components.push(component);
         }
 
+        // Crossover parameters
+        let mut child_parameters = HashMap::new();
+        for (key, value) in &parent1.parameters {
+            if scirs2_core::random::Random::default().gen::<f64>() < 0.5 {
+                child_parameters.insert(key.clone(), *value);
+            } else if let Some(parent2_value) = parent2.parameters.get(key) {
+                child_parameters.insert(key.clone(), *parent2_value);
+            } else {
+                child_parameters.insert(key.clone(), *value);
+            }
+        }
+
         Ok(OptimizerArchitecture {
             components: child_components,
-            connections: parent1.connections.clone(), // Simplified
+            parameters: child_parameters,
+            connections: Vec::new(),
             metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: format!("arch_{}", Random::default().gen::<u64>()),
         })
     }
 
@@ -515,36 +552,43 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         architecture: &mut OptimizerArchitecture<T>,
         searchspace: &SearchSpaceConfig,
     ) -> Result<()> {
-        for component in &mut architecture.components {
-            for (param_name, param_range) in searchspace
-                .optimizer_components
-                .iter()
-                .find(|c| c.componenttype == component.component_type)
-                .map(|c| &c.hyperparameter_ranges)
-                .unwrap_or(&HashMap::new())
-            {
-                if scirs2_core::random::random::<f64>() < self.mutation_rate {
-                    if let Some(current_value) = component.hyperparameters.get_mut(param_name) {
-                        match param_range {
-                            super::ParameterRange::Continuous(min, max) => {
-                                let noise = scirs2_core::random::random::<f64>() * 0.1 - 0.05; // Small noise
-                                let new_val = current_value.to_f64().unwrap_or(0.0) + noise;
-                                let clamped = new_val.max(*min).min(*max);
-                                *current_value =
-                                    num_traits::cast::cast(clamped).unwrap_or_else(|| T::zero());
-                            }
-                            super::ParameterRange::LogUniform(min, max) => {
-                                let log_val = current_value.to_f64().unwrap_or(0.001).ln();
-                                let noise = scirs2_core::random::random::<f64>() * 0.2 - 0.1;
-                                let new_log = log_val + noise;
-                                let new_val = new_log.exp().max(*min).min(*max);
-                                *current_value =
-                                    num_traits::cast::cast(new_val).unwrap_or_else(|| T::zero());
-                            }
-                            _ => {
-                                // For other types, regenerate randomly
-                                // This is simplified - could be more sophisticated
-                            }
+        // Mutate parameters directly
+        for (param_name, current_value) in architecture.parameters.iter_mut() {
+            if scirs2_core::random::Random::default().gen::<f64>() < self.mutation_rate {
+                // Find the parameter range from search space config
+                let param_range = searchspace
+                    .components
+                    .iter()
+                    .flat_map(|c| c.hyperparameter_ranges.iter())
+                    .find(|(name, _)| name == &param_name)
+                    .map(|(_, range)| range);
+
+                if let Some(param_range) = param_range {
+                    match param_range {
+                        ParameterRange::Continuous(min, max) => {
+                            let noise =
+                                scirs2_core::random::Random::default().gen::<f64>() * 0.1 - 0.05; // Small noise
+                            let current_f64 =
+                                num_traits::cast::cast::<T, f64>(*current_value).unwrap_or(0.0);
+                            let new_val = current_f64 + noise;
+                            let clamped = new_val.max(*min).min(*max);
+                            *current_value =
+                                num_traits::cast::cast(clamped).unwrap_or_else(|| T::zero());
+                        }
+                        ParameterRange::LogUniform(min, max) => {
+                            let current_f64 =
+                                num_traits::cast::cast::<T, f64>(*current_value).unwrap_or(0.001);
+                            let log_val = current_f64.ln();
+                            let noise =
+                                scirs2_core::random::Random::default().gen::<f64>() * 0.2 - 0.1;
+                            let new_log = log_val + noise;
+                            let new_val = new_log.exp().max(*min).min(*max);
+                            *current_value =
+                                num_traits::cast::cast(new_val).unwrap_or_else(|| T::zero());
+                        }
+                        _ => {
+                            // For other types, regenerate randomly
+                            // This is simplified - could be more sophisticated
                         }
                     }
                 }
@@ -593,7 +637,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                 let parent1_idx = self.selection(&fitnessscores)?;
                 let parent2_idx = self.selection(&fitnessscores)?;
 
-                let mut child = if scirs2_core::random::random::<f64>() < self.crossover_rate {
+                let mut child = if scirs2_core::random::Random::default().gen::<f64>()
+                    < self.crossover_rate
+                {
                     self.crossover(&self.population[parent1_idx], &self.population[parent2_idx])?
                 } else {
                     self.population[parent1_idx].clone()
@@ -826,27 +872,39 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ReinforcementLe
         actions: &Array1<T>,
         searchspace: &SearchSpaceConfig,
     ) -> Result<OptimizerArchitecture<T>> {
-        use crate::neural_architecture_search::OptimizerComponent;
+        use crate::architecture::OptimizerComponent;
 
         // Simplified decoding - randomly select for now
-        let component_config = &searchspace.optimizer_components[0];
+        let component_config = &searchspace.components[0];
         let mut hyperparameters = HashMap::new();
 
         for (param_name, param_range) in &component_config.hyperparameter_ranges {
-            hyperparameters.insert(
-                param_name.clone(),
-                num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            );
+            hyperparameters.insert(param_name.clone(), 0.01f64);
         }
 
         Ok(OptimizerArchitecture {
-            components: vec![OptimizerComponent {
-                component_type: component_config.componenttype.clone(),
-                hyperparameters,
-                connections: Vec::new(),
-            }],
+            components: vec![format!("{:?}", component_config.component_type)],
+            parameters: hyperparameters
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                    )
+                })
+                .collect(),
             connections: Vec::new(),
             metadata: HashMap::new(),
+            hyperparameters: hyperparameters
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                    )
+                })
+                .collect(),
+            architecture_id: format!("arch_{}", Random::default().gen::<u64>()),
         })
     }
 
@@ -1032,7 +1090,7 @@ impl<
         }
 
         let gumbel_noise: Array1<T> = Array1::from_shape_fn(logits.len(), |_| {
-            let u = scirs2_core::random::random::<f64>();
+            let u = scirs2_core::random::Random::default().gen::<f64>();
             T::from(-(-u.ln()).ln()).unwrap()
         });
 
@@ -1052,7 +1110,7 @@ impl<
     }
 
     fn discretize_architecture(&self, weights: &Array3<T>) -> OptimizerArchitecture<T> {
-        use crate::neural_architecture_search::OptimizerComponent;
+        use crate::architecture::OptimizerComponent;
 
         let mut components = Vec::new();
 
@@ -1068,7 +1126,7 @@ impl<
                     .unwrap_or(0),
                 DiscretizationStrategy::Sampling => {
                     let probs = self.softmax(&edge_weights.to_owned());
-                    let rand_val = scirs2_core::random::random::<f64>();
+                    let rand_val = scirs2_core::random::Random::default().gen::<f64>();
                     let mut cumsum = 0.0;
 
                     let mut selected_idx = 0;
@@ -1115,22 +1173,54 @@ impl<
             };
 
             let mut hyperparameters = HashMap::new();
-            hyperparameters.insert(
-                "_learningrate".to_string(),
-                num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            );
+            hyperparameters.insert("_learningrate".to_string(), 0.001f64);
 
             components.push(OptimizerComponent {
+                id: format!("comp_{}", edge_idx),
                 component_type,
                 hyperparameters,
-                connections: Vec::new(),
+                enabled: true,
+                position: ComponentPosition {
+                    layer: 0,
+                    index: edge_idx as u32,
+                    x: 0.0,
+                    y: 0.0,
+                },
             });
         }
 
         OptimizerArchitecture {
-            components,
+            components: components
+                .iter()
+                .map(|c| c.component_type.to_string())
+                .collect(),
+            parameters: components
+                .iter()
+                .enumerate()
+                .flat_map(|(i, c)| {
+                    c.hyperparameters.iter().map(move |(k, v)| {
+                        (
+                            format!("{}_{}", i, k),
+                            num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                        )
+                    })
+                })
+                .collect(),
+            hyperparameters: components
+                .iter()
+                .enumerate()
+                .flat_map(|(i, c)| {
+                    c.hyperparameters.iter().map(move |(k, v)| {
+                        (
+                            format!("{}_{}", i, k),
+                            num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                        )
+                    })
+                })
+                .collect(),
             connections: Vec::new(),
             metadata: HashMap::new(),
+            architecture_id: format!("arch_{}", Random::default().gen::<u64>()),
         }
     }
 }
@@ -1150,7 +1240,7 @@ impl<
         // Initialize architecture weights with small random values
         self.architecture_weights =
             Array3::from_shape_fn(self.architecture_weights.raw_dim(), |_| {
-                T::from(scirs2_core::random::random::<f64>() * 0.1 - 0.05).unwrap()
+                T::from(scirs2_core::random::Random::default().gen::<f64>() * 0.1 - 0.05).unwrap()
             });
         Ok(())
     }
@@ -1265,14 +1355,17 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         // Simple encoding: component types and hyperparameter values
         let mut encoding = Vec::new();
 
-        for component in &architecture.components {
-            // Encode component type as one-hot
-            encoding.push(T::from(component_type_to_u8(&component.component_type)).unwrap());
+        for component_str in &architecture.components {
+            // Encode component type as one-hot (use a simple hash of the string as placeholder)
+            let hash = component_str
+                .bytes()
+                .fold(0u8, |acc, b| acc.wrapping_add(b));
+            encoding.push(num_traits::cast::cast(hash).unwrap_or_else(|| T::zero()));
+        }
 
-            // Encode hyperparameters
-            for (_, &value) in &component.hyperparameters {
-                encoding.push(value);
-            }
+        // Encode hyperparameters from the architecture's hyperparameters map
+        for (_, &value) in &architecture.hyperparameters {
+            encoding.push(value);
         }
 
         // Pad to fixed size
@@ -1477,7 +1570,8 @@ impl<T: Float + Debug + Default + Send + Sync> AcquisitionFunction<T> {
             }
             AcquisitionType::Thompson => {
                 // Thompson sampling - sample from posterior
-                mean + variance.sqrt() * T::from(scirs2_core::random::random::<f64>()).unwrap()
+                mean + variance.sqrt()
+                    * T::from(scirs2_core::random::Random::default().gen::<f64>()).unwrap()
             }
             AcquisitionType::InfoGain => {
                 // Information gain - simplified as entropy
@@ -1761,7 +1855,9 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + Send + Sync
 
     fn apply_dropout(&self, input: &Array1<T>, dropoutrate: T) -> Array1<T> {
         input.mapv(|x| {
-            if scirs2_core::random::random::<f64>() < dropoutrate.to_f64().unwrap_or(0.0) {
+            if scirs2_core::random::Random::default().gen::<f64>()
+                < dropoutrate.to_f64().unwrap_or(0.0)
+            {
                 T::zero()
             } else {
                 x / (T::one() - dropoutrate)
@@ -1786,7 +1882,8 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> PredictorLayer<
         let scale = (6.0 / (fan_in + fan_out)).sqrt();
 
         self.weights = Array2::from_shape_fn(self.weights.raw_dim(), |_| {
-            T::from(scirs2_core::random::random::<f64>() * scale * 2.0 - scale).unwrap()
+            T::from(scirs2_core::random::Random::default().gen::<f64>() * scale * 2.0 - scale)
+                .unwrap()
         });
 
         Ok(())
@@ -1835,13 +1932,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEnc
                 break;
             }
 
-            // Encode component type
-            encoding.push(T::from(component_type_to_u8(&component.component_type)).unwrap());
-
-            // Encode hyperparameters (take first few)
-            for (_, &value) in component.hyperparameters.iter().take(3) {
-                encoding.push(value);
-            }
+            // Encode component type (use string hash as placeholder)
+            let hash = component.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
+            encoding.push(num_traits::cast::cast(hash).unwrap_or_else(|| T::zero()));
         }
 
         // Pad to fixed size
@@ -1904,7 +1997,13 @@ fn component_type_to_u8(_componenttype: &ComponentType) -> u8 {
         ComponentType::LSTMOptimizer => 32,
         ComponentType::TransformerOptimizer => 33,
         ComponentType::AttentionOptimizer => 34,
-        ComponentType::Custom(_) => 255, // Use highest value for custom types
+        ComponentType::AdaDelta => 35,
+        ComponentType::Momentum => 36,
+        ComponentType::Nesterov => 37,
+        ComponentType::LRScheduler => 38,
+        ComponentType::BatchNorm => 39,
+        ComponentType::Dropout => 40,
+        ComponentType::Custom => 255, // Use highest value for custom types
     }
 }
 

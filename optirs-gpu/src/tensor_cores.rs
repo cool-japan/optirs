@@ -17,7 +17,14 @@ use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
 use std::sync::Arc;
 
 use crate::backends::{Backend, CompiledKernel, GpuBackend};
+use crate::GpuOptimError;
 use scirs2_core::gpu::{GpuContext, GpuKernel};
+
+#[cfg(feature = "gpu")]
+use crate::memory::vendors::cuda_backend::CudaStream;
+
+#[cfg(not(feature = "gpu"))]
+pub struct CudaStream;
 
 /// Tensor core matrix multiplication configuration
 #[derive(Debug, Clone)]
@@ -248,10 +255,10 @@ impl TensorCoreOptimizer {
             2.0
         };
         let tensor_core_factor = match self.compute_capability {
-            (major_minor) if major >= 9 => 8.0,                // Hopper
-            (major_minor) if major >= 8 => 6.0,                // Ampere
+            (major, _minor) if major >= 9 => 8.0,              // Hopper
+            (major, _minor) if major >= 8 => 6.0,              // Ampere
             (major, minor) if major >= 7 && minor >= 5 => 4.0, // Turing
-            (major_minor) if major >= 7 => 3.0,                // Volta
+            (major, _minor) if major >= 7 => 3.0,              // Volta
             _ => 1.5, // Pre-tensor core with some optimization
         };
 
@@ -421,8 +428,8 @@ impl TensorCoreOptimizer {
         padding_m: usize,
         padding_n: usize,
     ) -> (u32, u32, u32) {
-        let padded_m = _m + padding_m;
-        let padded_n = _n + padding_n;
+        let padded_m = m + padding_m;
+        let padded_n = n + padding_n;
 
         let tile_m = self.config.wmma_tile_m;
         let tile_n = self.config.wmma_tile_n;
@@ -1106,7 +1113,7 @@ impl TensorCoreOptimizer {
 
     fn estimate_memory_bandwidth(&self, m: usize, n: usize, k: usize, timems: f64) -> f64 {
         let bytes_transferred = (m * k + k * n + m * n) * 4; // Assuming 4 bytes per element
-        let bytes_per_second = bytes_transferred as f64 / (time_ms / 1000.0);
+        let bytes_per_second = bytes_transferred as f64 / (timems / 1000.0);
         bytes_per_second / 1e9 // Convert to GB/s
     }
 
@@ -1133,20 +1140,20 @@ impl TensorCoreOptimizer {
 
     fn estimate_max_tensor_cores(&self) -> usize {
         match self.compute_capability {
-            (major_minor) if major >= 9 => 528,                // Hopper H100
-            (major_minor) if major >= 8 => 432,                // Ampere A100
+            (major, _minor) if major >= 9 => 528, // Hopper H100
+            (major, _minor) if major >= 8 => 432, // Ampere A100
             (major, minor) if major >= 7 && minor >= 5 => 272, // Turing RTX 2080
-            (major_minor) if major >= 7 => 640,                // Volta V100
+            (major, _minor) if major >= 7 => 640, // Volta V100
             _ => 1,
         }
     }
 
     fn estimate_tensor_ops_throughput(&self) -> f64 {
         match self.compute_capability {
-            (major_minor) if major >= 9 => 1000e12, // Hopper: ~1000 TOPS
-            (major_minor) if major >= 8 => 312e12,  // Ampere: ~312 TOPS
+            (major, _minor) if major >= 9 => 1000e12, // Hopper: ~1000 TOPS
+            (major, _minor) if major >= 8 => 312e12,  // Ampere: ~312 TOPS
             (major, minor) if major >= 7 && minor >= 5 => 130e12, // Turing: ~130 TOPS
-            (major_minor) if major >= 7 => 125e12,  // Volta: ~125 TOPS
+            (major, _minor) if major >= 7 => 125e12,  // Volta: ~125 TOPS
             _ => 0.0,
         }
     }
@@ -1237,7 +1244,7 @@ impl MixedPrecisionTrainer {
             return;
         }
 
-        if has_overflow {
+        if hasoverflow {
             // Reduce loss scale on _overflow
             self.loss_scale *= self.backoff_factor;
             self.successful_steps = 0;
@@ -1317,7 +1324,7 @@ impl MixedPrecisionTrainer {
 }
 
 /// Sparse tensor core matrix with 2:4 structured sparsity
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SparseTensorCoreMatrix<T: Float + Debug + Send + Sync + 'static> {
     /// Non-zero values in 2:4 sparse format
     values: Vec<T>,
@@ -1350,7 +1357,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseTensorCoreMatrix<T> {
                 // Collect 4 elements
                 for offset in 0..4 {
                     if col_group + offset < n {
-                        group_values.push(_dense[[row, col_group + offset]]);
+                        group_values.push(dense[[row, col_group + offset]]);
                         group_indices.push(offset);
                     }
                 }
@@ -1373,8 +1380,8 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseTensorCoreMatrix<T> {
         Self {
             values,
             metadata,
-            _dense_m: m,
-            _dense_n: n,
+            dense_m: m,
+            dense_n: n,
             sparsity_ratio,
         }
     }
@@ -1640,7 +1647,7 @@ impl StreamPool {
         Ok(Self {
             _phantom: std::marker::PhantomData,
             current_stream: 0,
-            num_streams,
+            num_streams: numstreams,
         })
     }
 

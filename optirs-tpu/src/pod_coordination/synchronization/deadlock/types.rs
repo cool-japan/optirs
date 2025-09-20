@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::tpu::tpu_backend::DeviceId;
+use crate::tpu_backend::DeviceId;
 
 /// Deadlock detector for resource management
 #[derive(Debug)]

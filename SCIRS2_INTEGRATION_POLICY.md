@@ -47,9 +47,10 @@ ndarray, num-traits, etc. (Core Rust Scientific Stack)
 - **Status**: 🔶 INVESTIGATE - Check if OptiRS does matrix ops beyond ndarray
 
 #### `scirs2-autograd` - AUTOMATIC DIFFERENTIATION
-- **Use Cases**: Gradient computation, backpropagation integration
-- **OptiRS Modules**: `neural_integration/`, `gradient_accumulation/`
-- **Status**: 🔶 INVESTIGATE - If OptiRS provides autograd features
+- **Use Cases**: Gradient computation, backpropagation integration, **array! macro access**
+- **OptiRS Modules**: `neural_integration/`, `gradient_accumulation/`, **all test modules**
+- **Status**: ✅ REQUIRED - Provides array! macro for tests
+- **Special Note**: The `array!` macro is accessed via `scirs2_autograd::ndarray::array` since scirs2-core doesn't re-export it
 
 #### `scirs2-neural` - NEURAL NETWORKS
 - **Use Cases**: Neural network layer integration, activation functions
@@ -184,14 +185,39 @@ ndarray, num-traits, etc. (Core Rust Scientific Stack)
    use scirs2_optimize::*;
    ```
 
-2. **Feature Gates**
+2. **Array Macro Import Pattern**
+   ```rust
+   // ✅ CORRECT - Use scirs2_autograd for array! macro
+   use scirs2_autograd::ndarray::array;
+
+   // ❌ WRONG - This won't work
+   use scirs2_core::ndarray_ext::array;  // array! macro not re-exported here
+
+   // ❌ WRONG - Don't use ndarray directly
+   use ndarray::array;  // Violates SciRS2 integration policy
+
+   // Example usage in tests:
+   #[cfg(test)]
+   mod tests {
+       use super::*;
+       use scirs2_autograd::ndarray::array;
+
+       #[test]
+       fn test_example() {
+           let data = array![1.0, 2.0, 3.0];
+           // test implementation
+       }
+   }
+   ```
+
+3. **Feature Gates**
    ```rust
    // ✅ GOOD - Optional features
    #[cfg(feature = "neural-integration")]
    use scirs2_neural::networks::NeuralNetwork;
    ```
 
-3. **Error Handling**
+4. **Error Handling**
    ```rust
    // ✅ GOOD - Proper error context
    use scirs2_core::ScientificNumber;
@@ -238,9 +264,9 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: [Current Date]
-**Next Review**: [Quarterly]
+**Document Version**: 1.1
+**Last Updated**: 2025-09-20
+**Next Review**: Q1 2026
 **Owner**: OptiRS Architecture Team
 
 ## Quick Reference
@@ -250,10 +276,10 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 # Essential SciRS2 dependencies for OptiRS
 scirs2-core = { path = "../scirs/scirs2-core" }      # Always required - foundation
 scirs2-optimize = { path = "../scirs/scirs2-optimize" }  # Core optimization interfaces
+scirs2-autograd = { path = "../scirs/scirs2-autograd" } # Required for array! macro in tests
 
 # Add these only when needed:
 # scirs2-linalg = { path = "../scirs/scirs2-linalg" }     # If doing matrix operations
-# scirs2-autograd = { path = "../scirs/scirs2-autograd" } # If providing autograd
 # scirs2-neural = { path = "../scirs/scirs2-neural" }     # If NN-specific features
 # scirs2-metrics = { path = "../scirs/scirs2-metrics" }   # If benchmarking tools
 # scirs2-stats = { path = "../scirs/scirs2-stats" }       # If statistical analysis

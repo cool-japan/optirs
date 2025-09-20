@@ -11,15 +11,17 @@ use crate::error::{OptimError, Result};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use super::config::CiCdAutomationConfig;
-use super::test_execution::{
-    PerformanceTestSuite, TestSuiteConfig, CiCdTestResult, TestSuiteStatistics,
-    CiCdContext, TriggerEvent, GitInfo
-};
-use super::reporting::{ReportGenerator, GeneratedReport};
 use super::artifact_management::ArtifactManager;
-use super::integrations::{IntegrationManager, IntegrationNotification, NotificationType, NotificationPriority};
-use super::performance_gates::{PerformanceGateEvaluator, GateResult};
+use super::config::CiCdAutomationConfig;
+use super::integrations::{
+    IntegrationManager, IntegrationNotification, NotificationPriority, NotificationType,
+};
+use super::performance_gates::{GateResult, PerformanceGateEvaluator};
+use super::reporting::{GeneratedReport, ReportGenerator};
+use super::test_execution::{
+    CiCdContext, CiCdTestResult, GitInfo, PerformanceTestSuite, TestSuiteConfig,
+    TestSuiteStatistics, TriggerEvent,
+};
 
 /// Main CI/CD automation engine
 #[derive(Debug)]
@@ -154,7 +156,10 @@ impl CiCdAutomation {
     }
 
     /// Execute the complete CI/CD automation pipeline
-    pub fn execute_automation(&mut self, trigger: TriggerEvent) -> Result<AutomationExecutionResult> {
+    pub fn execute_automation(
+        &mut self,
+        trigger: TriggerEvent,
+    ) -> Result<AutomationExecutionResult> {
         let execution_start = SystemTime::now();
         let execution_id = uuid::Uuid::new_v4().to_string();
 
@@ -175,18 +180,18 @@ impl CiCdAutomation {
         let mut warnings = Vec::new();
 
         // Step 1: Environment validation
-        let env_result = self.execute_step("environment_validation", || {
-            self.validate_environment()
-        });
+        let env_result =
+            self.execute_step("environment_validation", || self.validate_environment());
         step_results.push(env_result.clone());
         if !env_result.success {
-            errors.push(format!("Environment validation failed: {}", env_result.message));
+            errors.push(format!(
+                "Environment validation failed: {}",
+                env_result.message
+            ));
         }
 
         // Step 2: Test execution
-        let test_result = self.execute_step("test_execution", || {
-            self.execute_tests()
-        });
+        let test_result = self.execute_step("test_execution", || self.execute_tests());
         step_results.push(test_result.clone());
 
         let (test_results, test_statistics) = if test_result.success {
@@ -196,15 +201,18 @@ impl CiCdAutomation {
             (results, stats)
         } else {
             errors.push(format!("Test execution failed: {}", test_result.message));
-            (Vec::new(), TestSuiteStatistics {
-                total_tests: 0,
-                passed: 0,
-                failed: 0,
-                skipped: 0,
-                errors: 0,
-                total_duration: Duration::ZERO,
-                success_rate: 0.0,
-            })
+            (
+                Vec::new(),
+                TestSuiteStatistics {
+                    total_tests: 0,
+                    passed: 0,
+                    failed: 0,
+                    skipped: 0,
+                    errors: 0,
+                    total_duration: Duration::ZERO,
+                    success_rate: 0.0,
+                },
+            )
         };
 
         // Step 3: Performance gate evaluation
@@ -219,7 +227,8 @@ impl CiCdAutomation {
             }
 
             // Extract gate result from evaluator
-            self.gate_evaluator.evaluate_gates(&test_results, &test_statistics)?
+            self.gate_evaluator
+                .evaluate_gates(&test_results, &test_statistics)?
         } else {
             GateResult {
                 status: super::performance_gates::OverallGateStatus::Skipped,
@@ -253,12 +262,14 @@ impl CiCdAutomation {
         };
 
         // Step 5: Artifact storage
-        let artifact_step = self.execute_step("artifact_storage", || {
-            self.store_artifacts(&reports)
-        });
+        let artifact_step =
+            self.execute_step("artifact_storage", || self.store_artifacts(&reports));
         step_results.push(artifact_step.clone());
         if !artifact_step.success {
-            warnings.push(format!("Artifact storage failed: {}", artifact_step.message));
+            warnings.push(format!(
+                "Artifact storage failed: {}",
+                artifact_step.message
+            ));
         }
 
         // Step 6: Integration notifications
@@ -267,7 +278,10 @@ impl CiCdAutomation {
         });
         step_results.push(integration_step.clone());
         if !integration_step.success {
-            warnings.push(format!("Integration notifications failed: {}", integration_step.message));
+            warnings.push(format!(
+                "Integration notifications failed: {}",
+                integration_step.message
+            ));
         }
 
         // Calculate overall success
@@ -276,7 +290,9 @@ impl CiCdAutomation {
         // Update statistics
         self.update_statistics(&test_results, &test_statistics, &reports, success);
 
-        let duration = SystemTime::now().duration_since(execution_start).unwrap_or_default();
+        let duration = SystemTime::now()
+            .duration_since(execution_start)
+            .unwrap_or_default();
 
         Ok(AutomationExecutionResult {
             context,
@@ -302,14 +318,18 @@ impl CiCdAutomation {
             Ok(_) => AutomationStepResult {
                 step_name: step_name.to_string(),
                 success: true,
-                duration: SystemTime::now().duration_since(start_time).unwrap_or_default(),
+                duration: SystemTime::now()
+                    .duration_since(start_time)
+                    .unwrap_or_default(),
                 message: format!("{} completed successfully", step_name),
                 metadata: std::collections::HashMap::new(),
             },
             Err(e) => AutomationStepResult {
                 step_name: step_name.to_string(),
                 success: false,
-                duration: SystemTime::now().duration_since(start_time).unwrap_or_default(),
+                duration: SystemTime::now()
+                    .duration_since(start_time)
+                    .unwrap_or_default(),
                 message: format!("{} failed: {}", step_name, e),
                 metadata: std::collections::HashMap::new(),
             },
@@ -331,8 +351,13 @@ impl CiCdAutomation {
     fn detect_ci_context(&self) -> Result<CiCdContext> {
         let platform_config = self.config.get_platform_config();
 
-        let build_id = std::env::var(platform_config.env_vars.get("BUILD_ID").unwrap_or(&"BUILD_ID".to_string()))
-            .unwrap_or_else(|_| "unknown".to_string());
+        let build_id = std::env::var(
+            platform_config
+                .env_vars
+                .get("BUILD_ID")
+                .unwrap_or(&"BUILD_ID".to_string()),
+        )
+        .unwrap_or_else(|_| "unknown".to_string());
 
         let build_number = std::env::var("BUILD_NUMBER")
             .ok()
@@ -401,7 +426,8 @@ impl CiCdAutomation {
             commit_message,
             author,
             commit_time: None, // Would parse from git log
-            repository_url: std::env::var("GITHUB_REPOSITORY").ok()
+            repository_url: std::env::var("GITHUB_REPOSITORY")
+                .ok()
                 .map(|repo| format!("https://github.com/{}", repo)),
             is_clean,
         })
@@ -418,14 +444,17 @@ impl CiCdAutomation {
                 .output()
                 .is_err()
             {
-                return Err(OptimError::InvalidConfig(
-                    format!("Required tool not found: {}", tool)
-                ));
+                return Err(OptimError::InvalidConfig(format!(
+                    "Required tool not found: {}",
+                    tool
+                )));
             }
         }
 
         // Validate configuration
-        self.config.validate().map_err(|e| OptimError::InvalidConfig(e))?;
+        self.config
+            .validate()
+            .map_err(|e| OptimError::InvalidConfig(e))?;
 
         Ok(())
     }
@@ -451,16 +480,17 @@ impl CiCdAutomation {
     /// Add default test cases for demonstration
     fn add_default_test_cases(&mut self) -> Result<()> {
         use super::test_execution::{
-            PerformanceTestCase, TestCategory, TestExecutor, EnvironmentRequirements
+            EnvironmentRequirements, PerformanceTestCase, TestCategory, TestExecutor,
         };
 
         let test_case = PerformanceTestCase {
             name: "simple_benchmark".to_string(),
             category: TestCategory::Benchmark,
             executor: TestExecutor::Criterion,
-            parameters: std::collections::HashMap::from([
-                ("iterations".to_string(), "1000".to_string()),
-            ]),
+            parameters: std::collections::HashMap::from([(
+                "iterations".to_string(),
+                "1000".to_string(),
+            )]),
             baseline: None,
             timeout: Some(300), // 5 minutes
             iterations: 5,
@@ -476,18 +506,30 @@ impl CiCdAutomation {
     }
 
     /// Evaluate performance gates
-    fn evaluate_performance_gates(&mut self, test_results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<()> {
+    fn evaluate_performance_gates(
+        &mut self,
+        test_results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<()> {
         if self.config.performance_gates.enabled {
-            let _gate_result = self.gate_evaluator.evaluate_gates(test_results, statistics)?;
+            let _gate_result = self
+                .gate_evaluator
+                .evaluate_gates(test_results, statistics)?;
             // Gate result is stored in the evaluator
         }
         Ok(())
     }
 
     /// Generate reports
-    fn generate_reports(&mut self, test_results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<()> {
+    fn generate_reports(
+        &mut self,
+        test_results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<()> {
         let output_dir = Path::new("./reports");
-        let _reports = self.report_generator.generate_reports(test_results, statistics, output_dir)?;
+        let _reports =
+            self.report_generator
+                .generate_reports(test_results, statistics, output_dir)?;
         Ok(())
     }
 
@@ -501,7 +543,10 @@ impl CiCdAutomation {
 
             let _artifact_url = self.artifact_manager.upload_artifact(
                 &report.file_path,
-                &format!("reports/{}", report.file_path.file_name().unwrap().to_string_lossy()),
+                &format!(
+                    "reports/{}",
+                    report.file_path.file_name().unwrap().to_string_lossy()
+                ),
                 tags,
             )?;
         }
@@ -516,7 +561,8 @@ impl CiCdAutomation {
         gate_result: &GateResult,
     ) -> Result<()> {
         // Handle test completion notifications
-        self.integration_manager.handle_test_completion(test_results, statistics)?;
+        self.integration_manager
+            .handle_test_completion(test_results, statistics)?;
 
         // Handle performance gate notifications
         if gate_result.status != super::performance_gates::OverallGateStatus::AllPassed {
@@ -525,8 +571,7 @@ impl CiCdAutomation {
                 title: "Performance Gates Failed".to_string(),
                 message: format!(
                     "Performance gate evaluation failed: {}/{} gates failed",
-                    gate_result.summary.gates_failed,
-                    gate_result.summary.total_gates
+                    gate_result.summary.gates_failed, gate_result.summary.total_gates
                 ),
                 priority: NotificationPriority::High,
                 data: std::collections::HashMap::new(),
@@ -566,10 +611,15 @@ impl CiCdAutomation {
 
         // Update average execution duration
         if let Some(context) = &self.execution_context {
-            let duration = SystemTime::now().duration_since(context.start_time).unwrap_or_default();
+            let duration = SystemTime::now()
+                .duration_since(context.start_time)
+                .unwrap_or_default();
 
-            let total_duration = self.statistics.average_execution_duration * (self.statistics.total_executions - 1) as u32 + duration;
-            self.statistics.average_execution_duration = total_duration / self.statistics.total_executions as u32;
+            let total_duration = self.statistics.average_execution_duration
+                * (self.statistics.total_executions - 1) as u32
+                + duration;
+            self.statistics.average_execution_duration =
+                total_duration / self.statistics.total_executions as u32;
         }
 
         self.statistics.last_execution_time = Some(SystemTime::now());
@@ -592,7 +642,9 @@ impl CiCdAutomation {
 
     /// Validate automation configuration
     pub fn validate_configuration(&self) -> Result<()> {
-        self.config.validate().map_err(|e| OptimError::InvalidConfig(e))
+        self.config
+            .validate()
+            .map_err(|e| OptimError::InvalidConfig(e))
     }
 
     /// Get system health status
@@ -610,12 +662,15 @@ impl CiCdAutomation {
                 ("reporting".to_string(), ComponentHealth::Healthy),
                 ("artifact_management".to_string(), ComponentHealth::Healthy),
                 ("performance_gates".to_string(), ComponentHealth::Healthy),
-                ("integrations".to_string(), match integration_health {
-                    super::integrations::IntegrationStatus::Healthy => ComponentHealth::Healthy,
-                    super::integrations::IntegrationStatus::Warning => ComponentHealth::Warning,
-                    super::integrations::IntegrationStatus::Error => ComponentHealth::Error,
-                    _ => ComponentHealth::Unknown,
-                }),
+                (
+                    "integrations".to_string(),
+                    match integration_health {
+                        super::integrations::IntegrationStatus::Healthy => ComponentHealth::Healthy,
+                        super::integrations::IntegrationStatus::Warning => ComponentHealth::Warning,
+                        super::integrations::IntegrationStatus::Error => ComponentHealth::Error,
+                        _ => ComponentHealth::Unknown,
+                    },
+                ),
             ]),
             last_check: SystemTime::now(),
         }

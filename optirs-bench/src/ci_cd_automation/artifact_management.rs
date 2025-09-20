@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use super::config::{
-    ArtifactStorageConfig, ArtifactStorageProvider, ArtifactRetentionPolicy,
-    ArtifactUploadConfig, ArtifactDownloadConfig, ParallelUploadConfig,
-    CompressionAlgorithm, EncryptionConfig
+    ArtifactDownloadConfig, ArtifactRetentionPolicy, ArtifactStorageConfig,
+    ArtifactStorageProvider, ArtifactUploadConfig, CompressionAlgorithm, EncryptionConfig,
+    ParallelUploadConfig,
 };
 
 /// Artifact manager for handling storage and retrieval
@@ -572,20 +572,43 @@ impl ArtifactManager {
             ArtifactStorageProvider::Local(path) => {
                 Box::new(LocalArtifactStorage::new(path.clone()))
             }
-            ArtifactStorageProvider::S3 { bucket, region, prefix } => {
-                return Err(OptimError::InvalidConfig("S3 storage not yet implemented".to_string()));
+            ArtifactStorageProvider::S3 {
+                bucket,
+                region,
+                prefix,
+            } => {
+                return Err(OptimError::InvalidConfig(
+                    "S3 storage not yet implemented".to_string(),
+                ));
             }
             ArtifactStorageProvider::GCS { bucket, prefix } => {
-                return Err(OptimError::InvalidConfig("GCS storage not yet implemented".to_string()));
+                return Err(OptimError::InvalidConfig(
+                    "GCS storage not yet implemented".to_string(),
+                ));
             }
-            ArtifactStorageProvider::AzureBlob { account, container, prefix } => {
-                return Err(OptimError::InvalidConfig("Azure Blob storage not yet implemented".to_string()));
+            ArtifactStorageProvider::AzureBlob {
+                account,
+                container,
+                prefix,
+            } => {
+                return Err(OptimError::InvalidConfig(
+                    "Azure Blob storage not yet implemented".to_string(),
+                ));
             }
-            ArtifactStorageProvider::FTP { host, port, path, secure } => {
-                return Err(OptimError::InvalidConfig("FTP storage not yet implemented".to_string()));
+            ArtifactStorageProvider::FTP {
+                host,
+                port,
+                path,
+                secure,
+            } => {
+                return Err(OptimError::InvalidConfig(
+                    "FTP storage not yet implemented".to_string(),
+                ));
             }
             ArtifactStorageProvider::HTTP { base_url, auth } => {
-                return Err(OptimError::InvalidConfig("HTTP storage not yet implemented".to_string()));
+                return Err(OptimError::InvalidConfig(
+                    "HTTP storage not yet implemented".to_string(),
+                ));
             }
         };
 
@@ -600,7 +623,12 @@ impl ArtifactManager {
     }
 
     /// Upload an artifact
-    pub fn upload_artifact(&mut self, local_path: &Path, remote_key: &str, tags: Vec<String>) -> Result<String> {
+    pub fn upload_artifact(
+        &mut self,
+        local_path: &Path,
+        remote_key: &str,
+        tags: Vec<String>,
+    ) -> Result<String> {
         // Validate file exists
         if !local_path.exists() {
             return Err(OptimError::IO(format!("File not found: {:?}", local_path)));
@@ -610,7 +638,9 @@ impl ArtifactManager {
         let metadata = self.create_artifact_metadata(local_path)?;
 
         // Create upload task
-        let task_id = self.upload_manager.create_upload_task(local_path, remote_key)?;
+        let task_id = self
+            .upload_manager
+            .create_upload_task(local_path, remote_key)?;
 
         // Perform upload
         let remote_url = self.storage_provider.upload(local_path, remote_key)?;
@@ -649,7 +679,9 @@ impl ArtifactManager {
         }
 
         // Create download task
-        let task_id = self.download_manager.create_download_task(remote_key, local_path)?;
+        let task_id = self
+            .download_manager
+            .create_download_task(remote_key, local_path)?;
 
         // Perform download
         self.storage_provider.download(remote_key, local_path)?;
@@ -695,7 +727,8 @@ impl ArtifactManager {
 
     /// Run cleanup based on retention policies
     pub fn run_cleanup(&mut self) -> Result<CleanupResult> {
-        self.retention_manager.run_cleanup(&mut self.registry, &*self.storage_provider)
+        self.retention_manager
+            .run_cleanup(&mut self.registry, &*self.storage_provider)
     }
 
     /// Get storage statistics
@@ -706,7 +739,8 @@ impl ArtifactManager {
     /// Create artifact metadata from file
     fn create_artifact_metadata(&self, path: &Path) -> Result<ArtifactMetadata> {
         let file_size = fs::metadata(path)?.len();
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
@@ -742,7 +776,7 @@ impl ArtifactManager {
 
         let checksum = match algorithm {
             ChecksumAlgorithm::SHA256 => {
-                use sha2::{Sha256, Digest};
+                use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
                 hasher.update(&buffer);
                 format!("{:x}", hasher.finalize())
@@ -826,13 +860,17 @@ impl ArtifactStorage for LocalArtifactStorage {
         let source_path = self.base_path.join(remote_key);
 
         if !source_path.exists() {
-            return Err(OptimError::IO(format!("Remote file not found: {}", remote_key)));
+            return Err(OptimError::IO(format!(
+                "Remote file not found: {}",
+                remote_key
+            )));
         }
 
         // Create parent directories for local path
         if let Some(parent) = local_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| OptimError::IO(format!("Failed to create local directories: {}", e)))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                OptimError::IO(format!("Failed to create local directories: {}", e))
+            })?;
         }
 
         fs::copy(&source_path, local_path)
@@ -874,7 +912,8 @@ impl ArtifactStorage for LocalArtifactStorage {
         let metadata = fs::metadata(&file_path)
             .map_err(|e| OptimError::IO(format!("Failed to get file metadata: {}", e)))?;
 
-        let filename = file_path.file_name()
+        let filename = file_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
@@ -933,10 +972,14 @@ impl ArtifactStorage for LocalArtifactStorage {
         // For local storage, just check if base path exists and is accessible
         if !self.base_path.exists() {
             if self.config.create_dirs {
-                fs::create_dir_all(&self.base_path)
-                    .map_err(|e| OptimError::IO(format!("Failed to create base directory: {}", e)))?;
+                fs::create_dir_all(&self.base_path).map_err(|e| {
+                    OptimError::IO(format!("Failed to create base directory: {}", e))
+                })?;
             } else {
-                return Err(OptimError::IO(format!("Base path does not exist: {:?}", self.base_path)));
+                return Err(OptimError::IO(format!(
+                    "Base path does not exist: {:?}",
+                    self.base_path
+                )));
             }
         }
 
@@ -953,7 +996,12 @@ impl ArtifactStorage for LocalArtifactStorage {
 
 impl LocalArtifactStorage {
     /// Recursively collect artifacts from directory
-    fn collect_artifacts(&self, dir: &Path, artifacts: &mut Vec<ArtifactInfo>, prefix: Option<&str>) -> Result<()> {
+    fn collect_artifacts(
+        &self,
+        dir: &Path,
+        artifacts: &mut Vec<ArtifactInfo>,
+        prefix: Option<&str>,
+    ) -> Result<()> {
         if !dir.is_dir() {
             return Ok(());
         }
@@ -963,7 +1011,8 @@ impl LocalArtifactStorage {
             let path = entry.path();
 
             if path.is_file() {
-                let relative_path = path.strip_prefix(&self.base_path)
+                let relative_path = path
+                    .strip_prefix(&self.base_path)
                     .map_err(|e| OptimError::IO(format!("Failed to get relative path: {}", e)))?;
 
                 let key = relative_path.to_string_lossy().to_string();
@@ -976,8 +1025,7 @@ impl LocalArtifactStorage {
                 }
 
                 let metadata = fs::metadata(&path)?;
-                let modified = metadata.modified()
-                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
                 artifacts.push(ArtifactInfo {
                     key,
@@ -1121,7 +1169,8 @@ impl UploadManager {
     pub fn complete_upload(&mut self, task_id: &str) -> Result<()> {
         if let Some(mut task) = self.active_uploads.remove(task_id) {
             task.status = UploadStatus::Completed;
-            let duration = SystemTime::now().duration_since(task.started_at)
+            let duration = SystemTime::now()
+                .duration_since(task.started_at)
                 .unwrap_or(Duration::from_secs(0));
 
             let result = UploadResult {
@@ -1149,7 +1198,9 @@ impl UploadManager {
 impl DownloadManager {
     /// Create a new download manager
     pub fn new(config: ArtifactDownloadConfig) -> Self {
-        let cache_dir = config.cache_directory.clone()
+        let cache_dir = config
+            .cache_directory
+            .clone()
             .unwrap_or_else(|| PathBuf::from("./cache"));
 
         Self {
@@ -1299,7 +1350,11 @@ impl RetentionManager {
     }
 
     /// Run cleanup operation
-    pub fn run_cleanup(&mut self, registry: &mut ArtifactRegistry, storage: &dyn ArtifactStorage) -> Result<CleanupResult> {
+    pub fn run_cleanup(
+        &mut self,
+        registry: &mut ArtifactRegistry,
+        storage: &dyn ArtifactStorage,
+    ) -> Result<CleanupResult> {
         let run_id = uuid::Uuid::new_v4().to_string();
         let start_time = SystemTime::now();
 
@@ -1314,7 +1369,9 @@ impl RetentionManager {
                 continue;
             }
 
-            let artifacts_to_process: Vec<String> = registry.artifacts.keys()
+            let artifacts_to_process: Vec<String> = registry
+                .artifacts
+                .keys()
                 .filter(|key| self.should_apply_rule(registry.artifacts.get(*key).unwrap(), rule))
                 .cloned()
                 .collect();
@@ -1344,7 +1401,8 @@ impl RetentionManager {
             }
         }
 
-        let duration = SystemTime::now().duration_since(start_time)
+        let duration = SystemTime::now()
+            .duration_since(start_time)
             .unwrap_or(Duration::from_secs(0));
 
         let result = CleanupResult {
@@ -1375,12 +1433,8 @@ impl RetentionManager {
                     false
                 }
             }
-            CleanupCondition::Status { status } => {
-                artifact.status == *status
-            }
-            CleanupCondition::Tag { tag } => {
-                artifact.tags.contains(tag)
-            }
+            CleanupCondition::Status { status } => artifact.status == *status,
+            CleanupCondition::Tag { tag } => artifact.tags.contains(tag),
             _ => false, // Other conditions not implemented in this simplified version
         }
     }
@@ -1391,7 +1445,7 @@ impl CleanupScheduler {
     pub fn new() -> Self {
         Self {
             next_cleanup: SystemTime::now() + Duration::from_secs(24 * 3600), // Tomorrow
-            interval: Duration::from_secs(24 * 3600), // Daily
+            interval: Duration::from_secs(24 * 3600),                         // Daily
             rules: Vec::new(),
             enabled: true,
         }

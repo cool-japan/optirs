@@ -4,7 +4,9 @@
 // through multiple channels (email, Slack, GitHub issues) when performance
 // regressions are detected.
 
-use crate::benchmarking::regression_tester::config::{Alert, AlertConfig, AlertSeverity, AlertStatus};
+use crate::benchmarking::regression_tester::config::{
+    Alert, AlertConfig, AlertSeverity, AlertStatus,
+};
 use crate::benchmarking::regression_tester::types::RegressionResult;
 use crate::error::Result;
 use num_traits::Float;
@@ -403,7 +405,8 @@ impl AlertSystem {
             .saturating_sub(max_age.as_secs());
 
         let original_len = self.alert_history.len();
-        self.alert_history.retain(|alert| alert.timestamp >= cutoff_time);
+        self.alert_history
+            .retain(|alert| alert.timestamp >= cutoff_time);
         original_len - self.alert_history.len()
     }
 
@@ -412,18 +415,18 @@ impl AlertSystem {
         let total_alerts = self.alert_history.len();
         let active_alerts = self.get_active_alerts().len();
 
-        let severity_counts = self.alert_history.iter().fold(
-            SeverityCounts::default(),
-            |mut counts, alert| {
-                match alert.severity {
-                    AlertSeverity::Critical => counts.critical += 1,
-                    AlertSeverity::High => counts.high += 1,
-                    AlertSeverity::Medium => counts.medium += 1,
-                    AlertSeverity::Low => counts.low += 1,
-                }
-                counts
-            },
-        );
+        let severity_counts =
+            self.alert_history
+                .iter()
+                .fold(SeverityCounts::default(), |mut counts, alert| {
+                    match alert.severity {
+                        AlertSeverity::Critical => counts.critical += 1,
+                        AlertSeverity::High => counts.high += 1,
+                        AlertSeverity::Medium => counts.medium += 1,
+                        AlertSeverity::Low => counts.low += 1,
+                    }
+                    counts
+                });
 
         AlertStatistics {
             total_alerts,
@@ -467,8 +470,8 @@ pub struct SeverityCounts {
 mod tests {
     use super::*;
     use crate::benchmarking::regression_tester::types::{
-        RegressionAnalysis, StatisticalTestResult, TrendAnalysis, TrendDirection,
-        ChangePointAnalysis, OutlierAnalysis,
+        ChangePointAnalysis, OutlierAnalysis, RegressionAnalysis, StatisticalTestResult,
+        TrendAnalysis, TrendDirection,
     };
 
     fn create_test_regression(severity: f64, test_id: &str) -> RegressionResult<f64> {
@@ -543,7 +546,10 @@ mod tests {
             alert_system.map_severity(0.9),
             AlertSeverity::Critical
         ));
-        assert!(matches!(alert_system.map_severity(0.7), AlertSeverity::High));
+        assert!(matches!(
+            alert_system.map_severity(0.7),
+            AlertSeverity::High
+        ));
         assert!(matches!(
             alert_system.map_severity(0.4),
             AlertSeverity::Medium

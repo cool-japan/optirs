@@ -39,69 +39,57 @@
 // # }
 // ```
 
-pub mod config;
-pub mod types;
-pub mod orchestrator;
-pub mod matrix;
-pub mod container;
-pub mod cloud;
-pub mod resources;
 pub mod aggregator;
+pub mod cloud;
+pub mod config;
+pub mod container;
+pub mod matrix;
+pub mod orchestrator;
+pub mod resources;
+pub mod types;
 
 // Re-export core configuration types
 pub use config::{
-    OrchestratorConfig, TestMatrixConfig, ContainerConfig, CloudConfig,
-    AwsConfig, AzureConfig, GcpConfig, GitHubActionsConfig, CustomCloudConfig,
-    ResourceLimits, PlatformSpec, FeatureCombination, TestScenario,
-    OptimizationLevel, BuildProfile, PlatformResourceRequirements,
-    ContainerRegistryConfig, StorageConfig, NetworkConfig, SecurityConfig,
-    MonitoringConfig, ComplianceConfig, MetricsConfig
+    AwsConfig, AzureConfig, BuildProfile, CloudConfig, ComplianceConfig, ContainerConfig,
+    ContainerRegistryConfig, CustomCloudConfig, FeatureCombination, GcpConfig, GitHubActionsConfig,
+    MetricsConfig, MonitoringConfig, NetworkConfig, OptimizationLevel, OrchestratorConfig,
+    PlatformResourceRequirements, PlatformSpec, ResourceLimits, SecurityConfig, StorageConfig,
+    TestMatrixConfig, TestScenario,
 };
 
 // Re-export core data types
 pub use types::{
-    PlatformTarget, TestResult, TestStatus, PerformanceMetrics,
-    CloudInstance, CloudInstanceStatus, ContainerInfo, ContainerStatus,
-    ContainerStats, ResourceType, ResourceUsage, TestMatrixEntry,
-    CrossPlatformTestingSummary, CompatibilityMatrix, CompatibilityIssue,
-    TestExecutionResult, PlatformTestResult, CloudProviderType,
-    ContainerRuntime, NetworkPort, PlatformCapabilities, HardwareInfo,
-    SoftwareInfo, EnvironmentVariables, TestEnvironment,
-    CrossPlatformMetrics, SecurityContext, ComplianceReport,
-    Performance, BenchmarkResult, NumericalResult
+    BenchmarkResult, CloudInstance, CloudInstanceStatus, CloudProviderType, CompatibilityIssue,
+    CompatibilityMatrix, ComplianceReport, ContainerInfo, ContainerRuntime, ContainerStats,
+    ContainerStatus, CrossPlatformMetrics, CrossPlatformTestingSummary, EnvironmentVariables,
+    HardwareInfo, NetworkPort, NumericalResult, Performance, PerformanceMetrics,
+    PlatformCapabilities, PlatformTarget, PlatformTestResult, ResourceType, ResourceUsage,
+    SecurityContext, SoftwareInfo, TestEnvironment, TestExecutionResult, TestMatrixEntry,
+    TestResult, TestStatus,
 };
 
 // Re-export main orchestrator
 pub use orchestrator::{
-    CrossPlatformOrchestrator, ExecutionContext, TestExecutor,
-    PlatformTestExecutor, CloudTestExecutor, ContainerTestExecutor
+    CloudTestExecutor, ContainerTestExecutor, CrossPlatformOrchestrator, ExecutionContext,
+    PlatformTestExecutor, TestExecutor,
 };
 
 // Re-export test matrix functionality
-pub use matrix::{
-    TestMatrixGenerator, MatrixFilter, MatrixStatistics
-};
+pub use matrix::{MatrixFilter, MatrixStatistics, TestMatrixGenerator};
 
 // Re-export container management
-pub use container::{
-    ContainerManager, ContainerRuntimeTrait, DockerRuntime, PodmanRuntime
-};
+pub use container::{ContainerManager, ContainerRuntimeTrait, DockerRuntime, PodmanRuntime};
 
 // Re-export cloud provider abstractions
 pub use cloud::{
-    CloudProvider, AwsProvider, AzureProvider, GcpProvider,
-    GitHubActionsProvider, CustomProvider
+    AwsProvider, AzureProvider, CloudProvider, CustomProvider, GcpProvider, GitHubActionsProvider,
 };
 
 // Re-export resource management
-pub use resources::{
-    PlatformResourceManager, ResourceUsageTracker, CostTracker, CostEntry
-};
+pub use resources::{CostEntry, CostTracker, PlatformResourceManager, ResourceUsageTracker};
 
 // Re-export result aggregation
-pub use aggregator::{
-    ResultAggregator, AggregationStatistics
-};
+pub use aggregator::{AggregationStatistics, ResultAggregator};
 
 /// Convenience function to create a default orchestrator
 pub fn create_default_orchestrator() -> crate::error::Result<CrossPlatformOrchestrator> {
@@ -166,7 +154,7 @@ pub fn create_ci_orchestrator() -> crate::error::Result<CrossPlatformOrchestrato
 
 /// High-level async function to run complete cross-platform testing
 pub async fn run_cross_platform_testing(
-    config: Option<OrchestratorConfig>
+    config: Option<OrchestratorConfig>,
 ) -> crate::error::Result<CrossPlatformTestingSummary> {
     let config = config.unwrap_or_default();
     let mut orchestrator = CrossPlatformOrchestrator::new(config)?;
@@ -176,12 +164,14 @@ pub async fn run_cross_platform_testing(
 /// High-level async function to run testing on specific platforms
 pub async fn run_platform_specific_testing(
     platforms: Vec<PlatformTarget>,
-    config: Option<OrchestratorConfig>
+    config: Option<OrchestratorConfig>,
 ) -> crate::error::Result<CrossPlatformTestingSummary> {
     let mut config = config.unwrap_or_default();
 
     // Filter platforms to only include requested ones
-    config.matrix_config.platforms = config.matrix_config.platforms
+    config.matrix_config.platforms = config
+        .matrix_config
+        .platforms
         .into_iter()
         .filter(|spec| platforms.contains(&spec.target))
         .collect();

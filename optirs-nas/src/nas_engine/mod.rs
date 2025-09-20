@@ -76,61 +76,42 @@ use std::fmt::Debug;
 // - Caching of evaluation results
 // - Early stopping based on convergence criteria
 
+use crate::EvaluationMetric;
 use num_traits::Float;
-use crate::learned_optimizers::few_shot_optimizer::EvaluationMetric;
 
 pub mod config;
-pub mod results;
-pub mod resources;
 pub mod engine;
+pub mod resources;
+pub mod results;
 
 // Re-export core types for convenience
 pub use config::*;
-pub use results::*;
-pub use resources::*;
 pub use engine::*;
+pub use resources::*;
+pub use results::*;
 
 // Additional convenience re-exports for commonly used combinations
 pub use engine::{
-    NeuralArchitectureSearch,
-    SearchStrategy,
-    MultiObjectiveOptimizer,
-    ArchitectureController,
-    PerformanceEvaluator,
-    ProgressiveNAS,
-    PerformancePredictor,
-    ParetoFront,
-    DiversityMetrics,
+    ArchitectureController, DiversityMetrics, MultiObjectiveOptimizer, NeuralArchitectureSearch,
+    PerformanceEvaluator, PerformancePredictor, ProgressiveNAS, SearchStrategy,
 };
 
+// Re-export ParetoFront from multi_objective module
+pub use crate::multi_objective::ParetoFront;
+
 pub use config::{
-    NASConfig,
-    SearchStrategyType,
-    SearchSpaceConfig,
-    EvaluationConfig,
-    MultiObjectiveConfig,
-    ObjectiveConfig,
-    EarlyStoppingConfig,
+    EarlyStoppingConfig, EvaluationConfig, MultiObjectiveConfig, NASConfig, ObjectiveConfig,
+    SearchSpaceConfig, SearchStrategyType,
 };
 
 pub use results::{
-    SearchResults,
-    SearchResult,
-    EvaluationResults,
-    ArchitectureEncoding,
-    SearchStatistics,
-    OptimizerArchitecture,
-    OptimizerComponent,
-    ConvergenceData,
+    ArchitectureEncoding, ConvergenceData, EvaluationResults, OptimizerArchitecture,
+    OptimizerComponent, SearchResult, SearchResults, SearchStatistics,
 };
 
-pub use config::{ResourceConstraints, HardwareResources};
+pub use config::{HardwareResources, ResourceConstraints};
+pub use resources::{ResourceMonitor, ResourceOptimizer, ResourceSnapshot};
 pub use results::ResourceUsage;
-pub use resources::{
-    ResourceMonitor,
-    ResourceSnapshot,
-    ResourceOptimizer,
-};
 
 #[cfg(test)]
 mod tests {
@@ -140,8 +121,8 @@ mod tests {
     #[test]
     fn test_nas_config_creation() {
         let config = NASConfig::<f64>::default();
-        assert_eq!(config.search_budget, 1000);
-        assert_eq!(config.population_size, 50);
+        assert_eq!(config.search_budget, 100);
+        assert_eq!(config.population_size, 20);
         assert!(config.early_stopping.enabled);
     }
 
@@ -155,10 +136,13 @@ mod tests {
             hardware_resources: HardwareResources::default(),
             enable_monitoring: true,
             violation_handling: ResourceViolationHandling::Penalty,
+            time_constraints: TimeConstraints::default(),
+            energy_constraints: Some(100.0),
+            cost_constraints: Some(1000.0),
         };
 
-        let monitor = ResourceMonitor::new(constraints);
-        assert!(monitor.constraints.max_memory_gb > 0.0);
+        let monitor = ResourceMonitor::new(constraints.clone());
+        assert!(constraints.max_memory_gb > 0.0);
     }
 
     #[test]
@@ -166,14 +150,15 @@ mod tests {
         let strategies = vec![
             SearchStrategyType::Random,
             SearchStrategyType::Evolutionary,
-            SearchStrategyType::Bayesian,
-            SearchStrategyType::Reinforcement,
+            SearchStrategyType::BayesianOptimization,
+            SearchStrategyType::ReinforcementLearning,
             SearchStrategyType::Differentiable,
             SearchStrategyType::Progressive,
-            SearchStrategyType::Hybrid,
+            SearchStrategyType::MultiObjectiveEvolutionary,
+            SearchStrategyType::NeuralPredictorBased,
         ];
 
-        assert_eq!(strategies.len(), 7);
+        assert_eq!(strategies.len(), 8);
     }
 
     #[test]
@@ -217,7 +202,7 @@ mod tests {
             ComponentType::LBFGS,
             ComponentType::Momentum,
             ComponentType::Nesterov,
-            ComponentType::Custom,
+            ComponentType::Custom("custom".to_string()),
         ];
 
         assert_eq!(components.len(), 10);
@@ -232,6 +217,10 @@ mod tests {
             energy_kwh: 5.4,
             cost_usd: 0.648,
             network_gb: 0.1,
+            network_io_gb: 0.1,
+            disk_io_gb: 0.5,
+            peak_memory_gb: 10.0,
+            efficiency_score: 0.75,
         };
 
         assert!(usage.memory_gb > 0.0);
@@ -242,14 +231,16 @@ mod tests {
     #[test]
     fn test_architecture_encoding() {
         let encoding = ArchitectureEncoding {
-            encoding_type: ArchitectureEncodingStrategy::Direct,
-            encoded_data: vec![1, 2, 3, 4],
-            metadata: std::collections::HashMap::new(),
-            checksum: 12345,
+            encoding_type: EncodingType::Binary,
+            binary_encoding: Some(vec![1, 2, 3, 4]),
+            string_encoding: None,
+            graph_encoding: None,
+            hash: 12345,
+            metadata: EncodingMetadata::default(),
         };
 
-        assert_eq!(encoding.encoded_data.len(), 4);
-        assert_eq!(encoding.checksum, 12345);
+        assert_eq!(encoding.binary_encoding.as_ref().unwrap().len(), 4);
+        assert_eq!(encoding.hash, 12345);
     }
 
     #[test]
@@ -262,17 +253,30 @@ mod tests {
 
     #[test]
     fn test_pareto_front_creation() {
+        use crate::multi_objective::{CoverageMetrics, FrontMetrics, ObjectiveBounds};
+
         let pareto_front = ParetoFront::<f64> {
             solutions: Vec::new(),
-            hypervolume: 0.0,
-            diversity_metrics: DiversityMetrics {
-                crowding_distance: Vec::new(),
-                entropy: 0.0,
-                average_distance: 0.0,
-                min_distance: 0.0,
-                max_distance: 0.0,
+            objective_bounds: ObjectiveBounds {
+                min_values: Vec::new(),
+                max_values: Vec::new(),
+                ideal_point: Vec::new(),
+                nadir_point: Vec::new(),
+            },
+            metrics: FrontMetrics {
+                hypervolume: 0.0,
+                spread: 0.0,
+                spacing: 0.0,
+                convergence: 0.0,
+                num_solutions: 0,
+                coverage: CoverageMetrics {
+                    objective_space_coverage: 0.0,
+                    reference_distance: 0.0,
+                    epsilon_dominance: 0.0,
+                },
             },
             generation: 0,
+            last_updated: std::time::SystemTime::now(),
         };
 
         assert_eq!(pareto_front.solutions.len(), 0);
@@ -282,6 +286,13 @@ mod tests {
     #[test]
     fn test_hardware_resources() {
         let hardware = HardwareResources {
+            max_memory_gb: 128.0,
+            max_cpu_cores: 32,
+            max_gpu_devices: 8,
+            max_storage_gb: 2000.0,
+            max_network_bandwidth: 10000.0,
+            enable_cloud_scaling: false,
+            cloud_budget: None,
             cpu_cores: 16,
             ram_gb: 64,
             num_gpus: 4,
@@ -301,65 +312,74 @@ pub fn create_example_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
     NASConfig {
         search_strategy: SearchStrategyType::Evolutionary,
         search_space: SearchSpaceConfig {
-            component_types: vec![
-                ComponentTypeConfig {
-                    name: "Adam".to_string(),
-                    parameters: vec!["learning_rate".to_string(), "beta1".to_string(), "beta2".to_string()],
-                    defaults: {
-                        let mut defaults = std::collections::HashMap::new();
-                        defaults.insert("learning_rate".to_string(), "0.001".to_string());
-                        defaults.insert("beta1".to_string(), "0.9".to_string());
-                        defaults.insert("beta2".to_string(), "0.999".to_string());
-                        defaults
-                    },
+            components: vec![
+                OptimizerComponentConfig {
                     component_type: ComponentType::Adam,
-                    enabled: true,
-                    probability: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-                    hyperparameter_ranges: std::collections::HashMap::new(),
-                    constraints: ArchitectureConstraints::default(),
-                    dependencies: Vec::new(),
-                },
-                ComponentTypeConfig {
-                    name: "SGD".to_string(),
-                    parameters: vec!["learning_rate".to_string(), "momentum".to_string()],
-                    defaults: {
-                        let mut defaults = std::collections::HashMap::new();
-                        defaults.insert("learning_rate".to_string(), "0.01".to_string());
-                        defaults.insert("momentum".to_string(), "0.0".to_string());
-                        defaults
+                    hyperparameter_ranges: {
+                        let mut ranges = std::collections::HashMap::new();
+                        ranges.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::Continuous(0.0001, 0.1),
+                        );
+                        ranges.insert("beta1".to_string(), ParameterRange::Continuous(0.8, 0.99));
+                        ranges.insert("beta2".to_string(), ParameterRange::Continuous(0.9, 0.999));
+                        ranges
                     },
+                    complexity_score: 1.0,
+                    memory_requirement: 2048,
+                    computational_cost: 1.5,
+                    compatibility_constraints: Vec::new(),
+                },
+                OptimizerComponentConfig {
                     component_type: ComponentType::SGD,
-                    enabled: true,
-                    probability: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-                    hyperparameter_ranges: std::collections::HashMap::new(),
-                    constraints: ArchitectureConstraints::default(),
-                    dependencies: Vec::new(),
-                },
-                ComponentTypeConfig {
-                    name: "RMSprop".to_string(),
-                    parameters: vec!["learning_rate".to_string(), "decay".to_string()],
-                    defaults: {
-                        let mut defaults = std::collections::HashMap::new();
-                        defaults.insert("learning_rate".to_string(), "0.001".to_string());
-                        defaults.insert("decay".to_string(), "0.9".to_string());
-                        defaults
+                    hyperparameter_ranges: {
+                        let mut ranges = std::collections::HashMap::new();
+                        ranges.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::Continuous(0.001, 0.1),
+                        );
+                        ranges.insert(
+                            "momentum".to_string(),
+                            ParameterRange::Continuous(0.0, 0.99),
+                        );
+                        ranges
                     },
-                    component_type: ComponentType::RMSprop,
-                    enabled: true,
-                    probability: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-                    hyperparameter_ranges: std::collections::HashMap::new(),
-                    constraints: ArchitectureConstraints::default(),
-                    dependencies: Vec::new(),
+                    complexity_score: 0.5,
+                    memory_requirement: 1024,
+                    computational_cost: 1.0,
+                    compatibility_constraints: Vec::new(),
                 },
+                OptimizerComponentConfig {
+                    component_type: ComponentType::RMSprop,
+                    hyperparameter_ranges: {
+                        let mut ranges = std::collections::HashMap::new();
+                        ranges.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::Continuous(0.0001, 0.1),
+                        );
+                        ranges.insert("decay".to_string(), ParameterRange::Continuous(0.8, 0.99));
+                        ranges
+                    },
+                    complexity_score: 0.8,
+                    memory_requirement: 1536,
+                    computational_cost: 1.2,
+                    compatibility_constraints: Vec::new(),
+                },
+            ],
+            connection_patterns: vec![ConnectionPatternType::Sequential],
+            learning_rate_schedules: LearningRateScheduleSpace::default(),
+            regularization_techniques: RegularizationSpace::default(),
+            adaptive_mechanisms: AdaptiveMechanismSpace::default(),
+            memory_constraints: MemoryConstraints::default(),
+            computation_constraints: ComputationConstraints::default(),
+            component_types: vec![
+                ComponentType::Adam,
+                ComponentType::SGD,
+                ComponentType::RMSprop,
             ],
             max_components: 10,
             min_components: 2,
             max_connections: 20,
-            min_connections: 1,
-            allow_cycles: false,
-            max_depth: 5,
-            enable_skip_connections: true,
-            connection_probability: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
         },
         evaluation_config: EvaluationConfig::default(),
         multi_objective_config: MultiObjectiveConfig::default(),
@@ -371,6 +391,8 @@ pub fn create_example_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
             metric: EvaluationMetric::FinalPerformance,
             target_performance: None,
             convergence_detection: ConvergenceDetectionStrategy::NoImprovement,
+            convergence_strategy: ConvergenceDetectionStrategy::BestScore,
+            min_generations: 10,
         },
         progressive_search: false,
         population_size: 25,
@@ -384,6 +406,9 @@ pub fn create_example_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
             max_computation_hours: num_traits::cast::cast(12.0).unwrap_or_else(|| T::zero()),
             max_energy_kwh: num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero()),
             max_cost_usd: num_traits::cast::cast(500.0).unwrap_or_else(|| T::zero()),
+            energy_constraints: Some(num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero())),
+            cost_constraints: Some(num_traits::cast::cast(500.0).unwrap_or_else(|| T::zero())),
+            time_constraints: TimeConstraints::default(),
             hardware_resources: HardwareResources {
                 cpu_cores: 8,
                 ram_gb: 32,
@@ -391,6 +416,13 @@ pub fn create_example_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
                 gpu_memory_gb: 16,
                 storage_gb: 500,
                 network_bandwidth_mbps: 500.0,
+                max_memory_gb: 32.0,
+                max_cpu_cores: 8,
+                max_gpu_devices: 2,
+                max_storage_gb: 500.0,
+                max_network_bandwidth: 500.0,
+                enable_cloud_scaling: false,
+                cloud_budget: None,
             },
             enable_monitoring: true,
             violation_handling: ResourceViolationHandling::Penalty,
@@ -403,32 +435,34 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
     NASConfig {
         search_strategy: SearchStrategyType::Random,
         search_space: SearchSpaceConfig {
-            component_types: vec![
-                ComponentTypeConfig {
+            components: vec![
+                OptimizerComponentConfig {
                     component_type: ComponentType::Adam,
-                    enabled: true,
-                    probability: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
                     hyperparameter_ranges: std::collections::HashMap::new(),
-                    constraints: ArchitectureConstraints::default(),
-                    dependencies: Vec::new(),
+                    complexity_score: 1.0,
+                    memory_requirement: 1024,
+                    computational_cost: 1.0,
+                    compatibility_constraints: Vec::new(),
                 },
-                ComponentTypeConfig {
+                OptimizerComponentConfig {
                     component_type: ComponentType::SGD,
-                    enabled: true,
-                    probability: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
                     hyperparameter_ranges: std::collections::HashMap::new(),
-                    constraints: ArchitectureConstraints::default(),
-                    dependencies: Vec::new(),
+                    complexity_score: 0.5,
+                    memory_requirement: 512,
+                    computational_cost: 0.5,
+                    compatibility_constraints: Vec::new(),
                 },
             ],
+            connection_patterns: vec![ConnectionPatternType::Sequential],
+            learning_rate_schedules: LearningRateScheduleSpace::default(),
+            regularization_techniques: RegularizationSpace::default(),
+            adaptive_mechanisms: AdaptiveMechanismSpace::default(),
+            memory_constraints: MemoryConstraints::default(),
+            computation_constraints: ComputationConstraints::default(),
+            component_types: vec![ComponentType::Adam, ComponentType::SGD],
             max_components: 5,
             min_components: 1,
             max_connections: 10,
-            min_connections: 0,
-            allow_cycles: false,
-            max_depth: 3,
-            enable_skip_connections: false,
-            connection_probability: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
         },
         evaluation_config: EvaluationConfig::default(),
         multi_objective_config: MultiObjectiveConfig::default(),
@@ -440,6 +474,8 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
             metric: EvaluationMetric::FinalPerformance,
             target_performance: None,
             convergence_detection: ConvergenceDetectionStrategy::NoImprovement,
+            convergence_strategy: ConvergenceDetectionStrategy::BestScore,
+            min_generations: 5,
         },
         progressive_search: false,
         population_size: 10,
@@ -454,6 +490,13 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
             max_energy_kwh: num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero()),
             max_cost_usd: num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero()),
             hardware_resources: HardwareResources {
+                max_cpu_cores: 4,
+                max_memory_gb: 16.0,
+                max_gpu_devices: 1,
+                max_storage_gb: 100.0,
+                max_network_bandwidth: 100.0,
+                enable_cloud_scaling: false,
+                cloud_budget: None,
                 cpu_cores: 4,
                 ram_gb: 16,
                 num_gpus: 1,
@@ -461,8 +504,11 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
                 storage_gb: 100,
                 network_bandwidth_mbps: 100.0,
             },
-            enable_monitoring: true,
+            time_constraints: TimeConstraints::default(),
+            energy_constraints: Some(num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero())),
+            cost_constraints: Some(num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero())),
             violation_handling: ResourceViolationHandling::Penalty,
+            enable_monitoring: false,
         },
     }
 }

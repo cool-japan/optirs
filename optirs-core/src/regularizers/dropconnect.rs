@@ -161,7 +161,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync, D: Dimension + Send + Sync>
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_dropconnect_creation() {

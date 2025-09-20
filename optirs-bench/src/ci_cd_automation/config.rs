@@ -1032,11 +1032,11 @@ impl Default for TestExecutionConfig {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_memory_mb: Some(4096),    // 4GB
-            max_cpu_percent: Some(80.0),  // 80%
+            max_memory_mb: Some(4096),          // 4GB
+            max_cpu_percent: Some(80.0),        // 80%
             max_execution_time_sec: Some(1800), // 30 minutes
-            max_disk_mb: Some(10240),     // 10GB
-            max_network_mbps: Some(100.0), // 100 MB/s
+            max_disk_mb: Some(10240),           // 10GB
+            max_network_mbps: Some(100.0),      // 100 MB/s
         }
     }
 }
@@ -1255,7 +1255,7 @@ impl Default for PerformanceGatesConfig {
                 operator: ComparisonOperator::LessThanOrEqual,
                 severity: GateSeverity::Error,
                 enabled: true,
-            }
+            },
         );
 
         // Default memory usage gate: fail if > 30% more memory
@@ -1267,7 +1267,7 @@ impl Default for PerformanceGatesConfig {
                 operator: ComparisonOperator::LessThanOrEqual,
                 severity: GateSeverity::Warning,
                 enabled: true,
-            }
+            },
         );
 
         Self {
@@ -1375,7 +1375,12 @@ impl BaselineManagementConfig {
 
 impl ReportingConfig {
     fn validate(&self) -> Result<(), String> {
-        if !self.generate_html && !self.generate_json && !self.generate_junit && !self.generate_markdown && !self.generate_pdf {
+        if !self.generate_html
+            && !self.generate_json
+            && !self.generate_junit
+            && !self.generate_markdown
+            && !self.generate_pdf
+        {
             return Err("At least one report format must be enabled".to_string());
         }
 
@@ -1402,7 +1407,9 @@ impl ArtifactStorageConfig {
                         return Err("GCS bucket name cannot be empty".to_string());
                     }
                 }
-                ArtifactStorageProvider::AzureBlob { account, container, .. } => {
+                ArtifactStorageProvider::AzureBlob {
+                    account, container, ..
+                } => {
                     if account.is_empty() || container.is_empty() {
                         return Err("Azure Blob account and container cannot be empty".to_string());
                     }
@@ -1446,7 +1453,8 @@ impl MetricGate {
 
         match self.gate_type {
             GateType::Relative => {
-                if self.threshold > 10.0 { // 1000% change seems unreasonable
+                if self.threshold > 10.0 {
+                    // 1000% change seems unreasonable
                     return Err("Relative gate threshold seems unreasonably high".to_string());
                 }
             }
@@ -1492,7 +1500,10 @@ impl PlatformSpecificConfig {
         env_vars.insert("COMMIT".to_string(), "GITHUB_SHA".to_string());
 
         let mut commands = HashMap::new();
-        commands.insert("cache_key".to_string(), "echo \"::set-output name=cache-key::${{ hashFiles('**/Cargo.lock') }}\"".to_string());
+        commands.insert(
+            "cache_key".to_string(),
+            "echo \"::set-output name=cache-key::${{ hashFiles('**/Cargo.lock') }}\"".to_string(),
+        );
 
         Self {
             env_vars,
@@ -1502,7 +1513,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: Some(360), // 6 hours
                 max_artifact_size_mb: Some(2048),   // 2GB
                 max_parallel_jobs: Some(20),
-                supported_os: vec!["ubuntu-latest".to_string(), "windows-latest".to_string(), "macos-latest".to_string()],
+                supported_os: vec![
+                    "ubuntu-latest".to_string(),
+                    "windows-latest".to_string(),
+                    "macos-latest".to_string(),
+                ],
             },
         }
     }
@@ -1519,10 +1534,14 @@ impl PlatformSpecificConfig {
             artifact_paths: vec!["./target/criterion".to_string()],
             commands: HashMap::new(),
             limitations: PlatformLimitations {
-                max_job_runtime_minutes: None, // Configurable
+                max_job_runtime_minutes: None,    // Configurable
                 max_artifact_size_mb: Some(1024), // 1GB default
-                max_parallel_jobs: None, // Depends on plan
-                supported_os: vec!["linux".to_string(), "windows".to_string(), "macos".to_string()],
+                max_parallel_jobs: None,          // Depends on plan
+                supported_os: vec![
+                    "linux".to_string(),
+                    "windows".to_string(),
+                    "macos".to_string(),
+                ],
             },
         }
     }
@@ -1542,7 +1561,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: None, // Configurable
                 max_artifact_size_mb: None,    // Configurable
                 max_parallel_jobs: None,       // Configurable
-                supported_os: vec!["linux".to_string(), "windows".to_string(), "macos".to_string()],
+                supported_os: vec![
+                    "linux".to_string(),
+                    "windows".to_string(),
+                    "macos".to_string(),
+                ],
             },
         }
     }
@@ -1562,7 +1585,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: Some(360), // 6 hours
                 max_artifact_size_mb: Some(100),    // 100MB
                 max_parallel_jobs: Some(10),
-                supported_os: vec!["ubuntu-latest".to_string(), "windows-latest".to_string(), "macos-latest".to_string()],
+                supported_os: vec![
+                    "ubuntu-latest".to_string(),
+                    "windows-latest".to_string(),
+                    "macos-latest".to_string(),
+                ],
             },
         }
     }
@@ -1582,7 +1609,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: Some(300), // 5 hours
                 max_artifact_size_mb: Some(3072),   // 3GB
                 max_parallel_jobs: Some(16),
-                supported_os: vec!["linux".to_string(), "macos".to_string(), "windows".to_string()],
+                supported_os: vec![
+                    "linux".to_string(),
+                    "macos".to_string(),
+                    "windows".to_string(),
+                ],
             },
         }
     }
@@ -1602,7 +1633,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: Some(50), // 50 minutes
                 max_artifact_size_mb: Some(100),   // 100MB
                 max_parallel_jobs: Some(5),
-                supported_os: vec!["linux".to_string(), "osx".to_string(), "windows".to_string()],
+                supported_os: vec![
+                    "linux".to_string(),
+                    "osx".to_string(),
+                    "windows".to_string(),
+                ],
             },
         }
     }
@@ -1622,7 +1657,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: None, // Configurable
                 max_artifact_size_mb: None,    // Configurable
                 max_parallel_jobs: None,       // Configurable
-                supported_os: vec!["linux".to_string(), "windows".to_string(), "macos".to_string()],
+                supported_os: vec![
+                    "linux".to_string(),
+                    "windows".to_string(),
+                    "macos".to_string(),
+                ],
             },
         }
     }
@@ -1642,7 +1681,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: None, // Configurable
                 max_artifact_size_mb: None,    // Configurable
                 max_parallel_jobs: None,       // Configurable
-                supported_os: vec!["linux".to_string(), "windows".to_string(), "macos".to_string()],
+                supported_os: vec![
+                    "linux".to_string(),
+                    "windows".to_string(),
+                    "macos".to_string(),
+                ],
             },
         }
     }
@@ -1662,7 +1705,11 @@ impl PlatformSpecificConfig {
                 max_job_runtime_minutes: None,
                 max_artifact_size_mb: None,
                 max_parallel_jobs: None,
-                supported_os: vec!["linux".to_string(), "windows".to_string(), "macos".to_string()],
+                supported_os: vec![
+                    "linux".to_string(),
+                    "windows".to_string(),
+                    "macos".to_string(),
+                ],
             },
         }
     }

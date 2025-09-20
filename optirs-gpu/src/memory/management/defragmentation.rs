@@ -20,7 +20,7 @@ pub struct DefragmentationEngine {
     /// Memory layout tracking
     memory_layout: MemoryLayoutTracker,
     /// Compaction strategies
-    strategies: Vec<CompactionStrategy>,
+    strategies: Vec<Box<dyn CompactionStrategy>>,
     /// Performance history
     performance_history: VecDeque<DefragPerformance>,
 }
@@ -735,7 +735,7 @@ impl DefragmentationEngine {
             fragmentation_after: self.memory_layout.calculate_fragmentation(),
             time_taken: cycle_time,
             bytes_moved: result.bytes_moved,
-            algorithm_used: result.algorithm_used,
+            algorithm_used: result.algorithm_used.clone(),
             success: true,
         };
 

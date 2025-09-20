@@ -21,7 +21,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```no_run
-/// use scirs2_core::ndarray_ext::array;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::SpectralNorm;
 ///
 /// let mut spec_norm = SpectralNorm::new(1);
@@ -162,7 +162,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_spectral_norm_creation() {

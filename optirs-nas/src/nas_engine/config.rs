@@ -3,16 +3,11 @@
 // This module contains all configuration types, enums, and parameter definitions
 // for the Neural Architecture Search system.
 
+use crate::EvaluationMetric;
+use num_traits::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::Duration;
-use num_traits::Float;
-use crate::learned_optimizers::few_shot_optimizer::EvaluationMetric;
-
-use crate::neural_architecture_search::{
-    MultiObjectiveOptimizer, PerformanceEvaluator, PerformancePredictor,
-    ParetoFront,
-};
 
 /// Neural Architecture Search configuration for optimizers
 #[derive(Debug, Clone)]
@@ -111,6 +106,18 @@ pub struct SearchSpaceConfig {
 
     /// Computation constraints
     pub computation_constraints: ComputationConstraints,
+
+    /// Component types to include in search
+    pub component_types: Vec<ComponentType>,
+
+    /// Maximum number of components
+    pub max_components: usize,
+
+    /// Minimum number of components
+    pub min_components: usize,
+
+    /// Maximum number of connections
+    pub max_connections: usize,
 }
 
 /// Optimizer component configuration for search
@@ -208,6 +215,47 @@ pub enum ComponentType {
 
     /// Convergence acceleration
     ConvergenceAcceleration,
+
+    /// Specific optimizer types
+    SGD,
+    Adam,
+    AdamW,
+    RMSprop,
+    AdaGrad,
+    AdaDelta,
+    Nesterov,
+    LRScheduler,
+    BatchNorm,
+    Dropout,
+    LAMB,
+    LARS,
+    Lion,
+    RAdam,
+    Lookahead,
+    SAM,
+    LBFGS,
+    SparseAdam,
+    GroupedAdam,
+    MAML,
+    Reptile,
+    MetaSGD,
+    ConstantLR,
+    ExponentialLR,
+    StepLR,
+    CosineAnnealingLR,
+    OneCycleLR,
+    CyclicLR,
+    L1Regularizer,
+    L2Regularizer,
+    ElasticNetRegularizer,
+    DropoutRegularizer,
+    WeightDecay,
+    AdaptiveLR,
+    AdaptiveMomentum,
+    AdaptiveRegularization,
+    LSTMOptimizer,
+    TransformerOptimizer,
+    AttentionOptimizer,
 
     /// Custom components
     Custom(String),
@@ -598,10 +646,10 @@ pub enum ProblemType {
 /// Dataset size categories
 #[derive(Debug, Clone)]
 pub enum DatasetSizeCategory {
-    Small,      // < 1K samples
-    Medium,     // 1K - 100K samples
-    Large,      // 100K - 1M samples
-    VeryLarge,  // > 1M samples
+    Small,     // < 1K samples
+    Medium,    // 1K - 100K samples
+    Large,     // 100K - 1M samples
+    VeryLarge, // > 1M samples
 }
 
 /// Correlation structure in datasets
@@ -742,6 +790,12 @@ pub enum ObjectiveType {
     ModelSize,
     Robustness,
     Fairness,
+    Performance,
+    Efficiency,
+    Interpretability,
+    Privacy,
+    Sustainability,
+    Cost,
     Custom(String),
 }
 
@@ -840,6 +894,15 @@ pub struct EarlyStoppingConfig<T: Float + Debug + Send + Sync + 'static> {
 
     /// Minimum number of generations before stopping
     pub min_generations: usize,
+
+    /// Metric to monitor for early stopping
+    pub metric: EvaluationMetric,
+
+    /// Target performance value
+    pub target_performance: Option<T>,
+
+    /// Convergence detection strategy
+    pub convergence_detection: ConvergenceDetectionStrategy,
 }
 
 /// Convergence detection strategies
@@ -849,6 +912,7 @@ pub enum ConvergenceDetectionStrategy {
     AverageScore,
     PopulationDiversity,
     ParetoFrontStability,
+    NoImprovement,
     Custom(String),
 }
 
@@ -900,6 +964,21 @@ pub struct ResourceConstraints<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource violation handling
     pub violation_handling: ResourceViolationHandling,
+
+    /// Maximum memory in GB
+    pub max_memory_gb: T,
+
+    /// Maximum computation hours
+    pub max_computation_hours: T,
+
+    /// Maximum energy in kWh
+    pub max_energy_kwh: T,
+
+    /// Maximum cost in USD
+    pub max_cost_usd: T,
+
+    /// Enable resource monitoring
+    pub enable_monitoring: bool,
 }
 
 /// Hardware resource specifications
@@ -925,6 +1004,24 @@ pub struct HardwareResources {
 
     /// Cloud resource budget
     pub cloud_budget: Option<f64>,
+
+    /// CPU cores available
+    pub cpu_cores: usize,
+
+    /// RAM in GB
+    pub ram_gb: u32,
+
+    /// Number of GPUs
+    pub num_gpus: usize,
+
+    /// GPU memory in GB
+    pub gpu_memory_gb: u32,
+
+    /// Storage in GB
+    pub storage_gb: u32,
+
+    /// Network bandwidth in Mbps
+    pub network_bandwidth_mbps: f32,
 }
 
 /// Time constraints for search
@@ -971,6 +1068,9 @@ pub enum ResourceViolationHandling {
     /// Dynamic resource allocation
     Dynamic,
 
+    /// Apply penalty to objective function
+    Penalty,
+
     /// Custom handling
     Custom(String),
 }
@@ -1011,6 +1111,10 @@ impl Default for SearchSpaceConfig {
             adaptive_mechanisms: AdaptiveMechanismSpace::default(),
             memory_constraints: MemoryConstraints::default(),
             computation_constraints: ComputationConstraints::default(),
+            component_types: vec![ComponentType::SGD, ComponentType::Adam],
+            max_components: 10,
+            min_components: 1,
+            max_connections: 20,
         }
     }
 }
@@ -1163,6 +1267,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EarlyStoppingConfig<T
             min_improvement: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
             convergence_strategy: ConvergenceDetectionStrategy::BestScore,
             min_generations: 10,
+            metric: EvaluationMetric::Accuracy,
+            target_performance: None,
+            convergence_detection: ConvergenceDetectionStrategy::NoImprovement,
         }
     }
 }
@@ -1175,6 +1282,11 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for ResourceConstraints<T
             energy_constraints: None,
             cost_constraints: None,
             violation_handling: ResourceViolationHandling::Skip,
+            max_memory_gb: num_traits::cast::cast(32.0).unwrap_or_else(|| T::zero()),
+            max_computation_hours: num_traits::cast::cast(24.0).unwrap_or_else(|| T::zero()),
+            max_energy_kwh: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
+            max_cost_usd: num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()),
+            enable_monitoring: true,
         }
     }
 }
@@ -1189,6 +1301,12 @@ impl Default for HardwareResources {
             max_network_bandwidth: 1000.0, // 1 GB/s
             enable_cloud_scaling: false,
             cloud_budget: None,
+            cpu_cores: num_cpus::get(),
+            ram_gb: 32,
+            num_gpus: 1,
+            gpu_memory_gb: 8,
+            storage_gb: 100,
+            network_bandwidth_mbps: 1000.0,
         }
     }
 }
@@ -1196,7 +1314,7 @@ impl Default for HardwareResources {
 impl Default for TimeConstraints {
     fn default() -> Self {
         Self {
-            max_search_time: Duration::from_secs(3600), // 1 hour
+            max_search_time: Duration::from_secs(3600),    // 1 hour
             max_evaluation_time: Duration::from_secs(300), // 5 minutes
             search_deadline: None,
             budget_allocation: TimeBudgetAllocation::Uniform,

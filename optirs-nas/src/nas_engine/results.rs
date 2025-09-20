@@ -3,21 +3,23 @@
 // This module contains all result types, evaluation metrics, statistics tracking,
 // and performance measurement functionality for the Neural Architecture Search system.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use crate::multi_objective::ParetoFront;
+use crate::EvaluationMetric;
 use num_traits::Float;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::Debug;
-use crate::learned_optimizers::few_shot_optimizer::EvaluationMetric;
-
-use crate::neural_architecture_search::{
-    ParetoFront,
-};
+use std::time::{Duration, Instant};
 
 // Define missing types as placeholders since they're not available
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizerArchitecture<T: Float + Debug + Send + Sync + 'static> {
     pub components: Vec<String>,
     pub parameters: HashMap<String, T>,
+    pub connections: Vec<(usize, usize)>,
+    pub metadata: HashMap<String, String>,
+    pub hyperparameters: HashMap<String, T>,
+    pub architecture_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,10 @@ pub struct ConvergenceData<T: Float + Debug + Send + Sync + 'static> {
     pub best_score: T,
     pub convergence_rate: T,
     pub stability_measure: T,
+    pub best_scores_over_time: Vec<T>,
+    pub diversity_over_time: Vec<T>,
+    pub convergence_generation: usize,
+    pub final_diversity: T,
 }
 
 /// Search result for tracking individual architecture evaluations
@@ -207,6 +213,12 @@ pub struct ResourceUsage<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource efficiency score
     pub efficiency_score: T,
+
+    /// Cost in USD
+    pub cost_usd: T,
+
+    /// Network usage (GB) - alias for network_io_gb
+    pub network_gb: T,
 }
 
 /// Architecture encoding for reproducibility and analysis
@@ -377,6 +389,18 @@ pub struct SearchStatistics<T: Float + Debug + Send + Sync + 'static> {
     /// Total architectures evaluated
     pub total_architectures_evaluated: usize,
 
+    /// Total evaluations (alias for compatibility)
+    pub total_evaluations: usize,
+
+    /// Current generation in evolutionary search
+    pub current_generation: usize,
+
+    /// Population diversity metric
+    pub population_diversity: T,
+
+    /// Average score across all evaluations
+    pub average_score: T,
+
     /// Successful evaluations
     pub successful_evaluations: usize,
 
@@ -525,6 +549,40 @@ pub struct SearchResults<T: Float + Debug + Send + Sync + 'static> {
 
     /// Recommendations for future searches
     pub recommendations: Vec<SearchRecommendation>,
+
+    /// Resource usage summary
+    pub resource_usage_summary: ResourceUsageSummary<T>,
+
+    /// Total search time in seconds
+    pub search_time_seconds: f64,
+
+    /// Convergence data
+    pub convergence_data: ConvergenceData<T>,
+
+    /// Original configuration
+    pub config: SearchConfigSummary,
+}
+
+/// Resource usage summary
+#[derive(Debug, Clone)]
+pub struct ResourceUsageSummary<T: Float + Debug + Send + Sync + 'static> {
+    /// Total memory used (GB)
+    pub total_memory_gb: T,
+
+    /// Total CPU time (hours)
+    pub total_cpu_hours: T,
+
+    /// Total GPU time (hours)
+    pub total_gpu_hours: T,
+
+    /// Total energy consumed (kWh)
+    pub total_energy_kwh: T,
+
+    /// Total cost (USD)
+    pub total_cost_usd: T,
+
+    /// Average efficiency score
+    pub average_efficiency: T,
 }
 
 /// Evaluation summary
@@ -735,6 +793,10 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for SearchStatistics<T> {
     fn default() -> Self {
         Self {
             total_architectures_evaluated: 0,
+            total_evaluations: 0,
+            current_generation: 0,
+            population_diversity: T::zero(),
+            average_score: T::zero(),
             successful_evaluations: 0,
             failed_evaluations: 0,
             best_score: None,
@@ -814,6 +876,8 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for ResourceUsage<T> {
             disk_io_gb: T::zero(),
             peak_memory_gb: T::zero(),
             efficiency_score: T::zero(),
+            cost_usd: T::zero(),
+            network_gb: T::zero(),
         }
     }
 }
@@ -890,12 +954,14 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
             return T::zero();
         }
 
-        let success_rate = num_traits::cast::cast(self.successful_evaluations).unwrap_or_else(|| T::zero()) /
-                          num_traits::cast::cast(self.total_architectures_evaluated).unwrap_or_else(|| T::zero());
+        let success_rate = num_traits::cast::cast(self.successful_evaluations)
+            .unwrap_or_else(|| T::zero())
+            / num_traits::cast::cast(self.total_architectures_evaluated)
+                .unwrap_or_else(|| T::zero());
 
         let time_efficiency = if self.total_search_time.as_secs() > 0 {
-            num_traits::cast::cast(self.successful_evaluations).unwrap_or_else(|| T::zero()) /
-            T::from(self.total_search_time.as_secs()).unwrap()
+            num_traits::cast::cast(self.successful_evaluations).unwrap_or_else(|| T::zero())
+                / T::from(self.total_search_time.as_secs()).unwrap()
         } else {
             T::zero()
         };
@@ -910,7 +976,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
         }
 
         let recent_scores = &self.score_history[self.score_history.len() - patience..];
-        let max_score = recent_scores.iter().fold(T::neg_infinity(), |a, &b| a.max(b));
+        let max_score = recent_scores
+            .iter()
+            .fold(T::neg_infinity(), |a, &b| a.max(b));
         let min_score = recent_scores.iter().fold(T::infinity(), |a, &b| a.min(b));
 
         max_score - min_score < min_improvement
@@ -923,10 +991,13 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
         }
 
         let recent_scores = &self.score_history[self.score_history.len() - window_size..];
-        let older_scores = &self.score_history[self.score_history.len() - window_size * 2..self.score_history.len() - window_size];
+        let older_scores = &self.score_history
+            [self.score_history.len() - window_size * 2..self.score_history.len() - window_size];
 
-        let recent_mean = recent_scores.iter().fold(T::zero(), |a, &b| a + b) / num_traits::cast::cast(window_size).unwrap_or_else(|| T::zero());
-        let older_mean = older_scores.iter().fold(T::zero(), |a, &b| a + b) / num_traits::cast::cast(window_size).unwrap_or_else(|| T::zero());
+        let recent_mean = recent_scores.iter().fold(T::zero(), |a, &b| a + b)
+            / num_traits::cast::cast(window_size).unwrap_or_else(|| T::zero());
+        let older_mean = older_scores.iter().fold(T::zero(), |a, &b| a + b)
+            / num_traits::cast::cast(window_size).unwrap_or_else(|| T::zero());
 
         Some(recent_mean - older_mean)
     }
@@ -935,18 +1006,18 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
 impl<T: Float + Debug + Send + Sync + 'static> ResourceUsage<T> {
     /// Calculate total resource cost
     pub fn total_cost(&self, costs: &ResourceCosts<T>) -> T {
-        self.memory_gb * costs.memory_cost_per_gb +
-        self.cpu_time_seconds * costs.cpu_cost_per_second +
-        self.gpu_time_seconds * costs.gpu_cost_per_second +
-        self.energy_kwh * costs.energy_cost_per_kwh
+        self.memory_gb * costs.memory_cost_per_gb
+            + self.cpu_time_seconds * costs.cpu_cost_per_second
+            + self.gpu_time_seconds * costs.gpu_cost_per_second
+            + self.energy_kwh * costs.energy_cost_per_kwh
     }
 
     /// Check if usage exceeds limits
     pub fn exceeds_limits(&self, limits: &ResourceLimits<T>) -> bool {
-        self.memory_gb > limits.max_memory_gb ||
-        self.cpu_time_seconds > limits.max_cpu_seconds ||
-        self.gpu_time_seconds > limits.max_gpu_seconds ||
-        self.energy_kwh > limits.max_energy_kwh
+        self.memory_gb > limits.max_memory_gb
+            || self.cpu_time_seconds > limits.max_cpu_seconds
+            || self.gpu_time_seconds > limits.max_gpu_seconds
+            || self.energy_kwh > limits.max_energy_kwh
     }
 }
 
@@ -1026,6 +1097,8 @@ mod tests {
             disk_io_gb: 2.0,
             peak_memory_gb: 12.0,
             efficiency_score: 0.8,
+            cost_usd: 0.0,
+            network_gb: 1.0,
         };
 
         let costs = ResourceCosts {
@@ -1054,5 +1127,44 @@ mod tests {
         let encoding = ArchitectureEncoding::default();
         assert_eq!(encoding.hash, 0);
         assert!(matches!(encoding.encoding_type, EncodingType::String));
+    }
+}
+
+// Default implementations for missing types
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ScoreStatistics<T> {
+    fn default() -> Self {
+        Self {
+            mean: T::zero(),
+            median: T::zero(),
+            std_dev: T::zero(),
+            min: T::zero(),
+            max: T::zero(),
+            percentiles: HashMap::new(),
+            histogram: Vec::new(),
+        }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ResourceSummary<T> {
+    fn default() -> Self {
+        Self {
+            total_consumption: ResourceUsage::default(),
+            average_per_evaluation: ResourceUsage::default(),
+            peak_usage: ResourceUsage::default(),
+            efficiency_metrics: ResourceEfficiencyMetrics::default(),
+        }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ResourceEfficiencyMetrics<T> {
+    fn default() -> Self {
+        Self {
+            cpu_efficiency: T::zero(),
+            gpu_efficiency: T::zero(),
+            memory_efficiency: T::zero(),
+            energy_efficiency: T::zero(),
+            overall_efficiency: T::zero(),
+        }
     }
 }

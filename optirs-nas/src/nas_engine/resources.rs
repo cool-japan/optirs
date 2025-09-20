@@ -3,20 +3,21 @@
 // This module provides comprehensive resource monitoring, constraint enforcement,
 // and resource optimization functionality for the NAS system.
 
+use num_traits::Float;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::marker::PhantomData;
-use std::fmt::Debug;
-use num_traits::Float;
+use std::time::{Duration, Instant};
 
+use super::config::{
+    HardwareResources, ResourceConstraints, ResourceViolationHandling, TimeConstraints,
+};
+use super::results::{ResourceUsage, ResourceUsageSummary};
 use crate::error::{OptimError, Result};
-use super::config::{ResourceConstraints, HardwareResources, TimeConstraints, ResourceViolationHandling};
-use super::results::ResourceUsage;
 
 /// Resource monitor for tracking and managing system resources
-#[derive(Debug)]
 pub struct ResourceMonitor<T: Float + Debug + Send + Sync + 'static> {
     /// Resource constraints
     constraints: ResourceConstraints<T>,
@@ -41,6 +42,24 @@ pub struct ResourceMonitor<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource optimization strategies
     optimization_strategies: Vec<Box<dyn ResourceOptimizer<T>>>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Debug for ResourceMonitor<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResourceMonitor")
+            .field("constraints", &self.constraints)
+            .field("current_usage", &self.current_usage)
+            .field("usage_history", &self.usage_history)
+            .field("monitoring_config", &self.monitoring_config)
+            .field("monitoring_state", &self.monitoring_state)
+            .field("monitors_count", &self.monitors.len())
+            .field("alert_handlers_count", &self.alert_handlers.len())
+            .field(
+                "optimization_strategies_count",
+                &self.optimization_strategies.len(),
+            )
+            .finish()
+    }
 }
 
 /// Resource snapshot for history tracking
@@ -147,7 +166,7 @@ pub struct AlertThresholds {
 }
 
 /// Monitoring state
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MonitoringState {
     Stopped,
     Starting,
@@ -166,7 +185,10 @@ pub trait ResourceTracker<T: Float + Debug + Send + Sync + 'static>: Send + Sync
     fn get_system_metrics(&self) -> Result<SystemMetrics<T>>;
 
     /// Check if resource limits are exceeded
-    fn check_limits(&self, constraints: &ResourceConstraints<T>) -> Result<Vec<ResourceViolation<T>>>;
+    fn check_limits(
+        &self,
+        constraints: &ResourceConstraints<T>,
+    ) -> Result<Vec<ResourceViolation<T>>>;
 
     /// Get tracker name
     fn name(&self) -> &str;
@@ -215,6 +237,8 @@ pub enum ViolationType {
     TemperatureExceeded,
     PowerExceeded,
     NetworkExceeded,
+    ComputationTimeExceeded,
+    CostExceeded,
 }
 
 /// Violation severity levels
@@ -285,7 +309,11 @@ pub enum TrendDirection {
 /// Resource optimizer trait
 pub trait ResourceOptimizer<T: Float + Debug + Send + Sync + 'static>: Send + Sync {
     /// Optimize resource usage
-    fn optimize(&self, current_usage: &ResourceUsage<T>, constraints: &ResourceConstraints<T>) -> Result<OptimizationAction<T>>;
+    fn optimize(
+        &self,
+        current_usage: &ResourceUsage<T>,
+        constraints: &ResourceConstraints<T>,
+    ) -> Result<OptimizationAction<T>>;
 
     /// Get optimizer name
     fn name(&self) -> &str;
@@ -432,13 +460,17 @@ where
 
         Ok(ResourceUsage {
             memory_gb: num_traits::cast::cast(used_memory).unwrap_or_else(|| T::zero()),
-            cpu_time_seconds: num_traits::cast::cast(cpu_usage * 3600.0).unwrap_or_else(|| T::zero()), // Convert to CPU-hours equivalent
-            gpu_time_seconds: num_traits::cast::cast(gpu_usage * 3600.0).unwrap_or_else(|| T::zero()), // Convert to GPU-hours equivalent
+            cpu_time_seconds: num_traits::cast::cast(cpu_usage * 3600.0)
+                .unwrap_or_else(|| T::zero()), // Convert to CPU-hours equivalent
+            gpu_time_seconds: num_traits::cast::cast(gpu_usage * 3600.0)
+                .unwrap_or_else(|| T::zero()), // Convert to GPU-hours equivalent
             energy_kwh: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()), // 0.25 kWh estimated
             network_io_gb: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // 1 GB network I/O
             disk_io_gb: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()), // 2 GB disk I/O
             peak_memory_gb: num_traits::cast::cast(used_memory * 1.2).unwrap_or_else(|| T::zero()), // 20% overhead
             efficiency_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // 80% efficiency
+            cost_usd: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), // $0.50 estimated
+            network_gb: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // Same as network_io_gb
         })
     }
 
@@ -452,22 +484,28 @@ where
         let power = self.get_power_info()?;
 
         Ok(SystemMetrics {
-            available_memory_gb: T::from(total_memory - used_memory),
+            available_memory_gb: num_traits::cast::cast(total_memory - used_memory)
+                .unwrap_or_else(|| T::zero()),
             available_cpu_cores: total_cores,
             available_gpu_devices: gpu_devices,
-            available_disk_gb: T::from(total_disk - used_disk),
-            network_bandwidth: T::from(bandwidth),
-            system_temperature: T::from(temperature),
-            power_consumption: T::from(power),
+            available_disk_gb: num_traits::cast::cast(total_disk - used_disk)
+                .unwrap_or_else(|| T::zero()),
+            network_bandwidth: num_traits::cast::cast(bandwidth).unwrap_or_else(|| T::zero()),
+            system_temperature: num_traits::cast::cast(temperature).unwrap_or_else(|| T::zero()),
+            power_consumption: num_traits::cast::cast(power).unwrap_or_else(|| T::zero()),
         })
     }
 
-    fn check_limits(&self, constraints: &ResourceConstraints<T>) -> Result<Vec<ResourceViolation<T>>> {
+    fn check_limits(
+        &self,
+        constraints: &ResourceConstraints<T>,
+    ) -> Result<Vec<ResourceViolation<T>>> {
         let current_usage = self.get_current_usage()?;
         let mut violations = Vec::new();
 
         // Check memory limit
-        let memory_limit = T::from(constraints.hardware_resources.max_memory_gb);
+        let memory_limit = num_traits::cast::cast(constraints.hardware_resources.max_memory_gb)
+            .unwrap_or_else(|| T::zero());
         if current_usage.memory_gb > memory_limit {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::MemoryExceeded,
@@ -486,7 +524,7 @@ where
 
         // Check power limit
         let system_metrics = self.get_system_metrics()?;
-        let power_limit = T::from(1000.0); // 1000W limit
+        let power_limit = num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()); // 1000W limit
         if system_metrics.power_consumption > power_limit {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::PowerExceeded,
@@ -504,7 +542,7 @@ where
         }
 
         // Check temperature limit
-        let temp_limit = T::from(80.0); // 80°C limit
+        let temp_limit = num_traits::cast::cast(80.0).unwrap_or_else(|| T::zero()); // 80°C limit
         if system_metrics.system_temperature > temp_limit {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::TemperatureExceeded,
@@ -584,10 +622,7 @@ where
     fn handle_warning(&self, warning: &ResourceWarning<T>) -> Result<()> {
         println!(
             "[WARNING] {:?}: Current={}, Threshold={}, Trend={:?}",
-            warning.warning_type,
-            warning.current_value,
-            warning.threshold_value,
-            warning.trend
+            warning.warning_type, warning.current_value, warning.threshold_value, warning.trend
         );
 
         if self.verbose {
@@ -617,7 +652,10 @@ pub struct MemoryOptimizer {
 impl MemoryOptimizer {
     /// Create a new memory optimizer
     pub fn new(name: String, aggressiveness: f64) -> Self {
-        Self { name, aggressiveness }
+        Self {
+            name,
+            aggressiveness,
+        }
     }
 }
 
@@ -625,31 +663,45 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceOptimizer<T> for MemoryOp
 where
     T: From<f64> + std::cmp::PartialOrd,
 {
-    fn optimize(&self, current_usage: &ResourceUsage<T>, constraints: &ResourceConstraints<T>) -> Result<OptimizationAction<T>> {
-        let memory_limit = T::from(constraints.hardware_resources.max_memory_gb);
+    fn optimize(
+        &self,
+        current_usage: &ResourceUsage<T>,
+        constraints: &ResourceConstraints<T>,
+    ) -> Result<OptimizationAction<T>> {
+        let memory_limit = num_traits::cast::cast(constraints.hardware_resources.max_memory_gb)
+            .unwrap_or_else(|| T::zero());
 
-        if current_usage.memory_gb > memory_limit * T::from(0.8) {
-            let reduction_target = current_usage.memory_gb * T::from(self.aggressiveness * 0.2);
+        if current_usage.memory_gb
+            > memory_limit * num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero())
+        {
+            let reduction_target = current_usage.memory_gb
+                * num_traits::cast::cast(self.aggressiveness * 0.2).unwrap_or_else(|| T::zero());
 
             let mut parameters = HashMap::new();
             parameters.insert("memory_reduction_gb".to_string(), reduction_target);
-            parameters.insert("aggressiveness".to_string(), T::from(self.aggressiveness));
+            parameters.insert(
+                "aggressiveness".to_string(),
+                num_traits::cast::cast(self.aggressiveness).unwrap_or_else(|| T::zero()),
+            );
 
             Ok(OptimizationAction {
                 action_type: ActionType::ReduceMemoryUsage,
                 parameters,
                 expected_savings: ResourceUsage {
                     memory_gb: reduction_target,
-                    cpu_time_seconds: T::from(0.0),
-                    gpu_time_seconds: T::from(0.0),
-                    energy_kwh: T::from(0.0),
-                    network_io_gb: T::from(0.0),
-                    disk_io_gb: T::from(0.0),
+                    cpu_time_seconds: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    gpu_time_seconds: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    energy_kwh: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    network_io_gb: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    disk_io_gb: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
                     peak_memory_gb: reduction_target,
-                    efficiency_score: T::from(0.1),
+                    efficiency_score: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                    cost_usd: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    network_gb: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
                 },
-                implementation_cost: T::from(0.05),
-                description: "Reduce memory usage through cache clearing and optimization".to_string(),
+                implementation_cost: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                description: "Reduce memory usage through cache clearing and optimization"
+                    .to_string(),
                 priority: OptimizationPriority::High,
             })
         } else {
@@ -657,7 +709,7 @@ where
                 action_type: ActionType::ReduceMemoryUsage,
                 parameters: HashMap::new(),
                 expected_savings: ResourceUsage::default(),
-                implementation_cost: T::from(0.0),
+                implementation_cost: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
                 description: "No memory optimization needed".to_string(),
                 priority: OptimizationPriority::Low,
             })
@@ -673,9 +725,9 @@ where
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + From<f64>> ResourceMonitor<T>
+impl<T: Float + Debug + Send + Sync + 'static> ResourceMonitor<T>
 where
-    T: std::cmp::PartialOrd + std::fmt::Display,
+    T: From<f64> + std::fmt::Display,
 {
     /// Create a new resource monitor
     pub fn new(constraints: ResourceConstraints<T>) -> Self {
@@ -787,10 +839,10 @@ where
                 timestamp: Instant::now(),
                 usage: total_usage,
                 system_metrics: metrics,
-                active_processes: 1, // Simplified
+                active_processes: 1,                  // Simplified
                 memory_pressure: MemoryPressure::Low, // Simplified
-                cpu_load_average: T::from(0.6),
-                gpu_utilization: T::from(0.8),
+                cpu_load_average: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+                gpu_utilization: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
             };
 
             {
@@ -889,7 +941,11 @@ where
             efficiency_score,
             total_samples: history.len(),
             monitoring_duration: if !history.is_empty() {
-                history.last().unwrap().timestamp.duration_since(history.first().unwrap().timestamp)
+                history
+                    .last()
+                    .unwrap()
+                    .timestamp
+                    .duration_since(history.first().unwrap().timestamp)
             } else {
                 Duration::from_secs(0)
             },
@@ -907,16 +963,20 @@ where
         let recent_window = history.len().min(10);
         let recent = &history[history.len() - recent_window..];
 
-        let memory_trend = self.calculate_metric_trend(recent.iter().map(|s| s.usage.memory_gb).collect());
-        let cpu_trend = self.calculate_metric_trend(recent.iter().map(|s| s.usage.cpu_time_seconds).collect());
-        let gpu_trend = self.calculate_metric_trend(recent.iter().map(|s| s.usage.gpu_time_seconds).collect());
+        let memory_trend =
+            self.calculate_metric_trend(recent.iter().map(|s| s.usage.memory_gb).collect());
+        let cpu_trend =
+            self.calculate_metric_trend(recent.iter().map(|s| s.usage.cpu_time_seconds).collect());
+        let gpu_trend =
+            self.calculate_metric_trend(recent.iter().map(|s| s.usage.gpu_time_seconds).collect());
 
         UsageTrend {
             memory_trend,
             cpu_trend,
             gpu_trend,
-            energy_trend: TrendDirection::Stable, // Simplified
+            energy_trend: TrendDirection::Stable,  // Simplified
             overall_trend: TrendDirection::Stable, // Simplified
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -926,10 +986,18 @@ where
             return TrendDirection::Stable;
         }
 
-        let first_half_avg = values.iter().take(values.len() / 2).fold(T::from(0.0), |acc, &x| acc + x) / T::from(values.len() / 2);
-        let second_half_avg = values.iter().skip(values.len() / 2).fold(T::from(0.0), |acc, &x| acc + x) / T::from(values.len() - values.len() / 2);
+        let first_half_avg = values.iter().take(values.len() / 2).fold(
+            num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+            |acc, &x| acc + x,
+        ) / num_traits::cast::cast(values.len() / 2)
+            .unwrap_or_else(|| T::one());
+        let second_half_avg = values.iter().skip(values.len() / 2).fold(
+            num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+            |acc, &x| acc + x,
+        ) / num_traits::cast::cast(values.len() - values.len() / 2)
+            .unwrap_or_else(|| T::one());
 
-        let change_threshold = T::from(0.05); // 5% change threshold
+        let change_threshold = num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()); // 5% change threshold
 
         if second_half_avg > first_half_avg + change_threshold {
             TrendDirection::Increasing
@@ -947,12 +1015,128 @@ where
     }
 
     /// Generate recommendations
-    fn generate_recommendations(&self, _usage: &ResourceUsage<T>, _history: &[ResourceSnapshot<T>]) -> Vec<String> {
+    fn generate_recommendations(
+        &self,
+        _usage: &ResourceUsage<T>,
+        _history: &[ResourceSnapshot<T>],
+    ) -> Vec<String> {
         vec![
             "Consider enabling memory optimization".to_string(),
             "Monitor GPU utilization for potential improvements".to_string(),
             "Review energy consumption patterns".to_string(),
         ]
+    }
+
+    /// Check for resource constraint violations
+    pub fn check_resource_violations(&self) -> Result<Vec<ResourceViolation<T>>> {
+        let current_usage = self.get_current_usage();
+        let mut violations = Vec::new();
+
+        // Check memory constraints
+        if current_usage.memory_gb > self.constraints.max_memory_gb {
+            violations.push(ResourceViolation {
+                violation_type: ViolationType::MemoryExceeded,
+                severity: ViolationSeverity::High,
+                current_value: current_usage.memory_gb,
+                limit_value: self.constraints.max_memory_gb,
+                violation_time: Instant::now(),
+                affected_resources: vec!["System Memory".to_string(), "RAM".to_string()],
+                suggested_actions: vec![
+                    "Reduce batch size".to_string(),
+                    "Clear memory cache".to_string(),
+                    "Enable memory optimization".to_string(),
+                ],
+            });
+        }
+
+        // Check CPU time constraints
+        if current_usage.cpu_time_seconds
+            > self.constraints.max_computation_hours
+                * num_traits::cast::cast(3600.0).unwrap_or_else(|| T::zero())
+        {
+            violations.push(ResourceViolation {
+                violation_type: ViolationType::ComputationTimeExceeded,
+                severity: ViolationSeverity::Medium,
+                current_value: current_usage.cpu_time_seconds,
+                limit_value: self.constraints.max_computation_hours
+                    * num_traits::cast::cast(3600.0).unwrap_or_else(|| T::zero()),
+                violation_time: Instant::now(),
+                affected_resources: vec!["CPU".to_string(), "Computation Time".to_string()],
+                suggested_actions: vec![
+                    "Optimize algorithms".to_string(),
+                    "Enable parallelization".to_string(),
+                    "Reduce search space".to_string(),
+                ],
+            });
+        }
+
+        // Check energy constraints
+        if current_usage.energy_kwh > self.constraints.max_energy_kwh {
+            violations.push(ResourceViolation {
+                violation_type: ViolationType::EnergyExceeded,
+                severity: ViolationSeverity::Low,
+                current_value: current_usage.energy_kwh,
+                limit_value: self.constraints.max_energy_kwh,
+                violation_time: Instant::now(),
+                affected_resources: vec!["Energy".to_string(), "Power Consumption".to_string()],
+                suggested_actions: vec![
+                    "Enable power-saving mode".to_string(),
+                    "Reduce GPU usage".to_string(),
+                    "Optimize computation schedule".to_string(),
+                ],
+            });
+        }
+
+        // Check cost constraints
+        if current_usage.cost_usd > self.constraints.max_cost_usd {
+            violations.push(ResourceViolation {
+                violation_type: ViolationType::CostExceeded,
+                severity: ViolationSeverity::High,
+                current_value: current_usage.cost_usd,
+                limit_value: self.constraints.max_cost_usd,
+                violation_time: Instant::now(),
+                affected_resources: vec!["Budget".to_string(), "Cost".to_string()],
+                suggested_actions: vec![
+                    "Stop non-critical tasks".to_string(),
+                    "Switch to cheaper resources".to_string(),
+                    "Optimize resource allocation".to_string(),
+                ],
+            });
+        }
+
+        Ok(violations)
+    }
+
+    /// Get a summary of resource usage
+    pub fn get_usage_summary(&self) -> ResourceUsageSummary<T> {
+        let current_usage = self.get_current_usage();
+        let history = self.get_usage_history();
+
+        // Calculate totals from history
+        let mut total_cpu_hours = T::zero();
+        let mut total_gpu_hours = T::zero();
+        let mut total_energy_kwh = T::zero();
+        let mut total_cost_usd = T::zero();
+
+        for snapshot in &history {
+            total_cpu_hours = total_cpu_hours
+                + snapshot.usage.cpu_time_seconds
+                    / num_traits::cast::cast(3600.0).unwrap_or_else(|| T::one());
+            total_gpu_hours = total_gpu_hours
+                + snapshot.usage.gpu_time_seconds
+                    / num_traits::cast::cast(3600.0).unwrap_or_else(|| T::one());
+            total_energy_kwh = total_energy_kwh + snapshot.usage.energy_kwh;
+            total_cost_usd = total_cost_usd + snapshot.usage.cost_usd;
+        }
+
+        ResourceUsageSummary {
+            total_memory_gb: current_usage.memory_gb,
+            total_cpu_hours,
+            total_gpu_hours,
+            total_energy_kwh,
+            total_cost_usd,
+            average_efficiency: current_usage.efficiency_score,
+        }
     }
 }
 
@@ -1042,26 +1226,26 @@ mod tests {
     #[test]
     fn test_resource_monitor_creation() {
         let constraints = ResourceConstraints::default();
-        let monitor = ResourceMonitor::<f32>::new(constraints);
+        let monitor = ResourceMonitor::<f64>::new(constraints);
         assert_eq!(monitor.get_monitoring_state(), MonitoringState::Stopped);
     }
 
     #[test]
     fn test_system_resource_tracker() {
-        let mut tracker = SystemResourceTracker::new(
-            "TestTracker".to_string(),
-            Duration::from_secs(1),
-        );
+        use super::ResourceTracker;
 
-        assert!(tracker.initialize().is_ok());
+        let mut tracker =
+            SystemResourceTracker::new("TestTracker".to_string(), Duration::from_secs(1));
 
-        let usage = tracker.get_current_usage::<f32>();
+        assert!(<SystemResourceTracker as ResourceTracker<f64>>::initialize(&mut tracker).is_ok());
+
+        let usage = <SystemResourceTracker as ResourceTracker<f64>>::get_current_usage(&tracker);
         assert!(usage.is_ok());
 
-        let metrics = tracker.get_system_metrics::<f32>();
+        let metrics = <SystemResourceTracker as ResourceTracker<f64>>::get_system_metrics(&tracker);
         assert!(metrics.is_ok());
 
-        assert!(tracker.cleanup().is_ok());
+        assert!(<SystemResourceTracker as ResourceTracker<f64>>::cleanup(&mut tracker).is_ok());
     }
 
     #[test]
@@ -1077,6 +1261,8 @@ mod tests {
             disk_io_gb: 2.0,
             peak_memory_gb: 22.0,
             efficiency_score: 0.8,
+            cost_usd: 0.0,
+            network_gb: 1.0,
         };
 
         let constraints = ResourceConstraints::default();
@@ -1104,7 +1290,7 @@ mod tests {
     #[test]
     fn test_trend_calculation() {
         let constraints = ResourceConstraints::default();
-        let monitor = ResourceMonitor::<f32>::new(constraints);
+        let monitor = ResourceMonitor::<f64>::new(constraints);
 
         let values = vec![1.0, 1.1, 1.2, 1.3, 1.4];
         let trend = monitor.calculate_metric_trend(values);

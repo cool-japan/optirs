@@ -9,14 +9,13 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use super::config::{
-    IntegrationConfig, GitHubIntegration, SlackIntegration, EmailIntegration,
-    WebhookIntegration, CustomIntegrationConfig, HttpMethod, WebhookAuth,
-    GitHubLabelConfig, GitHubStatusCheckConfig, SlackNotificationConfig,
-    SmtpConfig, EmailTemplateConfig, WebhookTriggerConfig, WebhookPayloadConfig,
-    PayloadFormat, WebhookRetryConfig
+    CustomIntegrationConfig, EmailIntegration, EmailTemplateConfig, GitHubIntegration,
+    GitHubLabelConfig, GitHubStatusCheckConfig, HttpMethod, IntegrationConfig, PayloadFormat,
+    SlackIntegration, SlackNotificationConfig, SmtpConfig, WebhookAuth, WebhookIntegration,
+    WebhookPayloadConfig, WebhookRetryConfig, WebhookTriggerConfig,
 };
-use super::test_execution::{CiCdTestResult, TestSuiteStatistics, TestExecutionStatus};
 use super::reporting::GeneratedReport;
+use super::test_execution::{CiCdTestResult, TestExecutionStatus, TestSuiteStatistics};
 
 /// Integration manager for handling external service connections
 #[derive(Debug)]
@@ -86,7 +85,11 @@ pub trait CustomIntegration: std::fmt::Debug + Send + Sync {
     fn send_notification(&self, notification: &IntegrationNotification) -> Result<()>;
 
     /// Handle test results
-    fn handle_test_results(&self, results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<()>;
+    fn handle_test_results(
+        &self,
+        results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<()>;
 
     /// Handle report generation
     fn handle_report_generated(&self, report: &GeneratedReport) -> Result<()>;
@@ -495,7 +498,11 @@ impl IntegrationManager {
     }
 
     /// Handle test completion
-    pub fn handle_test_completion(&mut self, results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> Result<()> {
+    pub fn handle_test_completion(
+        &mut self,
+        results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> Result<()> {
         let notification_type = if statistics.failed > 0 {
             NotificationType::TestFailure
         } else {
@@ -510,7 +517,10 @@ impl IntegrationManager {
 
         let notification = IntegrationNotification {
             notification_type,
-            title: format!("Test Suite Completed: {}/{} Passed", statistics.passed, statistics.total_tests),
+            title: format!(
+                "Test Suite Completed: {}/{} Passed",
+                statistics.passed, statistics.total_tests
+            ),
             message: self.create_test_summary_message(results, statistics),
             priority,
             data: self.create_test_data_map(statistics),
@@ -614,9 +624,7 @@ impl IntegrationManager {
                 NotificationType::TestCompletion | NotificationType::TestFailure => {
                     github_config.create_status_checks || github_config.create_pr_comments
                 }
-                NotificationType::PerformanceRegression => {
-                    github_config.create_regression_issues
-                }
+                NotificationType::PerformanceRegression => github_config.create_regression_issues,
                 _ => false,
             }
         } else {
@@ -630,8 +638,12 @@ impl IntegrationManager {
             match notification_type {
                 NotificationType::TestCompletion => slack_config.notifications.notify_on_completion,
                 NotificationType::TestFailure => slack_config.notifications.notify_on_failure,
-                NotificationType::PerformanceRegression => slack_config.notifications.notify_on_regression,
-                NotificationType::PerformanceImprovement => slack_config.notifications.notify_on_improvement,
+                NotificationType::PerformanceRegression => {
+                    slack_config.notifications.notify_on_regression
+                }
+                NotificationType::PerformanceImprovement => {
+                    slack_config.notifications.notify_on_improvement
+                }
                 _ => true, // Send other notifications by default
             }
         } else {
@@ -642,15 +654,20 @@ impl IntegrationManager {
     /// Determine if notification should be sent to Email
     fn should_send_to_email(&self, notification_type: &NotificationType) -> bool {
         // For simplicity, send high and critical priority notifications via email
-        matches!(notification_type,
-            NotificationType::TestFailure |
-            NotificationType::PerformanceRegression |
-            NotificationType::SystemAlert
+        matches!(
+            notification_type,
+            NotificationType::TestFailure
+                | NotificationType::PerformanceRegression
+                | NotificationType::SystemAlert
         )
     }
 
     /// Create test summary message
-    fn create_test_summary_message(&self, results: &[CiCdTestResult], statistics: &TestSuiteStatistics) -> String {
+    fn create_test_summary_message(
+        &self,
+        results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> String {
         let mut message = format!(
             "Test Suite Results:\n• Total: {}\n• Passed: {}\n• Failed: {}\n• Skipped: {}\n• Success Rate: {:.1}%\n",
             statistics.total_tests,
@@ -662,7 +679,11 @@ impl IntegrationManager {
 
         if statistics.failed > 0 {
             message.push_str("\nFailed Tests:\n");
-            for result in results.iter().filter(|r| r.status == TestExecutionStatus::Failed).take(5) {
+            for result in results
+                .iter()
+                .filter(|r| r.status == TestExecutionStatus::Failed)
+                .take(5)
+            {
                 message.push_str(&format!("• {}\n", result.test_name));
             }
             if statistics.failed > 5 {
@@ -676,12 +697,21 @@ impl IntegrationManager {
     /// Create test data map for notification
     fn create_test_data_map(&self, statistics: &TestSuiteStatistics) -> HashMap<String, String> {
         let mut data = HashMap::new();
-        data.insert("total_tests".to_string(), statistics.total_tests.to_string());
+        data.insert(
+            "total_tests".to_string(),
+            statistics.total_tests.to_string(),
+        );
         data.insert("passed_tests".to_string(), statistics.passed.to_string());
         data.insert("failed_tests".to_string(), statistics.failed.to_string());
         data.insert("skipped_tests".to_string(), statistics.skipped.to_string());
-        data.insert("success_rate".to_string(), format!("{:.1}", statistics.success_rate * 100.0));
-        data.insert("duration_seconds".to_string(), statistics.total_duration.as_secs().to_string());
+        data.insert(
+            "success_rate".to_string(),
+            format!("{:.1}", statistics.success_rate * 100.0),
+        );
+        data.insert(
+            "duration_seconds".to_string(),
+            statistics.total_duration.as_secs().to_string(),
+        );
         data
     }
 }
@@ -922,9 +952,8 @@ impl WebhookClient {
                 });
                 Ok(serde_json::to_string(&payload)?)
             }
-            PayloadFormat::XML => {
-                Ok(format!(
-                    r#"<?xml version="1.0"?>
+            PayloadFormat::XML => Ok(format!(
+                r#"<?xml version="1.0"?>
 <notification>
     <type>{:?}</type>
     <title>{}</title>
@@ -932,14 +961,16 @@ impl WebhookClient {
     <priority>{:?}</priority>
     <timestamp>{}</timestamp>
 </notification>"#,
-                    notification.notification_type,
-                    notification.title,
-                    notification.message,
-                    notification.priority,
-                    notification.timestamp.duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default().as_secs()
-                ))
-            }
+                notification.notification_type,
+                notification.title,
+                notification.message,
+                notification.priority,
+                notification
+                    .timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            )),
             _ => Ok(notification.message.clone()),
         }
     }
@@ -1057,7 +1088,9 @@ impl RetryManager {
         let mut completed_retries = Vec::new();
 
         for (index, failed_request) in self.failed_requests.iter_mut().enumerate() {
-            if now >= failed_request.next_retry_at && failed_request.retry_attempts < self.config.max_retries {
+            if now >= failed_request.next_retry_at
+                && failed_request.retry_attempts < self.config.max_retries
+            {
                 // Attempt retry
                 // In a real implementation, this would make the actual request
                 println!("Retrying request: {}", failed_request.id);
@@ -1067,7 +1100,10 @@ impl RetryManager {
 
                 // Calculate next retry time with exponential backoff
                 let delay = self.config.initial_delay_sec as f64
-                    * self.config.backoff_multiplier.powi(failed_request.retry_attempts as i32);
+                    * self
+                        .config
+                        .backoff_multiplier
+                        .powi(failed_request.retry_attempts as i32);
                 let delay = delay.min(self.config.max_delay_sec as f64) as u64;
 
                 failed_request.next_retry_at = now + Duration::from_secs(delay);
@@ -1155,7 +1191,10 @@ mod tests {
             timestamp: SystemTime::now(),
         };
 
-        assert_eq!(notification.notification_type, NotificationType::TestCompletion);
+        assert_eq!(
+            notification.notification_type,
+            NotificationType::TestCompletion
+        );
         assert_eq!(notification.priority, NotificationPriority::Normal);
     }
 

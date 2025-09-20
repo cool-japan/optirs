@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 // Import from tpu_backend module
+use crate::error::Result;
 use crate::tpu_backend::DeviceId;
-use scirs2_core::error::Result;
 
 /// Type alias for topology metrics collection
 pub type TopologyMetrics = HashMap<String, f64>;

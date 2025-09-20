@@ -628,7 +628,9 @@ impl PerformanceTestSuite {
 
         // Check tag inclusion
         if !filtering.include_tags.is_empty() {
-            let has_included_tag = filtering.include_tags.iter()
+            let has_included_tag = filtering
+                .include_tags
+                .iter()
                 .any(|tag| test_case.tags.contains(tag));
             if !has_included_tag {
                 return false;
@@ -644,7 +646,9 @@ impl PerformanceTestSuite {
 
         // Check name patterns (simplified regex matching)
         if !filtering.include_patterns.is_empty() {
-            let matches_pattern = filtering.include_patterns.iter()
+            let matches_pattern = filtering
+                .include_patterns
+                .iter()
                 .any(|pattern| test_case.name.contains(pattern));
             if !matches_pattern {
                 return false;
@@ -661,7 +665,10 @@ impl PerformanceTestSuite {
     }
 
     /// Execute test cases sequentially
-    fn execute_sequential(&self, test_cases: &[&PerformanceTestCase]) -> Result<Vec<CiCdTestResult>> {
+    fn execute_sequential(
+        &self,
+        test_cases: &[&PerformanceTestCase],
+    ) -> Result<Vec<CiCdTestResult>> {
         let mut results = Vec::new();
 
         for test_case in test_cases {
@@ -669,7 +676,9 @@ impl PerformanceTestSuite {
             results.push(result);
 
             // Check if we should stop on failure
-            if let TestExecutionStatus::Failed | TestExecutionStatus::Error = results.last().unwrap().status {
+            if let TestExecutionStatus::Failed | TestExecutionStatus::Error =
+                results.last().unwrap().status
+            {
                 // For now, continue execution even on failures
                 // In the future, this could be configurable
             }
@@ -750,22 +759,37 @@ impl PerformanceTestSuite {
     }
 
     /// Execute test based on its executor type
-    fn execute_test_by_executor(&self, test_case: &PerformanceTestCase) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_test_by_executor(
+        &self,
+        test_case: &PerformanceTestCase,
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         match &test_case.executor {
             TestExecutor::Criterion => self.execute_criterion_test(test_case),
             TestExecutor::Custom(cmd) => self.execute_custom_test(test_case, cmd),
             TestExecutor::Shell => self.execute_shell_test(test_case),
-            TestExecutor::Docker { image, options } => self.execute_docker_test(test_case, image, options),
-            TestExecutor::ExternalTool { tool, args } => self.execute_external_tool_test(test_case, tool, args),
-            TestExecutor::RustBinary { binary, args } => self.execute_rust_binary_test(test_case, binary, args),
-            TestExecutor::Python { script, args } => self.execute_python_test(test_case, script, args),
+            TestExecutor::Docker { image, options } => {
+                self.execute_docker_test(test_case, image, options)
+            }
+            TestExecutor::ExternalTool { tool, args } => {
+                self.execute_external_tool_test(test_case, tool, args)
+            }
+            TestExecutor::RustBinary { binary, args } => {
+                self.execute_rust_binary_test(test_case, binary, args)
+            }
+            TestExecutor::Python { script, args } => {
+                self.execute_python_test(test_case, script, args)
+            }
         }
     }
 
     /// Execute a Criterion.rs benchmark test
-    fn execute_criterion_test(&self, test_case: &PerformanceTestCase) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_criterion_test(
+        &self,
+        test_case: &PerformanceTestCase,
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         // Simplified Criterion execution
-        let iterations = test_case.parameters
+        let iterations = test_case
+            .parameters
             .get("iterations")
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(test_case.iterations);
@@ -797,12 +821,18 @@ impl PerformanceTestSuite {
     }
 
     /// Execute a custom test command
-    fn execute_custom_test(&self, test_case: &PerformanceTestCase, command: &str) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_custom_test(
+        &self,
+        test_case: &PerformanceTestCase,
+        command: &str,
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         let output = Command::new("sh")
             .arg("-c")
             .arg(command)
             .output()
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to execute custom test: {}", e)))?;
+            .map_err(|e| {
+                OptimError::InvalidConfig(format!("Failed to execute custom test: {}", e))
+            })?;
 
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
 
@@ -813,16 +843,24 @@ impl PerformanceTestSuite {
     }
 
     /// Execute a shell test
-    fn execute_shell_test(&self, test_case: &PerformanceTestCase) -> Result<(Vec<PerformanceMeasurement>, String)> {
-        let command = test_case.parameters
-            .get("command")
-            .ok_or_else(|| OptimError::InvalidConfig("Shell test requires 'command' parameter".to_string()))?;
+    fn execute_shell_test(
+        &self,
+        test_case: &PerformanceTestCase,
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
+        let command = test_case.parameters.get("command").ok_or_else(|| {
+            OptimError::InvalidConfig("Shell test requires 'command' parameter".to_string())
+        })?;
 
         self.execute_custom_test(test_case, command)
     }
 
     /// Execute a Docker-based test
-    fn execute_docker_test(&self, test_case: &PerformanceTestCase, image: &str, options: &[String]) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_docker_test(
+        &self,
+        test_case: &PerformanceTestCase,
+        image: &str,
+        options: &[String],
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         let mut cmd = Command::new("docker");
         cmd.arg("run");
 
@@ -836,8 +874,9 @@ impl PerformanceTestSuite {
             cmd.args(command.split_whitespace());
         }
 
-        let output = cmd.output()
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to execute Docker test: {}", e)))?;
+        let output = cmd.output().map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to execute Docker test: {}", e))
+        })?;
 
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
         let measurements = self.parse_performance_output(&output_str, test_case)?;
@@ -846,12 +885,18 @@ impl PerformanceTestSuite {
     }
 
     /// Execute an external tool test
-    fn execute_external_tool_test(&self, test_case: &PerformanceTestCase, tool: &str, args: &[String]) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_external_tool_test(
+        &self,
+        test_case: &PerformanceTestCase,
+        tool: &str,
+        args: &[String],
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         let mut cmd = Command::new(tool);
         cmd.args(args);
 
-        let output = cmd.output()
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to execute external tool: {}", e)))?;
+        let output = cmd.output().map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to execute external tool: {}", e))
+        })?;
 
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
         let measurements = self.parse_performance_output(&output_str, test_case)?;
@@ -860,13 +905,19 @@ impl PerformanceTestSuite {
     }
 
     /// Execute a Rust binary test
-    fn execute_rust_binary_test(&self, test_case: &PerformanceTestCase, binary: &str, args: &[String]) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_rust_binary_test(
+        &self,
+        test_case: &PerformanceTestCase,
+        binary: &str,
+        args: &[String],
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         let mut cmd = Command::new("cargo");
         cmd.arg("run").arg("--bin").arg(binary).arg("--");
         cmd.args(args);
 
-        let output = cmd.output()
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to execute Rust binary: {}", e)))?;
+        let output = cmd.output().map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to execute Rust binary: {}", e))
+        })?;
 
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
         let measurements = self.parse_performance_output(&output_str, test_case)?;
@@ -875,13 +926,19 @@ impl PerformanceTestSuite {
     }
 
     /// Execute a Python script test
-    fn execute_python_test(&self, test_case: &PerformanceTestCase, script: &str, args: &[String]) -> Result<(Vec<PerformanceMeasurement>, String)> {
+    fn execute_python_test(
+        &self,
+        test_case: &PerformanceTestCase,
+        script: &str,
+        args: &[String],
+    ) -> Result<(Vec<PerformanceMeasurement>, String)> {
         let mut cmd = Command::new("python");
         cmd.arg(script);
         cmd.args(args);
 
-        let output = cmd.output()
-            .map_err(|e| OptimError::InvalidConfig(format!("Failed to execute Python script: {}", e)))?;
+        let output = cmd.output().map_err(|e| {
+            OptimError::InvalidConfig(format!("Failed to execute Python script: {}", e))
+        })?;
 
         let output_str = String::from_utf8_lossy(&output.stdout).to_string();
         let measurements = self.parse_performance_output(&output_str, test_case)?;
@@ -890,7 +947,11 @@ impl PerformanceTestSuite {
     }
 
     /// Parse performance output for measurements (simplified)
-    fn parse_performance_output(&self, output: &str, test_case: &PerformanceTestCase) -> Result<Vec<PerformanceMeasurement>> {
+    fn parse_performance_output(
+        &self,
+        output: &str,
+        test_case: &PerformanceTestCase,
+    ) -> Result<Vec<PerformanceMeasurement>> {
         let mut measurements = Vec::new();
 
         // Simple parsing - look for common patterns
@@ -942,9 +1003,10 @@ impl PerformanceTestSuite {
         if let Some(required_os) = &requirements.os {
             let current_os = std::env::consts::OS;
             if current_os != required_os {
-                return Err(OptimError::InvalidConfig(
-                    format!("Required OS: {}, Current OS: {}", required_os, current_os)
-                ));
+                return Err(OptimError::InvalidConfig(format!(
+                    "Required OS: {}, Current OS: {}",
+                    required_os, current_os
+                )));
             }
         }
 
@@ -952,9 +1014,10 @@ impl PerformanceTestSuite {
         if let Some(required_arch) = &requirements.architecture {
             let current_arch = std::env::consts::ARCH;
             if current_arch != required_arch {
-                return Err(OptimError::InvalidConfig(
-                    format!("Required architecture: {}, Current architecture: {}", required_arch, current_arch)
-                ));
+                return Err(OptimError::InvalidConfig(format!(
+                    "Required architecture: {}, Current architecture: {}",
+                    required_arch, current_arch
+                )));
             }
         }
 
@@ -962,18 +1025,20 @@ impl PerformanceTestSuite {
         if let Some(min_cores) = requirements.min_cpu_cores {
             let available_cores = num_cpus::get();
             if available_cores < min_cores {
-                return Err(OptimError::InvalidConfig(
-                    format!("Required CPU cores: {}, Available: {}", min_cores, available_cores)
-                ));
+                return Err(OptimError::InvalidConfig(format!(
+                    "Required CPU cores: {}, Available: {}",
+                    min_cores, available_cores
+                )));
             }
         }
 
         // Check environment variables
         for env_var in &requirements.required_env_vars {
             if std::env::var(env_var).is_err() {
-                return Err(OptimError::InvalidConfig(
-                    format!("Required environment variable not set: {}", env_var)
-                ));
+                return Err(OptimError::InvalidConfig(format!(
+                    "Required environment variable not set: {}",
+                    env_var
+                )));
             }
         }
 
@@ -981,7 +1046,10 @@ impl PerformanceTestSuite {
     }
 
     /// Create test execution metadata
-    fn create_test_metadata(&self, test_case: &PerformanceTestCase) -> Result<TestExecutionMetadata> {
+    fn create_test_metadata(
+        &self,
+        test_case: &PerformanceTestCase,
+    ) -> Result<TestExecutionMetadata> {
         Ok(TestExecutionMetadata {
             executor: test_case.executor.clone(),
             parameters: test_case.parameters.clone(),
@@ -1035,9 +1103,13 @@ impl PerformanceTestSuite {
     }
 
     /// Generate resource usage report (simplified)
-    fn generate_resource_usage_report(&self, start_time: SystemTime, end_time: SystemTime) -> Result<ResourceUsageReport> {
+    fn generate_resource_usage_report(
+        &self,
+        start_time: SystemTime,
+        end_time: SystemTime,
+    ) -> Result<ResourceUsageReport> {
         Ok(ResourceUsageReport {
-            peak_memory_mb: 100.0, // Placeholder
+            peak_memory_mb: 100.0,  // Placeholder
             avg_cpu_percent: 50.0,  // Placeholder
             peak_cpu_percent: 80.0, // Placeholder
             disk_io_mb: 10.0,       // Placeholder
@@ -1064,12 +1136,30 @@ impl PerformanceTestSuite {
     /// Get test suite statistics
     pub fn get_statistics(&self) -> TestSuiteStatistics {
         let total_tests = self.results.len();
-        let passed = self.results.iter().filter(|r| r.status == TestExecutionStatus::Passed).count();
-        let failed = self.results.iter().filter(|r| r.status == TestExecutionStatus::Failed).count();
-        let skipped = self.results.iter().filter(|r| r.status == TestExecutionStatus::Skipped).count();
-        let errors = self.results.iter().filter(|r| r.status == TestExecutionStatus::Error).count();
+        let passed = self
+            .results
+            .iter()
+            .filter(|r| r.status == TestExecutionStatus::Passed)
+            .count();
+        let failed = self
+            .results
+            .iter()
+            .filter(|r| r.status == TestExecutionStatus::Failed)
+            .count();
+        let skipped = self
+            .results
+            .iter()
+            .filter(|r| r.status == TestExecutionStatus::Skipped)
+            .count();
+        let errors = self
+            .results
+            .iter()
+            .filter(|r| r.status == TestExecutionStatus::Error)
+            .count();
 
-        let total_duration = self.results.iter()
+        let total_duration = self
+            .results
+            .iter()
             .filter_map(|r| r.duration)
             .fold(Duration::ZERO, |acc, d| acc + d);
 
@@ -1080,7 +1170,11 @@ impl PerformanceTestSuite {
             skipped,
             errors,
             total_duration,
-            success_rate: if total_tests > 0 { passed as f64 / total_tests as f64 } else { 0.0 },
+            success_rate: if total_tests > 0 {
+                passed as f64 / total_tests as f64
+            } else {
+                0.0
+            },
         }
     }
 }

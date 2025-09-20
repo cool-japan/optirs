@@ -22,6 +22,10 @@ pub mod prevention;
 pub mod recovery;
 pub mod types;
 
+// Type aliases for resource and transaction IDs
+pub type ResourceId = u64;
+pub type TransactionId = u64;
+
 // Re-export core types
 pub use types::{
     AdaptiveSensitivity, AdvancedDeadlockConfig, AdvancedDiagnostics, DeadlockDetectionConfig,
@@ -96,7 +100,7 @@ pub use recovery::{
 // Convenience type aliases for backward compatibility
 pub type DeadlockConfig = DeadlockDetectionConfig;
 pub type Statistics = DeadlockStatistics;
-pub type PerformanceConfig = DeadlockPerformanceConfig;
+// PerformanceConfig already imported above as alias
 pub type RecoveryConfig = DeadlockRecovery;
 
 /// Create a new deadlock detector with default configuration

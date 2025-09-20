@@ -18,6 +18,7 @@ use super::config::*;
 use super::device_manager::*;
 use super::optimization::*;
 use super::performance::*;
+use crate::pod_coordination::types::*;
 use super::state::*;
 
 /// Type aliases for coordination

@@ -18,7 +18,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::array;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::{OrthogonalRegularization, Regularizer};
 ///
 /// let ortho_reg = OrthogonalRegularization::new(0.01);
@@ -146,7 +146,7 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_orthogonal_creation() {

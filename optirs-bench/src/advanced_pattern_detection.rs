@@ -686,7 +686,8 @@ impl AdvancedPatternDetector {
         let cosine_similarity = dot_product / (norm1 * norm2);
 
         // Weight by pattern type similarity
-        let type_similarity = self.calculate_type_similarity(&pattern1.pattern_type, &pattern2.pattern_type);
+        let type_similarity =
+            self.calculate_type_similarity(&pattern1.pattern_type, &pattern2.pattern_type);
 
         // Combine similarities
         Ok((cosine_similarity + type_similarity) / 2.0)
@@ -699,19 +700,38 @@ impl AdvancedPatternDetector {
         type2: &AdvancedPatternType,
     ) -> f64 {
         match (type1, type2) {
-            (AdvancedPatternType::LinearGrowth { .. }, AdvancedPatternType::LinearGrowth { .. }) => 1.0,
-            (AdvancedPatternType::ExponentialGrowth { .. }, AdvancedPatternType::ExponentialGrowth { .. }) => 1.0,
+            (
+                AdvancedPatternType::LinearGrowth { .. },
+                AdvancedPatternType::LinearGrowth { .. },
+            ) => 1.0,
+            (
+                AdvancedPatternType::ExponentialGrowth { .. },
+                AdvancedPatternType::ExponentialGrowth { .. },
+            ) => 1.0,
             (AdvancedPatternType::Periodic { .. }, AdvancedPatternType::Periodic { .. }) => 1.0,
             (AdvancedPatternType::SawTooth { .. }, AdvancedPatternType::SawTooth { .. }) => 1.0,
-            (AdvancedPatternType::StepFunction { .. }, AdvancedPatternType::StepFunction { .. }) => 1.0,
+            (
+                AdvancedPatternType::StepFunction { .. },
+                AdvancedPatternType::StepFunction { .. },
+            ) => 1.0,
             (AdvancedPatternType::Chaotic { .. }, AdvancedPatternType::Chaotic { .. }) => 1.0,
             (AdvancedPatternType::Burst { .. }, AdvancedPatternType::Burst { .. }) => 1.0,
-            (AdvancedPatternType::LeakSignature { .. }, AdvancedPatternType::LeakSignature { .. }) => 1.0,
+            (
+                AdvancedPatternType::LeakSignature { .. },
+                AdvancedPatternType::LeakSignature { .. },
+            ) => 1.0,
             // Partial similarities for related types
-            (AdvancedPatternType::LinearGrowth { .. }, AdvancedPatternType::ExponentialGrowth { .. }) => 0.7,
-            (AdvancedPatternType::ExponentialGrowth { .. }, AdvancedPatternType::LinearGrowth { .. }) => 0.7,
+            (
+                AdvancedPatternType::LinearGrowth { .. },
+                AdvancedPatternType::ExponentialGrowth { .. },
+            ) => 0.7,
+            (
+                AdvancedPatternType::ExponentialGrowth { .. },
+                AdvancedPatternType::LinearGrowth { .. },
+            ) => 0.7,
             (AdvancedPatternType::SawTooth { .. }, AdvancedPatternType::Periodic { .. }) => 0.6,
-            (AdvancedPatternType::Periodic { .. }, AdvancedPatternType::SawTooth { .. }) => 0.6_ => 0.0,
+            (AdvancedPatternType::Periodic { .. }, AdvancedPatternType::SawTooth { .. }) => 0.6,
+            _ => 0.0,
         }
     }
 
@@ -731,13 +751,18 @@ impl AdvancedPatternDetector {
         // Use the pattern with highest confidence as base
         let base_pattern = pattern_group
             .iter()
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .unwrap();
 
         let mut fused_pattern = (*base_pattern).clone();
 
         // Average confidence scores
-        fused_pattern.confidence = pattern_group.iter().map(|p| p.confidence).sum::<f64>() / pattern_group.len() as f64;
+        fused_pattern.confidence =
+            pattern_group.iter().map(|p| p.confidence).sum::<f64>() / pattern_group.len() as f64;
 
         // Average signatures
         let signature_len = fused_pattern.signature.len();
@@ -777,11 +802,14 @@ impl AdvancedPatternDetector {
             // Check if pattern already exists
             if let Some(existing_pattern) = self.pattern_database.patterns.get_mut(&pattern.id) {
                 // Update existing pattern with new information
-                existing_pattern.confidence = (existing_pattern.confidence + pattern.confidence) / 2.0;
+                existing_pattern.confidence =
+                    (existing_pattern.confidence + pattern.confidence) / 2.0;
                 // Update frequency stats
-                if let Some(freq_stats) = self.pattern_database.frequency_stats.get_mut(&pattern.id) {
+                if let Some(freq_stats) = self.pattern_database.frequency_stats.get_mut(&pattern.id)
+                {
                     freq_stats.count += 1;
-                    freq_stats.avg_confidence = (freq_stats.avg_confidence + pattern.confidence) / 2.0;
+                    freq_stats.avg_confidence =
+                        (freq_stats.avg_confidence + pattern.confidence) / 2.0;
                     freq_stats.last_seen = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -789,7 +817,9 @@ impl AdvancedPatternDetector {
                 }
             } else {
                 // Add new pattern
-                self.pattern_database.patterns.insert(pattern.id.clone(), pattern.clone());
+                self.pattern_database
+                    .patterns
+                    .insert(pattern.id.clone(), pattern.clone());
                 self.pattern_database.frequency_stats.insert(
                     pattern.id.clone(),
                     PatternFrequencyStats {
@@ -817,7 +847,7 @@ impl AdvancedPatternDetector {
     fn prune_pattern_database(&mut self) -> Result<()> {
         // Remove patterns with lowest frequency and confidence
         let mut patterns_to_remove = Vec::new();
-        
+
         for (id, freq_stats) in &self.pattern_database.frequency_stats {
             if let Some(pattern) = self.pattern_database.patterns.get(id) {
                 let score = freq_stats.count as f64 * pattern.confidence;
@@ -826,9 +856,11 @@ impl AdvancedPatternDetector {
         }
 
         // Sort by score and remove the lowest scoring patterns
-        patterns_to_remove.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        
-        let patterns_to_remove_count = self.pattern_database.patterns.len() - self.config.max_patterns_stored;
+        patterns_to_remove
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let patterns_to_remove_count =
+            self.pattern_database.patterns.len() - self.config.max_patterns_stored;
         for (id_) in patterns_to_remove.iter().take(patterns_to_remove_count) {
             self.pattern_database.patterns.remove(id);
             self.pattern_database.frequency_stats.remove(id);
@@ -863,7 +895,7 @@ impl AdvancedPatternDetector {
             if memory_data.len() >= 2 {
                 let n = memory_data.len();
                 let last_values = &memory_data[n.saturating_sub(10)..];
-                
+
                 if let Some((slope_)) = self.calculate_linear_trend(last_values) {
                     pattern.trend.direction = slope.signum();
                     pattern.trend.strength = slope.abs().min(1.0);
@@ -883,7 +915,11 @@ impl AdvancedPatternDetector {
         let n = data.len() as f64;
         let sum_x = (0..data.len()).map(|i| i as f64).sum::<f64>();
         let sum_y = data.iter().sum::<f64>();
-        let sum_xy = data.iter().enumerate().map(|(i, &y)| i as f64 * y).sum::<f64>();
+        let sum_xy = data
+            .iter()
+            .enumerate()
+            .map(|(i, &y)| i as f64 * y)
+            .sum::<f64>();
         let sum_x2 = (0..data.len()).map(|i| (i * i) as f64).sum::<f64>();
 
         let denominator = n * sum_x2 - sum_x * sum_x;
@@ -904,7 +940,8 @@ impl AdvancedPatternDetector {
             AdvancedPatternType::LinearGrowth { .. } => Ok(0.5),
             AdvancedPatternType::ExponentialGrowth { .. } => Ok(0.3),
             AdvancedPatternType::Periodic { .. } => Ok(0.7),
-            AdvancedPatternType::LeakSignature { .. } => Ok(0.2, _ => Ok(0.5),
+            AdvancedPatternType::LeakSignature { .. } => Ok(0.2),
+            _ => Ok(0.5),
         }
     }
 }
@@ -924,23 +961,23 @@ impl PatternClassifier {
     fn classify_patterns(&self, features: &[f64]) -> Result<Vec<AdvancedMemoryPattern>> {
         // Simplified neural network classification
         let mut patterns = Vec::new();
-        
+
         // Forward pass through network
         let outputs = self.forward_pass(features);
-        
+
         // Convert outputs to patterns
         for (i, &output) in outputs.iter().enumerate() {
             if output > 0.5 {
                 patterns.push(self.create_pattern_from_class(i, output, features)?);
             }
         }
-        
+
         Ok(patterns)
     }
 
     fn forward_pass(&self, features: &[f64]) -> Vec<f64> {
         let mut outputs = vec![0.0; self.weights.len()];
-        
+
         for (i, weights_row) in self.weights.iter().enumerate() {
             let mut sum = self.biases[i];
             for (j, &weight) in weights_row.iter().enumerate() {
@@ -950,7 +987,7 @@ impl PatternClassifier {
             }
             outputs[i] = 1.0 / (1.0 + (-sum).exp()); // Sigmoid activation
         }
-        
+
         outputs
     }
 
@@ -976,7 +1013,8 @@ impl PatternClassifier {
                 harmonics: vec![1.0, 0.5, 0.25],
                 phase_shift: 0.0,
                 amplitude: features.get(5).copied().unwrap_or(1.0),
-            }_ => AdvancedPatternType::LeakSignature {
+            },
+            _ => AdvancedPatternType::LeakSignature {
                 leak_rate: features.get(6).copied().unwrap_or(0.01),
                 leak_acceleration: features.get(7).copied().unwrap_or(0.001),
                 leak_confidence: confidence,
@@ -1023,7 +1061,7 @@ impl SignalProcessor {
 
         // Apply Kalman filtering for noise reduction
         let filtered_signal = self.kalman_filter.filter(signal)?;
-        
+
         // Analyze filtered signal for additional patterns
         if filtered_signal.len() > 0 {
             // Additional pattern detection on filtered signal would go here
@@ -1045,20 +1083,20 @@ impl FFTProcessor {
     fn analyze_frequencies(&self, signal: &[f64]) -> Result<Vec<AdvancedMemoryPattern>> {
         // Simplified FFT implementation
         let mut patterns = Vec::new();
-        
+
         if signal.len() < 8 {
             return Ok(patterns);
         }
 
         // Apply window function
         let windowed_signal = self.apply_window(signal);
-        
+
         // Compute FFT (simplified)
         let spectrum = self.compute_fft(&windowed_signal)?;
-        
+
         // Find dominant frequencies
         let dominant_freqs = self.find_dominant_frequencies(&spectrum);
-        
+
         // Create pattern from frequency analysis
         if !dominant_freqs.is_empty() {
             patterns.push(AdvancedMemoryPattern {
@@ -1106,7 +1144,8 @@ impl FFTProcessor {
                 .iter()
                 .enumerate()
                 .map(|(i, &x)| x * (0.54 - 0.46 * (2.0 * PI * i as f64 / (n - 1) as f64).cos()))
-                .collect(, _ => signal.to_vec(),
+                .collect(),
+            _ => signal.to_vec(),
         }
     }
 
@@ -1114,20 +1153,20 @@ impl FFTProcessor {
         // Simplified FFT - in practice would use a proper FFT library
         let n = signal.len();
         let mut spectrum = vec![0.0; n / 2];
-        
+
         for k in 0..n / 2 {
             let mut real = 0.0;
             let mut imag = 0.0;
-            
+
             for j in 0..n {
                 let angle = -2.0 * PI * (k * j) as f64 / n as f64;
                 real += signal[j] * angle.cos();
                 imag += signal[j] * angle.sin();
             }
-            
+
             spectrum[k] = (real * real + imag * imag).sqrt();
         }
-        
+
         Ok(spectrum)
     }
 
@@ -1137,9 +1176,9 @@ impl FFTProcessor {
             .enumerate()
             .map(|(i, &mag)| (i, mag))
             .collect();
-        
+
         freq_mag_pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         freq_mag_pairs
             .iter()
             .take(5)
@@ -1176,24 +1215,24 @@ impl KalmanFilter {
 
     fn filter(&mut self, signal: &[f64]) -> Result<Vec<f64>> {
         let mut filtered = Vec::new();
-        
+
         for &measurement in signal {
             // Prediction step
             self.predict();
-            
+
             // Update step
             self.update(measurement);
-            
+
             filtered.push(self.state[0]);
         }
-        
+
         Ok(filtered)
     }
 
     fn predict(&mut self) {
         // Simple constant velocity model
         self.state[0] += self.state[1]; // position += velocity
-        
+
         // Update covariance
         self.covariance[0][0] += self.process_noise;
         self.covariance[1][1] += self.process_noise;
@@ -1202,11 +1241,11 @@ impl KalmanFilter {
     fn update(&mut self, measurement: f64) {
         // Kalman gain
         let gain = self.covariance[0][0] / (self.covariance[0][0] + self.measurement_noise);
-        
+
         // Update state
         let innovation = measurement - self.state[0];
         self.state[0] += gain * innovation;
-        
+
         // Update covariance
         self.covariance[0][0] *= 1.0 - gain;
     }
@@ -1230,7 +1269,7 @@ impl AdvancedStatisticalAnalyzer {
 
         // Statistical tests
         let test_results = self.hypothesis_tester.run_tests(data)?;
-        
+
         // Time series analysis
         let ts_patterns = self.time_series_analyzer.analyze(data)?;
         patterns.extend(ts_patterns);
@@ -1279,18 +1318,25 @@ impl FeatureExtractor {
 
         let n = data.len() as f64;
         let mean = data.iter().sum::<f64>() / n;
-        
+
         let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
         let std_dev = variance.sqrt();
-        
+
         let skewness = if std_dev > 0.0 {
-            data.iter().map(|x| ((x - mean) / std_dev).powi(3)).sum::<f64>() / n
+            data.iter()
+                .map(|x| ((x - mean) / std_dev).powi(3))
+                .sum::<f64>()
+                / n
         } else {
             0.0
         };
-        
+
         let kurtosis = if std_dev > 0.0 {
-            data.iter().map(|x| ((x - mean) / std_dev).powi(4)).sum::<f64>() / n - 3.0
+            data.iter()
+                .map(|x| ((x - mean) / std_dev).powi(4))
+                .sum::<f64>()
+                / n
+                - 3.0
         } else {
             0.0
         };
@@ -1314,9 +1360,12 @@ impl FeatureExtractor {
         let zero_crossing_rate = zero_crossings as f64 / data.len() as f64;
 
         // Spectral centroid (simplified)
-        let spectral_centroid = data.iter().enumerate()
+        let spectral_centroid = data
+            .iter()
+            .enumerate()
             .map(|(i, &x)| i as f64 * x.abs())
-            .sum::<f64>() / data.iter().map(|&x| x.abs()).sum::<f64>().max(1.0);
+            .sum::<f64>()
+            / data.iter().map(|&x| x.abs()).sum::<f64>().max(1.0);
 
         // Spectral rolloff (simplified)
         let total_energy = data.iter().map(|&x| x * x).sum::<f64>();
@@ -1331,7 +1380,11 @@ impl FeatureExtractor {
         }
         let spectral_rolloff = rolloff_index as f64 / data.len() as f64;
 
-        Ok(vec![zero_crossing_rate, spectral_centroid, spectral_rolloff])
+        Ok(vec![
+            zero_crossing_rate,
+            spectral_centroid,
+            spectral_rolloff,
+        ])
     }
 
     fn extract_time_domain_features(&self, data: &[f64]) -> Result<Vec<f64>> {
@@ -1434,11 +1487,11 @@ impl HypothesisTestEngine {
 
     fn run_tests(&self, data: &[f64]) -> Result<HashMap<String, f64>> {
         let mut results = HashMap::new();
-        
+
         // Mann-Kendall trend test (simplified)
         let mk_statistic = self.mann_kendall_test(data)?;
         results.insert("mann_kendall".to_string(), mk_statistic);
-        
+
         Ok(results)
     }
 
@@ -1449,7 +1502,7 @@ impl HypothesisTestEngine {
 
         let mut s = 0;
         let n = data.len();
-        
+
         for i in 0..n - 1 {
             for j in i + 1..n {
                 if data[j] > data[i] {
@@ -1459,7 +1512,7 @@ impl HypothesisTestEngine {
                 }
             }
         }
-        
+
         // Normalize to [-1, 1]
         let max_s = (n * (n - 1) / 2) as i32;
         Ok(s as f64 / max_s as f64)
@@ -1477,12 +1530,12 @@ impl TimeSeriesAnalyzer {
 
     fn analyze(&self, data: &[f64]) -> Result<Vec<AdvancedMemoryPattern>> {
         let mut patterns = Vec::new();
-        
+
         // ARIMA analysis
         if let Ok(arima_pattern) = self.arima_fitter.fit_and_analyze(data) {
             patterns.push(arima_pattern);
         }
-        
+
         // Change point detection
         let change_points = self.change_point_detector.detect_change_points(data)?;
         if !change_points.is_empty() {
@@ -1512,7 +1565,7 @@ impl TimeSeriesAnalyzer {
                 evolution: PatternEvolution::default(),
             });
         }
-        
+
         Ok(patterns)
     }
 }
@@ -1574,24 +1627,25 @@ impl ChangePointDetector {
     fn detect_change_points(&self, data: &[f64]) -> Result<Vec<usize>> {
         // Simplified CUSUM change point detection
         let mut change_points = Vec::new();
-        
+
         if data.len() < 10 {
             return Ok(change_points);
         }
-        
+
         let mean = data.iter().sum::<f64>() / data.len() as f64;
         let mut cumsum = 0.0;
-        let threshold = 2.0 * data.iter().map(|x| (x - mean).abs()).sum::<f64>() / data.len() as f64;
-        
+        let threshold =
+            2.0 * data.iter().map(|x| (x - mean).abs()).sum::<f64>() / data.len() as f64;
+
         for (i, &value) in data.iter().enumerate() {
             cumsum += value - mean;
-            
+
             if cumsum.abs() > threshold {
                 change_points.push(i);
                 cumsum = 0.0; // Reset after detecting change point
             }
         }
-        
+
         Ok(change_points)
     }
 }

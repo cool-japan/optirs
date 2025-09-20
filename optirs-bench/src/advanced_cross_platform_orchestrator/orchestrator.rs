@@ -8,13 +8,15 @@ use crate::error::{OptimError, Result};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
-use super::config::*;
-use super::types::*;
-use super::matrix::TestMatrixGenerator;
-use super::container::ContainerManager;
 use super::aggregator::ResultAggregator;
+use super::cloud::{
+    AwsProvider, AzureProvider, CloudProvider, CustomProvider, GcpProvider, GitHubActionsProvider,
+};
+use super::config::*;
+use super::container::ContainerManager;
+use super::matrix::TestMatrixGenerator;
 use super::resources::PlatformResourceManager;
-use super::cloud::{CloudProvider, AwsProvider, AzureProvider, GcpProvider, GitHubActionsProvider, CustomProvider};
+use super::types::*;
 
 /// Advanced cross-platform testing orchestrator
 #[derive(Debug)]
@@ -152,7 +154,8 @@ impl CrossPlatformOrchestrator {
         let results = if self.config.enable_parallel_testing {
             self.execute_parallel_testing(&matrix, &allocations).await?
         } else {
-            self.execute_sequential_testing(&matrix, &allocations).await?
+            self.execute_sequential_testing(&matrix, &allocations)
+                .await?
         };
 
         // Aggregate results
@@ -168,21 +171,33 @@ impl CrossPlatformOrchestrator {
         let trends = self.analyze_performance_trends(&results).await?;
 
         // Generate recommendations
-        let recommendations = self.generate_recommendations(&compatibility_analysis, &results).await?;
+        let recommendations = self
+            .generate_recommendations(&compatibility_analysis, &results)
+            .await?;
 
         // Cleanup resources
         self.cleanup_resources(&allocations).await?;
 
         // Generate comprehensive report
         let summary = CrossPlatformTestingSummary {
-            total_platforms_tested: matrix.iter()
+            total_platforms_tested: matrix
+                .iter()
                 .map(|e| &e.platform)
                 .collect::<HashSet<_>>()
                 .len(),
             total_test_combinations: matrix.len(),
-            successful_tests: results.iter().filter(|r| matches!(r.status, TestStatus::Passed)).count(),
-            failed_tests: results.iter().filter(|r| matches!(r.status, TestStatus::Failed)).count(),
-            skipped_tests: results.iter().filter(|r| matches!(r.status, TestStatus::Skipped)).count(),
+            successful_tests: results
+                .iter()
+                .filter(|r| matches!(r.status, TestStatus::Passed))
+                .count(),
+            failed_tests: results
+                .iter()
+                .filter(|r| matches!(r.status, TestStatus::Failed))
+                .count(),
+            skipped_tests: results
+                .iter()
+                .filter(|r| matches!(r.status, TestStatus::Skipped))
+                .count(),
             compatibility_score: compatibility_analysis.overall_score,
             performance_comparisons,
             trends,
@@ -250,7 +265,10 @@ impl CrossPlatformOrchestrator {
                     allocations.insert(allocation_id, allocation);
                 }
             } else if self.config.enable_container_testing {
-                let container = self.container_manager.create_container_for_platform(&entry.platform).await?;
+                let container = self
+                    .container_manager
+                    .create_container_for_platform(&entry.platform)
+                    .await?;
                 let allocation = ResourceAllocation {
                     id: allocation_id.clone(),
                     platform: entry.platform.clone(),
@@ -357,9 +375,7 @@ impl CrossPlatformOrchestrator {
             AllocatedResourceType::Container(container) => {
                 self.execute_container_test(&context, container).await
             }
-            AllocatedResourceType::Local => {
-                self.execute_local_test(&context).await
-            }
+            AllocatedResourceType::Local => self.execute_local_test(&context).await,
         };
 
         result
@@ -380,7 +396,8 @@ impl CrossPlatformOrchestrator {
         Ok(TestResult {
             test_name: context.execution_id.clone(),
             status: TestStatus::Passed,
-            execution_time: SystemTime::now().duration_since(context.start_time)
+            execution_time: SystemTime::now()
+                .duration_since(context.start_time)
                 .unwrap_or_default(),
             performance_metrics: PerformanceMetrics::default(),
             error_message: None,
@@ -404,7 +421,8 @@ impl CrossPlatformOrchestrator {
         Ok(TestResult {
             test_name: context.execution_id.clone(),
             status: TestStatus::Passed,
-            execution_time: SystemTime::now().duration_since(context.start_time)
+            execution_time: SystemTime::now()
+                .duration_since(context.start_time)
                 .unwrap_or_default(),
             performance_metrics: PerformanceMetrics::default(),
             error_message: None,
@@ -414,10 +432,7 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Execute test locally
-    async fn execute_local_test(
-        &self,
-        context: &TestExecutionContext,
-    ) -> Result<TestResult> {
+    async fn execute_local_test(&self, context: &TestExecutionContext) -> Result<TestResult> {
         // Simulate local test execution
         log::info!("Executing local test {}", context.execution_id);
 
@@ -427,7 +442,8 @@ impl CrossPlatformOrchestrator {
         Ok(TestResult {
             test_name: context.execution_id.clone(),
             status: TestStatus::Passed,
-            execution_time: SystemTime::now().duration_since(context.start_time)
+            execution_time: SystemTime::now()
+                .duration_since(context.start_time)
                 .unwrap_or_default(),
             performance_metrics: PerformanceMetrics::default(),
             error_message: None,
@@ -437,7 +453,10 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Find cloud provider for platform
-    fn find_provider_for_platform(&self, platform: &PlatformTarget) -> Option<&Box<dyn CloudProvider>> {
+    fn find_provider_for_platform(
+        &self,
+        platform: &PlatformTarget,
+    ) -> Option<&Box<dyn CloudProvider>> {
         // Simple provider selection logic
         self.cloud_providers.first()
     }
@@ -452,15 +471,25 @@ impl CrossPlatformOrchestrator {
         for result in results {
             // Extract platform from test name (simplified)
             if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
-                platform_results.entry(platform).or_insert_with(Vec::new).push(result);
+                platform_results
+                    .entry(platform)
+                    .or_insert_with(Vec::new)
+                    .push(result);
             }
         }
 
         // Calculate platform-specific scores
         for (platform, platform_tests) in &platform_results {
-            let passed = platform_tests.iter().filter(|r| matches!(r.status, TestStatus::Passed)).count();
+            let passed = platform_tests
+                .iter()
+                .filter(|r| matches!(r.status, TestStatus::Passed))
+                .count();
             let total = platform_tests.len();
-            let score = if total > 0 { passed as f64 / total as f64 * 100.0 } else { 0.0 };
+            let score = if total > 0 {
+                passed as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
             platform_scores.insert(platform.clone(), score);
         }
 
@@ -499,10 +528,14 @@ impl CrossPlatformOrchestrator {
         let mut comparisons = HashMap::new();
 
         // Group by platform and aggregate metrics
-        let mut platform_metrics: HashMap<PlatformTarget, Vec<&PerformanceMetrics>> = HashMap::new();
+        let mut platform_metrics: HashMap<PlatformTarget, Vec<&PerformanceMetrics>> =
+            HashMap::new();
         for result in results {
             if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
-                platform_metrics.entry(platform).or_insert_with(Vec::new).push(&result.performance_metrics);
+                platform_metrics
+                    .entry(platform)
+                    .or_insert_with(Vec::new)
+                    .push(&result.performance_metrics);
             }
         }
 
@@ -553,7 +586,11 @@ impl CrossPlatformOrchestrator {
                 recommendations.push(PlatformRecommendation {
                     platform: platform.clone(),
                     recommendation_type: "Performance".to_string(),
-                    description: format!("Platform {} has low compatibility score: {:.1}%", platform.to_string(), score),
+                    description: format!(
+                        "Platform {} has low compatibility score: {:.1}%",
+                        platform.to_string(),
+                        score
+                    ),
                     priority: if *score < 50.0 { 1 } else { 2 },
                     estimated_effort: "Medium".to_string(),
                 });
@@ -565,7 +602,10 @@ impl CrossPlatformOrchestrator {
 
     /// Generate issues summary
     fn generate_issues_summary(&self, results: &[TestResult]) -> IssueSummary {
-        let total_issues = results.iter().filter(|r| matches!(r.status, TestStatus::Failed)).count();
+        let total_issues = results
+            .iter()
+            .filter(|r| matches!(r.status, TestStatus::Failed))
+            .count();
         let mut issues_by_platform = HashMap::new();
 
         for result in results {
@@ -586,7 +626,10 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Cleanup allocated resources
-    async fn cleanup_resources(&self, allocations: &HashMap<String, ResourceAllocation>) -> Result<()> {
+    async fn cleanup_resources(
+        &self,
+        allocations: &HashMap<String, ResourceAllocation>,
+    ) -> Result<()> {
         log::info!("Cleaning up {} resource allocations", allocations.len());
 
         for (allocation_id, allocation) in allocations {

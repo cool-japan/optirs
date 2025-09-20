@@ -521,9 +521,9 @@ mod tests {
     use super::*;
     use crate::benchmarking::regression_tester::config::TestEnvironment;
     use crate::benchmarking::regression_tester::types::{
-        BaselineStatistics, ConfidenceIntervals, PerformanceMetrics, TimingMetrics, TimingStatistics,
-        MemoryMetrics, MemoryStatistics, EfficiencyMetrics, ConvergenceMetrics,
-        EfficiencyStatistics, ConvergenceStatistics, FragmentationStatistics,
+        BaselineStatistics, ConfidenceIntervals, ConvergenceMetrics, ConvergenceStatistics,
+        EfficiencyMetrics, EfficiencyStatistics, FragmentationStatistics, MemoryMetrics,
+        MemoryStatistics, PerformanceMetrics, TimingMetrics, TimingStatistics,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 

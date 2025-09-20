@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 /// Available allocation strategies
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AllocationStrategy {
     /// First-fit allocation (fastest)
     FirstFit,
@@ -429,15 +429,15 @@ impl AllocationStrategyManager {
 
     /// ML-based allocation using learned patterns
     pub fn find_ml_based_block(&mut self, size: usize) -> Option<*mut u8> {
-        if let Some(ref ml_config) = self.ml_config {
+        if let Some(ml_config) = self.ml_config.clone() {
             // Extract features for ML prediction
             let features = self.extract_ml_features(size);
 
             // Make prediction (simplified - would use actual ML model)
-            let prediction = self.predict_best_strategy(&features, ml_config);
+            let prediction = self.predict_best_strategy(&features, &ml_config);
 
             // Apply predicted strategy if confidence is high enough
-            if prediction.confidence >= ml_config.prediction_confidence_threshold {
+            if prediction.confidence >= ml_config.prediction_confidence_threshold as f64 {
                 match prediction.strategy {
                     AllocationStrategy::FirstFit => self.find_first_fit(size),
                     AllocationStrategy::BestFit => self.find_best_fit(size),
@@ -464,16 +464,16 @@ impl AllocationStrategyManager {
 
         // Choose primary or secondary strategy based on thresholds
         let chosen_strategy =
-            if fragmentation_level > self.hybrid_config.switch_threshold_fragmentation {
-                &self.hybrid_config.secondary_strategy
-            } else if utilization_level > self.hybrid_config.switch_threshold_utilization {
-                &self.hybrid_config.secondary_strategy
+            if fragmentation_level > self.hybrid_config.switch_threshold_fragmentation as f64 {
+                self.hybrid_config.secondary_strategy.clone()
+            } else if utilization_level > self.hybrid_config.switch_threshold_utilization as f64 {
+                self.hybrid_config.secondary_strategy.clone()
             } else {
-                &self.hybrid_config.primary_strategy
+                self.hybrid_config.primary_strategy.clone()
             };
 
         // Apply chosen strategy
-        self.apply_fallback_strategy(size, chosen_strategy)
+        self.apply_fallback_strategy(size, &chosen_strategy)
     }
 
     fn apply_fallback_strategy(
@@ -493,7 +493,7 @@ impl AllocationStrategyManager {
     }
 
     /// Analyze allocation patterns from history
-    fn analyze_allocation_patterns(&self) -> AllocationPattern {
+    pub fn analyze_allocation_patterns(&self) -> AllocationPattern {
         if self.allocation_history.len() < 10 {
             return AllocationPattern::Unknown;
         }
@@ -653,7 +653,7 @@ impl AllocationStrategyManager {
         }
 
         // Calculate confidence based on score difference
-        let scores = vec![
+        let mut scores = vec![
             score_first_fit,
             score_best_fit,
             score_worst_fit,
@@ -840,7 +840,7 @@ impl AllocationStrategyManager {
 }
 
 /// Allocation pattern analysis results
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AllocationPattern {
     SmallFrequent,
     LargeInfrequent,

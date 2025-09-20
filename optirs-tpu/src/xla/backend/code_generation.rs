@@ -764,12 +764,12 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
     /// Format operand for assembly
     fn format_operand(&self, operand: &TPUOperand) -> Result<String> {
         match operand {
-            TPUOpescirs2_core::random::Register(reg) => self.format_register(reg),
-            TPUOpescirs2_core::random::Immediate(val) => Ok(format!("#{}", val)),
-            TPUOpescirs2_core::random::Memory(addr) => {
+            TPUOperand::Register(reg) => self.format_register(reg),
+            TPUOperand::Immediate(val) => Ok(format!("#{}", val)),
+            TPUOperand::Memory(addr) => {
                 Ok(format!("[{}]", self.format_memory_address(addr)?))
             }
-            TPUOpescirs2_core::random::Label(label) => Ok(label.clone()),
+            TPUOperand::Label(label) => Ok(label.clone()),
         }
     }
 
@@ -938,7 +938,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
             match map {
                 OperandMapping::Input(idx) => {
                     if *idx < operation.inputs.len() {
-                        operands.push(TPUOpescirs2_core::random::Register(TPURegister {
+                        operands.push(TPUOperand::Register(TPURegister {
                             reg_type: RegisterType::Vector,
                             index: operation.inputs[*idx].0,
                             data_type: DataType::F32,
@@ -948,7 +948,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
                 }
                 OperandMapping::Output(idx) => {
                     if *idx == 0 {
-                        operands.push(TPUOpescirs2_core::random::Register(TPURegister {
+                        operands.push(TPUOperand::Register(TPURegister {
                             reg_type: RegisterType::Vector,
                             index: operation.output.0,
                             data_type: DataType::F32,
@@ -957,10 +957,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
                     }
                 }
                 OperandMapping::Constant(val) => {
-                    operands.push(TPUOpescirs2_core::random::Immediate(*val));
+                    operands.push(TPUOperand::Immediate(*val));
                 }
                 OperandMapping::Register(reg_type) => {
-                    operands.push(TPUOpescirs2_core::random::Register(TPURegister {
+                    operands.push(TPUOperand::Register(TPURegister {
                         reg_type: reg_type.clone(),
                         index: 0,
                         data_type: DataType::F32,
@@ -1146,13 +1146,13 @@ mod tests {
             id: 0,
             opcode: TPUOpcode::VectorAdd,
             operands: vec![
-                TPUOpescirs2_core::random::Register(TPURegister {
+                TPUOperand::Register(TPURegister {
                     reg_type: RegisterType::Vector,
                     index: 0,
                     data_type: DataType::F32,
                     size: 4,
                 }),
-                TPUOpescirs2_core::random::Register(TPURegister {
+                TPUOperand::Register(TPURegister {
                     reg_type: RegisterType::Vector,
                     index: 1,
                     data_type: DataType::F32,

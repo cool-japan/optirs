@@ -53,7 +53,10 @@ impl ContainerManager {
     }
 
     /// Create container for specific platform
-    pub async fn create_container_for_platform(&self, platform: &PlatformTarget) -> Result<ContainerInfo> {
+    pub async fn create_container_for_platform(
+        &self,
+        platform: &PlatformTarget,
+    ) -> Result<ContainerInfo> {
         let image = self.get_image_for_platform(platform)?;
         let container = self.runtime.create_container(platform, &image)?;
         self.runtime.start_container(&container.container_id)?;
@@ -71,7 +74,10 @@ impl ContainerManager {
             _ => "ubuntu:22.04",
         };
 
-        Ok(format!("{}:{}", self.config.registry.image_prefix, base_image))
+        Ok(format!(
+            "{}:{}",
+            self.config.registry.image_prefix, base_image
+        ))
     }
 
     /// Stop and remove container
@@ -90,10 +96,14 @@ impl DockerRuntime {
 
 impl ContainerRuntimeTrait for DockerRuntime {
     fn create_container(&self, platform: &PlatformTarget, image: &str) -> Result<ContainerInfo> {
-        let container_id = format!("test_{}_{}", platform.to_string(), SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs());
+        let container_id = format!(
+            "test_{}_{}",
+            platform.to_string(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
 
         // Simulate container creation
         let output = Command::new("docker")
@@ -103,19 +113,17 @@ impl ContainerRuntimeTrait for DockerRuntime {
             .output();
 
         match output {
-            Ok(_) => {
-                Ok(ContainerInfo {
-                    container_id: container_id.clone(),
-                    name: container_id,
-                    image: image.to_string(),
-                    platform: platform.clone(),
-                    status: ContainerStatus::Created,
-                    ports: vec![],
-                    resource_usage: ContainerStats::default(),
-                    created_at: SystemTime::now(),
-                    started_at: None,
-                })
-            }
+            Ok(_) => Ok(ContainerInfo {
+                container_id: container_id.clone(),
+                name: container_id,
+                image: image.to_string(),
+                platform: platform.clone(),
+                status: ContainerStatus::Created,
+                ports: vec![],
+                resource_usage: ContainerStats::default(),
+                created_at: SystemTime::now(),
+                started_at: None,
+            }),
             Err(e) => {
                 // Fallback to simulated container for testing
                 Ok(ContainerInfo {
@@ -151,9 +159,7 @@ impl ContainerRuntimeTrait for DockerRuntime {
 
     fn remove_container(&self, container_id: &str) -> Result<()> {
         // Simulate container removal
-        let _output = Command::new("docker")
-            .args(&["rm", container_id])
-            .output();
+        let _output = Command::new("docker").args(&["rm", container_id]).output();
         Ok(())
     }
 
@@ -171,10 +177,14 @@ impl PodmanRuntime {
 
 impl ContainerRuntimeTrait for PodmanRuntime {
     fn create_container(&self, platform: &PlatformTarget, image: &str) -> Result<ContainerInfo> {
-        let container_id = format!("test_{}_{}", platform.to_string(), SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs());
+        let container_id = format!(
+            "test_{}_{}",
+            platform.to_string(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
 
         // Similar to Docker but with podman commands
         Ok(ContainerInfo {
@@ -205,9 +215,7 @@ impl ContainerRuntimeTrait for PodmanRuntime {
     }
 
     fn remove_container(&self, container_id: &str) -> Result<()> {
-        let _output = Command::new("podman")
-            .args(&["rm", container_id])
-            .output();
+        let _output = Command::new("podman").args(&["rm", container_id]).output();
         Ok(())
     }
 
@@ -232,10 +240,14 @@ mod tests {
         let config = ContainerConfig::default();
         let manager = ContainerManager::new(config).unwrap();
 
-        let linux_image = manager.get_image_for_platform(&PlatformTarget::LinuxX86_64).unwrap();
+        let linux_image = manager
+            .get_image_for_platform(&PlatformTarget::LinuxX86_64)
+            .unwrap();
         assert!(linux_image.contains("ubuntu"));
 
-        let windows_image = manager.get_image_for_platform(&PlatformTarget::WindowsX86_64).unwrap();
+        let windows_image = manager
+            .get_image_for_platform(&PlatformTarget::WindowsX86_64)
+            .unwrap();
         assert!(windows_image.contains("windows"));
     }
 }

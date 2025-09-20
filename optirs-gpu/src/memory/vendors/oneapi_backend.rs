@@ -597,15 +597,22 @@ impl SyclQueueManager {
 
     /// Wait for queue completion
     pub fn wait_for_queue(&mut self, queue_id: u32) -> Result<(), OneApiError> {
+        // First, collect all operations from the queue
+        let mut operations = Vec::new();
         if let Some(queue) = self.queues.iter_mut().find(|q| q.id == queue_id) {
-            // Process all operations in queue
             while let Some(operation) = queue.operations.pop_front() {
-                self.execute_operation(operation)?;
+                operations.push(operation);
             }
-            Ok(())
         } else {
-            Err(OneApiError::InvalidQueue("Queue not found".to_string()))
+            return Err(OneApiError::InvalidQueue("Queue not found".to_string()));
         }
+
+        // Now execute all operations
+        for operation in operations {
+            self.execute_operation(operation)?;
+        }
+
+        Ok(())
     }
 
     fn execute_operation(&self, operation: SyclOperation) -> Result<(), OneApiError> {
@@ -754,7 +761,7 @@ impl OneApiMemoryBackend {
             }
         } else {
             // Direct allocation
-            self.direct_allocate(size, memory_type)?
+            self.direct_allocate(size, memory_type.clone())?
         };
 
         // Update statistics

@@ -1,7 +1,7 @@
 [package]
 name = "optirs"
 version.workspace = true
-edition.workspace = true
+edition = "2021"
 authors.workspace = true
 description = "OptiRS - Advanced ML optimization and hardware acceleration library (main integration crate)"
 license.workspace = true

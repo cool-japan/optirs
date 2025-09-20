@@ -225,6 +225,18 @@ impl UnifiedGpuBackend {
     }
 
     /// Get unified memory statistics
+    /// Get total available GPU memory
+    pub fn get_total_memory(&self) -> usize {
+        // Default to 8GB if backend doesn't provide memory info
+        // Individual backends should implement proper memory querying
+        match self {
+            UnifiedGpuBackend::Cuda(_) => 8 * 1024 * 1024 * 1024, // 8GB default for CUDA
+            UnifiedGpuBackend::Rocm(_) => 8 * 1024 * 1024 * 1024, // 8GB default for ROCm
+            UnifiedGpuBackend::OneApi(_) => 8 * 1024 * 1024 * 1024, // 8GB default for OneAPI
+            UnifiedGpuBackend::Metal(_) => 8 * 1024 * 1024 * 1024, // 8GB default for Metal
+        }
+    }
+
     pub fn get_memory_stats(&self) -> UnifiedMemoryStats {
         match self {
             UnifiedGpuBackend::Cuda(backend) => {
@@ -268,7 +280,7 @@ impl UnifiedGpuBackend {
 }
 
 /// Unified memory statistics across all vendors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UnifiedMemoryStats {
     pub total_allocations: u64,
     pub bytes_allocated: u64,

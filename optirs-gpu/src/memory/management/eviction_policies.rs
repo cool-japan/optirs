@@ -156,7 +156,7 @@ pub enum ObjectPriority {
 }
 
 /// Object type classification
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ObjectType {
     Data,
     Texture,
@@ -164,6 +164,7 @@ pub enum ObjectType {
     Instruction,
     Temporary,
     Persistent,
+    Critical,
 }
 
 impl CacheObject {

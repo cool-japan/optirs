@@ -480,15 +480,22 @@ impl CudaStreamManager {
 
     /// Synchronize stream
     pub fn synchronize_stream(&mut self, stream_id: u32) -> Result<(), CudaError> {
+        // First, collect all operations from the stream
+        let mut operations = Vec::new();
         if let Some(stream) = self.streams.iter_mut().find(|s| s.id == stream_id) {
-            // Process all operations in stream
             while let Some(operation) = stream.operations.pop_front() {
-                self.execute_operation(operation)?;
+                operations.push(operation);
             }
-            Ok(())
         } else {
-            Err(CudaError::InvalidStream("Stream not found".to_string()))
+            return Err(CudaError::InvalidStream("Stream not found".to_string()));
         }
+
+        // Now execute all operations
+        for operation in operations {
+            self.execute_operation(operation)?;
+        }
+
+        Ok(())
     }
 
     fn execute_operation(&self, operation: CudaOperation) -> Result<(), CudaError> {

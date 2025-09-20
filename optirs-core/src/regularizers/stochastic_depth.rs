@@ -19,7 +19,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::array;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::StochasticDepth;
 ///
 /// let stochastic_depth = StochasticDepth::new(0.2, 10, 50);
@@ -157,7 +157,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::array;
+    use scirs2_autograd::ndarray::array;
 
     #[test]
     fn test_stochastic_depth_creation() {
