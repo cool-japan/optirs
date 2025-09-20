@@ -137,8 +137,8 @@ scirs2-series = "0.1.0-beta.2"       # EVIDENCE: Time series analysis - compilat
 scirs2-datasets = "0.1.0-beta.2"   # EVIDENCE: Dataset handling - compilation errors show this is needed
 
 # CONDITIONAL ADDITIONS (add only when compilation errors prove they're needed):
-# scirs2-signal = { path = "../scirs/scirs2-signal" }       # If signal processing needed
-# scirs2-series = { path = "../scirs/scirs2-series" }       # If time-series analysis
+# scirs2-signal = "0.1.0-beta.2"      # If signal processing needed
+# scirs2-series = "0.1.0-beta.2"      # If time-series analysis
 
 [profile.release]
 opt-level = 3

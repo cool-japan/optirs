@@ -33,17 +33,17 @@
 //!     OptimizerBenchmark, GradientFlowAnalyzer,
 //!     visualization::OptimizerStateVisualizer,
 //! };
-//! use scirs2_core::ndarray_ext::Array1;
+//! use scirs2_core::ndarray_ext::{Array1, Ix1};
 //!
 //! // Create a benchmark suite
-//! let mut benchmark = OptimizerBenchmark::new();
+//! let mut benchmark = OptimizerBenchmark::<f64>::new();
 //! benchmark.add_standard_test_functions();
 //!
 //! // Set up gradient flow analysis
-//! let mut analyzer = GradientFlowAnalyzer::new(1000);
+//! let mut analyzer = GradientFlowAnalyzer::<f64, Ix1>::new(1000);
 //!
 //! // Set up state visualization
-//! let mut visualizer = OptimizerStateVisualizer::new(500);
+//! let mut visualizer = OptimizerStateVisualizer::<f64, Ix1>::new(500);
 //! ```
 
 // Re-export error types from optirs-core for consistency

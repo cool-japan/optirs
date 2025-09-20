@@ -17,7 +17,8 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::{Array2, array};
+/// use scirs2_core::ndarray_ext::Array2;
+/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::DropConnect;
 ///
 /// let dropconnect = DropConnect::new(0.5).unwrap(); // 50% connection dropout

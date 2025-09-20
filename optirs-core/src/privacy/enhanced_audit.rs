@@ -1510,6 +1510,12 @@ impl AuditChain {
     }
 }
 
+impl Default for AuditChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MerkleTree {
     /// Create new Merkle tree
     pub fn new() -> Self {
@@ -1572,6 +1578,12 @@ impl MerkleTree {
     }
 }
 
+impl Default for MerkleTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Implementation stubs for other components
 impl ComplianceMonitor {
     pub fn new() -> Self {
@@ -1627,6 +1639,12 @@ impl ComplianceMonitor {
     }
 }
 
+impl Default for ComplianceMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> FormalVerificationEngine<T> {
     pub fn new() -> Self {
         Self {
@@ -1662,6 +1680,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ProofSystem<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ProofSystem<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ModelChecker<T> {
     pub fn new() -> Self {
         Self {
@@ -1671,12 +1695,24 @@ impl<T: Float + Debug + Send + Sync + 'static> ModelChecker<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ModelChecker<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> SystemModel<T> {
     pub fn new() -> Self {
         Self {
             states: Vec::new(),
             transitions: HashMap::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for SystemModel<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

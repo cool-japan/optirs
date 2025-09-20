@@ -1225,6 +1225,12 @@ impl AllocationConflictDetector {
     }
 }
 
+impl Default for AllocationConflictDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Default implementations
 
 impl Default for ResourceConstraints {

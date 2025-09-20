@@ -19,11 +19,12 @@
 //! use scirs2_core::ndarray_ext::Array2;
 //!
 //! // Create an optimizer
-//! let optimizer = Adam::new(0.001)?;
+//! let mut optimizer = Adam::new(0.001);
 //!
-//! // Use with your gradients
+//! // Use with your parameters and gradients
+//! let params = Array2::zeros((10, 10));
 //! let gradients = Array2::zeros((10, 10));
-//! let updated_params = optimizer.step(&gradients)?;
+//! let updated_params = optimizer.step(&params, &gradients)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
