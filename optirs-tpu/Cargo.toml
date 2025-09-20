@@ -1,0 +1,47 @@
+[package]
+name = "optirs-tpu"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS TPU coordination and pod management"
+license.workspace = true
+repository.workspace = true
+keywords = ["tpu", "coordination", "xla", "pod", "distributed"]
+categories = ["science", "algorithms", "hardware-support"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
+# ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
+num-traits = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+# Async and networking
+tokio = { workspace = true, features = ["full"] }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+num_cpus = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+
+[features]
+default = ["coordination"]
+coordination = []
+xla = []
+profiling = []

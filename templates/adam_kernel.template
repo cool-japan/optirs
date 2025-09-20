@@ -1,0 +1,60 @@
+// Adam Optimizer GPU Kernel Template
+// Data Type: {{dtype}}
+// Learning Rate Type: {{lr_type}}
+// Beta1: {{beta1}}
+// Beta2: {{beta2}}
+// Epsilon: {{epsilon}}
+// Weight Decay Enabled: {{weight_decay_enabled}}
+// Bias Correction: {{bias_correction}}
+
+{{kernel_header}}
+
+__global__ void adam_update_kernel(
+    {{dtype}}* params,
+    const {{dtype}}* gradients,
+    {{dtype}}* momentum_buffer,
+    {{dtype}}* variance_buffer,
+    const {{lr_type}} learning_rate,
+    const {{dtype}} beta1,
+    const {{dtype}} beta2,
+    const {{dtype}} epsilon,
+    const {{dtype}} weight_decay,
+    const int step,
+    const int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < size) {
+        {{dtype}} grad = gradients[idx];
+        {{dtype}} param = params[idx];
+
+        // Weight decay
+        {{#if weight_decay_enabled}}
+        grad += weight_decay * param;
+        {{/if}}
+
+        // Exponential moving averages
+        {{dtype}} m = momentum_buffer[idx];
+        {{dtype}} v = variance_buffer[idx];
+
+        m = beta1 * m + (1.0 - beta1) * grad;
+        v = beta2 * v + (1.0 - beta2) * grad * grad;
+
+        momentum_buffer[idx] = m;
+        variance_buffer[idx] = v;
+
+        // Bias correction
+        {{#if bias_correction}}
+        {{dtype}} m_corrected = m / (1.0 - pow(beta1, step));
+        {{dtype}} v_corrected = v / (1.0 - pow(beta2, step));
+        {{else}}
+        {{dtype}} m_corrected = m;
+        {{dtype}} v_corrected = v;
+        {{/if}}
+
+        // Parameter update
+        params[idx] = param - learning_rate * m_corrected / (sqrt(v_corrected) + epsilon);
+    }
+}
+
+{{kernel_footer}}
