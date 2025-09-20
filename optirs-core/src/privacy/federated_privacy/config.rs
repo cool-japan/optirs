@@ -101,7 +101,7 @@ pub struct AmplificationConfig {
 }
 
 /// Cross-device privacy configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CrossDeviceConfig {
     /// User-level privacy guarantees
     pub user_level_privacy: bool,
@@ -120,7 +120,7 @@ pub struct CrossDeviceConfig {
 }
 
 /// Federated composition methods
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum FederatedCompositionMethod {
     /// Basic composition
     Basic,
@@ -129,6 +129,7 @@ pub enum FederatedCompositionMethod {
     AdvancedComposition,
 
     /// Moments accountant for federated setting
+    #[default]
     FederatedMomentsAccountant,
 
     /// Renyi differential privacy
@@ -177,7 +178,7 @@ pub struct CommunicationPrivacyConfig {
 }
 
 /// Advanced threat modeling configuration for comprehensive security analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AdvancedThreatModelingConfig {
     /// Enable advanced threat analysis
     pub enabled: bool,
@@ -221,7 +222,7 @@ pub struct AdversarialCapabilities {
 }
 
 /// Attack surface configuration for comprehensive analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AttackSurfaceConfig {
     /// Client-side attack vectors
     pub client_attack_vectors: ClientAttackVectors,
@@ -240,7 +241,7 @@ pub struct AttackSurfaceConfig {
 }
 
 /// Threat intelligence integration for real-time threat assessment
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ThreatIntelligenceConfig {
     /// Enable threat intelligence feeds
     pub enabled: bool,
@@ -278,7 +279,7 @@ pub struct RiskAssessmentConfig {
 }
 
 /// Effectiveness metrics for countermeasure evaluation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EffectivenessMetrics {
     /// Accuracy of threat detection
     pub detection_accuracy: f64,
@@ -291,7 +292,7 @@ pub struct EffectivenessMetrics {
 }
 
 /// Cost-benefit analysis configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CostBenefitAnalysisConfig {
     /// Implementation costs
     pub implementation_costs: Vec<f64>,
@@ -304,7 +305,7 @@ pub struct CostBenefitAnalysisConfig {
 }
 
 /// Dynamic adaptation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DynamicAdaptationConfig {
     /// Adaptation triggers
     pub triggers: Vec<String>,
@@ -317,7 +318,7 @@ pub struct DynamicAdaptationConfig {
 }
 
 /// Countermeasure optimization configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CountermeasureOptimizationConfig {
     /// Optimization algorithms
     pub algorithms: Vec<String>,
@@ -330,7 +331,7 @@ pub struct CountermeasureOptimizationConfig {
 }
 
 /// Countermeasure effectiveness evaluation framework
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CountermeasureEvaluationConfig {
     /// Effectiveness metrics
     pub effectiveness_metrics: EffectivenessMetrics,
@@ -551,7 +552,7 @@ pub enum ComputationalThreatLevel {
     Unlimited,   // Theoretical unlimited computational resources
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NetworkThreatCapabilities {
     /// Can intercept communications
     pub can_intercept: bool,
@@ -567,7 +568,7 @@ pub struct NetworkThreatCapabilities {
     pub can_dos: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DataThreatCapabilities {
     /// Can access training data
     pub can_access_training_data: bool,
@@ -607,7 +608,7 @@ pub enum AttackPersistenceLevel {
     Adaptive,     // Evolving attack strategies
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ClientAttackVectors {
     /// Model poisoning attacks
     pub model_poisoning: bool,
@@ -621,7 +622,7 @@ pub struct ClientAttackVectors {
     pub client_impersonation: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerAttackVectors {
     /// Server compromise scenarios
     pub server_compromise: bool,
@@ -635,7 +636,7 @@ pub struct ServerAttackVectors {
     pub client_discrimination: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommunicationVulnerabilities {
     /// Man-in-the-middle attacks
     pub mitm_attacks: bool,
@@ -649,7 +650,7 @@ pub struct CommunicationVulnerabilities {
     pub timing_analysis: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AggregationVulnerabilities {
     /// Secure aggregation bypass
     pub secure_aggregation_bypass: bool,
@@ -661,7 +662,7 @@ pub struct AggregationVulnerabilities {
     pub reconstruction_attacks: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PrivacyMechanismVulnerabilities {
     /// Differential privacy parameter inference
     pub dp_parameter_inference: bool,
@@ -673,7 +674,7 @@ pub struct PrivacyMechanismVulnerabilities {
     pub auxiliary_info_attacks: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ThreatSignatureDatabase {
     /// Known attack patterns
     pub attack_patterns: Vec<AttackPattern>,
@@ -858,7 +859,7 @@ pub struct LikelihoodEstimationMethods {
     pub simulation_based: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RiskMitigationStrategies {
     /// Risk avoidance strategies
     pub avoidance_strategies: Vec<String>,
@@ -1309,7 +1310,7 @@ pub enum BufferingStrategy {
 }
 
 /// Bandwidth adaptation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BandwidthAdaptationConfig {
     pub enabled: bool,
     pub compression_adaptation: bool,
@@ -1556,18 +1557,6 @@ impl Default for AmplificationConfig {
     }
 }
 
-impl Default for CrossDeviceConfig {
-    fn default() -> Self {
-        Self {
-            user_level_privacy: false,
-            device_clustering: false,
-            temporal_privacy: false,
-            geographic_privacy: false,
-            demographic_privacy: false,
-        }
-    }
-}
-
 impl Default for CommunicationPrivacyConfig {
     fn default() -> Self {
         Self {
@@ -1581,19 +1570,6 @@ impl Default for CommunicationPrivacyConfig {
     }
 }
 
-impl Default for AdvancedThreatModelingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            adversarial_capabilities: AdversarialCapabilities::default(),
-            attack_surface_analysis: AttackSurfaceConfig::default(),
-            threat_intelligence: ThreatIntelligenceConfig::default(),
-            risk_assessment: RiskAssessmentConfig::default(),
-            countermeasure_evaluation: CountermeasureEvaluationConfig::default(),
-        }
-    }
-}
-
 impl Default for AdversarialCapabilities {
     fn default() -> Self {
         Self {
@@ -1603,124 +1579,6 @@ impl Default for AdversarialCapabilities {
             algorithmic_knowledge: AlgorithmicKnowledgeLevel::BlackBox,
             collusion_potential: CollusionThreatLevel::None,
             attack_persistence: AttackPersistenceLevel::OneTime,
-        }
-    }
-}
-
-impl Default for NetworkThreatCapabilities {
-    fn default() -> Self {
-        Self {
-            can_intercept: false,
-            can_modify: false,
-            can_inject: false,
-            can_analyze_traffic: false,
-            can_timing_attack: false,
-            can_dos: false,
-        }
-    }
-}
-
-impl Default for DataThreatCapabilities {
-    fn default() -> Self {
-        Self {
-            can_access_training_data: false,
-            can_modify_training_data: false,
-            can_inject_poisoned_data: false,
-            can_membership_inference: false,
-            can_extract_parameters: false,
-            can_gradient_inversion: false,
-        }
-    }
-}
-
-impl Default for AttackSurfaceConfig {
-    fn default() -> Self {
-        Self {
-            client_attack_vectors: ClientAttackVectors::default(),
-            server_attack_vectors: ServerAttackVectors::default(),
-            communication_vulnerabilities: CommunicationVulnerabilities::default(),
-            aggregation_vulnerabilities: AggregationVulnerabilities::default(),
-            privacy_mechanism_vulnerabilities: PrivacyMechanismVulnerabilities::default(),
-        }
-    }
-}
-
-impl Default for ClientAttackVectors {
-    fn default() -> Self {
-        Self {
-            model_poisoning: false,
-            data_poisoning: false,
-            gradient_manipulation: false,
-            local_model_extraction: false,
-            client_impersonation: false,
-        }
-    }
-}
-
-impl Default for ServerAttackVectors {
-    fn default() -> Self {
-        Self {
-            server_compromise: false,
-            malicious_aggregation: false,
-            backdoor_injection: false,
-            budget_manipulation: false,
-            client_discrimination: false,
-        }
-    }
-}
-
-impl Default for CommunicationVulnerabilities {
-    fn default() -> Self {
-        Self {
-            mitm_attacks: false,
-            eavesdropping: false,
-            replay_attacks: false,
-            message_injection: false,
-            timing_analysis: false,
-        }
-    }
-}
-
-impl Default for AggregationVulnerabilities {
-    fn default() -> Self {
-        Self {
-            secure_aggregation_bypass: false,
-            aggregation_manipulation: false,
-            statistical_attacks: false,
-            reconstruction_attacks: false,
-        }
-    }
-}
-
-impl Default for PrivacyMechanismVulnerabilities {
-    fn default() -> Self {
-        Self {
-            dp_parameter_inference: false,
-            budget_exhaustion: false,
-            composition_attacks: false,
-            auxiliary_info_attacks: false,
-        }
-    }
-}
-
-impl Default for ThreatIntelligenceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            real_time_monitoring: false,
-            signature_database: ThreatSignatureDatabase::default(),
-            anomaly_detection: AnomalyDetectionConfig::default(),
-            threat_correlation: ThreatCorrelationConfig::default(),
-        }
-    }
-}
-
-impl Default for ThreatSignatureDatabase {
-    fn default() -> Self {
-        Self {
-            attack_patterns: Vec::new(),
-            threat_actors: Vec::new(),
-            vulnerability_signatures: Vec::new(),
         }
     }
 }
@@ -1807,72 +1665,6 @@ impl Default for LikelihoodEstimationMethods {
             expert_judgment: true,
             threat_modeling: false,
             simulation_based: false,
-        }
-    }
-}
-
-impl Default for RiskMitigationStrategies {
-    fn default() -> Self {
-        Self {
-            avoidance_strategies: Vec::new(),
-            mitigation_controls: Vec::new(),
-            transfer_mechanisms: Vec::new(),
-            acceptance_criteria: Vec::new(),
-        }
-    }
-}
-
-impl Default for CountermeasureEvaluationConfig {
-    fn default() -> Self {
-        Self {
-            effectiveness_metrics: EffectivenessMetrics::default(),
-            cost_benefit_analysis: CostBenefitAnalysisConfig::default(),
-            dynamic_adaptation: DynamicAdaptationConfig::default(),
-            optimization: CountermeasureOptimizationConfig::default(),
-        }
-    }
-}
-
-impl Default for EffectivenessMetrics {
-    fn default() -> Self {
-        Self {
-            detection_accuracy: 0.0,
-            false_positive_rate: 0.05,
-            false_negative_rate: 0.1,
-            response_times: Vec::new(),
-        }
-    }
-}
-
-impl Default for CostBenefitAnalysisConfig {
-    fn default() -> Self {
-        Self {
-            implementation_costs: Vec::new(),
-            operational_costs: Vec::new(),
-            benefits: Vec::new(),
-            roi_methods: Vec::new(),
-        }
-    }
-}
-
-impl Default for DynamicAdaptationConfig {
-    fn default() -> Self {
-        Self {
-            triggers: Vec::new(),
-            strategies: Vec::new(),
-            learning_rate: 0.01,
-            min_threshold: 0.1,
-        }
-    }
-}
-
-impl Default for CountermeasureOptimizationConfig {
-    fn default() -> Self {
-        Self {
-            algorithms: Vec::new(),
-            target_metrics: Vec::new(),
-            constraints: Vec::new(),
-            frequency: "daily".to_string(),
         }
     }
 }
@@ -1994,17 +1786,6 @@ impl Default for AsyncUpdateConfig {
     }
 }
 
-impl Default for BandwidthAdaptationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            compression_adaptation: false,
-            transmission_scheduling: false,
-            quality_of_service: QoSConfig::default(),
-        }
-    }
-}
-
 impl Default for QoSConfig {
     fn default() -> Self {
         Self {
@@ -2057,12 +1838,6 @@ impl Default for ForgettingPreventionConfig {
             memory_replay_ratio: 0.1,
             importance_estimation: ImportanceEstimationMethod::FisherInformation,
         }
-    }
-}
-
-impl Default for FederatedCompositionMethod {
-    fn default() -> Self {
-        FederatedCompositionMethod::FederatedMomentsAccountant
     }
 }
 

@@ -453,7 +453,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum> Default for RobustEstimators<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum> Default
+    for RobustEstimators<T>
+{
     fn default() -> Self {
         Self::new()
     }

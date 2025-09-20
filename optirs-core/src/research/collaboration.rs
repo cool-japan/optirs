@@ -694,7 +694,7 @@ pub enum NotificationFrequency {
 }
 
 /// Integration settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntegrationSettings {
     /// Slack integration
     pub slack: Option<SlackIntegration>,
@@ -1327,17 +1327,6 @@ impl Default for NotificationSettings {
             desktop: false,
             mobile_push: false,
             frequency: NotificationFrequency::Daily,
-        }
-    }
-}
-
-impl Default for IntegrationSettings {
-    fn default() -> Self {
-        Self {
-            slack: None,
-            email: None,
-            calendar: None,
-            cloud_storage: None,
         }
     }
 }

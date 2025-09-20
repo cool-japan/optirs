@@ -418,7 +418,7 @@ pub struct TestStatistic<T: Float + Debug + Send + Sync + 'static> {
 pub struct SecureAggregator<T: Float + Debug + Send + Sync + 'static> {
     config: SecureAggregationConfig,
     client_masks: HashMap<String, Array1<T>>,
-    shared_randomness: Arc<std::sync::Mutex<Random>>,
+    shared_randomness: Arc<std::sync::Mutex<u64>>,
     aggregation_threshold: usize,
     round_keys: Vec<u64>,
 }
@@ -780,6 +780,12 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryManager<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for MemoryManager<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> KnowledgeTransferEngine<T> {
     /// Create a new knowledge transfer engine
     pub fn new() -> Self {
@@ -788,6 +794,12 @@ impl<T: Float + Debug + Send + Sync + 'static> KnowledgeTransferEngine<T> {
             transfer_matrices: HashMap::new(),
             similarity_cache: HashMap::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for KnowledgeTransferEngine<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -800,6 +812,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ForgettingPreventionEngine<T> {
             regularization_strength: 0.1,
             memory_replay_buffer: VecDeque::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ForgettingPreventionEngine<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -940,7 +958,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> SecureAggregator<T> {
         Ok(Self {
             config,
             client_masks: HashMap::new(),
-            shared_randomness: Arc::new(std::sync::Mutex::new(Random::default())),
+            shared_randomness: Arc::new(std::sync::Mutex::new(0u64)),
             aggregation_threshold: 10,
             round_keys: Vec::new(),
         })

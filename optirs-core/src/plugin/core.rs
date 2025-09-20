@@ -506,7 +506,6 @@ impl Default for PluginInfo {
     }
 }
 
-
 impl Default for OptimizerConfig {
     fn default() -> Self {
         Self {
@@ -518,7 +517,6 @@ impl Default for OptimizerConfig {
         }
     }
 }
-
 
 /// Utility functions for plugin development
 /// Create a basic plugin info structure

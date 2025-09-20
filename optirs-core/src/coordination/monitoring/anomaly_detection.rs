@@ -1347,12 +1347,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         (is_outlier, confidence, avg_score)
     }
 
-    fn isolation_tree_score(
-        value: T,
-        values: &[T],
-        max_depth: usize,
-        current_depth: usize,
-    ) -> T {
+    fn isolation_tree_score(value: T, values: &[T], max_depth: usize, current_depth: usize) -> T {
         if current_depth >= max_depth || values.len() <= 1 {
             return num_traits::cast::cast(current_depth).unwrap_or_else(|| T::zero())
                 / num_traits::cast::cast(max_depth).unwrap_or_else(|| T::zero());

@@ -114,7 +114,7 @@ pub enum OptimizationMode {
 }
 
 /// Hardware configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HardwareConfig {
     /// CPU information
     pub cpu_info: CpuInfo,
@@ -244,7 +244,7 @@ pub enum DataType {
 }
 
 /// Dataset statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DatasetStatistics {
     /// Feature means
     pub feature_means: Vec<f64>,
@@ -352,7 +352,7 @@ pub struct ResourceUsage {
 }
 
 /// Reproducibility information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReproducibilityInfo {
     /// Environment hash for reproducibility
     pub environment_hash: String,
@@ -386,7 +386,7 @@ pub struct SystemInfo {
 }
 
 /// Reproducibility checklist
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReproducibilityChecklist {
     /// Random seed set
     pub random_seed_set: bool,
@@ -454,7 +454,7 @@ pub enum NoteType {
 }
 
 /// Experiment metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExperimentMetadata {
     /// Experiment tags
     pub tags: Vec<String>,
@@ -732,17 +732,6 @@ impl Default for ExperimentConfig {
     }
 }
 
-impl Default for HardwareConfig {
-    fn default() -> Self {
-        Self {
-            cpu_info: CpuInfo::default(),
-            gpu_info: None,
-            memory_config: MemoryConfig::default(),
-            parallel_config: ParallelConfig::default(),
-        }
-    }
-}
-
 impl Default for CpuInfo {
     fn default() -> Self {
         Self {
@@ -801,32 +790,6 @@ impl Default for DatasetInfo {
     }
 }
 
-impl Default for DatasetStatistics {
-    fn default() -> Self {
-        Self {
-            feature_means: Vec::new(),
-            feature_stds: Vec::new(),
-            feature_ranges: Vec::new(),
-            class_distribution: None,
-            missing_values: Vec::new(),
-            correlation_matrix: None,
-        }
-    }
-}
-
-impl Default for ReproducibilityInfo {
-    fn default() -> Self {
-        Self {
-            environment_hash: String::new(),
-            git_commit: None,
-            code_checksum: String::new(),
-            dependency_versions: HashMap::new(),
-            system_info: SystemInfo::default(),
-            checklist: ReproducibilityChecklist::default(),
-        }
-    }
-}
-
 impl Default for SystemInfo {
     fn default() -> Self {
         Self {
@@ -836,33 +799,6 @@ impl Default for SystemInfo {
             hostname: String::new(),
             username: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
             timezone: String::new(),
-        }
-    }
-}
-
-impl Default for ReproducibilityChecklist {
-    fn default() -> Self {
-        Self {
-            random_seed_set: false,
-            dependencies_pinned: false,
-            data_version_controlled: false,
-            code_version_controlled: false,
-            environment_documented: false,
-            hardware_documented: false,
-            results_archived: false,
-        }
-    }
-}
-
-impl Default for ExperimentMetadata {
-    fn default() -> Self {
-        Self {
-            tags: Vec::new(),
-            research_question: String::new(),
-            expected_outcomes: Vec::new(),
-            success_criteria: Vec::new(),
-            related_experiments: Vec::new(),
-            references: Vec::new(),
         }
     }
 }

@@ -168,7 +168,6 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossDevicePrivacyManager<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -326,11 +326,19 @@ impl PluginRegistry {
         let optimizer = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
             let opt = registration.factory.create_f32(config)?;
             // This is safe because we checked the type
-            unsafe { std::mem::transmute::<Box<dyn OptimizerPlugin<f32>>, Box<dyn OptimizerPlugin<A>>>(opt) }
+            unsafe {
+                std::mem::transmute::<Box<dyn OptimizerPlugin<f32>>, Box<dyn OptimizerPlugin<A>>>(
+                    opt,
+                )
+            }
         } else if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f64>() {
             let opt = registration.factory.create_f64(config)?;
             // This is safe because we checked the type
-            unsafe { std::mem::transmute::<Box<dyn OptimizerPlugin<f64>>, Box<dyn OptimizerPlugin<A>>>(opt) }
+            unsafe {
+                std::mem::transmute::<Box<dyn OptimizerPlugin<f64>>, Box<dyn OptimizerPlugin<A>>>(
+                    opt,
+                )
+            }
         } else {
             return Err(OptimError::UnsupportedDataType(format!(
                 "Type {} not supported",
@@ -580,7 +588,6 @@ impl Default for RegistryConfig {
         }
     }
 }
-
 
 // Helper macro for registering plugins
 #[macro_export]

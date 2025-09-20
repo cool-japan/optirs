@@ -1364,7 +1364,6 @@ pub enum AggregationStrategy {
     RuleBased,
 }
 
-
 /// Deduplication settings
 #[derive(Debug, Clone)]
 pub struct DeduplicationSettings {
@@ -1781,7 +1780,6 @@ impl Default for CompressionSettings {
         }
     }
 }
-
 
 impl Default for AuthenticationSettings {
     fn default() -> Self {

@@ -692,7 +692,7 @@ mod tests {
         let mut config = GpuMemorySystemConfig::default();
         // Use very small memory budget for testing
         config.system_config.memory_budget = 0.001; // 0.1% of total memory
-        // Disable memory pools to avoid large allocations
+                                                    // Disable memory pools to avoid large allocations
         if let VendorConfig::Cuda(ref mut cuda_config) = config.vendor_config {
             cuda_config.enable_memory_pools = false;
         }

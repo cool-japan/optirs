@@ -153,6 +153,21 @@ pub enum MechanismSelectionStrategy {
     Adaptive,
 }
 
+impl<T> Default for GaussianMechanism<T>
+where
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> GaussianMechanism<T>
 where
     T: Float
@@ -280,6 +295,21 @@ where
             shape: None,
             rate: None,
         }
+    }
+}
+
+impl<T> Default for LaplaceMechanism<T>
+where
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + scirs2_core::random::distributions::uniform::SampleUniform,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

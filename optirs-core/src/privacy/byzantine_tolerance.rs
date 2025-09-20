@@ -1226,7 +1226,9 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand> Default for GradientStatistics<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand> Default
+    for GradientStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }

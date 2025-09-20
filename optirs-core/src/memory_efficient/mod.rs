@@ -1191,19 +1191,17 @@ mod tests {
         let mut m = Array1::zeros(3);
         let mut v = Array1::zeros(3);
 
-        fused::fused_adam_update(
-            &mut params,
-            &gradients,
-            &mut m,
-            &mut v,
-            0.01,  // lr
-            0.9,   // beta1
-            0.999, // beta2
-            1e-8,  // epsilon
-            0.1,   // bias1
-            0.001, // bias2
-            None,  // weight_decay
-        );
+        let config = fused::AdamConfig {
+            lr: 0.01,
+            beta1: 0.9,
+            beta2: 0.999,
+            epsilon: 1e-8,
+            bias1: 0.1,
+            bias2: 0.001,
+            weight_decay: None,
+        };
+
+        fused::fused_adam_update(&mut params, &gradients, &mut m, &mut v, config);
 
         // Verify parameters were updated
         assert!(params[0] < 1.0);

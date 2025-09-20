@@ -51,7 +51,10 @@ where
         Self {
             base_optimizer: Box::new(optimizer),
             current_lr: initial_lr,
-            metric_adapter: scirs2_metrics::integration::optim::MetricOptimizer::new(metric_name, maximize),
+            metric_adapter: scirs2_metrics::integration::optim::MetricOptimizer::new(
+                metric_name,
+                maximize,
+            ),
             history: Vec::new(),
             best_params: None,
             _phantom: PhantomData,

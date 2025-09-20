@@ -1564,6 +1564,12 @@ impl HPOBudgetManager {
     }
 }
 
+impl Default for AdaptiveBudgetController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdaptiveBudgetController {
     pub fn new() -> Self {
         Self {
@@ -1619,6 +1625,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ObjectiveNoiseMechanism<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
     pub fn new() -> Self {
         Self {
@@ -1650,6 +1662,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ObjectiveSensitivityAnalyzer<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ObjectiveSensitivityAnalyzer<T> {
     pub fn new() -> Self {
         Self {
@@ -1657,6 +1675,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveSensitivityAnalyzer<T> {
             sensitivity_cache: HashMap::new(),
             sample_estimator: SampleBasedSensitivityEstimator::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for SampleBasedSensitivityEstimator<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1672,6 +1696,12 @@ impl<T: Float + Debug + Send + Sync + 'static> SampleBasedSensitivityEstimator<T
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for BootstrapEstimator<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> BootstrapEstimator<T> {
     pub fn new() -> Self {
         Self {
@@ -1683,6 +1713,12 @@ impl<T: Float + Debug + Send + Sync + 'static> BootstrapEstimator<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for PrivateCrossValidation<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> PrivateCrossValidation<T> {
     pub fn new() -> Self {
         Self {
@@ -1691,6 +1727,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateCrossValidation<T> {
             fold_strategy: FoldStrategy::Random,
             private_aggregation: PrivateFoldAggregation::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for PrivateFoldAggregation<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1709,6 +1751,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateFoldAggregation<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ConfidenceEstimation<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ConfidenceEstimation<T> {
     pub fn new() -> Self {
         Self {
@@ -1717,6 +1765,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConfidenceEstimation<T> {
             bootstrap_params: None,
             _phantom: std::marker::PhantomData,
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for SearchStrategy<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1803,6 +1857,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for SelectionMechanism<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> SelectionMechanism<T> {
     pub fn new() -> Self {
         Self {
@@ -1818,6 +1878,12 @@ impl<T: Float + Debug + Send + Sync + 'static> SelectionMechanism<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for UtilityFunction<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> UtilityFunction<T> {
     pub fn new() -> Self {
         Self {
@@ -1825,6 +1891,12 @@ impl<T: Float + Debug + Send + Sync + 'static> UtilityFunction<T> {
             parameters: vec![T::one()],
             multi_objective_weights: None,
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ResultValidator<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1838,6 +1910,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ResultValidator<T> {
     }
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for AnomalyDetector<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
     pub fn new() -> Self {
         Self {
@@ -1845,6 +1923,12 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
             detection_method: AnomalyDetectionMethod::ZScore,
             baseline: None,
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for GaussianProcessModel<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1856,6 +1940,12 @@ impl<T: Float + Debug + Send + Sync + 'static> GaussianProcessModel<T> {
             kernel: KernelFunction::new(),
             hyperparameters: Vec::new(),
         }
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for KernelFunction<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

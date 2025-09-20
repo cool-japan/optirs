@@ -1435,7 +1435,6 @@ pub enum PartitioningStrategy {
     Custom,
 }
 
-
 /// Index configuration
 #[derive(Debug, Clone)]
 pub struct IndexConfiguration {
@@ -1469,7 +1468,6 @@ pub enum IndexType {
     FullText,
     Custom,
 }
-
 
 /// Storage statistics
 #[derive(Debug, Clone)]

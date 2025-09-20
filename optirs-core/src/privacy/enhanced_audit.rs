@@ -31,10 +31,12 @@ type AxiomVerifyFn<T> = Box<dyn Fn(&Array1<T>) -> bool + Send + Sync>;
 type ProofStrategyApplyFn<T> = Box<dyn Fn(&Array1<T>, &[Axiom<T>]) -> ProofResult + Send + Sync>;
 
 /// Type alias for cryptographic proof generation function
-type CryptoProofGenerateFn<T> = Box<dyn Fn(&Array1<T>, &CryptographicKeys) -> Result<CryptographicProof> + Send + Sync>;
+type CryptoProofGenerateFn<T> =
+    Box<dyn Fn(&Array1<T>, &CryptographicKeys) -> Result<CryptographicProof> + Send + Sync>;
 
 /// Type alias for cryptographic proof verification function
-type CryptoProofVerifyFn<T> = Box<dyn Fn(&CryptographicProof, &Array1<T>, &CryptographicKeys) -> bool + Send + Sync>;
+type CryptoProofVerifyFn<T> =
+    Box<dyn Fn(&CryptographicProof, &Array1<T>, &CryptographicKeys) -> bool + Send + Sync>;
 
 /// Type alias for compliance assessment function
 type ComplianceAssessmentFn = Box<dyn Fn(&AuditEvent) -> ComplianceAssessment + Send + Sync>;
