@@ -35,7 +35,7 @@ pub use types::{
 
 use crate::error::Result;
 use crate::BenchmarkResult;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;

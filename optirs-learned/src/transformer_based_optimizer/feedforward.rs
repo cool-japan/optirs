@@ -2,7 +2,7 @@
 
 use super::layers::ActivationLayer;
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2, Axis};
 use std::fmt::Debug;
 
@@ -142,9 +142,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
         // Initialize weights with Xavier initialization
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_f64 = scirs2_core::random::f64();
+                let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = T::from(scaled_f64).unwrap();
+                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -159,7 +159,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
     /// Create with He initialization (better for ReLU)
     pub fn new_he_init(input_dim: usize, output_dim: usize) -> Result<Self> {
-        let scale = num_traits::cast::cast(2.0 / input_dim as f64)
+        let scale = scirs2_core::numeric::NumCast::from(2.0 / input_dim as f64)
             .unwrap_or_else(|| T::zero())
             .sqrt();
         let mut weight = Array2::zeros((input_dim, output_dim));
@@ -167,9 +167,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_f64 = scirs2_core::random::f64();
+                let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = T::from(scaled_f64).unwrap();
+                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -224,9 +224,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
         for i in 0..self.input_dim {
             for j in 0..self.output_dim {
-                let random_f64 = scirs2_core::random::f64();
+                let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = T::from(scaled_f64).unwrap();
+                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
                 self.weight[[i, j]] = random_val * scale;
             }
         }

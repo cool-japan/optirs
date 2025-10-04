@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use super::architecture::ArchitectureCandidate;
 
 /// Search history manager
-pub struct SearchHistory<T: num_traits::Float> {
+pub struct SearchHistory<T: scirs2_core::numeric::Float> {
     /// Search records
     pub records: Vec<SearchRecord<T>>,
     
@@ -25,7 +25,7 @@ pub struct SearchHistory<T: num_traits::Float> {
 
 /// Search record entry
 #[derive(Debug, Clone)]
-pub struct SearchRecord<T: num_traits::Float> {
+pub struct SearchRecord<T: scirs2_core::numeric::Float> {
     /// Record ID
     pub id: usize,
     
@@ -50,7 +50,7 @@ pub struct SearchRecord<T: num_traits::Float> {
 
 /// Search statistics
 #[derive(Debug, Clone)]
-pub struct SearchStatistics<T: num_traits::Float> {
+pub struct SearchStatistics<T: scirs2_core::numeric::Float> {
     /// Total evaluations
     pub total_evaluations: usize,
     
@@ -72,7 +72,7 @@ pub struct SearchStatistics<T: num_traits::Float> {
 
 /// Convergence metrics
 #[derive(Debug, Clone)]
-pub struct ConvergenceMetrics<T: num_traits::Float> {
+pub struct ConvergenceMetrics<T: scirs2_core::numeric::Float> {
     /// Has converged
     pub converged: bool,
     
@@ -118,7 +118,7 @@ pub struct ConvergenceConfig {
     pub window_size: usize,
 }
 
-impl<T: num_traits::Float + Default + std::fmt::Debug + Clone + Send + Sync> SearchHistory<T> {
+impl<T: scirs2_core::numeric::Float + Default + std::fmt::Debug + Clone + Send + Sync> SearchHistory<T> {
     /// Create new search history
     pub fn new(config: HistoryConfig) -> Self {
         Self {
@@ -209,7 +209,7 @@ impl<T: num_traits::Float + Default + std::fmt::Debug + Clone + Send + Sync> Sea
         
         let improvement = recent_best - self.stats.convergence.last_improvement;
         
-        if improvement < num_traits::cast::cast(config.threshold).unwrap_or_else(|| T::zero()) {
+        if improvement < scirs2_core::numeric::NumCast::from(config.threshold).unwrap_or_else(|| T::zero()) {
             self.stats.convergence.stagnation_count += 1;
         } else {
             self.stats.convergence.stagnation_count = 0;
@@ -237,7 +237,7 @@ impl<T: num_traits::Float + Default + std::fmt::Debug + Clone + Send + Sync> Sea
 
 /// Search summary
 #[derive(Debug, Clone)]
-pub struct SearchSummary<T: num_traits::Float> {
+pub struct SearchSummary<T: scirs2_core::numeric::Float> {
     pub total_evaluations: usize,
     pub best_performance: T,
     pub avg_performance: T,
@@ -261,7 +261,7 @@ impl Default for HistoryConfig {
     }
 }
 
-impl<T: num_traits::Float + Default + Send + Sync> Default for SearchStatistics<T> {
+impl<T: scirs2_core::numeric::Float + Default + Send + Sync> Default for SearchStatistics<T> {
     fn default() -> Self {
         Self {
             total_evaluations: 0,

@@ -35,7 +35,7 @@ pub use state::{OptimizerStateSnapshot, TransformerOptimizerState};
 // Re-export for backward compatibility - create alias for the old name
 pub use TransformerBasedOptimizerConfig as TransformerOptimizerConfig;
 
-use num_traits::{Float, ToPrimitive};
+use scirs2_core::numeric::{Float, ToPrimitive};
 use scirs2_core::ndarray_ext::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -92,7 +92,7 @@ impl<
             + Sync
             + 'static
             + scirs2_core::ndarray_ext::ScalarOperand
-            + num_traits::FromPrimitive,
+            + scirs2_core::numeric::FromPrimitive,
     > TransformerOptimizer<T>
 {
     /// Create new transformer optimizer
@@ -211,7 +211,7 @@ impl<
         }
 
         let avg_loss = if batch_count > 0 {
-            total_loss / num_traits::cast::cast(batch_count).unwrap_or_else(|| T::zero())
+            total_loss / scirs2_core::numeric::NumCast::from(batch_count).unwrap_or_else(|| T::zero())
         } else {
             T::zero()
         };

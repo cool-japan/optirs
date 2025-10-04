@@ -3,7 +3,7 @@
 // This module provides TPU acceleration for optimizers using XLA (Accelerated Linear Algebra)
 // compilation for maximum performance on Google Cloud TPUs and other XLA-compatible hardware.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use optirs_core::Optimizer;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension};

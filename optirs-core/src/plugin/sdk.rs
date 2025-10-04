@@ -7,7 +7,7 @@
 use super::core::*;
 use crate::benchmarking::cross_platform_tester::{PerformanceBaseline, PlatformTarget};
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::Array1;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -551,7 +551,7 @@ impl PluginTemplate {
 
 use optirs_core::plugin::*;
 use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 
 #[derive(Debug)]
 pub struct {}Optimizer<A: Float> {{

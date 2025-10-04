@@ -16,8 +16,11 @@ workspace = true
 # Core dependencies
 optirs-core = { workspace = true }
 scirs2-core = { workspace = true }
-# ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
-num-traits = { workspace = true }
+
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

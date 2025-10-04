@@ -3,7 +3,7 @@
 // Manifold regularization assumes that data lies on a low-dimensional manifold
 // and encourages smoothness along this manifold structure.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Array2, ArrayBase, Data, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

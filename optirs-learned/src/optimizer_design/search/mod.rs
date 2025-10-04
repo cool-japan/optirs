@@ -13,7 +13,7 @@ pub mod differentiable;
 pub mod progressive;
 
 use std::collections::{HashMap, VecDeque};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 
 use super::architecture::{ArchitectureSpec, ArchitectureCandidate};

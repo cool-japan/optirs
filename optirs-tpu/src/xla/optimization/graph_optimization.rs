@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // constant folding, dead code elimination, common subexpression elimination,
 // and algebraic simplifications.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::super::frontend::{

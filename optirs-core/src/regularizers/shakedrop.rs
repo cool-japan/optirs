@@ -1,4 +1,4 @@
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 use std::fmt::Debug;

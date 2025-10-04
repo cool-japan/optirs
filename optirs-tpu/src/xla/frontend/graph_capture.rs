@@ -6,7 +6,7 @@ use std::fmt::Debug;
 // from high-level operations, including graph validation and optimization
 // preparation.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;

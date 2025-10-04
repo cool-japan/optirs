@@ -4,7 +4,7 @@
 // must implement to integrate with the plugin system.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::any::Any;

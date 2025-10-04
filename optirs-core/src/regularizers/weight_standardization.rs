@@ -4,7 +4,7 @@
 // layers by standardizing the weights along the channel dimension. This improves
 // training stability and allows for use of larger batch sizes.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Array2, Array4, ArrayBase, Data, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

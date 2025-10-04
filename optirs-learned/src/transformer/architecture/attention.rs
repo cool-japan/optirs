@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements the attention mechanisms used in the transformer optimizer,
 // including multi-head attention, relative position bias, and rotary position embeddings.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, Array3};
 use scirs2_core::random::{Random, Rng as SCRRng};

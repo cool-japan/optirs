@@ -2,7 +2,7 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -52,7 +52,7 @@ pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'stati
     chunking: ChunkingStrategy<T>,
 }
 
-impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSequenceProcessor<T> {
+impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync> OptimizationSequenceProcessor<T> {
     /// Create new sequence processor
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let strategy = SequenceProcessingStrategy::SlidingWindow;
@@ -456,7 +456,7 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
     fn detect_change_points(&self, losses: &Array1<T>) -> Result<Vec<usize>> {
         let mut change_points = vec![0]; // Always include start
         let window_size = 5;
-        let threshold = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let threshold = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
         for i in window_size..losses.len() - window_size {
             let before_mean = losses.slice(s![i - window_size..i]).mean().unwrap();
@@ -836,7 +836,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
 
     pub fn mean(&self) -> T {
         if self.count > 0 {
-            self.sum / num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero())
+            self.sum / scirs2_core::numeric::NumCast::from(self.count).unwrap_or_else(|| T::zero())
         } else {
             T::zero()
         }
@@ -845,7 +845,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
     pub fn variance(&self) -> T {
         if self.count > 1 {
             let mean = self.mean();
-            (self.sum_sq / num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero()))
+            (self.sum_sq / scirs2_core::numeric::NumCast::from(self.count).unwrap_or_else(|| T::zero()))
                 - (mean * mean)
         } else {
             T::zero()

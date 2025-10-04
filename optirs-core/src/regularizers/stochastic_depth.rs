@@ -4,7 +4,7 @@
 // certain layers during training, which helps prevent overfitting and
 // improves gradient flow in very deep networks.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

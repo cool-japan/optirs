@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // elementwise fusion, producer-consumer fusion, loop fusion, and
 // multi-output fusion to reduce memory traffic and improve performance.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use super::super::frontend::{

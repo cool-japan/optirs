@@ -7,7 +7,7 @@
 use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};

@@ -4,7 +4,7 @@
 // CutMix replaces a random patch of one image with a patch from another image
 // and adjusts the labels proportionally.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Array2, Array4, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 // Removed unused import ScientificNumber

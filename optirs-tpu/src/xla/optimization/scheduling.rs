@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // including dependency-aware scheduling, resource-aware scheduling,
 // latency hiding, and multi-core parallelization.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 

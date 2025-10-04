@@ -4,7 +4,7 @@
 // that require extremely low latency updates, such as high-frequency trading,
 // real-time control systems, and interactive machine learning.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::Array1;
 use std::collections::VecDeque;
 use std::sync::{

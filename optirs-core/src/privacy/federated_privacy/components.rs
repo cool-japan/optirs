@@ -3,7 +3,7 @@
 use super::super::PrivacyBudget;
 use super::config::*;
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::random::Random;
 use std::collections::{HashMap, VecDeque};

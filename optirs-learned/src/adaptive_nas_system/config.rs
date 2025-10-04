@@ -3,7 +3,7 @@
 // This module defines configuration structures and enums that control
 // the behavior of the adaptive NAS system.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use crate::neural_architecture_search::NASConfig;
 
@@ -73,20 +73,20 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AdaptiveNASConfig<T> 
         Self {
             base_config: NASConfig::default(),
             performance_window: 100,
-            improvement_threshold: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            adaptation_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            complexity_penalty: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            improvement_threshold: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
+            adaptation_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
+            complexity_penalty: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             online_learning: true,
             architecture_transfer: true,
             curriculum_search: false,
-            _diversityweight: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-            exploration_weight: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-            prediction_confidence_threshold: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            _diversityweight: scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()),
+            exploration_weight: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
+            prediction_confidence_threshold: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
             max_complexity: 1_000_000,
-            _minperformance: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            _minperformance: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             enable_meta_learning: true,
             meta_learning_frequency: 50,
-            novelty_weight: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            novelty_weight: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             progressive_search: true,
             budget_allocation: BudgetAllocationStrategy::ExpectedImprovement,
             quality_criteria: vec![

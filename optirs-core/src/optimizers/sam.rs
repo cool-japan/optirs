@@ -5,7 +5,7 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 use std::marker::PhantomData;

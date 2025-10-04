@@ -4,7 +4,7 @@
 // and visualization of optimization behavior, including cross-framework comparisons
 // with PyTorch and TensorFlow optimizers.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use optirs_core::error::{OptimError, Result};
 use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use std::collections::VecDeque;

@@ -5,7 +5,7 @@ use crate::optimizers::Optimizer;
 use crate::parameter_groups::{
     GroupManager, GroupedOptimizer, ParameterGroup, ParameterGroupConfig,
 };
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

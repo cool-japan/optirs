@@ -8,8 +8,9 @@ use super::super::{MomentsAccountant, PrivacyBudget};
 use super::components::*;
 use super::config::*;
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -339,7 +340,7 @@ impl<
         }
 
         if let Some(mut aggregate) = first_update {
-            let count_t = num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
+            let count_t = T::from(count).unwrap_or_else(|| T::zero());
             for value in aggregate.iter_mut() {
                 *value = *value / count_t;
             }
@@ -354,7 +355,7 @@ impl<
     /// Sample clients for federated round
     fn sample_clients(&self, availableclients: &[String]) -> Result<Vec<String>> {
         use scirs2_core::random::Rng;
-        let mut rng = rng();
+        let mut rng = thread_rng();
         let target_count = self.config.clients_per_round.min(availableclients.len());
 
         match self.config.sampling_strategy {
@@ -407,7 +408,7 @@ impl<
         selectedclients: &[String],
     ) -> Result<SecureAggregationPlan> {
         use scirs2_core::random::Rng;
-        let mut rng = rng();
+        let mut rng = thread_rng();
 
         let mut masking_seeds = HashMap::new();
         for client in selectedclients {
@@ -570,7 +571,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ByzantineRobustAggregator<T> {
         }
 
         for value in result.iter_mut() {
-            *value = *value / num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
+            *value = *value / T::from(count).unwrap_or_else(|| T::zero());
         }
 
         Ok(result)
@@ -730,7 +731,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SecureAggregator<T> {
         }
 
         for value in result.iter_mut() {
-            *value = *value / num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
+            *value = *value / T::from(count).unwrap_or_else(|| T::zero());
         }
 
         Ok(result)

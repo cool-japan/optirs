@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::architecture::ArchitectureCandidate;
 
 /// Population manager
-pub struct PopulationManager<T: num_traits::Float> {
+pub struct PopulationManager<T: scirs2_core::numeric::Float> {
     /// Current population
     pub population: Vec<ArchitectureCandidate>,
     
@@ -43,7 +43,7 @@ pub struct PopulationConfig {
 
 /// Population statistics
 #[derive(Debug, Clone)]
-pub struct PopulationStats<T: num_traits::Float> {
+pub struct PopulationStats<T: scirs2_core::numeric::Float> {
     /// Best fitness in population
     pub best_fitness: T,
     
@@ -73,7 +73,7 @@ pub struct DiversityMetrics {
     pub genetic: f64,
 }
 
-impl<T: num_traits::Float + Default + std::fmt::Debug + Send + Sync> PopulationManager<T> {
+impl<T: scirs2_core::numeric::Float + Default + std::fmt::Debug + Send + Sync> PopulationManager<T> {
     /// Create new population manager
     pub fn new(config: PopulationConfig) -> Self {
         Self {
@@ -105,7 +105,7 @@ impl<T: num_traits::Float + Default + std::fmt::Debug + Send + Sync> PopulationM
         
         let fitnesses: Vec<T> = self.population
             .iter()
-            .map(|c| num_traits::cast::cast(c.performance.optimization_performance).unwrap_or_else(|| T::zero()))
+            .map(|c| scirs2_core::numeric::NumCast::from(c.performance.optimization_performance).unwrap_or_else(|| T::zero()))
             .collect();
         
         self.stats.best_fitness = fitnesses.iter().copied().fold(T::neg_infinity(), T::max);
@@ -135,7 +135,7 @@ impl Default for PopulationConfig {
     }
 }
 
-impl<T: num_traits::Float + Default + Send + Sync> Default for PopulationStats<T> {
+impl<T: scirs2_core::numeric::Float + Default + Send + Sync> Default for PopulationStats<T> {
     fn default() -> Self {
         Self {
             best_fitness: T::zero(),

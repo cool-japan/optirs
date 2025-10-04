@@ -1,6 +1,6 @@
 //! Common types and configurations for learned optimizers
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -158,7 +158,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizerState<T> {
             step: 0,
             step_count: 0,
             loss: None,
-            learning_rate: T::from(0.001).unwrap(),
+            learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap(),
             metadata: StateMetadata::default(),
         }
     }

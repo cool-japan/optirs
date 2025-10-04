@@ -2,7 +2,7 @@
 
 use super::config::{CacheEvictionStrategy, MemoryConfig, TransformerBasedOptimizerConfig};
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;

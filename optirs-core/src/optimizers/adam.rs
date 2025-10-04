@@ -1,6 +1,6 @@
 // Adam optimizer implementation
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

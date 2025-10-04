@@ -4,10 +4,10 @@ use std::fmt::Debug;
 // This module implements the encoder components of the transformer optimizer,
 // including the transformer layer, feed-forward network, and layer normalization.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{s, Array1, Array2};
-use scirs2_core::random::{Random, Rng as SCRRng};
+use scirs2_core::random::{CoreRandom as Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;
 use super::attention::MultiHeadAttention;
@@ -302,12 +302,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> FeedForwardNetw
                 // Approximate GELU: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
                 output.mapv_inplace(|x| {
                     let sqrt_2_pi =
-                        num_traits::cast::cast(0.7978845608).unwrap_or_else(|| T::zero()); // sqrt(2/π)
-                    let coeff = num_traits::cast::cast(0.044715).unwrap_or_else(|| T::zero());
+                        scirs2_core::numeric::NumCast::from(0.7978845608).unwrap_or_else(|| T::zero()); // sqrt(2/π)
+                    let coeff = scirs2_core::numeric::NumCast::from(0.044715).unwrap_or_else(|| T::zero());
                     let x_cubed = x * x * x;
                     let inner = sqrt_2_pi * (x + coeff * x_cubed);
                     let tanh_val = inner.tanh();
-                    num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+                    scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
                         * x
                         * (T::one() + tanh_val)
                 });
@@ -319,12 +319,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> FeedForwardNetw
                 // For simplicity, treating as GELU for now
                 output.mapv_inplace(|x| {
                     let sqrt_2_pi =
-                        num_traits::cast::cast(0.7978845608).unwrap_or_else(|| T::zero());
-                    let coeff = num_traits::cast::cast(0.044715).unwrap_or_else(|| T::zero());
+                        scirs2_core::numeric::NumCast::from(0.7978845608).unwrap_or_else(|| T::zero());
+                    let coeff = scirs2_core::numeric::NumCast::from(0.044715).unwrap_or_else(|| T::zero());
                     let x_cubed = x * x * x;
                     let inner = sqrt_2_pi * (x + coeff * x_cubed);
                     let tanh_val = inner.tanh();
-                    num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+                    scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
                         * x
                         * (T::one() + tanh_val)
                 });
@@ -333,12 +333,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> FeedForwardNetw
                 // For simplicity, treating as GELU for now
                 output.mapv_inplace(|x| {
                     let sqrt_2_pi =
-                        num_traits::cast::cast(0.7978845608).unwrap_or_else(|| T::zero());
-                    let coeff = num_traits::cast::cast(0.044715).unwrap_or_else(|| T::zero());
+                        scirs2_core::numeric::NumCast::from(0.7978845608).unwrap_or_else(|| T::zero());
+                    let coeff = scirs2_core::numeric::NumCast::from(0.044715).unwrap_or_else(|| T::zero());
                     let x_cubed = x * x * x;
                     let inner = sqrt_2_pi * (x + coeff * x_cubed);
                     let tanh_val = inner.tanh();
-                    num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+                    scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
                         * x
                         * (T::one() + tanh_val)
                 });
@@ -359,7 +359,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync> LayerNor
         Self {
             gamma: Array1::ones(dim),
             beta: Array1::zeros(dim),
-            eps: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            eps: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             dim,
         }
     }
@@ -381,7 +381,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync> LayerNor
 
             // Compute mean
             let mean = row.iter().cloned().sum::<T>()
-                / num_traits::cast::cast(input_dim).unwrap_or_else(|| T::zero());
+                / scirs2_core::numeric::NumCast::from(input_dim).unwrap_or_else(|| T::zero());
 
             // Compute variance
             let variance = row
@@ -391,7 +391,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync> LayerNor
                     diff * diff
                 })
                 .sum::<T>()
-                / num_traits::cast::cast(input_dim).unwrap_or_else(|| T::zero());
+                / scirs2_core::numeric::NumCast::from(input_dim).unwrap_or_else(|| T::zero());
 
             let std = (variance + self.eps).sqrt();
 

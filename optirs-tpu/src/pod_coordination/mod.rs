@@ -108,7 +108,7 @@ pub use topology::*;
 pub use types::*;
 
 // Additional common imports for convenience
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, IxDyn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

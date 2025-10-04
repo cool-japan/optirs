@@ -3,7 +3,7 @@
 // This module provides utility functions and helpers for optimization
 // tasks in machine learning.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

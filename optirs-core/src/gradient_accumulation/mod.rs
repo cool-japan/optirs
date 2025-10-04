@@ -4,7 +4,7 @@
 // micro-batches to simulate larger batch sizes without increasing memory usage.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use std::fmt::Debug;
 

@@ -4,7 +4,7 @@ use super::config::{ActivationFunction, MetaLearningConfig};
 use super::feedforward::FeedForwardNetwork;
 use super::layers::LayerNormalization;
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

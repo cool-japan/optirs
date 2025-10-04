@@ -4,7 +4,7 @@
 // including generic parameter optimization, lazy registration, and architecture-aware optimizations.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -442,7 +442,7 @@ pub mod forward_backward {
                 + ScalarOperand
                 + Debug
                 + 'static
-                + num_traits::FromPrimitive
+                + scirs2_core::numeric::FromPrimitive
                 + std::iter::Sum
                 + Send
                 + Sync,

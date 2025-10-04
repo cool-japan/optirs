@@ -19,7 +19,7 @@ use std::fmt::Debug;
 //     NeuralArchitectureSearch, NASConfig, SearchStrategyType,
 //     SearchSpaceConfig, EvaluationConfig, MultiObjectiveConfig
 // };
-// use num_traits::Float;
+// use scirs2_core::numeric::Float;
 //
 // // Configure the NAS engine
 // let config = NASConfig::<f64> {
@@ -77,7 +77,7 @@ use std::fmt::Debug;
 // - Early stopping based on convergence criteria
 
 use crate::EvaluationMetric;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 
 pub mod config;
 pub mod engine;
@@ -116,7 +116,7 @@ pub use results::ResourceUsage;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_traits::Float;
+    use scirs2_core::numeric::Float;
 
     #[test]
     fn test_nas_config_creation() {
@@ -387,7 +387,7 @@ pub fn create_example_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
         early_stopping: EarlyStoppingConfig {
             enabled: true,
             patience: 25,
-            min_improvement: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            min_improvement: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             metric: EvaluationMetric::FinalPerformance,
             target_performance: None,
             convergence_detection: ConvergenceDetectionStrategy::NoImprovement,
@@ -402,12 +402,12 @@ pub fn create_example_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
         parallelization_factor: 2,
         auto_hyperparameter_tuning: true,
         resource_constraints: ResourceConstraints {
-            max_memory_gb: num_traits::cast::cast(8.0).unwrap_or_else(|| T::zero()),
-            max_computation_hours: num_traits::cast::cast(12.0).unwrap_or_else(|| T::zero()),
-            max_energy_kwh: num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero()),
-            max_cost_usd: num_traits::cast::cast(500.0).unwrap_or_else(|| T::zero()),
-            energy_constraints: Some(num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero())),
-            cost_constraints: Some(num_traits::cast::cast(500.0).unwrap_or_else(|| T::zero())),
+            max_memory_gb: scirs2_core::numeric::NumCast::from(8.0).unwrap_or_else(|| T::zero()),
+            max_computation_hours: scirs2_core::numeric::NumCast::from(12.0).unwrap_or_else(|| T::zero()),
+            max_energy_kwh: scirs2_core::numeric::NumCast::from(50.0).unwrap_or_else(|| T::zero()),
+            max_cost_usd: scirs2_core::numeric::NumCast::from(500.0).unwrap_or_else(|| T::zero()),
+            energy_constraints: Some(scirs2_core::numeric::NumCast::from(50.0).unwrap_or_else(|| T::zero())),
+            cost_constraints: Some(scirs2_core::numeric::NumCast::from(500.0).unwrap_or_else(|| T::zero())),
             time_constraints: TimeConstraints::default(),
             hardware_resources: HardwareResources {
                 cpu_cores: 8,
@@ -470,7 +470,7 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
         early_stopping: EarlyStoppingConfig {
             enabled: true,
             patience: 10,
-            min_improvement: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            min_improvement: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             metric: EvaluationMetric::FinalPerformance,
             target_performance: None,
             convergence_detection: ConvergenceDetectionStrategy::NoImprovement,
@@ -485,10 +485,10 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
         parallelization_factor: 1,
         auto_hyperparameter_tuning: false,
         resource_constraints: ResourceConstraints {
-            max_memory_gb: num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero()),
-            max_computation_hours: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            max_energy_kwh: num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero()),
-            max_cost_usd: num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero()),
+            max_memory_gb: scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()),
+            max_computation_hours: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            max_energy_kwh: scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero()),
+            max_cost_usd: scirs2_core::numeric::NumCast::from(50.0).unwrap_or_else(|| T::zero()),
             hardware_resources: HardwareResources {
                 max_cpu_cores: 4,
                 max_memory_gb: 16.0,
@@ -505,8 +505,8 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
                 network_bandwidth_mbps: 100.0,
             },
             time_constraints: TimeConstraints::default(),
-            energy_constraints: Some(num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero())),
-            cost_constraints: Some(num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero())),
+            energy_constraints: Some(scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero())),
+            cost_constraints: Some(scirs2_core::numeric::NumCast::from(50.0).unwrap_or_else(|| T::zero())),
             violation_handling: ResourceViolationHandling::Penalty,
             enable_monitoring: false,
         },

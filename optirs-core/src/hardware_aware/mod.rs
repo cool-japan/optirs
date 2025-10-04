@@ -4,7 +4,7 @@
 // including CPUs, GPUs, TPUs, edge devices, and distributed systems.
 
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;

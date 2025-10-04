@@ -4,7 +4,7 @@
 // Lipschitz constant of the neural network by normalizing the spectral norm
 // (largest singular value) of weight matrices.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Array2, Array4, Dimension, ScalarOperand};
 use scirs2_core::random::Rng;
 use scirs2_core::Random;

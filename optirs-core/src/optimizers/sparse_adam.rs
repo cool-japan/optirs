@@ -4,7 +4,7 @@
 // handles sparse gradients by only updating the parameters and moments
 // for indices that have non-zero gradients.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Ix1, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;

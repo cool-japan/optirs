@@ -5,7 +5,7 @@
 #[cfg(feature = "metrics_integration")]
 use crate::error::Result;
 use crate::optimizers::Optimizer;
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 #[cfg(feature = "metrics_integration")]
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 #[cfg(not(feature = "metrics_integration"))]

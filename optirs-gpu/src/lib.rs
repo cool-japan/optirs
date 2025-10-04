@@ -9,7 +9,7 @@
 //! - Tensor core optimizations
 //! - Cross-platform GPU abstraction
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension};
 
 use scirs2_core::gpu::GpuError;

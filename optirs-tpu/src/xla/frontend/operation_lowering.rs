@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module handles the lowering of high-level operations to XLA primitives,
 // including operation decomposition and primitive mapping.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use super::graph_capture::{

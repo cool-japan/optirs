@@ -4,7 +4,7 @@ use super::config::PerformanceConfig;
 use super::meta_learning::MetaLearningResult;
 use super::TrainingMetrics;
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};

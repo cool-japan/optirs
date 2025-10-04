@@ -4,7 +4,7 @@
 // leveraging tensor cores on modern GPUs for accelerated computation.
 
 use scirs2_core::ndarray_ext::{Array, Dimension};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::marker::PhantomData;
 use std::sync::Arc;
 

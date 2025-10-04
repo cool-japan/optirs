@@ -1,7 +1,7 @@
 // Search strategies for neural architecture search
 
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
@@ -410,9 +410,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SurrogateModel<T> {
     pub fn predict(&self, _architecture: &str) -> Result<(T, T)> {
         // Return (mean, variance)
         if self.trained {
-            Ok((num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())))
+            Ok((scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()), scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())))
         } else {
-            Ok((num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()), num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())))
+            Ok((scirs2_core::numeric::NumCast::from(0.0).unwrap_or_else(|| T::zero()), scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())))
         }
     }
 }
@@ -438,7 +438,7 @@ impl AcquisitionFunction {
                 Ok(mean + variance.sqrt())
             }
             AcquisitionFunction::UpperConfidenceBound => {
-                Ok(mean + num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * variance.sqrt())
+                Ok(mean + scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * variance.sqrt())
             }
             AcquisitionFunction::ProbabilityOfImprovement => {
                 Ok(mean)

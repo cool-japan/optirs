@@ -1,7 +1,7 @@
 // GPU-accelerated Adam optimizer implementation
 
 use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::sync::Arc;
 

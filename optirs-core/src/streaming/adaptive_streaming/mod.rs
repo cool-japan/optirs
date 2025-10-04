@@ -62,7 +62,7 @@ where
         + Send
         + Sync
         + 'static
-        + num_traits::Float
+        + scirs2_core::numeric::Float
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
@@ -87,7 +87,7 @@ where
         + Send
         + Sync
         + 'static
-        + num_traits::Float
+        + scirs2_core::numeric::Float
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,

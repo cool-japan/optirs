@@ -9,7 +9,7 @@ use crate::regression_tester::types::{
     PerformanceRecord, RegressionAnalysis, RegressionDetector, RegressionResult,
     StatisticalTestResult, TrendAnalysis, TrendDirection,
 };
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 

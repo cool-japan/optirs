@@ -1,6 +1,6 @@
 // Population management for evolutionary neural architecture search
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use scirs2_core::random::seq::SliceRandom;
 use std::collections::{HashMap, VecDeque};

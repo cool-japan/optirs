@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // Implements various multi-objective optimization algorithms including NSGA-II, NSGA-III,
 // MOEA/D, and other state-of-the-art algorithms for finding Pareto-optimal optimizer architectures.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::random::Random;
 use scirs2_core::random::Rng;
@@ -753,15 +753,15 @@ impl<
         let mut parameters = HashMap::new();
         parameters.insert(
             "learning_rate".to_string(),
-            num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
         );
         parameters.insert(
             "beta1".to_string(),
-            num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
         );
         parameters.insert(
             "beta2".to_string(),
-            num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.999).unwrap_or_else(|| T::zero()),
         );
 
         Ok(OptimizerArchitecture {
@@ -1061,7 +1061,7 @@ impl<
             convergence: T::zero(), // Would be calculated based on reference front
             num_solutions: self.pareto_front.solutions.len(),
             coverage: CoverageMetrics {
-                objective_space_coverage: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                objective_space_coverage: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                 reference_distance: T::zero(),
                 epsilon_dominance: T::zero(),
             },
@@ -1087,7 +1087,7 @@ impl<
 
         for i in 0..bounds.max_values.len() {
             let range = bounds.max_values[i] - bounds.min_values[i];
-            volume = volume * range.max(num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()));
+            volume = volume * range.max(scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()));
         }
 
         volume * T::from(self.pareto_front.solutions.len() as f64).unwrap()

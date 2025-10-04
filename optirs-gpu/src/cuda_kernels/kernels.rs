@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use super::config::*;
 use crate::adaptive_selection::OptimizerType;
 use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::ptr;
 use std::sync::{Arc, Mutex};

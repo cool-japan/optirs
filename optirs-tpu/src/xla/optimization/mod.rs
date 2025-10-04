@@ -9,7 +9,7 @@ pub mod kernel_fusion;
 pub mod memory_planning;
 pub mod scheduling;
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 

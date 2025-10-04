@@ -2,7 +2,7 @@
 
 use crate::pod_coordination::coordination::config::*;
 use crate::pod_coordination::types::*;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, IxDyn};
 use serde::{Deserialize, Serialize};
 

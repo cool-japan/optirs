@@ -5,7 +5,7 @@
 //! various optimization strategies such as grid search, random search,
 //! Bayesian optimization, and evolutionary approaches.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;

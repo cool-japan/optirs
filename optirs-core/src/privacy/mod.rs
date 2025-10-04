@@ -5,9 +5,9 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
-use scirs2_core::random::Rng;
+use scirs2_core::random::{thread_rng, Rng};
 use scirs2_core::ScientificNumber;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -190,7 +190,7 @@ where
     accountant: MomentsAccountant,
 
     /// Random number generator for noise
-    rng: scirs2_core::random::Random,
+    rng: scirs2_core::random::CoreRandom,
 
     /// Adaptive clipping state
     adaptive_clip_state: Option<AdaptiveClippingState>,
@@ -266,7 +266,7 @@ where
             config.dataset_size,
         );
 
-        let rng = rng();
+        let rng = thread_rng();
 
         let adaptive_clip_state = if config.adaptive_clipping {
             Some(AdaptiveClippingState {

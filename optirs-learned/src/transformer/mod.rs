@@ -28,7 +28,7 @@ pub use training::{
     TransformerEvaluator, TransformerMetaLearner,
 };
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{HashMap, VecDeque};
 
@@ -126,7 +126,7 @@ pub struct TransformerNetwork<
 }
 
 /// Transformer-based neural optimizer with self-attention mechanisms
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TransformerOptimizer<
     T: Float
         + Debug
@@ -175,7 +175,7 @@ pub struct TransformerOptimizer<
     step_count: usize,
 
     /// Random number generator
-    rng: scirs2_core::random::Random,
+    rng: scirs2_core::random::CoreRandom,
 }
 
 /// Sequence buffer for optimization history
@@ -236,7 +236,7 @@ impl<
 
         let mut layers = Vec::new();
         for _ in 0..config.num_layers {
-            let mut rng = scirs2_core::random::rng();
+            let mut rng = scirs2_core::random::thread_rng();
             layers.push(TransformerLayer::new(config, &mut rng)?);
         }
 
@@ -303,7 +303,7 @@ impl<
         let gradient_processor = GradientProcessor::new(GradientProcessingStrategy::Adaptive);
         let lr_adapter = LearningRateAdapter::new(
             LearningRateAdaptationStrategy::TransformerPredicted,
-            num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
         );
         let momentum_integrator = MomentumIntegrator::new(MomentumStrategy::TransformerPredicted);
         let regularizer = TransformerRegularizer::new(RegularizationStrategy::Adaptive);
@@ -326,7 +326,7 @@ impl<
             sequence_buffer,
             metrics,
             step_count: 0,
-            rng: scirs2_core::random::rng(),
+            rng: scirs2_core::random::thread_rng(),
         })
     }
 

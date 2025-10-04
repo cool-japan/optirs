@@ -3,7 +3,7 @@
 // Based on the paper "Large Batch Optimization for Deep Learning: Training BERT in 76 minutes"
 // by You et al. (2019).
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

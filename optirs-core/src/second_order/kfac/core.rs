@@ -5,7 +5,7 @@
 // Fisher information matrix approximation.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -48,7 +48,7 @@ impl<
             + std::iter::Sum
             + scirs2_core::ndarray_ext::ScalarOperand
             + 'static
-            + num_traits::FromPrimitive,
+            + scirs2_core::numeric::FromPrimitive,
     > KFAC<T>
 {
     /// Create a new K-FAC optimizer
@@ -57,7 +57,7 @@ impl<
             config,
             layer_states: HashMap::new(),
             step_count: 0,
-            acceptance_ratio: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            acceptance_ratio: T::from(1.0).unwrap_or_else(|| T::zero()),
             previous_loss: None,
             eigenvalue_history: Vec::new(),
             stats: KFACStats::default(),
@@ -128,10 +128,10 @@ impl<
             // Update condition number statistics
             let (a_cond, g_cond) = state.condition_number_estimate();
             let avg_cond =
-                (a_cond + g_cond) / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                (a_cond + g_cond) / T::from(2.0).unwrap_or_else(|| T::zero());
 
             // Update running average of condition numbers
-            let decay = num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero());
+            let decay = T::from(0.95).unwrap_or_else(|| T::zero());
             self.stats.avg_condition_number =
                 decay * self.stats.avg_condition_number + (T::one() - decay) * avg_cond;
         }
@@ -220,7 +220,7 @@ impl<
             state.reset();
         }
         self.step_count = 0;
-        self.acceptance_ratio = num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero());
+        self.acceptance_ratio = T::from(1.0).unwrap_or_else(|| T::zero());
         self.previous_loss = None;
         self.eigenvalue_history.clear();
         self.stats = KFACStats::default();
@@ -301,10 +301,10 @@ impl<
 
         if ratio_diff > T::zero() {
             // Acceptance ratio is too high, reduce damping
-            Ok(base_damping * num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()))
+            Ok(base_damping * T::from(0.9).unwrap_or_else(|| T::zero()))
         } else {
             // Acceptance ratio is too low, increase damping
-            Ok(base_damping * num_traits::cast::cast(1.1).unwrap_or_else(|| T::zero()))
+            Ok(base_damping * T::from(1.1).unwrap_or_else(|| T::zero()))
         }
     }
 
@@ -312,21 +312,21 @@ impl<
         if let Some(prev_loss) = self.previous_loss {
             // Update acceptance ratio based on loss improvement
             let loss_ratio = current_loss / prev_loss;
-            let decay = num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero());
+            let decay = T::from(0.95).unwrap_or_else(|| T::zero());
 
             if loss_ratio <= T::one() {
                 // Loss improved, increase acceptance ratio
                 self.acceptance_ratio = decay * self.acceptance_ratio
-                    + (T::one() - decay) * num_traits::cast::cast(1.2).unwrap_or_else(|| T::zero());
+                    + (T::one() - decay) * T::from(1.2).unwrap_or_else(|| T::zero());
             } else {
                 // Loss got worse, decrease acceptance ratio
                 self.acceptance_ratio = decay * self.acceptance_ratio
-                    + (T::one() - decay) * num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero());
+                    + (T::one() - decay) * T::from(0.8).unwrap_or_else(|| T::zero());
             }
 
             // Clamp acceptance ratio to reasonable bounds
-            let min_ratio = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
-            let max_ratio = num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+            let min_ratio = T::from(0.1).unwrap_or_else(|| T::zero());
+            let max_ratio = T::from(2.0).unwrap_or_else(|| T::zero());
             self.acceptance_ratio = self.acceptance_ratio.max(min_ratio).min(max_ratio);
         }
 

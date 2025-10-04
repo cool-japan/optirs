@@ -12,7 +12,7 @@ use std::fmt::Debug;
 // - Dynamic layout optimization and memory coalescing
 // - Performance profiling and automated benchmarking
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
 use std::sync::Arc;
 

@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements various momentum-based optimization strategies that
 // integrate with the transformer optimizer's attention mechanisms.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::VecDeque;
@@ -260,7 +260,7 @@ impl<
             *v = v.clone() * beta2 + &grad_squared * (T::one() - beta2);
 
             // Bias correction
-            let step = num_traits::cast::cast(self.step_count as f64).unwrap_or_else(|| T::zero());
+            let step = scirs2_core::numeric::NumCast::from(self.step_count as f64).unwrap_or_else(|| T::zero());
             let bias_correction1 = T::one() - beta1.powf(step);
             let bias_correction2 = T::one() - beta2.powf(step);
 
@@ -316,7 +316,7 @@ impl<
             .map(|&x| x * x)
             .fold(T::zero(), |a, b| a + b)
             .sqrt();
-        let adaptive_beta = num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())
+        let adaptive_beta = scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())
             * (T::one() / (T::one() + grad_norm));
 
         if self.velocity.is_none() {
@@ -449,7 +449,7 @@ impl<
             for i in 0..seq_len {
                 let column_sum = (0..num_heads).map(|h| attention_weights[[h, i]]).sum::<T>();
                 scaling[i] = column_sum / total_attention
-                    * num_traits::cast::cast(seq_len as f64).unwrap_or_else(|| T::zero());
+                    * scirs2_core::numeric::NumCast::from(seq_len as f64).unwrap_or_else(|| T::zero());
             }
 
             self.attention_scaling = Some(scaling);
@@ -475,10 +475,10 @@ impl<
                 v: Array1::zeros(actual_size),
                 group_id: i,
                 group_beta1: self.momentum_params.beta1
-                    * num_traits::cast::cast(0.8 + 0.2 * i as f64 / num_groups as f64)
+                    * scirs2_core::numeric::NumCast::from(0.8 + 0.2 * i as f64 / num_groups as f64)
                         .unwrap_or_else(|| T::zero()),
                 group_beta2: self.momentum_params.beta2
-                    * num_traits::cast::cast(0.9 + 0.1 * i as f64 / num_groups as f64)
+                    * scirs2_core::numeric::NumCast::from(0.9 + 0.1 * i as f64 / num_groups as f64)
                         .unwrap_or_else(|| T::zero()),
             };
 
@@ -516,8 +516,8 @@ impl<
             MomentumStatistics {
                 avg_momentum_magnitude: magnitude,
                 momentum_variance: variance,
-                direction_consistency: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // Placeholder
-                acceleration_magnitude: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Placeholder
+                direction_consistency: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()), // Placeholder
+                acceleration_magnitude: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()), // Placeholder
                 update_count: self.step_count,
             }
         } else {
@@ -567,13 +567,13 @@ impl<
 {
     fn default() -> Self {
         Self {
-            beta1: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-            beta2: num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()),
-            epsilon: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
-            decay_rate: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
-            adaptive_scale: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            attention_weight: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            variance_weight: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
+            beta1: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+            beta2: scirs2_core::numeric::NumCast::from(0.999).unwrap_or_else(|| T::zero()),
+            epsilon: scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
+            decay_rate: scirs2_core::numeric::NumCast::from(0.99).unwrap_or_else(|| T::zero()),
+            adaptive_scale: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            attention_weight: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            variance_weight: scirs2_core::numeric::NumCast::from(0.99).unwrap_or_else(|| T::zero()),
         }
     }
 }

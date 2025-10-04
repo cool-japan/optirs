@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // transformer encoder/decoder blocks, including various activation functions
 // and output projection layers.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::{Random, Rng as SCRRng};
@@ -124,7 +124,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
             OutputTransformation::LearnedActivation => {
                 // For now, use a simple learned scaling
                 output
-                    .mapv_inplace(|x| x * num_traits::cast::cast(1.1).unwrap_or_else(|| T::zero()));
+                    .mapv_inplace(|x| x * scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero()));
             }
             OutputTransformation::ParameterScaling => {
                 // Apply different scaling per parameter dimension

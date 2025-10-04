@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements various positional encoding strategies used in the
 // transformer optimizer to provide position information to the attention mechanisms.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{s, Array1, Array2};
 use scirs2_core::random::{Random, Rng as SCRRng};
@@ -66,7 +66,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
 
                 for pos in 0..max_seqlen {
                     for i in 0..modeldim {
-                        let angle = num_traits::cast::cast(pos).unwrap_or_else(|| T::zero())
+                        let angle = scirs2_core::numeric::NumCast::from(pos).unwrap_or_else(|| T::zero())
                             / T::from(10000.0_f64.powf(2.0 * (i as f64) / modeldim as f64))
                                 .unwrap();
 
@@ -109,7 +109,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
 
                 for pos in 0..max_seqlen {
                     for i in 0..modeldim {
-                        let angle = num_traits::cast::cast(pos).unwrap_or_else(|| T::zero())
+                        let angle = scirs2_core::numeric::NumCast::from(pos).unwrap_or_else(|| T::zero())
                             / T::from(10000.0_f64.powf(2.0 * (i as f64) / modeldim as f64))
                                 .unwrap();
 
@@ -235,7 +235,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
 
         let mut encoding = Array1::zeros(self.modeldim);
         for i in 0..self.modeldim {
-            let angle = num_traits::cast::cast(position).unwrap_or_else(|| T::zero())
+            let angle = scirs2_core::numeric::NumCast::from(position).unwrap_or_else(|| T::zero())
                 / T::from(10000.0_f64.powf(2.0 * (i as f64) / self.modeldim as f64)).unwrap();
 
             if i % 2 == 0 {

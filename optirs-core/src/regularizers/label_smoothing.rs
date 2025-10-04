@@ -4,7 +4,7 @@
 // becoming over-confident by replacing hard one-hot encoded targets with
 // soft targets that include some probability for incorrect classes.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

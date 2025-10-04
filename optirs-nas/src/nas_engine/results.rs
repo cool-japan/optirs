@@ -5,7 +5,7 @@
 
 use crate::multi_objective::ParetoFront;
 use crate::EvaluationMetric;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -954,19 +954,19 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
             return T::zero();
         }
 
-        let success_rate = num_traits::cast::cast(self.successful_evaluations)
+        let success_rate = scirs2_core::numeric::NumCast::from(self.successful_evaluations)
             .unwrap_or_else(|| T::zero())
-            / num_traits::cast::cast(self.total_architectures_evaluated)
+            / scirs2_core::numeric::NumCast::from(self.total_architectures_evaluated)
                 .unwrap_or_else(|| T::zero());
 
         let time_efficiency = if self.total_search_time.as_secs() > 0 {
-            num_traits::cast::cast(self.successful_evaluations).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(self.successful_evaluations).unwrap_or_else(|| T::zero())
                 / T::from(self.total_search_time.as_secs()).unwrap()
         } else {
             T::zero()
         };
 
-        (success_rate + time_efficiency) / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+        (success_rate + time_efficiency) / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
     }
 
     /// Check if search has converged
@@ -995,9 +995,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
             [self.score_history.len() - window_size * 2..self.score_history.len() - window_size];
 
         let recent_mean = recent_scores.iter().fold(T::zero(), |a, &b| a + b)
-            / num_traits::cast::cast(window_size).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(window_size).unwrap_or_else(|| T::zero());
         let older_mean = older_scores.iter().fold(T::zero(), |a, &b| a + b)
-            / num_traits::cast::cast(window_size).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(window_size).unwrap_or_else(|| T::zero());
 
         Some(recent_mean - older_mean)
     }

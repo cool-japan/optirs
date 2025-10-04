@@ -5,7 +5,7 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -547,7 +547,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             let median = if coord_values.len() % 2 == 0 {
                 let mid = coord_values.len() / 2;
                 (coord_values[mid - 1] + coord_values[mid])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                    / T::from(2.0).unwrap_or_else(|| T::zero())
             } else {
                 coord_values[coord_values.len() / 2]
             };
@@ -723,7 +723,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
                 let change = self
                     .compute_euclidean_distance(&current, &new_estimate)
                     .unwrap_or(T::zero());
-                if change < num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()) {
+                if change < T::from(1e-6).unwrap_or_else(|| T::zero()) {
                     break;
                 }
 
@@ -904,7 +904,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
         for participant_id in gradients.keys() {
             // Use reputation score as initial weight
             let base_weight = if let Some(reputation) = self.reputation_scores.get(participant_id) {
-                num_traits::cast::cast(reputation.score).unwrap_or_else(|| T::zero())
+                T::from(reputation.score).unwrap_or_else(|| T::zero())
             } else {
                 T::one()
             };
@@ -939,7 +939,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             let mut to_remove = Vec::new();
             for (participant_id, gradient) in &unassigned {
                 let similarity = self.compute_cosine_similarity(&first_gradient, gradient)?;
-                if similarity > num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()) {
+                if similarity > T::from(0.8).unwrap_or_else(|| T::zero()) {
                     // Similarity threshold
                     current_cluster.insert(participant_id.clone(), gradient.clone());
                     to_remove.push(participant_id.clone());
@@ -1027,9 +1027,9 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
 
                 for i in 0..gradient.len() {
                     let q1 = stats.median[i]
-                        - stats.iqr[i] / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                        - stats.iqr[i] / T::from(2.0).unwrap_or_else(|| T::zero());
                     let q3 = stats.median[i]
-                        + stats.iqr[i] / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                        + stats.iqr[i] / T::from(2.0).unwrap_or_else(|| T::zero());
 
                     if gradient[i] < q1 || gradient[i] > q3 {
                         let iqr_score = if gradient[i] < q1 {
@@ -1268,7 +1268,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             self.mean = gradient.clone();
         } else if self.mean.len() == gradient.len() {
             // Update running mean
-            let alpha = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()); // Learning rate for running average
+            let alpha = T::from(0.01).unwrap_or_else(|| T::zero()); // Learning rate for running average
             self.mean = &self.mean * (T::one() - alpha) + gradient * alpha;
         }
 
@@ -1311,7 +1311,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PatternModel<T> {
         }
 
         // Normalize distance to [0,1] score
-        let max_expected_distance = num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()); // Tunable parameter
+        let max_expected_distance = T::from(10.0).unwrap_or_else(|| T::zero()); // Tunable parameter
         let deviation_score = (min_distance / max_expected_distance).min(T::one());
 
         Ok(deviation_score.to_f64().unwrap_or(0.5))
@@ -1378,7 +1378,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticalAnalysis<T> {
             median[i] = if values.len() % 2 == 0 {
                 let mid = values.len() / 2;
                 (values[mid - 1] + values[mid])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                    / T::from(2.0).unwrap_or_else(|| T::zero())
             } else {
                 values[values.len() / 2]
             };
@@ -1499,7 +1499,7 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientProperties<T> {
         Self {
             norm_range: (
                 T::zero(),
-                num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
+                T::from(100.0).unwrap_or_else(|| T::zero()),
             ),
             sparsity_threshold: 0.1,
             direction_consistency: 0.8,

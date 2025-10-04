@@ -1,6 +1,6 @@
 // Dropout regularization
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::random::Rng;
 use scirs2_core::Random;

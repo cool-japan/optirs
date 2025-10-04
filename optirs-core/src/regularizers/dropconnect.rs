@@ -3,9 +3,9 @@
 // DropConnect is a regularization technique that randomly drops connections between layers
 // during training. Unlike Dropout which drops units, DropConnect drops individual weights.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
-use scirs2_core::legacy::rng;
+use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -82,9 +82,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> DropConnect<A> {
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
 
         // Sample mask
-        let mut rng = rng();
+        let mut rng = thread_rng();
         let mask = Array::from_shape_fn(weights.raw_dim(), |_| {
-            rng.random_bool_with_chance(keep_prob_f64)
+            rng.gen_bool(keep_prob_f64)
         });
 
         // Apply mask and scale by keep probability
@@ -120,9 +120,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> DropConnect<A> {
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
 
         // Create mask with same shape as weights
-        let mut rng = rng();
+        let mut rng = thread_rng();
         let mask =
-            Array::from_shape_fn(weightsshape, |_| rng.random_bool_with_chance(keep_prob_f64));
+            Array::from_shape_fn(weightsshape, |_| rng.gen_bool(keep_prob_f64));
 
         // Apply mask to gradients
         let mut result = gradients.clone();

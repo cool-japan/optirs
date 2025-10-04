@@ -3,7 +3,7 @@
 // This module implements meta-learning strategies that allow the transformer
 // optimizer to quickly adapt to new tasks and optimization landscapes.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{HashMap, VecDeque};
@@ -436,14 +436,14 @@ impl<
             task_info: task_info.clone(),
             performance: MetaPerformanceMetrics {
                 final_performance: query_loss,
-                convergence_speed: num_traits::cast::cast(
+                convergence_speed: scirs2_core::numeric::NumCast::from(
                     1.0 / self.meta_params.inner_steps as f64,
                 )
                 .unwrap_or_else(|| T::zero()),
                 sample_efficiency: T::from(support_data.len() as f64).unwrap(),
                 generalization: T::one() / (T::one() + query_loss),
-                stability: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                resource_usage: num_traits::cast::cast(self.meta_params.inner_steps as f64)
+                stability: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+                resource_usage: scirs2_core::numeric::NumCast::from(self.meta_params.inner_steps as f64)
                     .unwrap_or_else(|| T::zero()),
             },
             adaptation_steps: self.meta_params.inner_steps,
@@ -468,7 +468,7 @@ impl<
         // Perform multiple gradient steps
         let mut final_loss = initial_loss;
         for _ in 0..self.meta_params.inner_steps {
-            final_loss = final_loss * num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero());
+            final_loss = final_loss * scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero());
             // Simplified decay
         }
 
@@ -513,7 +513,7 @@ impl<
     ) -> Result<T> {
         let support_loss = self.compute_support_loss(support_data)?;
         let query_loss = self.compute_query_loss(query_data)?;
-        Ok((support_loss + query_loss) / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()))
+        Ok((support_loss + query_loss) / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()))
     }
 
     /// Compute loss on support set
@@ -703,7 +703,7 @@ impl<
 
     fn compute_forgetting_penalty(&self) -> Result<T> {
         // Simplified forgetting penalty
-        Ok(num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()))
     }
 
     fn reset(&mut self) {
@@ -788,12 +788,12 @@ impl<
 {
     fn default() -> Self {
         Self {
-            meta_learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            meta_learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             inner_steps: 5,
             meta_batch_size: 32,
-            diversity_weight: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            transfer_coefficient: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            memory_retention: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+            diversity_weight: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            transfer_coefficient: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            memory_retention: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -814,8 +814,8 @@ impl<
         Self {
             support_size: 5,
             query_size: 15,
-            adaptation_lr: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            temperature: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            adaptation_lr: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
+            temperature: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
         }
     }
 }

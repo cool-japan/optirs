@@ -3,7 +3,7 @@
 // Orthogonal regularization encourages weight matrices to be orthogonal,
 // which helps with gradient flow and prevents vanishing/exploding gradients.
 
-use num_traits::{Float, FromPrimitive};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::ndarray_ext::{Array, Array3, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
 use std::fmt::Debug;
 

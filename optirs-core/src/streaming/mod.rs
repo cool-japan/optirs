@@ -5,7 +5,7 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, ArrayBase, ScalarOperand};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

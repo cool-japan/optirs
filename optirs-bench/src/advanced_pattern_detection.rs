@@ -4,7 +4,7 @@
 // techniques, statistical analysis, and advanced signal processing for memory usage patterns.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::f64::consts::PI;

@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements memory layout optimization, buffer allocation strategies,
 // memory bandwidth optimization, and memory hierarchy utilization for TPU execution.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 

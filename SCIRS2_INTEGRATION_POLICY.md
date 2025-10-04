@@ -335,20 +335,29 @@ let buffer_pool = GlobalBufferPool::get();
 
 ## Enforcement
 
-### **Automated Checks**
-- CI pipeline checks for unused SciRS2 dependencies
+### **Automated Checks (Planned)**
+- CI pipeline checks for prohibited direct dependencies (rand, ndarray, num-*)
+- `cargo deny` configuration to block external scientific dependencies
+- Custom linting rules for SciRS2 ecosystem compliance
 - Documentation tests verify integration examples work
-- Dependency graph analysis in builds
 
-### **Manual Reviews**
-- All SciRS2 integration changes require team review
-- Quarterly dependency audits
-- Annual architecture review
+### **Manual Reviews (REQUIRED)**
+- All PRs must follow SciRS2 dependency policy
+- Code reviews MUST verify no direct external dependencies
+- Regular audits should identify and refactor non-compliant code
+- Examples and tests must demonstrate proper SciRS2-Core usage patterns
 
 ### **Violation Response**
-1. **Warning**: Document why integration is needed
-2. **Correction**: Remove unjustified dependencies
-3. **Training**: Educate team on integration policy
+1. **Immediate Fix Required**: Remove all direct external dependencies
+2. **Refactor to SciRS2-Core**: Replace with proper abstractions
+3. **Documentation Update**: Add migration notes
+4. **Policy Training**: Educate team on SciRS2 integration policy
+
+### **Current Policy Status**
+- **Version**: 2.0.0 (Aligned with SciRS2 v0.1.0-RC.1)
+- **Effective Date**: 2025-10-04
+- **Migration Status**: In Progress - Removing prohibited dependencies
+- **Next Review**: Q4 2025
 
 ## Future Considerations
 
@@ -373,25 +382,56 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2025-09-20
-**Next Review**: Q1 2026
+**Document Version**: 2.0.0 (Aligned with SciRS2 Ecosystem Policy v3.0.0)
+**Last Updated**: 2025-10-04
+**Next Review**: Q4 2025
 **Owner**: OptiRS Architecture Team
+**Reference**: [SciRS2 Ecosystem Policy](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
 
 ## Quick Reference
 
-### Current Recommended Integration (Minimal Start)
+### Correct Cargo.toml Configuration
 ```toml
-# Essential SciRS2 dependencies for OptiRS
-scirs2-core = { path = "../scirs/scirs2-core" }      # Always required - foundation
+# ✅ REQUIRED in all OptiRS crates
+[dependencies]
+scirs2-core = { path = "../scirs/scirs2-core", features = ["array", "random", "simd", "parallel"] }
 scirs2-optimize = { path = "../scirs/scirs2-optimize" }  # Core optimization interfaces
-scirs2-autograd = { path = "../scirs/scirs2-autograd" } # Required for array! macro in tests
 
-# Add these only when needed:
-# scirs2-linalg = { path = "../scirs/scirs2-linalg" }     # If doing matrix operations
-# scirs2-neural = { path = "../scirs/scirs2-neural" }     # If NN-specific features
-# scirs2-metrics = { path = "../scirs/scirs2-metrics" }   # If benchmarking tools
-# scirs2-stats = { path = "../scirs/scirs2-stats" }       # If statistical analysis
+# ❌ FORBIDDEN - These must be REMOVED
+# rand = { workspace = true }           # REMOVE - Use scirs2-core::random
+# rand_distr = { workspace = true }     # REMOVE - Use scirs2-core::random
+# ndarray = { workspace = true }        # REMOVE - Use scirs2-core::ndarray
+# num-traits = { workspace = true }     # REMOVE - Use scirs2-core::numeric
+# num-complex = { workspace = true }    # REMOVE - Use scirs2-core::numeric
 ```
 
-**Remember**: Start minimal, add based on evidence, document everything!
+### Correct Import Patterns
+```rust
+// ✅ CORRECT - Always use these patterns
+use scirs2_core::random::*;      // For RNG and distributions
+use scirs2_core::ndarray::*;     // For arrays and array! macro
+use scirs2_core::numeric::*;     // For numerical traits (Float, Zero, One, Complex)
+use scirs2_core::simd_ops::*;    // For SIMD operations
+use scirs2_core::parallel_ops::*; // For parallel processing
+use scirs2_core::error::*;       // For error handling
+
+// ❌ FORBIDDEN - Never use these
+use rand::*;                      // FORBIDDEN
+use ndarray::*;                   // FORBIDDEN
+use num_traits::*;                // FORBIDDEN
+use num_complex::*;               // FORBIDDEN
+```
+
+### Migration Checklist for Existing Code
+- [ ] Remove all direct external dependencies from workspace Cargo.toml
+- [ ] Remove all direct external dependencies from individual crate Cargo.toml files
+- [ ] Replace `use rand::*` → `use scirs2_core::random::*`
+- [ ] Replace `use ndarray::*` → `use scirs2_core::ndarray::*`
+- [ ] Replace `use num_traits::*` → `use scirs2_core::numeric::*`
+- [ ] Replace `use num_complex::*` → `use scirs2_core::numeric::*`
+- [ ] Enable required scirs2-core features: `["array", "random", "simd", "parallel"]`
+- [ ] Run `cargo build --all-features` to verify compliance
+- [ ] Update all tests to use SciRS2-Core imports
+- [ ] Update all examples to demonstrate SciRS2-Core usage
+
+**Remember**: OptiRS is part of the SciRS2 ecosystem and MUST follow the dependency abstraction policy. No direct external dependencies are allowed!

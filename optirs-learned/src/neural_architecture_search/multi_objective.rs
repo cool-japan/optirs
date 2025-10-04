@@ -1,6 +1,6 @@
 // Multi-objective optimization for neural architecture search
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::HashMap;
 use crate::error::Result;

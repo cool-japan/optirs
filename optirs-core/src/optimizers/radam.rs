@@ -2,7 +2,7 @@
 //
 // RAdam is an improved variant of Adam with a rectified adaptive learning rate.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
@@ -235,20 +235,20 @@ where
         // RAdam logic for variance rectification
         let beta2_t = self.beta2.powi(self.t as i32);
         let rho_t = self.rho_inf
-            - <A as num_traits::NumCast>::from(2.0).unwrap()
-                * <A as num_traits::NumCast>::from(self.t as f64).unwrap()
+            - <A as scirs2_core::numeric::NumCast>::from(2.0).unwrap()
+                * <A as scirs2_core::numeric::NumCast>::from(self.t as f64).unwrap()
                 * beta2_t
                 / (A::one() - beta2_t);
 
         // Compute adaptive learning rate and update parameters
-        let updated_params = if rho_t > <A as num_traits::NumCast>::from(4.0).unwrap() {
+        let updated_params = if rho_t > <A as scirs2_core::numeric::NumCast>::from(4.0).unwrap() {
             // Threshold for using the adaptive learning rate
             // Compute bias-corrected second moment estimate (variance)
             let v_hat = &v[0] / (A::one() - beta2_t);
 
             // Compute length of the approximated SMA (simple moving average)
-            let sma_rectifier = (rho_t - <A as num_traits::NumCast>::from(4.0).unwrap())
-                * (rho_t - <A as num_traits::NumCast>::from(2.0).unwrap())
+            let sma_rectifier = (rho_t - <A as scirs2_core::numeric::NumCast>::from(4.0).unwrap())
+                * (rho_t - <A as scirs2_core::numeric::NumCast>::from(2.0).unwrap())
                 / self.rho_inf;
             let sma_rectifier = sma_rectifier * A::sqrt(A::one() - beta2_t)
                 / (A::one() - self.beta1.powi(self.t as i32));

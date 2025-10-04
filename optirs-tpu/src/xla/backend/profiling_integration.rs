@@ -4,7 +4,7 @@
 // running on TPU hardware, including performance counters, trace collection,
 // memory profiling, and power consumption tracking.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::fs::File;

@@ -6,7 +6,7 @@
 pub mod kfac;
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension, ScalarOperand};
 use std::collections::VecDeque;
 use std::fmt::Debug;

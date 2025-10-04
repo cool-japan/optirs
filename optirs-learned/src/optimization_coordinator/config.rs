@@ -1,6 +1,6 @@
 // Configuration structures for optimization coordinator
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
@@ -54,17 +54,17 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AdvancedConfig<T> {
         let mut objective_weights = HashMap::new();
         objective_weights.insert(
             OptimizationObjective::ConvergenceSpeed,
-            num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
         );
         objective_weights.insert(
             OptimizationObjective::SolutionQuality,
-            num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()),
         );
         objective_weights.insert(
             OptimizationObjective::ResourceEfficiency,
-            num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()),
         );
-        objective_weights.insert(OptimizationObjective::Robustness, num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()));
+        objective_weights.insert(OptimizationObjective::Robustness, scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()));
 
         Self {
             enable_nas: true,
@@ -73,7 +73,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AdvancedConfig<T> {
             enable_meta_learning: true,
             max_parallel_optimizers: 8,
             prediction_horizon: 100,
-            adaptation_threshold: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+            adaptation_threshold: scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()),
             resource_allocation: ResourceAllocationStrategy::Adaptive,
             objective_weights,
             enable_dynamic_reconfiguration: true,
@@ -345,7 +345,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedConfig<T> {
         // Validate objective weights sum to 1
         let weight_sum: T = self.objective_weights.values().fold(T::zero(), |acc, &w| acc + w);
         let expected_sum = T::one();
-        let tolerance = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let tolerance = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
 
         if (weight_sum - expected_sum).abs() > tolerance {
             return Err("objective_weights must sum to 1.0".to_string());
@@ -407,9 +407,9 @@ impl Default for ComputationalBudget {
 impl<T: Float + Debug + Send + Sync + 'static> Default for ConvergenceCriteria<T> {
     fn default() -> Self {
         Self {
-            function_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
-            parameter_tolerance: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
-            gradient_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            function_tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
+            parameter_tolerance: scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
+            gradient_tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             max_iterations: 1000,
             stagnation_threshold: 50,
         }

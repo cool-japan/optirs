@@ -9,7 +9,7 @@ use super::memory_leak_detector::{
     MemoryGrowthAnalysis, MemoryLeakResult, MemoryUsageSnapshot,
 };
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;

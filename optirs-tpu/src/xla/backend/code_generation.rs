@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // kernel generation, instruction scheduling, register allocation,
 // and hardware-specific optimizations.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 

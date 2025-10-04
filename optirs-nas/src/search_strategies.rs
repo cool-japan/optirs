@@ -3,7 +3,8 @@
 // Implements various NAS algorithms including DARTS, evolutionary search,
 // reinforcement learning-based search, and Bayesian optimization.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
+use scirs2_core::ScientificNumber;
 use scirs2_core::ndarray_ext::{s, Array1, Array2, Array3};
 use scirs2_core::random::Rng;
 use scirs2_core::random::{Random, Rng as SCRRng};
@@ -346,7 +347,7 @@ impl<
                     }
                     ParameterRange::Integer(min, max) => self.rng.gen_range(*min..*max) as f64,
                     ParameterRange::Boolean => {
-                        if self.rng.random_f64() < 0.5 {
+                        if self.rng.gen::<f64>() < 0.5 {
                             1.0
                         } else {
                             0.0
@@ -568,23 +569,21 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                         ParameterRange::Continuous(min, max) => {
                             let noise =
                                 scirs2_core::random::Random::default().gen::<f64>() * 0.1 - 0.05; // Small noise
-                            let current_f64 =
-                                num_traits::cast::cast::<T, f64>(*current_value).unwrap_or(0.0);
+                            let current_f64 = current_value.to_f64().unwrap_or(0.0);
                             let new_val = current_f64 + noise;
                             let clamped = new_val.max(*min).min(*max);
                             *current_value =
-                                num_traits::cast::cast(clamped).unwrap_or_else(|| T::zero());
+                                scirs2_core::numeric::NumCast::from(clamped).unwrap_or_else(|| T::zero());
                         }
                         ParameterRange::LogUniform(min, max) => {
-                            let current_f64 =
-                                num_traits::cast::cast::<T, f64>(*current_value).unwrap_or(0.001);
+                            let current_f64 = current_value.to_f64().unwrap_or(0.001);
                             let log_val = current_f64.ln();
                             let noise =
                                 scirs2_core::random::Random::default().gen::<f64>() * 0.2 - 0.1;
                             let new_log = log_val + noise;
                             let new_val = new_log.exp().max(*min).min(*max);
                             *current_value =
-                                num_traits::cast::cast(new_val).unwrap_or_else(|| T::zero());
+                                scirs2_core::numeric::NumCast::from(new_val).unwrap_or_else(|| T::zero());
                         }
                         _ => {
                             // For other types, regenerate randomly
@@ -695,7 +694,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                 if self.adaptive_rates && self.generation_count > 10 {
                     let recent_improvement = self.calculate_recent_improvement(&performances);
                     if recent_improvement
-                        < num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero())
+                        < scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero())
                     {
                         self.mutation_rate = (self.mutation_rate * 1.1).min(0.5);
                     } else {
@@ -714,9 +713,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     fn get_statistics(&self) -> SearchStrategyStatistics<T> {
         let mut stats = self.statistics.clone();
         stats.exploration_rate =
-            num_traits::cast::cast(self.mutation_rate).unwrap_or_else(|| T::zero());
+            scirs2_core::numeric::NumCast::from(self.mutation_rate).unwrap_or_else(|| T::zero());
         stats.exploitation_rate =
-            num_traits::cast::cast(1.0 - self.mutation_rate).unwrap_or_else(|| T::zero());
+            scirs2_core::numeric::NumCast::from(1.0 - self.mutation_rate).unwrap_or_else(|| T::zero());
         stats
     }
 }
@@ -728,7 +727,7 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> EvolutionarySearch<T> {
         }
 
         let recent_avg = performances.iter().rev().take(5).cloned().sum::<T>()
-            / num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero());
         let earlier_avg = performances
             .iter()
             .rev()
@@ -736,7 +735,7 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> EvolutionarySearch<T> {
             .take(5)
             .cloned()
             .sum::<T>()
-            / num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero());
 
         recent_avg - earlier_avg
     }
@@ -757,7 +756,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + 'stati
             ),
             experience_buffer: ExperienceBuffer::new(10000),
             policy_optimizer: PolicyOptimizer::new(
-                num_traits::cast::cast(_learningrate).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(_learningrate).unwrap_or_else(|| T::zero()),
             ),
             baseline_predictor: BaselinePredictor::new(),
             epsilon: 0.1,
@@ -854,9 +853,9 @@ impl<
 
     fn get_statistics(&self) -> SearchStrategyStatistics<T> {
         let mut stats = self.statistics.clone();
-        stats.exploration_rate = num_traits::cast::cast(self.epsilon).unwrap_or_else(|| T::zero());
+        stats.exploration_rate = scirs2_core::numeric::NumCast::from(self.epsilon).unwrap_or_else(|| T::zero());
         stats.exploitation_rate =
-            num_traits::cast::cast(1.0 - self.epsilon).unwrap_or_else(|| T::zero());
+            scirs2_core::numeric::NumCast::from(1.0 - self.epsilon).unwrap_or_else(|| T::zero());
         stats
     }
 }
@@ -889,7 +888,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ReinforcementLe
                 .map(|(k, v)| {
                     (
                         k.clone(),
-                        num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                        scirs2_core::numeric::NumCast::from(*v).unwrap_or_else(|| T::zero()),
                     )
                 })
                 .collect(),
@@ -900,7 +899,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ReinforcementLe
                 .map(|(k, v)| {
                     (
                         k.clone(),
-                        num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                        scirs2_core::numeric::NumCast::from(*v).unwrap_or_else(|| T::zero()),
                     )
                 })
                 .collect(),
@@ -923,8 +922,8 @@ impl<T: Float + Debug + Default + Send + Sync> Default for SearchStrategyStatist
             best_performance: T::zero(),
             average_performance: T::zero(),
             convergence_rate: T::zero(),
-            exploration_rate: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            exploitation_rate: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            exploration_rate: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            exploitation_rate: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1025,9 +1024,9 @@ impl<T: Float + Debug + Default + Send + Sync> PolicyOptimizer<T> {
     fn new(_learningrate: T) -> Self {
         Self {
             _learningrate,
-            momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
             velocity: HashMap::new(),
-            gradient_clip_norm: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            gradient_clip_norm: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1038,7 +1037,7 @@ impl<T: Float + Debug + Default + Send + Sync> BaselinePredictor<T> {
             network_weights: vec![Array2::zeros((64, 64)), Array2::zeros((1, 64))],
             network_biases: vec![Array1::zeros(64), Array1::zeros(1)],
             optimizer: BaselineOptimizer::new(
-                num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             ),
         }
     }
@@ -1048,7 +1047,7 @@ impl<T: Float + Debug + Default + Send + Sync> BaselineOptimizer<T> {
     fn new(_learningrate: T) -> Self {
         Self {
             _learningrate,
-            momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
             velocity: Vec::new(),
         }
     }
@@ -1074,9 +1073,9 @@ impl<
         Self {
             architecture_weights: Array3::zeros((num_edges, num_operations, 1)),
             weight_optimizer: WeightOptimizer::new(
-                num_traits::cast::cast(0.025).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(0.025).unwrap_or_else(|| T::zero()),
             ),
-            temperature: num_traits::cast::cast(temperature).unwrap_or_else(|| T::zero()),
+            temperature: scirs2_core::numeric::NumCast::from(temperature).unwrap_or_else(|| T::zero()),
             gumbel_softmax: use_gumbel,
             continuous_relaxation: true,
             statistics: SearchStrategyStatistics::default(),
@@ -1140,7 +1139,7 @@ impl<
                     selected_idx
                 }
                 DiscretizationStrategy::Threshold => {
-                    let threshold = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+                    let threshold = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
                     edge_weights
                         .iter()
                         .enumerate()
@@ -1151,7 +1150,7 @@ impl<
                 DiscretizationStrategy::Progressive => {
                     // Gradually sharpen the distribution
                     let sharpened = edge_weights
-                        .mapv(|x| x.powf(num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())));
+                        .mapv(|x| x.powf(scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())));
                     sharpened
                         .iter()
                         .enumerate()
@@ -1201,7 +1200,7 @@ impl<
                     c.hyperparameters.iter().map(move |(k, v)| {
                         (
                             format!("{}_{}", i, k),
-                            num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                            scirs2_core::numeric::NumCast::from(*v).unwrap_or_else(|| T::zero()),
                         )
                     })
                 })
@@ -1213,7 +1212,7 @@ impl<
                     c.hyperparameters.iter().map(move |(k, v)| {
                         (
                             format!("{}_{}", i, k),
-                            num_traits::cast::cast(*v).unwrap_or_else(|| T::zero()),
+                            scirs2_core::numeric::NumCast::from(*v).unwrap_or_else(|| T::zero()),
                         )
                     })
                 })
@@ -1304,13 +1303,13 @@ impl<
             let reward = performances[0] - baseline;
 
             // Update architecture weights
-            let _learningrate = num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero());
+            let _learningrate = scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero());
             self.architecture_weights = &self.architecture_weights
                 + &(Array3::ones(self.architecture_weights.raw_dim()) * _learningrate * reward);
 
             // Anneal temperature
             self.temperature =
-                self.temperature * num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero());
+                self.temperature * scirs2_core::numeric::NumCast::from(0.999).unwrap_or_else(|| T::zero());
         }
 
         Ok(())
@@ -1340,13 +1339,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             gaussian_process: GaussianProcess::new(_kerneltype),
             acquisition_function: AcquisitionFunction::new(
                 acquisition_type,
-                num_traits::cast::cast(exploration_factor).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(exploration_factor).unwrap_or_else(|| T::zero()),
             ),
             observed_architectures: Vec::new(),
             observed_performances: Vec::new(),
             kernel: GPKernel::new(_kerneltype),
             statistics: SearchStrategyStatistics::default(),
-            exploration_factor: num_traits::cast::cast(exploration_factor)
+            exploration_factor: scirs2_core::numeric::NumCast::from(exploration_factor)
                 .unwrap_or_else(|| T::zero()),
         }
     }
@@ -1360,7 +1359,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             let hash = component_str
                 .bytes()
                 .fold(0u8, |acc, b| acc.wrapping_add(b));
-            encoding.push(num_traits::cast::cast(hash).unwrap_or_else(|| T::zero()));
+            encoding.push(scirs2_core::numeric::NumCast::from(hash).unwrap_or_else(|| T::zero()));
         }
 
         // Encode hyperparameters from the architecture's hyperparameters map
@@ -1499,8 +1498,8 @@ impl<T: Float + Debug + Default + Send + Sync> WeightOptimizer<T> {
     fn new(_learningrate: T) -> Self {
         Self {
             _learningrate,
-            momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-            weight_decay: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+            weight_decay: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             velocity: Array3::zeros((0, 0, 0)),
         }
     }
@@ -1511,7 +1510,7 @@ impl<T: Float + Debug + Default + Send + Sync> GaussianProcess<T> {
         Self {
             kernel_matrix: Array2::zeros((0, 0)),
             inverse_kernel: Array2::zeros((0, 0)),
-            noise_variance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            noise_variance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             length_scales: Array1::ones(1),
             signal_variance: T::one(),
         }
@@ -1525,8 +1524,8 @@ impl<T: Float + Debug + Default + Send + Sync> GaussianProcess<T> {
     fn predict(&self, x: &Array1<T>) -> Result<(T, T)> {
         // Simplified prediction - return mean and variance
         Ok((
-            num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
         ))
     }
 }
@@ -1546,7 +1545,7 @@ impl<T: Float + Debug + Default + Send + Sync> AcquisitionFunction<T> {
             AcquisitionType::EI => {
                 // Simplified Expected Improvement
                 let std_dev = variance.sqrt();
-                if std_dev > num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()) {
+                if std_dev > scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()) {
                     let z = (mean - self.current_best) / std_dev;
                     // Simplified calculation without proper CDF/PDF
                     z * std_dev
@@ -1556,7 +1555,7 @@ impl<T: Float + Debug + Default + Send + Sync> AcquisitionFunction<T> {
             }
             AcquisitionType::PI => {
                 // Simplified Probability of Improvement
-                if variance > num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()) {
+                if variance > scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()) {
                     let z = (mean - self.current_best) / variance.sqrt();
                     // Simplified - would need proper CDF
                     if z > T::zero() {
@@ -1604,9 +1603,9 @@ impl<
             architecture_encoder: ArchitectureEncoder::new(_embeddingdim),
             search_optimizer: SearchOptimizer::new(
                 SearchOptimizerType::Adam,
-                num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             ),
-            confidence_threshold: num_traits::cast::cast(confidence_threshold)
+            confidence_threshold: scirs2_core::numeric::NumCast::from(confidence_threshold)
                 .unwrap_or_else(|| T::zero()),
             statistics: SearchStrategyStatistics::default(),
             uncertainty_sampling: true,
@@ -1646,7 +1645,7 @@ impl<
                 .predictor_network
                 .forward_with_uncertainty(encoded_arch)?;
             let _loss = (prediction - target_performance)
-                .powf(num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()));
+                .powf(scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()));
 
             // Simplified gradient update
             self.predictor_network.backward_update(
@@ -1786,9 +1785,9 @@ impl<
     fn get_statistics(&self) -> SearchStrategyStatistics<T> {
         let mut stats = self.statistics.clone();
         stats.exploration_rate = if self.uncertainty_sampling {
-            num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero())
         } else {
-            num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero())
         };
         stats.exploitation_rate = T::one() - stats.exploration_rate;
         stats
@@ -1808,7 +1807,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + Send + Sync
         Self {
             layers,
             dropout_rates: vec![
-                num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+                scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
                 architecture.len() - 1
             ],
             architecture,
@@ -1838,7 +1837,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + Send + Sync
         // For simplicity, return the first output as prediction and a simple uncertainty estimate
         let prediction = current[0];
         let uncertainty = current.iter().map(|&x| x * x).sum::<T>().sqrt()
-            * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+            * scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
         Ok((prediction, uncertainty))
     }
@@ -1902,7 +1901,7 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> PredictorLayer<
                 let gelu_val = 0.5
                     * x_f64
                     * (1.0 + (x_f64 * 0.7978845608 * (1.0 + 0.044715 * x_f64 * x_f64)).tanh());
-                num_traits::cast::cast(gelu_val).unwrap_or_else(|| T::zero())
+                scirs2_core::numeric::NumCast::from(gelu_val).unwrap_or_else(|| T::zero())
             }),
             ActivationFunction::Swish => x.mapv(|xi| {
                 let sigmoid = T::one() / (T::one() + (-xi).exp());
@@ -1934,7 +1933,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEnc
 
             // Encode component type (use string hash as placeholder)
             let hash = component.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-            encoding.push(num_traits::cast::cast(hash).unwrap_or_else(|| T::zero()));
+            encoding.push(scirs2_core::numeric::NumCast::from(hash).unwrap_or_else(|| T::zero()));
         }
 
         // Pad to fixed size
@@ -1948,7 +1947,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SearchOptimizer
         Self {
             optimizer_type,
             _learningrate: learningrate,
-            momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
             parameters: HashMap::new(),
         }
     }

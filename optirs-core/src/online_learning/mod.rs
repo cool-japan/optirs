@@ -4,7 +4,7 @@
 // including online learning, continual learning, and lifelong optimization systems.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use scirs2_core::random::{thread_rng, Random};
 use std::collections::{HashMap, VecDeque};

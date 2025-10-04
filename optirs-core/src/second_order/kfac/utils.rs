@@ -5,7 +5,7 @@
 // mathematical utilities.
 
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::fmt::Debug;
 
@@ -32,7 +32,7 @@ impl KFACUtils {
 
         // Simple averaging across batch
         if batch_size > 0 {
-            let scale = T::one() / num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+            let scale = T::one() / T::from(batch_size).unwrap_or_else(|| T::zero());
             for i in 0..update.nrows() {
                 for j in 0..update.ncols() {
                     let input_idx = i % input_dim;
@@ -54,7 +54,7 @@ impl KFACUtils {
     }
 
     /// Compute batch normalization statistics for K-FAC
-    pub fn batchnorm_statistics<T: Float + num_traits::FromPrimitive>(
+    pub fn batchnorm_statistics<T: Float + scirs2_core::numeric::FromPrimitive>(
         input: &Array2<T>,
         eps: T,
     ) -> Result<(Array1<T>, Array1<T>)> {
@@ -65,7 +65,7 @@ impl KFACUtils {
             return Ok((Array1::zeros(num_features), Array1::ones(num_features)));
         }
 
-        let batch_size_t = num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+        let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
 
         // Compute mean
         let mean = input.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
@@ -131,7 +131,7 @@ impl KFACUtils {
 
         // Normalize by batch size
         if batch_size > 0 {
-            let scale = T::one() / num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+            let scale = T::one() / T::from(batch_size).unwrap_or_else(|| T::zero());
             result = result * scale;
         }
 
@@ -274,7 +274,7 @@ impl KFACUtils {
         for i in 0..n {
             for j in 0..n {
                 result[[i, j]] = (matrix[[i, j]] + matrix[[j, i]])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                    / T::from(2.0).unwrap_or_else(|| T::zero());
             }
         }
 

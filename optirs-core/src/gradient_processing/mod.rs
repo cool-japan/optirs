@@ -3,8 +3,9 @@
 // This module provides comprehensive gradient manipulation utilities including
 // various clipping strategies, normalization, and other processing techniques.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -421,20 +422,19 @@ where
     A: Float + ScalarOperand,
     D: Dimension,
 {
-    use scirs2_core::legacy::rng;
     use scirs2_core::random::Rng;
-    use scirs2_core::random::distributions::Normal;
+    use scirs2_core::random::RandNormal;
 
     if noise_std <= A::zero() {
         return gradients;
     }
 
-    let mut rng = rng();
+    let mut rng = thread_rng();
 
     // Create noise array manually to avoid trait compatibility issues
     let shape = gradients.raw_dim();
     let mut noise = Array::zeros(shape);
-    let normal = Normal::new(0.0, noise_std.to_f64().unwrap_or(0.01)).unwrap();
+    let normal = RandNormal::new(0.0, noise_std.to_f64().unwrap_or(0.01)).unwrap();
 
     for elem in noise.iter_mut() {
         *elem = A::from(rng.sample(&normal)).unwrap_or(A::zero());

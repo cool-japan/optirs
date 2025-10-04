@@ -3,7 +3,7 @@
 // This module provides functionality for building, analyzing, and managing XLA computation graphs,
 // including type inference, shape analysis, dependency tracking, and constant folding.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::marker::PhantomData;

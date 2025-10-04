@@ -13,7 +13,7 @@
 
 use crate::error::{OptimError, Result};
 use crate::schedulers::LearningRateScheduler;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

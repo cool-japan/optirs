@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use super::super::moment_accountant::MomentsAccountant;
 use super::super::{AccountingMethod, DifferentialPrivacyConfig, NoiseMechanism, PrivacyBudget};
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::Rng;
 use scirs2_core::random::{Random, Rng as SCRRng};

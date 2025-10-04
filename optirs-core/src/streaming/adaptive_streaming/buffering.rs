@@ -8,7 +8,7 @@ use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 use super::performance::{PerformanceSnapshot, PerformanceTracker};
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};

@@ -8,9 +8,9 @@
 use crate::error::Result;
 use crate::optimizers::*;
 use crate::schedulers::*;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
-use scirs2_core::random::Rng;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -336,7 +336,7 @@ pub trait OptimizerTrait<A: Float + ScalarOperand + Debug, D: Dimension>: Send +
 }
 
 impl<
-        A: Float + ScalarOperand + Debug + Send + Sync + 'static + num_traits::FromPrimitive,
+        A: Float + ScalarOperand + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive,
         D: Dimension + 'static,
     > SelfTuningOptimizer<A, D>
 {
@@ -617,7 +617,7 @@ impl<
 
     /// Epsilon-greedy optimizer selection
     fn select_epsilon_greedy(&self) -> usize {
-        let mut rng = rng();
+        let mut rng = thread_rng();
 
         if A::from(rng.gen::<f64>()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
             // Explore: random selection
@@ -637,7 +637,7 @@ impl<
     /// Thompson sampling optimizer selection
     fn select_thompson_sampling(&self) -> usize {
         // Simplified Thompson sampling - in practice would use Beta distributions
-        let mut rng = rng();
+        let mut rng = thread_rng();
 
         let mut best_sample = f64::NEG_INFINITY;
         let mut best_idx = 0;

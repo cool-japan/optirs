@@ -225,7 +225,7 @@ impl CudaKernelManager {
     }
 
     /// Executes a high-level optimization operation with full pipeline
-    pub async fn execute_optimization<T: num_traits::Float + Send + Sync>(
+    pub async fn execute_optimization<T: scirs2_core::numeric::Float + Send + Sync>(
         &mut self,
         operation: OptimizationOperation<T>,
     ) -> Result<OptimizationResult<T>> {

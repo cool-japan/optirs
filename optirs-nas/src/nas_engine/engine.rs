@@ -10,7 +10,7 @@ use super::results::*;
 use crate::error::Result;
 use crate::multi_objective;
 use crate::EvaluationMetric;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -647,20 +647,20 @@ impl<
     ) -> Result<ResourceUsage<T>> {
         // Estimate resource usage based on architecture complexity
         let component_count =
-            num_traits::cast::cast(architecture.components.len()).unwrap_or_else(|| T::zero());
+            scirs2_core::numeric::NumCast::from(architecture.components.len()).unwrap_or_else(|| T::zero());
         let connection_count =
-            num_traits::cast::cast(architecture.connections.len()).unwrap_or_else(|| T::zero());
+            scirs2_core::numeric::NumCast::from(architecture.connections.len()).unwrap_or_else(|| T::zero());
 
         // Simple resource estimation model
-        let memory_gb = component_count * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())
-            + connection_count * num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero());
-        let cpu_time = component_count * num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())
-            + connection_count * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
-        let gpu_time = component_count * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+        let memory_gb = component_count * scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())
+            + connection_count * scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero());
+        let cpu_time = component_count * scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())
+            + connection_count * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
+        let gpu_time = component_count * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
         let energy_kwh =
-            (cpu_time + gpu_time) * num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero());
-        let cost_usd = energy_kwh * num_traits::cast::cast(0.12).unwrap_or_else(|| T::zero()); // $0.12 per kWh
-        let network_gb = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()); // Minimal network usage
+            (cpu_time + gpu_time) * scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero());
+        let cost_usd = energy_kwh * scirs2_core::numeric::NumCast::from(0.12).unwrap_or_else(|| T::zero()); // $0.12 per kWh
+        let network_gb = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()); // Minimal network usage
 
         Ok(ResourceUsage {
             memory_gb,
@@ -670,9 +670,9 @@ impl<
             cost_usd,
             network_gb,
             network_io_gb: network_gb,
-            disk_io_gb: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            disk_io_gb: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             peak_memory_gb: memory_gb,
-            efficiency_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            efficiency_score: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -720,7 +720,7 @@ impl<
         if !self.search_history.is_empty() {
             let recent_results: Vec<_> = self.search_history.iter().rev().take(20).collect();
             self.search_statistics.population_diversity =
-                num_traits::cast::cast(self.calculate_population_diversity(&recent_results))
+                scirs2_core::numeric::NumCast::from(self.calculate_population_diversity(&recent_results))
                     .unwrap_or_else(|| T::one());
 
             let scores: Vec<T> = self
@@ -741,7 +741,7 @@ impl<
 
                 let sum: T = scores.iter().cloned().sum();
                 self.search_statistics.average_score =
-                    sum / num_traits::cast::cast(scores.len()).unwrap_or_else(|| T::one());
+                    sum / scirs2_core::numeric::NumCast::from(scores.len()).unwrap_or_else(|| T::one());
             }
         }
     }
@@ -805,7 +805,7 @@ impl<
 
                 let diversity = self.calculate_population_diversity(&generation_results);
                 diversity_over_time
-                    .push(num_traits::cast::cast(diversity).unwrap_or_else(|| T::zero()));
+                    .push(scirs2_core::numeric::NumCast::from(diversity).unwrap_or_else(|| T::zero()));
             }
         }
 
@@ -816,7 +816,7 @@ impl<
                 let delta = *best_scores_over_time.last().unwrap()
                     - *best_scores_over_time.first().unwrap();
                 delta
-                    / num_traits::cast::cast(best_scores_over_time.len())
+                    / scirs2_core::numeric::NumCast::from(best_scores_over_time.len())
                         .unwrap_or_else(|| T::one())
             } else {
                 T::zero()
@@ -826,9 +826,9 @@ impl<
                     &diversity_over_time[diversity_over_time.len().saturating_sub(5)..];
                 let variance = recent_diversity
                     .iter()
-                    .map(|&d| num_traits::cast::cast(d).unwrap_or(T::zero()))
+                    .map(|&d| scirs2_core::numeric::NumCast::from(d).unwrap_or(T::zero()))
                     .fold(T::zero(), |acc: T, d: T| acc + d * d)
-                    / num_traits::cast::cast(recent_diversity.len()).unwrap_or_else(|| T::one());
+                    / scirs2_core::numeric::NumCast::from(recent_diversity.len()).unwrap_or_else(|| T::one());
                 variance.sqrt()
             } else {
                 T::one()
@@ -853,7 +853,7 @@ impl<
             .count();
 
         let success_rate = if total_evaluations > 0 {
-            num_traits::cast::cast(successful_evaluations as f64 / total_evaluations as f64)
+            scirs2_core::numeric::NumCast::from(successful_evaluations as f64 / total_evaluations as f64)
                 .unwrap_or_else(|| T::zero())
         } else {
             T::zero()
@@ -1059,12 +1059,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformanceEvaluator<T> {
         let mut scores = HashMap::new();
         scores.insert(
             EvaluationMetric::FinalPerformance,
-            num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
         );
 
         Ok(EvaluationResults {
             metric_scores: scores,
-            overall_score: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            overall_score: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             confidence_intervals: HashMap::new(),
             evaluation_time: Duration::from_secs(1),
             success: true,
@@ -1102,8 +1102,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformancePredictor<T> {
         Ok(Self {
             model_type: PredictorType::NeuralNetwork,
             training_data: Vec::new(),
-            prediction_accuracy: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-            confidence_threshold: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            prediction_accuracy: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+            confidence_threshold: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -1115,12 +1115,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformancePredictor<T> {
         let mut scores = HashMap::new();
         scores.insert(
             EvaluationMetric::FinalPerformance,
-            num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
         );
 
         Ok(EvaluationResults {
             metric_scores: scores,
-            overall_score: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+            overall_score: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
             confidence_intervals: HashMap::new(),
             evaluation_time: Duration::from_millis(10),
             success: true,

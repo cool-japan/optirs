@@ -4,7 +4,7 @@
 // memory-efficient implementations of optimization algorithms.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 use std::ops::{AddAssign, MulAssign, SubAssign};

@@ -3,7 +3,7 @@
 // Based on the paper "Symbolic Discovery of Optimization Algorithms"
 // by Chen et al. (2023).
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 

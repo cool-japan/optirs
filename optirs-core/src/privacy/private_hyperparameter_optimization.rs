@@ -7,7 +7,7 @@
 use crate::error::{OptimError, Result};
 use crate::privacy::moment_accountant::MomentsAccountant;
 use crate::privacy::{DifferentialPrivacyConfig, PrivacyBudget};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::random::rngs::StdRng;
 use scirs2_core::random::Rng;
@@ -1128,7 +1128,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
         let improvement = best_recent - best_overall;
 
         Ok(improvement
-            < num_traits::cast::cast(self.config.early_stopping.min_improvement)
+            < T::from(self.config.early_stopping.min_improvement)
                 .unwrap_or_else(|| T::zero()))
     }
 
@@ -1291,7 +1291,7 @@ impl<T: Float + Debug + Send + Sync + 'static> NoisyOptimizer<T> for PrivateRand
                     let max = param_def
                         .bounds
                         .max
-                        .unwrap_or(num_traits::cast::cast(100).unwrap_or_else(|| T::zero()))
+                        .unwrap_or(T::from(100).unwrap_or_else(|| T::zero()))
                         .to_i64()
                         .unwrap_or(100);
                     ParameterValue::Integer(self.rng.gen_range(min..max + 1))
@@ -1383,7 +1383,7 @@ impl<T: Float + Debug + Send + Sync + 'static> NoisyOptimizer<T>
                     _ => {
                         // Simplified for other types
                         ParameterValue::Continuous(
-                            num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                            T::from(0.5).unwrap_or_else(|| T::zero()),
                         )
                     }
                 };
@@ -1613,7 +1613,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
             .add_noise(objective_value, privacy_budget)?;
 
         Ok(HPOResult {
-            objective_value: num_traits::cast::cast(noisy_value).unwrap_or_else(|| T::zero()),
+            objective_value: T::from(noisy_value).unwrap_or_else(|| T::zero()),
             standard_error: None,
             cv_scores: None,
             training_time: None,
@@ -1645,13 +1645,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
     }
 
     pub fn add_noise(&mut self, value: f64, _privacybudget: &PrivacyBudget) -> Result<f64> {
-        use scirs2_core::random::{Rng};
-        use scirs2_core::random::distributions::Normal;
+        use scirs2_core::random::{Rng, RandNormal};
 
         match self.mechanism_type {
             HyperparameterNoiseMechanism::Gaussian => {
                 let noise_scale = self.noise_params.scale.to_f64().unwrap_or(1.0);
-                let normal = Normal::new(0.0, noise_scale)
+                let normal = RandNormal::new(0.0, noise_scale)
                     .map_err(|_| OptimError::InvalidConfig("Invalid noise scale".to_string()))?;
 
                 let noise = self.rng.sample(&normal);
@@ -1782,9 +1781,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStrategy<T> {
             exploration_factor: 0.1,
             convergence_criteria: ConvergenceCriteria {
                 max_iterations: 100,
-                tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+                tolerance: T::from(1e-6).unwrap_or_else(|| T::zero()),
                 patience: 10,
-                min_change: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+                min_change: T::from(1e-4).unwrap_or_else(|| T::zero()),
             },
         }
     }
@@ -1919,7 +1918,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AnomalyDetector<T> {
 impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
     pub fn new() -> Self {
         Self {
-            threshold: num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero()),
+            threshold: T::from(3.0).unwrap_or_else(|| T::zero()),
             detection_method: AnomalyDetectionMethod::ZScore,
             baseline: None,
         }
@@ -1969,7 +1968,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AcquisitionFunction<T> {
         Self {
             function_type: AcquisitionFunctionType::ExpectedImprovement,
             parameters: Vec::new(),
-            exploration_weight: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            exploration_weight: T::from(0.1).unwrap_or_else(|| T::zero()),
         }
     }
 }

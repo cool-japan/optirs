@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements differentiable NAS approaches like DARTS,
 // where architecture parameters are optimized using gradient descent.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use super::super::architecture::ArchitectureCandidate;

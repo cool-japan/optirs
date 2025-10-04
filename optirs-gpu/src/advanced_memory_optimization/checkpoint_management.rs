@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 use scirs2_core::ndarray_ext::Array2;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};

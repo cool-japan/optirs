@@ -3,7 +3,7 @@
 // This module provides detailed performance metrics, monitoring capabilities,
 // and analytics for streaming optimization systems.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

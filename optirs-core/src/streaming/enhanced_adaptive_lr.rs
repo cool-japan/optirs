@@ -4,7 +4,7 @@
 // dynamically adjust learning rates based on multiple signals including
 // gradient statistics, performance metrics, concept drift, and resource constraints.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};

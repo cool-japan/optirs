@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use crate::regression_tester::types::{DatabaseMetadata, PerformanceRecord};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

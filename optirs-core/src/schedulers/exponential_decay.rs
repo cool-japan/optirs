@@ -1,6 +1,6 @@
 // Exponential decay learning rate scheduler
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt::Debug;
 

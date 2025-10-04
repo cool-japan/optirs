@@ -1,7 +1,7 @@
 // Configuration structures for transformer-based optimizer
 
 use super::positional_encoding::PositionalEncodingType;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -85,7 +85,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerBasedOptim
             feedforward_dimension: 2048,
             sequence_length: 128,
             dropout_rate: 0.1,
-            learning_rate: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            learning_rate: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             batch_size: 32,
             num_epochs: 100,
             activation_function: ActivationFunction::ReLU,
@@ -94,8 +94,8 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerBasedOptim
             meta_learning_config: MetaLearningConfig::default(),
             performance_config: PerformanceConfig::default(),
             enable_gradient_clipping: true,
-            gradient_clip_value: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            weight_decay: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            gradient_clip_value: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            weight_decay: scirs2_core::numeric::NumCast::from(1e-5).unwrap_or_else(|| T::zero()),
             warmup_steps: 1000,
             enable_layer_norm: true,
             use_pre_norm: true,
@@ -136,10 +136,10 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerBasedOptimizerConfig<T
         Self {
             batch_size: 64,
             num_epochs: 200,
-            learning_rate: num_traits::cast::cast(2e-4).unwrap_or_else(|| T::zero()),
+            learning_rate: scirs2_core::numeric::NumCast::from(2e-4).unwrap_or_else(|| T::zero()),
             warmup_steps: 2000,
             enable_gradient_clipping: true,
-            weight_decay: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            weight_decay: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             ..Self::default()
         }
     }
@@ -347,9 +347,9 @@ pub struct MetaLearningConfig<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for MetaLearningConfig<T> {
     fn default() -> Self {
         Self {
-            meta_learning_rate: num_traits::cast::cast(1e-3).unwrap_or_else(|| T::zero()),
+            meta_learning_rate: scirs2_core::numeric::NumCast::from(1e-3).unwrap_or_else(|| T::zero()),
             inner_steps: 5,
-            inner_learning_rate: num_traits::cast::cast(1e-2).unwrap_or_else(|| T::zero()),
+            inner_learning_rate: scirs2_core::numeric::NumCast::from(1e-2).unwrap_or_else(|| T::zero()),
             first_order: false,
             num_support: 5,
             num_query: 15,

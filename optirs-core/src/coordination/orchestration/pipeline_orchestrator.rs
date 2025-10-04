@@ -4,7 +4,7 @@
 // managing complex optimization workflows with multiple stages, dependencies,
 // and parallel execution paths.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::Array1;
 use std::collections::{HashMap, VecDeque};

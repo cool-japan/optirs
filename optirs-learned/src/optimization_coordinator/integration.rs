@@ -6,7 +6,7 @@ use super::state::*;
 use crate::benchmarking::enhanced_memory_monitor::{TrendDirection, AlertSeverity};
 use crate::OptimizerError as OptimError;
 use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
