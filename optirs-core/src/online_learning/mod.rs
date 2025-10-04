@@ -6,7 +6,7 @@
 use crate::error::{OptimError, Result};
 use num_traits::Float;
 use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
-use scirs2_core::random::{rng, Random};
+use scirs2_core::random::{thread_rng, Random};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -730,7 +730,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                         self.memory_buffer.importance_scores.pop_front();
                     }
                     MemoryUpdateStrategy::Random => {
-                        let idx = scirs2_core::random::rng()
+                        let idx = thread_rng()
                             .gen_range(0..self.memory_buffer.examples.len());
                         self.memory_buffer.examples.remove(idx);
                         self.memory_buffer.importance_scores.remove(idx);

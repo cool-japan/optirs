@@ -201,7 +201,6 @@ impl<
             + std::iter::Sum
             + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug
-            + scirs2_core::random::distributions::uniform::SampleUniform,
     > FederatedPrivacyCoordinator<T>
 {
     /// Create a new federated privacy coordinator
@@ -355,7 +354,7 @@ impl<
     /// Sample clients for federated round
     fn sample_clients(&self, availableclients: &[String]) -> Result<Vec<String>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
         let target_count = self.config.clients_per_round.min(availableclients.len());
 
         match self.config.sampling_strategy {
@@ -408,7 +407,7 @@ impl<
         selectedclients: &[String],
     ) -> Result<SecureAggregationPlan> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
 
         let mut masking_seeds = HashMap::new();
         for client in selectedclients {

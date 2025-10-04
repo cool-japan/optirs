@@ -1645,7 +1645,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
     }
 
     pub fn add_noise(&mut self, value: f64, _privacybudget: &PrivacyBudget) -> Result<f64> {
-        use scirs2_core::random::distributions::{Distribution, Normal};
+        use scirs2_core::random::{Rng};
+        use scirs2_core::random::distributions::Normal;
 
         match self.mechanism_type {
             HyperparameterNoiseMechanism::Gaussian => {
@@ -1653,7 +1654,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
                 let normal = Normal::new(0.0, noise_scale)
                     .map_err(|_| OptimError::InvalidConfig("Invalid noise scale".to_string()))?;
 
-                let noise = normal.sample(&mut self.rng);
+                let noise = self.rng.sample(&normal);
                 Ok(value + noise)
             }
             _ => Ok(value), // Simplified for other mechanisms

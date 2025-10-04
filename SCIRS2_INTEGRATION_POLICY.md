@@ -2,37 +2,146 @@
 
 ## 🚨 CRITICAL ARCHITECTURAL REQUIREMENT
 
-**OptiRS MUST use SciRS2 as its scientific computing foundation.** This document establishes the policy for proper, minimal, and effective integration of SciRS2 crates into OptiRS.
+**OptiRS MUST use SciRS2 as its scientific computing foundation.** This document establishes the policy for proper, minimal, and effective integration of SciRS2 crates into OptiRS, following the [SciRS2 Ecosystem Policy](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md).
 
 ## Core Integration Principles
 
-### 1. **Foundation, Not Dependency Bloat**
-- OptiRS extends SciRS2's capabilities with ML optimization specialization
-- Use SciRS2 crates **only when actually needed** by OptiRS functionality
-- **DO NOT** add SciRS2 crates "just in case" - add them when code requires them
+### 1. **Strict Dependency Abstraction (MANDATORY)**
+- **OptiRS is a non-core SciRS2 ecosystem crate** - it extends but does not replace SciRS2
+- **NO DIRECT EXTERNAL DEPENDENCIES** allowed in OptiRS (only scirs2-* crates)
+- **ALL scientific computing MUST go through scirs2-core abstractions**
+- This is not optional - it is the foundational architecture of the SciRS2 ecosystem
 
-### 2. **Evidence-Based Integration**
-- Each SciRS2 crate must have **clear justification** based on OptiRS features
-- Document **specific use cases** for each integrated SciRS2 crate
-- Remove unused SciRS2 dependencies during code reviews
+### 2. **Prohibited Direct Dependencies**
+```toml
+# ❌ FORBIDDEN in all OptiRS crates (workspace and individual Cargo.toml)
+[dependencies]
+rand = "*"              # ❌ Use scirs2-core::random instead
+rand_distr = "*"        # ❌ Use scirs2-core::random instead
+rand_core = "*"         # ❌ Use scirs2-core::random instead
+ndarray = "*"           # ❌ Use scirs2-core::ndarray instead
+ndarray-rand = "*"      # ❌ Use scirs2-core::ndarray instead
+ndarray-stats = "*"     # ❌ Use scirs2-core::ndarray instead
+num-traits = "*"        # ❌ Use scirs2-core::numeric instead
+num-complex = "*"       # ❌ Use scirs2-core::numeric instead
+nalgebra = "*"          # ❌ Use scirs2-core::linalg instead
+```
 
-### 3. **Architectural Hierarchy**
+### 3. **Required Import Patterns**
+```rust
+// ❌ FORBIDDEN - Direct external imports
+use rand::*;
+use rand::Rng;
+use rand_distr::{Beta, Normal};
+use ndarray::{Array, Array1, Array2, array, s};
+use num_complex::Complex;
+use num_traits::Float;
+
+// ✅ REQUIRED - SciRS2-Core abstractions
+use scirs2_core::random::*;           // Complete rand + rand_distr functionality
+use scirs2_core::ndarray::*;          // Complete ndarray ecosystem with macros
+use scirs2_core::numeric::*;          // num-traits, num-complex, num-integer
+```
+
+### 4. **Architectural Hierarchy**
 ```
 OptiRS (ML Optimization Specialization)
-    ↓ builds upon
-SciRS2 (Scientific Computing Foundation)
-    ↓ builds upon
-ndarray, num-traits, etc. (Core Rust Scientific Stack)
+    ↓ uses abstractions from
+SciRS2-Core (Unified Scientific Computing Layer)
+    ↓ manages and abstracts
+External Libraries (rand, ndarray, num-traits, etc.)
+```
+
+**Key Point**: OptiRS does NOT directly depend on external libraries. Only scirs2-core can use them.
+
+## Complete Dependency Mapping (from SciRS2 Policy)
+
+**ALL external dependencies MUST go through scirs2-core abstractions:**
+
+| External Crate | SciRS2-Core Module | OptiRS Usage |
+|----------------|-------------------|--------------|
+| `rand` | `scirs2_core::random` | Random initialization, stochastic optimization |
+| `rand_distr` | `scirs2_core::random` | Probability distributions for sampling |
+| `ndarray` | `scirs2_core::ndarray` | Array operations, gradients, parameters |
+| `ndarray-rand` | `scirs2_core::ndarray` | Array initialization |
+| `ndarray-stats` | `scirs2_core::ndarray` | Statistical operations on arrays |
+| `num-traits` | `scirs2_core::numeric` | Numerical traits (Float, Zero, One) |
+| `num-complex` | `scirs2_core::numeric` | Complex number support |
+| `num-integer` | `scirs2_core::numeric` | Integer traits |
+| `nalgebra` | `scirs2_core::linalg` | Linear algebra (if needed) |
+
+### Additional Required Abstractions for OptiRS
+
+#### SIMD Operations (Performance-Critical)
+```rust
+// ✅ REQUIRED - Use unified SIMD operations
+use scirs2_core::simd_ops::SimdUnifiedOps;
+
+// Automatic SIMD optimization for gradient operations
+let result = f32::simd_add(&gradients.view(), &updates.view());
+let dot = f64::simd_dot(&params.view(), &grads.view());
+```
+
+#### Parallel Processing (Multi-threaded Optimization)
+```rust
+// ✅ REQUIRED - Use core parallel abstractions
+use scirs2_core::parallel_ops::*;
+
+// Parallel parameter updates
+params.par_chunks_mut(chunk_size)
+    .for_each(|chunk| update_chunk(chunk));
+```
+
+#### GPU Acceleration (optirs-gpu module)
+```rust
+// ✅ REQUIRED - Use core GPU abstractions
+use scirs2_core::gpu::{GpuDevice, GpuKernel};
+
+// Unified GPU interface for CUDA, Metal, OpenCL, WebGPU
+let device = GpuDevice::default()?;
+```
+
+#### Error Handling (All Modules)
+```rust
+// ✅ REQUIRED - Use core error types
+use scirs2_core::error::{CoreError, Result};
+use scirs2_core::validation::{check_positive, check_finite};
+
+// Consistent error handling across OptiRS
+pub type OptiRsResult<T> = Result<T, OptiRsError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum OptiRsError {
+    #[error(transparent)]
+    Core(#[from] CoreError),
+    // OptiRS-specific errors...
+}
+```
+
+#### Memory Management (Large-Scale Optimization)
+```rust
+// ✅ REQUIRED - Use core memory-efficient operations
+use scirs2_core::memory_efficient::{MemoryMappedArray, LazyArray};
+use scirs2_core::memory::{BufferPool, GlobalBufferPool};
+
+// Memory-efficient gradient accumulation
+let buffer_pool = GlobalBufferPool::get();
 ```
 
 ## Required SciRS2 Crates Analysis
 
 ### **ESSENTIAL (Always Required)**
 
-#### `scirs2-core` - FOUNDATION
-- **Use Cases**: Core scientific primitives, ScientificNumber trait, random number generation
-- **OptiRS Modules**: All modules use core utilities
-- **Status**: ✅ REQUIRED - Foundation crate
+#### `scirs2-core` - FOUNDATION (CRITICAL)
+- **Use Cases**:
+  - Core scientific primitives, random number generation (replaces rand/rand_distr)
+  - Array operations (replaces ndarray)
+  - Numerical traits (replaces num-traits/num-complex)
+  - SIMD operations, GPU abstractions, parallel processing
+  - Error handling, memory management
+- **OptiRS Modules**: **ALL MODULES** - Foundation for everything
+- **Status**: ✅ REQUIRED - Absolutely mandatory foundation crate
+- **Features**: Enable `["array", "random", "simd", "parallel", "gpu"]` as needed
 
 #### `scirs2-optimize` - OPTIMIZATION BASE
 - **Use Cases**: Base optimization interfaces, optimizer trait definitions

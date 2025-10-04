@@ -6,7 +6,7 @@
 
 use num_traits::Float;
 use scirs2_core::ndarray_ext::{Array, Axis, Dimension, Ix3, ScalarOperand};
-use std::fmt::Debug;
+use scirs2_core::legacy::rng;use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
 use crate::regularizers::Regularizer;
@@ -20,7 +20,7 @@ use crate::regularizers::Regularizer;
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array4;
-/// use scirs2_autograd::ndarray::array;
+use scirs2_core::legacy::rng;/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::SpatialDropout;
 ///
 /// let spatial_dropout = SpatialDropout::new(0.3).unwrap(); // 30% dropout rate
@@ -80,7 +80,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 
         // Create a mask for each feature map
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
         let feature_mask: Vec<bool> = (0..feature_size)
             .map(|_| rng.random_bool_with_chance(keep_prob_f64))
             .collect();
@@ -112,7 +112,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 ///
 /// ```
 /// use scirs2_core::ndarray_ext::Array3;
-/// use scirs2_autograd::ndarray::array;
+use scirs2_core::legacy::rng;/// use scirs2_autograd::ndarray::array;
 /// use optirs_core::regularizers::FeatureDropout;
 ///
 /// let feature_dropout = FeatureDropout::new(0.5).unwrap(); // 50% dropout rate
@@ -172,7 +172,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
 
         // Create a consistent mask for each feature
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
         let feature_mask: Vec<bool> = (0..feature_size)
             .map(|_| rng.random_bool_with_chance(keep_prob_f64))
             .collect();

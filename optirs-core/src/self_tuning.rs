@@ -617,9 +617,9 @@ impl<
 
     /// Epsilon-greedy optimizer selection
     fn select_epsilon_greedy(&self) -> usize {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
 
-        if A::from(rng.random_f64()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
+        if A::from(rng.gen::<f64>()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
             // Explore: random selection
             rng.gen_range(0..self.optimizer_candidates.len())
         } else {
@@ -637,7 +637,7 @@ impl<
     /// Thompson sampling optimizer selection
     fn select_thompson_sampling(&self) -> usize {
         // Simplified Thompson sampling - in practice would use Beta distributions
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
 
         let mut best_sample = f64::NEG_INFINITY;
         let mut best_idx = 0;

@@ -421,18 +421,15 @@ where
     A: Float + ScalarOperand,
     D: Dimension,
 {
-    use scirs2_core::random::distributions::{Distribution, Normal};
-    use scirs2_core::random::{RandomExt, SeedableRng};
+    use scirs2_core::legacy::rng;
+    use scirs2_core::random::Rng;
+    use scirs2_core::random::distributions::Normal;
 
     if noise_std <= A::zero() {
         return gradients;
     }
 
-    let mut rng = if let Some(s) = seed {
-        <scirs2_core::random::rngs::StdRng as scirs2_core::random::SeedableRng>::seed_from_u64(s)
-    } else {
-        <scirs2_core::random::rngs::StdRng as scirs2_core::random::SeedableRng>::seed_from_u64(42)
-    };
+    let mut rng = rng();
 
     // Create noise array manually to avoid trait compatibility issues
     let shape = gradients.raw_dim();
@@ -440,7 +437,7 @@ where
     let normal = Normal::new(0.0, noise_std.to_f64().unwrap_or(0.01)).unwrap();
 
     for elem in noise.iter_mut() {
-        *elem = A::from(Distribution::sample(&normal, &mut rng)).unwrap_or(A::zero());
+        *elem = A::from(rng.sample(&normal)).unwrap_or(A::zero());
     }
 
     gradients.zip_mut_with(&noise, |g, &n| {

@@ -247,7 +247,7 @@ enum PrivacyEventType {
 impl<O, A, D> DifferentiallyPrivateOptimizer<O, A, D>
 where
     A: Float
-        + scirs2_core::random::distributions::uniform::SampleUniform
+        
         + std::ops::AddAssign
         + std::ops::SubAssign
         + Send
@@ -266,7 +266,7 @@ where
             config.dataset_size,
         );
 
-        let rng = scirs2_core::random::rng();
+        let rng = rng();
 
         let adaptive_clip_state = if config.adaptive_clipping {
             Some(AdaptiveClippingState {

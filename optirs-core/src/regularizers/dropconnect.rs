@@ -5,6 +5,7 @@
 
 use num_traits::Float;
 use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::legacy::rng;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -81,7 +82,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> DropConnect<A> {
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
 
         // Sample mask
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
         let mask = Array::from_shape_fn(weights.raw_dim(), |_| {
             rng.random_bool_with_chance(keep_prob_f64)
         });
@@ -119,7 +120,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> DropConnect<A> {
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
 
         // Create mask with same shape as weights
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
         let mask =
             Array::from_shape_fn(weightsshape, |_| rng.random_bool_with_chance(keep_prob_f64));
 

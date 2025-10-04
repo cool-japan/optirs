@@ -164,7 +164,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     fn default() -> Self {
         Self::new()
@@ -179,7 +179,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     /// Create a new Gaussian mechanism
     pub fn new() -> Self {
@@ -248,7 +248,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     fn add_noise_1d(
         &mut self,
@@ -309,7 +309,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     fn default() -> Self {
         Self::new()
@@ -324,7 +324,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     /// Create a new Laplace mechanism
     pub fn new() -> Self {
@@ -387,7 +387,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     fn add_noise_1d(
         &mut self,
@@ -448,7 +448,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     /// Create a new exponential mechanism
     pub fn new(_qualityfunction: Box<dyn Fn(&T) -> T + Send + Sync>) -> Self {
@@ -510,7 +510,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     /// Create a new truncated noise mechanism
     pub fn new(_base_mechanism: Box<dyn NoiseMechanism<T> + Send>, truncationbound: T) -> Self {
@@ -530,7 +530,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     fn add_noise_1d(
         &mut self,
@@ -606,7 +606,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform
+        
         + std::iter::Sum,
 {
     /// Create a new tree aggregation mechanism
@@ -665,7 +665,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+        ,
 {
     /// Create a new sparse vector mechanism
     pub fn new(
@@ -735,7 +735,7 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform
+        
         + std::iter::Sum
         + 'static,
 {
@@ -914,7 +914,7 @@ where
     T: Float
         + Default
         + Clone
-        + scirs2_core::random::distributions::uniform::SampleUniform
+        
         + 'static,
 {
     let (rows, cols) = shape;

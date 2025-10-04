@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::privacy::{DifferentialPrivacyConfig, NoiseMechanism, PrivacyBudget};
 use num_traits::Float;
 use scirs2_core::ndarray_ext::{ArrayBase, Data, Dimension};
+use scirs2_core::legacy::rng;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -1949,7 +1950,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 }
             }
             SamplingStrategy::Random => {
-                let mut rng = scirs2_core::random::rng();
+                let mut rng = rng();
                 for _ in 0..range.num_samples {
                     let value = rng.gen_range(range.min..range.max);
                     values.push(num_traits::cast::cast(value).unwrap_or_else(|| T::zero()));

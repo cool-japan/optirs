@@ -183,14 +183,14 @@ impl<A: Float + ScalarOperand + Debug + num_traits::FromPrimitive + Send + Sync>
 {
     /// Create a new selection network
     pub fn new(input_size: usize, hidden_size: usize, num_optimizers: usize) -> Self {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
 
         let input_weights = Array2::from_shape_fn((hidden_size, input_size), |_| {
-            A::from(rng.random_f64()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.gen::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
         });
 
         let output_weights = Array2::from_shape_fn((num_optimizers, hidden_size), |_| {
-            A::from(rng.random_f64()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.gen::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
         });
 
         let input_bias = Array1::zeros(hidden_size);
@@ -432,10 +432,10 @@ impl<A: Float + ScalarOperand + Debug + num_traits::FromPrimitive + Send + Sync>
         epsilon: f64,
         confidence: f64,
     ) -> Result<OptimizerType> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = rng();
 
         // Epsilon-greedy exploration
-        if rng.random_f64() < epsilon {
+        if rng.gen::<f64>() < epsilon {
             // Explore: random selection
             let idx = rng.gen_range(0..self.available_optimizers.len());
             return Ok(self.available_optimizers[idx]);

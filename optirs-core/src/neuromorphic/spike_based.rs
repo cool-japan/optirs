@@ -17,6 +17,8 @@ use crate::error::Result;
 use crate::optimizers::Optimizer;
 use num_traits::Float;
 use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::legacy::rng;
+use scirs2_core::random::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -303,7 +305,7 @@ impl<
             let spike_prob =
                 firing_rate * dt / num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero());
 
-            if scirs2_core::random::f64() < spike_prob.to_f64().unwrap_or(0.0) {
+            if rng().gen::<f64>() < spike_prob.to_f64().unwrap_or(0.0) {
                 spike_times.push(time);
             }
 

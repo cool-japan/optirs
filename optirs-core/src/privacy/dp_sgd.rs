@@ -7,6 +7,7 @@
 use num_traits::Float;
 #[allow(dead_code)]
 use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::legacy::rng;
 use scirs2_core::random::distributions::Normal;
 use std::collections::{HashMap, VecDeque};
 
@@ -216,7 +217,6 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform
         + scirs2_core::ndarray_ext::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum,
@@ -232,7 +232,7 @@ where
             config.dataset_size,
         );
 
-        let rng = scirs2_core::random::rng();
+        let rng = rng();
 
         let adaptive_clipping = if config.adaptive_clipping {
             Some(AdaptiveClippingState::new(

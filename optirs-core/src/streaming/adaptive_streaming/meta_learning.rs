@@ -9,6 +9,7 @@ use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, Streaming
 use super::performance::{PerformanceSnapshot, PerformanceTracker};
 
 use num_traits::Float;
+use scirs2_core::random::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -936,7 +937,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer
         } else {
             // Random sampling
             for _ in 0..batch_size.min(self.experiences.len()) {
-                let idx = scirs2_core::random::usize(0..self.experiences.len());
+                let idx = rng().gen_range(0..self.experiences.len());
                 if let Some(experience) = self.experiences.get(idx) {
                     batch.push(experience.clone());
                 }
