@@ -6,7 +6,7 @@
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2, Dimension};
+use scirs2_core::ndarray_ext::{Array1, Array2, Dimension};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -1178,7 +1178,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug,
     > MetaLearningFramework<T>
 {
@@ -1224,7 +1224,7 @@ impl<
                     gradient_clip: Some(config.gradient_clip),
                 };
                 Ok(Box::new(
-                    MAMLLearner::<T, scirs2_core::ndarray::Ix1>::new(maml_config)?,
+                    MAMLLearner::<T, scirs2_core::ndarray_ext::Ix1>::new(maml_config)?,
                 ))
             }
             _ => {
@@ -1241,7 +1241,7 @@ impl<
                     gradient_clip: Some(config.gradient_clip),
                 };
                 Ok(Box::new(
-                    MAMLLearner::<T, scirs2_core::ndarray::Ix1>::new(maml_config)?,
+                    MAMLLearner::<T, scirs2_core::ndarray_ext::Ix1>::new(maml_config)?,
                 ))
             }
         }
@@ -1549,7 +1549,7 @@ impl<
             + Clone
             + Send
             + Sync
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug,
         D: Dimension,
     > MAMLLearner<T, D>
@@ -1587,7 +1587,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
         D: Dimension,
     > MetaLearner<T> for MAMLLearner<T, D>
 {

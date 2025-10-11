@@ -3,7 +3,7 @@
 // This module implements advanced second-order optimization algorithms that
 // leverage automatic differentiation for computing Hessians and curvature information.
 
-use scirs2_core::ndarray::{Array, Array1, Array2, Axis};
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, Axis};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::VecDeque;

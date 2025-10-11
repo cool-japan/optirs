@@ -5,7 +5,7 @@
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -39,7 +39,7 @@ pub struct TransformerMetaLearner<
         + Default
         + Clone
         + std::iter::Sum
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + Send
         + Sync
         + 'static,
@@ -369,7 +369,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > TransformerMetaLearner<T>
 {
     /// Create new meta-learner
@@ -605,7 +605,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > DomainAdapter<T>
 {
     fn new() -> Result<Self> {
@@ -631,7 +631,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > FewShotLearner<T>
 {
     fn new() -> Result<Self> {
@@ -678,7 +678,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > ContinualLearningState<T>
 {
     fn new() -> Result<Self> {
@@ -723,7 +723,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > DomainSimilarityEstimator<T>
 {
     fn new() -> Result<Self> {
@@ -743,7 +743,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > TransferEfficiencyTracker<T>
 {
     fn new() -> Result<Self> {
@@ -763,7 +763,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > DistanceMetricLearner<T>
 {
     fn new() -> Result<Self> {
@@ -783,7 +783,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > Default for MetaLearningParams<T>
 {
     fn default() -> Self {
@@ -807,7 +807,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > Default for FewShotParams<T>
 {
     fn default() -> Self {

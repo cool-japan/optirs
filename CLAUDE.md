@@ -158,10 +158,10 @@ OptiRS must make **FULL USE** of scirs2-core's extensive capabilities:
 #### Core Array Operations (replaces ndarray)
 ```rust
 // ✅ CORRECT - Use scirs2-core's unified ndarray module (v0.1.0-beta.4+)
-use scirs2_core::ndarray::*;  // Complete ndarray functionality including macros
-use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
-use scirs2_core::ndarray::{Axis, Ix1, Ix2, IxDyn};
-use scirs2_core::ndarray::{array, s, azip};  // ALL macros available directly
+use scirs2_core::ndarray_ext::*;  // Complete ndarray functionality including macros
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayView, ArrayViewMut};
+use scirs2_core::ndarray_ext::{Axis, Ix1, Ix2, IxDyn};
+use scirs2_core::ndarray_ext::{array, s, azip};  // ALL macros available directly
 
 // Example usage
 let arr = array![[1.0, 2.0], [3.0, 4.0]];  // array! macro works
@@ -421,9 +421,9 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 ### Importing Core Types - FULL SciRS2 Usage (CORRECT) - v0.1.0-beta.4+
 ```rust
 // ✅ Arrays and numerical operations (SciRS2 v0.1.0-beta.4+)
-use scirs2_core::ndarray::*;  // Includes array!, s!, azip! macros - ALL AVAILABLE
-use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
-use scirs2_core::ndarray::{Ix1, Ix2, IxDyn, Axis};
+use scirs2_core::ndarray_ext::*;  // Includes array!, s!, azip! macros - ALL AVAILABLE
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayView, ArrayViewMut};
+use scirs2_core::ndarray_ext::{Ix1, Ix2, IxDyn, Axis};
 
 // Example: array! macro works directly
 let arr = array![[1.0, 2.0], [3.0, 4.0]];
@@ -476,7 +476,7 @@ use rayon::prelude::*; // NEVER - Use scirs2_core::parallel_ops
 // optirs-core/src/optimizers/new_optimizer.rs
 
 // ✅ CORRECT imports
-use scirs2_core::ndarray::{Array2, ArrayView2};
+use scirs2_core::ndarray_ext::{Array2, ArrayView2};
 use scirs2_core::random::{thread_rng, Rng};
 use scirs2_core::numeric::{Float, Zero};
 use scirs2_core::simd_ops::SimdUnifiedOps;
@@ -626,8 +626,8 @@ When reviewing or writing OptiRS code, verify these requirements:
 ### ✅ Arrays and Numerical Operations
 - [ ] NO direct `use ndarray::{...}`
 - [ ] NO direct `Array`, `Array1`, `Array2` from ndarray
-- [ ] YES `use scirs2_core::ndarray::*` (unified module v0.1.0-beta.4+)
-- [ ] YES `use scirs2_core::ndarray::{Array, Array1, Array2, array, s}`
+- [ ] YES `use scirs2_core::ndarray_ext::*` (unified module v0.1.0-beta.4+)
+- [ ] YES `use scirs2_core::ndarray_ext::{Array, Array1, Array2, array, s}`
 
 ### ✅ Random Number Generation
 - [ ] NO direct `use rand::{...}`
@@ -673,7 +673,7 @@ use rayon::prelude::*;               // NEVER USE
 let mut rng = rng();  // WRONG - function not available
 
 // ✅ CORRECT - SciRS2-Core abstractions (REQUIRED - v0.1.0-beta.4+)
-use scirs2_core::ndarray::{Array2, array, s};  // ALL macros available
+use scirs2_core::ndarray_ext::{Array2, array, s};  // ALL macros available
 use scirs2_core::random::{thread_rng, Normal, RandBeta};  // ALL distributions
 use scirs2_core::numeric::{Float, Complex};
 use scirs2_core::validation::{check_positive, check_finite};

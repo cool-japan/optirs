@@ -4,7 +4,7 @@
 // including policy gradient methods, actor-critic algorithms, and trust region methods.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -508,5 +508,5 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for RLOptimizationMetrics
 }
 
 // Import slice syntax
-use scirs2_core::ndarray::s;
+use scirs2_core::ndarray_ext::s;
 // use statrs::statistics::Statistics; // statrs not available

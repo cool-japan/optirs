@@ -6,7 +6,7 @@
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension};
 use scirs2_core::random::RandNormal;
 use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
@@ -22,12 +22,12 @@ where
     A: Float
         + Send
         + Sync
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + std::fmt::Debug
         + Default
         + Clone
         + std::iter::Sum,
-    D: scirs2_core::ndarray::Dimension,
+    D: scirs2_core::ndarray_ext::Dimension,
     O: Optimizer<A, D>,
 {
     /// Base optimizer (SGD, Adam, etc.)
@@ -217,10 +217,10 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum,
-    D: scirs2_core::ndarray::Dimension,
+    D: scirs2_core::ndarray_ext::Dimension,
     O: Optimizer<A, D> + Send + Sync,
 {
     /// Create a new DP-SGD optimizer
@@ -900,7 +900,7 @@ mod tests {
     fn test_dp_sgd_creation() {
         let sgd = SGD::new(0.01);
         let config = DifferentialPrivacyConfig::default();
-        let dp_sgd = DPSGDOptimizer::<_, f64, scirs2_core::ndarray::Ix1>::new(sgd, config);
+        let dp_sgd = DPSGDOptimizer::<_, f64, scirs2_core::ndarray_ext::Ix1>::new(sgd, config);
         assert!(dp_sgd.is_ok());
     }
 

@@ -3,7 +3,7 @@ use std::fmt::Debug;
 
 use crate::error::Result;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
 use std::f64::consts::PI;
 
 /// Multi-head attention mechanism

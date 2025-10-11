@@ -5,7 +5,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
 use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

@@ -5,7 +5,7 @@ use super::meta_learning::MetaLearningResult;
 use super::TrainingMetrics;
 use crate::error::Result;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;

@@ -7,7 +7,7 @@
 
 use super::{PolicyNetwork, RLOptimizationMetrics, RLOptimizerConfig, TrajectoryBatch};
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 

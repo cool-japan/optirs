@@ -97,7 +97,7 @@ optirs-gpu = { version = "0.1.0-beta.1", features = ["cuda"] }
 ```rust
 use optirs::prelude::*;
 // ALWAYS use scirs2_core for arrays - NEVER direct ndarray!
-use scirs2_core::ndarray::Array2;
+use scirs2_core::ndarray_ext::Array2;
 
 // Create an optimizer with SciRS2 integration
 let optimizer = Adam::new(0.001)?;
@@ -112,8 +112,8 @@ let updated_params = optimizer.step(&gradients)?;
 ### ✅ CORRECT Usage - Full SciRS2 Integration
 ```rust
 // Arrays and numerical operations
-use scirs2_core::ndarray::{Array, Array2, ArrayView};
-use scirs2_core::ndarray::stats::{mean, variance};
+use scirs2_core::ndarray_ext::{Array, Array2, ArrayView};
+use scirs2_core::ndarray_ext::stats::{mean, variance};
 
 // Random number generation
 use scirs2_core::random::{Random, rng};
@@ -168,7 +168,7 @@ OptiRS was separated from SciRS2 v0.1.0-beta.2 to:
 
 ```rust
 // ✅ ALWAYS use SciRS2-Core
-use scirs2_core::ndarray::{Array2, ArrayView2};
+use scirs2_core::ndarray_ext::{Array2, ArrayView2};
 use scirs2_core::random::Random;
 use scirs2_core::simd_ops::simd_dot_product;
 use scirs2_core::parallel_ops::par_chunks;
@@ -200,7 +200,7 @@ To maintain consistency and readability across the entire OptiRS ecosystem, all 
 
 ```rust
 // ✅ Correct: snake_case with SciRS2 types
-use scirs2_core::ndarray::Array2;
+use scirs2_core::ndarray_ext::Array2;
 let experiment_id = "exp_001";
 let max_epochs = 100;
 let learning_rate = 0.001;

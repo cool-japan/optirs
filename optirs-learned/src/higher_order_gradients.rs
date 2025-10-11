@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements efficient computation of second-order and higher-order
 // gradients, Hessians, and Jacobians for meta-learning and advanced optimization.
 
-use scirs2_core::ndarray::{Array, Array1, Array2, Array3, Dimension, Ix1, Ix2};
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, Array3, Dimension, Ix1, Ix2};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::sync::Arc;

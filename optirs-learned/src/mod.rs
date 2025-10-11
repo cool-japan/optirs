@@ -5,7 +5,7 @@
 // optimization algorithms.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array, Array1, Array2, Dimension};
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -226,7 +226,7 @@ struct ComputationCheckpoint<T: Float + Debug + Send + Sync + 'static> {
     memory_usage: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::ndarray::ScalarOperand> AutodiffEngine<T> {
+impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::ndarray_ext::ScalarOperand> AutodiffEngine<T> {
     /// Create a new automatic differentiation engine
     pub fn new(config: AutodiffConfig) -> Self {
         Self {

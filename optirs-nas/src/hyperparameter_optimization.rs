@@ -4,7 +4,7 @@
 // architecture search, including Bayesian optimization, population-based methods,
 // and multi-fidelity optimization strategies.
 
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, Dimension};
+use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, Dimension};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::{HashMap, VecDeque, BTreeMap};

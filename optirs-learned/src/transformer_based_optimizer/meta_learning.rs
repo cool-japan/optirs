@@ -5,7 +5,7 @@ use super::feedforward::FeedForwardNetwork;
 use super::layers::LayerNormalization;
 use crate::error::Result;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -49,7 +49,7 @@ pub struct TransformerMetaLearning<T: Float + Debug + Send + Sync + 'static> {
     meta_state: MetaState<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
     TransformerMetaLearning<T>
 {
     /// Create new transformer meta-learning component

@@ -39,7 +39,7 @@ use num_traits::Float;
 
 // ✅ REQUIRED - SciRS2-Core abstractions
 use scirs2_core::random::*;           // Complete rand + rand_distr functionality
-use scirs2_core::ndarray::*;          // Complete ndarray ecosystem with macros
+use scirs2_core::ndarray_ext::*;          // Complete ndarray ecosystem with macros
 use scirs2_core::numeric::*;          // num-traits, num-complex, num-integer
 ```
 
@@ -305,7 +305,7 @@ OptiRS is an **optimization library**, not an autodiff or data processing framew
 2. **Array Macro Import Pattern (Updated v0.1.0-beta.4+)**
    ```rust
    // ✅ CORRECT - Use scirs2_core::ndarray for array! macro (v0.1.0-beta.4+)
-   use scirs2_core::ndarray::{array, Array1, Array2, s, azip};
+   use scirs2_core::ndarray_ext::{array, Array1, Array2, s, azip};
 
    // ❌ WRONG - Don't use ndarray directly
    use ndarray::array;  // Violates SciRS2 integration policy
@@ -317,7 +317,7 @@ OptiRS is an **optimization library**, not an autodiff or data processing framew
    #[cfg(test)]
    mod tests {
        use super::*;
-       use scirs2_core::ndarray::{array, s};
+       use scirs2_core::ndarray_ext::{array, s};
 
        #[test]
        fn test_example() {
@@ -403,15 +403,15 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 ## Key Updates from v2.0.0 to v3.0.0
 
 ### Major Changes (v0.1.0-beta.4+)
-1. **Unified NDArray Module**: `array!` macro now available directly via `scirs2_core::ndarray::*`
+1. **Unified NDArray Module**: `array!` macro now available directly via `scirs2_core::ndarray_ext::*`
 2. **Complete Random Module**: All `rand_distr` distributions now in `scirs2_core::random::*`
 3. **Deprecation**: `scirs2_autograd` no longer needed for `array!` macro
 4. **Policy Alignment**: Updated to SciRS2 POLICY v3.0.0 standards
 5. **Enhanced Validation**: Added `scirs2_core::validation` to standard imports
 
 ### Migration Notes
-- Replace `use scirs2_autograd::ndarray::array` with `use scirs2_core::ndarray::array`
-- Update all array macro imports to use `scirs2_core::ndarray::{array, s, azip}`
+- Replace `use scirs2_autograd::ndarray::array` with `use scirs2_core::ndarray_ext::array`
+- Update all array macro imports to use `scirs2_core::ndarray_ext::{array, s, azip}`
 - Remove scirs2-autograd dependency if only used for array macros
 
 ## Quick Reference
@@ -447,7 +447,7 @@ scirs2-optimize = { path = "../scirs/scirs2-optimize" }  # Core optimization int
 ```rust
 // ✅ CORRECT - Always use these patterns
 use scirs2_core::random::*;           // For RNG and all distributions (Beta, Normal, etc.)
-use scirs2_core::ndarray::*;          // For arrays including array!, s!, azip! macros
+use scirs2_core::ndarray_ext::*;          // For arrays including array!, s!, azip! macros
 use scirs2_core::numeric::*;          // For numerical traits (Float, Zero, One, Complex)
 use scirs2_core::simd_ops::*;         // For SIMD operations
 use scirs2_core::parallel_ops::*;     // For parallel processing
@@ -468,7 +468,7 @@ use rayon::prelude::*;                // FORBIDDEN - Use scirs2_core::parallel_o
 - [ ] Remove all direct external dependencies from workspace Cargo.toml
 - [ ] Remove all direct external dependencies from individual crate Cargo.toml files
 - [ ] Replace `use rand::*` → `use scirs2_core::random::*`
-- [ ] Replace `use ndarray::*` → `use scirs2_core::ndarray::*`
+- [ ] Replace `use ndarray::*` → `use scirs2_core::ndarray_ext::*`
 - [ ] Replace `use num_traits::*` → `use scirs2_core::numeric::*`
 - [ ] Replace `use num_complex::*` → `use scirs2_core::numeric::*`
 - [ ] Enable required scirs2-core features: `["array", "random", "simd", "parallel"]`

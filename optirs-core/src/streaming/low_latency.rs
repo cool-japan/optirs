@@ -5,7 +5,7 @@
 // real-time control systems, and interactive machine learning.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::Array1;
+use scirs2_core::ndarray_ext::Array1;
 use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -82,8 +82,8 @@ impl Default for LowLatencyConfig {
 /// Low-latency streaming optimizer
 pub struct LowLatencyOptimizer<O, A>
 where
-    A: Float + Send + Sync + scirs2_core::ndarray::ScalarOperand + std::fmt::Debug,
-    O: Optimizer<A, scirs2_core::ndarray::Ix1> + Send + Sync,
+    A: Float + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug,
+    O: Optimizer<A, scirs2_core::ndarray_ext::Ix1> + Send + Sync,
 {
     /// Base optimizer
     base_optimizer: Arc<Mutex<O>>,
@@ -279,10 +279,10 @@ where
         + Default
         + Clone
         + std::fmt::Debug
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + 'static
         + std::iter::Sum,
-    O: Optimizer<A, scirs2_core::ndarray::Ix1> + Send + Sync + 'static,
+    O: Optimizer<A, scirs2_core::ndarray_ext::Ix1> + Send + Sync + 'static,
 {
     /// Create a new low-latency optimizer
     pub fn new(_baseoptimizer: O, config: LowLatencyConfig) -> Result<Self> {

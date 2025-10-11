@@ -109,7 +109,7 @@ pub use types::*;
 
 // Additional common imports for convenience
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array, IxDyn};
+use scirs2_core::ndarray_ext::{Array, IxDyn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -216,7 +216,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
+            + scirs2_core::ndarray_ext::ScalarOperand,
     > OptimizationStep<T>
 {
     /// Execute the optimization step
@@ -402,7 +402,7 @@ impl PodCoordinationBuilder {
             + Clone
             + Send
             + Sync
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::iter::Sum,
     >(
         self,

@@ -4,7 +4,7 @@
 // based on metric values.
 
 use scirs2_core::numeric::{Float, FromPrimitive};
-use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::ndarray_ext::ScalarOperand;
 #[cfg(not(feature = "metrics_integration"))]
 use std::fmt::Debug;
 #[cfg(feature = "metrics_integration")]

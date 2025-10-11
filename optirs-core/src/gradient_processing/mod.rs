@@ -4,7 +4,7 @@
 // various clipping strategies, normalization, and other processing techniques.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 
@@ -574,7 +574,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientMask<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray::Array1;
+    use scirs2_core::ndarray_ext::Array1;
 
     #[test]
     fn test_gradient_processor() {
@@ -690,7 +690,7 @@ mod tests {
     #[test]
     fn test_gradient_mask_creation() {
         let mask = Array1::from_vec(vec![true, false, true]);
-        let grad_mask: GradientMask<f64, scirs2_core::ndarray::Ix1> = GradientMask::new(mask);
+        let grad_mask: GradientMask<f64, scirs2_core::ndarray_ext::Ix1> = GradientMask::new(mask);
 
         assert_eq!(grad_mask.num_active(), 2);
         assert_eq!(grad_mask.num_frozen(), 1);
@@ -699,7 +699,7 @@ mod tests {
     #[test]
     fn test_gradient_mask_apply() {
         let mask = Array1::from_vec(vec![true, false, true]);
-        let grad_mask: GradientMask<f64, scirs2_core::ndarray::Ix1> = GradientMask::new(mask);
+        let grad_mask: GradientMask<f64, scirs2_core::ndarray_ext::Ix1> = GradientMask::new(mask);
         let mut gradients = Array1::from_vec(vec![1.0, 2.0, 3.0]);
 
         grad_mask.apply_mask(&mut gradients);
@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn test_gradient_mask_freeze_unfreeze() {
         let mask = Array1::from_vec(vec![true, true, true]);
-        let mut grad_mask: GradientMask<f64, scirs2_core::ndarray::Ix1> =
+        let mut grad_mask: GradientMask<f64, scirs2_core::ndarray_ext::Ix1> =
             GradientMask::new(mask);
 
         // Freeze some indices
@@ -728,7 +728,7 @@ mod tests {
     fn test_gradient_mask_with_lr_multipliers() {
         let mask = Array1::from_vec(vec![true, true, true]);
         let multipliers = Array1::from_vec(vec![1.0, 0.5, 2.0]);
-        let grad_mask: GradientMask<f64, scirs2_core::ndarray::Ix1> =
+        let grad_mask: GradientMask<f64, scirs2_core::ndarray_ext::Ix1> =
             GradientMask::new(mask).with_lr_multipliers(multipliers);
         let mut gradients = Array1::from_vec(vec![1.0, 2.0, 3.0]);
 
@@ -741,8 +741,8 @@ mod tests {
 
     #[test]
     fn test_gradient_mask_freeze_all() {
-        let grad_mask = GradientMask::<f64, scirs2_core::ndarray::Ix1>::freeze_all(
-            scirs2_core::ndarray::Ix1(3),
+        let grad_mask = GradientMask::<f64, scirs2_core::ndarray_ext::Ix1>::freeze_all(
+            scirs2_core::ndarray_ext::Ix1(3),
         );
         assert_eq!(grad_mask.num_frozen(), 3);
         assert_eq!(grad_mask.num_active(), 0);
@@ -750,8 +750,8 @@ mod tests {
 
     #[test]
     fn test_gradient_mask_update_all() {
-        let grad_mask = GradientMask::<f64, scirs2_core::ndarray::Ix1>::update_all(
-            scirs2_core::ndarray::Ix1(3),
+        let grad_mask = GradientMask::<f64, scirs2_core::ndarray_ext::Ix1>::update_all(
+            scirs2_core::ndarray_ext::Ix1(3),
         );
         assert_eq!(grad_mask.num_frozen(), 0);
         assert_eq!(grad_mask.num_active(), 3);

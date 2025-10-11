@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // Provides comprehensive evaluation metrics, benchmarking suites,
 // and performance prediction capabilities for optimizer architectures.
 
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use serde::{Deserialize, Serialize};

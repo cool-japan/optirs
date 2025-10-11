@@ -11,7 +11,7 @@ use super::{
     TrajectoryBatch, ValueNetwork,
 };
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::HashMap;
@@ -698,5 +698,5 @@ impl<
 }
 
 // Import slice syntax
-use scirs2_core::ndarray::s;
+use scirs2_core::ndarray_ext::s;
 // use statrs::statistics::Statistics; // statrs not available

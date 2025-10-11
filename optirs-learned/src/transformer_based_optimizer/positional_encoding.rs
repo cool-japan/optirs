@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 use std::fmt::Debug;

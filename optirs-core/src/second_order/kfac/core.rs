@@ -6,7 +6,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -46,7 +46,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + 'static
             + scirs2_core::numeric::FromPrimitive,
     > KFAC<T>

@@ -1,7 +1,7 @@
 // Cosine annealing learning rate scheduler
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt::Debug;
 
 use crate::schedulers::LearningRateScheduler;
@@ -23,7 +23,7 @@ use crate::schedulers::LearningRateScheduler;
 /// ```
 /// use optirs_core::schedulers::{CosineAnnealing, LearningRateScheduler};
 /// use optirs_core::optimizers::SGD;
-/// use scirs2_core::ndarray::Array1;
+/// use scirs2_core::ndarray_ext::Array1;
 ///
 /// // Create a scheduler with initial learning rate 0.1, minimum learning rate 0.001,
 /// // cycle length 100 steps, and with warm restarts enabled

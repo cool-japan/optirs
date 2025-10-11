@@ -5,7 +5,7 @@
 
 use crate::schedulers::LearningRateScheduler;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::fmt;
 
 /// Cyclic learning rate policy

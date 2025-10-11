@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{s, Array1, Array2};
+use scirs2_core::ndarray_ext::{s, Array1, Array2};
 use scirs2_core::random::{Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;

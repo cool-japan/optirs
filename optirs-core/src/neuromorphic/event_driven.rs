@@ -11,7 +11,7 @@ use super::{
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -702,7 +702,7 @@ impl<
             + Sync
             + 'static
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::ops::AddAssign,
     > EventDrivenOptimizer<T>
 {

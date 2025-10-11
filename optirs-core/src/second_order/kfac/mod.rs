@@ -28,7 +28,7 @@
 //
 // ```rust
 // use optirs_core::second_order::kfac::{KFAC, KFACConfig, LayerInfo, LayerType};
-// use scirs2_core::ndarray::Array2;
+// use scirs2_core::ndarray_ext::Array2;
 //
 // // Create K-FAC configuration
 // let config = KFACConfig::<f32>::default();
@@ -86,7 +86,7 @@ pub use utils::KFACUtils as Utils;
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use scirs2_core::ndarray::Array2;
+    use scirs2_core::ndarray_ext::Array2;
     use std::collections::HashMap;
 
     #[test]

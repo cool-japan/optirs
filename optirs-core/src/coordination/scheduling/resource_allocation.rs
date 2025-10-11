@@ -7,7 +7,7 @@ use std::fmt::Debug;
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::Array1;
+use scirs2_core::ndarray_ext::Array1;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, SystemTime};
 

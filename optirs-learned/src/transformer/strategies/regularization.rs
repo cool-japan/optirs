@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};
@@ -37,7 +37,7 @@ pub enum RegularizationStrategy {
 /// Transformer regularizer
 #[derive(Debug, Clone)]
 pub struct TransformerRegularizer<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
 > {
     /// Regularization strategy
     strategy: RegularizationStrategy,
@@ -61,7 +61,7 @@ pub struct TransformerRegularizer<
 /// Regularization parameters
 #[derive(Debug, Clone)]
 pub struct RegularizationParams<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
 > {
     /// L2 regularization coefficient
     l2_weight: T,
@@ -94,7 +94,7 @@ pub struct RegularizationParams<
 /// Parameter statistics for adaptive regularization
 #[derive(Debug, Clone)]
 pub struct ParameterStatistics<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
 > {
     /// Running mean of parameter magnitudes
     mean_magnitude: T,
@@ -115,7 +115,7 @@ pub struct ParameterStatistics<
 /// State for spectral normalization
 #[derive(Debug, Clone)]
 pub struct SpectralNormState<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
 > {
     /// Left singular vectors for each weight matrix
     u_vectors: HashMap<String, Array1<T>>,
@@ -132,7 +132,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -742,7 +742,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -764,7 +764,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + Send
             + Sync
             + 'static,

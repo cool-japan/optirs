@@ -7,7 +7,7 @@
 use crate::adaptive_selection::{OptimizerType, ProblemCharacteristics};
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use std::collections::HashMap;
 use std::fmt::Debug;
 

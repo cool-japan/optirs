@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module provides seamless integration with the candle-core tensor library
 // for automatic gradient computation in optimization algorithms.
 
-use scirs2_core::ndarray::{Array, Array1, Array2, ArrayBase, Dimension, Ix1, Ix2};
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayBase, Dimension, Ix1, Ix2};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

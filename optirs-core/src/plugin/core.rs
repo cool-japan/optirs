@@ -5,7 +5,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;

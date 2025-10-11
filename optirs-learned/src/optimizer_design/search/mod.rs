@@ -14,7 +14,7 @@ pub mod progressive;
 
 use std::collections::{HashMap, VecDeque};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 
 use super::architecture::{ArchitectureSpec, ArchitectureCandidate};
 

@@ -6,7 +6,7 @@
 
 use scirs2_core::numeric::Float;
 use optirs_core::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
@@ -1487,7 +1487,7 @@ mod tests {
 
     #[test]
     fn test_cosine_similarity() {
-        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray::Ix1>::new(10);
+        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray_ext::Ix1>::new(10);
 
         let arrays1 = vec![Array1::from_vec(vec![1.0, 0.0])];
         let arrays2 = vec![Array1::from_vec(vec![1.0, 0.0])]; // Same direction

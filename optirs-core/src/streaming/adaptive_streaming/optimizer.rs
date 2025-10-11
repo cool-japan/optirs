@@ -23,7 +23,7 @@ use crate::adaptive_selection::OptimizerType;
 // Removed dependency on learned_optimizers - using stub implementation
 use scirs2_core::numeric::Float;
 use scirs2_core::ScientificNumber;
-use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, IxDyn};
+use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension, IxDyn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -211,7 +211,7 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + 'static,
     D: Dimension,
     O: Clone,

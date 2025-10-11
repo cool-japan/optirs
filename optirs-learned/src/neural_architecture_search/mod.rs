@@ -29,7 +29,7 @@ pub use multi_objective::{MultiObjectiveOptimizer, OptimizationObjective, Pareto
 pub use search_history::{SearchHistory, ArchitectureEntry, SearchEvent};
 pub use resource_management::{ResourceManager, ResourceConstraints, ComputeBudget};
 
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};

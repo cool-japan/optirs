@@ -3,7 +3,7 @@
 use super::config::*;
 use crate::OptimizerError as OptimError;
 use crate::neural_architecture_search::ScheduleType;
-use scirs2_core::ndarray::Array1;
+use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

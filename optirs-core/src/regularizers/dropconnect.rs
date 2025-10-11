@@ -4,7 +4,7 @@
 // during training. Unlike Dropout which drops units, DropConnect drops individual weights.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 
@@ -18,8 +18,8 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray::Array2;
-/// use scirs2_core::ndarray::array;
+/// use scirs2_core::ndarray_ext::Array2;
+/// use scirs2_core::ndarray_ext::array;
 /// use optirs_core::regularizers::DropConnect;
 ///
 /// let dropconnect = DropConnect::new(0.5).unwrap(); // 50% connection dropout
@@ -163,7 +163,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync, D: Dimension + Send + Sync>
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray::array;
+    use scirs2_core::ndarray_ext::array;
 
     #[test]
     fn test_dropconnect_creation() {

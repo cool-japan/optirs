@@ -9,7 +9,7 @@ use super::components::*;
 use super::config::*;
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::Array1;
+use scirs2_core::ndarray_ext::Array1;
 use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -200,7 +200,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug
     > FederatedPrivacyCoordinator<T>
 {

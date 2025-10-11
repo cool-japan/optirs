@@ -5,7 +5,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use std::fmt::Debug;
 
 /// Type alias for adaptive step conditions
@@ -402,7 +402,7 @@ pub mod utils {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray::Array1;
+    use scirs2_core::ndarray_ext::Array1;
 
     #[test]
     fn test_gradient_accumulator_sum() {

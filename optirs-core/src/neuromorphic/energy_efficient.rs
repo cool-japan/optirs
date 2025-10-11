@@ -12,7 +12,7 @@ use super::{
 use crate::error::Result;
 use crate::optimizers::Optimizer;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
@@ -239,7 +239,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EnergyEfficientConfig
 struct EnergyMonitor<
     T: Float
         + Debug
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum
         + Send
@@ -626,7 +626,7 @@ enum CompressionAlgorithm {
 pub struct EnergyEfficientOptimizer<
     T: Float
         + Debug
-        + scirs2_core::ndarray::ScalarOperand
+        + scirs2_core::ndarray_ext::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum
         + Send
@@ -974,7 +974,7 @@ impl<
             + Debug
             + Send
             + Sync
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug
             + std::iter::Sum,
     > EnergyEfficientOptimizer<T>
@@ -1466,7 +1466,7 @@ impl<
             + Debug
             + Send
             + Sync
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + std::fmt::Debug
             + std::iter::Sum,
     > EnergyMonitor<T>

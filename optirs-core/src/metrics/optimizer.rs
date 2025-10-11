@@ -7,9 +7,9 @@ use crate::error::Result;
 use crate::optimizers::Optimizer;
 use scirs2_core::numeric::{Float, FromPrimitive};
 #[cfg(feature = "metrics_integration")]
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
 #[cfg(not(feature = "metrics_integration"))]
-use scirs2_core::ndarray::{Dimension, ScalarOperand};
+use scirs2_core::ndarray_ext::{Dimension, ScalarOperand};
 #[cfg(feature = "metrics_integration")]
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};

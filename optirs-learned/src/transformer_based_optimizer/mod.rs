@@ -36,7 +36,7 @@ pub use state::{OptimizerStateSnapshot, TransformerOptimizerState};
 pub use TransformerBasedOptimizerConfig as TransformerOptimizerConfig;
 
 use scirs2_core::numeric::{Float, ToPrimitive};
-use scirs2_core::ndarray::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -91,7 +91,7 @@ impl<
             + Send
             + Sync
             + 'static
-            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::ndarray_ext::ScalarOperand
             + scirs2_core::numeric::FromPrimitive,
     > TransformerOptimizer<T>
 {

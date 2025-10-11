@@ -6,7 +6,7 @@
 use crate::error::{OptimError, Result};
 use crate::TestFunction;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::Array1;
+use scirs2_core::ndarray_ext::Array1;
 // use serde::{Deserialize, Serialize}; // Commented out for now
 use std::collections::HashMap;
 use std::fmt::Debug;

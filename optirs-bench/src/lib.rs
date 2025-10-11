@@ -33,7 +33,7 @@
 //!     OptimizerBenchmark, GradientFlowAnalyzer,
 //!     visualization::OptimizerStateVisualizer,
 //! };
-//! use scirs2_core::ndarray::{Array1, Ix1};
+//! use scirs2_core::ndarray_ext::{Array1, Ix1};
 //!
 //! // Create a benchmark suite
 //! let mut benchmark = OptimizerBenchmark::<f64>::new();
@@ -105,7 +105,7 @@ pub mod prelude {
         VisualizationExport,
     };
 
-    pub use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
+    pub use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayView, ArrayViewMut};
     pub use scirs2_core::random::{rng, Random};
 }
 
@@ -120,9 +120,9 @@ mod tests {
         let mut benchmark = OptimizerBenchmark::<f64>::new();
         benchmark.add_standard_test_functions();
 
-        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray::Ix1>::new(10);
+        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray_ext::Ix1>::new(10);
         let visualizer =
-            visualization::OptimizerStateVisualizer::<f64, scirs2_core::ndarray::Ix1>::new(10);
+            visualization::OptimizerStateVisualizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(10);
 
         assert_eq!(analyzer.step_count(), 0);
         assert_eq!(visualizer.step_count(), 0);
@@ -148,7 +148,7 @@ mod tests {
 
         // Test that prelude imports work
         let mut benchmark = OptimizerBenchmark::<f64>::new();
-        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray::Ix1>::new(5);
+        let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray_ext::Ix1>::new(5);
 
         assert_eq!(analyzer.step_count(), 0);
         assert!(benchmark.get_results().is_empty());

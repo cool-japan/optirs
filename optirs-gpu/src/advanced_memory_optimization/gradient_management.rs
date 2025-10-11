@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::time::Instant;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray_ext::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
@@ -273,7 +273,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ZeroRedundancyS
                         worker_rank: worker,
                         start_index: start_idx,
                         end_index: end_idx,
-                        data: param.slice(scirs2_core::ndarray::s![start_idx..end_idx]).to_owned(),
+                        data: param.slice(scirs2_core::ndarray_ext::s![start_idx..end_idx]).to_owned(),
                     };
 
                     if worker == worker_rank {

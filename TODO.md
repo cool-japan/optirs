@@ -5,7 +5,7 @@
 ### Phase 0: Immediate SciRS2 Migration ✅ COMPLETED
 - [x] **Remove ALL direct ndarray imports** ✅ COMPLETED
   - [x] Audit all `use ndarray::` statements - Found 160+ violations, all fixed
-  - [x] Replace with `scirs2_core::ndarray::` - All 474 imports updated
+  - [x] Replace with `scirs2_core::ndarray_ext::` - All 474 imports updated
   - [x] Update all Array, ArrayView, ArrayViewMut imports - All updated
   - [x] Verify compilation after ndarray removal - ✅ Working
 
@@ -46,10 +46,10 @@
 
 ### Phase 0: Immediate SciRS2 Migration ✅ COMPLETED
 - [ ] **Array Operations Migration**
-  - [ ] Use `scirs2_core::ndarray::stats` for statistical operations
-  - [ ] Use `scirs2_core::ndarray::matrix` for matrix operations
-  - [ ] Use `scirs2_core::ndarray::manipulation` for array manipulation
-  - [ ] Use `scirs2_core::ndarray::indexing` for NumPy-like indexing
+  - [ ] Use `scirs2_core::ndarray_ext::stats` for statistical operations
+  - [ ] Use `scirs2_core::ndarray_ext::matrix` for matrix operations
+  - [ ] Use `scirs2_core::ndarray_ext::manipulation` for array manipulation
+  - [ ] Use `scirs2_core::ndarray_ext::indexing` for NumPy-like indexing
 
 - [ ] **Performance Optimization**
   - [ ] Implement SIMD optimization using `scirs2_core::simd_ops`

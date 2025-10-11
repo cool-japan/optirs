@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{s, Array1, Array2};
+use scirs2_core::ndarray_ext::{s, Array1, Array2};
 use scirs2_core::random::{CoreRandom as Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;
@@ -201,7 +201,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + Send + Sync> Transfor
     }
 
     /// Get attention patterns for analysis
-    pub fn get_attention_patterns(&self) -> Option<&scirs2_core::ndarray::Array3<T>> {
+    pub fn get_attention_patterns(&self) -> Option<&scirs2_core::ndarray_ext::Array3<T>> {
         self.self_attention.get_attention_patterns()
     }
 }

@@ -6,7 +6,7 @@
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;

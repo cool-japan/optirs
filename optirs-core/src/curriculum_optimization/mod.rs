@@ -5,7 +5,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -780,7 +780,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> AdaptiveCurri
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray::Array1;
+    use scirs2_core::ndarray_ext::Array1;
 
     #[test]
     fn test_linear_curriculum() {
@@ -791,7 +791,7 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy,
             importance_strategy,
         );
@@ -819,7 +819,7 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy,
             importance_strategy,
         );
@@ -843,7 +843,7 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy,
             importance_strategy,
         );
@@ -877,7 +877,7 @@ mod tests {
             min_weight: 0.1,
         };
 
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy,
             importance_strategy,
         );
@@ -907,7 +907,7 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy,
             importance_strategy,
         );
@@ -953,11 +953,11 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let curriculum1 = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let curriculum1 = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy1,
             importance_strategy.clone(),
         );
-        let curriculum2 = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let curriculum2 = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy2,
             importance_strategy,
         );
@@ -985,7 +985,7 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
+        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
             strategy,
             importance_strategy,
         );

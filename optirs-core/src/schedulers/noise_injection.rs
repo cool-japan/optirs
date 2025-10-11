@@ -4,7 +4,7 @@
 // to help escape local minima and improve exploration during training.
 
 use scirs2_core::numeric::{Float, NumCast};
-use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::ndarray_ext::ScalarOperand;
 use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 

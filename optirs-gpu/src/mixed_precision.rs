@@ -3,7 +3,7 @@
 // This module provides automatic mixed precision (AMP) training capabilities
 // leveraging tensor cores on modern GPUs for accelerated computation.
 
-use scirs2_core::ndarray::{Array, Dimension};
+use scirs2_core::ndarray_ext::{Array, Dimension};
 use scirs2_core::numeric::Float;
 use std::marker::PhantomData;
 use std::sync::Arc;
