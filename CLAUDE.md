@@ -157,21 +157,33 @@ OptiRS must make **FULL USE** of scirs2-core's extensive capabilities:
 
 #### Core Array Operations (replaces ndarray)
 ```rust
-// ✅ CORRECT - Use scirs2-core's unified ndarray module (v0.1.0-beta.4+)
-use scirs2_core::ndarray_ext::*;  // Complete ndarray functionality including macros
+// ✅ CORRECT - Option 1: Use ndarray_ext for NumPy-like extensions
+use scirs2_core::ndarray_ext::*;  // Includes fancy indexing, broadcasting, stats + all macros
 use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayView, ArrayViewMut};
 use scirs2_core::ndarray_ext::{Axis, Ix1, Ix2, IxDyn};
-use scirs2_core::ndarray_ext::{array, s, azip};  // ALL macros available directly
+use scirs2_core::ndarray_ext::{array, s, azip};  // ALL macros available
 
-// Example usage
+// ✅ CORRECT - Option 2: Use ndarray for standard operations
+use scirs2_core::ndarray::*;  // Standard ndarray re-exports + all macros
+use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
+use scirs2_core::ndarray::{Axis, Ix1, Ix2, IxDyn};
+use scirs2_core::ndarray::{array, s, azip};  // ALL macros available
+
+// Example usage (works with both modules)
 let arr = array![[1.0, 2.0], [3.0, 4.0]];  // array! macro works
 let slice = arr.slice(s![.., 0]);          // s! macro works
 azip!((a in &mut arr) *a *= 2.0);         // azip! macro works
 
+// Choose ndarray_ext when you need:
+// - Fancy indexing (boolean masks, index arrays)
+// - Broadcasting helpers
+// - Statistical functions
+// - NumPy-like manipulation
+
 // ❌ FORBIDDEN - Direct ndarray imports
-use ndarray::*;  // NEVER USE
+use ndarray::*;  // NEVER USE - must go through scirs2_core
 use ndarray::{Array, Array1, Array2};  // NEVER USE
-use ndarray::{array, s};  // NEVER USE - all macros are in scirs2_core::ndarray
+use ndarray::{array, s};  // NEVER USE
 ```
 
 #### Random Number Generation (replaces rand/rand_distr)
@@ -317,7 +329,7 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 ### Mandatory Usage Guidelines (SciRS2 Ecosystem Policy v3.0.0)
 
-1. **NEVER** import `ndarray` directly → **ALWAYS** use `scirs2_core::ndarray` (includes `array!`, `s!`, `azip!` macros)
+1. **NEVER** import `ndarray` directly → **ALWAYS** use `scirs2_core::ndarray_ext` (for NumPy-like extensions) OR `scirs2_core::ndarray` (for standard operations) - both include `array!`, `s!`, `azip!` macros
 2. **NEVER** import `rand` or `rand_distr` directly → **ALWAYS** use `scirs2_core::random` (all distributions included)
 3. **NEVER** import `num-traits` or `num-complex` directly → **ALWAYS** use `scirs2_core::numeric`
 4. **NEVER** import `rayon` directly → **ALWAYS** use `scirs2_core::parallel_ops`
@@ -329,6 +341,11 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 10. **ALWAYS** use scirs2-core's error types and result handling
 
 **Violation of these guidelines is a CRITICAL architectural error and must be fixed immediately.**
+
+**Note on Array Modules**:
+- `scirs2_core::ndarray_ext`: Extended NumPy-like functionality (fancy indexing, boolean masking, broadcasting helpers, stats)
+- `scirs2_core::ndarray`: Standard ndarray re-exports (basic array operations, views, slicing)
+- **Both are valid and encouraged** depending on your needs. Choose based on required functionality.
 
 **Key Updates (v0.1.0-beta.4+)**:
 1. The `array!` macro is now available directly from `scirs2_core::ndarray`
@@ -355,7 +372,7 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 1. **Error Handling**: Use `scirs2_core::error::CoreError` and `scirs2_core::error::Result`
 2. **Parameter Validation**: Use `scirs2_core::validation` functions (check_positive, check_finite, check_shape, etc.)
-3. **Array Operations**: Use `scirs2_core::ndarray` exclusively - includes ALL macros (array!, s!, azip!)
+3. **Array Operations**: Use `scirs2_core::ndarray_ext` for extended NumPy-like features (fancy indexing, broadcasting, stats), OR `scirs2_core::ndarray` for standard ndarray re-exports - both include ALL macros (array!, s!, azip!)
 4. **Random Numbers**: Use `scirs2_core::random` exclusively - includes ALL distributions from rand_distr
 5. **Numerical Traits**: Use `scirs2_core::numeric` exclusively (Float, Zero, One, Complex, etc.)
 6. **Parallelization**: Use `scirs2_core::parallel_ops` exclusively (NOT direct `rayon`)
@@ -368,10 +385,16 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 **Remember**: ALL external dependencies MUST go through scirs2-core abstractions. Direct imports from `ndarray`, `rand`, `num-traits`, etc. are FORBIDDEN.
 
+**Array Module Choice**:
+- Use `scirs2_core::ndarray_ext` when you need NumPy-like extensions (fancy indexing, boolean masking, broadcasting helpers, statistical functions)
+- Use `scirs2_core::ndarray` for standard ndarray operations (basic array creation, slicing, views)
+- Both modules include all essential macros (`array!`, `s!`, `azip!`)
+
 ## OptiRS Module-Specific SciRS2 Usage
 
 ### optirs-core
-- Use `scirs2_core::ndarray` for all array operations (includes `array!`, `s!`, `azip!` macros - v0.1.0-beta.4+)
+- Use `scirs2_core::ndarray_ext` for array operations with NumPy-like extensions (fancy indexing, stats, broadcasting)
+- Use `scirs2_core::ndarray` for standard ndarray operations (both include `array!`, `s!`, `azip!` macros - v0.1.0-beta.4+)
 - Use `scirs2_core::random` for all RNG operations (includes ALL distributions: Normal, Beta, Cauchy, etc.)
 - Use `scirs2_core::numeric` for numerical traits (Float, Zero, One, Complex)
 - Use `scirs2_core::validation` for parameter validation (check_positive, check_finite, etc.)
@@ -626,8 +649,11 @@ When reviewing or writing OptiRS code, verify these requirements:
 ### ✅ Arrays and Numerical Operations
 - [ ] NO direct `use ndarray::{...}`
 - [ ] NO direct `Array`, `Array1`, `Array2` from ndarray
-- [ ] YES `use scirs2_core::ndarray_ext::*` (unified module v0.1.0-beta.4+)
-- [ ] YES `use scirs2_core::ndarray_ext::{Array, Array1, Array2, array, s}`
+- [ ] YES `use scirs2_core::ndarray_ext::*` for NumPy-like extensions (fancy indexing, stats, broadcasting)
+- [ ] YES `use scirs2_core::ndarray::*` for standard ndarray operations
+- [ ] YES both modules include `array!`, `s!`, `azip!` macros (v0.1.0-beta.4+)
+- [ ] YES `use scirs2_core::ndarray_ext::{Array, Array1, Array2, array, s}` (with extensions)
+- [ ] YES `use scirs2_core::ndarray::{Array, Array1, Array2, array, s}` (standard)
 
 ### ✅ Random Number Generation
 - [ ] NO direct `use rand::{...}`
@@ -673,7 +699,11 @@ use rayon::prelude::*;               // NEVER USE
 let mut rng = rng();  // WRONG - function not available
 
 // ✅ CORRECT - SciRS2-Core abstractions (REQUIRED - v0.1.0-beta.4+)
-use scirs2_core::ndarray_ext::{Array2, array, s};  // ALL macros available
+use scirs2_core::ndarray_ext::{Array2, array, s};  // With NumPy-like extensions
+// OR
+use scirs2_core::ndarray::{Array2, array, s};      // Standard ndarray operations
+// Both are CORRECT - choose based on your needs
+
 use scirs2_core::random::{thread_rng, Normal, RandBeta};  // ALL distributions
 use scirs2_core::numeric::{Float, Complex};
 use scirs2_core::validation::{check_positive, check_finite};
@@ -681,8 +711,8 @@ use scirs2_core::parallel_ops::*;
 
 // Correct usage examples
 let mut rng = thread_rng();         // CORRECT
-let arr = array![[1.0, 2.0]];      // CORRECT - macro works
-let slice = arr.slice(s![.., 0]);  // CORRECT - s! macro works
+let arr = array![[1.0, 2.0]];      // CORRECT - macro works in both modules
+let slice = arr.slice(s![.., 0]);  // CORRECT - s! macro works in both modules
 let beta = RandBeta::new(2.0, 5.0)?;  // CORRECT - all distributions available
 check_positive(x, "parameter")?;    // CORRECT - validation
 ```

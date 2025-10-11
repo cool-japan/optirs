@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension};
+use scirs2_core::ndarray::{Array, Array1, Array2, Dimension};
 use scirs2_core::numeric::Float;
 
 use crate::error::{OptimError, Result};

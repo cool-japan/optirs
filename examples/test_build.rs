@@ -1,4 +1,4 @@
-use scirs2_core::ndarray_ext::array;
+use scirs2_core::ndarray::array;
 use optirs_core::optimizers::{Adam, Optimizer};
 
 #[allow(dead_code)]

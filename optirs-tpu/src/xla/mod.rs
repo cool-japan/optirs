@@ -10,7 +10,7 @@ pub mod frontend;
 pub mod optimization;
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -18,10 +18,16 @@ use std::time::{Duration, Instant};
 use super::{PodTopology, TPUConfig, TPUVersion, XLAOptimizationLevel};
 use crate::error::{OptimError, Result};
 
-// Re-export key types from submodules
-pub use backend::*;
-pub use frontend::*;
-pub use optimization::*;
+// Note: Submodules have conflicting type names (ExecutionScheduler, ResourceManager, MemorySpace)
+// Users should access types via full module paths (e.g., backend::ExecutionScheduler)
+
+// Selective re-exports of non-conflicting types used in this module
+use frontend::{ComputationGraphBuilder, OperationLowering, ShapeInference};
+use optimization::{MemoryPlanner, OptimizationPipeline, PerformanceAnalyzer};
+use backend::{RuntimeIntegration, TPUCodeGenerator};
+
+// Re-export for public API
+pub use frontend::XLAComputation;
 
 /// XLA Compiler for TPU optimization
 pub struct XLACompiler<T: Float + Debug + Send + Sync + 'static> {

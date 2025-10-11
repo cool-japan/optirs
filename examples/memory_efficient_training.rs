@@ -1,5 +1,5 @@
 // Example demonstrating memory-efficient training with gradient clipping
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::random::distributions::Uniform;
 use scirs2_core::random::RandomExt;
 use optirs_core::gradient_processing::GradientProcessor;
@@ -31,7 +31,7 @@ impl Layer {
     ) -> (Array2<f64>, Array2<f64>, Array1<f64>) {
         let grad_input = grad_output.dot(&self.weights.t());
         let grad_weights = input.t().dot(grad_output) / input.nrows() as f64;
-        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
+        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
         (grad_input, grad_weights, grad_bias)
     }
 }

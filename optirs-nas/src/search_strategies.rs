@@ -5,7 +5,7 @@
 
 use scirs2_core::numeric::Float;
 use scirs2_core::ScientificNumber;
-use scirs2_core::ndarray_ext::{s, Array1, Array2, Array3};
+use scirs2_core::ndarray::{s, Array1, Array2, Array3};
 use scirs2_core::random::Rng;
 use scirs2_core::random::{Random, Rng as SCRRng};
 use std::collections::{HashMap, VecDeque};
@@ -1060,7 +1060,7 @@ impl<
             + Send
             + Sync
             + std::fmt::Debug
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::iter::Sum,
     > DifferentiableSearch<T>
 {
@@ -1232,7 +1232,7 @@ impl<
             + Sync
             + std::fmt::Debug
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > SearchStrategy<T> for DifferentiableSearch<T>
 {
     fn initialize(&mut self, _searchspace: &SearchSpaceConfig) -> Result<()> {

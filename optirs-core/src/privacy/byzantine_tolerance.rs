@@ -6,7 +6,7 @@
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -274,7 +274,7 @@ pub struct VerificationRule<T: Float + Debug + Send + Sync + 'static> {
     pub weight: f64,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     ByzantineTolerantAggregator<T>
 {
     /// Create new Byzantine tolerant aggregator
@@ -1146,7 +1146,7 @@ impl ReputationScore {
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     AnomalyDetector<T>
 {
     /// Create new anomaly detector
@@ -1226,7 +1226,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand> Default
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand> Default
     for GradientStatistics<T>
 {
     fn default() -> Self {
@@ -1234,7 +1234,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     GradientStatistics<T>
 {
     /// Create new gradient statistics
@@ -1510,7 +1510,7 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientProperties<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
     use std::collections::HashMap;
 
     #[test]

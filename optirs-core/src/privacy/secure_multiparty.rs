@@ -6,7 +6,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -280,7 +280,7 @@ pub struct CryptographicAggregator<T: Float + Debug + Send + Sync + 'static> {
     aggregation_proofs: Vec<AggregationProof<T>>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     CryptographicAggregator<T>
 {
     /// Create new cryptographic aggregator
@@ -911,7 +911,7 @@ pub struct SecureAggregationResult<T: Float + Debug + Send + Sync + 'static> {
     pub security_level: CommunicationSecurity,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     SMPCCoordinator<T>
 {
     /// Create new SMPC coordinator
@@ -1218,7 +1218,7 @@ pub enum PrivacyLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_secret_sharing() {

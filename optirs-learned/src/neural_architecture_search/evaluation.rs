@@ -1,6 +1,6 @@
 // Architecture evaluation and metrics
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::HashMap;

@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -1066,7 +1066,7 @@ pub struct HardwarePerformanceStats<A: Float> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_cpu_optimization() {

@@ -470,7 +470,7 @@ impl ArchitectureSpace {
             } else if new_components1.len() < self.min_components {
                 // Pad with random components from parents if too few
                 while new_components1.len() < self.min_components {
-                    let source = if rng.gen_bool(0.5) {
+                    let source = if rng.random_bool() {
                         &parent1.components
                     } else {
                         &parent2.components
@@ -489,7 +489,7 @@ impl ArchitectureSpace {
             } else if new_components2.len() < self.min_components {
                 // Pad with random components from parents if too few
                 while new_components2.len() < self.min_components {
-                    let source = if rng.gen_bool(0.5) {
+                    let source = if rng.random_bool() {
                         &parent1.components
                     } else {
                         &parent2.components

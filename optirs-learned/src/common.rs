@@ -1,7 +1,7 @@
 //! Common types and configurations for learned optimizers
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;

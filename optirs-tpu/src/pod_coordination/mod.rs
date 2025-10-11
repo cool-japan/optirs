@@ -94,22 +94,15 @@ pub mod batch_coordination;
 // Gradient aggregation
 pub mod gradient_aggregation;
 
-// Re-export core types and functionality
-pub use batch_coordination::*;
-pub use communication::*;
-pub use coordination::*;
-pub use fault_tolerance::*;
-pub use gradient_aggregation::*;
-pub use load_balancing::*;
-pub use performance::*;
-pub use resource_scheduling::*;
-pub use synchronization::*;
-pub use topology::*;
+// Types module is re-exported for common types
 pub use types::*;
+
+// Note: Explicit re-exports of commonly used types are provided below
+// instead of glob re-exports to avoid ambiguous glob re-export warnings
 
 // Additional common imports for convenience
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, IxDyn};
+use scirs2_core::ndarray::{Array, IxDyn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -216,7 +209,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > OptimizationStep<T>
 {
     /// Execute the optimization step
@@ -402,7 +395,7 @@ impl PodCoordinationBuilder {
             + Clone
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::iter::Sum,
     >(
         self,

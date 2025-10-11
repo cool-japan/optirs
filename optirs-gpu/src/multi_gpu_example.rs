@@ -10,7 +10,7 @@ use crate::gpu::multi_gpu_sync::{
 };
 use crate::optimizers::adam::Adam;
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;

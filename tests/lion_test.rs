@@ -1,7 +1,7 @@
 //! Tests for the Lion optimizer
 
 use approx::assert_abs_diff_eq;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use optirs_core::optimizers::{Lion, Optimizer};
 
 #[test]

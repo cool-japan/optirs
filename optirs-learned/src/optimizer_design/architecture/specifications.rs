@@ -5,7 +5,7 @@
 // and memory management configurations.
 
 use std::collections::HashMap;
-use scirs2_core::ndarray_ext::Array2;
+use scirs2_core::ndarray::Array2;
 
 use super::components::*;
 

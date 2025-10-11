@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // including static and dynamic shape analysis, constraint validation, and shape optimization.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, Dimension};
 use std::collections::{HashMap, HashSet};
 
 use super::graph_capture::{

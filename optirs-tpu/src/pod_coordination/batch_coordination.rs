@@ -55,7 +55,7 @@ pub struct BatchMetadata {
 
 #[derive(Debug, Clone)]
 pub struct BatchPartition<T> {
-    pub data: scirs2_core::ndarray_ext::Array<T, scirs2_core::ndarray_ext::IxDyn>,
+    pub data: scirs2_core::ndarray::Array<T, scirs2_core::ndarray::IxDyn>,
     pub indices: Vec<usize>,
     pub status: PartitionStatus,
     pub device: DeviceId,

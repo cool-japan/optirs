@@ -4,7 +4,7 @@
 // such as Stochastic Gradient Descent (SGD), Adam, RMSprop, and others.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};

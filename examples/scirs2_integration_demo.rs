@@ -5,7 +5,7 @@
 
 use optirs_core::error::Result;
 use optirs_core::gradient_processing::{add_gradient_noise, GradientProcessor};
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::random::{Distribution, Normal, Random};
 
 fn main() -> Result<()> {

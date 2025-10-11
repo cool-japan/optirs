@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // the Advanced mode, combining learned optimizers with advanced analytics,
 // anomaly detection, and predictive performance modeling.
 
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayView1};
+use scirs2_core::ndarray::{Array1, Array2, ArrayView1};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime};

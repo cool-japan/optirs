@@ -4,7 +4,7 @@
 // using closures and function combinators.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::ScalarOperand;
+use scirs2_core::ndarray::ScalarOperand;
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::marker::PhantomData;

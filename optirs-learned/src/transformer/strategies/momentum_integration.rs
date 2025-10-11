@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use std::collections::VecDeque;
 
 use crate::error::{OptimError, Result};
@@ -35,7 +35,7 @@ pub enum MomentumStrategy {
 /// Momentum integrator for transformer optimizer
 #[derive(Debug, Clone)]
 pub struct MomentumIntegrator<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Integration strategy
     strategy: MomentumStrategy,
@@ -68,7 +68,7 @@ pub struct MomentumIntegrator<
 /// Momentum parameters
 #[derive(Debug, Clone)]
 pub struct MomentumParams<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Beta1 (momentum coefficient)
     beta1: T,
@@ -95,7 +95,7 @@ pub struct MomentumParams<
 /// Momentum state for hierarchical momentum
 #[derive(Debug, Clone)]
 pub struct MomentumState<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// First moment
     m: Array1<T>,
@@ -116,7 +116,7 @@ pub struct MomentumState<
 /// Momentum statistics for analysis
 #[derive(Debug, Clone)]
 pub struct MomentumStatistics<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Average momentum magnitude
     pub avg_momentum_magnitude: T,
@@ -139,7 +139,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::iter::Sum
             + Send
             + Sync
@@ -375,12 +375,12 @@ impl<
 
             if start_idx < gradients.len() {
                 let group_gradients =
-                    gradients.slice(scirs2_core::ndarray_ext::s![start_idx..end_idx]);
+                    gradients.slice(scirs2_core::ndarray::s![start_idx..end_idx]);
 
                 // Update group momentum
                 let group_m = state
                     .m
-                    .slice(scirs2_core::ndarray_ext::s![..group_gradients.len()]);
+                    .slice(scirs2_core::ndarray::s![..group_gradients.len()]);
                 let updated_m = group_m.to_owned() * state.group_beta1 + &group_gradients;
 
                 // Update state
@@ -558,7 +558,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::iter::Sum
             + Send
             + Sync

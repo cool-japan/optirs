@@ -2,7 +2,7 @@
 
 use super::config::*;
 use crate::OptimizerError as OptimError;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;

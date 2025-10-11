@@ -227,7 +227,7 @@ impl<
             + From<f64>
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > NeuralArchitectureSearch<T>
 {
     /// Create a new Neural Architecture Search engine

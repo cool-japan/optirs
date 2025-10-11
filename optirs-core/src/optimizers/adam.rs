@@ -1,7 +1,7 @@
 // Adam optimizer implementation
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 // SciRS2 Integration
@@ -26,7 +26,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{Adam, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -52,9 +52,9 @@ pub struct Adam<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
     /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Current timestep
     t: usize,
 }

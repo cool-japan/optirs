@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 pub struct SchedulingError;
 
-pub type Result<T> = std::result::Result<T, SchedulingError>;
+pub type SchedulingResult<T> = std::result::Result<T, SchedulingError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SchedulingPolicy {

@@ -7,7 +7,7 @@ use std::fmt::Debug;
 // preparation.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 

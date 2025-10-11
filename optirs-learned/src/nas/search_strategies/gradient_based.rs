@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
+use scirs2_core::ndarray::{Array1, Array2, Array3};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet};
 
@@ -729,7 +729,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         
         for (i, (edge_id, mixed_op)) in self.mixed_operations.iter().enumerate() {
             if i < params.shape()[0] {
-                let edge_params = params.slice(scirs2_core::ndarray_ext::s![i, .., 0]);
+                let edge_params = params.slice(scirs2_core::ndarray::s![i, .., 0]);
                 let best_idx = edge_params.iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))

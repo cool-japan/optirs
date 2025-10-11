@@ -95,7 +95,7 @@ impl ArchitectureSearchSpace {
             }
             LayerType::LSTM => {
                 let units = rng.gen_range(config.min_units..=config.max_units);
-                let return_sequences = rng.gen_bool(0.5);
+                let return_sequences = rng.random_bool();
 
                 layer_config.insert("units".to_string(), serde_json::json!(units));
                 layer_config.insert("return_sequences".to_string(), serde_json::json!(return_sequences));

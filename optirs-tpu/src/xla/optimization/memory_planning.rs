@@ -12,7 +12,8 @@ use super::super::frontend::{
     DataType, Layout, MemorySpace, OperandId, OperationId, OperationType, TensorShape, Tile,
     XLAComputation, XLAOperation,
 };
-use super::super::{HardwareTarget, TPUConfig};
+use super::HardwareTarget;
+use super::super::TPUConfig;
 use crate::error::{OptimError, Result};
 
 /// Memory planner for XLA computations

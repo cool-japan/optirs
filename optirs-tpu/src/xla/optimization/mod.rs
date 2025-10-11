@@ -17,10 +17,12 @@ use super::frontend::{OperandId, OperationId, XLAComputation};
 use super::{XLACompilerConfig, XLAOptimizationLevel};
 use crate::error::{OptimError, Result};
 
+// Re-export main types selectively to avoid ambiguous glob re-exports
+// (MemoryAccessType and MemoryLevel exist in both memory_planning and scheduling)
 pub use graph_optimization::*;
 pub use kernel_fusion::*;
-pub use memory_planning::*;
-pub use scheduling::*;
+pub use memory_planning::{MemoryPlan, MemoryPlanner};
+pub use scheduling::ExecutionScheduler;
 
 /// Performance analyzer for XLA operations
 pub struct PerformanceAnalyzer<T> {
