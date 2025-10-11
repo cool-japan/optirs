@@ -5,7 +5,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ## ✅ COMPLETED: SciRS2 Integration
 - [x] **Full SciRS2-Core Integration** - 100% complete
-- [x] **Array Operations** - All ndarray imports replaced with scirs2_core::ndarray_ext
+- [x] **Array Operations** - All ndarray imports replaced with scirs2_core::ndarray
 - [x] **Random Generation** - All rand imports replaced with scirs2_core::random
 - [x] **Error Handling** - Integrated scirs2_core::error types
 - [x] **Namespace Correction** - Fixed all scirs2_optim references to optirs_core

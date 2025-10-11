@@ -16,7 +16,7 @@ use scirs2_stats::distributions;
 use crate::error::Result;
 use crate::optimizers::Optimizer;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -184,7 +184,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for SpikeNoiseConfig<T> {
 
 /// Spike-based optimizer
 pub struct SpikingOptimizer<
-    T: Float + Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + 'static,
+    T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + 'static,
 > {
     /// Configuration
     config: SpikingConfig<T>,
@@ -231,7 +231,7 @@ impl<
             + Debug
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + 'static
             + std::iter::Sum,
     > SpikingOptimizer<T>
@@ -646,7 +646,7 @@ impl<
 
 /// Spike train optimizer for temporal pattern learning
 pub struct SpikeTrainOptimizer<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug + Send + Sync,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + std::fmt::Debug + Send + Sync,
 > {
     /// Configuration
     config: SpikingConfig<T>,
@@ -713,7 +713,7 @@ pub enum TemporalKernelType {
 }
 
 impl<
-        T: Float + Debug + Send + Sync + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug,
+        T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + std::fmt::Debug,
     > SpikeTrainOptimizer<T>
 {
     /// Create a new spike train optimizer

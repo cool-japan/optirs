@@ -1,12 +1,12 @@
 // Example comparing different optimizers on a simple quadratic loss function
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use plotters::prelude::*;
 use optirs_core::optimizers::{Adam, AdamW, Optimizer, RAdam, RMSprop, SGD};
 
 // Type aliases to simplify complex types
-type OptimizerList = Vec<(String, Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>)>;
-type OptimizerSlice<'a> = &'a [(String, Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>)];
+type OptimizerList = Vec<(String, Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>)>;
+type OptimizerSlice<'a> = &'a [(String, Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>)];
 
 #[allow(dead_code)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

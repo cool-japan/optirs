@@ -7,7 +7,7 @@
 //! - Population-based training for evolutionary optimization
 //! - Neural predictors for learning-based optimization
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use num_traits::Float;
 use scirs2_core::random::{rng, Rng};
 use optirs_core::error::Result;

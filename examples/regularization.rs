@@ -1,6 +1,6 @@
 //! Example of using regularization techniques
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Optimizer, SGD};
 use optirs_core::regularizers::{ElasticNet, Regularizer, L1, L2};
 

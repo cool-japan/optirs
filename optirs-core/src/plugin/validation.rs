@@ -7,7 +7,7 @@
 use super::core::*;
 use super::sdk::*;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};

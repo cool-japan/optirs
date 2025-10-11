@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -42,7 +42,7 @@ pub struct GradientProcessor<
         + Default
         + Clone
         + std::iter::Sum
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + Send
         + Sync
         + 'static,
@@ -113,7 +113,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,

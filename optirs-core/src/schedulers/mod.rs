@@ -4,7 +4,7 @@
 // of optimizers during training based on different strategies.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Dimension, ScalarOperand};
 use std::fmt::Debug;
 
 use crate::optimizers::Optimizer;

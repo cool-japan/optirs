@@ -13,7 +13,7 @@ use std::fmt::Debug;
 // - Performance profiling and automated benchmarking
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
+use scirs2_core::ndarray::{Array, Array2, Dimension};
 use std::sync::Arc;
 
 use crate::backends::{Backend, CompiledKernel, GpuBackend};
@@ -904,7 +904,7 @@ impl TensorCoreOptimizer {
             let new_cols = cols + padding_cols;
             let mut padded = Array2::zeros((new_rows, new_cols));
             padded
-                .slice_mut(scirs2_core::ndarray_ext::s![..rows, ..cols])
+                .slice_mut(scirs2_core::ndarray::s![..rows, ..cols])
                 .assign(matrix);
             optimized_data = padded;
         }
@@ -2301,7 +2301,7 @@ mod tests {
 
     #[test]
     fn test_sparse_tensor_core_matrix() {
-        use scirs2_core::ndarray_ext::Array2;
+        use scirs2_core::ndarray::Array2;
 
         let dense = Array2::from_shape_vec((4, 8), (0..32).map(|x| x as f32).collect()).unwrap();
         let sparse = SparseTensorCoreMatrix::from_dense(&dense);

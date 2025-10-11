@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // MOEA/D, and other state-of-the-art algorithms for finding Pareto-optimal optimizer architectures.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use scirs2_core::random::Random;
 use scirs2_core::random::Rng;
 use serde::{Deserialize, Serialize};

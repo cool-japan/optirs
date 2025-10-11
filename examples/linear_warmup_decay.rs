@@ -1,4 +1,4 @@
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use num_traits::Float;
 use scirs2_core::random::Rng;
 use optirs_core::optimizers::SGD;

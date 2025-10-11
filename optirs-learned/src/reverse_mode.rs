@@ -4,14 +4,14 @@ use std::fmt::Debug;
 // This module implements reverse-mode automatic differentiation for efficient
 // gradient computation in neural networks and optimization algorithms.
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};
 
 /// Reverse-mode AD engine (gradient tape)
-pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
+pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
     /// Computation tape for reverse pass
     tape: Vec<ReverseOperation<T>>,
 
@@ -226,7 +226,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Gra
     }
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
+impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
     /// Create a new reverse-mode AD engine
     pub fn new() -> Self {
         Self {
@@ -961,7 +961,7 @@ pub struct GradientAccumulator<T: Float + Debug + Send + Sync + 'static> {
     count: usize,
 }
 
-impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> GradientAccumulator<T> {
+impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray::ScalarOperand + Send + Sync> GradientAccumulator<T> {
     pub fn new() -> Self {
         Self {
             gradients: HashMap::new(),

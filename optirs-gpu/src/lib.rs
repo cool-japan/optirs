@@ -10,7 +10,7 @@
 //! - Cross-platform GPU abstraction
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension};
+use scirs2_core::ndarray::{Array, Dimension};
 
 use scirs2_core::gpu::GpuError;
 

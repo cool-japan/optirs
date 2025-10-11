@@ -28,7 +28,7 @@ pub use analytics::{PerformanceAnalyzer, PerformanceSnapshot, PerformanceMetrics
 pub use analytics::performance::ResourceUsage;
 pub use integration::*;
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -224,7 +224,7 @@ impl<
             + Send
             + Sync
             + Default
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug,
     > AdvancedCoordinator<T>
 {

@@ -37,17 +37,28 @@ log = { workspace = true }
 # ALL scientific computing MUST go through scirs2-core abstractions.
 # Following SciRS2 Ecosystem Policy (v3.0.0) from SCIRS2_INTEGRATION_POLICY.md
 #
+# PHILOSOPHY: OptiRS is an OPTIMIZATION library, not an autodiff framework.
+# Start minimal - add dependencies only when compilation errors prove necessity.
+#
+# ✅ ESSENTIAL (Always Required):
 scirs2-core = { workspace = true }        # FOUNDATION - Core scientific primitives
                                           # Provides: random, ndarray, numeric, simd_ops, parallel_ops
 scirs2-optimize = { workspace = true }    # ESSENTIAL - Base optimization interfaces
-scirs2-linalg = { workspace = true }      # ESSENTIAL - Matrix operations for optimization
-scirs2-autograd = { workspace = true }    # ESSENTIAL - Automatic differentiation
-scirs2-neural = { workspace = true }      # ESSENTIAL - Neural network optimization support
-scirs2-metrics = { workspace = true }     # ESSENTIAL - Performance monitoring and benchmarks
-scirs2-stats = { workspace = true }       # ESSENTIAL - Statistical analysis functions
-scirs2-signal = { workspace = true }      # EVIDENCE - Signal processing
-scirs2-series = { workspace = true }      # EVIDENCE - Time series analysis
-scirs2-datasets = { workspace = true }    # EVIDENCE - Dataset handling
+
+# ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
+scirs2-neural = { workspace = true }      # EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = { workspace = true }     # EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = { workspace = true }       # EVIDENCE: multiple modules use distributions
+scirs2-series = { workspace = true }      # EVIDENCE: performance_tracking.rs requires this
+scirs2-datasets = { workspace = true }    # EVIDENCE: cross_platform_tester.rs requires this
+
+# ⚠️ CONDITIONAL (Uncomment only if compilation fails):
+# scirs2-linalg = { workspace = true }      # Only if second-order methods need matrix ops beyond ndarray
+# scirs2-signal = { workspace = true }      # Only if gradient smoothing specifically requires it
+
+# ❌ NOT REQUIRED for OptiRS:
+# scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
+# TODO: Remove scirs2-autograd usage from src/optimizers/adam.rs
 
 # System utilities (allowed - not scientific computing)
 uuid = { workspace = true }               # For generating unique identifiers

@@ -4,7 +4,7 @@
 // It's useful as a base for other schedulers or for testing.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::ScalarOperand;
+use scirs2_core::ndarray::ScalarOperand;
 use std::fmt::Debug;
 
 use super::LearningRateScheduler;

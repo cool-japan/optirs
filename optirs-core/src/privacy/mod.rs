@@ -6,7 +6,7 @@
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
 use scirs2_core::random::{thread_rng, Rng};
 use scirs2_core::ScientificNumber;
 use std::collections::VecDeque;
@@ -252,7 +252,7 @@ where
         + std::ops::SubAssign
         + Send
         + Sync
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + std::fmt::Debug,
     D: Dimension,
     O: Optimizer<A, D>,
@@ -757,7 +757,7 @@ mod tests {
         let dp_config = DifferentialPrivacyConfig::default();
 
         let dp_optimizer =
-            DifferentiallyPrivateOptimizer::<_, f64, scirs2_core::ndarray_ext::Ix1>::new(
+            DifferentiallyPrivateOptimizer::<_, f64, scirs2_core::ndarray::Ix1>::new(
                 sgd, dp_config,
             );
         assert!(dp_optimizer.is_ok());
@@ -775,7 +775,7 @@ mod tests {
         let dp_optimizer: DifferentiallyPrivateOptimizer<
             SGD<f64>,
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = DifferentiallyPrivateOptimizer::new(sgd, dp_config).unwrap();
         let budget = dp_optimizer.get_privacy_budget();
 

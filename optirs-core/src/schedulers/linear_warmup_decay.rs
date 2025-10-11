@@ -5,7 +5,7 @@
 // initial learning rate during the warmup phase, then applies a decay strategy.
 
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::ScalarOperand;
+use scirs2_core::ndarray::ScalarOperand;
 use std::fmt::Debug;
 
 use crate::schedulers::{

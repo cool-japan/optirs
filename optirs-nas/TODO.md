@@ -6,7 +6,7 @@
 - [x] **Search Space Management** - Using scirs2_core::neural_architecture_search::SearchSpace
 - [x] **Quantum Optimization** - scirs2_core::quantum_optimization for advanced search strategies
 - [x] **Parallel Processing** - scirs2_core::parallel::LoadBalancer for parallel search
-- [x] **Array Operations** - All NAS operations use scirs2_core::ndarray_ext
+- [x] **Array Operations** - All NAS operations use scirs2_core::ndarray
 - [x] **Random Generation** - scirs2_core::random for all stochastic search operations
 
 ## 🚀 NEW PRIORITIES: Enhanced NAS Development (Post-SciRS2 Integration)

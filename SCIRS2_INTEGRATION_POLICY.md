@@ -130,6 +130,16 @@ let buffer_pool = GlobalBufferPool::get();
 
 ## Required SciRS2 Crates Analysis
 
+### **OptiRS Dependency Philosophy**
+
+OptiRS is an **optimization library**, not an autodiff or data processing framework. Therefore:
+
+- ✅ **Core Requirements**: `scirs2-core` (foundation) and `scirs2-optimize` (optimization interfaces)
+- ⚠️ **Conditional**: Additional crates only if specific features are implemented
+- ❌ **Not Needed**: `scirs2-autograd` (OptiRS receives pre-computed gradients)
+
+**Guideline**: Start with minimal dependencies. Add others only when compilation fails or features explicitly require them.
+
 ### **ESSENTIAL (Always Required)**
 
 #### `scirs2-core` - FOUNDATION (CRITICAL)
@@ -154,12 +164,6 @@ let buffer_pool = GlobalBufferPool::get();
 - **Use Cases**: Matrix/vector operations for gradients, parameters, second-order methods
 - **OptiRS Modules**: `optimizers/`, `gradient_processing/`, `second_order/`
 - **Status**: 🔶 INVESTIGATE - Check if OptiRS does matrix ops beyond ndarray
-
-#### `scirs2-autograd` - AUTOMATIC DIFFERENTIATION
-- **Use Cases**: Gradient computation, backpropagation integration, **array! macro access**
-- **OptiRS Modules**: `neural_integration/`, `gradient_accumulation/`, **all test modules**
-- **Status**: ✅ REQUIRED - Provides array! macro for tests
-- **Special Note**: The `array!` macro is accessed via `scirs2_autograd::ndarray::array` since scirs2-core doesn't re-export it
 
 #### `scirs2-neural` - NEURAL NETWORKS
 - **Use Cases**: Neural network layer integration, activation functions
@@ -199,6 +203,10 @@ let buffer_pool = GlobalBufferPool::get();
 - **Status**: ⚠️ CONDITIONAL - Only if OptiRS analyzes optimization over time
 
 ### **LIKELY NOT REQUIRED**
+
+#### `scirs2-autograd` - AUTOMATIC DIFFERENTIATION
+- **Status**: ❌ NOT REQUIRED - OptiRS receives gradients, doesn't compute them
+- **Rationale**: OptiRS is an optimization library that operates on pre-computed gradients. Automatic differentiation is outside OptiRS scope. Users combine OptiRS with autodiff frameworks externally.
 
 #### `scirs2-vision` - COMPUTER VISION
 - **Status**: ❌ UNLIKELY - OptiRS is optimization-focused, not vision-focused
@@ -294,26 +302,27 @@ let buffer_pool = GlobalBufferPool::get();
    use scirs2_optimize::*;
    ```
 
-2. **Array Macro Import Pattern**
+2. **Array Macro Import Pattern (Updated v0.1.0-beta.4+)**
    ```rust
-   // ✅ CORRECT - Use scirs2_autograd for array! macro
-   use scirs2_autograd::ndarray::array;
-
-   // ❌ WRONG - This won't work
-   use scirs2_core::ndarray_ext::array;  // array! macro not re-exported here
+   // ✅ CORRECT - Use scirs2_core::ndarray for array! macro (v0.1.0-beta.4+)
+   use scirs2_core::ndarray::{array, Array1, Array2, s, azip};
 
    // ❌ WRONG - Don't use ndarray directly
    use ndarray::array;  // Violates SciRS2 integration policy
+
+   // ❌ OBSOLETE - scirs2_autograd no longer needed for array! macro
+   use scirs2_autograd::ndarray::array;  // Old pattern, use scirs2_core::ndarray instead
 
    // Example usage in tests:
    #[cfg(test)]
    mod tests {
        use super::*;
-       use scirs2_autograd::ndarray::array;
+       use scirs2_core::ndarray::{array, s};
 
        #[test]
        fn test_example() {
            let data = array![1.0, 2.0, 3.0];
+           let slice = data.slice(s![..2]);
            // test implementation
        }
    }
@@ -354,10 +363,12 @@ let buffer_pool = GlobalBufferPool::get();
 4. **Policy Training**: Educate team on SciRS2 integration policy
 
 ### **Current Policy Status**
-- **Version**: 2.0.0 (Aligned with SciRS2 v0.1.0-RC.1)
-- **Effective Date**: 2025-10-04
+- **Version**: 3.0.0 (Aligned with SciRS2 POLICY v3.0.0)
+- **Effective Date**: 2025-10-11
+- **SciRS2 Version**: v0.1.0-RC.1
 - **Migration Status**: In Progress - Removing prohibited dependencies
 - **Next Review**: Q4 2025
+- **Base Policy**: [SciRS2 Ecosystem Policy v3.0.0](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
 
 ## Future Considerations
 
@@ -382,22 +393,49 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 
 ---
 
-**Document Version**: 2.0.0 (Aligned with SciRS2 Ecosystem Policy v3.0.0)
-**Last Updated**: 2025-10-04
+**Document Version**: 3.0.0 (Aligned with SciRS2 Ecosystem Policy v3.0.0)
+**Last Updated**: 2025-10-11
+**SciRS2 Version**: v0.1.0-RC.1
 **Next Review**: Q4 2025
 **Owner**: OptiRS Architecture Team
-**Reference**: [SciRS2 Ecosystem Policy](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
+**Reference**: [SciRS2 Ecosystem Policy v3.0.0](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
+
+## Key Updates from v2.0.0 to v3.0.0
+
+### Major Changes (v0.1.0-beta.4+)
+1. **Unified NDArray Module**: `array!` macro now available directly via `scirs2_core::ndarray::*`
+2. **Complete Random Module**: All `rand_distr` distributions now in `scirs2_core::random::*`
+3. **Deprecation**: `scirs2_autograd` no longer needed for `array!` macro
+4. **Policy Alignment**: Updated to SciRS2 POLICY v3.0.0 standards
+5. **Enhanced Validation**: Added `scirs2_core::validation` to standard imports
+
+### Migration Notes
+- Replace `use scirs2_autograd::ndarray::array` with `use scirs2_core::ndarray::array`
+- Update all array macro imports to use `scirs2_core::ndarray::{array, s, azip}`
+- Remove scirs2-autograd dependency if only used for array macros
 
 ## Quick Reference
 
-### Correct Cargo.toml Configuration
+### Correct Cargo.toml Configuration for OptiRS
 ```toml
 # ✅ REQUIRED in all OptiRS crates
 [dependencies]
 scirs2-core = { path = "../scirs/scirs2-core", features = ["array", "random", "simd", "parallel"] }
 scirs2-optimize = { path = "../scirs/scirs2-optimize" }  # Core optimization interfaces
 
-# ❌ FORBIDDEN - These must be REMOVED
+# ⚠️ CONDITIONAL - Only if actually needed
+# scirs2-linalg = { workspace = true }      # Only if second-order methods need matrix ops beyond ndarray
+# scirs2-neural = { workspace = true }      # Only if NN-specific optimizers implemented
+# scirs2-metrics = { workspace = true }     # Only if advanced metrics beyond scirs2-core needed
+# scirs2-stats = { workspace = true }       # Only if statistical analysis beyond scirs2-core needed
+
+# ❌ NOT REQUIRED for OptiRS
+# scirs2-autograd = { workspace = true }    # OptiRS receives gradients, doesn't compute them
+# scirs2-signal = { workspace = true }      # Unless gradient smoothing specifically requires it
+# scirs2-series = { workspace = true }      # Unless trajectory analysis specifically requires it
+# scirs2-datasets = { workspace = true }    # Unless benchmarking requires sample datasets
+
+# ❌ FORBIDDEN - Direct external dependencies
 # rand = { workspace = true }           # REMOVE - Use scirs2-core::random
 # rand_distr = { workspace = true }     # REMOVE - Use scirs2-core::random
 # ndarray = { workspace = true }        # REMOVE - Use scirs2-core::ndarray
@@ -405,21 +443,25 @@ scirs2-optimize = { path = "../scirs/scirs2-optimize" }  # Core optimization int
 # num-complex = { workspace = true }    # REMOVE - Use scirs2-core::numeric
 ```
 
-### Correct Import Patterns
+### Correct Import Patterns (Updated v0.1.0-beta.4+)
 ```rust
 // ✅ CORRECT - Always use these patterns
-use scirs2_core::random::*;      // For RNG and distributions
-use scirs2_core::ndarray::*;     // For arrays and array! macro
-use scirs2_core::numeric::*;     // For numerical traits (Float, Zero, One, Complex)
-use scirs2_core::simd_ops::*;    // For SIMD operations
-use scirs2_core::parallel_ops::*; // For parallel processing
-use scirs2_core::error::*;       // For error handling
+use scirs2_core::random::*;           // For RNG and all distributions (Beta, Normal, etc.)
+use scirs2_core::ndarray::*;          // For arrays including array!, s!, azip! macros
+use scirs2_core::numeric::*;          // For numerical traits (Float, Zero, One, Complex)
+use scirs2_core::simd_ops::*;         // For SIMD operations
+use scirs2_core::parallel_ops::*;     // For parallel processing
+use scirs2_core::error::*;            // For error handling
+use scirs2_core::validation::*;       // For parameter validation
 
 // ❌ FORBIDDEN - Never use these
-use rand::*;                      // FORBIDDEN
-use ndarray::*;                   // FORBIDDEN
-use num_traits::*;                // FORBIDDEN
-use num_complex::*;               // FORBIDDEN
+use rand::*;                          // FORBIDDEN - Use scirs2_core::random
+use rand_distr::*;                    // FORBIDDEN - Use scirs2_core::random
+use ndarray::*;                       // FORBIDDEN - Use scirs2_core::ndarray
+use ndarray::{array, s};              // FORBIDDEN - Use scirs2_core::ndarray
+use num_traits::*;                    // FORBIDDEN - Use scirs2_core::numeric
+use num_complex::*;                   // FORBIDDEN - Use scirs2_core::numeric
+use rayon::prelude::*;                // FORBIDDEN - Use scirs2_core::parallel_ops
 ```
 
 ### Migration Checklist for Existing Code

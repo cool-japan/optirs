@@ -2,7 +2,7 @@
 
 use scirs2_core::numeric::Float;
 use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuDataType, GpuKernelHandle};
-use scirs2_core::ndarray_ext::{ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{ArrayBase, Data, DataMut, Dimension};
 use std::marker::PhantomData;
 use std::sync::Arc;
 

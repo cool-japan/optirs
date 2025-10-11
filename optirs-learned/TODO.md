@@ -6,7 +6,7 @@
 - [x] **Neural Architecture Search** - Using scirs2_core::neural_architecture_search
 - [x] **Memory Efficient Operations** - scirs2_core::memory_efficient::LazyArray for history
 - [x] **JIT Compilation** - scirs2_core::jit for optimized transformer kernels
-- [x] **Array Operations** - All neural operations use scirs2_core::ndarray_ext
+- [x] **Array Operations** - All neural operations use scirs2_core::ndarray
 - [x] **Random Generation** - scirs2_core::random for all stochastic operations
 
 ## 🚀 NEW PRIORITIES: Enhanced Learned Optimization (Post-SciRS2 Integration)

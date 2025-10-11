@@ -581,17 +581,15 @@ impl PerformanceTestSuite {
 
     /// Execute all test cases in the suite
     pub fn execute(&mut self) -> Result<Vec<CiCdTestResult>> {
-        let mut results = Vec::new();
-
         // Filter test cases based on configuration
         let filtered_tests = self.filter_test_cases()?;
 
         // Execute tests based on parallel configuration
-        if self.config.parallel_execution.enabled {
-            results = self.execute_parallel(&filtered_tests)?;
+        let results = if self.config.parallel_execution.enabled {
+            self.execute_parallel(&filtered_tests)?
         } else {
-            results = self.execute_sequential(&filtered_tests)?;
-        }
+            self.execute_sequential(&filtered_tests)?
+        };
 
         self.results = results.clone();
         Ok(results)

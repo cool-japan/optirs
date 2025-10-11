@@ -7,7 +7,7 @@
 - [x] **Distributed Arrays** - scirs2_core::array_protocol::DistributedArray support
 - [x] **JIT XLA Integration** - scirs2_core::jit::JitCompiler for XLA compilation
 - [x] **Cluster Management** - scirs2_core::distributed::ClusterManager and JobScheduler
-- [x] **Array Operations** - All TPU operations use scirs2_core::ndarray_ext
+- [x] **Array Operations** - All TPU operations use scirs2_core::ndarray
 
 ## 🚀 NEW PRIORITIES: Enhanced TPU Development (Post-SciRS2 Integration)
 

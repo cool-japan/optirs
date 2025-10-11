@@ -1,6 +1,6 @@
 //! Debug LBFGS optimizer behavior
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Optimizer, LBFGS};
 
 #[allow(dead_code)]

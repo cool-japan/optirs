@@ -1,6 +1,6 @@
 //! Example of using SGD optimizer for a simple optimization problem
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Optimizer, SGD};
 
 #[allow(dead_code)]

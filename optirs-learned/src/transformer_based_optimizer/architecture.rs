@@ -8,7 +8,7 @@ use super::layers::{
 };
 use crate::error::Result;
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
 use std::fmt::Debug;
 
 /// Core transformer architecture

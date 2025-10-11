@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use std::collections::{HashMap, VecDeque};
 
 /// Byzantine-robust aggregation algorithms
@@ -151,7 +151,7 @@ impl<
             + Sync
             + 'static
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > ByzantineRobustAggregator<T>
 {
     #[allow(dead_code)]
@@ -501,7 +501,7 @@ impl Default for StatisticalTestConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_byzantine_robust_aggregator_creation() {

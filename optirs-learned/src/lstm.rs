@@ -6,7 +6,7 @@
 
 use scirs2_core::numeric::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
+use scirs2_core::ndarray::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
 use scirs2_core::random::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -903,7 +903,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug,
     > LSTMOptimizer<T>
 {

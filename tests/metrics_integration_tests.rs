@@ -3,7 +3,7 @@
 #[cfg(feature = "metrics_integration")]
 mod tests {
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
     use optirs_core::metrics::{MetricBasedReduceOnPlateau, MetricOptimizer, MetricScheduler};
     use optirs_core::optimizers::{Optimizer, SGD};
     use optirs_core::schedulers::LearningRateScheduler;
@@ -87,11 +87,11 @@ mod tests {
         let mut sgd: SGD<f64> = SGD::new(0.2);
 
         // Apply scheduler to optimizer
-        scheduler.apply_to::<scirs2_core::ndarray_ext::Ix1_>(&mut sgd);
+        scheduler.apply_to::<scirs2_core::ndarray::Ix1_>(&mut sgd);
 
         // Check that optimizer's learning rate was updated
         assert_abs_diff_eq!(
-            <SGD<f64> as Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>::get_learning_rate(&sgd),
+            <SGD<f64> as Optimizer<f64, scirs2_core::ndarray::Ix1>>::get_learning_rate(&sgd),
             0.05
         );
     }
@@ -142,9 +142,9 @@ mod tests {
 
         // Test application to optimizer
         let mut sgd: SGD<f64> = SGD::new(0.2);
-        scheduler.apply_to::<scirs2_core::ndarray_ext::Ix1_>(&mut sgd);
+        scheduler.apply_to::<scirs2_core::ndarray::Ix1_>(&mut sgd);
         assert_abs_diff_eq!(
-            <SGD<f64> as Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>::get_learning_rate(&sgd),
+            <SGD<f64> as Optimizer<f64, scirs2_core::ndarray::Ix1>>::get_learning_rate(&sgd),
             0.05
         );
     }

@@ -1,5 +1,5 @@
 // Simple demo of in-place optimizers
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::memory_efficient::{clip_inplace, normalize_inplace, scale_inplace};
 use optirs_core::memory_efficient::{InPlaceAdam, InPlaceOptimizer, InPlaceSGD};
 use std::error::Error;

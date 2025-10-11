@@ -104,6 +104,10 @@ Example: `cargo build --features "gpu,learned"`
 
 See detailed policy in: `SCIRS2_INTEGRATION_POLICY.md`
 
+**Important**:
+1. From SciRS2 v0.1.0-beta.4+, the `array!` macro is available directly from `scirs2_core::ndarray`
+2. OptiRS does **NOT** require `scirs2-autograd` - OptiRS is an optimization library that receives pre-computed gradients, not an automatic differentiation library
+
 ### Prohibited Dependencies (NEVER USE)
 
 **NO DIRECT EXTERNAL DEPENDENCIES allowed in OptiRS:**
@@ -129,10 +133,10 @@ nalgebra = "*"          # Use scirs2_core::linalg
 scirs2-core = { workspace = true }        # MANDATORY - All scientific computing
 scirs2-optimize = { workspace = true }    # REQUIRED - Base optimization interfaces
 
-# Additional SciRS2 crates as needed
-scirs2-linalg = { workspace = true }      # Linear algebra operations
-scirs2-autograd = { workspace = true }    # Automatic differentiation
-scirs2-neural = { workspace = true }      # Neural network support
+# Additional SciRS2 crates as needed (based on OptiRS requirements)
+scirs2-linalg = { workspace = true }      # Linear algebra operations (if needed)
+# Note: scirs2-autograd is NOT required - OptiRS receives gradients, doesn't compute them
+scirs2-neural = { workspace = true }      # Neural network support (if NN-specific optimizers)
 scirs2-metrics = { workspace = true }     # Performance monitoring
 scirs2-stats = { workspace = true }       # Statistical analysis
 ```
@@ -157,29 +161,39 @@ OptiRS must make **FULL USE** of scirs2-core's extensive capabilities:
 use scirs2_core::ndarray::*;  // Complete ndarray functionality including macros
 use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
 use scirs2_core::ndarray::{Axis, Ix1, Ix2, IxDyn};
-use scirs2_core::ndarray::{array, s, azip};  // Macros available
+use scirs2_core::ndarray::{array, s, azip};  // ALL macros available directly
+
+// Example usage
+let arr = array![[1.0, 2.0], [3.0, 4.0]];  // array! macro works
+let slice = arr.slice(s![.., 0]);          // s! macro works
+azip!((a in &mut arr) *a *= 2.0);         // azip! macro works
 
 // ❌ FORBIDDEN - Direct ndarray imports
 use ndarray::*;  // NEVER USE
 use ndarray::{Array, Array1, Array2};  // NEVER USE
+use ndarray::{array, s};  // NEVER USE - all macros are in scirs2_core::ndarray
 ```
 
 #### Random Number Generation (replaces rand/rand_distr)
 ```rust
-// ✅ CORRECT - Use scirs2-core's random module
+// ✅ CORRECT - Use scirs2-core's random module (v0.1.0-beta.4+)
 use scirs2_core::random::*;  // Complete rand + rand_distr functionality
 use scirs2_core::random::{thread_rng, Rng};
-use scirs2_core::random::{Normal, Beta, Cauchy, ChiSquared, StudentT};
+// ALL distributions available: Beta, Cauchy, ChiSquared, FisherF, LogNormal,
+// Normal, StudentT, Weibull, Bernoulli, Binomial, Poisson, etc.
+use scirs2_core::random::{Normal, RandBeta, Cauchy, ChiSquared, StudentT};
 
 // Example usage
 let mut rng = thread_rng();
-let dist = Normal::new(0.0, 1.0)?;
-let sample = dist.sample(&mut rng);
+let normal = Normal::new(0.0, 1.0)?;
+let beta = RandBeta::new(2.0, 5.0)?;  // Note: RandBeta to avoid naming conflict
+let sample = normal.sample(&mut rng);
 
 // ❌ FORBIDDEN - Direct rand imports
 use rand::*;  // NEVER USE
 use rand::thread_rng;  // NEVER USE
-use rand_distr::Normal;  // NEVER USE
+use rand_distr::*;  // NEVER USE
+use rand_distr::{Normal, Beta};  // NEVER USE
 ```
 
 #### Numerical Traits (replaces num-traits/num-complex)
@@ -303,17 +317,22 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 ### Mandatory Usage Guidelines (SciRS2 Ecosystem Policy v3.0.0)
 
-1. **NEVER** import `ndarray` directly → **ALWAYS** use `scirs2_core::ndarray`
-2. **NEVER** import `rand` or `rand_distr` directly → **ALWAYS** use `scirs2_core::random`
+1. **NEVER** import `ndarray` directly → **ALWAYS** use `scirs2_core::ndarray` (includes `array!`, `s!`, `azip!` macros)
+2. **NEVER** import `rand` or `rand_distr` directly → **ALWAYS** use `scirs2_core::random` (all distributions included)
 3. **NEVER** import `num-traits` or `num-complex` directly → **ALWAYS** use `scirs2_core::numeric`
 4. **NEVER** import `rayon` directly → **ALWAYS** use `scirs2_core::parallel_ops`
 5. **NEVER** import `wide` directly → **ALWAYS** use `scirs2_core::simd_ops`
-6. **ALWAYS** use scirs2-core's GPU abstractions for hardware acceleration
-7. **ALWAYS** use scirs2-core's memory management for large data operations
-8. **ALWAYS** use scirs2-core's profiling and benchmarking tools
-9. **ALWAYS** use scirs2-core's error types and result handling
+6. **ALWAYS** use `scirs2_core::validation` for parameter validation (check_positive, check_finite, etc.)
+7. **ALWAYS** use scirs2-core's GPU abstractions for hardware acceleration
+8. **ALWAYS** use scirs2-core's memory management for large data operations
+9. **ALWAYS** use scirs2-core's profiling and benchmarking tools
+10. **ALWAYS** use scirs2-core's error types and result handling
 
 **Violation of these guidelines is a CRITICAL architectural error and must be fixed immediately.**
+
+**Key Updates (v0.1.0-beta.4+)**:
+1. The `array!` macro is now available directly from `scirs2_core::ndarray`
+2. OptiRS does **NOT** use `scirs2-autograd` - OptiRS receives gradients, doesn't compute them
 
 ## Development Guidelines
 
@@ -332,26 +351,30 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 - Use `approx` for floating-point comparisons
 - Mock GPU/TPU for hardware tests when not available
 
-## Key Implementation Patterns
+## Key Implementation Patterns (Updated v0.1.0-beta.4+)
 
 1. **Error Handling**: Use `scirs2_core::error::CoreError` and `scirs2_core::error::Result`
-2. **Array Operations**: Use `scirs2_core::ndarray` exclusively (NOT `ndarray_ext`)
-3. **Random Numbers**: Use `scirs2_core::random` exclusively (NOT `rand`)
-4. **Numerical Traits**: Use `scirs2_core::numeric` exclusively (NOT `num-traits`)
-5. **Parallelization**: Use `scirs2_core::parallel_ops` exclusively (NOT `rayon`)
-6. **SIMD Operations**: Use `scirs2_core::simd_ops::SimdUnifiedOps` exclusively (NOT `wide`)
-7. **Async Operations**: Use `tokio` with `scirs2_core::array_protocol::AsyncArray`
-8. **GPU Backends**: Use `scirs2_core::gpu` abstractions
-9. **Memory Efficiency**: Use `scirs2_core::memory_efficient` for large data
-10. **Profiling**: Use `scirs2_core::profiling` and `benchmarking`
-11. **Metrics**: Use `scirs2_core::metrics` for monitoring
+2. **Parameter Validation**: Use `scirs2_core::validation` functions (check_positive, check_finite, check_shape, etc.)
+3. **Array Operations**: Use `scirs2_core::ndarray` exclusively - includes ALL macros (array!, s!, azip!)
+4. **Random Numbers**: Use `scirs2_core::random` exclusively - includes ALL distributions from rand_distr
+5. **Numerical Traits**: Use `scirs2_core::numeric` exclusively (Float, Zero, One, Complex, etc.)
+6. **Parallelization**: Use `scirs2_core::parallel_ops` exclusively (NOT direct `rayon`)
+7. **SIMD Operations**: Use `scirs2_core::simd_ops::SimdUnifiedOps` exclusively (NOT direct `wide`)
+8. **Async Operations**: Use `tokio` with `scirs2_core::array_protocol::AsyncArray`
+9. **GPU Backends**: Use `scirs2_core::gpu` abstractions
+10. **Memory Efficiency**: Use `scirs2_core::memory_efficient` for large data
+11. **Profiling**: Use `scirs2_core::profiling` and `benchmarking`
+12. **Metrics**: Use `scirs2_core::metrics` for monitoring
+
+**Remember**: ALL external dependencies MUST go through scirs2-core abstractions. Direct imports from `ndarray`, `rand`, `num-traits`, etc. are FORBIDDEN.
 
 ## OptiRS Module-Specific SciRS2 Usage
 
 ### optirs-core
-- Use `scirs2_core::ndarray` for all array operations (includes array! macro)
-- Use `scirs2_core::random` for all RNG operations (includes all distributions)
+- Use `scirs2_core::ndarray` for all array operations (includes `array!`, `s!`, `azip!` macros - v0.1.0-beta.4+)
+- Use `scirs2_core::random` for all RNG operations (includes ALL distributions: Normal, Beta, Cauchy, etc.)
 - Use `scirs2_core::numeric` for numerical traits (Float, Zero, One, Complex)
+- Use `scirs2_core::validation` for parameter validation (check_positive, check_finite, etc.)
 - Use `scirs2_core::simd_ops::SimdUnifiedOps` for gradient processing
 - Use `scirs2_core::parallel_ops` for parameter groups
 - Use `scirs2_core::memory::BufferPool` for memory management
@@ -395,20 +418,32 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 ## Common Workflows
 
-### Importing Core Types - FULL SciRS2 Usage (CORRECT)
+### Importing Core Types - FULL SciRS2 Usage (CORRECT) - v0.1.0-beta.4+
 ```rust
 // ✅ Arrays and numerical operations (SciRS2 v0.1.0-beta.4+)
-use scirs2_core::ndarray::*;  // Includes array!, s!, azip! macros
+use scirs2_core::ndarray::*;  // Includes array!, s!, azip! macros - ALL AVAILABLE
 use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
 use scirs2_core::ndarray::{Ix1, Ix2, IxDyn, Axis};
 
-// ✅ Random number generation (complete rand + rand_distr)
-use scirs2_core::random::*;  // thread_rng, Rng, distributions
-use scirs2_core::random::{thread_rng, Normal, Beta, StudentT};
+// Example: array! macro works directly
+let arr = array![[1.0, 2.0], [3.0, 4.0]];
+let slice = arr.slice(s![.., 0]);
+
+// ✅ Random number generation (complete rand + rand_distr - ALL distributions)
+use scirs2_core::random::*;  // thread_rng, Rng, ALL distributions
+use scirs2_core::random::{thread_rng, Normal, RandBeta, Cauchy, ChiSquared, StudentT};
+
+// Example: all distributions work
+let mut rng = thread_rng();
+let normal = Normal::new(0.0, 1.0)?;
+let beta = RandBeta::new(2.0, 5.0)?;
 
 // ✅ Numerical traits (num-traits, num-complex, num-integer)
-use scirs2_core::numeric::*;  // Float, Zero, One, Complex
+use scirs2_core::numeric::*;  // Float, Zero, One, Complex, NumCast, etc.
 use scirs2_core::numeric::{Float, Zero, One, Complex};
+
+// ✅ Validation (parameter checking)
+use scirs2_core::validation::*;  // check_positive, check_finite, check_shape, etc.
 
 // ✅ Performance features
 use scirs2_core::simd_ops::SimdUnifiedOps;  // SIMD operations
@@ -421,17 +456,19 @@ use scirs2_core::memory::{BufferPool, GlobalBufferPool};
 
 // ✅ Error handling
 use scirs2_core::error::{CoreError, Result};
-use scirs2_core::validation::{check_positive, check_finite};
 
 // ✅ Profiling and metrics
 use scirs2_core::profiling::Profiler;
 use scirs2_core::metrics::{Counter, Timer};
 
-// ❌ FORBIDDEN - Never use these
-use ndarray::*;        // NEVER
-use rand::*;           // NEVER
-use num_traits::*;     // NEVER
-use rayon::prelude::*; // NEVER
+// ❌ FORBIDDEN - Never use these (CRITICAL ERROR)
+use ndarray::*;        // NEVER - Use scirs2_core::ndarray
+use ndarray::{array, s};  // NEVER - All macros in scirs2_core::ndarray
+use rand::*;           // NEVER - Use scirs2_core::random
+use rand_distr::*;     // NEVER - Use scirs2_core::random
+use num_traits::*;     // NEVER - Use scirs2_core::numeric
+use num_complex::*;    // NEVER - Use scirs2_core::numeric
+use rayon::prelude::*; // NEVER - Use scirs2_core::parallel_ops
 ```
 
 ### Adding a New Optimizer with Full SciRS2 Integration
@@ -596,9 +633,10 @@ When reviewing or writing OptiRS code, verify these requirements:
 - [ ] NO direct `use rand::{...}`
 - [ ] NO direct `use rand_distr::{...}`
 - [ ] NO `rng()` function calls without proper import
-- [ ] YES `use scirs2_core::random::*`
-- [ ] YES `use scirs2_core::random::{thread_rng, Rng, Normal, Beta, ...}`
+- [ ] YES `use scirs2_core::random::*` (v0.1.0-beta.4+ includes ALL distributions)
+- [ ] YES `use scirs2_core::random::{thread_rng, Rng, Normal, RandBeta, Cauchy, ...}`
 - [ ] YES use `thread_rng()` instead of `rng()`
+- [ ] NOTE: Use `RandBeta` instead of `Beta` to avoid naming conflicts
 
 ### ✅ Numerical Traits
 - [ ] NO direct `use num_traits::{...}`
@@ -621,25 +659,32 @@ When reviewing or writing OptiRS code, verify these requirements:
 - [ ] YES use `scirs2_core::metrics` for monitoring
 - [ ] YES use `scirs2_core::benchmarking` for benchmarks
 
-### Common Anti-Patterns to Avoid
+### Common Anti-Patterns to Avoid (Updated v0.1.0-beta.4+)
 ```rust
-// ❌ WRONG - Direct external dependencies (FORBIDDEN)
-use ndarray::{Array2, array};
-use rand::thread_rng;
-use rand_distr::Normal;
-use num_traits::Float;
-use num_complex::Complex;
-use rayon::prelude::*;
+// ❌ WRONG - Direct external dependencies (FORBIDDEN - CRITICAL ERROR)
+use ndarray::{Array2, array};       // NEVER USE
+use ndarray::s;                      // NEVER USE
+use rand::thread_rng;                // NEVER USE
+use rand_distr::{Normal, Beta};      // NEVER USE
+use num_traits::Float;               // NEVER USE
+use num_complex::Complex;            // NEVER USE
+use rayon::prelude::*;               // NEVER USE
 
-let mut rng = rng();  // WRONG - use thread_rng()
+let mut rng = rng();  // WRONG - function not available
 
-// ✅ CORRECT - SciRS2-Core abstractions (REQUIRED)
-use scirs2_core::ndarray::{Array2, array};
-use scirs2_core::random::{thread_rng, Normal};
+// ✅ CORRECT - SciRS2-Core abstractions (REQUIRED - v0.1.0-beta.4+)
+use scirs2_core::ndarray::{Array2, array, s};  // ALL macros available
+use scirs2_core::random::{thread_rng, Normal, RandBeta};  // ALL distributions
 use scirs2_core::numeric::{Float, Complex};
+use scirs2_core::validation::{check_positive, check_finite};
 use scirs2_core::parallel_ops::*;
 
-let mut rng = thread_rng();  // CORRECT
+// Correct usage examples
+let mut rng = thread_rng();         // CORRECT
+let arr = array![[1.0, 2.0]];      // CORRECT - macro works
+let slice = arr.slice(s![.., 0]);  // CORRECT - s! macro works
+let beta = RandBeta::new(2.0, 5.0)?;  // CORRECT - all distributions available
+check_positive(x, "parameter")?;    // CORRECT - validation
 ```
 
 ### Build Verification

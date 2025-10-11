@@ -175,9 +175,6 @@ impl PrivacyGuaranteesAnalyzer {
             PrivacyAttackScenario::NoiseReductionAttack => {
                 self.test_noise_reduction(test)?;
             }
-            PrivacyAttackScenario::PropertyInference => {
-                self.test_information_leakage(test)?;
-            }
         }
 
         let execution_time = start_time.elapsed();

@@ -1,5 +1,5 @@
 // Example demonstrating memory-efficient optimizers
-use scirs2_core::ndarray_ext::Array2;
+use scirs2_core::ndarray::Array2;
 use optirs_core::memory_efficient::{InPlaceAdam, InPlaceOptimizer, InPlaceSGD};
 use optirs_core::optimizers::{Adam, SGD};
 use optirs_core::Optimizer;

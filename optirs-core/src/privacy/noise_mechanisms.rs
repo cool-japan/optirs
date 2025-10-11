@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // including Gaussian, Laplace, Exponential, and advanced mechanisms like
 // tree aggregation and truncated noise.
 
-use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{s, Array, Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 // Removed unused import Distribution
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
@@ -21,7 +21,7 @@ pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 1D arrays
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -30,7 +30,7 @@ pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 2D arrays
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -39,7 +39,7 @@ pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 3D arrays
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -252,7 +252,7 @@ where
 {
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -262,7 +262,7 @@ where
 
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -272,7 +272,7 @@ where
 
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -391,7 +391,7 @@ where
 {
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -401,7 +401,7 @@ where
 
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -411,7 +411,7 @@ where
 
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -534,7 +534,7 @@ where
 {
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -551,7 +551,7 @@ where
 
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -568,7 +568,7 @@ where
 
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -819,7 +819,7 @@ where
         match data.ndim() {
             1 => {
                 // Cast to 1D array
-                let data_1d: &mut Array<T, scirs2_core::ndarray_ext::Ix1> =
+                let data_1d: &mut Array<T, scirs2_core::ndarray::Ix1> =
                     unsafe { std::mem::transmute(data) };
                 mechanism.add_noise_1d(
                     data_1d,
@@ -830,7 +830,7 @@ where
             }
             2 => {
                 // Cast to 2D array
-                let data_2d: &mut Array<T, scirs2_core::ndarray_ext::Ix2> =
+                let data_2d: &mut Array<T, scirs2_core::ndarray::Ix2> =
                     unsafe { std::mem::transmute(data) };
                 mechanism.add_noise_2d(
                     data_2d,
@@ -841,7 +841,7 @@ where
             }
             3 => {
                 // Cast to 3D array
-                let data_3d: &mut Array<T, scirs2_core::ndarray_ext::Ix3> =
+                let data_3d: &mut Array<T, scirs2_core::ndarray::Ix3> =
                     unsafe { std::mem::transmute(data) };
                 mechanism.add_noise_3d(
                     data_3d,

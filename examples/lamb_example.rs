@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the LAMB optimizer for training
 //! and compares it with other optimizers.
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Adam, Lion, Optimizer, LAMB, SGD};
 
 #[allow(dead_code)]
@@ -45,19 +45,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let optimizers = vec![
         (
             "LAMB",
-            Box::new(LAMB::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
+            Box::new(LAMB::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>,
         ),
         (
             "Lion",
-            Box::new(Lion::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
+            Box::new(Lion::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>,
         ),
         (
             "Adam",
-            Box::new(Adam::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
+            Box::new(Adam::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>,
         ),
         (
             "SGD",
-            Box::new(SGD::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>,
+            Box::new(SGD::new(learning_rate)) as Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>,
         ),
     ];
 

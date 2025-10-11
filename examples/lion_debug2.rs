@@ -1,6 +1,6 @@
 //! Debug Lion optimizer behavior with smaller start
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Lion, Optimizer};
 
 #[allow(dead_code)]

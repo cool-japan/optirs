@@ -3,7 +3,7 @@
 //! This example shows how to use different learning rates for different
 //! parts of a model, which is common in transfer learning and fine-tuning.
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use optirs_core::{
     optimizers::GroupedAdam,
     parameter_groups::{GroupedOptimizer, ParameterGroupConfig},

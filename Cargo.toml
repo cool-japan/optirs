@@ -110,26 +110,29 @@ optirs-bench = { version = "0.1.0-beta.2", path = "./optirs-bench" }
 # 🚨 CRITICAL: SciRS2 ECOSYSTEM DEPENDENCIES 🚨
 #
 # OptiRS MUST use SciRS2 as its scientific computing foundation.
-# This section implements evidence-based integration as per SCIRS2_INTEGRATION_POLICY.md
+# This section implements minimal dependency policy as per SCIRS2_INTEGRATION_POLICY.md
 #
-# MINIMAL ESSENTIAL START (as per integration policy):
-# Only these crates are included initially. Additional crates will be added
-# based on compilation evidence and actual usage requirements.
+# PHILOSOPHY: OptiRS is an OPTIMIZATION library, not an autodiff framework.
+# Start minimal - add dependencies only when compilation errors prove necessity.
 #
+# ✅ ESSENTIAL (Always Required):
 scirs2-core = "0.1.0-rc.1"           # FOUNDATION - Core scientific primitives
-scirs2-optimize = "0.1.0-rc.1"   # ESSENTIAL - Base optimization interfaces
-scirs2-linalg = "0.1.0-rc.1"       # EVIDENCE: Matrix operations for optimization
-scirs2-autograd = "0.1.0-rc.1"   # EVIDENCE: Automatic differentiation
-scirs2-neural = "0.1.0-rc.1"       # EVIDENCE: Neural network optimization
-scirs2-metrics = "0.1.0-rc.1"     # EVIDENCE: Performance monitoring
-scirs2-stats = "0.1.0-rc.1"         # EVIDENCE: Statistical analysis - compilation errors show this is needed
-scirs2-signal = "0.1.0-rc.1"       # EVIDENCE: Signal processing - compilation errors show this is needed
-scirs2-series = "0.1.0-rc.1"       # EVIDENCE: Time series analysis - compilation errors show this is needed
-scirs2-datasets = "0.1.0-rc.1"   # EVIDENCE: Dataset handling - compilation errors show this is needed
+scirs2-optimize = "0.1.0-rc.1"       # ESSENTIAL - Base optimization interfaces
 
-# CONDITIONAL ADDITIONS (add only when compilation errors prove they're needed):
-# scirs2-signal = "0.1.0-beta.2"      # If signal processing needed
-# scirs2-series = "0.1.0-beta.2"      # If time-series analysis
+# ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
+scirs2-neural = "0.1.0-rc.1"         # EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = "0.1.0-rc.1"        # EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = "0.1.0-rc.1"          # EVIDENCE: multiple modules use distributions
+scirs2-series = "0.1.0-rc.1"         # EVIDENCE: performance_tracking.rs requires this
+scirs2-datasets = "0.1.0-rc.1"       # EVIDENCE: cross_platform_tester.rs requires this
+
+# ⚠️ CONDITIONAL (Uncomment only if compilation fails):
+# scirs2-linalg = "0.1.0-rc.1"       # Only if second-order methods need matrix ops beyond ndarray
+# scirs2-signal = "0.1.0-rc.1"       # Only if gradient smoothing specifically requires it
+
+# ❌ NOT REQUIRED for OptiRS:
+# scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
+# TODO: Remove scirs2-autograd usage from optirs-core/src/optimizers/adam.rs
 
 [profile.release]
 opt-level = 3

@@ -397,7 +397,7 @@ impl SynchronizationManager {
         };
 
         let (lock, condvar) = &*barrier_condition;
-        let mut completed = lock.lock().unwrap();
+        let completed = lock.lock().unwrap();
 
         let timeout_result = condvar
             .wait_timeout_while(

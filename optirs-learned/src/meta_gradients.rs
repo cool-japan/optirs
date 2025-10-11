@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // Reptile, and other meta-learning approaches that require gradients of
 // gradients with respect to meta-parameters.
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
@@ -16,7 +16,7 @@ use crate::error::Result;
 
 /// Meta-gradient computation engine
 #[allow(dead_code)]
-pub struct MetaGradientEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
+pub struct MetaGradientEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
     /// Forward-mode engine for directional derivatives
     forward_engine: ForwardModeEngine<T>,
 
@@ -407,7 +407,7 @@ pub enum CheckpointPolicy {
     None,
 }
 
-impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync>
+impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand + Send + Sync>
     MetaGradientEngine<T>
 {
     /// Create a new meta-gradient engine
