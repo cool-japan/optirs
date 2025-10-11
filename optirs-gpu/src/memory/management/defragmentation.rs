@@ -599,7 +599,7 @@ impl CompactionStrategy for TwoPointerCompactionStrategy {
         let mut sorted_blocks = movable_blocks;
         sorted_blocks.sort_by_key(|b| b.address);
 
-        let mut left_ptr = 0;
+        let left_ptr = 0;
         let mut compact_addr = sorted_blocks[0].address;
 
         // Two-pointer compaction

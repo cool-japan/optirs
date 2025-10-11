@@ -57,7 +57,7 @@ pub struct InputEmbedding<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectionLayer<T> {
     /// Create new output projection layer
     pub fn new(input_dim: usize, output_dim: usize) -> Result<Self> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut weights = Array2::zeros((input_dim, output_dim));
 
         // Xavier initialization
@@ -187,7 +187,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> InputEmbedding<T> {
     /// Create new input embedding layer
     pub fn new(input_dim: usize, model_dim: usize) -> Result<Self> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut weights = Array2::zeros((input_dim, model_dim));
 
         // Xavier initialization

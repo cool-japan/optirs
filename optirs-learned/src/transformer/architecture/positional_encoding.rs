@@ -81,7 +81,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
             }
             PositionalEncodingType::Learned => {
                 // Initialize learnable position embeddings
-                let mut rng = scirs2_core::random::rng();
+                let mut rng = scirs2_core::random::thread_rng();
                 let mut embeddings = Array2::zeros((max_seqlen, modeldim));
 
                 // Xavier initialization

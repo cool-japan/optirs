@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // 5. Create a noisy scheduler
-    let mut rng = scirs2_core::random::rng();
+    let mut rng = scirs2_core::random::thread_rng();
     let noisy_scheduler = CustomScheduler::new(0.1, move |step| {
         // Exponential decay with noise
         let base_lr = 0.1 * 0.95f64.powi((step / 10) as i32);

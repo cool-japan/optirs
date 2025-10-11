@@ -347,7 +347,7 @@ impl<
                     }
                     ParameterRange::Integer(min, max) => self.rng.gen_range(*min..*max) as f64,
                     ParameterRange::Boolean => {
-                        if self.rng.gen::<f64>() < 0.5 {
+                        if self.rng.random::<f64>() < 0.5 {
                             1.0
                         } else {
                             0.0
@@ -406,7 +406,7 @@ impl<
             connections: Vec::new(),
             metadata: HashMap::new(),
             hyperparameters: HashMap::new(),
-            architecture_id: format!("arch_{}", self.rng.gen::<u32>()),
+            architecture_id: format!("arch_{}", self.rng.random::<u32>()),
         })
     }
 
@@ -489,7 +489,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         let mut best_idx = 0;
         let mut best_fitness = T::neg_infinity();
 
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         for _ in 0..self.tournament_size {
             let idx = rng.gen_range(0..self.population.len());
             if fitnessscores[idx] > best_fitness {
@@ -512,7 +512,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         for i in 0..max_len {
             let component = if i < parent1.components.len() && i < parent2.components.len() {
                 // Crossover between components
-                if scirs2_core::random::Random::default().gen::<f64>() < 0.5 {
+                if scirs2_core::random::Random::default().random::<f64>() < 0.5 {
                     parent1.components[i].clone()
                 } else {
                     parent2.components[i].clone()
@@ -529,7 +529,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         // Crossover parameters
         let mut child_parameters = HashMap::new();
         for (key, value) in &parent1.parameters {
-            if scirs2_core::random::Random::default().gen::<f64>() < 0.5 {
+            if scirs2_core::random::Random::default().random::<f64>() < 0.5 {
                 child_parameters.insert(key.clone(), *value);
             } else if let Some(parent2_value) = parent2.parameters.get(key) {
                 child_parameters.insert(key.clone(), *parent2_value);
@@ -544,7 +544,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             connections: Vec::new(),
             metadata: HashMap::new(),
             hyperparameters: HashMap::new(),
-            architecture_id: format!("arch_{}", Random::default().gen::<u64>()),
+            architecture_id: format!("arch_{}", Random::default().random::<u64>()),
         })
     }
 
@@ -555,7 +555,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     ) -> Result<()> {
         // Mutate parameters directly
         for (param_name, current_value) in architecture.parameters.iter_mut() {
-            if scirs2_core::random::Random::default().gen::<f64>() < self.mutation_rate {
+            if scirs2_core::random::Random::default().random::<f64>() < self.mutation_rate {
                 // Find the parameter range from search space config
                 let param_range = searchspace
                     .components
@@ -568,7 +568,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                     match param_range {
                         ParameterRange::Continuous(min, max) => {
                             let noise =
-                                scirs2_core::random::Random::default().gen::<f64>() * 0.1 - 0.05; // Small noise
+                                scirs2_core::random::Random::default().random::<f64>() * 0.1 - 0.05; // Small noise
                             let current_f64 = current_value.to_f64().unwrap_or(0.0);
                             let new_val = current_f64 + noise;
                             let clamped = new_val.max(*min).min(*max);
@@ -579,7 +579,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                             let current_f64 = current_value.to_f64().unwrap_or(0.001);
                             let log_val = current_f64.ln();
                             let noise =
-                                scirs2_core::random::Random::default().gen::<f64>() * 0.2 - 0.1;
+                                scirs2_core::random::Random::default().random::<f64>() * 0.2 - 0.1;
                             let new_log = log_val + noise;
                             let new_val = new_log.exp().max(*min).min(*max);
                             *current_value =
@@ -636,7 +636,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                 let parent1_idx = self.selection(&fitnessscores)?;
                 let parent2_idx = self.selection(&fitnessscores)?;
 
-                let mut child = if scirs2_core::random::Random::default().gen::<f64>()
+                let mut child = if scirs2_core::random::Random::default().random::<f64>()
                     < self.crossover_rate
                 {
                     self.crossover(&self.population[parent1_idx], &self.population[parent2_idx])?
@@ -663,7 +663,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         }
 
         // Fallback to random generation
-        let idx = scirs2_core::random::rng().gen_range(0..self.population.len());
+        let idx = scirs2_core::random::thread_rng().gen_range(0..self.population.len());
         self.statistics.total_architectures_generated += 1;
         Ok(self.population[idx].clone())
     }
@@ -903,7 +903,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ReinforcementLe
                     )
                 })
                 .collect(),
-            architecture_id: format!("arch_{}", Random::default().gen::<u64>()),
+            architecture_id: format!("arch_{}", Random::default().random::<u64>()),
         })
     }
 
@@ -1089,7 +1089,7 @@ impl<
         }
 
         let gumbel_noise: Array1<T> = Array1::from_shape_fn(logits.len(), |_| {
-            let u = scirs2_core::random::Random::default().gen::<f64>();
+            let u = scirs2_core::random::Random::default().random::<f64>();
             T::from(-(-u.ln()).ln()).unwrap()
         });
 
@@ -1125,7 +1125,7 @@ impl<
                     .unwrap_or(0),
                 DiscretizationStrategy::Sampling => {
                     let probs = self.softmax(&edge_weights.to_owned());
-                    let rand_val = scirs2_core::random::Random::default().gen::<f64>();
+                    let rand_val = scirs2_core::random::Random::default().random::<f64>();
                     let mut cumsum = 0.0;
 
                     let mut selected_idx = 0;
@@ -1219,7 +1219,7 @@ impl<
                 .collect(),
             connections: Vec::new(),
             metadata: HashMap::new(),
-            architecture_id: format!("arch_{}", Random::default().gen::<u64>()),
+            architecture_id: format!("arch_{}", Random::default().random::<u64>()),
         }
     }
 }
@@ -1239,7 +1239,7 @@ impl<
         // Initialize architecture weights with small random values
         self.architecture_weights =
             Array3::from_shape_fn(self.architecture_weights.raw_dim(), |_| {
-                T::from(scirs2_core::random::Random::default().gen::<f64>() * 0.1 - 0.05).unwrap()
+                T::from(scirs2_core::random::Random::default().random::<f64>() * 0.1 - 0.05).unwrap()
             });
         Ok(())
     }
@@ -1570,7 +1570,7 @@ impl<T: Float + Debug + Default + Send + Sync> AcquisitionFunction<T> {
             AcquisitionType::Thompson => {
                 // Thompson sampling - sample from posterior
                 mean + variance.sqrt()
-                    * T::from(scirs2_core::random::Random::default().gen::<f64>()).unwrap()
+                    * T::from(scirs2_core::random::Random::default().random::<f64>()).unwrap()
             }
             AcquisitionType::InfoGain => {
                 // Information gain - simplified as entropy
@@ -1854,7 +1854,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + Send + Sync
 
     fn apply_dropout(&self, input: &Array1<T>, dropoutrate: T) -> Array1<T> {
         input.mapv(|x| {
-            if scirs2_core::random::Random::default().gen::<f64>()
+            if scirs2_core::random::Random::default().random::<f64>()
                 < dropoutrate.to_f64().unwrap_or(0.0)
             {
                 T::zero()
@@ -1881,7 +1881,7 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> PredictorLayer<
         let scale = (6.0 / (fan_in + fan_out)).sqrt();
 
         self.weights = Array2::from_shape_fn(self.weights.raw_dim(), |_| {
-            T::from(scirs2_core::random::Random::default().gen::<f64>() * scale * 2.0 - scale)
+            T::from(scirs2_core::random::Random::default().random::<f64>() * scale * 2.0 - scale)
                 .unwrap()
         });
 

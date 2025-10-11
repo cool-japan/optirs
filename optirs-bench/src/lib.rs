@@ -147,7 +147,7 @@ mod tests {
         use crate::prelude::*;
 
         // Test that prelude imports work
-        let mut benchmark = OptimizerBenchmark::<f64>::new();
+        let benchmark = OptimizerBenchmark::<f64>::new();
         let analyzer = GradientFlowAnalyzer::<f64, scirs2_core::ndarray::Ix1>::new(5);
 
         assert_eq!(analyzer.step_count(), 0);

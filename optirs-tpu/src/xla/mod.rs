@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_compilation_cache() {
-        let mut cache = CompilationCache::new(10); // 10 MB
+        let cache = CompilationCache::new(10); // 10 MB
         assert_eq!(cache.current_size, 0);
         assert!(!cache.needs_eviction(100));
     }

@@ -481,7 +481,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MetaOptimizer<T> {
     }
 
     pub fn update(&mut self, state: &mut MetaState<T>, gradients: &[T]) -> Result<()> {
-        let mut params = state.get_parameters_mut();
+        let params = state.get_parameters_mut();
 
         if let Some(momentum) = self.momentum {
             // Momentum update
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_memory_bank() {
-        let mut memory = MemoryBank::<f32>::new(100, 64);
+        let memory = MemoryBank::<f32>::new(100, 64);
         assert!(memory.is_ok());
 
         let mut bank = memory.unwrap();
@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_adaptation_network() {
-        let mut network = AdaptationNetwork::<f32>::new(128, 256);
+        let network = AdaptationNetwork::<f32>::new(128, 256);
         assert!(network.is_ok());
 
         let mut net = network.unwrap();

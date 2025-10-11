@@ -150,7 +150,7 @@ impl EvolutionarySearchStrategy {
 
         // For simplicity, assume architecture strings are JSON-like
         // In practice, this would be more sophisticated
-        if rng.gen::<f64>() < self.crossover_rate {
+        if rng.random::<f64>() < self.crossover_rate {
             // Perform crossover
             let crossover_point = rng.gen_range(0..parent1.len().min(parent2.len()));
             let mut child = parent1[..crossover_point].to_string();
@@ -165,7 +165,7 @@ impl EvolutionarySearchStrategy {
     fn mutate(&self, architecture: &str, search_space: &ArchitectureSearchSpace) -> Result<String> {
         let mut rng = scirs2_core::random::thread_rng();
 
-        if rng.gen::<f64>() < self.mutation_rate {
+        if rng.random::<f64>() < self.mutation_rate {
             // Perform mutation by regenerating part of the architecture
             search_space.mutate_architecture(architecture)
         } else {

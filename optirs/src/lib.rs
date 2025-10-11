@@ -46,6 +46,7 @@ pub use optirs_nas as nas;
 pub use optirs_bench as bench;
 
 /// Common imports for ease of use
+#[allow(ambiguous_glob_reexports)]
 pub mod prelude {
     pub use crate::core::optimizers::*;
     pub use crate::core::regularizers::*;

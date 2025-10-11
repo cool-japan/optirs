@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_feedforward_network() {
-        let mut ffn = FeedForwardNetwork::<f32>::new(
+        let ffn = FeedForwardNetwork::<f32>::new(
             128,
             512,
             crate::transformer_based_optimizer::config::ActivationFunction::ReLU,
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_mixture_of_experts() {
-        let mut moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
+        let moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
         assert!(moe.is_ok());
 
         let mut mixture = moe.unwrap();

@@ -670,8 +670,8 @@ impl<
         let probs = exp_logits / sum_exp;
 
         // Sample from categorical distribution
-        let mut rng = scirs2_core::random::rng();
-        let rand_val = rng.gen::<f64>();
+        let mut rng = scirs2_core::random::thread_rng();
+        let rand_val = rng.random::<f64>();
         let mut cumulative = 0.0;
 
         for (i, &prob) in probs.iter().enumerate() {
@@ -1006,7 +1006,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
         use super::architecture_space::{ComponentType, OptimizerComponent};
 
         // Random selection of component type
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let component_type =
             self.component_types[rng.gen_range(0..self.component_types.len())].clone();
 
@@ -1015,31 +1015,31 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
             ComponentType::Adam => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.gen::<f64>() * 0.01).unwrap(),
+                    T::from(rng.random::<f64>() * 0.01).unwrap(),
                 );
                 hyperparameters.insert(
                     "beta1".to_string(),
-                    T::from(0.8 + rng.gen::<f64>() * 0.19).unwrap(),
+                    T::from(0.8 + rng.random::<f64>() * 0.19).unwrap(),
                 );
                 hyperparameters.insert(
                     "beta2".to_string(),
-                    T::from(0.9 + rng.gen::<f64>() * 0.099).unwrap(),
+                    T::from(0.9 + rng.random::<f64>() * 0.099).unwrap(),
                 );
             }
             ComponentType::SGD => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.gen::<f64>() * 0.1).unwrap(),
+                    T::from(rng.random::<f64>() * 0.1).unwrap(),
                 );
                 hyperparameters.insert(
                     "momentum".to_string(),
-                    T::from(rng.gen::<f64>() * 0.99).unwrap(),
+                    T::from(rng.random::<f64>() * 0.99).unwrap(),
                 );
             }
             _ => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.gen::<f64>() * 0.01).unwrap(),
+                    T::from(rng.random::<f64>() * 0.01).unwrap(),
                 );
             }
         }

@@ -1541,7 +1541,7 @@ mod tests {
             },
         };
 
-        let mut manager = UploadManager::new(config);
+        let manager = UploadManager::new(config);
         assert_eq!(manager.active_uploads.len(), 0);
     }
 

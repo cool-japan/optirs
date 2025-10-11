@@ -186,11 +186,11 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         let mut rng = thread_rng();
 
         let input_weights = Array2::from_shape_fn((hidden_size, input_size), |_| {
-            A::from(rng.gen::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.random::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
         });
 
         let output_weights = Array2::from_shape_fn((num_optimizers, hidden_size), |_| {
-            A::from(rng.gen::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.random::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
         });
 
         let input_bias = Array1::zeros(hidden_size);
@@ -435,7 +435,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         let mut rng = thread_rng();
 
         // Epsilon-greedy exploration
-        if rng.gen::<f64>() < epsilon {
+        if rng.random::<f64>() < epsilon {
             // Explore: random selection
             let idx = rng.gen_range(0..self.available_optimizers.len());
             return Ok(self.available_optimizers[idx]);

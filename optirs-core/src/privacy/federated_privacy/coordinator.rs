@@ -412,7 +412,7 @@ impl<
 
         let mut masking_seeds = HashMap::new();
         for client in selectedclients {
-            masking_seeds.insert(client.clone(), rng.gen::<u64>());
+            masking_seeds.insert(client.clone(), rng.random::<u64>());
         }
 
         Ok(SecureAggregationPlan {

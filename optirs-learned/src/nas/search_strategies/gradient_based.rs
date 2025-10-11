@@ -752,7 +752,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
     /// Sample Gumbel noise
     fn sample_gumbel_noise(&self, size: usize) -> Result<Array1<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let noise = Array1::from_shape_fn(size, |_| {
             let u: f64 = rng.gen_range(1e-10..1.0);

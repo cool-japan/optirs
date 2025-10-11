@@ -107,7 +107,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
             ));
         }
 
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Initialize projection weights
         let bound = (6.0 / (2 * modeldim) as f64).sqrt();
@@ -341,7 +341,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RelativePositionBias<T> {
     pub fn new(max_distance: usize, num_heads: usize) -> Result<Self> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let table_size = 2 * max_distance - 1;
 
         let mut bias_table = Array2::zeros((table_size, num_heads));

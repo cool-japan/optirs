@@ -632,24 +632,24 @@ impl AllocationStrategyManager {
             self.score_strategy_for_features(features, &AllocationStrategy::SegregatedList);
 
         let mut best_strategy = AllocationStrategy::BestFit;
-        let mut best_score = score_best_fit;
+        let mut _best_score = score_best_fit;
         let mut confidence = 0.5;
 
-        if score_first_fit > best_score {
+        if score_first_fit > _best_score {
             best_strategy = AllocationStrategy::FirstFit;
-            best_score = score_first_fit;
+            _best_score = score_first_fit;
         }
-        if score_worst_fit > best_score {
+        if score_worst_fit > _best_score {
             best_strategy = AllocationStrategy::WorstFit;
-            best_score = score_worst_fit;
+            _best_score = score_worst_fit;
         }
-        if score_buddy > best_score {
+        if score_buddy > _best_score {
             best_strategy = AllocationStrategy::BuddySystem;
-            best_score = score_buddy;
+            _best_score = score_buddy;
         }
-        if score_segregated > best_score {
+        if score_segregated > _best_score {
             best_strategy = AllocationStrategy::SegregatedList;
-            best_score = score_segregated;
+            _best_score = score_segregated;
         }
 
         // Calculate confidence based on score difference

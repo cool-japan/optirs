@@ -409,7 +409,7 @@ impl OperationLowering {
         context: &LoweringContext<T>,
     ) -> Result<Vec<XLAOperation<T>>> {
         let mut result_operations = Vec::new();
-        let mut current_intermediates = context.intermediates.clone();
+        let current_intermediates = context.intermediates.clone();
 
         for template in &pattern.target_sequence {
             let new_op = self.instantiate_template(operation, template, &current_intermediates)?;

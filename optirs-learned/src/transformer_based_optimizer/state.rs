@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn test_parameter_history() {
-        let mut history = ParameterHistory::<f32>::new(10, 5);
+        let history = ParameterHistory::<f32>::new(10, 5);
         assert!(history.is_ok());
 
         let mut h = history.unwrap();

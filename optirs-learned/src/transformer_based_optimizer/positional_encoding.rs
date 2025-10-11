@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_relative_positional_encoding() {
-        let mut rel_pe = RelativePositionalEncoding::<f32>::new(10, 64);
+        let rel_pe = RelativePositionalEncoding::<f32>::new(10, 64);
         assert!(rel_pe.is_ok());
 
         let mut rpe = rel_pe.unwrap();

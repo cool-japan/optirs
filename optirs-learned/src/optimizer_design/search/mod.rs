@@ -145,7 +145,7 @@ pub enum OptimizationStepType {
 impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> SearchStrategy<T> {
     /// Create new search strategy
     pub fn new(strategy_type: SearchStrategyType, config: SearchConfig) -> Self {
-        let rng = Box::new(scirs2_core::random::rng());
+        let rng = Box::new(scirs2_core::random::thread_rng());
         
         let state = match strategy_type {
             SearchStrategyType::Random => {

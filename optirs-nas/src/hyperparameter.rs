@@ -838,7 +838,7 @@ mod tests {
         let space: HyperparameterSpace<f64> = HyperparameterSpace::new();
         let mut optimizer = HyperparameterOptimizer::new(space, OptimizationStrategy::Random);
 
-        let mut config = HyperparameterConfiguration {
+        let config = HyperparameterConfiguration {
             id: "test_config".to_string(),
             parameters: HashMap::new(),
             categorical_parameters: HashMap::new(),

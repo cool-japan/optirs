@@ -1283,7 +1283,7 @@ mod tests {
 
     #[test]
     fn test_template_engine() {
-        let mut engine = TemplateEngine::new().unwrap();
+        let engine = TemplateEngine::new().unwrap();
         let template = "Hello {{name}}!";
         let mut variables = HashMap::new();
         variables.insert("name".to_string(), "World".to_string());

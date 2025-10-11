@@ -1596,15 +1596,15 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
         let start_time = Instant::now();
 
         // Simplified benchmark execution
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let score = match benchmark.test_function.function_type {
             TestFunctionType::Rosenbrock => {
                 // Simulate Rosenbrock function optimization
-                T::from(0.01 + rng.gen::<f64>() * 0.1).unwrap()
+                T::from(0.01 + rng.random::<f64>() * 0.1).unwrap()
             }
             TestFunctionType::Quadratic => {
                 // Simulate quadratic function optimization
-                T::from(0.001 + rng.gen::<f64>() * 0.01).unwrap()
+                T::from(0.001 + rng.random::<f64>() * 0.01).unwrap()
             }
             _ => {
                 // Default score

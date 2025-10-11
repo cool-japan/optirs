@@ -551,7 +551,6 @@ pub mod utils {
             BatchParallelizationStrategy::PipelineParallel => 0.90,
             BatchParallelizationStrategy::Hybrid => 0.92,
             BatchParallelizationStrategy::Adaptive => 0.97,
-            _ => 0.88,
         };
 
         let communication_factor = match config.communication_pattern {

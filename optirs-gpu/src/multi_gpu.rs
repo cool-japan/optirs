@@ -468,7 +468,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             }
 
             // Copy results back
-            grad_buffer.copy_to_host(grad_slice);
+            grad_buffer.copy_to_host(grad_slice)?;
         }
 
         Ok(())
@@ -530,7 +530,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             }
 
             // Copy results back
-            grad_buffer.copy_to_host(grad_slice);
+            grad_buffer.copy_to_host(grad_slice)?;
         }
 
         Ok(())
@@ -600,7 +600,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             // Synchronization handled at kernel level
 
             // Copy results back
-            grad_buffer.copy_to_host(grad_slice);
+            grad_buffer.copy_to_host(grad_slice)?;
         }
 
         Ok(())

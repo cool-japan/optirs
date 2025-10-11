@@ -304,7 +304,7 @@ impl<
             let spike_prob =
                 firing_rate * dt / T::from(1000.0).unwrap_or_else(|| T::zero());
 
-            if thread_rng().gen::<f64>() < spike_prob.to_f64().unwrap_or(0.0) {
+            if thread_rng().random::<f64>() < spike_prob.to_f64().unwrap_or(0.0) {
                 spike_times.push(time);
             }
 

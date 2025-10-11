@@ -1198,7 +1198,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SearchSpace<T> 
     /// Sample random architecture
     fn sample_random_architecture(&mut self) -> Result<ArchitectureSample<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let num_ops = rng.gen_range(1..=self.config.max_depth);
         let mut architecture = Vec::new();

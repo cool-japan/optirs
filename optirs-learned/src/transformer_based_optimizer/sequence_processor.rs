@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn test_sequence_buffer() {
-        let mut buffer = SequenceBuffer::<f32>::new(10, 64);
+        let buffer = SequenceBuffer::<f32>::new(10, 64);
         assert!(buffer.is_ok());
 
         let mut buf = buffer.unwrap();
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn test_chunking_strategy() {
-        let mut chunking = ChunkingStrategy::<f32>::new(10, 2);
+        let chunking = ChunkingStrategy::<f32>::new(10, 2);
         assert!(chunking.is_ok());
 
         let mut strategy = chunking.unwrap();

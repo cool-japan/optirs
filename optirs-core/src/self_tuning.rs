@@ -619,7 +619,7 @@ impl<
     fn select_epsilon_greedy(&self) -> usize {
         let mut rng = thread_rng();
 
-        if A::from(rng.gen::<f64>()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
+        if A::from(rng.random::<f64>()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
             // Explore: random selection
             rng.gen_range(0..self.optimizer_candidates.len())
         } else {

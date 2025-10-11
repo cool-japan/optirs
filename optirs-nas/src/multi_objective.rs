@@ -772,7 +772,7 @@ impl<
             hyperparameters: parameters,
             architecture_id: format!(
                 "arch_{}",
-                scirs2_core::random::Random::default().gen::<u32>()
+                scirs2_core::random::Random::default().random::<u32>()
             ),
         })
     }

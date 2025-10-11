@@ -210,7 +210,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> FeedForwardNetw
     pub fn new(config: &TransformerOptimizerConfig) -> Result<Self> {
         let modeldim = config.modeldim;
         let ff_dim = config.ff_dim;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Initialize weights with Xavier initialization
         let bound1 = (6.0 / (modeldim + ff_dim) as f64).sqrt();

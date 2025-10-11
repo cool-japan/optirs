@@ -945,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_memory_cache() {
-        let mut cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
+        let cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
         assert!(cache.is_ok());
 
         let mut c = cache.unwrap();

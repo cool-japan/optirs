@@ -840,7 +840,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
     /// Select mutation operator based on strategy
     fn select_mutation_operator(&self, architecture: &ArchitectureGenotype<T>) -> Result<MutationType> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         // Filter applicable operators
         let applicable_ops: Vec<MutationType> = self.config.available_operators
@@ -1014,7 +1014,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for AddOperationMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}", architecture.id, "add_op");
@@ -1097,7 +1097,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for RemoveOperationMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         if architecture.operations.len() <= self.min_operations {
             return Err(OptimError::InvalidInput(
@@ -1170,7 +1170,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for ParameterMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}", architecture.id, "param_mut");
