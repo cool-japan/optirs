@@ -979,7 +979,7 @@ impl RuntimeIntegration {
                 compilation_time: Instant::now(),
                 compiler_version: "1.0.0".to_string(),
                 target_requirements: TargetRequirements {
-                    min_tpu_version: self.target_config.tpu_version.clone(),
+                    min_tpu_version: self.target_config.tpu_version,
                     required_memory: 1024 * 1024, // 1MB
                     required_features: vec!["matmul".to_string()],
                     optional_features: vec![],
@@ -1023,7 +1023,7 @@ impl DeviceManager {
             devices.push(TPUDevice {
                 id: i,
                 device_type: TPUDeviceType::SingleChip,
-                version: target_config.tpu_version.clone(),
+                version: target_config.tpu_version,
                 memory_capacity: 16 * 1024 * 1024 * 1024 / num_chips, // Default 16GB per chip
                 compute_throughput: 420.0 / num_chips as f64,         // Default 420 TFLOPS total
                 state: DeviceState::Available,
@@ -1037,6 +1037,12 @@ impl DeviceManager {
             device_status: HashMap::new(),
             capabilities_cache: HashMap::new(),
         }
+    }
+}
+
+impl Default for ExecutableManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1056,6 +1062,12 @@ impl ExecutableManager {
         let id = executable.id.clone();
         self.executables.insert(id.clone(), executable);
         Ok(id)
+    }
+}
+
+impl Default for ExecutableCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1088,6 +1100,12 @@ impl ExecutionScheduler {
             },
             scheduling_policy: SchedulingPolicy::Priority,
         }
+    }
+}
+
+impl Default for ResourceManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

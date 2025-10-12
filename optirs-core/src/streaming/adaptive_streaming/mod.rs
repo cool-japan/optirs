@@ -56,18 +56,18 @@ pub use performance::{
 pub fn create_default_optimizer<A, D>(
 ) -> StreamingResult<AdaptiveStreamingOptimizer<crate::optimizers::Adam<A>, A, D>>
 where
-    A: scirs2_core::ndarray_ext::ScalarOperand
+    A: scirs2_core::ndarray::ScalarOperand
         + Clone
         + Default
         + Send
         + Sync
         + 'static
-        + num_traits::Float
+        + scirs2_core::numeric::Float
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray_ext::Data<Elem = A>
-        + scirs2_core::ndarray_ext::Dimension
+    D: scirs2_core::ndarray::Data<Elem = A>
+        + scirs2_core::ndarray::Dimension
         + Send
         + Sync
         + 'static,
@@ -81,18 +81,18 @@ pub fn create_optimizer_with_config<A, D>(
     config: StreamingConfig,
 ) -> StreamingResult<AdaptiveStreamingOptimizer<crate::optimizers::Adam<A>, A, D>>
 where
-    A: scirs2_core::ndarray_ext::ScalarOperand
+    A: scirs2_core::ndarray::ScalarOperand
         + Clone
         + Default
         + Send
         + Sync
         + 'static
-        + num_traits::Float
+        + scirs2_core::numeric::Float
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray_ext::Data<Elem = A>
-        + scirs2_core::ndarray_ext::Dimension
+    D: scirs2_core::ndarray::Data<Elem = A>
+        + scirs2_core::ndarray::Dimension
         + Send
         + Sync
         + 'static,

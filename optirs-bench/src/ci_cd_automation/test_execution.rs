@@ -205,7 +205,7 @@ pub struct ResourceAlertThresholds {
 }
 
 /// Test filtering configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestFilteringConfig {
     /// Include specific test categories
     pub include_categories: Vec<TestCategory>,
@@ -256,7 +256,7 @@ pub enum TestFailureType {
 }
 
 /// Environment requirements for test execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EnvironmentRequirements {
     /// Required operating system
     pub os: Option<String>,
@@ -311,7 +311,7 @@ pub enum DependencySource {
 }
 
 /// Network access requirements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkAccessRequirements {
     /// Requires internet access
     pub internet_access: bool,
@@ -581,17 +581,15 @@ impl PerformanceTestSuite {
 
     /// Execute all test cases in the suite
     pub fn execute(&mut self) -> Result<Vec<CiCdTestResult>> {
-        let mut results = Vec::new();
-
         // Filter test cases based on configuration
         let filtered_tests = self.filter_test_cases()?;
 
         // Execute tests based on parallel configuration
-        if self.config.parallel_execution.enabled {
-            results = self.execute_parallel(&filtered_tests)?;
+        let results = if self.config.parallel_execution.enabled {
+            self.execute_parallel(&filtered_tests)?
         } else {
-            results = self.execute_sequential(&filtered_tests)?;
-        }
+            self.execute_sequential(&filtered_tests)?
+        };
 
         self.results = results.clone();
         Ok(results)
@@ -615,10 +613,10 @@ impl PerformanceTestSuite {
         let filtering = &self.config.filtering;
 
         // Check category inclusion
-        if !filtering.include_categories.is_empty() {
-            if !filtering.include_categories.contains(&test_case.category) {
-                return false;
-            }
+        if !filtering.include_categories.is_empty()
+            && !filtering.include_categories.contains(&test_case.category)
+        {
+            return false;
         }
 
         // Check category exclusion
@@ -1088,10 +1086,8 @@ impl PerformanceTestSuite {
         // Simple regex-like extraction
         let parts: Vec<&str> = line.split_whitespace().collect();
         for i in 0..parts.len() {
-            if parts[i].contains("time") || parts[i].contains("duration") {
-                if i + 1 < parts.len() {
-                    return Some(parts[i + 1].replace("ms", "").replace("s", ""));
-                }
+            if (parts[i].contains("time") || parts[i].contains("duration")) && i + 1 < parts.len() {
+                return Some(parts[i + 1].replace("ms", "").replace("s", ""));
             }
         }
         None
@@ -1187,13 +1183,13 @@ impl PerformanceTestSuite {
     fn gather_git_info(&self) -> Result<GitInfo> {
         // Simplified Git info gathering
         let commit_hash = Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
 
         let branch = Command::new("git")
-            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
@@ -1371,20 +1367,6 @@ impl Default for ResourceAlertThresholds {
     }
 }
 
-impl Default for TestFilteringConfig {
-    fn default() -> Self {
-        Self {
-            include_categories: Vec::new(),
-            exclude_categories: Vec::new(),
-            include_tags: Vec::new(),
-            exclude_tags: Vec::new(),
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            platform_specific: false,
-        }
-    }
-}
-
 impl Default for TestRetryConfig {
     fn default() -> Self {
         Self {
@@ -1397,33 +1379,6 @@ impl Default for TestRetryConfig {
                 TestFailureType::TransientError,
                 TestFailureType::Network,
             ],
-        }
-    }
-}
-
-impl Default for EnvironmentRequirements {
-    fn default() -> Self {
-        Self {
-            os: None,
-            architecture: None,
-            min_cpu_cores: None,
-            min_memory_mb: None,
-            required_env_vars: Vec::new(),
-            dependencies: Vec::new(),
-            network_access: NetworkAccessRequirements::default(),
-            file_permissions: Vec::new(),
-        }
-    }
-}
-
-impl Default for NetworkAccessRequirements {
-    fn default() -> Self {
-        Self {
-            internet_access: false,
-            required_ports: Vec::new(),
-            required_hosts: Vec::new(),
-            max_latency_ms: None,
-            min_bandwidth_mbps: None,
         }
     }
 }

@@ -6,8 +6,8 @@
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -1251,7 +1251,7 @@ impl<T: Float + Debug + Send + Sync + 'static> HyperparameterOptimizer<T> {
 
     fn evaluate_configuration(&self, config: HyperparameterConfig<T>) -> Result<HyperOptResult<T>> {
         // Simplified evaluation - in practice would run actual optimization
-        let performance = num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()); // Placeholder
+        let performance = scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()); // Placeholder
 
         let evaluation = EvaluationResults {
             metric_scores: HashMap::new(),
@@ -1269,11 +1269,11 @@ impl<T: Float + Debug + Send + Sync + 'static> HyperparameterOptimizer<T> {
             constraint_violations: Vec::new(),
             resource_usage: ResourceUsage {
                 evaluation_time: Duration::from_secs(60),
-                memory_mb: num_traits::cast::cast(1024.0).unwrap_or_else(|| T::zero()),
-                cpu_hours: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+                memory_mb: scirs2_core::numeric::NumCast::from(1024.0).unwrap_or_else(|| T::zero()),
+                cpu_hours: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
                 gpu_hours: T::zero(),
-                energy_kwh: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                cost: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+                energy_kwh: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                cost: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
             },
             eval_metadata: EvaluationMetadata {
                 timestamp: std::time::SystemTime::now(),

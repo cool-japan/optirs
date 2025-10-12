@@ -4,8 +4,8 @@
 // Lipschitz constant of the neural network by normalizing the spectral norm
 // (largest singular value) of weight matrices.
 
-use num_traits::{Float, FromPrimitive};
-use scirs2_core::ndarray_ext::{Array, Array2, Array4, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array2, Array4, Dimension, ScalarOperand};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::random::Rng;
 use scirs2_core::Random;
 use std::fmt::Debug;
@@ -21,7 +21,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```no_run
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::SpectralNorm;
 ///
 /// let mut spec_norm = SpectralNorm::new(1);
@@ -37,9 +37,9 @@ pub struct SpectralNorm<A: Float> {
     /// Epsilon for numerical stability
     eps: A,
     /// Cached left singular vector
-    u: Option<Array<A, scirs2_core::ndarray_ext::Ix1>>,
+    u: Option<Array<A, scirs2_core::ndarray::Ix1>>,
     /// Cached right singular vector  
-    v: Option<Array<A, scirs2_core::ndarray_ext::Ix1>>,
+    v: Option<Array<A, scirs2_core::ndarray::Ix1>>,
     /// Random number generator
     rng: Random<scirs2_core::random::rngs::StdRng>,
 }
@@ -162,7 +162,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_autograd::ndarray::array;
+    use scirs2_core::ndarray::array;
 
     #[test]
     fn test_spectral_norm_creation() {

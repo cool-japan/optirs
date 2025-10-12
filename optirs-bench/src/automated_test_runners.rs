@@ -455,7 +455,7 @@ impl AutomatedTestRunner {
         // Try to detect branch from git
         if branch.is_none() {
             if let Ok(output) = Command::new("git")
-                .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
                 .output()
             {
                 if output.status.success() {
@@ -530,11 +530,7 @@ impl AutomatedTestRunner {
         for platform in platforms {
             if let Some(config) = self.platform_matrix.platforms.get(platform) {
                 let execution = TestExecution {
-                    id: format!(
-                        "{}_{}",
-                        platform.to_string(),
-                        chrono::Utc::now().timestamp()
-                    ),
+                    id: format!("{}_{}", platform, chrono::Utc::now().timestamp()),
                     platform: platform.clone(),
                     config: config.clone(),
                     status: ExecutionStatus::Queued,
@@ -671,9 +667,11 @@ impl AutomatedTestRunner {
         Self::setup_platform_environment(&execution.config)?;
 
         // Create cross-platform tester configuration
-        let mut test_config = CrossPlatformConfig::default();
-        test_config.target_platforms = vec![execution.platform.clone()];
-        test_config.test_categories = execution.config.test_categories.clone();
+        let mut test_config = CrossPlatformConfig {
+            target_platforms: vec![execution.platform.clone()],
+            test_categories: execution.config.test_categories.clone(),
+            ..Default::default()
+        };
         test_config.performance_thresholds.insert(
             execution.platform.clone(),
             execution.config.performance_thresholds.clone(),
@@ -969,7 +967,7 @@ impl PlatformMatrix {
         let mut environment_setup = HashMap::new();
 
         // Define common platforms
-        let common_platforms = vec![
+        let common_platforms = [
             PlatformTarget::LinuxX64,
             PlatformTarget::MacOSX64,
             PlatformTarget::WindowsX64,

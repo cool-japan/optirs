@@ -3,8 +3,8 @@
 use super::config::TransformerBasedOptimizerConfig;
 use super::meta_learning::MetaState;
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
@@ -742,6 +742,12 @@ pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub norm_trend: T,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ParameterStatistics<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
     pub fn new() -> Self {
         Self {
@@ -756,9 +762,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
     pub fn update_with_snapshot(&mut self, snapshot: &ParameterSnapshot<T>) {
         self.total_snapshots += 1;
         self.average_norm = (self.average_norm
-            * num_traits::cast::cast(self.total_snapshots - 1).unwrap_or_else(|| T::zero())
+            * scirs2_core::numeric::NumCast::from(self.total_snapshots - 1)
+                .unwrap_or_else(|| T::zero())
             + snapshot.norm)
-            / num_traits::cast::cast(self.total_snapshots).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(self.total_snapshots)
+                .unwrap_or_else(|| T::zero());
         self.max_norm = self.max_norm.max(snapshot.norm);
         self.min_norm = self.min_norm.min(snapshot.norm);
     }
@@ -785,9 +793,9 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveState<T> {
             m: Array1::zeros(parameter_count),
             v: Array1::zeros(parameter_count),
             step_count: 0,
-            beta1: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-            beta2: num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()),
-            epsilon: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
+            beta1: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+            beta2: scirs2_core::numeric::NumCast::from(0.999).unwrap_or_else(|| T::zero()),
+            epsilon: scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -838,11 +846,18 @@ pub struct ConvergenceTracker<T: Float + Debug + Send + Sync + 'static> {
     stability_window: usize,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ConvergenceTracker<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
     pub fn new() -> Self {
         Self {
             recent_losses: VecDeque::new(),
-            convergence_threshold: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            convergence_threshold: scirs2_core::numeric::NumCast::from(1e-6)
+                .unwrap_or_else(|| T::zero()),
             stability_window: 10,
         }
     }
@@ -964,6 +979,12 @@ pub struct StateStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub update_frequency: f64,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for StateStatistics<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> StateStatistics<T> {
     pub fn new() -> Self {
         Self {
@@ -984,9 +1005,10 @@ impl<T: Float + Debug + Send + Sync + 'static> StateStatistics<T> {
             .sqrt();
         self.last_update_magnitude = magnitude;
         self.average_update_magnitude = (self.average_update_magnitude
-            * num_traits::cast::cast(self.total_updates - 1).unwrap_or_else(|| T::zero())
+            * scirs2_core::numeric::NumCast::from(self.total_updates - 1)
+                .unwrap_or_else(|| T::zero())
             + magnitude)
-            / num_traits::cast::cast(self.total_updates).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(self.total_updates).unwrap_or_else(|| T::zero());
     }
 
     pub fn reset(&mut self) {
@@ -1083,7 +1105,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningSchedule<T> {
             initial_rate,
             current_rate: initial_rate,
             warmup_steps,
-            decay_factor: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+            decay_factor: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1093,6 +1115,12 @@ pub struct LearningPerformanceMetrics<T: Float + Debug + Send + Sync + 'static> 
     pub loss_trend: T,
     pub convergence_stability: T,
     pub adaptation_efficiency: T,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for LearningPerformanceMetrics<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> LearningPerformanceMetrics<T> {
@@ -1151,6 +1179,12 @@ pub struct MemoryUsageTracker {
     pub allocation_count: usize,
 }
 
+impl Default for MemoryUsageTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryUsageTracker {
     pub fn new() -> Self {
         Self {
@@ -1172,6 +1206,12 @@ pub struct CacheStatistics {
     pub hit_count: usize,
     pub miss_count: usize,
     pub eviction_count: usize,
+}
+
+impl Default for CacheStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CacheStatistics {
@@ -1228,7 +1268,7 @@ mod tests {
 
         let s = state.unwrap();
         assert_eq!(s.version, 0);
-        assert!(s.current_parameters.len() > 0);
+        assert!(!s.current_parameters.is_empty());
     }
 
     #[test]
@@ -1270,7 +1310,7 @@ mod tests {
 
     #[test]
     fn test_parameter_history() {
-        let mut history = ParameterHistory::<f32>::new(10, 5);
+        let history = ParameterHistory::<f32>::new(10, 5);
         assert!(history.is_ok());
 
         let mut h = history.unwrap();

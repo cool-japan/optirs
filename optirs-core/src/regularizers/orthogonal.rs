@@ -3,8 +3,8 @@
 // Orthogonal regularization encourages weight matrices to be orthogonal,
 // which helps with gradient flow and prevents vanishing/exploding gradients.
 
-use num_traits::{Float, FromPrimitive};
-use scirs2_core::ndarray_ext::{Array, Array3, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array3, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -18,7 +18,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::{OrthogonalRegularization, Regularizer};
 ///
 /// let ortho_reg = OrthogonalRegularization::new(0.01);
@@ -146,7 +146,7 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_autograd::ndarray::array;
+    use scirs2_core::ndarray::array;
 
     #[test]
     fn test_orthogonal_creation() {

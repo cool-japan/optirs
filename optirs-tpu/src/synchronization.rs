@@ -397,7 +397,7 @@ impl SynchronizationManager {
         };
 
         let (lock, condvar) = &*barrier_condition;
-        let mut completed = lock.lock().unwrap();
+        let completed = lock.lock().unwrap();
 
         let timeout_result = condvar
             .wait_timeout_while(
@@ -506,6 +506,12 @@ impl SynchronizationManager {
 #[derive(Debug)]
 pub struct AllReduceHandler;
 
+impl Default for AllReduceHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AllReduceHandler {
     pub fn new() -> Self {
         Self
@@ -555,6 +561,12 @@ impl CollectiveHandler for AllReduceHandler {
 #[derive(Debug)]
 pub struct AllGatherHandler;
 
+impl Default for AllGatherHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AllGatherHandler {
     pub fn new() -> Self {
         Self
@@ -598,6 +610,12 @@ impl CollectiveHandler for AllGatherHandler {
 /// Broadcast operation handler
 #[derive(Debug)]
 pub struct BroadcastHandler;
+
+impl Default for BroadcastHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BroadcastHandler {
     pub fn new() -> Self {
@@ -647,6 +665,12 @@ impl CollectiveHandler for BroadcastHandler {
 /// Barrier operation handler
 #[derive(Debug)]
 pub struct BarrierHandler;
+
+impl Default for BarrierHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BarrierHandler {
     pub fn new() -> Self {
@@ -875,7 +899,7 @@ mod tests {
         assert_eq!(mesh_topology.topology_type, TopologyType::Mesh);
         assert_eq!(mesh_topology.connections.len(), 4);
 
-        for (_, neighbors) in &mesh_topology.connections {
+        for neighbors in mesh_topology.connections.values() {
             assert_eq!(neighbors.len(), 3); // Each device connects to 3 others
         }
     }

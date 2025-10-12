@@ -618,7 +618,7 @@ impl ComprehensiveSecurityAuditor {
             // Simulate vulnerability checking
             if self.is_vulnerable_dependency(&depname, &version) {
                 let vulnerability = Vulnerability {
-                    id: format!("RUSTSEC-XXXX-XXXX"),
+                    id: "RUSTSEC-XXXX-XXXX".to_string(),
                     title: format!("Vulnerability in {}", depname),
                     description: format!(
                         "Security vulnerability found in {} version {}",
@@ -1037,7 +1037,7 @@ impl ComprehensiveSecurityAuditor {
             .count();
         score -= critical_violations as f64 * 0.1;
 
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 
     /// Generate remediation suggestions based on audit findings
@@ -1839,7 +1839,7 @@ mod tests {
         };
 
         let score = auditor.calculate_security_score(&auditresult);
-        assert!(score >= 0.0 && score <= 1.0);
+        assert!((0.0..=1.0).contains(&score));
     }
 
     #[test]

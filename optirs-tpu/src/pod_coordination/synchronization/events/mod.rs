@@ -13,12 +13,10 @@ pub mod queue;
 pub mod routing;
 pub mod utilities;
 
+// Re-export main types explicitly to avoid ambiguous glob re-exports
+// Submodules with conflicts (monitoring, performance, storage) can be accessed via full paths
 pub use compression::*;
-pub use core::*;
 pub use delivery::*;
-pub use filtering::*;
-pub use handlers::*;
-pub use persistence::*;
 pub use queue::*;
 pub use routing::*;
 pub use utilities::*;

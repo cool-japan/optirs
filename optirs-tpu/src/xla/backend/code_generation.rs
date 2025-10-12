@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // kernel generation, instruction scheduling, register allocation,
 // and hardware-specific optimizations.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
@@ -1104,6 +1104,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
     ) -> Result<Vec<TPUInstruction>> {
         // Simplified scheduling - return instructions as-is
         Ok(instructions.to_vec())
+    }
+}
+
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for CodeOptimizer<T>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -4,8 +4,8 @@
 // sample importance weighting, and adversarial training support.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -780,7 +780,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> AdaptiveCurri
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_linear_curriculum() {
@@ -791,10 +791,8 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
-            strategy,
-            importance_strategy,
-        );
+        let mut curriculum =
+            CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
         // Test initial difficulty
         assert_relative_eq!(curriculum.get_current_difficulty(), 0.1, epsilon = 1e-6);
@@ -819,10 +817,8 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
-            strategy,
-            importance_strategy,
-        );
+        let mut curriculum =
+            CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
         let initial_difficulty = curriculum.get_current_difficulty();
 
@@ -843,10 +839,8 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
-            strategy,
-            importance_strategy,
-        );
+        let mut curriculum =
+            CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
         // Set sample difficulties
         curriculum.set_sample_difficulty(1, 0.3); // Easy
@@ -877,10 +871,8 @@ mod tests {
             min_weight: 0.1,
         };
 
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
-            strategy,
-            importance_strategy,
-        );
+        let mut curriculum =
+            CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
         let sampleids = vec![1, 2, 3];
         let losses = vec![0.1, 1.0, 0.5]; // Low, high, medium loss
@@ -907,10 +899,8 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
-            strategy,
-            importance_strategy,
-        );
+        let mut curriculum =
+            CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
         let adversarial_config = AdversarialConfig {
             epsilon: 0.1,
@@ -953,11 +943,11 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let curriculum1 = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
+        let curriculum1 = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
             strategy1,
             importance_strategy.clone(),
         );
-        let curriculum2 = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
+        let curriculum2 = CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(
             strategy2,
             importance_strategy,
         );
@@ -985,10 +975,8 @@ mod tests {
         };
 
         let importance_strategy = ImportanceWeightingStrategy::Uniform;
-        let mut curriculum = CurriculumManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(
-            strategy,
-            importance_strategy,
-        );
+        let mut curriculum =
+            CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
         curriculum.update_curriculum(0.8).unwrap();
         let state = curriculum.export_state();

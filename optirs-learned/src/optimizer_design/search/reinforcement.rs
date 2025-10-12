@@ -5,8 +5,8 @@ use std::fmt::Debug;
 // policy gradients, and other reinforcement learning methods.
 
 use std::collections::{HashMap, VecDeque};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::numeric::Float;
+use scirs2_core::ndarray::{Array1, Array2};
 
 use super::super::architecture::{ArchitectureSpec, ArchitectureCandidate, ActivationType};
 
@@ -627,7 +627,7 @@ impl<T: Float + Debug + Default + Send + Sync> StateRepresentation<T> {
         ];
 
         // Update performance history
-        self.performance_history.push(num_traits::cast::cast(performance).unwrap_or_else(|| T::zero()));
+        self.performance_history.push(scirs2_core::numeric::NumCast::from(performance).unwrap_or_else(|| T::zero()));
         if self.performance_history.len() > 10 {
             self.performance_history.remove(0);
         }
@@ -646,10 +646,10 @@ impl<T: Float + Debug + Default + Send + Sync> PolicyParameters<T> {
     pub fn default() -> Self {
         Self {
             policy_type: PolicyType::REINFORCE,
-            learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            gamma: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
+            learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
+            gamma: scirs2_core::numeric::NumCast::from(0.99).unwrap_or_else(|| T::zero()),
             exploration: ExplorationParameters::default(),
-            entropy_weight: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            entropy_weight: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -659,16 +659,16 @@ impl<T: Float + Debug + Default + Send + Sync> ExplorationParameters<T> {
     pub fn default() -> Self {
         Self {
             strategy: ExplorationStrategy::EpsilonGreedy,
-            initial_rate: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            final_rate: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            initial_rate: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            final_rate: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             decay_schedule: DecaySchedule::Exponential,
-            current_rate: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            current_rate: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
         }
     }
 
     /// Update exploration rate
     pub fn update_rate(&mut self, step: usize, total_steps: usize) {
-        let progress = num_traits::cast::cast(step as f64 / total_steps as f64).unwrap_or_else(|| T::zero());
+        let progress = scirs2_core::numeric::NumCast::from(step as f64 / total_steps as f64).unwrap_or_else(|| T::zero());
         
         self.current_rate = match self.decay_schedule {
             DecaySchedule::Linear => {

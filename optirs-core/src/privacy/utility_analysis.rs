@@ -6,9 +6,9 @@
 
 use crate::error::Result;
 use crate::privacy::{DifferentialPrivacyConfig, NoiseMechanism, PrivacyBudget};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{ArrayBase, Data, Dimension};
-use scirs2_core::random::Rng;
+use scirs2_core::ndarray::{ArrayBase, Data, Dimension};
+use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -1208,7 +1208,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 expected_utility: max_utility_point.utility_value,
                 privacy_guarantee: max_utility_point.privacy_guarantee,
                 objective: OptimizationObjective::MaximizeUtility,
-                confidence_score: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+                confidence_score: T::from(0.95).unwrap_or_else(|| T::zero()),
                 tradeoff_ratio: max_utility_point.utility_value
                     / max_utility_point.privacy_guarantee,
             });
@@ -1250,7 +1250,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 expected_utility: max_privacy_point.utility_value,
                 privacy_guarantee: max_privacy_point.privacy_guarantee,
                 objective: OptimizationObjective::MinimizePrivacyLoss,
-                confidence_score: num_traits::cast::cast(0.90).unwrap_or_else(|| T::zero()),
+                confidence_score: T::from(0.90).unwrap_or_else(|| T::zero()),
                 tradeoff_ratio: max_privacy_point.utility_value
                     / max_privacy_point.privacy_guarantee,
             });
@@ -1278,62 +1278,57 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             };
 
         // 4. Evaluate robustness if enabled
-        let robustness_results = if self.config.enable_robustness_evaluation
-            && !pareto_frontier.is_empty()
-        {
-            let _config = &pareto_frontier[0].configuration;
-            RobustnessResults {
-                robustness_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // Placeholder
-                worst_case_degradation: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                adversarial_robustness: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
-                distributional_robustness: num_traits::cast::cast(0.85)
-                    .unwrap_or_else(|| T::zero()),
-                stability_analysis: StabilityAnalysis {
-                    lyapunov_exponent: num_traits::cast::cast(-0.1).unwrap_or_else(|| T::zero()),
-                    stability_margin: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-                    convergence_properties: ConvergenceProperties {
-                        convergence_rate: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
-                        convergence_radius: num_traits::cast::cast(1.0)
-                            .unwrap_or_else(|| T::zero()),
-                        asymptotic_behavior: AsymptoticBehavior::Linear,
-                        stability_guarantees: true,
+        let robustness_results =
+            if self.config.enable_robustness_evaluation && !pareto_frontier.is_empty() {
+                let _config = &pareto_frontier[0].configuration;
+                RobustnessResults {
+                    robustness_score: T::from(0.8).unwrap_or_else(|| T::zero()), // Placeholder
+                    worst_case_degradation: T::from(0.1).unwrap_or_else(|| T::zero()),
+                    adversarial_robustness: T::from(0.75).unwrap_or_else(|| T::zero()),
+                    distributional_robustness: T::from(0.85).unwrap_or_else(|| T::zero()),
+                    stability_analysis: StabilityAnalysis {
+                        lyapunov_exponent: T::from(-0.1).unwrap_or_else(|| T::zero()),
+                        stability_margin: T::from(0.2).unwrap_or_else(|| T::zero()),
+                        convergence_properties: ConvergenceProperties {
+                            convergence_rate: T::from(0.95).unwrap_or_else(|| T::zero()),
+                            convergence_radius: T::from(1.0).unwrap_or_else(|| T::zero()),
+                            asymptotic_behavior: AsymptoticBehavior::Linear,
+                            stability_guarantees: true,
+                        },
+                        perturbation_analysis: PerturbationAnalysis {
+                            perturbation_sensitivity: T::from(0.1).unwrap_or_else(|| T::zero()),
+                            critical_threshold: T::from(0.5).unwrap_or_else(|| T::zero()),
+                            recovery_time: T::from(10.0).unwrap_or_else(|| T::zero()),
+                            perturbation_effects: Vec::new(),
+                        },
                     },
-                    perturbation_analysis: PerturbationAnalysis {
-                        perturbation_sensitivity: num_traits::cast::cast(0.1)
-                            .unwrap_or_else(|| T::zero()),
-                        critical_threshold: num_traits::cast::cast(0.5)
-                            .unwrap_or_else(|| T::zero()),
-                        recovery_time: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()),
-                        perturbation_effects: Vec::new(),
+                    failure_modes: Vec::new(),
+                }
+            } else {
+                RobustnessResults {
+                    robustness_score: T::zero(),
+                    worst_case_degradation: T::zero(),
+                    adversarial_robustness: T::zero(),
+                    distributional_robustness: T::zero(),
+                    stability_analysis: StabilityAnalysis {
+                        lyapunov_exponent: T::zero(),
+                        stability_margin: T::zero(),
+                        convergence_properties: ConvergenceProperties {
+                            convergence_rate: T::zero(),
+                            convergence_radius: T::zero(),
+                            asymptotic_behavior: AsymptoticBehavior::Linear,
+                            stability_guarantees: false,
+                        },
+                        perturbation_analysis: PerturbationAnalysis {
+                            perturbation_sensitivity: T::zero(),
+                            critical_threshold: T::zero(),
+                            recovery_time: T::zero(),
+                            perturbation_effects: Vec::new(),
+                        },
                     },
-                },
-                failure_modes: Vec::new(),
-            }
-        } else {
-            RobustnessResults {
-                robustness_score: T::zero(),
-                worst_case_degradation: T::zero(),
-                adversarial_robustness: T::zero(),
-                distributional_robustness: T::zero(),
-                stability_analysis: StabilityAnalysis {
-                    lyapunov_exponent: T::zero(),
-                    stability_margin: T::zero(),
-                    convergence_properties: ConvergenceProperties {
-                        convergence_rate: T::zero(),
-                        convergence_radius: T::zero(),
-                        asymptotic_behavior: AsymptoticBehavior::Linear,
-                        stability_guarantees: false,
-                    },
-                    perturbation_analysis: PerturbationAnalysis {
-                        perturbation_sensitivity: T::zero(),
-                        critical_threshold: T::zero(),
-                        recovery_time: T::zero(),
-                        perturbation_effects: Vec::new(),
-                    },
-                },
-                failure_modes: Vec::new(),
-            }
-        };
+                    failure_modes: Vec::new(),
+                }
+            };
 
         // 5. Generate budget recommendations
         let budget_recommendations = BudgetRecommendations {
@@ -1347,23 +1342,18 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                     accounting_method: crate::privacy::AccountingMethod::MomentsAccountant,
                     estimated_steps_remaining: 1000,
                 },
-                per_iteration_allocation: vec![
-                    num_traits::cast::cast(0.1)
-                        .unwrap_or_else(|| T::zero());
-                    10
-                ],
+                per_iteration_allocation: vec![T::from(0.1).unwrap_or_else(|| T::zero()); 10],
                 allocation_strategy: AllocationStrategy::Adaptive,
-                expected_utility: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
-                risk_assessment: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
+                expected_utility: T::from(0.85).unwrap_or_else(|| T::zero()),
+                risk_assessment: T::from(0.2).unwrap_or_else(|| T::zero()),
             },
             alternative_allocations: Vec::new(),
             efficiency_metrics: BudgetEfficiencyMetrics {
-                utility_per_epsilon: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-                amplification_factor: num_traits::cast::cast(1.5).unwrap_or_else(|| T::zero()),
-                utilization_efficiency: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                marginal_utility: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                return_on_privacy_investment: num_traits::cast::cast(1.2)
-                    .unwrap_or_else(|| T::zero()),
+                utility_per_epsilon: T::from(0.8).unwrap_or_else(|| T::zero()),
+                amplification_factor: T::from(1.5).unwrap_or_else(|| T::zero()),
+                utilization_efficiency: T::from(0.9).unwrap_or_else(|| T::zero()),
+                marginal_utility: T::from(0.1).unwrap_or_else(|| T::zero()),
+                return_on_privacy_investment: T::from(1.2).unwrap_or_else(|| T::zero()),
             },
             adaptive_strategies: Vec::new(),
         };
@@ -1371,24 +1361,24 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         // 6. Generate degradation predictions
         let degradation_predictions = vec![
             DegradationPrediction {
-                privacy_parameter: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                predicted_utility_loss: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                privacy_parameter: T::from(0.1).unwrap_or_else(|| T::zero()),
+                predicted_utility_loss: T::from(0.05).unwrap_or_else(|| T::zero()),
                 confidence_interval: (
-                    num_traits::cast::cast(0.03).unwrap_or_else(|| T::zero()),
-                    num_traits::cast::cast(0.07).unwrap_or_else(|| T::zero()),
+                    T::from(0.03).unwrap_or_else(|| T::zero()),
+                    T::from(0.07).unwrap_or_else(|| T::zero()),
                 ),
                 prediction_model: PredictionModel::LinearRegression,
-                model_accuracy: num_traits::cast::cast(0.92).unwrap_or_else(|| T::zero()),
+                model_accuracy: T::from(0.92).unwrap_or_else(|| T::zero()),
             },
             DegradationPrediction {
-                privacy_parameter: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-                predicted_utility_loss: num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
+                privacy_parameter: T::from(1.0).unwrap_or_else(|| T::zero()),
+                predicted_utility_loss: T::from(0.15).unwrap_or_else(|| T::zero()),
                 confidence_interval: (
-                    num_traits::cast::cast(0.12).unwrap_or_else(|| T::zero()),
-                    num_traits::cast::cast(0.18).unwrap_or_else(|| T::zero()),
+                    T::from(0.12).unwrap_or_else(|| T::zero()),
+                    T::from(0.18).unwrap_or_else(|| T::zero()),
                 ),
                 prediction_model: PredictionModel::LinearRegression,
-                model_accuracy: num_traits::cast::cast(0.88).unwrap_or_else(|| T::zero()),
+                model_accuracy: T::from(0.88).unwrap_or_else(|| T::zero()),
             },
         ];
 
@@ -1396,19 +1386,19 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let mut risk_categories = HashMap::new();
         risk_categories.insert(
             RiskCategory::MembershipInference,
-            num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
+            T::from(0.3).unwrap_or_else(|| T::zero()),
         );
         risk_categories.insert(
             RiskCategory::AttributeInference,
-            num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
+            T::from(0.2).unwrap_or_else(|| T::zero()),
         );
         risk_categories.insert(
             RiskCategory::ModelInversion,
-            num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            T::from(0.1).unwrap_or_else(|| T::zero()),
         );
 
         let privacy_risk_assessment = PrivacyRiskAssessment {
-            overall_risk_score: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()),
+            overall_risk_score: T::from(0.25).unwrap_or_else(|| T::zero()),
             risk_categories,
             mitigation_recommendations: vec![
                 "Increase noise multiplier for better privacy".to_string(),
@@ -1423,21 +1413,21 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let statistical_tests = StatisticalTestResults {
             hypothesis_tests: vec![HypothesisTestResult {
                 test_name: "Privacy-Utility Correlation Test".to_string(),
-                test_statistic: num_traits::cast::cast(-0.75).unwrap_or_else(|| T::zero()),
-                p_value: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-                significance_level: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                test_statistic: T::from(-0.75).unwrap_or_else(|| T::zero()),
+                p_value: T::from(0.01).unwrap_or_else(|| T::zero()),
+                significance_level: T::from(0.05).unwrap_or_else(|| T::zero()),
                 reject_null: true,
-                effect_size: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+                effect_size: T::from(0.6).unwrap_or_else(|| T::zero()),
             }],
             significance_levels: vec![
-                num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
-                num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+                T::from(0.05).unwrap_or_else(|| T::zero()),
+                T::from(0.01).unwrap_or_else(|| T::zero()),
             ],
-            effect_sizes: vec![num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero())],
+            effect_sizes: vec![T::from(0.6).unwrap_or_else(|| T::zero())],
             power_analysis: PowerAnalysis {
-                statistical_power: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
+                statistical_power: T::from(0.85).unwrap_or_else(|| T::zero()),
                 required_sample_size: 100,
-                minimum_detectable_effect: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
+                minimum_detectable_effect: T::from(0.2).unwrap_or_else(|| T::zero()),
                 power_curve: Vec::new(),
             },
             multiple_comparison_corrections: Vec::new(),
@@ -1503,10 +1493,10 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 utility_value: utility,
                 configuration: config,
                 confidence_interval: (
-                    utility - num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                    utility + num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                    utility - T::from(0.1).unwrap_or_else(|| T::zero()),
+                    utility + T::from(0.1).unwrap_or_else(|| T::zero()),
                 ), // Default CI
-                statistical_significance: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()), // Default significance
+                statistical_significance: T::from(0.95).unwrap_or_else(|| T::zero()), // Default significance
                 privacy_cost,
                 dominated: false,
                 distance_to_ideal: T::zero(),
@@ -1609,7 +1599,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         sensitivity_results.base_utility = base_utility;
 
         // Perturbation factor for finite difference approximation
-        let perturbation_factor = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()); // 1% perturbation
+        let perturbation_factor = T::from(0.01).unwrap_or_else(|| T::zero()); // 1% perturbation
 
         // Analyze epsilon sensitivity
         let mut epsilon_config = base_config.clone();
@@ -1894,7 +1884,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                             .take(combinations_per_dimension)
                         {
                             // Skip invalid combinations
-                            if delta >= num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())
+                            if delta >= T::from(1.0).unwrap_or_else(|| T::zero())
                                 || epsilon <= T::zero()
                                 || noise_mult <= T::zero()
                             {
@@ -1907,11 +1897,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                                 noise_multiplier: noise_mult,
                                 clipping_threshold: clip_thresh,
                                 batch_size: batch_size.to_usize().unwrap_or(256),
-                                sampling_probability: num_traits::cast::cast(0.1)
-                                    .unwrap_or_else(|| T::zero()), // Default
+                                sampling_probability: T::from(0.1).unwrap_or_else(|| T::zero()), // Default
                                 iterations: 1000, // Default
-                                learning_rate: num_traits::cast::cast(0.01)
-                                    .unwrap_or_else(|| T::zero()), // Default learning rate
+                                learning_rate: T::from(0.01).unwrap_or_else(|| T::zero()), // Default learning rate
                                 noise_mechanism: NoiseMechanism::Gaussian,
                             });
 
@@ -1936,7 +1924,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 for i in 0..range.num_samples {
                     let fraction = i as f64 / (range.num_samples - 1).max(1) as f64;
                     let value = range.min + fraction * (range.max - range.min);
-                    values.push(num_traits::cast::cast(value).unwrap_or_else(|| T::zero()));
+                    values.push(T::from(value).unwrap_or_else(|| T::zero()));
                 }
             }
             SamplingStrategy::Logarithmic => {
@@ -1949,10 +1937,10 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 }
             }
             SamplingStrategy::Random => {
-                let mut rng = scirs2_core::random::rng();
+                let mut rng = thread_rng();
                 for _ in 0..range.num_samples {
                     let value = rng.gen_range(range.min..range.max);
-                    values.push(num_traits::cast::cast(value).unwrap_or_else(|| T::zero()));
+                    values.push(T::from(value).unwrap_or_else(|| T::zero()));
                 }
             }
             _ => {
@@ -1960,7 +1948,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 for i in 0..range.num_samples {
                     let fraction = i as f64 / (range.num_samples - 1).max(1) as f64;
                     let value = range.min + fraction * (range.max - range.min);
-                    values.push(num_traits::cast::cast(value).unwrap_or_else(|| T::zero()));
+                    values.push(T::from(value).unwrap_or_else(|| T::zero()));
                 }
             }
         }
@@ -1972,17 +1960,17 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     fn compute_privacy_cost(&self, config: &PrivacyConfiguration<T>) -> Result<T> {
         // Privacy cost is inversely related to epsilon (lower epsilon = higher privacy = higher cost)
         // Normalize by a reasonable maximum epsilon value
-        let max_epsilon = num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero());
+        let max_epsilon = T::from(10.0).unwrap_or_else(|| T::zero());
         let normalized_epsilon = config.epsilon / max_epsilon;
 
         // Add delta component (lower delta = higher privacy = higher cost)
-        let max_delta = num_traits::cast::cast(1e-3).unwrap_or_else(|| T::zero());
+        let max_delta = T::from(1e-3).unwrap_or_else(|| T::zero());
         let normalized_delta = config.delta / max_delta;
 
         // Combine epsilon and delta into a privacy cost metric
         // Higher values indicate lower privacy (higher cost in privacy terms)
-        let privacy_cost = normalized_epsilon
-            + normalized_delta * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let privacy_cost =
+            normalized_epsilon + normalized_delta * T::from(0.1).unwrap_or_else(|| T::zero());
 
         Ok(privacy_cost)
     }

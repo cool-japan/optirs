@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // optimized computations on Google Cloud TPUs and compatible hardware.
 
 #[allow(dead_code)]
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};

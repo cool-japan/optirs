@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -274,7 +274,7 @@ pub struct VerificationRule<T: Float + Debug + Send + Sync + 'static> {
     pub weight: f64,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     ByzantineTolerantAggregator<T>
 {
     /// Create new Byzantine tolerant aggregator
@@ -544,10 +544,10 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             let mut coord_values: Vec<T> = values.iter().map(|g| g[i]).collect();
             coord_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
-            let median = if coord_values.len() % 2 == 0 {
+            let median = if coord_values.len().is_multiple_of(2) {
                 let mid = coord_values.len() / 2;
                 (coord_values[mid - 1] + coord_values[mid])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                    / T::from(2.0).unwrap_or_else(|| T::zero())
             } else {
                 coord_values[coord_values.len() / 2]
             };
@@ -723,7 +723,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
                 let change = self
                     .compute_euclidean_distance(&current, &new_estimate)
                     .unwrap_or(T::zero());
-                if change < num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()) {
+                if change < T::from(1e-6).unwrap_or_else(|| T::zero()) {
                     break;
                 }
 
@@ -904,7 +904,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
         for participant_id in gradients.keys() {
             // Use reputation score as initial weight
             let base_weight = if let Some(reputation) = self.reputation_scores.get(participant_id) {
-                num_traits::cast::cast(reputation.score).unwrap_or_else(|| T::zero())
+                T::from(reputation.score).unwrap_or_else(|| T::zero())
             } else {
                 T::one()
             };
@@ -939,7 +939,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             let mut to_remove = Vec::new();
             for (participant_id, gradient) in &unassigned {
                 let similarity = self.compute_cosine_similarity(&first_gradient, gradient)?;
-                if similarity > num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()) {
+                if similarity > T::from(0.8).unwrap_or_else(|| T::zero()) {
                     // Similarity threshold
                     current_cluster.insert(participant_id.clone(), gradient.clone());
                     to_remove.push(participant_id.clone());
@@ -1026,10 +1026,10 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
                 let mut max_iqr_score = 0.0;
 
                 for i in 0..gradient.len() {
-                    let q1 = stats.median[i]
-                        - stats.iqr[i] / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
-                    let q3 = stats.median[i]
-                        + stats.iqr[i] / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                    let q1 =
+                        stats.median[i] - stats.iqr[i] / T::from(2.0).unwrap_or_else(|| T::zero());
+                    let q3 =
+                        stats.median[i] + stats.iqr[i] / T::from(2.0).unwrap_or_else(|| T::zero());
 
                     if gradient[i] < q1 || gradient[i] > q3 {
                         let iqr_score = if gradient[i] < q1 {
@@ -1146,7 +1146,7 @@ impl ReputationScore {
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     AnomalyDetector<T>
 {
     /// Create new anomaly detector
@@ -1226,7 +1226,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand> Default
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand> Default
     for GradientStatistics<T>
 {
     fn default() -> Self {
@@ -1234,7 +1234,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     GradientStatistics<T>
 {
     /// Create new gradient statistics
@@ -1268,7 +1268,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
             self.mean = gradient.clone();
         } else if self.mean.len() == gradient.len() {
             // Update running mean
-            let alpha = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()); // Learning rate for running average
+            let alpha = T::from(0.01).unwrap_or_else(|| T::zero()); // Learning rate for running average
             self.mean = &self.mean * (T::one() - alpha) + gradient * alpha;
         }
 
@@ -1311,7 +1311,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PatternModel<T> {
         }
 
         // Normalize distance to [0,1] score
-        let max_expected_distance = num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()); // Tunable parameter
+        let max_expected_distance = T::from(10.0).unwrap_or_else(|| T::zero()); // Tunable parameter
         let deviation_score = (min_distance / max_expected_distance).min(T::one());
 
         Ok(deviation_score.to_f64().unwrap_or(0.5))
@@ -1375,10 +1375,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticalAnalysis<T> {
             values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
             // Median
-            median[i] = if values.len() % 2 == 0 {
+            median[i] = if values.len().is_multiple_of(2) {
                 let mid = values.len() / 2;
-                (values[mid - 1] + values[mid])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                (values[mid - 1] + values[mid]) / T::from(2.0).unwrap_or_else(|| T::zero())
             } else {
                 values[values.len() / 2]
             };
@@ -1497,10 +1496,7 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientProperties<T> {
     /// Create new gradient properties
     pub fn new() -> Self {
         Self {
-            norm_range: (
-                T::zero(),
-                num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
-            ),
+            norm_range: (T::zero(), T::from(100.0).unwrap_or_else(|| T::zero())),
             sparsity_threshold: 0.1,
             direction_consistency: 0.8,
         }
@@ -1510,7 +1506,7 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientProperties<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
     use std::collections::HashMap;
 
     #[test]
@@ -1621,7 +1617,7 @@ mod tests {
         let b = Array1::from(vec![4.0, 5.0, 6.0]);
 
         let distance = aggregator.compute_euclidean_distance(&a, &b).unwrap();
-        let expected = ((3.0_f64.powi(2) + 3.0_f64.powi(2) + 3.0_f64.powi(2)) as f64).sqrt();
+        let expected = (3.0_f64.powi(2) + 3.0_f64.powi(2) + 3.0_f64.powi(2)).sqrt();
 
         assert!((distance - expected).abs() < 1e-10);
     }

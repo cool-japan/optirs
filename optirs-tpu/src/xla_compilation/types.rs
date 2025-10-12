@@ -4,8 +4,8 @@ use std::fmt::Debug;
 // This module defines the fundamental types used throughout the XLA compilation system,
 // including operations, operands, shapes, layouts, and performance characteristics.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::time::Instant;
 

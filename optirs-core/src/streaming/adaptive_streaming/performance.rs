@@ -8,7 +8,7 @@ use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 use super::resource_management::ResourceUsage;
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::iter::Sum;
@@ -43,9 +43,9 @@ pub struct DataStatistics<A: Float + Send + Sync> {
     /// Number of samples in this batch
     pub sample_count: usize,
     /// Feature-wise means
-    pub feature_means: scirs2_core::ndarray_ext::Array1<A>,
+    pub feature_means: scirs2_core::ndarray::Array1<A>,
     /// Feature-wise standard deviations
-    pub feature_stds: scirs2_core::ndarray_ext::Array1<A>,
+    pub feature_stds: scirs2_core::ndarray::Array1<A>,
     /// Average data quality score
     pub average_quality: A,
     /// Timestamp of statistics computation
@@ -56,8 +56,8 @@ impl<A: Float + Send + Sync> Default for DataStatistics<A> {
     fn default() -> Self {
         Self {
             sample_count: 0,
-            feature_means: scirs2_core::ndarray_ext::Array1::zeros(0),
-            feature_stds: scirs2_core::ndarray_ext::Array1::zeros(0),
+            feature_means: scirs2_core::ndarray::Array1::zeros(0),
+            feature_stds: scirs2_core::ndarray::Array1::zeros(0),
             average_quality: A::zero(),
             timestamp: Instant::now(),
         }

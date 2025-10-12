@@ -266,7 +266,7 @@ pub enum IntegrationStatus {
 }
 
 /// Integration statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntegrationStatistics {
     /// GitHub statistics
     pub github: Option<GitHubStatistics>,
@@ -1129,18 +1129,6 @@ impl RetryManager {
 }
 
 // Default implementations
-
-impl Default for IntegrationStatistics {
-    fn default() -> Self {
-        Self {
-            github: None,
-            slack: None,
-            email: None,
-            webhook: WebhookStatistics::default(),
-            custom: HashMap::new(),
-        }
-    }
-}
 
 impl Default for WebhookStatistics {
     fn default() -> Self {

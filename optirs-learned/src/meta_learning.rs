@@ -4,9 +4,9 @@
 // learned optimizers, including MAML, Reptile, Meta-SGD, and other advanced
 // techniques for few-shot optimization and rapid adaptation.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, Dimension};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -651,7 +651,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for MetaTask<T> {
             support_set: TaskDataset::default(),
             query_set: TaskDataset::default(),
             metadata: TaskMetadata::default(),
-            difficulty: T::from(1.0).unwrap_or_else(|| T::zero()),
+            difficulty: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
             domain: "default".to_string(),
             task_type: TaskType::Classification,
         }
@@ -1178,7 +1178,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug,
     > MetaLearningFramework<T>
 {
@@ -1215,34 +1215,34 @@ impl<
             MetaLearningAlgorithm::MAML => {
                 let maml_config = MAMLConfig {
                     second_order: config.second_order,
-                    inner_lr: num_traits::cast::cast(config.inner_learning_rate)
+                    inner_lr: scirs2_core::numeric::NumCast::from(config.inner_learning_rate)
                         .unwrap_or_else(|| T::zero()),
-                    outer_lr: num_traits::cast::cast(config.meta_learning_rate)
+                    outer_lr: scirs2_core::numeric::NumCast::from(config.meta_learning_rate)
                         .unwrap_or_else(|| T::zero()),
                     inner_steps: config.inner_steps,
                     allow_unused: true,
                     gradient_clip: Some(config.gradient_clip),
                 };
-                Ok(Box::new(
-                    MAMLLearner::<T, scirs2_core::ndarray_ext::Ix1>::new(maml_config)?,
-                ))
+                Ok(Box::new(MAMLLearner::<T, scirs2_core::ndarray::Ix1>::new(
+                    maml_config,
+                )?))
             }
             _ => {
                 // For other algorithms, create appropriate learners
                 // Simplified for now
                 let maml_config = MAMLConfig {
                     second_order: false,
-                    inner_lr: num_traits::cast::cast(config.inner_learning_rate)
+                    inner_lr: scirs2_core::numeric::NumCast::from(config.inner_learning_rate)
                         .unwrap_or_else(|| T::zero()),
-                    outer_lr: num_traits::cast::cast(config.meta_learning_rate)
+                    outer_lr: scirs2_core::numeric::NumCast::from(config.meta_learning_rate)
                         .unwrap_or_else(|| T::zero()),
                     inner_steps: config.inner_steps,
                     allow_unused: true,
                     gradient_clip: Some(config.gradient_clip),
                 };
-                Ok(Box::new(
-                    MAMLLearner::<T, scirs2_core::ndarray_ext::Ix1>::new(maml_config)?,
-                ))
+                Ok(Box::new(MAMLLearner::<T, scirs2_core::ndarray::Ix1>::new(
+                    maml_config,
+                )?))
             }
         }
     }
@@ -1406,8 +1406,8 @@ impl<
         meta_parameters: &mut HashMap<String, Array1<T>>,
         meta_gradients: &HashMap<String, Array1<T>>,
     ) -> Result<()> {
-        let meta_lr =
-            num_traits::cast::cast(self.config.meta_learning_rate).unwrap_or_else(|| T::zero());
+        let meta_lr = scirs2_core::numeric::NumCast::from(self.config.meta_learning_rate)
+            .unwrap_or_else(|| T::zero());
 
         for (name, gradient) in meta_gradients {
             if let Some(parameter) = meta_parameters.get_mut(name) {
@@ -1442,7 +1442,7 @@ impl<
             .fold(T::infinity(), |a, &b| a.min(b));
 
         let performance_range = max_recent - min_recent;
-        let threshold = num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero());
+        let threshold = scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero());
 
         performance_range < threshold
     }
@@ -1549,7 +1549,7 @@ impl<
             + Clone
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug,
         D: Dimension,
     > MAMLLearner<T, D>
@@ -1587,7 +1587,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
         D: Dimension,
     > MetaLearner<T> for MAMLLearner<T, D>
 {
@@ -1635,22 +1635,29 @@ impl<
             task_losses: task_losses.clone(),
             meta_gradients,
             metrics: MetaTrainingMetrics {
-                avg_adaptation_speed: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()),
-                generalization_performance: num_traits::cast::cast(0.85)
+                avg_adaptation_speed: scirs2_core::numeric::NumCast::from(2.0)
                     .unwrap_or_else(|| T::zero()),
-                task_diversity: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
-                gradient_alignment: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                generalization_performance: scirs2_core::numeric::NumCast::from(0.85)
+                    .unwrap_or_else(|| T::zero()),
+                task_diversity: scirs2_core::numeric::NumCast::from(0.7)
+                    .unwrap_or_else(|| T::zero()),
+                gradient_alignment: scirs2_core::numeric::NumCast::from(0.9)
+                    .unwrap_or_else(|| T::zero()),
             },
             adaptation_stats: AdaptationStatistics {
                 convergence_steps: vec![self.config.inner_steps; task_batch.len()],
                 final_losses: task_losses.clone(),
-                adaptation_efficiency: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+                adaptation_efficiency: scirs2_core::numeric::NumCast::from(0.8)
+                    .unwrap_or_else(|| T::zero()),
                 stability_metrics: StabilityMetrics {
-                    parameter_stability: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                    performance_stability: num_traits::cast::cast(0.85)
+                    parameter_stability: scirs2_core::numeric::NumCast::from(0.9)
                         .unwrap_or_else(|| T::zero()),
-                    gradient_stability: num_traits::cast::cast(0.92).unwrap_or_else(|| T::zero()),
-                    forgetting_measure: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                    performance_stability: scirs2_core::numeric::NumCast::from(0.85)
+                        .unwrap_or_else(|| T::zero()),
+                    gradient_stability: scirs2_core::numeric::NumCast::from(0.92)
+                        .unwrap_or_else(|| T::zero()),
+                    forgetting_measure: scirs2_core::numeric::NumCast::from(0.1)
+                        .unwrap_or_else(|| T::zero()),
                 },
             },
         })
@@ -1673,8 +1680,8 @@ impl<
             let gradients = self.compute_gradients(&adapted_parameters, loss)?;
 
             // Update _parameters
-            let learning_rate =
-                num_traits::cast::cast(self.config.inner_lr).unwrap_or_else(|| T::zero());
+            let learning_rate = scirs2_core::numeric::NumCast::from(self.config.inner_lr)
+                .unwrap_or_else(|| T::zero());
             for (name, param) in adapted_parameters.iter_mut() {
                 if let Some(grad) = gradients.get(name) {
                     for i in 0..param.len() {
@@ -1687,8 +1694,10 @@ impl<
             adaptation_trajectory.push(AdaptationStep {
                 step,
                 loss,
-                gradient_norm: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // Placeholder
-                parameter_change_norm: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Placeholder
+                gradient_norm: scirs2_core::numeric::NumCast::from(1.0)
+                    .unwrap_or_else(|| T::zero()), // Placeholder
+                parameter_change_norm: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::zero()), // Placeholder
                 learning_rate,
             });
         }
@@ -1703,10 +1712,12 @@ impl<
             adaptation_trajectory,
             final_loss,
             metrics: TaskAdaptationMetrics {
-                convergence_speed: num_traits::cast::cast(1.5).unwrap_or_else(|| T::zero()),
-                final_performance: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                efficiency: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
-                robustness: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+                convergence_speed: scirs2_core::numeric::NumCast::from(1.5)
+                    .unwrap_or_else(|| T::zero()),
+                final_performance: scirs2_core::numeric::NumCast::from(0.9)
+                    .unwrap_or_else(|| T::zero()),
+                efficiency: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
+                robustness: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
             },
         })
     }
@@ -1727,12 +1738,13 @@ impl<
             let loss = (prediction - *target) * (prediction - *target);
 
             predictions.push(prediction);
-            confidence_scores.push(num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())); // Placeholder
+            confidence_scores
+                .push(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())); // Placeholder
             total_loss = total_loss + loss;
         }
 
         let query_loss = total_loss / T::from(task.query_set.features.len()).unwrap();
-        let accuracy = num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()); // Placeholder
+        let accuracy = scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()); // Placeholder
 
         Ok(QueryEvaluationResult {
             query_loss,
@@ -1742,8 +1754,9 @@ impl<
             metrics: QueryEvaluationMetrics {
                 mse: Some(query_loss),
                 classification_accuracy: Some(accuracy),
-                auc: Some(num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())),
-                uncertainty_quality: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+                auc: Some(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())),
+                uncertainty_quality: scirs2_core::numeric::NumCast::from(0.8)
+                    .unwrap_or_else(|| T::zero()),
             },
         })
     }
@@ -1923,7 +1936,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ContinualLearni
             // handle continual learning with catastrophic forgetting prevention
             let task_result = TaskResult {
                 task_id: task.id.clone(),
-                loss: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Placeholder loss
+                loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()), // Placeholder loss
                 metrics: HashMap::new(),
             };
             sequence_results.push(task_result);
@@ -1931,8 +1944,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ContinualLearni
 
         Ok(ContinualLearningResult {
             sequence_results,
-            forgetting_measure: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
-            adaptation_efficiency: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+            forgetting_measure: scirs2_core::numeric::NumCast::from(0.05)
+                .unwrap_or_else(|| T::zero()),
+            adaptation_efficiency: scirs2_core::numeric::NumCast::from(0.95)
+                .unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -1968,7 +1983,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MultiTaskCoordi
             // coordinate learning across multiple tasks simultaneously
             let task_result = TaskResult {
                 task_id: task.id.clone(),
-                loss: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Placeholder loss
+                loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()), // Placeholder loss
                 metrics: HashMap::new(),
             };
             task_results.push(task_result);
@@ -1976,7 +1991,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MultiTaskCoordi
 
         Ok(MultiTaskResult {
             task_results,
-            coordination_overhead: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            coordination_overhead: scirs2_core::numeric::NumCast::from(0.01)
+                .unwrap_or_else(|| T::zero()),
             convergence_status: "converged".to_string(),
         })
     }
@@ -1990,6 +2006,14 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MultiTaskCoordi
 pub struct MetaOptimizationTracker<T: Float + Debug + Send + Sync + 'static> {
     step_count: usize,
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default
+    for MetaOptimizationTracker<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaOptimizationTracker<T> {

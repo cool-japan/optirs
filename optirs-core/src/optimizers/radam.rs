@@ -2,8 +2,8 @@
 //
 // RAdam is an improved variant of Adam with a rectified adaptive learning rate.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -33,7 +33,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{RAdam, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -59,9 +59,9 @@ pub struct RAdam<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor
     weight_decay: A,
     /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Current timestep
     t: usize,
     /// Rho infinity (precomputed constant)
@@ -235,20 +235,20 @@ where
         // RAdam logic for variance rectification
         let beta2_t = self.beta2.powi(self.t as i32);
         let rho_t = self.rho_inf
-            - <A as num_traits::NumCast>::from(2.0).unwrap()
-                * <A as num_traits::NumCast>::from(self.t as f64).unwrap()
+            - <A as scirs2_core::numeric::NumCast>::from(2.0).unwrap()
+                * <A as scirs2_core::numeric::NumCast>::from(self.t as f64).unwrap()
                 * beta2_t
                 / (A::one() - beta2_t);
 
         // Compute adaptive learning rate and update parameters
-        let updated_params = if rho_t > <A as num_traits::NumCast>::from(4.0).unwrap() {
+        let updated_params = if rho_t > <A as scirs2_core::numeric::NumCast>::from(4.0).unwrap() {
             // Threshold for using the adaptive learning rate
             // Compute bias-corrected second moment estimate (variance)
             let v_hat = &v[0] / (A::one() - beta2_t);
 
             // Compute length of the approximated SMA (simple moving average)
-            let sma_rectifier = (rho_t - <A as num_traits::NumCast>::from(4.0).unwrap())
-                * (rho_t - <A as num_traits::NumCast>::from(2.0).unwrap())
+            let sma_rectifier = (rho_t - <A as scirs2_core::numeric::NumCast>::from(4.0).unwrap())
+                * (rho_t - <A as scirs2_core::numeric::NumCast>::from(2.0).unwrap())
                 / self.rho_inf;
             let sma_rectifier = sma_rectifier * A::sqrt(A::one() - beta2_t)
                 / (A::one() - self.beta1.powi(self.t as i32));
@@ -281,7 +281,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_radam_step() {

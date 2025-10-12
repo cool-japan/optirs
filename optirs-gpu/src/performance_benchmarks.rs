@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, Array1, Array2, Dimension};
+use scirs2_core::numeric::Float;
 
 use crate::adaptive_selection::OptimizerType;
 use crate::error::{OptimError, Result};
@@ -1144,7 +1144,7 @@ impl DataGenerator for SparseDataGenerator {
         let params = Array1::from_vec(
             (0..size)
                 .map(|_| {
-                    if scirs2_core::random::f64() < self.density {
+                    if scirs2_core::random::random::<f64>() < self.density {
                         scirs2_core::random::f32()
                     } else {
                         0.0
@@ -1156,7 +1156,7 @@ impl DataGenerator for SparseDataGenerator {
         let gradients = Array1::from_vec(
             (0..size)
                 .map(|_| {
-                    if scirs2_core::random::f64() < self.density {
+                    if scirs2_core::random::random::<f64>() < self.density {
                         scirs2_core::random::f32() - 0.5
                     } else {
                         0.0

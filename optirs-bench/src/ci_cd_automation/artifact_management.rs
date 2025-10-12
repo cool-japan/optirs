@@ -675,7 +675,7 @@ impl ArtifactManager {
         // Check cache first
         if let Some(cached_path) = self.download_manager.check_cache(remote_key)? {
             if cached_path != local_path {
-                fs::copy(&cached_path, local_path).map_err(|e| OptimError::IO(e))?;
+                fs::copy(&cached_path, local_path).map_err(OptimError::IO)?;
             }
             return Ok(());
         }
@@ -769,11 +769,10 @@ impl ArtifactManager {
     fn compute_file_checksum(&self, path: &Path, algorithm: ChecksumAlgorithm) -> Result<String> {
         use std::io::Read;
 
-        let mut file = fs::File::open(path).map_err(|e| OptimError::IO(e))?;
+        let mut file = fs::File::open(path).map_err(OptimError::IO)?;
 
         let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .map_err(|e| OptimError::IO(e))?;
+        file.read_to_end(&mut buffer).map_err(OptimError::IO)?;
 
         let checksum = match algorithm {
             ChecksumAlgorithm::SHA256 => {
@@ -785,7 +784,7 @@ impl ArtifactManager {
             ChecksumAlgorithm::MD5 => {
                 let mut hasher = md5::Context::new();
                 hasher.consume(&buffer);
-                format!("{:x}", hasher.compute())
+                format!("{:x}", hasher.finalize())
             }
             _ => {
                 // Simplified implementation for other algorithms
@@ -834,12 +833,12 @@ impl ArtifactStorage for LocalArtifactStorage {
         // Create parent directories if needed
         if let Some(parent) = dest_path.parent() {
             if self.config.create_dirs {
-                fs::create_dir_all(parent).map_err(|e| OptimError::IO(e))?;
+                fs::create_dir_all(parent).map_err(OptimError::IO)?;
             }
         }
 
         // Copy file
-        fs::copy(local_path, &dest_path).map_err(|e| OptimError::IO(e))?;
+        fs::copy(local_path, &dest_path).map_err(OptimError::IO)?;
 
         // Set permissions if configured
         if let Some(permissions) = self.config.file_permissions {
@@ -867,10 +866,10 @@ impl ArtifactStorage for LocalArtifactStorage {
 
         // Create parent directories for local path
         if let Some(parent) = local_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| OptimError::IO(e))?;
+            fs::create_dir_all(parent).map_err(OptimError::IO)?;
         }
 
-        fs::copy(&source_path, local_path).map_err(|e| OptimError::IO(e))?;
+        fs::copy(&source_path, local_path).map_err(OptimError::IO)?;
 
         Ok(())
     }
@@ -879,7 +878,7 @@ impl ArtifactStorage for LocalArtifactStorage {
         let file_path = self.base_path.join(remote_key);
 
         if file_path.exists() {
-            fs::remove_file(&file_path).map_err(|e| OptimError::IO(e))?;
+            fs::remove_file(&file_path).map_err(OptimError::IO)?;
         }
 
         Ok(())
@@ -904,7 +903,7 @@ impl ArtifactStorage for LocalArtifactStorage {
 
     fn get_metadata(&self, remote_key: &str) -> Result<ArtifactMetadata> {
         let file_path = self.base_path.join(remote_key);
-        let metadata = fs::metadata(&file_path).map_err(|e| OptimError::IO(e))?;
+        let metadata = fs::metadata(&file_path).map_err(OptimError::IO)?;
 
         let filename = file_path
             .file_name()
@@ -966,7 +965,7 @@ impl ArtifactStorage for LocalArtifactStorage {
         // For local storage, just check if base path exists and is accessible
         if !self.base_path.exists() {
             if self.config.create_dirs {
-                fs::create_dir_all(&self.base_path).map_err(|e| OptimError::IO(e))?;
+                fs::create_dir_all(&self.base_path).map_err(OptimError::IO)?;
             } else {
                 return Err(OptimError::IO(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
@@ -977,8 +976,8 @@ impl ArtifactStorage for LocalArtifactStorage {
 
         // Test write access
         let test_file = self.base_path.join(".write_test");
-        fs::write(&test_file, "test").map_err(|e| OptimError::IO(e))?;
-        fs::remove_file(&test_file).map_err(|e| OptimError::IO(e))?;
+        fs::write(&test_file, "test").map_err(OptimError::IO)?;
+        fs::remove_file(&test_file).map_err(OptimError::IO)?;
 
         Ok(())
     }
@@ -1038,6 +1037,12 @@ impl LocalArtifactStorage {
 }
 
 // Implementation of supporting structures
+
+impl Default for ArtifactRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ArtifactRegistry {
     /// Create a new artifact registry
@@ -1101,7 +1106,7 @@ impl ArtifactRegistry {
             }
         }
 
-        let average_size = if self.artifacts.len() > 0 {
+        let average_size = if !self.artifacts.is_empty() {
             total_size as f64 / self.artifacts.len() as f64
         } else {
             0.0
@@ -1433,6 +1438,12 @@ impl RetentionManager {
     }
 }
 
+impl Default for CleanupScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CleanupScheduler {
     /// Create a new cleanup scheduler
     pub fn new() -> Self {
@@ -1541,7 +1552,7 @@ mod tests {
             },
         };
 
-        let mut manager = UploadManager::new(config);
+        let manager = UploadManager::new(config);
         assert_eq!(manager.active_uploads.len(), 0);
     }
 

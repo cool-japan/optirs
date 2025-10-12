@@ -657,7 +657,7 @@ impl PrefetchStrategy for SequentialPrefetcher {
             .get(&(access.context_id as usize))
         {
             let mut next_addr = access.address;
-            let step = if seq_info.direction > 0 { 64 } else { 64 };
+            let step = 64; // Cache line size
 
             for i in 0..self.config.max_prefetch_count {
                 next_addr = if seq_info.direction > 0 {
@@ -1145,7 +1145,7 @@ mod tests {
     fn test_prefetch_engine_creation() {
         let config = PrefetchConfig::default();
         let engine = PrefetchingEngine::new(config);
-        assert!(engine.strategies.len() > 0);
+        assert!(!engine.strategies.is_empty());
     }
 
     #[test]

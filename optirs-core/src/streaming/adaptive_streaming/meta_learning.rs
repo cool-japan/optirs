@@ -8,7 +8,8 @@ use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 use super::performance::{PerformanceSnapshot, PerformanceTracker};
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -674,7 +675,11 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         self.statistics.total_experiences += 1;
 
         // Trigger learning if enough experiences collected
-        if self.statistics.total_experiences % self.config.update_frequency == 0 {
+        if self
+            .statistics
+            .total_experiences
+            .is_multiple_of(self.config.update_frequency)
+        {
             self.trigger_learning()?;
         }
 
@@ -936,7 +941,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer
         } else {
             // Random sampling
             for _ in 0..batch_size.min(self.experiences.len()) {
-                let idx = scirs2_core::random::usize(0..self.experiences.len());
+                let idx = thread_rng().gen_range(0..self.experiences.len());
                 if let Some(experience) = self.experiences.get(idx) {
                     batch.push(experience.clone());
                 }

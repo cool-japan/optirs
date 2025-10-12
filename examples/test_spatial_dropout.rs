@@ -1,4 +1,4 @@
-use scirs2_core::ndarray_ext::{Array, Axis};
+use scirs2_core::ndarray::{Array, Axis};
 use optirs_core::regularizers::SpatialDropout;
 
 #[allow(dead_code)]

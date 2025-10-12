@@ -267,8 +267,10 @@ mod tests {
 
     #[test]
     fn test_amplification_with_disabled_config() {
-        let mut config = AmplificationConfig::default();
-        config.enabled = false;
+        let mut config = AmplificationConfig {
+            enabled: false,
+            ..Default::default()
+        };
 
         let mut analyzer = PrivacyAmplificationAnalyzer::new(config);
 
@@ -308,8 +310,10 @@ mod tests {
 
     #[test]
     fn test_shuffling_amplification() {
-        let mut config = AmplificationConfig::default();
-        config.shuffling_enabled = true;
+        let mut config = AmplificationConfig {
+            shuffling_enabled: true,
+            ..Default::default()
+        };
 
         let analyzer = PrivacyAmplificationAnalyzer::new(config);
 
@@ -322,8 +326,10 @@ mod tests {
 
     #[test]
     fn test_heterogeneous_amplification() {
-        let mut config = AmplificationConfig::default();
-        config.heterogeneous_amplification = true;
+        let mut config = AmplificationConfig {
+            heterogeneous_amplification: true,
+            ..Default::default()
+        };
 
         let analyzer = PrivacyAmplificationAnalyzer::new(config);
 
@@ -337,9 +343,11 @@ mod tests {
 
     #[test]
     fn test_combined_amplification() {
-        let mut config = AmplificationConfig::default();
-        config.shuffling_enabled = true;
-        config.heterogeneous_amplification = true;
+        let mut config = AmplificationConfig {
+            shuffling_enabled: true,
+            heterogeneous_amplification: true,
+            ..Default::default()
+        };
 
         let mut analyzer = PrivacyAmplificationAnalyzer::new(config);
 

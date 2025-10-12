@@ -1,7 +1,7 @@
 // Meta-learning orchestrator for coordination logic
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime};
@@ -177,7 +177,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
         for (idx, strategy) in self.strategies.iter().enumerate() {
             let suitability_score = self.calculate_strategy_suitability(strategy.as_ref(), meta_task)?;
             let performance_score = self.get_strategy_performance_score(strategy.get_id())?;
-            let combined_score = suitability_score * num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()) + performance_score * num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero());
+            let combined_score = suitability_score * scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()) + performance_score * scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero());
 
             if combined_score > best_score {
                 best_score = combined_score;
@@ -357,10 +357,10 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
 
         for optimizer in optimizers {
             let base_adjustment = match difficulty_level {
-                DifficultyLevel::Easy => num_traits::cast::cast(1.2).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Easy => scirs2_core::numeric::NumCast::from(1.2).unwrap_or_else(|| T::zero()),
                 DifficultyLevel::Medium => T::one(),
-                DifficultyLevel::Hard => num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-                DifficultyLevel::Extreme => num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Hard => scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Extreme => scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             };
 
             // Additional adjustments based on optimizer-specific characteristics
@@ -375,12 +375,12 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
     fn calculate_exploration_parameters(&self, meta_task: &MetaTask<T>) -> Result<ExplorationParameters<T>> {
         Ok(ExplorationParameters {
             exploration_rate: match meta_task.difficulty_level {
-                DifficultyLevel::Easy => num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                DifficultyLevel::Medium => num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-                DifficultyLevel::Hard => num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-                DifficultyLevel::Extreme => num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Easy => scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Medium => scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Hard => scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
+                DifficultyLevel::Extreme => scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()),
             },
-            exploration_decay: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
+            exploration_decay: scirs2_core::numeric::NumCast::from(0.99).unwrap_or_else(|| T::zero()),
             exploration_strategy: ExplorationStrategy::EpsilonGreedy,
             adaptive_exploration: true,
         })
@@ -426,7 +426,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
             synchronization_points: self.identify_synchronization_points(meta_task)?,
             coordination_schedule: self.create_coordination_schedule(meta_task)?,
             temporal_dependencies: self.analyze_temporal_dependencies(meta_task)?,
-            coordination_strength: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            coordination_strength: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -436,11 +436,11 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
     }
 
     fn assess_task_difficulty(&self, characteristics: &TaskCharacteristics<T>) -> Result<DifficultyLevel> {
-        if characteristics.complexity_score > num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()) {
+        if characteristics.complexity_score > scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()) {
             Ok(DifficultyLevel::Extreme)
-        } else if characteristics.complexity_score > num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()) {
+        } else if characteristics.complexity_score > scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()) {
             Ok(DifficultyLevel::Hard)
-        } else if characteristics.complexity_score > num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()) {
+        } else if characteristics.complexity_score > scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()) {
             Ok(DifficultyLevel::Medium)
         } else {
             Ok(DifficultyLevel::Easy)
@@ -462,10 +462,10 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
 
     fn define_success_criteria(&self, characteristics: &TaskCharacteristics<T>) -> Result<SuccessCriteria<T>> {
         Ok(SuccessCriteria {
-            target_performance: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-            convergence_threshold: characteristics.complexity_score / num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()),
+            target_performance: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+            convergence_threshold: characteristics.complexity_score / scirs2_core::numeric::NumCast::from(10.0).unwrap_or_else(|| T::zero()),
             max_iterations: 1000,
-            stability_requirement: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+            stability_requirement: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -492,14 +492,14 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
     }
 
     fn calculate_strategy_suitability(&self, _strategy: &dyn MetaLearningStrategy<T>, _task: &MetaTask<T>) -> Result<T> {
-        Ok(num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()))
     }
 
     fn get_strategy_performance_score(&self, strategy_id: String) -> Result<T> {
         Ok(self.strategy_performance.get(&strategy_id)
             .and_then(|history| history.back())
             .cloned()
-            .unwrap_or_else(|| num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())))
+            .unwrap_or_else(|| scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())))
     }
 
     fn calculate_recent_performance(&self) -> Result<f64> {
@@ -518,7 +518,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
     }
 
     fn calculate_episode_performance(&self, _task: &MetaTask<T>, _guidance: &StrategyGuidance<T>) -> Result<T> {
-        Ok(num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero())) // Placeholder
+        Ok(scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero())) // Placeholder
     }
 
     fn calculate_parameter_adjustments(&self, _task: &MetaTask<T>) -> Result<HashMap<String, T>> {
@@ -565,20 +565,20 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
     }
 
     fn calculate_adaptation_responsiveness(&self) -> Result<T> {
-        Ok(num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero())) // Placeholder
+        Ok(scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero())) // Placeholder
     }
 
     fn assess_transfer_potential(&self, _characteristics: &TaskCharacteristics<T>) -> Result<T> {
-        Ok(num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero())) // Placeholder
+        Ok(scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero())) // Placeholder
     }
 
     fn get_optimizer_historical_performance(&self, _optimizer: &str) -> Result<Vec<T>> {
-        Ok(vec![num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()); 10]) // Placeholder
+        Ok(vec![scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()); 10]) // Placeholder
     }
 
     fn calculate_confidence_from_history(&self, history: &[T]) -> Result<T> {
         if history.is_empty() {
-            return Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+            return Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
         }
 
         let mean = history.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(history.len()).unwrap();
@@ -599,11 +599,11 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
     }
 
     fn calculate_transfer_strength(&self, _task: &MetaTask<T>) -> Result<T> {
-        Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()))
     }
 
     fn assess_negative_transfer_risk(&self, _task: &MetaTask<T>) -> Result<T> {
-        Ok(num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()))
     }
 
     fn identify_synchronization_points(&self, _task: &MetaTask<T>) -> Result<Vec<SynchronizationPoint>> {
@@ -699,13 +699,13 @@ impl<T: Float + Debug + Send + Sync + 'static> TaskDistributionAnalyzer<T> {
     ) -> Result<TaskCharacteristics<T>> {
         // Extract task characteristics from landscape features
         let characteristics = TaskCharacteristics {
-            complexity_score: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), // Would be computed from landscape features
+            complexity_score: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()), // Would be computed from landscape features
             dimensionality: 100,
-            noise_level: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            multimodality: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-            conditioning: num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
-            separability: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-            smoothness: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            noise_level: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            multimodality: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
+            conditioning: scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()),
+            separability: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
+            smoothness: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
         };
 
         self.task_history.push_back(characteristics.clone());
@@ -878,7 +878,7 @@ macro_rules! impl_strategy {
             ) -> Result<StrategyGuidance<T>> {
                 Ok(StrategyGuidance {
                     optimizer_priorities: meta_task.participating_optimizers.iter()
-                        .map(|id| (id.clone(), num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())))
+                        .map(|id| (id.clone(), scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())))
                         .collect(),
                     learning_rate_scaling: HashMap::new(),
                     exploration_factors: HashMap::new(),

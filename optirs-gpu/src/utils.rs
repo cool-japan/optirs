@@ -88,7 +88,7 @@ pub fn validate_ptr_and_size(ptr: *mut u8, size: usize) -> Result<(), GpuOptimEr
 /// Calculate optimal block size for GPU kernels
 pub fn calculate_block_size(n: usize, max_threads: usize) -> (usize, usize) {
     let block_size = 256.min(max_threads);
-    let grid_size = (n + block_size - 1) / block_size;
+    let grid_size = n.div_ceil(block_size);
     (grid_size, block_size)
 }
 

@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use crate::regression_tester::types::{DatabaseMetadata, PerformanceRecord};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -77,7 +77,7 @@ impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync>
         record: PerformanceRecord<A>,
         max_history: usize,
     ) {
-        let history = self.history.entry(key).or_insert_with(VecDeque::new);
+        let history = self.history.entry(key).or_default();
         history.push_back(record);
 
         // Maintain reasonable history size
@@ -222,7 +222,7 @@ impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync>
     /// Merge another database into this one
     pub fn merge(&mut self, other: PerformanceDatabase<A>) {
         for (key, mut other_history) in other.history {
-            let history = self.history.entry(key).or_insert_with(VecDeque::new);
+            let history = self.history.entry(key).or_default();
 
             // Merge histories and sort by timestamp
             history.append(&mut other_history);

@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 use std::time::Instant;
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -110,7 +110,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GradientAccumul
         // Average gradients over accumulation steps
         let mut result = HashMap::new();
         for (name, accumulated) in self.accumulated_gradients.drain() {
-            let scale = T::one() / num_traits::cast::cast(self.target_steps).unwrap_or_else(|| T::zero());
+            let scale = T::one() / scirs2_core::numeric::NumCast::from(self.target_steps).unwrap_or_else(|| T::zero());
             result.insert(name, accumulated * scale);
         }
 
@@ -158,7 +158,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GradientAccumul
         self.total_grad_norm = self.total_grad_norm.sqrt();
 
         // Apply clipping if necessary
-        let max_norm = num_traits::cast::cast(self.gradient_clipping.max_norm).unwrap_or_else(|| T::zero());
+        let max_norm = scirs2_core::numeric::NumCast::from(self.gradient_clipping.max_norm).unwrap_or_else(|| T::zero());
         if self.total_grad_norm > max_norm {
             let clip_factor = max_norm / self.total_grad_norm;
             for gradients in self.accumulated_gradients.values_mut() {
@@ -273,7 +273,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ZeroRedundancyS
                         worker_rank: worker,
                         start_index: start_idx,
                         end_index: end_idx,
-                        data: param.slice(scirs2_core::ndarray_ext::s![start_idx..end_idx]).to_owned(),
+                        data: param.slice(scirs2_core::ndarray::s![start_idx..end_idx]).to_owned(),
                     };
 
                     if worker == worker_rank {
@@ -555,7 +555,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MixedPrecisionM
         }
 
         // Scale gradients down by loss scale
-        let scale_factor = num_traits::cast::cast(1.0 / self.loss_scale).unwrap_or_else(|| T::zero());
+        let scale_factor = scirs2_core::numeric::NumCast::from(1.0 / self.loss_scale).unwrap_or_else(|| T::zero());
 
         for (name, gradient) in gradients {
             if let Some(master_weight) = self.fp32_master_weights.get_mut(name) {

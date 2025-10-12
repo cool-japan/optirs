@@ -4,9 +4,9 @@
 // optimization workflows, including state persistence, incremental checkpointing,
 // and robust recovery mechanisms.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -1812,9 +1812,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RecoveryManager
             recovered_state: None,
             metrics: RecoveryMetrics {
                 recovery_time: Duration::from_secs(1),
-                integrity_score: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
-                completeness_score: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-                efficiency: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                integrity_score: T::from(0.95).unwrap_or_else(|| T::zero()),
+                completeness_score: T::from(1.0).unwrap_or_else(|| T::zero()),
+                efficiency: T::from(0.9).unwrap_or_else(|| T::zero()),
             },
             errors: Vec::new(),
             warnings: Vec::new(),

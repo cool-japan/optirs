@@ -35,8 +35,8 @@ pub use state::{OptimizerStateSnapshot, TransformerOptimizerState};
 // Re-export for backward compatibility - create alias for the old name
 pub use TransformerBasedOptimizerConfig as TransformerOptimizerConfig;
 
-use num_traits::{Float, ToPrimitive};
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
+use scirs2_core::numeric::{Float, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -91,8 +91,8 @@ impl<
             + Send
             + Sync
             + 'static
-            + scirs2_core::ndarray_ext::ScalarOperand
-            + num_traits::FromPrimitive,
+            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::numeric::FromPrimitive,
     > TransformerOptimizer<T>
 {
     /// Create new transformer optimizer
@@ -211,7 +211,8 @@ impl<
         }
 
         let avg_loss = if batch_count > 0 {
-            total_loss / num_traits::cast::cast(batch_count).unwrap_or_else(|| T::zero())
+            total_loss
+                / scirs2_core::numeric::NumCast::from(batch_count).unwrap_or_else(|| T::zero())
         } else {
             T::zero()
         };
@@ -282,7 +283,7 @@ impl<
 
         let improvement = (initial_loss - final_loss) / initial_loss;
         let improvement_f64 = improvement.to_f64().unwrap_or(0.0);
-        Ok(improvement_f64.max(0.0).min(1.0))
+        Ok(improvement_f64.clamp(0.0, 1.0))
     }
 
     /// Get current state

@@ -5,8 +5,8 @@ use crate::optimizers::Optimizer;
 use crate::parameter_groups::{
     GroupManager, GroupedOptimizer, ParameterGroup, ParameterGroupConfig,
 };
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Adam optimizer with parameter group support
@@ -17,7 +17,7 @@ use std::fmt::Debug;
 /// # Example
 ///
 /// ```no_run
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{GroupedAdam, Optimizer};
 /// use optirs_core::parameter_groups::{GroupedOptimizer, ParameterGroupConfig};
 ///
@@ -276,11 +276,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_grouped_adam_creation() {
-        let optimizer: GroupedAdam<f64, scirs2_core::ndarray_ext::Ix1> = GroupedAdam::new(0.001);
+        let optimizer: GroupedAdam<f64, scirs2_core::ndarray::Ix1> = GroupedAdam::new(0.001);
         assert_eq!(optimizer.defaultlr, 0.001);
         assert_eq!(optimizer.default_beta1, 0.9);
         assert_eq!(optimizer.default_beta2, 0.999);

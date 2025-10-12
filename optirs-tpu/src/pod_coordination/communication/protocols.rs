@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 pub struct ProtocolError;
 
-pub type Result<T> = std::result::Result<T, ProtocolError>;
+pub type ProtocolResult<T> = std::result::Result<T, ProtocolError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProtocolType {

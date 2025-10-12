@@ -214,15 +214,19 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
+        let config = SecurityAuditConfig {
+            max_test_iterations: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = SecurityAuditConfig {
+            test_timeout: Duration::from_secs(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
         let mut config = SecurityAuditConfig::default();
-        config.max_test_iterations = 0;
-        assert!(config.validate().is_err());
-
-        config.max_test_iterations = 100;
-        config.test_timeout = Duration::from_secs(0);
-        assert!(config.validate().is_err());
-
-        config.test_timeout = Duration::from_secs(1);
         config.disable_all();
         assert!(config.validate().is_err());
     }

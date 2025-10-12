@@ -1,7 +1,7 @@
 // L1 (Lasso) regularization
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -17,7 +17,7 @@ use crate::regularizers::Regularizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::regularizers::{L1, Regularizer};
 ///
 /// // Create an L1 regularizer with strength 0.01

@@ -3,8 +3,8 @@
 // Based on the paper "Symbolic Discovery of Optimization Algorithms"
 // by Chen et al. (2023).
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -24,7 +24,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{Lion, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -48,7 +48,7 @@ pub struct Lion<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
     /// Momentum vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> Lion<A> {
@@ -204,7 +204,7 @@ where
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_lion_basic_creation() {

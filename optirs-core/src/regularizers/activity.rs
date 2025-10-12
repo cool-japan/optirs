@@ -1,5 +1,5 @@
-use num_traits::{Float, FromPrimitive};
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension, ScalarOperand};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -209,8 +209,8 @@ where
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_autograd::ndarray::array;
-    use scirs2_core::ndarray_ext::{Array1, Array2};
+    use scirs2_core::ndarray::array;
+    use scirs2_core::ndarray::{Array1, Array2};
 
     #[test]
     fn test_activity_regularization_creation() {

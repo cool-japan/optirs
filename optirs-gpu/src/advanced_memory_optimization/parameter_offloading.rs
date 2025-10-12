@@ -7,8 +7,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
-use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};

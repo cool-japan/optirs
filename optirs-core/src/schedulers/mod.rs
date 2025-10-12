@@ -3,8 +3,8 @@
 // This module provides various learning rate schedulers that adjust the learning rate
 // of optimizers during training based on different strategies.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::optimizers::Optimizer;

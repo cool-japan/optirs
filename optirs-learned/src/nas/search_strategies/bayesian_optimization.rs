@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -319,7 +319,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
     /// Generate random architecture for initial sampling
     fn generate_random_architecture(&self) -> Result<ArchitectureRepresentation<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Generate random feature vector
         let features = Array1::from_shape_fn(self.architecture_encoder.encoding_dim, |_| {
@@ -369,7 +369,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
     /// Optimize acquisition function to find next candidate
     fn optimize_acquisition_function(&mut self) -> Result<ArchitectureRepresentation<T>> {
-        let mut best_acquisition_value = num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero());
+        let mut best_acquisition_value = scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero());
         let mut best_candidate = None;
 
         // Multiple random restarts
@@ -391,7 +391,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
     /// Single restart of acquisition function optimization
     fn optimize_acquisition_single_restart(&self) -> Result<ArchitectureRepresentation<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Start with random point
         let mut current_features = Array1::from_shape_fn(
@@ -399,7 +399,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
             |_| T::from(rng.random::<f64>()).unwrap()
         );
 
-        let step_size = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
+        let step_size = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
         let max_iterations = 100;
 
         // Simple gradient ascent (simplified)
@@ -434,7 +434,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
     /// Approximate gradient of acquisition function using finite differences
     fn approximate_acquisition_gradient(&self, features: &Array1<T>) -> Result<Array1<T>> {
-        let epsilon = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let epsilon = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
         let mut gradient = Array1::zeros(features.len());
 
         for i in 0..features.len() {
@@ -446,7 +446,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
             let arch_plus = ArchitectureRepresentation {
                 features: features_plus,
-                complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                complexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                 metadata: ArchitectureMetadata {
                     num_layers: 5,
                     num_parameters: 50000,
@@ -457,7 +457,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
             let arch_minus = ArchitectureRepresentation {
                 features: features_minus,
-                complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                complexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                 metadata: ArchitectureMetadata {
                     num_layers: 5,
                     num_parameters: 50000,
@@ -469,7 +469,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
             let acq_plus = self.evaluate_acquisition_function(&arch_plus)?;
             let acq_minus = self.evaluate_acquisition_function(&arch_minus)?;
 
-            gradient[i] = (acq_plus - acq_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * epsilon);
+            gradient[i] = (acq_plus - acq_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * epsilon);
         }
 
         Ok(gradient)
@@ -535,32 +535,32 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
             let poi = self.standard_normal_cdf(z);
             Ok(poi)
         } else {
-            Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+            Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()))
         }
     }
 
     /// Standard normal PDF (simplified approximation)
     fn standard_normal_pdf(&self, x: T) -> T {
-        let pi = num_traits::cast::cast(std::f64::consts::PI).unwrap_or_else(|| T::zero());
-        let coefficient = T::one() / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * pi).sqrt();
-        coefficient * (-x * x / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())).exp()
+        let pi = scirs2_core::numeric::NumCast::from(std::f64::consts::PI).unwrap_or_else(|| T::zero());
+        let coefficient = T::one() / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * pi).sqrt();
+        coefficient * (-x * x / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())).exp()
     }
 
     /// Standard normal CDF (simplified approximation)
     fn standard_normal_cdf(&self, x: T) -> T {
         // Using error function approximation
-        num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()) * (T::one() + self.erf(x / T::from(2.0_f64.sqrt()).unwrap()))
+        scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()) * (T::one() + self.erf(x / T::from(2.0_f64.sqrt()).unwrap()))
     }
 
     /// Error function approximation
     fn erf(&self, x: T) -> T {
         // Abramowitz and Stegun approximation
-        let a1 = num_traits::cast::cast(0.254829592).unwrap_or_else(|| T::zero());
-        let a2 = num_traits::cast::cast(-0.284496736).unwrap_or_else(|| T::zero());
-        let a3 = num_traits::cast::cast(1.421413741).unwrap_or_else(|| T::zero());
-        let a4 = num_traits::cast::cast(-1.453152027).unwrap_or_else(|| T::zero());
-        let a5 = num_traits::cast::cast(1.061405429).unwrap_or_else(|| T::zero());
-        let p = num_traits::cast::cast(0.3275911).unwrap_or_else(|| T::zero());
+        let a1 = scirs2_core::numeric::NumCast::from(0.254829592).unwrap_or_else(|| T::zero());
+        let a2 = scirs2_core::numeric::NumCast::from(-0.284496736).unwrap_or_else(|| T::zero());
+        let a3 = scirs2_core::numeric::NumCast::from(1.421413741).unwrap_or_else(|| T::zero());
+        let a4 = scirs2_core::numeric::NumCast::from(-1.453152027).unwrap_or_else(|| T::zero());
+        let a5 = scirs2_core::numeric::NumCast::from(1.061405429).unwrap_or_else(|| T::zero());
+        let p = scirs2_core::numeric::NumCast::from(0.3275911).unwrap_or_else(|| T::zero());
 
         let sign = if x >= T::zero() { T::one() } else { -T::one() };
         let x_abs = x.abs();
@@ -690,7 +690,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GaussianProcess
             k_star_star
         };
 
-        Ok((mean, variance.max(num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()))))
+        Ok((mean, variance.max(scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()))))
     }
 
     fn compute_covariance_matrix(&mut self) -> Result<()> {
@@ -706,7 +706,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GaussianProcess
         }
 
         // Add noise to diagonal
-        let noise_var = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()); // Small noise for numerical stability
+        let noise_var = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()); // Small noise for numerical stability
         for i in 0..n {
             cov_matrix[[i, i]] = cov_matrix[[i, i]] + noise_var;
         }
@@ -724,7 +724,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GaussianProcess
             Kernel::RBF { length_scale } => {
                 let diff = x1 - x2;
                 let squared_distance = diff.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x);
-                Ok((-squared_distance / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * *length_scale * *length_scale)).exp())
+                Ok((-squared_distance / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * *length_scale * *length_scale)).exp())
             }
             Kernel::Matern32 { length_scale } => {
                 let diff = x1 - x2;
@@ -736,7 +736,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GaussianProcess
                 // Default to RBF
                 let diff = x1 - x2;
                 let squared_distance = diff.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x);
-                Ok((-squared_distance / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())).exp())
+                Ok((-squared_distance / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())).exp())
             }
         }
     }
@@ -748,7 +748,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GaussianProcess
         
         // Add small regularization to diagonal
         for i in 0..n {
-            result[[i, i]] = T::one() / (matrix[[i, i]] + num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()));
+            result[[i, i]] = T::one() / (matrix[[i, i]] + scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()));
         }
         
         Ok(result)
@@ -764,12 +764,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEnc
         // Initialize some default encodings
         layer_encodings.insert("dense".to_string(), Array1::ones(encoding_dim / 4));
         layer_encodings.insert("lstm".to_string(), Array1::zeros(encoding_dim / 4));
-        layer_encodings.insert("attention".to_string(), Array1::from_elem(encoding_dim / 4, num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())));
+        layer_encodings.insert("attention".to_string(), Array1::from_elem(encoding_dim / 4, scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())));
 
         connection_encodings.insert("sequential".to_string(), Array1::ones(encoding_dim / 4));
         connection_encodings.insert("skip".to_string(), Array1::zeros(encoding_dim / 4));
 
-        param_normalizers.insert("num_parameters".to_string(), (num_traits::cast::cast(50000.0).unwrap_or_else(|| T::zero()), num_traits::cast::cast(25000.0).unwrap_or_else(|| T::zero())));
+        param_normalizers.insert("num_parameters".to_string(), (scirs2_core::numeric::NumCast::from(50000.0).unwrap_or_else(|| T::zero()), scirs2_core::numeric::NumCast::from(25000.0).unwrap_or_else(|| T::zero())));
 
         Ok(Self {
             encoding_dim,
@@ -785,7 +785,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AcquisitionOpti
         Ok(Self {
             bounds,
             num_restarts,
-            tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             max_iterations: 100,
         })
     }
@@ -813,10 +813,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Bay
             acquisition_function: AcquisitionFunction::ExpectedImprovement,
             kernel_type: KernelType::RBF,
             kernel_params,
-            noise_variance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
-            exploration_weight: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()),
+            noise_variance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
+            exploration_weight: scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()),
             max_complexity: 1000000,
-            convergence_tolerance: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            convergence_tolerance: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             num_acquisition_restarts: 10,
         }
     }

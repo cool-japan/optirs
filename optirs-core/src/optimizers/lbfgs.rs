@@ -2,8 +2,8 @@
 //
 // Based on the Limited-memory Broyden-Fletcher-Goldfarb-Shanno algorithm.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
@@ -19,7 +19,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```no_run
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{LBFGS, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -273,7 +273,7 @@ where
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_lbfgs_basic_creation() {

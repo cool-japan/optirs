@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use crate::regression_tester::config::TestEnvironment;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -26,7 +26,7 @@ pub struct PerformanceMetrics<A: Float> {
 }
 
 /// Timing metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TimingMetrics {
     /// Mean execution time (nanoseconds)
     pub mean_time_ns: u64,
@@ -393,20 +393,6 @@ impl<A: Float + Send + Sync> Default for PerformanceMetrics<A> {
             efficiency: EfficiencyMetrics::default(),
             convergence: ConvergenceMetrics::default(),
             custom: HashMap::new(),
-        }
-    }
-}
-
-impl Default for TimingMetrics {
-    fn default() -> Self {
-        Self {
-            mean_time_ns: 0,
-            std_time_ns: 0,
-            median_time_ns: 0,
-            p95_time_ns: 0,
-            p99_time_ns: 0,
-            min_time_ns: 0,
-            max_time_ns: 0,
         }
     }
 }

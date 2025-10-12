@@ -6,8 +6,8 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -653,7 +653,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
     /// Initialize embedding matrices
     fn initialize_embeddings(&mut self) -> Result<()> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         for (&encoding_type, &dim) in &self.config.embedding_dimensions {
             let vocab_size = self.config.vocabulary_size;
@@ -733,8 +733,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
     fn apply_minmax_normalization(&self, data: &mut Array2<T>) -> Result<()> {
         for j in 0..data.ncols() {
             let mut col = data.column_mut(j);
-            let min_val = col.iter().cloned().fold(num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero()), T::min);
-            let max_val = col.iter().cloned().fold(num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()), T::max);
+            let min_val = col.iter().cloned().fold(scirs2_core::numeric::NumCast::from(f64::INFINITY).unwrap_or_else(|| T::zero()), T::min);
+            let max_val = col.iter().cloned().fold(scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()), T::max);
             
             if max_val > min_val {
                 let range = max_val - min_val;
@@ -808,16 +808,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
         let stats = self.normalization_stats.entry(stats_key).or_insert_with(|| NormalizationStats {
             mean: Array1::zeros(encoded.primary_encoding.ncols()),
             std: Array1::ones(encoded.primary_encoding.ncols()),
-            min: Array1::from_elem(encoded.primary_encoding.ncols(), num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero())),
-            max: Array1::from_elem(encoded.primary_encoding.ncols(), num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero())),
+            min: Array1::from_elem(encoded.primary_encoding.ncols(), scirs2_core::numeric::NumCast::from(f64::INFINITY).unwrap_or_else(|| T::zero())),
+            max: Array1::from_elem(encoded.primary_encoding.ncols(), scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero())),
             sample_count: 0,
         });
         
         // Update statistics
         for j in 0..encoded.primary_encoding.ncols() {
             let col = encoded.primary_encoding.column(j);
-            let col_min = col.iter().cloned().fold(num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero()), T::min);
-            let col_max = col.iter().cloned().fold(num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()), T::max);
+            let col_min = col.iter().cloned().fold(scirs2_core::numeric::NumCast::from(f64::INFINITY).unwrap_or_else(|| T::zero()), T::min);
+            let col_max = col.iter().cloned().fold(scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()), T::max);
             
             stats.min[j] = stats.min[j].min(col_min);
             stats.max[j] = stats.max[j].max(col_max);
@@ -872,7 +872,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> SequentialEncod
         
         for pos in 0..max_length {
             for i in 0..(embedding_dim / 2) {
-                let angle = num_traits::cast::cast(pos as f64).unwrap_or_else(|| T::zero()) / 
+                let angle = scirs2_core::numeric::NumCast::from(pos as f64).unwrap_or_else(|| T::zero()) / 
                            T::from(10000.0_f64.powf(2.0 * i as f64 / embedding_dim as f64)).unwrap();
                 pos_encoding[[pos, 2 * i]] = angle.sin();
                 pos_encoding[[pos, 2 * i + 1]] = angle.cos();
@@ -922,10 +922,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
                     .unwrap_or_default()
                     .as_secs(),
                 quality_metrics: EncodingQualityMetrics {
-                    information_preservation: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                    information_preservation: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                     compression_ratio: T::from(seq_len as f64 / architecture.operations.len() as f64).unwrap(),
-                    stability: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-                    semantic_consistency: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
+                    stability: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+                    semantic_consistency: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
                 },
                 reconstruction_error: None,
                 version: "1.0".to_string(),
@@ -1027,7 +1027,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
         // Encode node features
         for (i, operation) in architecture.operations.iter().enumerate().take(num_nodes) {
             // Simple encoding - in practice would be more sophisticated
-            node_features[[i, 0]] = num_traits::cast::cast(i as f64).unwrap_or_else(|| T::zero()); // Node index
+            node_features[[i, 0]] = scirs2_core::numeric::NumCast::from(i as f64).unwrap_or_else(|| T::zero()); // Node index
             node_features[[i, 1]] = T::from(operation.parameters.len() as f64).unwrap(); // Parameter count
         }
         
@@ -1037,7 +1037,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
             secondary_encodings: {
                 let mut secondary = HashMap::new();
                 secondary.insert("adjacency_matrix".to_string(), 
-                               architecture.connections.adjacency_matrix.mapv(|x| num_traits::cast::cast(x).unwrap_or_else(|| T::zero())));
+                               architecture.connections.adjacency_matrix.mapv(|x| scirs2_core::numeric::NumCast::from(x).unwrap_or_else(|| T::zero())));
                 secondary
             },
             categorical_features: HashMap::new(),
@@ -1051,10 +1051,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
                     .unwrap_or_default()
                     .as_secs(),
                 quality_metrics: EncodingQualityMetrics {
-                    information_preservation: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+                    information_preservation: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
                     compression_ratio: T::from(num_nodes as f64 / architecture.operations.len() as f64).unwrap(),
-                    stability: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                    semantic_consistency: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                    stability: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+                    semantic_consistency: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                 },
                 reconstruction_error: None,
                 version: "1.0".to_string(),

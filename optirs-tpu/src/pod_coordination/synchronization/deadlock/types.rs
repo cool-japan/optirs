@@ -180,7 +180,7 @@ pub struct PerformanceOptimization {
 }
 
 /// Advanced deadlock configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AdvancedDeadlockConfig {
     /// Enable experimental features
     pub experimental: bool,
@@ -332,17 +332,6 @@ impl Default for PerformanceOptimization {
             aggressive: false,
             level: 2,
             speed_over_accuracy: false,
-        }
-    }
-}
-
-impl Default for AdvancedDeadlockConfig {
-    fn default() -> Self {
-        Self {
-            experimental: false,
-            custom_algorithms: Vec::new(),
-            diagnostics: AdvancedDiagnostics::default(),
-            integration: IntegrationSettings::default(),
         }
     }
 }

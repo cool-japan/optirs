@@ -2,8 +2,8 @@
 //
 // This module provides GPU-accelerated implementations of optimizers using CUDA kernels.
 
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::numeric::Float;
 use std::sync::Arc;
 
 #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
@@ -742,7 +742,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_gpu_optimizer_config_default() {

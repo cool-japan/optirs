@@ -7,8 +7,8 @@
 use super::config::*;
 use super::performance::PerformanceSnapshot;
 use crate::OptimizerError as OptimError;
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -509,7 +509,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternDetector
             analyzers,
             pattern_history: VecDeque::new(),
             pattern_library: PatternLibrary::new()?,
-            pattern_matcher: PatternMatcher::new(num_traits::cast::cast(config.pattern_tolerance).unwrap_or_else(|| T::zero()))?,
+            pattern_matcher: PatternMatcher::new(scirs2_core::numeric::NumCast::from(config.pattern_tolerance).unwrap_or_else(|| T::zero()))?,
             sequence_analyzer: SequenceAnalyzer::new()?,
         })
     }
@@ -594,7 +594,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
             pattern_type,
             analysis_window: VecDeque::new(),
             pattern_candidates: Vec::new(),
-            detection_threshold: num_traits::cast::cast(detection_threshold).unwrap_or_else(|| T::zero()),
+            detection_threshold: scirs2_core::numeric::NumCast::from(detection_threshold).unwrap_or_else(|| T::zero()),
             min_length,
             max_length,
         })
@@ -738,7 +738,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
             }
         }
 
-        let oscillation_ratio = num_traits::cast::cast(direction_changes).unwrap_or_else(|| T::zero()) / T::from(data.len().saturating_sub(2)).unwrap();
+        let oscillation_ratio = scirs2_core::numeric::NumCast::from(direction_changes).unwrap_or_else(|| T::zero()) / T::from(data.len().saturating_sub(2)).unwrap();
 
         if oscillation_ratio > self.detection_threshold {
             let characteristics = self.calculate_characteristics(data)?;
@@ -804,13 +804,13 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
 
         // Simple linear regression slope
         let n = T::from(data.len()).unwrap();
-        let sum_x = (0..data.len()).map(|i| num_traits::cast::cast(i).unwrap_or_else(|| T::zero())).fold(T::zero(), |acc, x| acc + x);
+        let sum_x = (0..data.len()).map(|i| scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero())).fold(T::zero(), |acc, x| acc + x);
         let sum_y = data.iter().fold(T::zero(), |acc, &y| acc + y);
         let sum_xy = data.iter().enumerate()
-            .map(|(i, &y)| num_traits::cast::cast(i).unwrap_or_else(|| T::zero()) * y)
+            .map(|(i, &y)| scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero()) * y)
             .fold(T::zero(), |acc, xy| acc + xy);
         let sum_x2 = (0..data.len())
-            .map(|i| num_traits::cast::cast(i).unwrap_or_else(|| T::zero()) * num_traits::cast::cast(i).unwrap_or_else(|| T::zero()))
+            .map(|i| scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero()) * scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero()))
             .fold(T::zero(), |acc, x2| acc + x2);
 
         let numerator = n * sum_xy - sum_x * sum_y;
@@ -826,11 +826,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
     /// Calculate pattern characteristics
     fn calculate_characteristics(&self, data: &[T]) -> Result<PatternCharacteristics<T>> {
         let length = data.len();
-        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / num_traits::cast::cast(length).unwrap_or_else(|| T::zero());
+        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / scirs2_core::numeric::NumCast::from(length).unwrap_or_else(|| T::zero());
 
         let variance = data.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / num_traits::cast::cast(length).unwrap_or_else(|| T::zero());
+            .fold(T::zero(), |acc, x| acc + x) / scirs2_core::numeric::NumCast::from(length).unwrap_or_else(|| T::zero());
 
         let std_dev = variance.sqrt();
 
@@ -842,13 +842,13 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
         let autocorr = self.calculate_autocorrelation(data, 5)?;
 
         // Estimate frequency (simplified)
-        let frequency = T::one() / num_traits::cast::cast(length).unwrap_or_else(|| T::zero());
+        let frequency = T::one() / scirs2_core::numeric::NumCast::from(length).unwrap_or_else(|| T::zero());
 
         // Calculate trend
         let trend_val = self.calculate_trend(data)?;
-        let trend = if trend_val > num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()) {
+        let trend = if trend_val > scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()) {
             PatternTrend::Increasing
-        } else if trend_val < num_traits::cast::cast(-0.01).unwrap_or_else(|| T::zero()) {
+        } else if trend_val < scirs2_core::numeric::NumCast::from(-0.01).unwrap_or_else(|| T::zero()) {
             PatternTrend::Decreasing
         } else {
             PatternTrend::Stable
@@ -863,11 +863,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
         // Calculate complexity (number of direction changes)
         let mut direction_changes = 0;
         for window in data.windows(2) {
-            if (window[1] - window[0]).abs() > std_dev / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) {
+            if (window[1] - window[0]).abs() > std_dev / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) {
                 direction_changes += 1;
             }
         }
-        let complexity = num_traits::cast::cast(direction_changes).unwrap_or_else(|| T::zero()) / num_traits::cast::cast(length).unwrap_or_else(|| T::zero());
+        let complexity = scirs2_core::numeric::NumCast::from(direction_changes).unwrap_or_else(|| T::zero()) / scirs2_core::numeric::NumCast::from(length).unwrap_or_else(|| T::zero());
 
         Ok(PatternCharacteristics {
             length,
@@ -907,7 +907,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
                 count += 1;
             }
 
-            autocorr.push(if count > 0 { sum / num_traits::cast::cast(count).unwrap_or_else(|| T::zero()) } else { T::zero() });
+            autocorr.push(if count > 0 { sum / scirs2_core::numeric::NumCast::from(count).unwrap_or_else(|| T::zero()) } else { T::zero() });
         }
 
         Ok(autocorr)
@@ -977,7 +977,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternLibrary<
         }
 
         let rmse = (sum_squared_diff / T::from(pattern1.len()).unwrap()).sqrt();
-        Ok(rmse < num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())) // Threshold for similarity
+        Ok(rmse < scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())) // Threshold for similarity
     }
 }
 
@@ -1002,8 +1002,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternMatcher<
         // Use correlation-based matching (simplified)
         let match_result = PatternMatch {
             template_name: "example_template".to_string(),
-            similarity_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
+            similarity_score: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero()),
             alignment_offset: 0,
             scale_factor: T::one(),
             match_quality: MatchQuality::Good,
@@ -1040,8 +1040,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SequenceAnalyze
                 elements: sequence.to_vec(),
                 duration: Duration::from_secs(sequence.len() as u64),
                 repetition_count: 1,
-                confidence: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
-                predictive_power: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+                confidence: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
+                predictive_power: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
             };
             patterns.push(pattern);
         }
@@ -1055,7 +1055,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SequenceAnomaly
     pub fn new() -> Result<Self> {
         Ok(Self {
             normal_patterns: Vec::new(),
-            anomaly_threshold: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            anomaly_threshold: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
             detection_window: Duration::from_secs(300),
             anomaly_history: VecDeque::new(),
         })
@@ -1064,10 +1064,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SequenceAnomaly
     /// Detect anomalies in sequence
     pub fn detect_anomalies(&mut self, element: &SequenceElement<T>) -> Result<Option<SequenceAnomaly<T>>> {
         // Simplified anomaly detection
-        if element.value > num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()) {
+        if element.value > scirs2_core::numeric::NumCast::from(10.0).unwrap_or_else(|| T::zero()) {
             let anomaly = SequenceAnomaly {
                 timestamp: SystemTime::now(),
-                anomaly_score: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                anomaly_score: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                 anomaly_type: AnomalyType::UnexpectedValue,
                 context: element.clone(),
                 explanation: "Value exceeds expected range".to_string(),

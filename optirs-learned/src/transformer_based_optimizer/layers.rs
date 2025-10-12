@@ -2,8 +2,8 @@
 
 use super::config::ActivationFunction;
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Embedding layer for input vectors
@@ -83,7 +83,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LayerNormalization<T> {
     pub fn new(dimension: usize) -> Result<Self> {
         let gamma = Array1::ones(dimension);
         let beta = Array1::zeros(dimension);
-        let epsilon = num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero());
+        let epsilon = scirs2_core::numeric::NumCast::from(1e-5).unwrap_or_else(|| T::zero());
 
         Ok(Self {
             dimension,
@@ -168,10 +168,11 @@ impl DropoutLayer {
 
         let mut output = input.clone();
         let keep_prob = 1.0 - self.dropout_rate;
-        let scale = num_traits::cast::cast(1.0 / keep_prob).unwrap_or_else(|| T::zero());
+        let scale =
+            scirs2_core::numeric::NumCast::from(1.0 / keep_prob).unwrap_or_else(|| T::zero());
 
         for elem in output.iter_mut() {
-            if scirs2_core::random::f64() < self.dropout_rate {
+            if scirs2_core::random::random::<f64>() < self.dropout_rate {
                 *elem = T::zero();
             } else {
                 *elem = *elem * scale;
@@ -324,7 +325,7 @@ impl ActivationLayer {
             ActivationFunction::Sigmoid => Self::sigmoid(input),
             ActivationFunction::LeakyReLU => Self::leaky_relu(
                 input,
-                num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             ),
         }
     }
@@ -337,10 +338,11 @@ impl ActivationLayer {
     /// GELU activation (approximation)
     fn gelu<T: Float + Debug + Send + Sync + 'static>(input: &Array2<T>) -> Array2<T> {
         input.map(|&x| {
-            let half = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+            let half = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
             let one = T::one();
-            let sqrt_2_pi = num_traits::cast::cast(0.797884560802865).unwrap_or_else(|| T::zero()); // sqrt(2/π)
-            let coeff = num_traits::cast::cast(0.044715).unwrap_or_else(|| T::zero());
+            let sqrt_2_pi =
+                scirs2_core::numeric::NumCast::from(0.797884560802865).unwrap_or_else(|| T::zero()); // sqrt(2/π)
+            let coeff = scirs2_core::numeric::NumCast::from(0.044715).unwrap_or_else(|| T::zero());
 
             let tanh_arg = sqrt_2_pi * (x + coeff * x * x * x);
             let tanh_val = tanh_arg.tanh();
@@ -456,6 +458,6 @@ mod tests {
         assert_eq!(gelu_output.shape(), input.shape());
 
         let sigmoid_output = ActivationLayer::apply(&input, ActivationFunction::Sigmoid);
-        assert!(sigmoid_output.iter().all(|&x| x >= 0.0 && x <= 1.0));
+        assert!(sigmoid_output.iter().all(|&x| (0.0..=1.0).contains(&x)));
     }
 }

@@ -101,7 +101,9 @@ impl GpuBackendFactory {
     /// Get preferred vendor based on platform
     pub fn get_preferred_vendor() -> GpuVendor {
         #[cfg(target_os = "macos")]
-        return GpuVendor::Apple;
+        {
+            GpuVendor::Apple
+        }
 
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
@@ -114,9 +116,13 @@ impl GpuBackendFactory {
             } else if vendors.contains(&GpuVendor::Intel) {
                 return GpuVendor::Intel;
             }
+            return GpuVendor::Unknown;
         }
 
-        GpuVendor::Unknown
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            GpuVendor::Unknown
+        }
     }
 
     /// Create backend configuration for vendor

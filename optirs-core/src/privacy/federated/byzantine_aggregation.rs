@@ -5,8 +5,8 @@ use std::fmt::Debug;
 // providing protection against malicious clients and outlier detection mechanisms.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
 /// Byzantine-robust aggregation algorithms
@@ -151,7 +151,7 @@ impl<
             + Sync
             + 'static
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > ByzantineRobustAggregator<T>
 {
     #[allow(dead_code)]
@@ -262,10 +262,10 @@ impl<
 
             coord_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-            let median = if coord_values.len() % 2 == 0 {
+            let median = if coord_values.len().is_multiple_of(2) {
                 let mid = coord_values.len() / 2;
                 (coord_values[mid - 1] + coord_values[mid])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                    / T::from(2.0).unwrap_or_else(|| T::zero())
             } else {
                 coord_values[coord_values.len() / 2]
             };
@@ -352,8 +352,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             }
 
             if count > 0 {
-                let avg_distance =
-                    total_distance / num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
+                let avg_distance = total_distance / T::from(count).unwrap_or_else(|| T::zero());
                 distances.insert(client_a, avg_distance);
             }
         }
@@ -370,8 +369,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             }) / T::from(distances_vec.len()).unwrap();
 
             let std_dev = variance.sqrt();
-            let threshold =
-                mean_distance + num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()) * std_dev; // 1-sigma threshold (more sensitive)
+            let threshold = mean_distance + T::from(1.0).unwrap_or_else(|| T::zero()) * std_dev; // 1-sigma threshold (more sensitive)
 
             for (client_id, &distance) in &distances {
                 let is_outlier = distance > threshold;
@@ -501,7 +499,7 @@ impl Default for StatisticalTestConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_byzantine_robust_aggregator_creation() {

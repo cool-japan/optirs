@@ -6,8 +6,8 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -360,7 +360,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Create a random individual
     fn create_random_individual(&self, id: usize) -> Result<Individual<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         // Random number of layers (between 2 and max_depth)
         let num_layers = rng.gen_range(2..=self.config.max_depth.min(10));
@@ -394,7 +394,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Create a random layer specification
     fn create_random_layer(&self, layer_id: usize) -> Result<LayerSpec<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let layer_types = vec![
             LayerType::Dense,
@@ -440,7 +440,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Create random connections between layers
     fn create_random_connections(&self, num_layers: usize) -> Result<ConnectionTopology> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mut adjacency_matrix = Array2::zeros((num_layers, num_layers));
         let mut connection_types = HashMap::new();
@@ -525,7 +525,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Tournament selection
     fn tournament_selection(&self) -> Result<Vec<Individual<T>>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut selected = Vec::new();
         
         for _ in 0..self.config.population_size {
@@ -565,7 +565,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Crossover and mutation phase
     fn crossover_and_mutation(&self, selected: &[Individual<T>]) -> Result<Vec<Individual<T>>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut offspring = Vec::new();
         
         for i in (0..selected.len()).step_by(2) {
@@ -598,7 +598,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Simple crossover (layer-wise)
     fn crossover(&self, parent1: &Individual<T>, parent2: &Individual<T>) -> Result<(Individual<T>, Individual<T>)> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mut child1 = parent1.clone();
         let mut child2 = parent2.clone();
@@ -625,7 +625,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Mutation operation
     fn mutate(&self, individual: &mut Individual<T>) -> Result<()> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mutation_op = self.mutation_operators[rng.gen_range(0..self.mutation_operators.len())];
         
@@ -658,7 +658,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Mutate layer parameters
     fn mutate_layer_parameters(&self, layer: &mut LayerSpec<T>) -> Result<()> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         match layer.layer_type {
             LayerType::Dense => {
@@ -685,7 +685,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Survivor selection (combine parents and offspring, keep best)
     fn survivor_selection(&mut self, offspring: &mut Vec<Individual<T>>) -> Result<()> {
         // Elitism: keep best individuals from current population
-        let elite_count = (self.config.elitism_ratio * num_traits::cast::cast(self.config.population_size as f64).unwrap_or_else(|| T::zero())).to_usize().unwrap_or(1);
+        let elite_count = (self.config.elitism_ratio * scirs2_core::numeric::NumCast::from(self.config.population_size as f64).unwrap_or_else(|| T::zero())).to_usize().unwrap_or(1);
         
         let mut combined = self.population.clone();
         combined.append(offspring);
@@ -748,13 +748,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
             }
         }
         
-        Ok(total_difference / num_traits::cast::cast(comparisons as f64).unwrap_or_else(|| T::zero()))
+        Ok(total_difference / scirs2_core::numeric::NumCast::from(comparisons as f64).unwrap_or_else(|| T::zero()))
     }
 
     /// Calculate difference between two architectures
     fn calculate_architecture_difference(&self, arch1: &ArchitectureSpecification<T>, arch2: &ArchitectureSpecification<T>) -> T {
         let layer_diff = T::from((arch1.layers.len() as i32 - arch2.layers.len() as i32).abs() as f64).unwrap();
-        let param_diff = T::from((arch1.parameter_count as i32 - arch2.parameter_count as i32).abs() as f64).unwrap() / num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero());
+        let param_diff = T::from((arch1.parameter_count as i32 - arch2.parameter_count as i32).abs() as f64).unwrap() / scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero());
         
         layer_diff + param_diff
     }
@@ -762,16 +762,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
     /// Evaluate performance metrics for an architecture
     fn evaluate_performance_metrics(&self, architecture: &ArchitectureSpecification<T>) -> Result<PerformanceMetrics<T>> {
         // Simplified performance evaluation
-        let complexity = num_traits::cast::cast(architecture.parameter_count as f64).unwrap_or_else(|| T::zero()) / num_traits::cast::cast(1000000.0).unwrap_or_else(|| T::zero()); // In millions
+        let complexity = scirs2_core::numeric::NumCast::from(architecture.parameter_count as f64).unwrap_or_else(|| T::zero()) / scirs2_core::numeric::NumCast::from(1000000.0).unwrap_or_else(|| T::zero()); // In millions
         let efficiency = T::one() / (T::one() + complexity);
         
         Ok(PerformanceMetrics {
-            training_performance: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()) - complexity * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            validation_performance: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()) - complexity * num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
+            training_performance: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()) - complexity * scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            validation_performance: scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero()) - complexity * scirs2_core::numeric::NumCast::from(0.15).unwrap_or_else(|| T::zero()),
             convergence_speed: efficiency,
             memory_efficiency: efficiency,
             computational_efficiency: efficiency,
-            generalization: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            generalization: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -820,11 +820,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Evo
         Self {
             population_size: 50,
             num_generations: 100,
-            mutation_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            crossover_rate: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
-            elitism_ratio: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            mutation_rate: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            crossover_rate: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
+            elitism_ratio: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             tournament_size: 3,
-            complexity_penalty: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            complexity_penalty: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             max_depth: 10,
             max_parameters: 10_000_000,
         }

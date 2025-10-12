@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements transformer-specific regularization techniques that
 // work in conjunction with the attention mechanisms and optimization dynamics.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
+use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};
@@ -37,7 +37,7 @@ pub enum RegularizationStrategy {
 /// Transformer regularizer
 #[derive(Debug, Clone)]
 pub struct TransformerRegularizer<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Regularization strategy
     strategy: RegularizationStrategy,
@@ -61,7 +61,7 @@ pub struct TransformerRegularizer<
 /// Regularization parameters
 #[derive(Debug, Clone)]
 pub struct RegularizationParams<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// L2 regularization coefficient
     l2_weight: T,
@@ -94,7 +94,7 @@ pub struct RegularizationParams<
 /// Parameter statistics for adaptive regularization
 #[derive(Debug, Clone)]
 pub struct ParameterStatistics<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Running mean of parameter magnitudes
     mean_magnitude: T,
@@ -115,7 +115,7 @@ pub struct ParameterStatistics<
 /// State for spectral normalization
 #[derive(Debug, Clone)]
 pub struct SpectralNormState<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Left singular vectors for each weight matrix
     u_vectors: HashMap<String, Array1<T>>,
@@ -132,7 +132,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -232,7 +232,7 @@ impl<
                 total_reg_loss = total_reg_loss
                     + l2_loss
                         * self.regularization_params.l2_weight
-                        * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+                        * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
             }
         }
 
@@ -296,11 +296,11 @@ impl<
     fn apply_gradient_penalty(&self, gradients: &mut HashMap<String, Array2<T>>) -> Result<T> {
         let mut total_penalty = T::zero();
 
-        for (_param_name, grad) in gradients {
+        for grad in gradients.values_mut() {
             // Compute gradient penalty (penalize large gradients)
             let grad_norm_squared = grad.iter().map(|&x| x * x).fold(T::zero(), |a, b| a + b);
             let penalty_grad = &*grad
-                * (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                * (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
                     * self.regularization_params.gradient_penalty_weight);
             *grad = grad.clone() + &penalty_grad;
 
@@ -429,7 +429,7 @@ impl<
                 total_reg_loss = total_reg_loss
                     + reg_loss
                         * adaptive_strength
-                        * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+                        * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
             }
         }
 
@@ -501,7 +501,8 @@ impl<
         // Simplified diversity gradient computation
         for h in 0..num_heads {
             for i in 0..seq_len {
-                grad[[h, i]] = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())
+                grad[[h, i]] = scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::zero())
                     * self.regularization_params.diversity_weight;
             }
         }
@@ -554,7 +555,7 @@ impl<
                         .fold(T::zero(), |a, b| a + b);
                     let expected = if i == k { T::one() } else { T::zero() };
                     grad_val = grad_val
-                        + num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero())
+                        + scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero())
                             * (wtw_ik - expected)
                             * matrix[[j, k]];
                 }
@@ -584,7 +585,7 @@ impl<
             .or_insert(ParameterStatistics::new());
 
         stats.update_count += 1;
-        let alpha = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let alpha = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
         // Update running mean
         stats.mean_magnitude = stats.mean_magnitude * (T::one() - alpha) + param_magnitude * alpha;
@@ -612,8 +613,10 @@ impl<
 
             // Adaptive strength based on parameter statistics
             let magnitude_factor = T::one() / (T::one() + stats.mean_magnitude);
-            let step_decay = decay_rate
-                .powf(num_traits::cast::cast(self.step_count as f64).unwrap_or_else(|| T::zero()));
+            let step_decay = decay_rate.powf(
+                scirs2_core::numeric::NumCast::from(self.step_count as f64)
+                    .unwrap_or_else(|| T::zero()),
+            );
 
             Ok(base_strength * magnitude_factor * step_decay)
         } else {
@@ -702,7 +705,8 @@ impl<
 
         stats.insert(
             "step_count".to_string(),
-            num_traits::cast::cast(self.step_count as f64).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(self.step_count as f64)
+                .unwrap_or_else(|| T::zero()),
         );
         stats.insert(
             "attention_history_length".to_string(),
@@ -742,7 +746,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -764,7 +768,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -772,15 +776,19 @@ impl<
 {
     fn default() -> Self {
         Self {
-            l2_weight: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            l1_weight: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            entropy_weight: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            gradient_penalty_weight: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            l2_weight: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
+            l1_weight: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
+            entropy_weight: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            gradient_penalty_weight: scirs2_core::numeric::NumCast::from(0.01)
+                .unwrap_or_else(|| T::zero()),
             spectral_iterations: 1,
-            diversity_weight: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            orthogonality_weight: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            adaptive_base_strength: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            adaptive_decay_rate: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
+            diversity_weight: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            orthogonality_weight: scirs2_core::numeric::NumCast::from(0.01)
+                .unwrap_or_else(|| T::zero()),
+            adaptive_base_strength: scirs2_core::numeric::NumCast::from(0.01)
+                .unwrap_or_else(|| T::zero()),
+            adaptive_decay_rate: scirs2_core::numeric::NumCast::from(0.99)
+                .unwrap_or_else(|| T::zero()),
         }
     }
 }

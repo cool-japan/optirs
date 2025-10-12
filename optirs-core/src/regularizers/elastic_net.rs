@@ -1,7 +1,7 @@
 // ElasticNet regularization (L1 + L2)
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -18,7 +18,7 @@ use crate::regularizers::{Regularizer, L1, L2};
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::regularizers::{ElasticNet, Regularizer};
 ///
 /// // Create an ElasticNet regularizer with strength 0.01 and l1_ratio 0.5

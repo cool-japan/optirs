@@ -7,8 +7,8 @@ use super::layers::{
     DropoutLayer, EmbeddingLayer, LayerNormalization, OutputProjection, ResidualConnections,
 };
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Core transformer architecture

@@ -94,22 +94,15 @@ pub mod batch_coordination;
 // Gradient aggregation
 pub mod gradient_aggregation;
 
-// Re-export core types and functionality
-pub use batch_coordination::*;
-pub use communication::*;
-pub use coordination::*;
-pub use fault_tolerance::*;
-pub use gradient_aggregation::*;
-pub use load_balancing::*;
-pub use performance::*;
-pub use resource_scheduling::*;
-pub use synchronization::*;
-pub use topology::*;
+// Types module is re-exported for common types
 pub use types::*;
 
+// Note: Explicit re-exports of commonly used types are provided below
+// instead of glob re-exports to avoid ambiguous glob re-export warnings
+
 // Additional common imports for convenience
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, IxDyn};
+use scirs2_core::ndarray::{Array, IxDyn};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -194,11 +187,14 @@ pub use gradient_aggregation::{
     QuantizationMethod, QuantizationSettings, SCAFFOLDParams, SparsificationMethod,
 };
 
+/// Type alias for optimization step functions
+type OptimizationStepFn<T> =
+    std::sync::Arc<dyn Fn(BatchPartition<T>) -> Result<Vec<Array<T, IxDyn>>> + Send + Sync>;
+
 /// Optimization step interface for batch execution
 pub struct OptimizationStep<T: Float> {
     /// Step function
-    pub stepfn:
-        std::sync::Arc<dyn Fn(BatchPartition<T>) -> Result<Vec<Array<T, IxDyn>>> + Send + Sync>,
+    pub stepfn: OptimizationStepFn<T>,
 }
 
 impl<T: Float> Clone for OptimizationStep<T> {
@@ -216,7 +212,7 @@ impl<
             + Send
             + Sync
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > OptimizationStep<T>
 {
     /// Execute the optimization step
@@ -402,7 +398,7 @@ impl PodCoordinationBuilder {
             + Clone
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::iter::Sum,
     >(
         self,
@@ -535,7 +531,7 @@ pub mod utils {
         target_utilization: f64,
     ) -> usize {
         let memory_needed = (workload_size as f64 / target_utilization) as usize;
-        let device_count = (memory_needed + memory_per_device - 1) / memory_per_device;
+        let device_count = memory_needed.div_ceil(memory_per_device);
 
         // Round to nearest valid topology size
         match device_count {
@@ -558,7 +554,6 @@ pub mod utils {
             BatchParallelizationStrategy::PipelineParallel => 0.90,
             BatchParallelizationStrategy::Hybrid => 0.92,
             BatchParallelizationStrategy::Adaptive => 0.97,
-            _ => 0.88,
         };
 
         let communication_factor = match config.communication_pattern {

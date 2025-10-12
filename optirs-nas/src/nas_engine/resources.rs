@@ -3,7 +3,7 @@
 // This module provides comprehensive resource monitoring, constraint enforcement,
 // and resource optimization functionality for the NAS system.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -459,18 +459,20 @@ where
         let (gpu_devices, gpu_usage) = self.get_gpu_info()?;
 
         Ok(ResourceUsage {
-            memory_gb: num_traits::cast::cast(used_memory).unwrap_or_else(|| T::zero()),
-            cpu_time_seconds: num_traits::cast::cast(cpu_usage * 3600.0)
+            memory_gb: scirs2_core::numeric::NumCast::from(used_memory)
+                .unwrap_or_else(|| T::zero()),
+            cpu_time_seconds: scirs2_core::numeric::NumCast::from(cpu_usage * 3600.0)
                 .unwrap_or_else(|| T::zero()), // Convert to CPU-hours equivalent
-            gpu_time_seconds: num_traits::cast::cast(gpu_usage * 3600.0)
+            gpu_time_seconds: scirs2_core::numeric::NumCast::from(gpu_usage * 3600.0)
                 .unwrap_or_else(|| T::zero()), // Convert to GPU-hours equivalent
-            energy_kwh: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()), // 0.25 kWh estimated
-            network_io_gb: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // 1 GB network I/O
-            disk_io_gb: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()), // 2 GB disk I/O
-            peak_memory_gb: num_traits::cast::cast(used_memory * 1.2).unwrap_or_else(|| T::zero()), // 20% overhead
-            efficiency_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // 80% efficiency
-            cost_usd: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), // $0.50 estimated
-            network_gb: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // Same as network_io_gb
+            energy_kwh: scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()), // 0.25 kWh estimated
+            network_io_gb: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()), // 1 GB network I/O
+            disk_io_gb: scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()), // 2 GB disk I/O
+            peak_memory_gb: scirs2_core::numeric::NumCast::from(used_memory * 1.2)
+                .unwrap_or_else(|| T::zero()), // 20% overhead
+            efficiency_score: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()), // 80% efficiency
+            cost_usd: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()), // $0.50 estimated
+            network_gb: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()), // Same as network_io_gb
         })
     }
 
@@ -484,15 +486,18 @@ where
         let power = self.get_power_info()?;
 
         Ok(SystemMetrics {
-            available_memory_gb: num_traits::cast::cast(total_memory - used_memory)
+            available_memory_gb: scirs2_core::numeric::NumCast::from(total_memory - used_memory)
                 .unwrap_or_else(|| T::zero()),
             available_cpu_cores: total_cores,
             available_gpu_devices: gpu_devices,
-            available_disk_gb: num_traits::cast::cast(total_disk - used_disk)
+            available_disk_gb: scirs2_core::numeric::NumCast::from(total_disk - used_disk)
                 .unwrap_or_else(|| T::zero()),
-            network_bandwidth: num_traits::cast::cast(bandwidth).unwrap_or_else(|| T::zero()),
-            system_temperature: num_traits::cast::cast(temperature).unwrap_or_else(|| T::zero()),
-            power_consumption: num_traits::cast::cast(power).unwrap_or_else(|| T::zero()),
+            network_bandwidth: scirs2_core::numeric::NumCast::from(bandwidth)
+                .unwrap_or_else(|| T::zero()),
+            system_temperature: scirs2_core::numeric::NumCast::from(temperature)
+                .unwrap_or_else(|| T::zero()),
+            power_consumption: scirs2_core::numeric::NumCast::from(power)
+                .unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -504,8 +509,9 @@ where
         let mut violations = Vec::new();
 
         // Check memory limit
-        let memory_limit = num_traits::cast::cast(constraints.hardware_resources.max_memory_gb)
-            .unwrap_or_else(|| T::zero());
+        let memory_limit =
+            scirs2_core::numeric::NumCast::from(constraints.hardware_resources.max_memory_gb)
+                .unwrap_or_else(|| T::zero());
         if current_usage.memory_gb > memory_limit {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::MemoryExceeded,
@@ -524,7 +530,7 @@ where
 
         // Check power limit
         let system_metrics = self.get_system_metrics()?;
-        let power_limit = num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()); // 1000W limit
+        let power_limit = scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero()); // 1000W limit
         if system_metrics.power_consumption > power_limit {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::PowerExceeded,
@@ -542,7 +548,7 @@ where
         }
 
         // Check temperature limit
-        let temp_limit = num_traits::cast::cast(80.0).unwrap_or_else(|| T::zero()); // 80°C limit
+        let temp_limit = scirs2_core::numeric::NumCast::from(80.0).unwrap_or_else(|| T::zero()); // 80°C limit
         if system_metrics.system_temperature > temp_limit {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::TemperatureExceeded,
@@ -668,20 +674,23 @@ where
         current_usage: &ResourceUsage<T>,
         constraints: &ResourceConstraints<T>,
     ) -> Result<OptimizationAction<T>> {
-        let memory_limit = num_traits::cast::cast(constraints.hardware_resources.max_memory_gb)
-            .unwrap_or_else(|| T::zero());
+        let memory_limit =
+            scirs2_core::numeric::NumCast::from(constraints.hardware_resources.max_memory_gb)
+                .unwrap_or_else(|| T::zero());
 
         if current_usage.memory_gb
-            > memory_limit * num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero())
+            > memory_limit * scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero())
         {
             let reduction_target = current_usage.memory_gb
-                * num_traits::cast::cast(self.aggressiveness * 0.2).unwrap_or_else(|| T::zero());
+                * scirs2_core::numeric::NumCast::from(self.aggressiveness * 0.2)
+                    .unwrap_or_else(|| T::zero());
 
             let mut parameters = HashMap::new();
             parameters.insert("memory_reduction_gb".to_string(), reduction_target);
             parameters.insert(
                 "aggressiveness".to_string(),
-                num_traits::cast::cast(self.aggressiveness).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(self.aggressiveness)
+                    .unwrap_or_else(|| T::zero()),
             );
 
             Ok(OptimizationAction {
@@ -689,17 +698,25 @@ where
                 parameters,
                 expected_savings: ResourceUsage {
                     memory_gb: reduction_target,
-                    cpu_time_seconds: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
-                    gpu_time_seconds: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
-                    energy_kwh: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
-                    network_io_gb: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
-                    disk_io_gb: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    cpu_time_seconds: scirs2_core::numeric::NumCast::from(0.0)
+                        .unwrap_or_else(|| T::zero()),
+                    gpu_time_seconds: scirs2_core::numeric::NumCast::from(0.0)
+                        .unwrap_or_else(|| T::zero()),
+                    energy_kwh: scirs2_core::numeric::NumCast::from(0.0)
+                        .unwrap_or_else(|| T::zero()),
+                    network_io_gb: scirs2_core::numeric::NumCast::from(0.0)
+                        .unwrap_or_else(|| T::zero()),
+                    disk_io_gb: scirs2_core::numeric::NumCast::from(0.0)
+                        .unwrap_or_else(|| T::zero()),
                     peak_memory_gb: reduction_target,
-                    efficiency_score: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                    cost_usd: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
-                    network_gb: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                    efficiency_score: scirs2_core::numeric::NumCast::from(0.1)
+                        .unwrap_or_else(|| T::zero()),
+                    cost_usd: scirs2_core::numeric::NumCast::from(0.0).unwrap_or_else(|| T::zero()),
+                    network_gb: scirs2_core::numeric::NumCast::from(0.0)
+                        .unwrap_or_else(|| T::zero()),
                 },
-                implementation_cost: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                implementation_cost: scirs2_core::numeric::NumCast::from(0.05)
+                    .unwrap_or_else(|| T::zero()),
                 description: "Reduce memory usage through cache clearing and optimization"
                     .to_string(),
                 priority: OptimizationPriority::High,
@@ -709,7 +726,8 @@ where
                 action_type: ActionType::ReduceMemoryUsage,
                 parameters: HashMap::new(),
                 expected_savings: ResourceUsage::default(),
-                implementation_cost: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+                implementation_cost: scirs2_core::numeric::NumCast::from(0.0)
+                    .unwrap_or_else(|| T::zero()),
                 description: "No memory optimization needed".to_string(),
                 priority: OptimizationPriority::Low,
             })
@@ -747,23 +765,19 @@ where
             enable_auto_optimization: true,
         };
 
-        let mut monitors: Vec<Box<dyn ResourceTracker<T>>> = Vec::new();
-        monitors.push(Box::new(SystemResourceTracker::new(
-            "SystemTracker".to_string(),
-            monitoring_config.monitoring_interval,
-        )));
+        let monitors: Vec<Box<dyn ResourceTracker<T>>> =
+            vec![Box::new(SystemResourceTracker::new(
+                "SystemTracker".to_string(),
+                monitoring_config.monitoring_interval,
+            ))];
 
-        let mut alert_handlers: Vec<Box<dyn AlertHandler<T>>> = Vec::new();
-        alert_handlers.push(Box::new(ConsoleAlertHandler::new(
-            "ConsoleHandler".to_string(),
-            true,
-        )));
+        let alert_handlers: Vec<Box<dyn AlertHandler<T>>> = vec![Box::new(
+            ConsoleAlertHandler::new("ConsoleHandler".to_string(), true),
+        )];
 
-        let mut optimization_strategies: Vec<Box<dyn ResourceOptimizer<T>>> = Vec::new();
-        optimization_strategies.push(Box::new(MemoryOptimizer::new(
-            "MemoryOptimizer".to_string(),
-            0.8,
-        )));
+        let optimization_strategies: Vec<Box<dyn ResourceOptimizer<T>>> = vec![Box::new(
+            MemoryOptimizer::new("MemoryOptimizer".to_string(), 0.8),
+        )];
 
         Self {
             constraints,
@@ -841,8 +855,10 @@ where
                 system_metrics: metrics,
                 active_processes: 1,                  // Simplified
                 memory_pressure: MemoryPressure::Low, // Simplified
-                cpu_load_average: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-                gpu_utilization: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+                cpu_load_average: scirs2_core::numeric::NumCast::from(0.6)
+                    .unwrap_or_else(|| T::zero()),
+                gpu_utilization: scirs2_core::numeric::NumCast::from(0.8)
+                    .unwrap_or_else(|| T::zero()),
             };
 
             {
@@ -987,17 +1003,19 @@ where
         }
 
         let first_half_avg = values.iter().take(values.len() / 2).fold(
-            num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.0).unwrap_or_else(|| T::zero()),
             |acc, &x| acc + x,
-        ) / num_traits::cast::cast(values.len() / 2)
+        ) / scirs2_core::numeric::NumCast::from(values.len() / 2)
             .unwrap_or_else(|| T::one());
-        let second_half_avg = values.iter().skip(values.len() / 2).fold(
-            num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
-            |acc, &x| acc + x,
-        ) / num_traits::cast::cast(values.len() - values.len() / 2)
-            .unwrap_or_else(|| T::one());
+        let second_half_avg =
+            values.iter().skip(values.len() / 2).fold(
+                scirs2_core::numeric::NumCast::from(0.0).unwrap_or_else(|| T::zero()),
+                |acc, &x| acc + x,
+            ) / scirs2_core::numeric::NumCast::from(values.len() - values.len() / 2)
+                .unwrap_or_else(|| T::one());
 
-        let change_threshold = num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()); // 5% change threshold
+        let change_threshold =
+            scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()); // 5% change threshold
 
         if second_half_avg > first_half_avg + change_threshold {
             TrendDirection::Increasing
@@ -1052,14 +1070,14 @@ where
         // Check CPU time constraints
         if current_usage.cpu_time_seconds
             > self.constraints.max_computation_hours
-                * num_traits::cast::cast(3600.0).unwrap_or_else(|| T::zero())
+                * scirs2_core::numeric::NumCast::from(3600.0).unwrap_or_else(|| T::zero())
         {
             violations.push(ResourceViolation {
                 violation_type: ViolationType::ComputationTimeExceeded,
                 severity: ViolationSeverity::Medium,
                 current_value: current_usage.cpu_time_seconds,
                 limit_value: self.constraints.max_computation_hours
-                    * num_traits::cast::cast(3600.0).unwrap_or_else(|| T::zero()),
+                    * scirs2_core::numeric::NumCast::from(3600.0).unwrap_or_else(|| T::zero()),
                 violation_time: Instant::now(),
                 affected_resources: vec!["CPU".to_string(), "Computation Time".to_string()],
                 suggested_actions: vec![
@@ -1121,10 +1139,10 @@ where
         for snapshot in &history {
             total_cpu_hours = total_cpu_hours
                 + snapshot.usage.cpu_time_seconds
-                    / num_traits::cast::cast(3600.0).unwrap_or_else(|| T::one());
+                    / scirs2_core::numeric::NumCast::from(3600.0).unwrap_or_else(|| T::one());
             total_gpu_hours = total_gpu_hours
                 + snapshot.usage.gpu_time_seconds
-                    / num_traits::cast::cast(3600.0).unwrap_or_else(|| T::one());
+                    / scirs2_core::numeric::NumCast::from(3600.0).unwrap_or_else(|| T::one());
             total_energy_kwh = total_energy_kwh + snapshot.usage.energy_kwh;
             total_cost_usd = total_cost_usd + snapshot.usage.cost_usd;
         }

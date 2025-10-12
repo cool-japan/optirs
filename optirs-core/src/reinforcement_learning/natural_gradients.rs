@@ -7,8 +7,8 @@
 
 use super::{PolicyNetwork, RLOptimizationMetrics, RLOptimizerConfig, TrajectoryBatch};
 use crate::error::Result;
-use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Natural gradient configuration
@@ -79,12 +79,12 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for NaturalGradientConfig
         Self {
             base_config: RLOptimizerConfig::default(),
             fisher_method: FisherEstimationMethod::Empirical,
-            damping: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            damping: T::from(1e-4).unwrap_or_else(|| T::zero()),
             fisher_update_freq: 10,
             use_empirical_fisher: true,
             cg_iters: 10,
-            cg_tolerance: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
-            natural_grad_scale: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            cg_tolerance: T::from(1e-8).unwrap_or_else(|| T::zero()),
+            natural_grad_scale: T::from(1.0).unwrap_or_else(|| T::zero()),
             enable_preconditioning: true,
             diagonal_fisher: false,
             block_diagonal_fisher: false,
@@ -185,9 +185,9 @@ impl<T: Float + Debug + ScalarOperand + std::ops::AddAssign + std::iter::Sum, P:
 
         let natural_grad_state = NaturalGradientState {
             prev_natural_grad: None,
-            momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            momentum: T::from(0.9).unwrap_or_else(|| T::zero()),
             adaptive_scales: None,
-            trust_radius: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            trust_radius: T::from(1.0).unwrap_or_else(|| T::zero()),
             kl_history: Vec::new(),
         };
 
@@ -295,8 +295,8 @@ impl<T: Float + Debug + ScalarOperand + std::ops::AddAssign + std::iter::Sum, P:
             diagonal = diagonal + log_prob_grad.mapv(|x| x * x);
         }
 
-        diagonal = diagonal / num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
-        diagonal = diagonal + num_traits::cast::cast(self._config.damping).unwrap_or_else(|| T::zero());
+        diagonal = diagonal / T::from(batch_size).unwrap_or_else(|| T::zero());
+        diagonal = diagonal + T::from(self._config.damping).unwrap_or_else(|| T::zero());
 
         self.fisher_diagonal = Some(diagonal);
 
@@ -459,7 +459,7 @@ impl<T: Float + Debug + ScalarOperand + std::ops::AddAssign + std::iter::Sum, P:
 
         // Normalize by sample count
         let fisher = &self.empirical_fisher_accumulator.fisher_sum
-            / num_traits::cast::cast(self.empirical_fisher_accumulator.sample_count).unwrap_or_else(|| T::zero());
+            / T::from(self.empirical_fisher_accumulator.sample_count).unwrap_or_else(|| T::zero());
 
         // Add damping for numerical stability
         let mut damped_fisher = fisher;

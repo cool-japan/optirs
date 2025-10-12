@@ -9,8 +9,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// A sequential composition of optimizers
@@ -21,7 +21,7 @@ use std::fmt::Debug;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizer_composition::SequentialOptimizer;
 /// use optirs_core::optimizers::{SGD, Adam, Optimizer};
 ///
@@ -192,7 +192,7 @@ where
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizer_composition::{ParallelOptimizer, ParameterGroup};
 /// use optirs_core::optimizers::{SGD, Adam, Optimizer};
 ///
@@ -491,7 +491,7 @@ where
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizer_composition::ChainedOptimizer;
 /// use optirs_core::optimizers::{SGD, Adam, Optimizer};
 ///
@@ -584,7 +584,7 @@ mod tests {
     use super::*;
     use crate::optimizers::{Adam, SGD};
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_sequential_optimizer() {
@@ -592,7 +592,7 @@ mod tests {
         let sgd = SGD::new(0.1);
         let adam = Adam::new(0.01);
 
-        let mut seq_optimizer: SequentialOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut seq_optimizer: SequentialOptimizer<f64, scirs2_core::ndarray::Ix1> =
             SequentialOptimizer::new(vec![Box::new(sgd), Box::new(adam)]);
 
         // Create test parameters and gradients
@@ -622,7 +622,7 @@ mod tests {
         let group1 = ParameterGroup::new(params1.clone(), 0); // Use SGD
         let group2 = ParameterGroup::new(params2.clone(), 1); // Use Adam
 
-        let mut parallel_optimizer: ParallelOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut parallel_optimizer: ParallelOptimizer<f64, scirs2_core::ndarray::Ix1> =
             ParallelOptimizer::new(vec![Box::new(sgd), Box::new(adam)], vec![group1, group2]);
 
         // Create test gradients
@@ -652,7 +652,7 @@ mod tests {
         let inner = SGD::new(0.1);
         let outer = Adam::new(0.01);
 
-        let mut chained_optimizer: ChainedOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut chained_optimizer: ChainedOptimizer<f64, scirs2_core::ndarray::Ix1> =
             ChainedOptimizer::new(Box::new(inner), Box::new(outer));
 
         // Create test parameters and gradients
@@ -676,7 +676,7 @@ mod tests {
         let sgd = SGD::new(0.1);
         let adam = Adam::new(0.01);
 
-        let mut seq_optimizer: SequentialOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut seq_optimizer: SequentialOptimizer<f64, scirs2_core::ndarray::Ix1> =
             SequentialOptimizer::new(vec![Box::new(sgd), Box::new(adam)]);
 
         // Test getting the learning rate (should be from the first optimizer)
@@ -703,7 +703,7 @@ mod tests {
         let sgd = SGD::new(0.1);
         let adam = Adam::new(0.01);
 
-        let mut parallel_optimizer: ParallelOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut parallel_optimizer: ParallelOptimizer<f64, scirs2_core::ndarray::Ix1> =
             ParallelOptimizer::new(vec![Box::new(sgd), Box::new(adam)], vec![]);
 
         // Create test parameters and gradients
@@ -743,7 +743,7 @@ mod tests {
         let inner = SGD::new(0.1);
         let outer = Adam::new(0.01);
 
-        let mut chained_optimizer: ChainedOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut chained_optimizer: ChainedOptimizer<f64, scirs2_core::ndarray::Ix1> =
             ChainedOptimizer::new(Box::new(inner), Box::new(outer));
 
         // Test getting the learning rate (should be from the inner optimizer)

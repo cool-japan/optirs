@@ -4,8 +4,8 @@ use super::config::{ActivationFunction, MetaLearningConfig};
 use super::feedforward::FeedForwardNetwork;
 use super::layers::LayerNormalization;
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -49,7 +49,7 @@ pub struct TransformerMetaLearning<T: Float + Debug + Send + Sync + 'static> {
     meta_state: MetaState<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     TransformerMetaLearning<T>
 {
     /// Create new transformer meta-learning component
@@ -130,7 +130,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
                 task_id: task.id.clone(),
                 adapted_parameters: adapted_params,
                 support_loss: self.compute_task_loss(
-                    &self.meta_state.get_parameters(),
+                    self.meta_state.get_parameters(),
                     &support_data[i],
                     task,
                 )?,
@@ -426,7 +426,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
 
         let recent_losses: Vec<_> = loss_history.iter().rev().take(5).cloned().collect();
         let improvement = recent_losses.last().unwrap() - recent_losses.first().unwrap();
-        Ok(improvement.max(0.0).min(1.0))
+        Ok(improvement.clamp(0.0, 1.0))
     }
 
     fn apply_meta_scaling(&self, update: &Array1<T>) -> Result<Array1<T>> {
@@ -481,7 +481,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MetaOptimizer<T> {
     }
 
     pub fn update(&mut self, state: &mut MetaState<T>, gradients: &[T]) -> Result<()> {
-        let mut params = state.get_parameters_mut();
+        let params = state.get_parameters_mut();
 
         if let Some(momentum) = self.momentum {
             // Momentum update
@@ -707,6 +707,12 @@ pub struct PerformanceTracker<T: Float + Debug + Send + Sync + 'static> {
     meta_results: VecDeque<MetaLearningResult<T>>,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for PerformanceTracker<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> PerformanceTracker<T> {
     pub fn new() -> Self {
         Self {
@@ -791,7 +797,7 @@ mod tests {
 
     #[test]
     fn test_memory_bank() {
-        let mut memory = MemoryBank::<f32>::new(100, 64);
+        let memory = MemoryBank::<f32>::new(100, 64);
         assert!(memory.is_ok());
 
         let mut bank = memory.unwrap();
@@ -809,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_adaptation_network() {
-        let mut network = AdaptationNetwork::<f32>::new(128, 256);
+        let network = AdaptationNetwork::<f32>::new(128, 256);
         assert!(network.is_ok());
 
         let mut net = network.unwrap();

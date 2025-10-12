@@ -1,6 +1,6 @@
 // Resource management for optimization coordination
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque, BTreeMap};
 use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime};
@@ -397,7 +397,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
     /// Get efficiency score
     pub fn get_efficiency_score(&self) -> Result<T> {
         if self.allocation_history.is_empty() {
-            return Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+            return Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
         }
 
         let recent_scores: Vec<_> = self.allocation_history
@@ -544,10 +544,10 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
         for optimizer_id in optimizers {
             // Simplified suitability based on optimizer type
             let score = match optimizer_id.as_str() {
-                "adam" => num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-                "sgd_momentum" => num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-                "learned_lstm" => num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                _ => num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+                "adam" => scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+                "sgd_momentum" => scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
+                "learned_lstm" => scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+                _ => scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
             };
 
             suitability.insert(optimizer_id.clone(), score);
@@ -565,12 +565,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
             _ => 1.0,
         };
 
-        Ok(num_traits::cast::cast(base_adjustment).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(base_adjustment).unwrap_or_else(|| T::zero()))
     }
 
     fn get_historical_performance_adjustment(&self, optimizer_id: &str) -> Result<T> {
         let performance = self.performance_monitor.get_optimizer_performance(optimizer_id)?;
-        Ok(num_traits::cast::cast(0.8 + performance * 0.4).unwrap_or_else(|| T::zero())) // Scale between 0.8 and 1.2
+        Ok(scirs2_core::numeric::NumCast::from(0.8 + performance * 0.4).unwrap_or_else(|| T::zero())) // Scale between 0.8 and 1.2
     }
 
     fn calculate_cpu_scaling_factor(&self, optimizer_id: &str, _context: &OptimizationContext<T>) -> Result<f64> {
@@ -1010,7 +1010,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourcePerformanceMonitor<T> {
             timestamp: SystemTime::now(),
             allocation: allocation.clone(),
             allocation_time: _duration,
-            efficiency_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // Placeholder
+            efficiency_score: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()), // Placeholder
         };
 
         self.allocation_records.push_back(record);

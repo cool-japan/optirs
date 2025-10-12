@@ -54,18 +54,20 @@ impl std::fmt::Display for PlatformTarget {
 }
 
 /// Feature importance levels
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum FeatureImportance {
     Critical,
     High,
+    #[default]
     Medium,
     Low,
 }
 
 /// Optimization levels for builds
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum OptimizationLevel {
     Debug,
+    #[default]
     Release,
     ReleaseLTO,
     MinSize,
@@ -92,8 +94,9 @@ pub enum CloudAuthConfig {
 }
 
 /// Container runtime options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ContainerRuntime {
+    #[default]
     Docker,
     Podman,
     Containerd,
@@ -101,17 +104,26 @@ pub enum ContainerRuntime {
 }
 
 /// Registry authentication methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RegistryAuth {
+    #[default]
     None,
-    UsernamePassword { username: String, password: String },
-    Token { token: String },
-    ServiceAccount { key_file: PathBuf },
+    UsernamePassword {
+        username: String,
+        password: String,
+    },
+    Token {
+        token: String,
+    },
+    ServiceAccount {
+        key_file: PathBuf,
+    },
 }
 
 /// Image tagging strategy for containers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ImageTagStrategy {
+    #[default]
     GitHash,
     GitCommit,
     Timestamp,
@@ -121,8 +133,9 @@ pub enum ImageTagStrategy {
 }
 
 /// Container network modes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NetworkMode {
+    #[default]
     Bridge,
     Host,
     None,
@@ -162,8 +175,9 @@ pub enum ContainerStatus {
 }
 
 /// Report output formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ReportFormat {
+    #[default]
     Json,
     Html,
     Markdown,
@@ -323,7 +337,7 @@ pub struct ResourceUsage {
 }
 
 /// Network I/O statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkIO {
     /// Bytes received
     pub rx_bytes: u64,
@@ -336,7 +350,7 @@ pub struct NetworkIO {
 }
 
 /// Block I/O statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BlockIO {
     /// Bytes read
     pub read_bytes: u64,
@@ -398,7 +412,7 @@ pub struct CompatibilityMatrix {
 }
 
 /// Issue summary for reporting
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IssueSummary {
     /// Total issues
     pub total_issues: usize,
@@ -483,48 +497,6 @@ pub struct AlertConfig {
     pub cooldown: Duration,
 }
 
-impl Default for FeatureImportance {
-    fn default() -> Self {
-        FeatureImportance::Medium
-    }
-}
-
-impl Default for OptimizationLevel {
-    fn default() -> Self {
-        OptimizationLevel::Release
-    }
-}
-
-impl Default for ContainerRuntime {
-    fn default() -> Self {
-        ContainerRuntime::Docker
-    }
-}
-
-impl Default for RegistryAuth {
-    fn default() -> Self {
-        RegistryAuth::None
-    }
-}
-
-impl Default for ImageTagStrategy {
-    fn default() -> Self {
-        ImageTagStrategy::GitHash
-    }
-}
-
-impl Default for NetworkMode {
-    fn default() -> Self {
-        NetworkMode::Bridge
-    }
-}
-
-impl Default for ReportFormat {
-    fn default() -> Self {
-        ReportFormat::Json
-    }
-}
-
 impl Default for ResourceUsage {
     fn default() -> Self {
         Self {
@@ -564,28 +536,6 @@ impl Default for ContainerStats {
     }
 }
 
-impl Default for NetworkIO {
-    fn default() -> Self {
-        Self {
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_packets: 0,
-            tx_packets: 0,
-        }
-    }
-}
-
-impl Default for BlockIO {
-    fn default() -> Self {
-        Self {
-            read_bytes: 0,
-            write_bytes: 0,
-            read_ops: 0,
-            write_ops: 0,
-        }
-    }
-}
-
 impl Default for CompatibilityMatrix {
     fn default() -> Self {
         Self {
@@ -594,18 +544,6 @@ impl Default for CompatibilityMatrix {
             performance_comparison: HashMap::new(),
             issues: Vec::new(),
             compatibility_score: 0.0,
-        }
-    }
-}
-
-impl Default for IssueSummary {
-    fn default() -> Self {
-        Self {
-            total_issues: 0,
-            issues_by_severity: HashMap::new(),
-            issues_by_platform: HashMap::new(),
-            issues_by_category: HashMap::new(),
-            blocking_issues: 0,
         }
     }
 }

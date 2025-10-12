@@ -5,11 +5,8 @@
 
 use optirs_core::error::Result;
 use optirs_core::gradient_processing::{add_gradient_noise, GradientProcessor};
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use scirs2_core::random::{
-    distributions::{Distribution, Normal},
-    Random,
-};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::random::{Distribution, Normal, Random};
 
 fn main() -> Result<()> {
     println!("🚀 OptiRS SciRS2 Integration Demo");
@@ -57,7 +54,7 @@ fn main() -> Result<()> {
     println!("\n✅ SciRS2 Integration Successful!");
     println!("OptiRS is now fully integrated with the SciRS2 ecosystem.");
     println!("All operations use scirs2_core primitives for:");
-    println!("  • Array operations (scirs2_core::ndarray_ext)");
+    println!("  • Array operations (scirs2_core::ndarray)");
     println!("  • Random number generation (scirs2_core::random)");
     println!("  • Error handling (scirs2_core::error)");
     println!("  • Mathematical operations (SciRS2 backend)");

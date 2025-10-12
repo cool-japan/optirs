@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::regression_tester::types::{
     PerformanceRecord, StatisticalAnalysisResult, StatisticalAnalyzer,
 };
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
@@ -302,7 +302,7 @@ pub mod stats_utils {
             return 0.0;
         }
 
-        if len % 2 == 0 {
+        if len.is_multiple_of(2) {
             (sorted_data[len / 2 - 1] + sorted_data[len / 2]) / 2.0
         } else {
             sorted_data[len / 2]
@@ -444,7 +444,7 @@ mod tests {
 
         let result = analyzer.analyze(&data).unwrap();
 
-        assert!(result.anomalies.len() > 0);
+        assert!(!result.anomalies.is_empty());
         assert!(result.summary.contains("outliers detected"));
     }
 

@@ -28,8 +28,8 @@ pub use training::{
     TransformerEvaluator, TransformerMetaLearner,
 };
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
 use super::{LearnedOptimizerConfig, MetaOptimizationStrategy};
@@ -101,7 +101,7 @@ pub struct TransformerNetwork<
         + Default
         + Clone
         + std::iter::Sum
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + Send
         + Sync
         + 'static,
@@ -126,14 +126,14 @@ pub struct TransformerNetwork<
 }
 
 /// Transformer-based neural optimizer with self-attention mechanisms
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TransformerOptimizer<
     T: Float
         + Debug
         + Default
         + Clone
         + std::iter::Sum
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + Send
         + Sync
         + 'static,
@@ -175,13 +175,13 @@ pub struct TransformerOptimizer<
     step_count: usize,
 
     /// Random number generator
-    rng: scirs2_core::random::Random,
+    rng: scirs2_core::random::CoreRandom,
 }
 
 /// Sequence buffer for optimization history
 #[derive(Debug, Clone)]
 pub struct SequenceBuffer<
-    T: Float + Debug + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync + 'static,
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Gradient sequences
     gradient_sequences: VecDeque<Array1<T>>,
@@ -224,7 +224,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -236,7 +236,7 @@ impl<
 
         let mut layers = Vec::new();
         for _ in 0..config.num_layers {
-            let mut rng = scirs2_core::random::rng();
+            let mut rng = scirs2_core::random::thread_rng();
             layers.push(TransformerLayer::new(config, &mut rng)?);
         }
 
@@ -277,7 +277,7 @@ impl<
     }
 
     /// Get attention patterns from all layers
-    pub fn get_attention_patterns(&self) -> Vec<Option<&scirs2_core::ndarray_ext::Array3<T>>> {
+    pub fn get_attention_patterns(&self) -> Vec<Option<&scirs2_core::ndarray::Array3<T>>> {
         self.layers
             .iter()
             .map(|layer| layer.get_attention_patterns())
@@ -291,7 +291,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -303,7 +303,7 @@ impl<
         let gradient_processor = GradientProcessor::new(GradientProcessingStrategy::Adaptive);
         let lr_adapter = LearningRateAdapter::new(
             LearningRateAdaptationStrategy::TransformerPredicted,
-            num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
         );
         let momentum_integrator = MomentumIntegrator::new(MomentumStrategy::TransformerPredicted);
         let regularizer = TransformerRegularizer::new(RegularizationStrategy::Adaptive);
@@ -326,7 +326,7 @@ impl<
             sequence_buffer,
             metrics,
             step_count: 0,
-            rng: scirs2_core::random::rng(),
+            rng: scirs2_core::random::thread_rng(),
         })
     }
 
@@ -460,7 +460,7 @@ impl<
             + Debug
             + Default
             + Clone
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -512,6 +512,12 @@ impl<
     /// Get recent gradient history
     pub fn get_recent_gradients(&self, count: usize) -> Vec<&Array1<T>> {
         self.gradient_sequences.iter().rev().take(count).collect()
+    }
+}
+
+impl Default for TransformerOptimizerMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -4,8 +4,8 @@
 // must implement to integrate with the plugin system.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;
@@ -685,12 +685,17 @@ mod tests {
             },
         );
 
-        let mut config = OptimizerConfig::default();
-        config.learning_rate = 0.001;
+        let mut config = OptimizerConfig {
+            learning_rate: 0.001,
+            ..Default::default()
+        };
 
         assert!(validate_config_against_schema(&config, &schema).is_ok());
 
-        config.learning_rate = -0.001;
+        let mut config = OptimizerConfig {
+            learning_rate: -0.001,
+            ..Default::default()
+        };
         assert!(validate_config_against_schema(&config, &schema).is_err());
     }
 }

@@ -13,8 +13,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::schedulers::LearningRateScheduler;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -528,7 +528,7 @@ impl<A: Float + ScalarOperand + Debug, O: UnifiedOptimizer<A> + Send + Sync> Tra
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_unified_sgd() {

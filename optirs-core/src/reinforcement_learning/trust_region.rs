@@ -7,8 +7,8 @@
 
 use super::{PolicyNetwork, RLOptimizationMetrics};
 use crate::error::Result;
-use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Trust region methods
@@ -55,15 +55,15 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for TrustRegionConfig<T> 
     fn default() -> Self {
         Self {
             method: TrustRegionMethod::TRPO,
-            max_kl: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            max_kl: T::from(0.01).unwrap_or_else(|| T::zero()),
             cg_iters: 10,
-            cg_damping: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            cg_tolerance: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
+            cg_damping: T::from(0.1).unwrap_or_else(|| T::zero()),
+            cg_tolerance: T::from(1e-8).unwrap_or_else(|| T::zero()),
             max_backtracks: 10,
-            backtrack_coeff: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            accept_ratio: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            backtrack_coeff: T::from(0.5).unwrap_or_else(|| T::zero()),
+            accept_ratio: T::from(0.1).unwrap_or_else(|| T::zero()),
             fisher_subsample_freq: 1,
-            fisher_reg: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            fisher_reg: T::from(1e-5).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -124,10 +124,10 @@ impl<T: Float + Debug + std::iter::Sum + ScalarOperand, P: PolicyNetwork<T + Sen
             fisher_matrix: None,
             natural_grad_state: NaturalGradientState {
                 prev_gradients: None,
-                momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                momentum: T::from(0.9).unwrap_or_else(|| T::zero()),
                 adaptive_lr_state: AdaptiveLRState {
-                    learning_rate: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-                    adapt_factor: num_traits::cast::cast(1.5).unwrap_or_else(|| T::zero()),
+                    learning_rate: T::from(0.01).unwrap_or_else(|| T::zero()),
+                    adapt_factor: T::from(1.5).unwrap_or_else(|| T::zero()),
                     success_count: 0,
                     failure_count: 0,
                 },
@@ -236,7 +236,7 @@ impl<T: Float + Debug + std::iter::Sum + ScalarOperand, P: PolicyNetwork<T + Sen
 
     /// Line search for step size selection
     fn line_search(&self, direction: &Array1<T>) -> Result<T> {
-        let mut step_size = num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero());
+        let mut step_size = T::from(1.0).unwrap_or_else(|| T::zero());
 
         for _i in 0..self.config.max_backtracks {
             // Check if step satisfies trust region constraint
@@ -262,14 +262,14 @@ impl<T: Float + Debug + std::iter::Sum + ScalarOperand, P: PolicyNetwork<T + Sen
     fn estimate_kl_divergence(&self, direction: &Array1<T>, stepsize: T) -> Result<T> {
         // Quadratic approximation: KL ≈ 0.5 * d^T * F * d * step_size^2
         let fvp = self.fisher_vector_product(direction)?;
-        let kl_estimate = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()) * self.dot(direction, &fvp) * stepsize * stepsize;
+        let kl_estimate = T::from(0.5).unwrap_or_else(|| T::zero()) * self.dot(direction, &fvp) * stepsize * stepsize;
         Ok(kl_estimate)
     }
 
     /// Project gradients onto trust region
     fn project_to_trust_region(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
         let grad_norm = self.norm(gradients);
-        let max_norm = (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * self.config.max_kl).sqrt();
+        let max_norm = (T::from(2.0).unwrap_or_else(|| T::zero()) * self.config.max_kl).sqrt();
 
         if grad_norm <= max_norm {
             Ok(gradients.clone())

@@ -4,7 +4,7 @@
 // techniques, statistical analysis, and advanced signal processing for memory usage patterns.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::f64::consts::PI;
@@ -1004,7 +1004,7 @@ impl PatternClassifier {
     ) -> Result<AdvancedMemoryPattern> {
         let pattern_type = match class_id {
             0 => AdvancedPatternType::LinearGrowth {
-                slope: features.get(0).copied().unwrap_or(0.0),
+                slope: features.first().copied().unwrap_or(0.0),
                 intercept: features.get(1).copied().unwrap_or(0.0),
                 r_squared: 0.8,
             },
@@ -1068,7 +1068,7 @@ impl SignalProcessor {
         let filtered_signal = self.kalman_filter.filter(signal)?;
 
         // Analyze filtered signal for additional patterns
-        if filtered_signal.len() > 0 {
+        if !filtered_signal.is_empty() {
             // Additional pattern detection on filtered signal would go here
         }
 
@@ -1159,17 +1159,17 @@ impl FFTProcessor {
         let n = signal.len();
         let mut spectrum = vec![0.0; n / 2];
 
-        for k in 0..n / 2 {
+        for (k, spectrum_k) in spectrum.iter_mut().enumerate() {
             let mut real = 0.0;
             let mut imag = 0.0;
 
-            for j in 0..n {
+            for (j, &signal_j) in signal.iter().enumerate() {
                 let angle = -2.0 * PI * (k * j) as f64 / n as f64;
-                real += signal[j] * angle.cos();
-                imag += signal[j] * angle.sin();
+                real += signal_j * angle.cos();
+                imag += signal_j * angle.sin();
             }
 
-            spectrum[k] = (real * real + imag * imag).sqrt();
+            *spectrum_k = (real * real + imag * imag).sqrt();
         }
 
         Ok(spectrum)

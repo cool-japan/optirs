@@ -1,4 +1,4 @@
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use num_traits::Float;
 use scirs2_core::random::Rng;
 use optirs_core::optimizers::SGD;
@@ -8,7 +8,7 @@ use optirs_core::Optimizer;
 /// Generate synthetic data for linear regression
 #[allow(dead_code)]
 fn generate_data<A: Float>(n_samples: usize, nfeatures: usize) -> (Array2<A>, Array1<A>) {
-    let mut rng = scirs2_core::random::rng();
+    let mut rng = scirs2_core::random::thread_rng();
     let mut x = Array2::<A>::zeros((n_samples, nfeatures));
     let mut y = Array1::<A>::zeros(n_samples);
 
@@ -124,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Shuffle data - just using a basic shuffling approach since we had rand version issues
         let mut indices: Vec<usize> = (0..n_samples).collect();
         // Simple Fisher-Yates shuffle
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         for i in (1..indices.len()).rev() {
             let j = rng.gen_range(0..i);
             indices.swap(i, j);

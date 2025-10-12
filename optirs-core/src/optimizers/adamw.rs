@@ -2,8 +2,8 @@
 //
 // AdamW is a variant of Adam that correctly implements weight decay regularization.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -30,7 +30,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{AdamW, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -56,9 +56,9 @@ pub struct AdamW<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (decoupled from adaptive moment computation)
     weight_decay: A,
     /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Current timestep
     t: usize,
 }
@@ -245,7 +245,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_adamw_step() {

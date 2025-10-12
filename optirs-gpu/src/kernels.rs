@@ -421,8 +421,7 @@ impl KernelManager {
         match kernel_type {
             KernelType::VectorOps | KernelType::SGDUpdate | KernelType::AdamUpdate => {
                 let threads_per_block = 256.min(capabilities.max_threads_per_block);
-                let blocks =
-                    (data_size + threads_per_block as usize - 1) / threads_per_block as usize;
+                let blocks = data_size.div_ceil(threads_per_block as usize);
 
                 LaunchConfig {
                     grid_size: (blocks as u32, 1, 1),
@@ -433,8 +432,7 @@ impl KernelManager {
             }
             KernelType::MatrixOps => {
                 let block_dim = 16; // 16x16 thread blocks for matrix operations
-                let grid_dim =
-                    ((data_size as f64).sqrt().ceil() as u32 + block_dim - 1) / block_dim;
+                let grid_dim = ((data_size as f64).sqrt().ceil() as u32).div_ceil(block_dim);
 
                 LaunchConfig {
                     grid_size: (grid_dim, grid_dim, 1),
@@ -445,8 +443,7 @@ impl KernelManager {
             }
             KernelType::Reduction => {
                 let threads_per_block = 512.min(capabilities.max_threads_per_block);
-                let blocks =
-                    (data_size + threads_per_block as usize - 1) / threads_per_block as usize;
+                let blocks = data_size.div_ceil(threads_per_block as usize);
 
                 LaunchConfig {
                     grid_size: (blocks as u32, 1, 1),
@@ -474,6 +471,12 @@ impl KernelManager {
 #[derive(Debug)]
 pub struct CudaCompiler {
     nvcc_path: String,
+}
+
+impl Default for CudaCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CudaCompiler {
@@ -533,6 +536,12 @@ impl KernelCompiler for CudaCompiler {
 #[derive(Debug)]
 pub struct RocmCompiler;
 
+impl Default for RocmCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RocmCompiler {
     pub fn new() -> Self {
         Self
@@ -587,6 +596,12 @@ impl KernelCompiler for RocmCompiler {
 #[derive(Debug)]
 pub struct MetalCompiler;
 
+impl Default for MetalCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetalCompiler {
     pub fn new() -> Self {
         Self
@@ -635,6 +650,12 @@ impl KernelCompiler for MetalCompiler {
 /// WebGPU kernel compiler
 #[derive(Debug)]
 pub struct WgpuCompiler;
+
+impl Default for WgpuCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl WgpuCompiler {
     pub fn new() -> Self {

@@ -7,7 +7,6 @@ use clap::{Arg, Command};
 // use optirs_core::benchmarking::advanced_memory_leak_detector::MemoryLeakConfig;
 use optirs_core::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -789,7 +788,7 @@ fn calculate_memory_efficiency_score(
         }
     }
 
-    score.max(0.0).min(1.0)
+    score.clamp(0.0, 1.0)
 }
 
 #[allow(dead_code)]
@@ -879,7 +878,7 @@ fn create_memory_leakreport(
 
     let overall_severity = if critical_leaks > 0 {
         "critical".to_string()
-    } else if leaks.len() > 0 {
+    } else if !leaks.is_empty() {
         "warning".to_string()
     } else {
         "good".to_string()
@@ -1009,7 +1008,7 @@ fn generate_markdownreport(report: &MemoryLeakReport) -> Result<String> {
     // Recommendations
     if !report.recommendations.is_empty() {
         md.push_str("## Optimization Recommendations\n\n");
-        for (_i, rec) in report.recommendations.iter().enumerate() {
+        for rec in report.recommendations.iter() {
             md.push_str(&format!(
                 "### {} (Priority: {})\n\n",
                 rec.recommendation_type, rec.priority

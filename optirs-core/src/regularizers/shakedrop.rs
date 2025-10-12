@@ -1,5 +1,5 @@
-use num_traits::{Float, FromPrimitive};
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension, ScalarOperand};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::random::Rng;
 use std::fmt::Debug;
 
@@ -206,7 +206,7 @@ impl<A: Float + FromPrimitive + Debug + ScalarOperand, D: Dimension + Send + Syn
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::{Array1, Array2};
+    use scirs2_core::ndarray::{Array1, Array2};
 
     #[test]
     fn test_shakedrop_new() {

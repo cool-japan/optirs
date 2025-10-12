@@ -5,8 +5,8 @@
 // natural gradient updates.
 
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::Array2;
+use scirs2_core::ndarray::Array2;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Natural gradient optimizer configuration
@@ -43,15 +43,15 @@ pub struct NaturalGradientConfig<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for NaturalGradientConfig<T> {
     fn default() -> Self {
         Self {
-            learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            fisher_damping: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            learning_rate: T::from(0.001).unwrap_or_else(|| T::zero()),
+            fisher_damping: T::from(0.001).unwrap_or_else(|| T::zero()),
             fisher_update_freq: 10,
             use_empirical_fisher: true,
             max_rank: Some(100),
             adaptive_damping: true,
             use_conjugate_gradient: true,
             max_cg_iterations: 100,
-            cg_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            cg_tolerance: T::from(1e-6).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -73,7 +73,7 @@ impl NaturalGradientCompute {
         if min_diag > T::zero() {
             max_diag / min_diag
         } else {
-            num_traits::cast::cast(1e12).unwrap_or_else(|| T::zero()) // Large condition number for singular matrices
+            T::from(1e12).unwrap_or_else(|| T::zero()) // Large condition number for singular matrices
         }
     }
 
@@ -101,7 +101,7 @@ impl NaturalGradientCompute {
         // For larger matrices, use regularized identity as placeholder
         // In practice, you would use a proper numerical library
         let mut result = Array2::eye(n);
-        let regularization = num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero());
+        let regularization = T::from(1e-8).unwrap_or_else(|| T::zero());
 
         for i in 0..n {
             result[[i, i]] = T::one() / (matrix[[i, i]] + regularization);
@@ -120,7 +120,7 @@ impl NaturalGradientCompute {
         match n {
             1 => {
                 let det = matrix[[0, 0]];
-                if det.abs() < num_traits::cast::cast(1e-12).unwrap_or_else(|| T::zero()) {
+                if det.abs() < T::from(1e-12).unwrap_or_else(|| T::zero()) {
                     return Err(crate::error::OptimError::ComputationError(
                         "Matrix is singular".to_string(),
                     ));
@@ -134,7 +134,7 @@ impl NaturalGradientCompute {
             _ => {
                 // Fallback to regularized diagonal
                 let mut result = Array2::eye(n);
-                let reg = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+                let reg = T::from(1e-6).unwrap_or_else(|| T::zero());
                 for i in 0..n {
                     result[[i, i]] = T::one() / (matrix[[i, i]] + reg);
                 }
@@ -154,7 +154,7 @@ impl NaturalGradientCompute {
         let d = matrix[[1, 1]];
 
         let det = a * d - b * c;
-        if det.abs() < num_traits::cast::cast(1e-12).unwrap_or_else(|| T::zero()) {
+        if det.abs() < T::from(1e-12).unwrap_or_else(|| T::zero()) {
             return Err(crate::error::OptimError::ComputationError(
                 "2x2 matrix is singular".to_string(),
             ));
@@ -183,7 +183,7 @@ impl NaturalGradientCompute {
             - m[[0, 1]] * (m[[1, 0]] * m[[2, 2]] - m[[1, 2]] * m[[2, 0]])
             + m[[0, 2]] * (m[[1, 0]] * m[[2, 1]] - m[[1, 1]] * m[[2, 0]]);
 
-        if det.abs() < num_traits::cast::cast(1e-12).unwrap_or_else(|| T::zero()) {
+        if det.abs() < T::from(1e-12).unwrap_or_else(|| T::zero()) {
             return Err(crate::error::OptimError::ComputationError(
                 "3x3 matrix is singular".to_string(),
             ));
@@ -216,7 +216,7 @@ impl NaturalGradientCompute {
         tolerance: T,
     ) -> Result<Array2<T>>
     where
-        T: Float + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand,
+        T: Float + std::iter::Sum + scirs2_core::ndarray::ScalarOperand,
     {
         let n = a.nrows();
         if n != a.ncols() || n != b.nrows() {

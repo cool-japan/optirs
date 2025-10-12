@@ -374,7 +374,7 @@ impl BuddyAllocator {
         // Look for larger blocks and split them
         for order in (min_order + 1)..=self.max_order {
             if !self.free_lists[order].is_empty() {
-                let mut large_block = self.free_lists[order].pop_front().unwrap();
+                let large_block = self.free_lists[order].pop_front().unwrap();
                 return Some(self.split_block(large_block, min_order));
             }
         }
@@ -406,7 +406,7 @@ impl BuddyAllocator {
     }
 
     /// Free a block with coalescing
-    fn free_with_coalescing(&mut self, mut block: BuddyBlock) {
+    fn free_with_coalescing(&mut self, block: BuddyBlock) {
         let mut current_block = block;
         current_block.deallocate();
 
@@ -645,6 +645,14 @@ impl BuddyAllocator {
         })
     }
 }
+
+// Safety: BuddyAllocator manages GPU memory pointers. While *mut u8 is not Send/Sync by default,
+// it's safe to share BuddyAllocator across threads when protected by Arc<Mutex<>> because:
+// 1. The pointers point to GPU memory managed by the GPU driver
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for BuddyAllocator {}
+unsafe impl Sync for BuddyAllocator {}
 
 /// Memory usage information
 #[derive(Debug, Clone)]

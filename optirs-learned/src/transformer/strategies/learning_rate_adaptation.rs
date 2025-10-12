@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements various learning rate adaptation strategies that the
 // transformer optimizer can use to dynamically adjust learning rates during training.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 
 use crate::error::{OptimError, Result};
@@ -200,9 +200,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
 
         // Apply warmup if in warmup phase
         if self.step_count < self.adaptation_params.warmup_steps {
-            let warmup_factor = num_traits::cast::cast(self.step_count as f64)
+            let warmup_factor = scirs2_core::numeric::NumCast::from(self.step_count as f64)
                 .unwrap_or_else(|| T::zero())
-                / num_traits::cast::cast(self.adaptation_params.warmup_steps as f64)
+                / scirs2_core::numeric::NumCast::from(self.adaptation_params.warmup_steps as f64)
                     .unwrap_or_else(|| T::zero());
             self.current_lr = self.current_lr * warmup_factor;
         }
@@ -218,9 +218,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
 
     /// Exponential decay schedule
     fn exponential_decay(&self) -> T {
-        let steps = num_traits::cast::cast(self.step_count as f64).unwrap_or_else(|| T::zero());
-        let decay_steps = num_traits::cast::cast(self.adaptation_params.decay_steps as f64)
+        let steps = scirs2_core::numeric::NumCast::from(self.step_count as f64)
             .unwrap_or_else(|| T::zero());
+        let decay_steps =
+            scirs2_core::numeric::NumCast::from(self.adaptation_params.decay_steps as f64)
+                .unwrap_or_else(|| T::zero());
         let decay_factor = (steps / decay_steps) * self.adaptation_params.decay_rate.ln();
         self.base_lr * (-decay_factor).exp()
     }
@@ -230,9 +232,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
         if self.step_count >= self.adaptation_params.decay_steps {
             self.adaptation_params.min_lr
         } else {
-            let progress = num_traits::cast::cast(self.step_count as f64)
+            let progress = scirs2_core::numeric::NumCast::from(self.step_count as f64)
                 .unwrap_or_else(|| T::zero())
-                / num_traits::cast::cast(self.adaptation_params.decay_steps as f64)
+                / scirs2_core::numeric::NumCast::from(self.adaptation_params.decay_steps as f64)
                     .unwrap_or_else(|| T::zero());
             let decay_factor = (T::one() - progress).powf(self.adaptation_params.power);
             (self.base_lr - self.adaptation_params.min_lr) * decay_factor
@@ -242,13 +244,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
 
     /// Cosine annealing schedule
     fn cosine_annealing(&self) -> T {
-        let steps = num_traits::cast::cast(self.step_count as f64).unwrap_or_else(|| T::zero());
-        let total_steps = num_traits::cast::cast(self.adaptation_params.decay_steps as f64)
+        let steps = scirs2_core::numeric::NumCast::from(self.step_count as f64)
             .unwrap_or_else(|| T::zero());
-        let pi = num_traits::cast::cast(std::f64::consts::PI).unwrap_or_else(|| T::zero());
+        let total_steps =
+            scirs2_core::numeric::NumCast::from(self.adaptation_params.decay_steps as f64)
+                .unwrap_or_else(|| T::zero());
+        let pi =
+            scirs2_core::numeric::NumCast::from(std::f64::consts::PI).unwrap_or_else(|| T::zero());
 
         let cosine_factor = (T::one() + (pi * steps / total_steps).cos())
-            / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
         self.adaptation_params.min_lr
             + (self.base_lr - self.adaptation_params.min_lr) * cosine_factor
     }
@@ -257,12 +262,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
     fn warm_restart(&self) -> T {
         let period = self.adaptation_params.restart_period;
         let cycle_position = self.step_count % period;
-        let progress = num_traits::cast::cast(cycle_position as f64).unwrap_or_else(|| T::zero())
-            / num_traits::cast::cast(period as f64).unwrap_or_else(|| T::zero());
+        let progress = scirs2_core::numeric::NumCast::from(cycle_position as f64)
+            .unwrap_or_else(|| T::zero())
+            / scirs2_core::numeric::NumCast::from(period as f64).unwrap_or_else(|| T::zero());
 
-        let pi = num_traits::cast::cast(std::f64::consts::PI).unwrap_or_else(|| T::zero());
+        let pi =
+            scirs2_core::numeric::NumCast::from(std::f64::consts::PI).unwrap_or_else(|| T::zero());
         let cosine_factor = (T::one() + (pi * progress).cos())
-            / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
 
         self.adaptation_params.min_lr
             + (self.base_lr - self.adaptation_params.min_lr) * cosine_factor
@@ -280,7 +287,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
                     self.patience_counter = 0;
 
                     // Slight increase in learning rate if loss is improving well
-                    Ok(self.current_lr * num_traits::cast::cast(1.01).unwrap_or_else(|| T::zero()))
+                    Ok(self.current_lr
+                        * scirs2_core::numeric::NumCast::from(1.01).unwrap_or_else(|| T::zero()))
                 } else {
                     // Loss didn't improve sufficiently
                     self.patience_counter += 1;
@@ -313,12 +321,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
                 .sqrt();
 
             // Adaptive learning rate based on gradient magnitude
-            let target_norm = num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero());
+            let target_norm = scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero());
             let scale_factor = target_norm
-                / (grad_norm + num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()));
+                / (grad_norm
+                    + scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()));
 
             // Smooth the adaptation
-            let alpha = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+            let alpha = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
             let adapted_lr =
                 self.current_lr * (T::one() - alpha) + (self.base_lr * scale_factor) * alpha;
 
@@ -334,8 +343,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
         // For now, use a simple heuristic based on step count
         let decay_factor = T::one()
             / (T::one()
-                + num_traits::cast::cast(self.step_count as f64).unwrap_or_else(|| T::zero())
-                    * num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()));
+                + scirs2_core::numeric::NumCast::from(self.step_count as f64)
+                    .unwrap_or_else(|| T::zero())
+                    * scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()));
         Ok(self.base_lr * decay_factor)
     }
 
@@ -399,16 +409,17 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for LRAdaptationParams<T> {
     fn default() -> Self {
         Self {
-            decay_rate: num_traits::cast::cast(0.96).unwrap_or_else(|| T::zero()),
+            decay_rate: scirs2_core::numeric::NumCast::from(0.96).unwrap_or_else(|| T::zero()),
             decay_steps: 1000,
-            power: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            min_lr: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
-            max_lr: num_traits::cast::cast(1e-1).unwrap_or_else(|| T::zero()),
+            power: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            min_lr: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
+            max_lr: scirs2_core::numeric::NumCast::from(1e-1).unwrap_or_else(|| T::zero()),
             warmup_steps: 100,
             restart_period: 1000,
             patience: 10,
-            reduction_factor: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            improvement_threshold: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            reduction_factor: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            improvement_threshold: scirs2_core::numeric::NumCast::from(0.01)
+                .unwrap_or_else(|| T::zero()),
         }
     }
 }

@@ -7,7 +7,6 @@ use chrono::{DateTime, Utc};
 use clap::{Arg, ArgMatches, Command};
 use optirs_core::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -817,7 +816,7 @@ fn validate_baseline(baseline: &BaselineMetrics) -> Result<bool> {
     }
 
     // Validate individual metrics
-    for (_name, metric) in &baseline.metrics {
+    for metric in baseline.metrics.values() {
         if metric.samples.is_empty() {
             return Ok(false);
         }
@@ -854,10 +853,10 @@ fn find_baseline_files(_baselinedir: &str) -> Result<Vec<PathBuf>> {
         let path = entry.path();
 
         if path.is_file()
-            && path.extension().map_or(false, |ext| ext == "json")
-            && path.file_name().map_or(false, |name| {
-                name.to_string_lossy().starts_with("baseline_")
-            })
+            && path.extension().is_some_and(|ext| ext == "json")
+            && path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("baseline_"))
         {
             baseline_files.push(path);
         }

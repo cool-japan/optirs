@@ -4,8 +4,8 @@
 // memory-efficient implementations of optimization algorithms.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
@@ -632,7 +632,7 @@ pub mod gradient_checkpointing {
 
             match self.strategy {
                 CheckpointStrategy::None => false,
-                CheckpointStrategy::Uniform { interval } => depth % interval == 0,
+                CheckpointStrategy::Uniform { interval } => depth.is_multiple_of(interval),
                 CheckpointStrategy::Logarithmic { base } => {
                     let log_depth = (depth as f64).log(base).floor() as usize;
                     depth == base.powi(log_depth as i32) as usize
@@ -937,7 +937,7 @@ pub mod gradient_checkpointing {
             }
 
             // Adapt strategy periodically
-            if self.step_count % self.adaptation_frequency == 0 {
+            if self.step_count.is_multiple_of(self.adaptation_frequency) {
                 self.adapt_strategy();
             }
 
@@ -1122,7 +1122,7 @@ pub use mixed_precision::*;
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_inplace_sgd() {
@@ -1316,7 +1316,7 @@ mod tests {
     fn test_gradient_checkpointing_uniform() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Uniform { interval: 2 },
         );
@@ -1348,7 +1348,7 @@ mod tests {
     fn test_gradient_checkpointing_logarithmic() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Logarithmic { base: 2.0 },
         );
@@ -1372,7 +1372,7 @@ mod tests {
         let pattern = vec![true, false, false, true, false];
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Custom { pattern },
         );
@@ -1393,7 +1393,7 @@ mod tests {
     fn test_gradient_checkpointing_memory_tracking() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Uniform { interval: 1 },
         );
@@ -1420,7 +1420,7 @@ mod tests {
     fn test_checkpointed_forward() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Uniform { interval: 1 },
         );
@@ -1449,7 +1449,7 @@ mod tests {
     fn test_recompute_from_checkpoint() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Uniform { interval: 2 },
         );
@@ -1477,7 +1477,7 @@ mod tests {
 
     #[test]
     fn test_auto_checkpointer() {
-        let mut auto_checkpointer: AutoCheckpointer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut auto_checkpointer: AutoCheckpointer<f64, scirs2_core::ndarray::Ix1> =
             gradient_checkpointing::AutoCheckpointer::new(
                 gradient_checkpointing::CheckpointStrategy::Uniform { interval: 2 },
                 0.6, // target 60% memory usage
@@ -1542,7 +1542,7 @@ mod tests {
     fn test_checkpointing_strategy_optimization() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Uniform { interval: 4 },
         );
@@ -1570,7 +1570,7 @@ mod tests {
     fn test_checkpointing_disabled() {
         let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
             f64,
-            scirs2_core::ndarray_ext::Ix1,
+            scirs2_core::ndarray::Ix1,
         > = gradient_checkpointing::GradientCheckpointer::new(
             gradient_checkpointing::CheckpointStrategy::Uniform { interval: 1 },
         );

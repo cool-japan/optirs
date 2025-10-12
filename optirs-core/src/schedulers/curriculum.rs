@@ -3,8 +3,8 @@
 // This module provides a scheduler that implements curriculum learning strategies,
 // where the learning rate is adjusted based on task difficulty or training progress.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::ScalarOperand;
+use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 

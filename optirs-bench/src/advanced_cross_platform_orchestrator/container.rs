@@ -108,7 +108,7 @@ impl ContainerRuntimeTrait for DockerRuntime {
 
         // Simulate container creation
         let output = Command::new("docker")
-            .args(&["create", "--name", &container_id, image])
+            .args(["create", "--name", &container_id, image])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output();
@@ -145,22 +145,20 @@ impl ContainerRuntimeTrait for DockerRuntime {
     fn start_container(&self, container_id: &str) -> Result<()> {
         // Simulate container start
         let _output = Command::new("docker")
-            .args(&["start", container_id])
+            .args(["start", container_id])
             .output();
         Ok(())
     }
 
     fn stop_container(&self, container_id: &str) -> Result<()> {
         // Simulate container stop
-        let _output = Command::new("docker")
-            .args(&["stop", container_id])
-            .output();
+        let _output = Command::new("docker").args(["stop", container_id]).output();
         Ok(())
     }
 
     fn remove_container(&self, container_id: &str) -> Result<()> {
         // Simulate container removal
-        let _output = Command::new("docker").args(&["rm", container_id]).output();
+        let _output = Command::new("docker").args(["rm", container_id]).output();
         Ok(())
     }
 
@@ -203,20 +201,18 @@ impl ContainerRuntimeTrait for PodmanRuntime {
 
     fn start_container(&self, container_id: &str) -> Result<()> {
         let _output = Command::new("podman")
-            .args(&["start", container_id])
+            .args(["start", container_id])
             .output();
         Ok(())
     }
 
     fn stop_container(&self, container_id: &str) -> Result<()> {
-        let _output = Command::new("podman")
-            .args(&["stop", container_id])
-            .output();
+        let _output = Command::new("podman").args(["stop", container_id]).output();
         Ok(())
     }
 
     fn remove_container(&self, container_id: &str) -> Result<()> {
-        let _output = Command::new("podman").args(&["rm", container_id]).output();
+        let _output = Command::new("podman").args(["rm", container_id]).output();
         Ok(())
     }
 

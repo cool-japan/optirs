@@ -4,8 +4,8 @@ use std::fmt::Debug;
 // This module implements efficient computation of second-order and higher-order
 // gradients, Hessians, and Jacobians for meta-learning and advanced optimization.
 
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Array3, Dimension, Ix1, Ix2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, Array1, Array2, Array3, Dimension, Ix1, Ix2};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -598,7 +598,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HigherOrderGrad
         let kfac_factors = KFACFactors {
             a_factors: vec![a_factor],
             g_factors: vec![g_factor],
-            damping: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            damping: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             update_frequency: 100,
         };
         
@@ -632,7 +632,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HigherOrderGrad
                 for k in 0..n {
                     // This would require triple differentiation
                     // Simplified implementation using finite differences
-                    let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+                    let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
                     
                     // f(x+h, y+h, z+h) - f(x+h, y+h, z-h) - ... (8 terms total)
                     // Divided by 8*h^3 for third derivative approximation

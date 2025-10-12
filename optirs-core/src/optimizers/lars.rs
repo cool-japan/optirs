@@ -9,8 +9,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Layer-wise Adaptive Rate Scaling (LARS) optimizer
@@ -32,7 +32,7 @@ use std::fmt::Debug;
 /// # Example
 ///
 /// ```no_run
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{LARS, Optimizer};
 ///
 /// let mut optimizer = LARS::new(0.01)
@@ -196,7 +196,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_lars_creation() {

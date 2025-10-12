@@ -4,9 +4,9 @@
 // including priority-based scheduling, resource-aware task allocation, and
 // dynamic load balancing.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime};
@@ -812,8 +812,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityCalcula
     }
 
     pub fn calculate_priority(&self, task: &ScheduledTask<T>) -> Result<TaskPriority<T>> {
-        let base_priority =
-            num_traits::cast::cast(task.priority.base_priority).unwrap_or_else(|| T::zero());
+        let base_priority = T::from(task.priority.base_priority).unwrap_or_else(|| T::zero());
         let urgency = self.calculate_urgency(task)?;
         let importance = self.calculate_importance(task)?;
         let efficiency = self.calculate_efficiency(task)?;
@@ -840,18 +839,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityCalcula
             let urgency = T::one() - T::from(time_to_deadline.as_secs_f64() / 3600.0).unwrap();
             Ok(urgency.max(T::zero()).min(T::one()))
         } else {
-            Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+            Ok(T::from(0.5).unwrap_or_else(|| T::zero()))
         }
     }
 
     fn calculate_importance(&self, _task: &ScheduledTask<T>) -> Result<T> {
         // Simplified importance calculation
-        Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+        Ok(T::from(0.5).unwrap_or_else(|| T::zero()))
     }
 
     fn calculate_efficiency(&self, _task: &ScheduledTask<T>) -> Result<T> {
         // Simplified efficiency calculation
-        Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+        Ok(T::from(0.5).unwrap_or_else(|| T::zero()))
     }
 }
 
@@ -914,11 +913,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskLoadBalance
 impl<T: Float + Debug + Default + Send + Sync> Default for PriorityWeights<T> {
     fn default() -> Self {
         Self {
-            base_weight: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-            urgency_weight: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()),
-            importance_weight: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()),
-            efficiency_weight: num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
-            history_weight: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+            base_weight: T::from(0.3).unwrap_or_else(|| T::zero()),
+            urgency_weight: T::from(0.25).unwrap_or_else(|| T::zero()),
+            importance_weight: T::from(0.25).unwrap_or_else(|| T::zero()),
+            efficiency_weight: T::from(0.15).unwrap_or_else(|| T::zero()),
+            history_weight: T::from(0.05).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -952,7 +951,7 @@ impl<T: Float + Debug + Default + Send + Sync> Default for EstimationAccuracyTra
     fn default() -> Self {
         Self {
             task_accuracies: HashMap::new(),
-            overall_accuracy: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            overall_accuracy: T::from(0.5).unwrap_or_else(|| T::zero()),
             accuracy_trend: VecDeque::new(),
             improvement_rate: T::zero(),
         }
@@ -964,7 +963,7 @@ impl<T: Float + Debug + Default + Send + Sync> Default for LoadPredictionModel<T
         Self {
             horizon: Duration::from_secs(300), // 5 minutes
             parameters: HashMap::new(),
-            accuracy: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            accuracy: T::from(0.5).unwrap_or_else(|| T::zero()),
             update_frequency: Duration::from_secs(60),
         }
     }

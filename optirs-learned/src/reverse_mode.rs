@@ -4,14 +4,14 @@ use std::fmt::Debug;
 // This module implements reverse-mode automatic differentiation for efficient
 // gradient computation in neural networks and optimization algorithms.
 
-use scirs2_core::ndarray_ext::Array1;
-use num_traits::Float;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};
 
 /// Reverse-mode AD engine (gradient tape)
-pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
+pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
     /// Computation tape for reverse pass
     tape: Vec<ReverseOperation<T>>,
 
@@ -226,7 +226,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Gra
     }
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
+impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
     /// Create a new reverse-mode AD engine
     pub fn new() -> Self {
         Self {
@@ -849,7 +849,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_
                             input_val.mapv(|x| if x > T::zero() { T::one() } else { T::zero() })
                         }
                         ActivationFunction::LeakyReLU { alpha } => {
-                            let alpha_t = num_traits::cast::cast(*alpha).unwrap_or_else(|| T::zero());
+                            let alpha_t = scirs2_core::numeric::NumCast::from(*alpha).unwrap_or_else(|| T::zero());
                             input_val.mapv(|x| if x > T::zero() { T::one() } else { alpha_t })
                         }
                     };
@@ -875,7 +875,7 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray_
                     }
                     ReductionType::Mean => {
                         // Mean: gradient divided by input size then broadcast
-                        let n = num_traits::cast::cast(inputshape[0]).unwrap_or_else(|| T::zero());
+                        let n = scirs2_core::numeric::NumCast::from(inputshape[0]).unwrap_or_else(|| T::zero());
                         let _grad = Array1::from_elem(inputshape[0], output_grad[0] / n);
                         Ok(vec![_grad])
                     }
@@ -961,7 +961,7 @@ pub struct GradientAccumulator<T: Float + Debug + Send + Sync + 'static> {
     count: usize,
 }
 
-impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> GradientAccumulator<T> {
+impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray::ScalarOperand + Send + Sync> GradientAccumulator<T> {
     pub fn new() -> Self {
         Self {
             gradients: HashMap::new(),
@@ -987,7 +987,7 @@ impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray_ext::ScalarOperan
             return HashMap::new();
         }
 
-        let count_t = num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero());
+        let count_t = scirs2_core::numeric::NumCast::from(self.count).unwrap_or_else(|| T::zero());
         self.gradients
             .iter()
             .map(|(name, grad)| (name.clone(), grad / count_t))

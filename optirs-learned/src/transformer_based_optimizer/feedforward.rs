@@ -2,8 +2,8 @@
 
 use super::layers::ActivationLayer;
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Axis};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Feed-forward network implementation
@@ -142,9 +142,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
         // Initialize weights with Xavier initialization
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_f64 = scirs2_core::random::f64();
+                let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = T::from(scaled_f64).unwrap();
+                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -159,7 +159,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
     /// Create with He initialization (better for ReLU)
     pub fn new_he_init(input_dim: usize, output_dim: usize) -> Result<Self> {
-        let scale = num_traits::cast::cast(2.0 / input_dim as f64)
+        let scale = scirs2_core::numeric::NumCast::from(2.0 / input_dim as f64)
             .unwrap_or_else(|| T::zero())
             .sqrt();
         let mut weight = Array2::zeros((input_dim, output_dim));
@@ -167,9 +167,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
         for i in 0..input_dim {
             for j in 0..output_dim {
-                let random_f64 = scirs2_core::random::f64();
+                let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = T::from(scaled_f64).unwrap();
+                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -224,9 +224,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 
         for i in 0..self.input_dim {
             for j in 0..self.output_dim {
-                let random_f64 = scirs2_core::random::f64();
+                let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = T::from(scaled_f64).unwrap();
+                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
                 self.weight[[i, j]] = random_val * scale;
             }
         }
@@ -539,13 +539,16 @@ impl<T: Float + Debug + Send + Sync + 'static> MixtureOfExperts<T> {
     }
 }
 
+// Re-export for backward compatibility
+pub use super::config::ActivationFunction;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_feedforward_network() {
-        let mut ffn = FeedForwardNetwork::<f32>::new(
+        let ffn = FeedForwardNetwork::<f32>::new(
             128,
             512,
             crate::transformer_based_optimizer::config::ActivationFunction::ReLU,
@@ -606,7 +609,7 @@ mod tests {
 
     #[test]
     fn test_mixture_of_experts() {
-        let mut moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
+        let moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
         assert!(moe.is_ok());
 
         let mut mixture = moe.unwrap();
@@ -630,6 +633,3 @@ mod tests {
         );
     }
 }
-
-// Re-export for backward compatibility
-pub use super::config::ActivationFunction;

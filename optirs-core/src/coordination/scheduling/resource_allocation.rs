@@ -5,9 +5,9 @@ use std::fmt::Debug;
 // dynamic resource pools, intelligent allocation strategies, and optimization
 // of resource utilization across optimization tasks.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, SystemTime};
 
@@ -998,11 +998,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         }
 
         // Check memory availability
-        let available_memory = num_traits::cast::cast(self.resource_pool.memory_mb)
-            .unwrap_or_else(|| T::zero())
+        let available_memory = T::from(self.resource_pool.memory_mb).unwrap_or_else(|| T::zero())
             * (T::one() - current_utilization.memory_utilization);
-        if available_memory < num_traits::cast::cast(request.memory_mb).unwrap_or_else(|| T::zero())
-        {
+        if available_memory < T::from(request.memory_mb).unwrap_or_else(|| T::zero()) {
             return Err(OptimError::ResourceUnavailable(
                 "Insufficient memory".to_string(),
             ));
@@ -1152,7 +1150,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> UtilizationTrac
     fn calculate_overall_utilization(&self) -> T {
         // Simplified overall utilization calculation
         (self.memory_utilization + self.storage_utilization + self.network_utilization)
-            / num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero())
+            / T::from(3.0).unwrap_or_else(|| T::zero())
     }
 }
 
@@ -1175,10 +1173,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceOptimiz
         // Simplified optimization implementation
         Ok(OptimizationResult {
             proposed_allocations: current_state.current_allocations.clone(),
-            performance_improvement: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            performance_improvement: T::from(0.1).unwrap_or_else(|| T::zero()),
             objectives_achieved: HashMap::new(),
-            optimization_cost: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            optimization_cost: T::from(0.05).unwrap_or_else(|| T::zero()),
+            confidence: T::from(0.8).unwrap_or_else(|| T::zero()),
             algorithm_used: self.current_strategy.clone(),
         })
     }
@@ -1191,7 +1189,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LoadBalancer<T>
             load_distribution: HashMap::new(),
             balancing_history: VecDeque::new(),
             load_predictor: LoadPredictor::new()?,
-            effectiveness: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            effectiveness: T::from(0.5).unwrap_or_else(|| T::zero()),
         })
     }
 }
@@ -1206,7 +1204,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LoadPredictor<T
                 training_size: 0,
                 performance_metrics: HashMap::new(),
             },
-            accuracy: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            accuracy: T::from(0.5).unwrap_or_else(|| T::zero()),
             recent_predictions: VecDeque::new(),
         })
     }
@@ -1291,12 +1289,12 @@ impl Default for NetworkSpec {
 impl<T: Float + Debug + Default + Send + Sync> Default for AllocationEfficiencyMetrics<T> {
     fn default() -> Self {
         Self {
-            utilization_efficiency: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            fragmentation: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            load_balance_score: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            utilization_efficiency: T::from(0.5).unwrap_or_else(|| T::zero()),
+            fragmentation: T::from(0.1).unwrap_or_else(|| T::zero()),
+            load_balance_score: T::from(0.8).unwrap_or_else(|| T::zero()),
             allocation_latency: Duration::from_millis(10),
-            success_rate: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
-            waste_percentage: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+            success_rate: T::from(0.95).unwrap_or_else(|| T::zero()),
+            waste_percentage: T::from(0.05).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1307,8 +1305,8 @@ impl<T: Float + Debug + Default + Send + Sync> Default for UtilizationTrends<T> 
             cpu_trend: TrendDirection::Stable,
             memory_trend: TrendDirection::Stable,
             gpu_trend: TrendDirection::Stable,
-            trend_strength: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            prediction_accuracy: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            trend_strength: T::from(0.1).unwrap_or_else(|| T::zero()),
+            prediction_accuracy: T::from(0.7).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1320,11 +1318,10 @@ impl<T: Float + Debug + Default + Send + Sync> Default for ResourceStatistics<T>
             total_deallocations: 0,
             failed_allocations: 0,
             average_allocation_time: Duration::from_millis(5),
-            average_utilization_efficiency: num_traits::cast::cast(0.7)
-                .unwrap_or_else(|| T::zero()),
-            fragmentation: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            load_balance_effectiveness: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-            conflict_resolution_rate: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            average_utilization_efficiency: T::from(0.7).unwrap_or_else(|| T::zero()),
+            fragmentation: T::from(0.1).unwrap_or_else(|| T::zero()),
+            load_balance_effectiveness: T::from(0.8).unwrap_or_else(|| T::zero()),
+            conflict_resolution_rate: T::from(0.9).unwrap_or_else(|| T::zero()),
         }
     }
 }

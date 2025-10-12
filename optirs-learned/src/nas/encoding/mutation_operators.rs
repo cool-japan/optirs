@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 
@@ -791,7 +791,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
         if self.config.available_operators.contains(&MutationType::ModifyParameters) {
             let param_mutator = ParameterMutator {
                 strength: self.config.mutation_strength,
-                distribution: ParameterDistribution::Gaussian { std: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()) },
+                distribution: ParameterDistribution::Gaussian { std: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()) },
                 selection_strategy: ParameterSelectionStrategy::Random,
             };
             self.operators.insert(MutationType::ModifyParameters, Box::new(param_mutator));
@@ -840,7 +840,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
     /// Select mutation operator based on strategy
     fn select_mutation_operator(&self, architecture: &ArchitectureGenotype<T>) -> Result<MutationType> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         // Filter applicable operators
         let applicable_ops: Vec<MutationType> = self.config.available_operators
@@ -922,7 +922,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
         if result.is_valid {
             stats.successes += 1;
         }
-        stats.success_rate = num_traits::cast::cast(stats.successes as f64 / stats.applications as f64).unwrap_or_else(|| T::zero());
+        stats.success_rate = scirs2_core::numeric::NumCast::from(stats.successes as f64 / stats.applications as f64).unwrap_or_else(|| T::zero());
         
         Ok(())
     }
@@ -942,7 +942,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
                 current_weight * (T::one() - params.failure_penalty)
             };
             
-            let clamped_weight = new_weight.max(num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())).min(num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()));
+            let clamped_weight = new_weight.max(scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())).min(scirs2_core::numeric::NumCast::from(10.0).unwrap_or_else(|| T::zero()));
             self.config.operator_weights.insert(mutation_type, clamped_weight);
         }
         
@@ -1014,7 +1014,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for AddOperationMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}", architecture.id, "add_op");
@@ -1080,15 +1080,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
     
     fn estimate_impact(&self, _architecture: &ArchitectureGenotype<T>) -> MutationImpact<T> {
         MutationImpact {
-            performance_delta: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()), // Small positive impact
-            complexity_delta: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),   // Increased complexity
+            performance_delta: scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()), // Small positive impact
+            complexity_delta: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),   // Increased complexity
             resource_delta: {
                 let mut resources = HashMap::new();
-                resources.insert("memory".to_string(), num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()));
-                resources.insert("flops".to_string(), num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()));
+                resources.insert("memory".to_string(), scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()));
+                resources.insert("flops".to_string(), scirs2_core::numeric::NumCast::from(0.15).unwrap_or_else(|| T::zero()));
                 resources
             },
-            confidence: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
             risk_level: RiskLevel::Low,
         }
     }
@@ -1097,7 +1097,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for RemoveOperationMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         if architecture.operations.len() <= self.min_operations {
             return Err(OptimError::InvalidInput(
@@ -1153,15 +1153,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
     
     fn estimate_impact(&self, _architecture: &ArchitectureGenotype<T>) -> MutationImpact<T> {
         MutationImpact {
-            performance_delta: num_traits::cast::cast(-0.1).unwrap_or_else(|| T::zero()), // Potential negative impact
-            complexity_delta: num_traits::cast::cast(-0.2).unwrap_or_else(|| T::zero()),  // Reduced complexity
+            performance_delta: scirs2_core::numeric::NumCast::from(-0.1).unwrap_or_else(|| T::zero()), // Potential negative impact
+            complexity_delta: scirs2_core::numeric::NumCast::from(-0.2).unwrap_or_else(|| T::zero()),  // Reduced complexity
             resource_delta: {
                 let mut resources = HashMap::new();
-                resources.insert("memory".to_string(), num_traits::cast::cast(-0.1).unwrap_or_else(|| T::zero()));
-                resources.insert("flops".to_string(), num_traits::cast::cast(-0.15).unwrap_or_else(|| T::zero()));
+                resources.insert("memory".to_string(), scirs2_core::numeric::NumCast::from(-0.1).unwrap_or_else(|| T::zero()));
+                resources.insert("flops".to_string(), scirs2_core::numeric::NumCast::from(-0.15).unwrap_or_else(|| T::zero()));
                 resources
             },
-            confidence: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
             risk_level: RiskLevel::Medium,
         }
     }
@@ -1170,7 +1170,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperator<T> for ParameterMutator<T> {
     fn mutate(&self, architecture: &ArchitectureGenotype<T>) -> Result<ArchitectureGenotype<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}", architecture.id, "param_mut");
@@ -1195,11 +1195,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
         if let Some(current_value) = operation.parameters.get(param_key) {
             let new_value = match &self.distribution {
                 ParameterDistribution::Gaussian { std } => {
-                    let noise = T::from(rng.random::<f64>() - 0.5).unwrap() * *std * num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                    let noise = T::from(rng.random::<f64>() - 0.5).unwrap() * *std * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
                     *current_value + noise
                 }
                 ParameterDistribution::Uniform { range } => {
-                    let noise = T::from(rng.random::<f64>() - 0.5).unwrap() * *range * num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                    let noise = T::from(rng.random::<f64>() - 0.5).unwrap() * *range * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
                     *current_value + noise
                 }
                 _ => *current_value, // Fallback
@@ -1235,7 +1235,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
             performance_delta: T::zero(), // Neutral expected impact
             complexity_delta: T::zero(),  // No complexity change
             resource_delta: HashMap::new(),
-            confidence: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
             risk_level: RiskLevel::VeryLow,
         }
     }
@@ -1297,7 +1297,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceFeed
             moving_average: T::zero(),
             trend: PerformanceTrend::Stable,
             stagnation_counter: 0,
-            best_performance: num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()),
+            best_performance: scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1305,15 +1305,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceFeed
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for MutationConfig<T> {
     fn default() -> Self {
         let mut operator_weights = HashMap::new();
-        operator_weights.insert(MutationType::AddOperation, num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()));
-        operator_weights.insert(MutationType::RemoveOperation, num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()));
-        operator_weights.insert(MutationType::ReplaceOperation, num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()));
-        operator_weights.insert(MutationType::ModifyParameters, num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()));
+        operator_weights.insert(MutationType::AddOperation, scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()));
+        operator_weights.insert(MutationType::RemoveOperation, scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()));
+        operator_weights.insert(MutationType::ReplaceOperation, scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()));
+        operator_weights.insert(MutationType::ModifyParameters, scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()));
         
         Self {
-            mutation_probability: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            mutation_probability: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             max_mutations_per_arch: 3,
-            mutation_strength: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            mutation_strength: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             available_operators: vec![
                 MutationType::AddOperation,
                 MutationType::RemoveOperation,
@@ -1322,12 +1322,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Mut
             ],
             operator_weights,
             adaptive_params: Some(AdaptiveMutationParams {
-                adaptation_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                success_threshold: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-                failure_penalty: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                adaptation_rate: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                success_threshold: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
+                failure_penalty: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
                 window_size: 10,
-                min_mutation_rate: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-                max_mutation_rate: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                min_mutation_rate: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
+                max_mutation_rate: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             }),
             preserve_constraints: true,
             track_history: true,

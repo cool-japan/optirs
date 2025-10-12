@@ -6,8 +6,8 @@
 #[allow(dead_code)]
 use super::core::*;
 use super::sdk::*;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -1218,9 +1218,11 @@ mod tests {
     fn test_documentation_compliance_checker() {
         let checker = DocumentationComplianceChecker;
 
-        let mut info = PluginInfo::default();
-        info.description = "Short".to_string();
-        info.author = "".to_string();
+        let mut info = PluginInfo {
+            description: "Short".to_string(),
+            author: "".to_string(),
+            ..Default::default()
+        };
 
         let result = checker.check_compliance(&info);
         assert!(!result.compliant);

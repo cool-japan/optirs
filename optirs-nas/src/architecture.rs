@@ -4,7 +4,7 @@
 //! including the search space definition, architecture encoding/decoding,
 //! and mutation/crossover operations for evolutionary algorithms.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -234,7 +234,7 @@ pub struct ArchitectureSpace {
 impl ArchitectureSpace {
     /// Create a new architecture space with default settings
     pub fn new() -> Self {
-        let mut component_types = vec![
+        let component_types = vec![
             ComponentType::SGD,
             ComponentType::Adam,
             ComponentType::AdamW,
@@ -325,7 +325,7 @@ impl ArchitectureSpace {
         let num_connections = rng.gen_range(0..=max_connections);
 
         for _ in 0..num_connections {
-            if rng.gen::<f64>() < self.connection_probability {
+            if rng.random::<f64>() < self.connection_probability {
                 let from_idx = rng.gen_range(0..num_components);
                 let to_idx = rng.gen_range(0..num_components);
 
@@ -353,7 +353,7 @@ impl ArchitectureSpace {
         }
 
         Architecture {
-            id: format!("arch_{}", rng.gen::<u64>()),
+            id: format!("arch_{}", rng.random::<u64>()),
             components,
             connections,
             hyperparameters: HashMap::new(),
@@ -371,19 +371,19 @@ impl ArchitectureSpace {
         use scirs2_core::random::Rng;
         let mut rng = scirs2_core::random::Random::default();
         let mut mutated = architecture.clone();
-        mutated.id = format!("{}_{}_mut", architecture.id, rng.gen::<u32>());
+        mutated.id = format!("{}_{}_mut", architecture.id, rng.random::<u32>());
         mutated.generation = architecture.generation + 1;
         mutated.performance = None; // Reset performance after mutation
 
         // Mutate component hyperparameters
         for component in &mut mutated.components {
-            if rng.gen::<f64>() < mutation_rate {
+            if rng.random::<f64>() < mutation_rate {
                 if let Some(ranges) = self.hyperparameter_ranges.get(&component.component_type) {
                     for (param_name, value) in &mut component.hyperparameters {
                         if let Some((min_val, max_val)) = ranges.get(param_name) {
                             // Gaussian mutation around current value
                             let std_dev = (max_val - min_val) * 0.1;
-                            let mutation = rng.gen::<f64>() * std_dev - std_dev / 2.0;
+                            let mutation = rng.random::<f64>() * std_dev - std_dev / 2.0;
                             *value = (*value + mutation).clamp(*min_val, *max_val);
                         }
                     }
@@ -392,8 +392,8 @@ impl ArchitectureSpace {
         }
 
         // Randomly add or remove components
-        if rng.gen::<f64>() < mutation_rate * 0.1 {
-            if mutated.components.len() < self.max_components && rng.gen::<bool>() {
+        if rng.random::<f64>() < mutation_rate * 0.1 {
+            if mutated.components.len() < self.max_components && rng.random::<bool>() {
                 // Add component
                 let component_type =
                     self.component_types[rng.gen_range(0..self.component_types.len())];
@@ -446,8 +446,8 @@ impl ArchitectureSpace {
         let mut child1 = parent1.clone();
         let mut child2 = parent2.clone();
 
-        child1.id = format!("{}_{}_cross", parent1.id, rng.gen::<u32>());
-        child2.id = format!("{}_{}_cross", parent2.id, rng.gen::<u32>());
+        child1.id = format!("{}_{}_cross", parent1.id, rng.random::<u32>());
+        child2.id = format!("{}_{}_cross", parent2.id, rng.random::<u32>());
         child1.generation = parent1.generation.max(parent2.generation) + 1;
         child2.generation = parent1.generation.max(parent2.generation) + 1;
         child1.performance = None;
@@ -470,7 +470,7 @@ impl ArchitectureSpace {
             } else if new_components1.len() < self.min_components {
                 // Pad with random components from parents if too few
                 while new_components1.len() < self.min_components {
-                    let source = if rng.gen_bool(0.5) {
+                    let source = if rng.random_bool() {
                         &parent1.components
                     } else {
                         &parent2.components
@@ -489,7 +489,7 @@ impl ArchitectureSpace {
             } else if new_components2.len() < self.min_components {
                 // Pad with random components from parents if too few
                 while new_components2.len() < self.min_components {
-                    let source = if rng.gen_bool(0.5) {
+                    let source = if rng.random_bool() {
                         &parent1.components
                     } else {
                         &parent2.components
@@ -580,10 +580,10 @@ impl ArchitectureSpace {
         let mut rec_stack = std::collections::HashSet::new();
 
         for component in &architecture.components {
-            if !visited.contains(&component.id) {
-                if self.has_cycle_util(architecture, &component.id, &mut visited, &mut rec_stack) {
-                    return true;
-                }
+            if !visited.contains(&component.id)
+                && Self::has_cycle_util(architecture, &component.id, &mut visited, &mut rec_stack)
+            {
+                return true;
             }
         }
 
@@ -591,7 +591,6 @@ impl ArchitectureSpace {
     }
 
     fn has_cycle_util(
-        &self,
         architecture: &Architecture,
         node: &str,
         visited: &mut std::collections::HashSet<String>,
@@ -604,7 +603,7 @@ impl ArchitectureSpace {
         for connection in &architecture.connections {
             if connection.from == node && connection.enabled {
                 if !visited.contains(&connection.to) {
-                    if self.has_cycle_util(architecture, &connection.to, visited, rec_stack) {
+                    if Self::has_cycle_util(architecture, &connection.to, visited, rec_stack) {
                         return true;
                     }
                 } else if rec_stack.contains(&connection.to) {

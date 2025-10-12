@@ -192,6 +192,12 @@ pub struct WriteBarrierEntry {
     pub timestamp: Instant,
 }
 
+impl Default for ReferenceTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReferenceTracker {
     pub fn new() -> Self {
         Self {
@@ -204,14 +210,8 @@ impl ReferenceTracker {
 
     /// Add reference between objects
     pub fn add_reference(&mut self, from: usize, to: usize) {
-        self.reference_graph
-            .entry(from)
-            .or_insert_with(HashSet::new)
-            .insert(to);
-        self.reverse_references
-            .entry(to)
-            .or_insert_with(HashSet::new)
-            .insert(from);
+        self.reference_graph.entry(from).or_default().insert(to);
+        self.reverse_references.entry(to).or_default().insert(from);
     }
 
     /// Remove reference between objects
@@ -1212,7 +1212,7 @@ mod tests {
     fn test_gc_engine_creation() {
         let config = GCConfig::default();
         let engine = GarbageCollectionEngine::new(config);
-        assert!(engine.collectors.len() > 0);
+        assert!(!engine.collectors.is_empty());
     }
 
     #[test]

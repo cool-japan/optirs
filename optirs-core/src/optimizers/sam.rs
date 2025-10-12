@@ -5,8 +5,8 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -32,7 +32,7 @@ use std::marker::PhantomData;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{SAM, SGD};
 /// use optirs_core::Optimizer;
 ///
@@ -335,12 +335,12 @@ mod tests {
     use super::*;
     use crate::optimizers::sgd::SGD;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_sam_creation() {
         let sgd = SGD::new(0.01);
-        let optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> = SAM::new(sgd);
+        let optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
 
         assert_abs_diff_eq!(optimizer.rho(), 0.05);
         assert_abs_diff_eq!(optimizer.get_learning_rate(), 0.01);
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn test_sam_with_config() {
         let sgd = SGD::new(0.01);
-        let optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
+        let optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> =
             SAM::with_config(sgd, 0.1, true);
 
         assert_abs_diff_eq!(optimizer.rho(), 0.1);
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn test_sam_first_step() {
         let sgd = SGD::new(0.1);
-        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> = SAM::new(sgd);
+        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn test_sam_adaptive() {
         let sgd = SGD::new(0.1);
-        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> =
+        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> =
             SAM::with_config(sgd, 0.05, true);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn test_sam_second_step() {
         let sgd = SGD::new(0.1);
-        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> = SAM::new(sgd);
+        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn test_sam_reset() {
         let sgd = SGD::new(0.1);
-        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> = SAM::new(sgd);
+        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn test_sam_error_handling() {
         let sgd = SGD::new(0.1);
-        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray_ext::Ix1> = SAM::new(sgd);
+        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
 
         // Gradient with all zeros should return error
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);

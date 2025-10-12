@@ -5,8 +5,8 @@
 
 use super::config::LayerInfo;
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{s, Array1, Array2};
+use scirs2_core::ndarray::{s, Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// K-FAC optimizer state for a single layer
@@ -54,8 +54,8 @@ impl<
             + Send
             + Sync
             + 'static
-            + scirs2_core::ndarray_ext::ScalarOperand
-            + num_traits::FromPrimitive,
+            + scirs2_core::ndarray::ScalarOperand
+            + scirs2_core::numeric::FromPrimitive,
     > KFACLayerState<T>
 {
     /// Create a new layer state for the given layer
@@ -232,10 +232,10 @@ impl<
             return Array2::eye(data.ncols());
         }
 
-        let batch_size_t = num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+        let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
 
         // Center the data
-        let mean = data.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
+        let mean = data.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
         let centered = data - &mean;
 
         // Compute covariance: (1/(n-1)) * X^T * X
@@ -259,7 +259,7 @@ impl<
         let mut inv = Array2::eye(n);
 
         // Add small regularization to ensure numerical stability
-        let reg_term = num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero());
+        let reg_term = T::from(1e-8).unwrap_or_else(|| T::zero());
         for i in 0..n {
             inv[[i, i]] = inv[[i, i]] + reg_term;
         }

@@ -6,7 +6,6 @@
 use clap::{Arg, Command};
 use optirs_core::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

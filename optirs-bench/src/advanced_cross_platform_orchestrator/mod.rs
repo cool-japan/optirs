@@ -104,8 +104,10 @@ pub fn create_default_orchestrator() -> crate::error::Result<CrossPlatformOrches
 
 /// Convenience function to create an orchestrator with cloud testing enabled
 pub fn create_cloud_orchestrator() -> crate::error::Result<CrossPlatformOrchestrator> {
-    let mut config = OrchestratorConfig::default();
-    config.enable_cloud_testing = true;
+    let mut config = OrchestratorConfig {
+        enable_cloud_testing: true,
+        ..Default::default()
+    };
     // Enable cloud providers by setting up basic configs
     config.cloud_config.aws = Some(config::AwsConfig::default());
     config.cloud_config.azure = Some(config::AzureConfig::default());
@@ -117,8 +119,10 @@ pub fn create_cloud_orchestrator() -> crate::error::Result<CrossPlatformOrchestr
 
 /// Convenience function to create an orchestrator with container testing enabled
 pub fn create_container_orchestrator() -> crate::error::Result<CrossPlatformOrchestrator> {
-    let mut config = OrchestratorConfig::default();
-    config.enable_container_testing = true;
+    let mut config = OrchestratorConfig {
+        enable_container_testing: true,
+        ..Default::default()
+    };
     config.container_config.runtime = ContainerRuntime::Docker;
     // Container configuration will use defaults
 
@@ -127,11 +131,13 @@ pub fn create_container_orchestrator() -> crate::error::Result<CrossPlatformOrch
 
 /// Convenience function to create a minimal orchestrator for CI/CD
 pub fn create_ci_orchestrator() -> crate::error::Result<CrossPlatformOrchestrator> {
-    let mut config = OrchestratorConfig::default();
-    config.enable_parallel_testing = true;
-    config.max_concurrent_jobs = 4;
-    config.enable_container_testing = true;
-    config.enable_cloud_testing = false; // Disable cloud for CI to save costs
+    let mut config = OrchestratorConfig {
+        enable_parallel_testing: true,
+        max_concurrent_jobs: 4,
+        enable_container_testing: true,
+        enable_cloud_testing: false, // Disable cloud for CI to save costs
+        ..Default::default()
+    };
 
     // Configure for essential platforms only
     config.matrix_config.platforms = vec![
@@ -181,12 +187,10 @@ pub async fn run_platform_specific_testing(
     let mut config = config.unwrap_or_default();
 
     // Filter platforms to only include requested ones
-    config.matrix_config.platforms = config
+    config
         .matrix_config
         .platforms
-        .into_iter()
-        .filter(|spec| platforms.contains(&spec.target))
-        .collect();
+        .retain(|spec| platforms.contains(&spec.target));
 
     let mut orchestrator = CrossPlatformOrchestrator::new(config)?;
     orchestrator.execute_cross_platform_testing().await

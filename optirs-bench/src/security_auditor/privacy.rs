@@ -175,9 +175,6 @@ impl PrivacyGuaranteesAnalyzer {
             PrivacyAttackScenario::NoiseReductionAttack => {
                 self.test_noise_reduction(test)?;
             }
-            PrivacyAttackScenario::PropertyInference => {
-                self.test_information_leakage(test)?;
-            }
         }
 
         let execution_time = start_time.elapsed();
@@ -672,7 +669,7 @@ mod tests {
     #[test]
     fn test_builtin_tests() {
         let analyzer = PrivacyGuaranteesAnalyzer::with_builtin_tests();
-        assert!(analyzer.get_tests().len() > 0);
+        assert!(!analyzer.get_tests().is_empty());
 
         // Check for specific tests
         let test_names: Vec<_> = analyzer.get_tests().iter().map(|t| &t.name).collect();

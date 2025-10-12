@@ -4,9 +4,9 @@
 // including adaptive sequence processing, memory-efficient attention mechanisms,
 // and dynamic architecture adaptation for complex optimization landscapes.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
+use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
@@ -880,13 +880,14 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AdaptiveConfig<T> {
             adaptive_sequence_length: true,
             max_sequence_length: 1024,
             min_sequence_length: 64,
-            attention_sparsity_threshold: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            attention_sparsity_threshold: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
             memory_budget: 8192, // 8GB
             dynamic_head_pruning: true,
             layer_adaptation: true,
             landscape_analysis_frequency: 100,
             prediction_horizon: 50,
-            adaptation_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            adaptation_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1180,7 +1181,7 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
 
         // Combined adaptive scaling
         let combined_scale = sequence_scale * attention_scale * architecture_scale
-            / num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(3.0).unwrap_or_else(|| T::zero());
 
         // Apply scaled gradient updates
         for (i, (param, grad)) in parameters.iter_mut().zip(gradients.iter()).enumerate() {
@@ -1193,13 +1194,15 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
 
     /// Calculate adaptive learning rate for each parameter
     fn calculate_adaptive_learning_rate(&self, param_index: usize, basescale: T) -> Result<T> {
-        let base_lr = num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()); // Base learning rate
+        let base_lr = scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()); // Base learning rate
 
         // Parameter-specific adaptation
-        let param_adaptation = if param_index % 2 == 0 {
-            num_traits::cast::cast(1.1).unwrap_or_else(|| T::zero()) // Slightly higher for even indices
+        let param_adaptation = if param_index.is_multiple_of(2) {
+            scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero())
+        // Slightly higher for even indices
         } else {
-            num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()) // Slightly lower for odd indices
+            scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())
+            // Slightly lower for odd indices
         };
 
         Ok(base_lr * basescale * param_adaptation)
@@ -1245,7 +1248,8 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
         let stability_measure = T::one() / (T::one() + variance);
 
         // Plateau detection
-        let plateau_threshold = num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero());
+        let plateau_threshold =
+            scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero());
         let plateau_detection = convergence_rate.abs() < plateau_threshold;
 
         // Oscillation measure (based on consecutive differences)
@@ -1318,7 +1322,7 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
                 / enhancement_result
                     .attention_optimization
                     .computational_speedup,
-            adaptation_time: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Placeholder
+            adaptation_time: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()), // Placeholder
         };
 
         self.architecture_adapter
@@ -1344,7 +1348,7 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
                 .sum();
             sum / T::from(self.landscape_analyzer.analysis_cache.len()).unwrap()
         } else {
-            num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
         };
 
         let avg_performance = if !self.architecture_adapter.performance_history.is_empty() {
@@ -1356,15 +1360,17 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
                 .sum();
             sum / T::from(self.architecture_adapter.performance_history.len()).unwrap()
         } else {
-            num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
         };
 
         EnhancementStatistics {
             total_enhancements: self.landscape_analyzer.analysis_cache.len(),
             average_complexity: avg_complexity,
             average_performance: avg_performance,
-            memory_efficiency: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // Placeholder
-            adaptation_success_rate: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()), // Placeholder
+            memory_efficiency: scirs2_core::numeric::NumCast::from(0.8)
+                .unwrap_or_else(|| T::zero()), // Placeholder
+            adaptation_success_rate: scirs2_core::numeric::NumCast::from(0.85)
+                .unwrap_or_else(|| T::zero()), // Placeholder
         }
     }
 }
@@ -1375,7 +1381,8 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveSequenceProcessor<T> {
         Ok(Self {
             current_length: 512,
             importance_scores: VecDeque::new(),
-            compression_ratio: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            compression_ratio: scirs2_core::numeric::NumCast::from(0.8)
+                .unwrap_or_else(|| T::zero()),
             compressor: SequenceCompressor::new()?,
             windowing_strategy: WindowingStrategy::ImportanceBased,
         })
@@ -1403,13 +1410,15 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveSequenceProcessor<T> {
         // Adapt compression ratio based on difficulty
         let new_compression_ratio = if difficulty_factor > 0.6 {
             // High difficulty: reduce compression to preserve information
-            self.compression_ratio * num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())
+            self.compression_ratio
+                * scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())
         } else {
             // Lower difficulty: increase compression for efficiency
-            self.compression_ratio * num_traits::cast::cast(1.1).unwrap_or_else(|| T::zero())
+            self.compression_ratio
+                * scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero())
         }
-        .min(num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()))
-        .max(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+        .min(scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()))
+        .max(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
 
         // Update internal state
         self.current_length = new_length;
@@ -1418,15 +1427,15 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveSequenceProcessor<T> {
         // Calculate information preservation based on compression ratio
         let information_preservation = T::one()
             - (T::one() - new_compression_ratio)
-                * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+                * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
 
         // Calculate efficiency gain
         let length_efficiency =
-            num_traits::cast::cast(self.current_length as f64 / new_length as f64)
+            scirs2_core::numeric::NumCast::from(self.current_length as f64 / new_length as f64)
                 .unwrap_or_else(|| T::zero());
         let compression_efficiency = T::one() / new_compression_ratio;
         let efficiency_gain = (length_efficiency + compression_efficiency)
-            / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
 
         // Update importance scores based on landscape
         self.update_importance_scores(analysis)?;
@@ -1441,11 +1450,11 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveSequenceProcessor<T> {
 
     fn update_importance_scores(&mut self, analysis: &LandscapeAnalysis<T>) -> Result<()> {
         // Generate importance scores based on landscape analysis
-        let base_importance = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
-        let complexity_boost =
-            analysis.complexity * num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero());
-        let difficulty_boost =
-            analysis.difficulty * num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero());
+        let base_importance = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
+        let complexity_boost = analysis.complexity
+            * scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero());
+        let difficulty_boost = analysis.difficulty
+            * scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero());
 
         let new_importance = base_importance + complexity_boost + difficulty_boost;
 
@@ -1490,10 +1499,10 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryEfficientAttentionManager<T
         // Calculate sparsity level based on landscape
         let sparsitylevel = if complexity > 0.7 {
             // High complexity: lower sparsity for more attention
-            num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero())
         } else {
             // Lower complexity: higher sparsity for efficiency
-            num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(0.15).unwrap_or_else(|| T::zero())
         };
 
         // Apply sparsity mask
@@ -1519,7 +1528,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryEfficientAttentionManager<T
         let speedup_from_sparsity = T::one() / sparsitylevel;
         let speedup_from_dimensions = T::from(512.0 * 512.0 / (seq_len * seq_len) as f64).unwrap();
         let computational_speedup = (speedup_from_sparsity + speedup_from_dimensions)
-            / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
 
         // Update memory tracker
         self.memory_tracker.current_usage += optimized_size;
@@ -1544,25 +1553,23 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryEfficientAttentionManager<T
         let base_seq_len = 512;
 
         // Adjust based on complexity and difficulty
-        let heads = if complexity > 0.8 {
+        let heads = (if complexity > 0.8 {
             (base_heads as f64 * 1.5) as usize
         } else if complexity < 0.3 {
             (base_heads as f64 * 0.75) as usize
         } else {
             base_heads
-        }
-        .max(4)
-        .min(16);
+        })
+        .clamp(4, 16);
 
-        let seq_len = if difficulty > 0.7 {
+        let seq_len = (if difficulty > 0.7 {
             (base_seq_len as f64 * 1.2) as usize
         } else if difficulty < 0.3 {
             (base_seq_len as f64 * 0.8) as usize
         } else {
             base_seq_len
-        }
-        .max(256)
-        .min(1024);
+        })
+        .clamp(256, 1024);
 
         Ok((heads, seq_len))
     }
@@ -1579,22 +1586,26 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryEfficientAttentionManager<T
                 for j in 0..seq_len {
                     // Generate attention weight based on position and analysis
                     let distance = ((i as i32 - j as i32).abs() as f64).sqrt();
-                    let base_attention = (-num_traits::cast::cast(distance)
+                    let base_attention = (-scirs2_core::numeric::NumCast::from(distance)
                         .unwrap_or_else(|| T::zero())
-                        / (num_traits::cast::cast(seq_len).unwrap_or_else(|| T::zero())
-                            * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())))
+                        / (scirs2_core::numeric::NumCast::from(seq_len)
+                            .unwrap_or_else(|| T::zero())
+                            * scirs2_core::numeric::NumCast::from(0.1)
+                                .unwrap_or_else(|| T::zero())))
                     .exp();
 
                     // Modulate based on landscape analysis
                     let complexity_factor = analysis.complexity.to_f64().unwrap_or(0.5);
                     let modulated_attention = base_attention
                         * (T::one()
-                            + num_traits::cast::cast(complexity_factor)
+                            + scirs2_core::numeric::NumCast::from(complexity_factor)
                                 .unwrap_or_else(|| T::zero())
-                                * num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()));
+                                * scirs2_core::numeric::NumCast::from(0.3)
+                                    .unwrap_or_else(|| T::zero()));
 
                     patterns[[head, i, j]] =
-                        num_traits::cast::cast(modulated_attention).unwrap_or_else(|| T::zero());
+                        scirs2_core::numeric::NumCast::from(modulated_attention)
+                            .unwrap_or_else(|| T::zero());
                 }
             }
         }
@@ -1636,8 +1647,9 @@ impl<T: Float + Debug + Send + Sync + 'static> DynamicArchitectureAdapter<T> {
         Ok(ArchitectureAdaptation {
             adapted_config: self.current_config.clone(),
             changes: vec![ArchitectureChange::LayerCountChange(6)],
-            expected_improvement: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            expected_improvement: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
         })
     }
 }
@@ -1660,10 +1672,10 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationLandscapeAnalyzer<T> 
     ) -> Result<LandscapeAnalysis<T>> {
         // Simplified implementation
         Ok(LandscapeAnalysis {
-            complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            difficulty: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
+            complexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            difficulty: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
             recommended_strategies: vec![OptimizationStrategy::Adaptive],
-            confidence: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
         })
     }
 }
@@ -1685,10 +1697,12 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformancePredictor<T
     ) -> Result<PerformancePrediction<T>> {
         // Simplified implementation
         Ok(PerformancePrediction {
-            convergence_improvement: num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
-            final_performance: num_traits::cast::cast(0.92).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
-            uncertainty: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+            convergence_improvement: scirs2_core::numeric::NumCast::from(0.15)
+                .unwrap_or_else(|| T::zero()),
+            final_performance: scirs2_core::numeric::NumCast::from(0.92)
+                .unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
+            uncertainty: scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()),
         })
     }
 }
@@ -1729,10 +1743,13 @@ impl MemoryUsageTracker {
 impl<T: Float + Debug + Send + Sync + 'static> ComplexityEstimator<T> {
     fn new() -> Self {
         Self {
-            computational_complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            sample_complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            model_complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            generalization_complexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            computational_complexity: scirs2_core::numeric::NumCast::from(0.5)
+                .unwrap_or_else(|| T::zero()),
+            sample_complexity: scirs2_core::numeric::NumCast::from(0.5)
+                .unwrap_or_else(|| T::zero()),
+            model_complexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            generalization_complexity: scirs2_core::numeric::NumCast::from(0.5)
+                .unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1802,9 +1819,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionCache<T> {
 impl<T: Float + Debug + Send + Sync + 'static> UncertaintyEstimator<T> {
     fn new(method: UncertaintyMethod) -> Self {
         Self {
-            epistemic_uncertainty: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            aleatoric_uncertainty: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
-            total_uncertainty: num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
+            epistemic_uncertainty: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
+            aleatoric_uncertainty: scirs2_core::numeric::NumCast::from(0.05)
+                .unwrap_or_else(|| T::zero()),
+            total_uncertainty: scirs2_core::numeric::NumCast::from(0.15)
+                .unwrap_or_else(|| T::zero()),
             estimation_method: method,
         }
     }
@@ -1813,7 +1833,7 @@ impl<T: Float + Debug + Send + Sync + 'static> UncertaintyEstimator<T> {
 impl<T: Float + Debug + Send + Sync + 'static> LocalMinimaDetector<T> {
     fn new() -> Self {
         Self {
-            threshold: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            threshold: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             detected_minima: Vec::new(),
             algorithm: MinimaDetectionAlgorithm::GradientBased,
         }
@@ -1823,7 +1843,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LocalMinimaDetector<T> {
 impl<T: Float + Debug + Send + Sync + 'static> SaddlePointDetector<T> {
     fn new() -> Self {
         Self {
-            threshold: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            threshold: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             detected_saddles: Vec::new(),
             algorithm: SaddleDetectionAlgorithm::EigenvalueBased,
         }
@@ -1878,9 +1898,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PatternRecognizer<T> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for LandscapeFeatures<T> {
     fn default() -> Self {
         Self {
-            smoothness: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            multimodality: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-            noise_level: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            smoothness: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            multimodality: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
+            noise_level: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             curvature: CurvatureInfo::default(),
             gradient_characteristics: GradientCharacteristics::default(),
         }
@@ -1890,13 +1910,15 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for LandscapeFeatures<T> 
 impl<T: Float + Debug + Send + Sync + 'static> Default for CurvatureInfo<T> {
     fn default() -> Self {
         Self {
-            mean_curvature: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            gaussian_curvature: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+            mean_curvature: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            gaussian_curvature: scirs2_core::numeric::NumCast::from(0.05)
+                .unwrap_or_else(|| T::zero()),
             principal_curvatures: vec![
-                num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                num_traits::cast::cast(-0.05).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(-0.05).unwrap_or_else(|| T::zero()),
             ],
-            condition_number: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()),
+            condition_number: scirs2_core::numeric::NumCast::from(10.0)
+                .unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1904,10 +1926,10 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for CurvatureInfo<T> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for GradientCharacteristics<T> {
     fn default() -> Self {
         Self {
-            gradient_norm: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            consistency: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-            noise_ratio: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            correlation: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            gradient_norm: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            consistency: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+            noise_ratio: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            correlation: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1915,10 +1937,11 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for GradientCharacteristi
 impl<T: Float + Debug + Send + Sync + 'static> Default for CompressionParams<T> {
     fn default() -> Self {
         Self {
-            target_ratio: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
-            quality_threshold: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+            target_ratio: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
+            quality_threshold: scirs2_core::numeric::NumCast::from(0.95)
+                .unwrap_or_else(|| T::zero()),
             max_time: 1000,
-            strength: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            strength: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1926,9 +1949,11 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for CompressionParams<T> 
 impl<T: Float + Debug + Send + Sync + 'static> Default for CompressionQualityMetrics<T> {
     fn default() -> Self {
         Self {
-            reconstruction_error: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
-            information_loss: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            compression_ratio: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            reconstruction_error: scirs2_core::numeric::NumCast::from(0.05)
+                .unwrap_or_else(|| T::zero()),
+            information_loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            compression_ratio: scirs2_core::numeric::NumCast::from(0.5)
+                .unwrap_or_else(|| T::zero()),
             compression_time: 100,
         }
     }

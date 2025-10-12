@@ -5,13 +5,19 @@
 
 use crate::error::{OptimError, Result};
 use crate::TestFunction;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 // use serde::{Deserialize, Serialize}; // Commented out for now
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::process::Command;
 use std::time::{Duration, Instant};
+
+/// Type alias for optimizer functions taking parameters and gradients
+type OptimizerFn<A> = Box<dyn Fn(&Array1<A>, &Array1<A>) -> Array1<A>>;
+
+/// Type alias for optimizer function references (trait objects)
+type OptimizerFnRef<'a, A> = &'a dyn Fn(&Array1<A>, &Array1<A>) -> Array1<A>;
 
 /// Cross-framework benchmark configuration
 #[derive(Debug, Clone)]
@@ -392,7 +398,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
     /// Run comprehensive cross-framework benchmark
     pub fn run_comprehensive_benchmark(
         &mut self,
-        scirs2_optimizers: Vec<(String, Box<dyn Fn(&Array1<A>, &Array1<A>) -> Array1<A>>)>,
+        scirs2_optimizers: Vec<(String, OptimizerFn<A>)>,
     ) -> Result<Vec<CrossFrameworkBenchmarkResult<A>>> {
         let mut all_results = Vec::new();
 
@@ -420,7 +426,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
         test_function: &TestFunction<A>,
         problem_dim: usize,
         batch_size: usize,
-        scirs2_optimizers: &[(String, Box<dyn Fn(&Array1<A>, &Array1<A>) -> Array1<A>>)],
+        scirs2_optimizers: &[(String, OptimizerFn<A>)],
     ) -> Result<CrossFrameworkBenchmarkResult<A>> {
         let mut optimizer_results = HashMap::new();
 
@@ -479,7 +485,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
         test_function: &TestFunction<A>,
         problem_dim: usize,
         _batch_size: usize,
-        optimizer: &dyn Fn(&Array1<A>, &Array1<A>) -> Array1<A>,
+        optimizer: &OptimizerFn<A>,
     ) -> Result<OptimizerBenchmarkSummary<A>> {
         let mut convergence_times = Vec::new();
         let mut final_values = Vec::new();
@@ -963,7 +969,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
                     score
                 ));
             }
-            report.push_str("\n");
+            report.push('\n');
         }
 
         // Statistical significance

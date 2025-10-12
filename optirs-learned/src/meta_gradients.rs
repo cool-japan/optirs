@@ -5,8 +5,8 @@ use std::fmt::Debug;
 // Reptile, and other meta-learning approaches that require gradients of
 // gradients with respect to meta-parameters.
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
 use super::forward_mode::ForwardModeEngine;
@@ -16,7 +16,7 @@ use crate::error::Result;
 
 /// Meta-gradient computation engine
 #[allow(dead_code)]
-pub struct MetaGradientEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
+pub struct MetaGradientEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
     /// Forward-mode engine for directional derivatives
     forward_engine: ForwardModeEngine<T>,
 
@@ -407,7 +407,7 @@ pub enum CheckpointPolicy {
     None,
 }
 
-impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync>
+impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand + Send + Sync>
     MetaGradientEngine<T>
 {
     /// Create a new meta-gradient engine
@@ -752,7 +752,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         objective_fn: &impl Fn(&Array1<T>, &Array1<T>, &[(Array1<T>, Array1<T>)]) -> T,
     ) -> Result<Array1<T>> {
         let mut _params = meta_params.clone();
-        let lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
 
         for _step in 0..self.inner_loop_config.num_steps {
             // Compute gradient on support set
@@ -779,8 +779,8 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         objective_fn: &impl Fn(&Array1<T>, &Array1<T>, &[(Array1<T>, Array1<T>)]) -> T,
     ) -> Result<Array1<T>> {
         let mut _params = meta_params.clone();
-        let lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
-        let convergence_threshold = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let convergence_threshold = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
 
         for _step in 0..self.inner_loop_config.max_steps {
             let gradient =
@@ -848,7 +848,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         }
 
         // Extract configuration to avoid borrow conflicts
-        let inner_lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let inner_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
         let inner_steps = self.inner_loop_config.num_steps;
         let task_query_set = task.query_set.clone();
         let _task_support_set = task.support_set.clone();
@@ -863,13 +863,13 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
                 // Simplified gradient computation (this is a placeholder)
                 // In a real implementation, you'd need to compute gradients properly
                 let grad_norm = adapted_params.iter().map(|&x| x * x).sum::<T>().sqrt();
-                if grad_norm < num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()) {
+                if grad_norm < scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()) {
                     break;
                 }
 
                 // Simple gradient descent step (simplified)
                 for param in adapted_params.iter_mut() {
-                    *param = *param - inner_lr * (*param) * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
+                    *param = *param - inner_lr * (*param) * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
                 }
             }
 
@@ -904,12 +904,12 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
 
                 for _ in 0..inner_steps {
                     let grad_norm = adapted_params.iter().map(|&x| x * x).sum::<T>().sqrt();
-                    if grad_norm < num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()) {
+                    if grad_norm < scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()) {
                         break;
                     }
 
                     for param in adapted_params.iter_mut() {
-                        *param = *param - inner_lr * (*param) * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
+                        *param = *param - inner_lr * (*param) * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
                     }
                 }
 
@@ -930,7 +930,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         objective_fn: &impl Fn(&Array1<T>, &Array1<T>, &[(Array1<T>, Array1<T>)]) -> T,
     ) -> Result<Array1<T>> {
         // Extract needed values to avoid borrow conflicts
-        let inner_lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let inner_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
         let inner_steps = self.inner_loop_config.num_steps;
         let task_query_set = task.query_set.clone();
 
@@ -942,12 +942,12 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
 
                 for _ in 0..inner_steps {
                     let grad_norm = adapted_params.iter().map(|&x| x * x).sum::<T>().sqrt();
-                    if grad_norm < num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()) {
+                    if grad_norm < scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()) {
                         break;
                     }
 
                     for param in adapted_params.iter_mut() {
-                        *param = *param - inner_lr * (*param) * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
+                        *param = *param - inner_lr * (*param) * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
                     }
                 }
 
@@ -969,7 +969,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         task: &MetaTask<T>,
         objective_fn: &impl Fn(&Array1<T>, &Array1<T>, &[(Array1<T>, Array1<T>)]) -> T,
     ) -> Result<Array1<T>> {
-        let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
         let mut meta_gradients = Array1::zeros(meta_params.len());
 
         for i in 0..meta_params.len() {
@@ -988,7 +988,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             let loss_minus = objective_fn(&adapted_minus, &meta_minus, &task.query_set);
 
             // Finite difference approximation
-            meta_gradients[i] = (loss_plus - loss_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps);
+            meta_gradients[i] = (loss_plus - loss_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
         }
 
         Ok(meta_gradients)
@@ -1018,7 +1018,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         // In practice, this would solve: dψ/dθ = -H^(-1) * d²L/dψdθ
         // where ψ are optimal params, θ are meta-_params, H is Hessian
 
-        let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
         let mut gradients = Array1::zeros(meta_params.len());
 
         for i in 0..meta_params.len() {
@@ -1046,7 +1046,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         data: &[(Array1<T>, Array1<T>)],
         objective_fn: &impl Fn(&Array1<T>, &Array1<T>, &[(Array1<T>, Array1<T>)]) -> T,
     ) -> Result<Array1<T>> {
-        let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
         let mut gradient = Array1::zeros(params.len());
 
         for i in 0..params.len() {
@@ -1059,7 +1059,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             let loss_plus = objective_fn(&params_plus, params, data);
             let loss_minus = objective_fn(&params_minus, params, data);
 
-            gradient[i] = (loss_plus - loss_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps);
+            gradient[i] = (loss_plus - loss_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
         }
 
         Ok(gradient)
@@ -1071,7 +1071,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         objective_fn: &impl Fn(&Array1<T>) -> T,
         point: &Array1<T>,
     ) -> Result<Array1<T>> {
-        let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
         let mut gradient = Array1::zeros(point.len());
 
         for i in 0..point.len() {
@@ -1084,7 +1084,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             let loss_plus = objective_fn(&point_plus);
             let loss_minus = objective_fn(&point_minus);
 
-            gradient[i] = (loss_plus - loss_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps);
+            gradient[i] = (loss_plus - loss_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
         }
 
         Ok(gradient)
@@ -1102,11 +1102,11 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             StopCondition::FixedSteps => Ok(false), // Always run fixed number of steps
             StopCondition::Convergence { threshold } => {
                 let grad_norm = gradient.iter().map(|&g| g * g).sum::<T>().sqrt();
-                Ok(grad_norm < num_traits::cast::cast(*threshold).unwrap_or_else(|| T::zero()))
+                Ok(grad_norm < scirs2_core::numeric::NumCast::from(*threshold).unwrap_or_else(|| T::zero()))
             }
             StopCondition::GradientNorm { threshold } => {
                 let grad_norm = gradient.iter().map(|&g| g * g).sum::<T>().sqrt();
-                Ok(grad_norm < num_traits::cast::cast(*threshold).unwrap_or_else(|| T::zero()))
+                Ok(grad_norm < scirs2_core::numeric::NumCast::from(*threshold).unwrap_or_else(|| T::zero()))
             }
             StopCondition::LossThreshold { threshold: _ } => {
                 // Would need to compute loss here
@@ -1306,7 +1306,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
     ) -> Result<T> {
         // Sample points around meta_params and compare loss values
         let num_samples = 10;
-        let perturbation_scale = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let perturbation_scale = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
         let mut similarities = Vec::new();
 
         for sample_idx in 0..num_samples {
@@ -1316,7 +1316,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
                 // Simple pseudo-random perturbation based on indices
                 let seed = (sample_idx * 1000 + i * 17) % 1000;
                 let perturbation_val = (seed as f64 / 1000.0) - 0.5; // Range [-0.5, 0.5]
-                let perturbation = num_traits::cast::cast(perturbation_val).unwrap_or_else(|| T::zero()) * perturbation_scale;
+                let perturbation = scirs2_core::numeric::NumCast::from(perturbation_val).unwrap_or_else(|| T::zero()) * perturbation_scale;
                 perturbed_params[i] = perturbed_params[i] + perturbation;
             }
 
@@ -1341,7 +1341,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
     ) -> Result<Array1<T>> {
         match self.advanced_config.lr_adaptation_method {
             LearningRateAdaptation::Fixed => {
-                let lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+                let lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
                 Ok(Array1::from_elem(meta_params.len(), lr))
             }
             LearningRateAdaptation::PerParameter => {
@@ -1367,7 +1367,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         _task: &MetaTask<T>,
     ) -> Result<Array1<T>> {
         let mut learning_rates = Array1::zeros(meta_params.len());
-        let base_lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let base_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
 
         for i in 0..meta_params.len() {
             // Adapt learning rate based on gradient magnitude
@@ -1386,7 +1386,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         gradient: &Array1<T>,
     ) -> Result<Array1<T>> {
         let mut learning_rates = Array1::zeros(gradient.len());
-        let base_lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let base_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
 
         // Compute gradient statistics
         let grad_mean = gradient.iter().copied().sum::<T>() / T::from(gradient.len()).unwrap();
@@ -1422,7 +1422,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         _task: &MetaTask<T>,
     ) -> Result<Array1<T>> {
         // Placeholder: would use a learned neural network
-        let base_lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let base_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
         Ok(Array1::from_elem(meta_params.len(), base_lr))
     }
 
@@ -1434,7 +1434,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         _task: &MetaTask<T>,
     ) -> Result<Array1<T>> {
         // Placeholder: would use meta-learned adaptation
-        let base_lr = num_traits::cast::cast(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
+        let base_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
         Ok(Array1::from_elem(meta_params.len(), base_lr))
     }
 }

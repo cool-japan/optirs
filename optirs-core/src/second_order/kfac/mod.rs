@@ -28,7 +28,7 @@
 //
 // ```rust
 // use optirs_core::second_order::kfac::{KFAC, KFACConfig, LayerInfo, LayerType};
-// use scirs2_core::ndarray_ext::Array2;
+// use scirs2_core::ndarray::Array2;
 //
 // // Create K-FAC configuration
 // let config = KFACConfig::<f32>::default();
@@ -86,7 +86,7 @@ pub use utils::KFACUtils as Utils;
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array2;
+    use scirs2_core::ndarray::Array2;
     use std::collections::HashMap;
 
     #[test]
@@ -190,9 +190,11 @@ mod integration_tests {
 
     #[test]
     fn test_kfac_adaptive_damping() {
-        let mut config = KFACConfig::<f32>::default();
-        config.auto_damping = true;
-        config.target_acceptance_ratio = 0.8;
+        let mut config = KFACConfig::<f32> {
+            auto_damping: true,
+            target_acceptance_ratio: 0.8,
+            ..Default::default()
+        };
 
         let mut kfac = KFAC::new(config);
 

@@ -3,7 +3,7 @@
 //! This example shows how to use the SGDR (Stochastic Gradient Descent with Warm Restarts)
 //! scheduler and compares it with standard cosine annealing.
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::random::distributions::Normal;
 use scirs2_core::random::RandomExt;
 use optirs_core::optimizers::{Optimizer, SGD};
@@ -126,7 +126,7 @@ fn train_linear_regression<S: LearningRateScheduler<f64>>(
     for i in 0..n_iterations {
         // Update learning rate from scheduler
         let lr = scheduler.step();
-        <SGD<f64> as Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>::set_learning_rate(&mut optimizer, lr);
+        <SGD<f64> as Optimizer<f64, scirs2_core::ndarray::Ix1>>::set_learning_rate(&mut optimizer, lr);
 
         // Forward pass
         let predictions = &x_train.dot(&_weights) + bias;

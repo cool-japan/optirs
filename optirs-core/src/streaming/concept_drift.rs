@@ -3,7 +3,7 @@
 // This module provides various algorithms for detecting when the underlying
 // data distribution changes (concept drift) and adapting the optimizer accordingly.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::iter::Sum;
 use std::time::{Duration, Instant};

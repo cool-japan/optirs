@@ -139,7 +139,7 @@ pub enum VisibilityLevel {
 }
 
 /// Example verification results
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ExampleVerificationResults {
     /// Total examples found
     pub total_examples: usize,
@@ -348,7 +348,7 @@ pub struct FormatAnalysis {
 }
 
 /// API completeness analysis
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ApiCompletenessAnalysis {
     /// Missing documentation sections
     pub missing_sections: HashMap<String, Vec<MissingSection>>,
@@ -385,7 +385,7 @@ pub enum Priority {
 }
 
 /// API evolution tracking
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ApiEvolutionAnalysis {
     /// New APIs since last analysis
     pub new_apis: Vec<String>,
@@ -677,7 +677,7 @@ impl DocumentationAnalyzer {
 
                     undocumented_by_category
                         .entry(category)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(undocumented_item);
                 }
             }
@@ -1204,7 +1204,7 @@ impl DocumentationAnalyzer {
 
                 violations
                     .entry(StyleCategory::HeadingStyle)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(violation);
             }
         }
@@ -1232,7 +1232,7 @@ impl DocumentationAnalyzer {
 
                 violations
                     .entry(StyleCategory::CodeFormatting)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(violation);
             }
         }
@@ -1260,7 +1260,7 @@ impl DocumentationAnalyzer {
 
                 violations
                     .entry(StyleCategory::ParameterStyle)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(violation);
             }
         }
@@ -1664,11 +1664,9 @@ impl DocumentationAnalyzer {
         // pub fn function_name(...) -> ReturnType
         if let Some(start) = line.find("fn ") {
             let after_fn = &line[start + 3..];
-            if let Some(end) = after_fn.find('(') {
-                Some(after_fn[..end].trim().to_string())
-            } else {
-                None
-            }
+            after_fn
+                .find('(')
+                .map(|end| after_fn[..end].trim().to_string())
         } else {
             None
         }
@@ -1747,11 +1745,9 @@ impl DocumentationAnalyzer {
         // pub const CONST_NAME: Type = value;
         if let Some(start) = line.find("const ") {
             let after_const = &line[start + 6..];
-            if let Some(end) = after_const.find(':') {
-                Some(after_const[..end].trim().to_string())
-            } else {
-                None
-            }
+            after_const
+                .find(':')
+                .map(|end| after_const[..end].trim().to_string())
         } else {
             None
         }
@@ -1833,18 +1829,6 @@ impl Default for CoverageAnalysis {
     }
 }
 
-impl Default for ExampleVerificationResults {
-    fn default() -> Self {
-        Self {
-            total_examples: 0,
-            compiled_examples: 0,
-            failed_examples: Vec::new(),
-            example_coverage: HashMap::new(),
-            quality_metrics: ExampleQualityMetrics::default(),
-        }
-    }
-}
-
 impl Default for ExampleQualityMetrics {
     fn default() -> Self {
         Self {
@@ -1886,28 +1870,6 @@ impl Default for FormatAnalysis {
             rustdoc_compliance: 1.0,
             cross_reference_completeness: 1.0,
             toc_quality: 1.0,
-        }
-    }
-}
-
-impl Default for ApiCompletenessAnalysis {
-    fn default() -> Self {
-        Self {
-            missing_sections: HashMap::new(),
-            evolution_tracking: ApiEvolutionAnalysis::default(),
-            documentation_debt: DocumentationDebt::default(),
-            accessibility_compliance: AccessibilityAnalysis::default(),
-        }
-    }
-}
-
-impl Default for ApiEvolutionAnalysis {
-    fn default() -> Self {
-        Self {
-            new_apis: Vec::new(),
-            deprecated_apis: Vec::new(),
-            changed_apis: Vec::new(),
-            breaking_changes: Vec::new(),
         }
     }
 }

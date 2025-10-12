@@ -402,7 +402,7 @@ for trial in 0..50 {
 ### Neural Hyperparameter Prediction
 
 ```rust
-use ndarray::Array1;
+use scirs2_core::ndarray::Array1;  // ✅ CORRECT - Use scirs2_core
 
 // Create and train hyperparameter predictor
 let mut predictor = HyperparameterPredictor::<f64>::new(10, 50, 3);
@@ -439,7 +439,23 @@ println!("Predicted hyperparameters: {:?}", predicted_hyperparams);
 
 ```rust
 use optirs_core::meta_learning::*;
-use ndarray::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};  // ✅ CORRECT - Use scirs2_core
+
+// Create meta-optimizer
+let meta_params = Array1::from_vec(vec![0.001, 0.9, 0.999]); // lr, beta1, beta2
+let mut meta_optimizer = MetaOptimizer::new(
+    "Adam".to_string(),
+    meta_params,
+    0.01, // meta-learning rate
+);
+```", predicted_hyperparams);
+```
+
+### Meta-Learning Optimizer
+
+```rust
+use optirs_core::meta_learning::*;
+use scirs2_core::ndarray::{Array1, Array2};  // ✅ CORRECT - Use scirs2_core
 
 // Create meta-optimizer
 let meta_params = Array1::from_vec(vec![0.001, 0.9, 0.999]); // lr, beta1, beta2
@@ -452,46 +468,6 @@ let mut meta_optimizer = MetaOptimizer::new(
 // Collect optimization trajectories from different tasks
 for task in tasks {
     let mut trajectory_params = Vec::new();
-    let mut trajectory_grads = Vec::new();
-    let mut trajectory_losses = Vec::new();
-    
-    // Run optimization on this task
-    let mut params = initialize_parameters(&task);
-    for step in 0..1000 {
-        let (loss, gradients) = compute_loss_and_gradients(&params, &task);
-        
-        trajectory_params.push(params.clone());
-        trajectory_grads.push(gradients.clone());
-        trajectory_losses.push(loss);
-        
-        // Update parameters
-        params = update_parameters(params, gradients, &meta_optimizer);
-    }
-    
-    let final_performance = evaluate_final_performance(&params, &task);
-    let hyperparams = HashMap::from([
-        ("learning_rate".to_string(), 0.001),
-        ("beta1".to_string(), 0.9),
-        ("beta2".to_string(), 0.999),
-    ]);
-    
-    let trajectory = OptimizationTrajectory::new(
-        trajectory_params,
-        trajectory_grads,
-        trajectory_losses,
-        final_performance,
-        hyperparams,
-    );
-    
-    meta_optimizer.add_trajectory(trajectory)?;
-}
-
-// Update meta-parameters based on all trajectories
-meta_optimizer.meta_update()?;
-
-// Use learned meta-parameters for new tasks
-let learned_params = meta_optimizer.get_meta_parameters();
-println!("Learned meta-parameters: {:?}", learned_params);
 ```
 
 ### Neural Optimizer

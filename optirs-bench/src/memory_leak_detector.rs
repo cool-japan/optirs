@@ -559,7 +559,7 @@ impl MemoryLeakDetector {
         let mut memory_by_type = HashMap::new();
 
         // Analyze allocations by type
-        for (_, info) in &self.allocation_tracker.active_allocations {
+        for info in self.allocation_tracker.active_allocations.values() {
             let type_name = format!("{:?}", info.allocation_type);
             *memory_by_type.entry(type_name).or_insert(0) += info.size;
         }
@@ -648,6 +648,12 @@ pub struct MemoryOptimizationReport {
     pub summary: String,
 }
 
+impl Default for AllocationTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AllocationTracker {
     /// Create a new allocation tracker
     pub fn new() -> Self {
@@ -731,6 +737,12 @@ impl AllocationTracker {
     }
 }
 
+impl Default for MemoryPatternAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryPatternAnalyzer {
     /// Create a new pattern analyzer
     pub fn new() -> Self {
@@ -797,6 +809,12 @@ impl MemoryPatternAnalyzer {
     }
 }
 
+impl Default for MemoryOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryOptimizer {
     /// Create a new memory optimizer
     pub fn new() -> Self {
@@ -853,6 +871,12 @@ impl MemoryOptimizer {
 #[derive(Debug)]
 pub struct GrowthBasedLeakDetector {
     growth_threshold: f64,
+}
+
+impl Default for GrowthBasedLeakDetector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GrowthBasedLeakDetector {
@@ -959,6 +983,12 @@ impl LeakDetector for GrowthBasedLeakDetector {
 #[derive(Debug)]
 pub struct PatternBasedLeakDetector;
 
+impl Default for PatternBasedLeakDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PatternBasedLeakDetector {
     pub fn new() -> Self {
         Self
@@ -1001,6 +1031,12 @@ impl LeakDetector for PatternBasedLeakDetector {
 /// Statistical leak detector
 #[derive(Debug)]
 pub struct StatisticalLeakDetector;
+
+impl Default for StatisticalLeakDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl StatisticalLeakDetector {
     pub fn new() -> Self {
@@ -1047,6 +1083,12 @@ impl LeakDetector for StatisticalLeakDetector {
 #[derive(Debug)]
 pub struct TrendPatternDetector;
 
+impl Default for TrendPatternDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrendPatternDetector {
     pub fn new() -> Self {
         Self
@@ -1075,6 +1117,12 @@ impl PatternDetector for TrendPatternDetector {
 #[derive(Debug)]
 pub struct PeriodicPatternDetector;
 
+impl Default for PeriodicPatternDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeriodicPatternDetector {
     pub fn new() -> Self {
         Self
@@ -1100,6 +1148,12 @@ impl PatternDetector for PeriodicPatternDetector {
 #[derive(Debug)]
 pub struct SpikeAnomalyDetector;
 
+impl Default for SpikeAnomalyDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpikeAnomalyDetector {
     pub fn new() -> Self {
         Self
@@ -1122,6 +1176,12 @@ impl AnomalyDetector for SpikeAnomalyDetector {
 /// Leak anomaly detector
 #[derive(Debug)]
 pub struct LeakAnomalyDetector;
+
+impl Default for LeakAnomalyDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl LeakAnomalyDetector {
     pub fn new() -> Self {
@@ -1147,6 +1207,12 @@ impl AnomalyDetector for LeakAnomalyDetector {
 /// Memory pooling strategy
 #[derive(Debug)]
 pub struct PoolingStrategy;
+
+impl Default for PoolingStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PoolingStrategy {
     pub fn new() -> Self {
@@ -1189,6 +1255,12 @@ impl OptimizationStrategy for PoolingStrategy {
 #[derive(Debug)]
 pub struct InPlaceStrategy;
 
+impl Default for InPlaceStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InPlaceStrategy {
     pub fn new() -> Self {
         Self
@@ -1230,6 +1302,12 @@ impl OptimizationStrategy for InPlaceStrategy {
 /// Cache optimization strategy
 #[derive(Debug)]
 pub struct CacheStrategy;
+
+impl Default for CacheStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CacheStrategy {
     pub fn new() -> Self {

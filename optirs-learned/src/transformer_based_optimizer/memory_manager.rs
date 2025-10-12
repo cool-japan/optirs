@@ -2,8 +2,8 @@
 
 use super::config::{CacheEvictionStrategy, MemoryConfig, TransformerBasedOptimizerConfig};
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -722,6 +722,12 @@ pub struct MemoryStatistics {
     pub pressure_events: usize,
 }
 
+impl Default for MemoryStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryStatistics {
     pub fn new() -> Self {
         Self {
@@ -879,6 +885,12 @@ pub struct MemoryPressureMonitor {
     pressure_history: VecDeque<f64>,
 }
 
+impl Default for MemoryPressureMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryPressureMonitor {
     pub fn new() -> Self {
         Self {
@@ -945,7 +957,7 @@ mod tests {
 
     #[test]
     fn test_memory_cache() {
-        let mut cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
+        let cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
         assert!(cache.is_ok());
 
         let mut c = cache.unwrap();

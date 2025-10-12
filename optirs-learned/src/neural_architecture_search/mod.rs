@@ -29,8 +29,8 @@ pub use multi_objective::{MultiObjectiveOptimizer, OptimizationObjective, Pareto
 pub use search_history::{SearchHistory, ArchitectureEntry, SearchEvent};
 pub use resource_management::{ResourceManager, ResourceConstraints, ComputeBudget};
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use crate::error::Result;
@@ -219,8 +219,8 @@ impl<T: Float + Debug + 'static + Send + Sync> NeuralArchitectureSearch<T> {
 
         if let Some(current_best) = self.population_manager.get_best_performance() {
             if let Some(prev_best_f64) = recent_best {
-                let prev_best = num_traits::cast::cast(prev_best_f64).unwrap_or_else(|| T::zero());
-                return (current_best - prev_best).abs() < num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero());
+                let prev_best = scirs2_core::numeric::NumCast::from(prev_best_f64).unwrap_or_else(|| T::zero());
+                return (current_best - prev_best).abs() < scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero());
             }
         }
 

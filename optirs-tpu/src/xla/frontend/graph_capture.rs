@@ -6,8 +6,8 @@ use std::fmt::Debug;
 // from high-level operations, including graph validation and optimization
 // preparation.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
@@ -433,7 +433,7 @@ pub struct Operand<T: Float + Debug + Send + Sync + 'static> {
 pub struct OperandId(pub usize);
 
 /// Tensor shape information
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TensorShape {
     /// Dimensions
     pub dimensions: Vec<usize>,
@@ -835,6 +835,14 @@ pub struct ValidationRule {
     pub validator: String,
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for ComputationGraphBuilder<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
     ComputationGraphBuilder<T>
 {
@@ -947,12 +955,12 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         let mut rec_stack = HashSet::new();
 
         for operation in &computation.operations {
-            if !visited.contains(&operation.id) {
-                if self.has_cycle_util(computation, operation.id, &mut visited, &mut rec_stack)? {
-                    return Err(OptimError::from(
-                        "Cycle detected in computation graph".to_string(),
-                    ));
-                }
+            if !visited.contains(&operation.id)
+                && Self::has_cycle_util(computation, operation.id, &mut visited, &mut rec_stack)?
+            {
+                return Err(OptimError::from(
+                    "Cycle detected in computation graph".to_string(),
+                ));
             }
         }
 
@@ -961,7 +969,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
 
     /// Utility function for cycle detection
     fn has_cycle_util(
-        &self,
         computation: &XLAComputation<T>,
         op_id: OperationId,
         visited: &mut HashSet<OperationId>,
@@ -973,7 +980,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         if let Some(dependencies) = computation.dependencies.get(&op_id) {
             for &dep_id in dependencies {
                 if !visited.contains(&dep_id) {
-                    if self.has_cycle_util(computation, dep_id, visited, rec_stack)? {
+                    if Self::has_cycle_util(computation, dep_id, visited, rec_stack)? {
                         return Ok(true);
                     }
                 } else if rec_stack.contains(&dep_id) {
@@ -1057,17 +1064,6 @@ impl Default for Layout {
             minor_to_major: vec![0, 1], // Default 2D layout
             tiles: Vec::new(),
             memory_space: MemorySpace::Default,
-        }
-    }
-}
-
-impl Default for TensorShape {
-    fn default() -> Self {
-        Self {
-            dimensions: Vec::new(),
-            dynamic_dimensions: Vec::new(),
-            element_count: 0,
-            tuple_shapes: Vec::new(),
         }
     }
 }

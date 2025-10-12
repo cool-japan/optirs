@@ -20,7 +20,7 @@
 // use optirs_core::plugin::{OptimizerPlugin, PluginCapabilities};
 // use optirs_core::plugin::core::{PluginInfo, OptimizerConfig, OptimizerState};
 // use optirs_core::error::{OptimError, Result};
-// use scirs2_core::ndarray_ext::Array1;
+// use scirs2_core::ndarray::Array1;
 //
 // #[derive(Debug, Clone)]
 // struct MyCustomOptimizer {

@@ -3,8 +3,8 @@
 // This module implements advanced second-order optimization algorithms that
 // leverage automatic differentiation for computing Hessians and curvature information.
 
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Axis};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, Array1, Array2, Axis};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::VecDeque;
 
@@ -293,12 +293,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
         );
         
         let trust_region_state = TrustRegionState {
-            radius: num_traits::cast::cast(config.trust_region_radius).unwrap_or_else(|| T::zero()),
+            radius: scirs2_core::numeric::NumCast::from(config.trust_region_radius).unwrap_or_else(|| T::zero()),
             radius_history: VecDeque::new(),
-            expand_threshold: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
-            shrink_threshold: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()),
-            expand_factor: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()),
-            shrink_factor: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())};
+            expand_threshold: scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero()),
+            shrink_threshold: scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()),
+            expand_factor: scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()),
+            shrink_factor: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())};
         
         Self {
             config,
@@ -360,7 +360,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
             match &hessian.full_matrix {
                 Some(h_matrix) => {
                     // Add damping for numerical stability
-                    let damped_hessian = h_matrix + &(Array2::eye(h_matrix.nrows()) * num_traits::cast::cast(self.config.damping).unwrap_or_else(|| T::zero()));
+                    let damped_hessian = h_matrix + &(Array2::eye(h_matrix.nrows()) * scirs2_core::numeric::NumCast::from(self.config.damping).unwrap_or_else(|| T::zero()));
                     
                     // Solve using conjugate gradient method
                     self.solve_cg(&damped_hessian, &(-gradients))
@@ -368,17 +368,17 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
                 None => {
                     // Use diagonal approximation or gradient descent
                     if let Some(ref diagonal) = hessian.diagonal {
-                        let inv_diag = diagonal.mapv(|x| T::one() / (x + num_traits::cast::cast(self.config.damping).unwrap_or_else(|| T::zero())));
+                        let inv_diag = diagonal.mapv(|x| T::one() / (x + scirs2_core::numeric::NumCast::from(self.config.damping).unwrap_or_else(|| T::zero())));
                         Ok(&(-gradients) * &inv_diag)
                     } else {
                         // Fallback to gradient descent
-                        Ok(-gradients * num_traits::cast::cast(self.config.learning_rate).unwrap_or_else(|| T::zero()))
+                        Ok(-gradients * scirs2_core::numeric::NumCast::from(self.config.learning_rate).unwrap_or_else(|| T::zero()))
                     }
                 }
             }
         } else {
             // No Hessian available, use gradient descent
-            Ok(-gradients * num_traits::cast::cast(self.config.learning_rate).unwrap_or_else(|| T::zero()))
+            Ok(-gradients * scirs2_core::numeric::NumCast::from(self.config.learning_rate).unwrap_or_else(|| T::zero()))
         }
     }
     
@@ -399,7 +399,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
             
             let rsnew = r.dot(&r);
             
-            if rsnew.sqrt() < num_traits::cast::cast(self.config.cg_tolerance).unwrap_or_else(|| T::zero()) {
+            if rsnew.sqrt() < scirs2_core::numeric::NumCast::from(self.config.cg_tolerance).unwrap_or_else(|| T::zero()) {
                 break;
             }
             
@@ -438,7 +438,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
             }
             _ => {
                 // Fallback to fixed step size
-                Ok(num_traits::cast::cast(self.config.line_search_config.initial_step).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(self.config.line_search_config.initial_step).unwrap_or_else(|| T::zero()))
             }
         }
     }
@@ -450,9 +450,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
         direction: &Array1<T>,
         objective_fn: &impl Fn(&Array1<T>) -> T,
     ) -> Result<T> {
-        let mut step_size = num_traits::cast::cast(self.config.line_search_config.initial_step).unwrap_or_else(|| T::zero());
-        let c1 = num_traits::cast::cast(self.config.line_search_config.c1).unwrap_or_else(|| T::zero());
-        let reduction_factor = num_traits::cast::cast(self.config.line_search_config.reduction_factor).unwrap_or_else(|| T::zero());
+        let mut step_size = scirs2_core::numeric::NumCast::from(self.config.line_search_config.initial_step).unwrap_or_else(|| T::zero());
+        let c1 = scirs2_core::numeric::NumCast::from(self.config.line_search_config.c1).unwrap_or_else(|| T::zero());
+        let reduction_factor = scirs2_core::numeric::NumCast::from(self.config.line_search_config.reduction_factor).unwrap_or_else(|| T::zero());
         
         let initial_value = objective_fn(params);
         let directional_derivative = T::zero(); // Would compute actual directional derivative
@@ -501,7 +501,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
             let delta = new_params - old_params;
             let grad_term = T::zero(); // Would use actual gradient
             let hess_term = if let Some(ref h_matrix) = hessian.full_matrix {
-                num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()) * delta.dot(&h_matrix.dot(&delta))
+                scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()) * delta.dot(&h_matrix.dot(&delta))
             } else {
                 T::zero()
             };
@@ -550,8 +550,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> NewtonOptimizer
             None
         };
         
-        let converged = gradient_norm < num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()) 
-            && parameter_change_norm < num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero());
+        let converged = gradient_norm < scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()) 
+            && parameter_change_norm < scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero());
         
         let metrics = ConvergenceMetrics {
             iteration: self.iteration,
@@ -625,7 +625,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> QuasiNewtonOpti
         let step_size = if self.config.enable_line_search {
             self.line_search(params, &search_direction, &objective_fn)?
         } else {
-            num_traits::cast::cast(self.config.learning_rate).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(self.config.learning_rate).unwrap_or_else(|| T::zero())
         };
         
         let new_params = params + &(search_direction * step_size);
@@ -644,7 +644,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> QuasiNewtonOpti
     fn compute_lbfgs_direction(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
         if self.bfgs_memory.s_history.is_empty() {
             // No history, use steepest descent
-            return Ok(-gradients * num_traits::cast::cast(self.config.learning_rate).unwrap_or_else(|| T::zero()));
+            return Ok(-gradients * scirs2_core::numeric::NumCast::from(self.config.learning_rate).unwrap_or_else(|| T::zero()));
         }
         
         let mut q = gradients.clone();
@@ -681,7 +681,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> QuasiNewtonOpti
         let sy = s.dot(y);
         
         // Skip update if curvature condition is not satisfied
-        if sy <= num_traits::cast::cast(1e-10).unwrap_or_else(|| T::zero()) {
+        if sy <= scirs2_core::numeric::NumCast::from(1e-10).unwrap_or_else(|| T::zero()) {
             return Ok(());
         }
         
@@ -717,7 +717,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> QuasiNewtonOpti
     ) -> Result<T> {
         // Simplified line search
         let mut step_size = T::one();
-        let reduction_factor = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+        let reduction_factor = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
         
         let initial_value = objective_fn(params);
         
@@ -810,10 +810,10 @@ pub mod utils {
     ) -> T {
         if let Some(ref diagonal) = hessian.diagonal {
             let max_diag = diagonal.iter().fold(T::neg_infinity(), |a, &b| a.max(b));
-            let adaptive_damping = gradient_norm * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
-            adaptive_damping.max(max_diag * num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()))
+            let adaptive_damping = gradient_norm * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
+            adaptive_damping.max(max_diag * scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()))
         } else {
-            gradient_norm * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero())
+            gradient_norm * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero())
         }
     }
 }

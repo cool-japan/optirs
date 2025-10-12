@@ -223,7 +223,7 @@ impl AllocationRouter {
 
         // Use size-based routing
         for route in &self.size_routes {
-            if size >= route.min_size && route.max_size.map_or(true, |max| size <= max) {
+            if size >= route.min_size && route.max_size.is_none_or(|max| size <= max) {
                 // Check performance if tracking is enabled
                 if self.config.enable_performance_tracking {
                     let preferred_perf = self
@@ -374,9 +374,7 @@ impl UnifiedAllocator {
             }
             AllocatorType::Buddy => {
                 if let Some(ref mut buddy) = self.buddy_allocator {
-                    buddy
-                        .allocate(size)
-                        .map_err(|e| AllocationError::BuddyError(e))
+                    buddy.allocate(size).map_err(AllocationError::BuddyError)
                 } else {
                     Err(AllocationError::AllocatorNotAvailable(
                         "Buddy allocator not enabled".to_string(),
@@ -387,7 +385,7 @@ impl UnifiedAllocator {
                 if let Some(ref mut slab) = self.slab_allocator {
                     slab.allocate(size)
                         .map(|ptr| ptr.as_ptr())
-                        .map_err(|e| AllocationError::SlabError(e))
+                        .map_err(AllocationError::SlabError)
                 } else {
                     Err(AllocationError::AllocatorNotAvailable(
                         "Slab allocator not enabled".to_string(),
@@ -399,7 +397,7 @@ impl UnifiedAllocator {
                     arena
                         .allocate(size)
                         .map(|ptr| ptr.as_ptr())
-                        .map_err(|e| AllocationError::ArenaError(e))
+                        .map_err(AllocationError::ArenaError)
                 } else {
                     Err(AllocationError::AllocatorNotAvailable(
                         "Arena allocator not enabled".to_string(),
@@ -627,6 +625,15 @@ impl UnifiedAllocator {
         Ok(())
     }
 }
+
+// Safety: UnifiedAllocator contains multiple allocators managing GPU memory pointers.
+// While the contained allocators use NonNull/raw pointers that aren't Send/Sync by default,
+// it's safe to share UnifiedAllocator across threads when protected by Arc<Mutex<>> because:
+// 1. All pointers point to GPU memory managed by the GPU driver
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for UnifiedAllocator {}
+unsafe impl Sync for UnifiedAllocator {}
 
 /// Detailed information about all allocators
 #[derive(Debug, Clone)]

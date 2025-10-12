@@ -126,7 +126,7 @@ pub struct TestScenario {
 }
 
 /// Cloud provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CloudConfig {
     /// AWS configuration
     pub aws: Option<AwsConfig>,
@@ -548,20 +548,6 @@ impl Default for PlatformResourceRequirements {
             disk_mb: 10240,
             gpu_required: false,
             network_bandwidth: Some(100.0),
-        }
-    }
-}
-
-impl Default for CloudConfig {
-    fn default() -> Self {
-        Self {
-            aws: None,
-            azure: None,
-            gcp: None,
-            github_actions: None,
-            custom_providers: vec![],
-            default_auth: None,
-            cost_optimization: CostOptimizationSettings::default(),
         }
     }
 }

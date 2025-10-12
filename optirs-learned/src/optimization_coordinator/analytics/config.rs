@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Analytics engine configuration
@@ -969,11 +969,11 @@ impl Default for ModelTrackingConfig {
 impl<T: Float + Debug + Send + Sync + 'static> Default for ConvergenceParameters<T> {
     fn default() -> Self {
         Self {
-            loss_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
-            gradient_tolerance: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
-            parameter_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            loss_tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
+            gradient_tolerance: scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
+            parameter_tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
             window_size: 10,
-            min_improvement: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            min_improvement: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             patience: 10,
         }
     }
@@ -984,7 +984,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EarlyStoppingConfig<T
         Self {
             enabled: true,
             monitor_metric: "val_loss".to_string(),
-            min_delta: num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            min_delta: scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             patience: 10,
             restore_best_weights: true,
             mode: EarlyStoppingMode::Min,

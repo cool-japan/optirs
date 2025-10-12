@@ -4,8 +4,8 @@ use std::fmt::Debug;
 // This module provides seamless integration with the candle-core tensor library
 // for automatic gradient computation in optimization algorithms.
 
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayBase, Dimension, Ix1, Ix2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, Array1, Array2, ArrayBase, Dimension, Ix1, Ix2};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -478,7 +478,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleOptimizer
         if let Some(clip_value) = self.config.gradient_clip_value {
             for tensor in self.tensors.values_mut() {
                 if let Some(ref mut grad) = tensor.grad {
-                    grad.mapv_inplace(|g| g.max(-num_traits::cast::cast(clip_value).unwrap_or_else(|| T::zero())).min(num_traits::cast::cast(clip_value).unwrap_or_else(|| T::zero())));
+                    grad.mapv_inplace(|g| g.max(-scirs2_core::numeric::NumCast::from(clip_value).unwrap_or_else(|| T::zero())).min(scirs2_core::numeric::NumCast::from(clip_value).unwrap_or_else(|| T::zero())));
                 }
             }
         }
@@ -493,7 +493,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleOptimizer
             }
             
             let total_norm = total_norm_squared.sqrt();
-            let clip_norm_t = num_traits::cast::cast(clip_norm).unwrap_or_else(|| T::zero());
+            let clip_norm_t = scirs2_core::numeric::NumCast::from(clip_norm).unwrap_or_else(|| T::zero());
             
             if total_norm > clip_norm_t {
                 let scale_factor = clip_norm_t / total_norm;
@@ -524,7 +524,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleOptimizer
         
         for (name, accumulated_grad) in &self.grad_buffer {
             if let Some(tensor) = self.tensors.get_mut(name) {
-                let scale = T::one() / num_traits::cast::cast(self.config.accumulation_steps).unwrap_or_else(|| T::zero());
+                let scale = T::one() / scirs2_core::numeric::NumCast::from(self.config.accumulation_steps).unwrap_or_else(|| T::zero());
                 tensor.grad = Some(accumulated_grad * scale);
             }
         }
@@ -535,9 +535,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleOptimizer
     /// Get current loss scale factor
     fn get_loss_scale(&self) -> T {
         match &self.mixed_precision.loss_scaling {
-            LossScalingStrategy::Fixed(scale) => num_traits::cast::cast(*scale).unwrap_or_else(|| T::zero()),
-            LossScalingStrategy::Dynamic { init_scale, .. } => num_traits::cast::cast(*init_scale).unwrap_or_else(|| T::zero()),
-            LossScalingStrategy::Adaptive { .. } => num_traits::cast::cast(1024.0).unwrap_or_else(|| T::zero()), // Default adaptive scale
+            LossScalingStrategy::Fixed(scale) => scirs2_core::numeric::NumCast::from(*scale).unwrap_or_else(|| T::zero()),
+            LossScalingStrategy::Dynamic { init_scale, .. } => scirs2_core::numeric::NumCast::from(*init_scale).unwrap_or_else(|| T::zero()),
+            LossScalingStrategy::Adaptive { .. } => scirs2_core::numeric::NumCast::from(1024.0).unwrap_or_else(|| T::zero()), // Default adaptive scale
         }
     }
     

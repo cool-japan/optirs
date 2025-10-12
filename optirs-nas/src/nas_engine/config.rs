@@ -4,7 +4,7 @@
 // for the Neural Architecture Search system.
 
 use crate::EvaluationMetric;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::Duration;
@@ -1264,7 +1264,8 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EarlyStoppingConfig<T
         Self {
             enabled: true,
             patience: 20,
-            min_improvement: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            min_improvement: scirs2_core::numeric::NumCast::from(0.001)
+                .unwrap_or_else(|| T::zero()),
             convergence_strategy: ConvergenceDetectionStrategy::BestScore,
             min_generations: 10,
             metric: EvaluationMetric::Accuracy,
@@ -1282,10 +1283,11 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for ResourceConstraints<T
             energy_constraints: None,
             cost_constraints: None,
             violation_handling: ResourceViolationHandling::Skip,
-            max_memory_gb: num_traits::cast::cast(32.0).unwrap_or_else(|| T::zero()),
-            max_computation_hours: num_traits::cast::cast(24.0).unwrap_or_else(|| T::zero()),
-            max_energy_kwh: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
-            max_cost_usd: num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()),
+            max_memory_gb: scirs2_core::numeric::NumCast::from(32.0).unwrap_or_else(|| T::zero()),
+            max_computation_hours: scirs2_core::numeric::NumCast::from(24.0)
+                .unwrap_or_else(|| T::zero()),
+            max_energy_kwh: scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero()),
+            max_cost_usd: scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero()),
             enable_monitoring: true,
         }
     }

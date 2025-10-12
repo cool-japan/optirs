@@ -5,7 +5,7 @@
 //! 2. Parallel: Apply different optimizers to different parameter groups
 //! 3. Chained: Wrap one optimizer with another (like Lookahead)
 
-use scirs2_core::ndarray_ext::{s, Array1, Array2};
+use scirs2_core::ndarray::{s, Array1, Array2};
 use scirs2_core::random::distributions::Normal;
 use scirs2_core::random::RandomExt;
 use optirs_core::optimizer_composition::{

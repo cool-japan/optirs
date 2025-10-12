@@ -2,8 +2,8 @@ use std::fmt::Debug;
 // Multi-head attention mechanisms for transformer architecture
 
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use std::f64::consts::PI;
 
 /// Multi-head attention mechanism
@@ -42,7 +42,7 @@ pub struct MultiHeadAttention<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
     /// Create new multi-head attention
     pub fn new(num_heads: usize, model_dimension: usize, head_dimension: usize) -> Result<Self> {
-        if model_dimension % num_heads != 0 {
+        if !model_dimension.is_multiple_of(num_heads) {
             return Err(crate::error::OptimError::Other(
                 "Model dimension must be divisible by number of heads".to_string(),
             ));
@@ -78,9 +78,10 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
 
         for i in 0..rows {
             for j in 0..cols {
-                let random_val = scirs2_core::random::f64();
+                let random_val = scirs2_core::random::random::<f64>();
                 let scaled_val = (random_val - 0.5) * 2.0 * std;
-                weights[[i, j]] = num_traits::cast::cast(scaled_val).unwrap_or_else(|| T::zero());
+                weights[[i, j]] =
+                    scirs2_core::numeric::NumCast::from(scaled_val).unwrap_or_else(|| T::zero());
             }
         }
 
@@ -305,7 +306,8 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
 
             for j in 0..seq_length {
                 let exp_val = (scores[[i, j]] - max_score).to_f64().unwrap().exp();
-                exp_scores[j] = num_traits::cast::cast(exp_val).unwrap_or_else(|| T::zero());
+                exp_scores[j] =
+                    scirs2_core::numeric::NumCast::from(exp_val).unwrap_or_else(|| T::zero());
                 exp_sum = exp_sum + exp_scores[j];
             }
 
@@ -439,6 +441,12 @@ pub struct AttentionVisualizer<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
+impl<T: Float + Debug + 'static + Send + Sync> Default for AttentionVisualizer<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + 'static + Send + Sync> AttentionVisualizer<T> {
     pub fn new() -> Self {
         Self {
@@ -470,7 +478,8 @@ impl<T: Float + Debug + 'static + Send + Sync> AttentionVisualizer<T> {
                             let log_prob = prob.to_f64().unwrap().ln();
                             entropy = entropy
                                 - prob
-                                    * num_traits::cast::cast(log_prob).unwrap_or_else(|| T::zero());
+                                    * scirs2_core::numeric::NumCast::from(log_prob)
+                                        .unwrap_or_else(|| T::zero());
                         }
                     }
                 }
@@ -482,7 +491,7 @@ impl<T: Float + Debug + 'static + Send + Sync> AttentionVisualizer<T> {
         AttentionPatterns {
             head_entropies,
             attention_diversity: attention_diversity
-                / num_traits::cast::cast(num_heads).unwrap_or_else(|| T::zero()),
+                / scirs2_core::numeric::NumCast::from(num_heads).unwrap_or_else(|| T::zero()),
             sequence_length: seq_length,
             num_heads,
         }

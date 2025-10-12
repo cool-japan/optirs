@@ -4,9 +4,9 @@
 // experiment design, execution tracking, result analysis, and reproducibility
 // features for optimization workflows.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};

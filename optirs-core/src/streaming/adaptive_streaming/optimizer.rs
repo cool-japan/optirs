@@ -21,8 +21,9 @@ use super::resource_management::{ResourceDiagnostics, ResourceManager, ResourceU
 
 use crate::adaptive_selection::OptimizerType;
 // Removed dependency on learned_optimizers - using stub implementation
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension, IxDyn};
+use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, IxDyn};
+use scirs2_core::numeric::Float;
+use scirs2_core::ScientificNumber;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -39,7 +40,7 @@ pub struct AdaptiveLearningRateController<A: Float> {
 impl<A: Float> AdaptiveLearningRateController<A> {
     pub fn new(_config: &StreamingConfig) -> Result<Self, crate::error::OptimError> {
         Ok(Self {
-            base_lr: num_traits::cast(0.001).unwrap_or_else(|| A::one()),
+            base_lr: A::from(0.001).unwrap_or_else(|| A::one()),
         })
     }
 
@@ -210,7 +211,7 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + 'static,
     D: Dimension,
     O: Clone,
@@ -317,11 +318,17 @@ where
         self.stats.optimization_steps += 1;
         self.stats.adaptations_applied += adaptations.len();
         self.stats.current_buffer_size = self.buffer.current_size();
-        self.stats.current_learning_rate =
-            num_traits::cast::cast(self.learning_rate_controller.current_rate()).unwrap_or(0.0);
+        self.stats.current_learning_rate = self
+            .learning_rate_controller
+            .current_rate()
+            .to_f64()
+            .unwrap_or(0.0);
         self.stats.performance_trend = self.compute_performance_trend();
-        self.stats.meta_learning_score =
-            num_traits::cast::cast(self.meta_learner.get_effectiveness_score()).unwrap_or(0.0);
+        self.stats.meta_learning_score = self
+            .meta_learner
+            .get_effectiveness_score()
+            .to_f64()
+            .unwrap_or(0.0);
 
         let processing_time = start_time.elapsed().as_millis() as f64;
         self.stats.avg_processing_time_ms = (self.stats.avg_processing_time_ms
@@ -809,8 +816,7 @@ where
                 .learning_rate_controller
                 .last_change()
                 .unwrap_or(A::zero()),
-            buffer_size_change: num_traits::cast::cast(self.buffer.last_size_change())
-                .unwrap_or(A::zero()),
+            buffer_size_change: A::from(self.buffer.last_size_change()).unwrap_or(A::zero()),
             timestamp: Instant::now(),
         };
 

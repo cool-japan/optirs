@@ -548,7 +548,7 @@ pub struct StatisticalAnalyzer {
 }
 
 /// Statistical snapshot
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StatisticalSnapshot {
     /// Timestamp
     pub timestamp: u64,
@@ -1519,19 +1519,6 @@ impl Default for GcMetrics {
             average_pause_time: 0.0,
             memory_reclaimed_per_gc: 0.0,
             gc_overhead_percentage: 0.0,
-        }
-    }
-}
-
-impl Default for StatisticalSnapshot {
-    fn default() -> Self {
-        Self {
-            timestamp: 0,
-            moving_averages: HashMap::new(),
-            standard_deviations: HashMap::new(),
-            trend_indicators: HashMap::new(),
-            change_points: vec![],
-            outliers: vec![],
         }
     }
 }

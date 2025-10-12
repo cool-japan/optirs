@@ -1,8 +1,8 @@
 // Multi-GPU synchronization support for distributed training
 
-use num_traits::Float;
 use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuDataType, GpuKernelHandle};
-use scirs2_core::ndarray_ext::{ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::numeric::Float;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -413,7 +413,10 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         );
 
         // Periodic monitoring output
-        if self.step_counter % self.config.bandwidth_monitor_interval == 0 {
+        if self
+            .step_counter
+            .is_multiple_of(self.config.bandwidth_monitor_interval)
+        {
             self.log_performance_statistics();
         }
 
@@ -450,7 +453,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             let grad_buffer = self.context.create_buffer_from_slice(grad_slice);
 
             // Calculate chunk size for ring operations
-            let chunk_size = (grad_len + self.config.num_gpus - 1) / self.config.num_gpus;
+            let chunk_size = grad_len.div_ceil(self.config.num_gpus);
 
             // Set kernel parameters
             kernel.set_buffer("data", &grad_buffer);
@@ -468,7 +471,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             }
 
             // Copy results back
-            grad_buffer.copy_to_host(grad_slice);
+            grad_buffer.copy_to_host(grad_slice)?;
         }
 
         Ok(())
@@ -530,7 +533,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             }
 
             // Copy results back
-            grad_buffer.copy_to_host(grad_slice);
+            grad_buffer.copy_to_host(grad_slice)?;
         }
 
         Ok(())
@@ -600,7 +603,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             // Synchronization handled at kernel level
 
             // Copy results back
-            grad_buffer.copy_to_host(grad_slice);
+            grad_buffer.copy_to_host(grad_slice)?;
         }
 
         Ok(())

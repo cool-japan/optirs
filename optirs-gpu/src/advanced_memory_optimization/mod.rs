@@ -133,35 +133,35 @@ pub use core::{
 };
 
 /// Convenience function to create a default memory optimizer
-pub fn create_default_optimizer<T: num_traits::Float + Default + Clone + Send + Sync + std::iter::Sum>()
+pub fn create_default_optimizer<T: scirs2_core::numeric::Float + Default + Clone + Send + Sync + std::iter::Sum>()
     -> crate::error::Result<AdvancedMemoryOptimizer<T>> {
     let config = AdvancedMemoryConfig::default();
     AdvancedMemoryOptimizer::new(config)
 }
 
 /// Convenience function to create an optimizer for large models
-pub fn create_large_model_optimizer<T: num_traits::Float + Default + Clone + Send + Sync + std::iter::Sum>()
+pub fn create_large_model_optimizer<T: scirs2_core::numeric::Float + Default + Clone + Send + Sync + std::iter::Sum>()
     -> crate::error::Result<AdvancedMemoryOptimizer<T>> {
     let config = AdvancedMemoryConfig::for_large_models();
     AdvancedMemoryOptimizer::new(config)
 }
 
 /// Convenience function to create an optimizer for training efficiency
-pub fn create_training_optimizer<T: num_traits::Float + Default + Clone + Send + Sync + std::iter::Sum>()
+pub fn create_training_optimizer<T: scirs2_core::numeric::Float + Default + Clone + Send + Sync + std::iter::Sum>()
     -> crate::error::Result<AdvancedMemoryOptimizer<T>> {
     let config = AdvancedMemoryConfig::for_training_efficiency();
     AdvancedMemoryOptimizer::new(config)
 }
 
 /// Convenience function to create an optimizer for inference
-pub fn create_inference_optimizer<T: num_traits::Float + Default + Clone + Send + Sync + std::iter::Sum>()
+pub fn create_inference_optimizer<T: scirs2_core::numeric::Float + Default + Clone + Send + Sync + std::iter::Sum>()
     -> crate::error::Result<AdvancedMemoryOptimizer<T>> {
     let config = AdvancedMemoryConfig::for_inference();
     AdvancedMemoryOptimizer::new(config)
 }
 
 /// High-level function to optimize memory usage with automatic configuration
-pub fn optimize_memory_automatically<T: num_traits::Float + Default + Clone + Send + Sync + std::iter::Sum>(
+pub fn optimize_memory_automatically<T: scirs2_core::numeric::Float + Default + Clone + Send + Sync + std::iter::Sum>(
     available_memory: usize,
     model_size: usize,
     batch_size: usize,

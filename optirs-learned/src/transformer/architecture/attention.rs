@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements the attention mechanisms used in the transformer optimizer,
 // including multi-head attention, relative position bias, and rotary position embeddings.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, Array3};
+use scirs2_core::ndarray::{s, Array, Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use scirs2_core::random::{Random, Rng as SCRRng};
 use std::collections::HashMap;
 
@@ -101,13 +101,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
         let numheads = config.numheads;
         let head_dim = modeldim / numheads;
 
-        if modeldim % numheads != 0 {
+        if !modeldim.is_multiple_of(numheads) {
             return Err(OptimError::InvalidConfig(
                 "Model dimension must be divisible by number of heads".to_string(),
             ));
         }
 
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
 
         // Initialize projection weights
         let bound = (6.0 / (2 * modeldim) as f64).sqrt();
@@ -294,7 +294,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
         Ok(attention_output)
     }
 
-    fn apply_softmax(&self, scores: &mut scirs2_core::ndarray_ext::ArrayViewMut2<T>) -> Result<()> {
+    fn apply_softmax(&self, scores: &mut scirs2_core::ndarray::ArrayViewMut2<T>) -> Result<()> {
         let (rows, cols) = scores.dim();
 
         for i in 0..rows {
@@ -341,7 +341,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RelativePositionBias<T> {
     pub fn new(max_distance: usize, num_heads: usize) -> Result<Self> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let table_size = 2 * max_distance - 1;
 
         let mut bias_table = Array2::zeros((table_size, num_heads));
@@ -358,16 +358,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RelativePositio
         })
     }
 
-    pub fn apply_bias(
-        &self,
-        scores: &mut scirs2_core::ndarray_ext::ArrayViewMut2<T>,
-    ) -> Result<()> {
+    pub fn apply_bias(&self, scores: &mut scirs2_core::ndarray::ArrayViewMut2<T>) -> Result<()> {
         let (seq_len, _) = scores.dim();
 
         // Simple bias application - in practice would be more sophisticated
         for i in 0..seq_len {
             for j in 0..seq_len {
-                let rel_pos = (i as i32 - j as i32).abs() as usize;
+                let rel_pos = (i as i32 - j as i32).unsigned_abs() as usize;
                 let bias_idx = rel_pos.min(self.max_distance - 1);
                 scores[[i, j]] = scores[[i, j]] + self.bias_table[[bias_idx, 0]];
             }
@@ -379,7 +376,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RelativePositio
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RoPEEmbeddings<T> {
     pub fn new(max_seqlen: usize, dim: usize) -> Result<Self> {
-        if dim % 2 != 0 {
+        if !dim.is_multiple_of(2) {
             return Err(OptimError::InvalidConfig(
                 "RoPE dimension must be even".to_string(),
             ));

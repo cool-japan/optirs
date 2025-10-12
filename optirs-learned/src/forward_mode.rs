@@ -4,8 +4,8 @@ use std::fmt::Debug;
 // This module implements forward-mode automatic differentiation for computing
 // directional derivatives and Jacobian-vector products efficiently.
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};

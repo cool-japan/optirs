@@ -2,8 +2,8 @@
 //
 // Implementation of SGDR: Stochastic Gradient Descent with Warm Restarts
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::ScalarOperand;
+use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::schedulers::LearningRateScheduler;
@@ -34,7 +34,7 @@ use crate::schedulers::LearningRateScheduler;
 /// ```
 /// use optirs_core::schedulers::{CosineAnnealingWarmRestarts, LearningRateScheduler};
 /// use optirs_core::optimizers::SGD;
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 ///
 /// // Create a scheduler with initial learning rate 0.1, minimum learning rate 0.001,
 /// // initial cycle length 10 steps, and multiplicative factor 2.0

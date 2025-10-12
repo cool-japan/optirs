@@ -3,9 +3,9 @@
 // This module implements various curriculum learning approaches that progressively
 // introduce optimization challenges of increasing difficulty to improve learning.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -385,7 +385,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             .copied()
             .unwrap_or(T::zero());
 
-        let alpha = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let alpha = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
         let new_competency = competency * (T::one() - alpha) + performance * alpha;
 
         self.progress_tracker
@@ -401,9 +401,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
     /// Generic curriculum update
     fn update_generic_curriculum(&mut self, performance: T) -> Result<()> {
         // Simple linear progression based on performance
-        if performance > num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()) {
+        if performance > scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()) {
             let increment = self.curriculum_params.difficulty_increment
-                * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero());
+                * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
             self.curriculum_state.current_difficulty = (self.curriculum_state.current_difficulty
                 + increment)
                 .min(self.curriculum_params.max_difficulty);
@@ -418,16 +418,16 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             self.curriculum_state.current_difficulty / self.curriculum_params.max_difficulty;
 
         self.curriculum_state.learning_phase = match difficulty_ratio {
-            x if x < num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()) => {
+            x if x < scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()) => {
                 LearningPhase::Exploration
             }
-            x if x < num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()) => {
+            x if x < scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()) => {
                 LearningPhase::SkillBuilding
             }
-            x if x < num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()) => {
+            x if x < scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()) => {
                 LearningPhase::Mastery
             }
-            x if x < num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()) => {
+            x if x < scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()) => {
                 LearningPhase::Transfer
             }
             _ => LearningPhase::Generalization,
@@ -438,7 +438,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
     fn adapt_curriculum_parameters(&mut self, task_id: &str, performance: T) -> Result<()> {
         // Adapt patience based on task performance variance
         let performance_variance = self.calculate_performance_variance(task_id);
-        if performance_variance > num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()) {
+        if performance_variance
+            > scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())
+        {
             self.curriculum_params.patience = self.curriculum_params.patience.max(5);
         } else {
             self.curriculum_params.patience =
@@ -451,14 +453,14 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             // Performance is improving, can be more aggressive
             self.curriculum_params.progression_threshold =
                 (self.curriculum_params.progression_threshold
-                    * num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()))
-                .max(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+                    * scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()))
+                .max(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
         } else {
             // Performance declining, be more conservative
             self.curriculum_params.progression_threshold =
                 (self.curriculum_params.progression_threshold
-                    * num_traits::cast::cast(1.05).unwrap_or_else(|| T::zero()))
-                .min(num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()));
+                    * scirs2_core::numeric::NumCast::from(1.05).unwrap_or_else(|| T::zero()))
+                .min(scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()));
         }
 
         Ok(())
@@ -507,9 +509,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             .collect();
 
         let first_half_avg = recent[5..].iter().cloned().fold(T::zero(), |a, b| a + b)
-            / num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero());
         let second_half_avg = recent[..5].iter().cloned().fold(T::zero(), |a, b| a + b)
-            / num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero());
+            / scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero());
 
         second_half_avg - first_half_avg
     }
@@ -519,7 +521,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         // Simple model: expected performance decreases with difficulty
         let difficulty_factor =
             self.curriculum_state.current_difficulty / self.curriculum_params.max_difficulty;
-        T::one() - difficulty_factor * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+        T::one()
+            - difficulty_factor
+                * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
     }
 
     /// Add task to curriculum
@@ -561,7 +565,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         );
         stats.insert(
             "epochs_since_increase".to_string(),
-            num_traits::cast::cast(self.curriculum_state.epochs_since_increase as f64)
+            scirs2_core::numeric::NumCast::from(self.curriculum_state.epochs_since_increase as f64)
                 .unwrap_or_else(|| T::zero()),
         );
         stats.insert(
@@ -633,7 +637,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LearningProgres
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumState<T> {
     fn new() -> Result<Self> {
         Ok(Self {
-            current_difficulty: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            current_difficulty: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
             active_tasks: Vec::new(),
             recent_performance: T::zero(),
             epochs_since_increase: 0,
@@ -686,14 +691,19 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DifficultyPredi
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for CurriculumParams<T> {
     fn default() -> Self {
         Self {
-            initial_difficulty: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            max_difficulty: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            difficulty_increment: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
-            progression_threshold: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            initial_difficulty: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
+            max_difficulty: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            difficulty_increment: scirs2_core::numeric::NumCast::from(0.05)
+                .unwrap_or_else(|| T::zero()),
+            progression_threshold: scirs2_core::numeric::NumCast::from(0.8)
+                .unwrap_or_else(|| T::zero()),
             patience: 5,
-            self_pacing_factor: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            diversity_weight: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-            teacher_confidence: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            self_pacing_factor: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
+            diversity_weight: scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()),
+            teacher_confidence: scirs2_core::numeric::NumCast::from(0.9)
+                .unwrap_or_else(|| T::zero()),
         }
     }
 }

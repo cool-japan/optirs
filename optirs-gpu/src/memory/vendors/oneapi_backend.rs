@@ -960,6 +960,15 @@ impl OneApiMemoryBackend {
     }
 }
 
+// Safety: OneApiMemoryBackend manages OneAPI/SYCL GPU memory pointers via *mut c_void.
+// While raw pointers are not Send/Sync by default, it's safe to share across threads
+// when protected by Arc<Mutex<>> because:
+// 1. All pointers point to SYCL USM memory managed by the OneAPI runtime
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for OneApiMemoryBackend {}
+unsafe impl Sync for OneApiMemoryBackend {}
+
 /// OneAPI errors
 #[derive(Debug, Clone)]
 pub enum OneApiError {

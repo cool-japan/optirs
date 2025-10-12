@@ -11,8 +11,8 @@ use super::{
     TrajectoryBatch, ValueNetwork,
 };
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::HashMap;
 
@@ -119,7 +119,7 @@ pub struct TRPOConfig<T: Float + Debug + Send + Sync + 'static> {
     pub use_natural_gradients: bool,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + num_traits::FromPrimitive> Default for PolicyGradientConfig<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive> Default for PolicyGradientConfig<T> {
     fn default() -> Self {
         Self {
             base_config: RLOptimizerConfig::default(),
@@ -127,44 +127,44 @@ impl<T: Float + Debug + Send + Sync + 'static + num_traits::FromPrimitive> Defau
             ppo_config: PPOConfig::default(),
             trpo_config: TRPOConfig::default(),
             policy_scheduler: Some(RLScheduler::new(
-                num_traits::cast::cast(3e-4).unwrap_or_else(|| T::zero()),
+                T::from(3e-4).unwrap_or_else(|| T::zero()),
                 ScheduleType::Constant,
             )),
             value_scheduler: Some(RLScheduler::new(
-                num_traits::cast::cast(1e-3).unwrap_or_else(|| T::zero()),
+                T::from(1e-3).unwrap_or_else(|| T::zero()),
                 ScheduleType::Constant,
             )),
             use_baseline: true,
             importance_sampling: false,
-            max_is_ratio: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()),
+            max_is_ratio: T::from(2.0).unwrap_or_else(|| T::zero()),
         }
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + num_traits::FromPrimitive> Default for PPOConfig<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive> Default for PPOConfig<T> {
     fn default() -> Self {
         Self {
-            clip_epsilon: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
+            clip_epsilon: T::from(0.2).unwrap_or_else(|| T::zero()),
             dual_clip: false,
             value_clip: true,
-            value_clip_range: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-            target_kl: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            kl_coeff: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-            kl_coeff_adapt_factor: num_traits::cast::cast(1.5).unwrap_or_else(|| T::zero()),
+            value_clip_range: T::from(0.2).unwrap_or_else(|| T::zero()),
+            target_kl: T::from(0.01).unwrap_or_else(|| T::zero()),
+            kl_coeff: T::from(0.2).unwrap_or_else(|| T::zero()),
+            kl_coeff_adapt_factor: T::from(1.5).unwrap_or_else(|| T::zero()),
             early_stop_on_kl: true,
         }
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + num_traits::FromPrimitive> Default for TRPOConfig<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive> Default for TRPOConfig<T> {
     fn default() -> Self {
         Self {
-            max_kl: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            backtrack_factor: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            max_kl: T::from(0.01).unwrap_or_else(|| T::zero()),
+            backtrack_factor: T::from(0.5).unwrap_or_else(|| T::zero()),
             max_backtracks: 10,
             cg_iters: 10,
-            cg_damping: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            cg_tolerance: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
+            cg_damping: T::from(0.1).unwrap_or_else(|| T::zero()),
+            cg_tolerance: T::from(1e-8).unwrap_or_else(|| T::zero()),
             use_natural_gradients: true,
         }
     }
@@ -208,7 +208,7 @@ impl<
             + ScalarOperand
             + std::ops::AddAssign
             + std::iter::Sum
-            + num_traits::FromPrimitive,
+            + scirs2_core::numeric::FromPrimitive,
         P: PolicyNetwork<T>,
         V: ValueNetwork<T>,
     > PolicyGradientOptimizer<T, P, V>
@@ -378,14 +378,14 @@ impl<
                     })
                     .count();
                 clip_fraction =
-                    clip_fraction + num_traits::cast::cast(n_clipped).unwrap_or_else(|| T::zero()) / T::from(ratio.len()).unwrap();
+                    clip_fraction + T::from(n_clipped).unwrap_or_else(|| T::zero()) / T::from(ratio.len()).unwrap();
 
                 // Compute approximate KL divergence
                 approx_kl = approx_kl + log_ratio.mapv(|x| x * x).mean().unwrap_or(T::zero());
 
                 // Early stopping based on KL divergence
                 if self.config.ppo_config.early_stop_on_kl
-                    && approx_kl > self.config.ppo_config.target_kl * num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero())
+                    && approx_kl > self.config.ppo_config.target_kl * T::from(2.0).unwrap_or_else(|| T::zero())
                 {
                     break;
                 }
@@ -698,5 +698,5 @@ impl<
 }
 
 // Import slice syntax
-use scirs2_core::ndarray_ext::s;
+use scirs2_core::ndarray::s;
 // use statrs::statistics::Statistics; // statrs not available

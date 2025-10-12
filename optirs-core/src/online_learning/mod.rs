@@ -4,9 +4,9 @@
 // including online learning, continual learning, and lifelong optimization systems.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
-use scirs2_core::random::{rng, Random};
+use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Random};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -730,8 +730,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                         self.memory_buffer.importance_scores.pop_front();
                     }
                     MemoryUpdateStrategy::Random => {
-                        let idx = scirs2_core::random::rng()
-                            .gen_range(0..self.memory_buffer.examples.len());
+                        let idx = thread_rng().gen_range(0..self.memory_buffer.examples.len());
                         self.memory_buffer.examples.remove(idx);
                         self.memory_buffer.importance_scores.remove(idx);
                     }
@@ -882,7 +881,7 @@ mod tests {
             fisher_samples: 100,
         };
 
-        let optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(strategy);
+        let optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(strategy);
 
         assert_eq!(optimizer.task_optimizers.len(), 0);
         assert!(optimizer.current_task.is_none());
@@ -895,7 +894,7 @@ mod tests {
             update_strategy: MemoryUpdateStrategy::FIFO,
         };
 
-        let mut optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(strategy);
+        let mut optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(strategy);
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
 
         optimizer
@@ -914,7 +913,7 @@ mod tests {
             update_strategy: MemoryUpdateStrategy::FIFO,
         };
 
-        let mut optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(strategy);
+        let mut optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(strategy);
         optimizer.memory_buffer.max_size = 2;
 
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
@@ -971,7 +970,7 @@ mod tests {
             task_embedding_size: 64,
         };
 
-        let mut optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(strategy);
+        let mut optimizer = LifelongOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(strategy);
 
         // Add some tasks
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);

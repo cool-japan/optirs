@@ -6,8 +6,8 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -311,7 +311,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
             return Ok(EarlyStopDecision {
                 should_stop: true,
                 predicted_performance: predicted_perf,
-                prediction_confidence: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                prediction_confidence: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                 stop_reason: StopReason::Converged,
                 decision_epoch: history.epochs.len(),
                 estimated_remaining_time: self.estimate_remaining_time(history)?,
@@ -324,7 +324,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
             return Ok(EarlyStopDecision {
                 should_stop: true,
                 predicted_performance: predicted_perf,
-                prediction_confidence: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+                prediction_confidence: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
                 stop_reason: StopReason::Plateau,
                 decision_epoch: history.epochs.len(),
                 estimated_remaining_time: self.estimate_remaining_time(history)?,
@@ -338,7 +338,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
             return Ok(EarlyStopDecision {
                 should_stop: true,
                 predicted_performance: predicted_perf,
-                prediction_confidence: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+                prediction_confidence: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
                 stop_reason: StopReason::Declining,
                 decision_epoch: history.epochs.len(),
                 estimated_remaining_time: self.estimate_remaining_time(history)?,
@@ -351,7 +351,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
             return Ok(EarlyStopDecision {
                 should_stop: true,
                 predicted_performance: predicted_perf,
-                prediction_confidence: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+                prediction_confidence: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
                 stop_reason: StopReason::BelowThreshold,
                 decision_epoch: history.epochs.len(),
                 estimated_remaining_time: self.estimate_remaining_time(history)?,
@@ -362,7 +362,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         Ok(EarlyStopDecision {
             should_stop: false,
             predicted_performance: predicted_perf,
-            prediction_confidence: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            prediction_confidence: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             stop_reason: StopReason::Converged,
             decision_epoch: history.epochs.len(),
             estimated_remaining_time: self.estimate_remaining_time(history)?,
@@ -397,16 +397,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         let y_range = y_end - y_start;
         
         params[0] = y_range; // a
-        params[1] = num_traits::cast::cast(-0.1).unwrap_or_else(|| T::zero()); // b (decay rate)
+        params[1] = scirs2_core::numeric::NumCast::from(-0.1).unwrap_or_else(|| T::zero()); // b (decay rate)
         params[2] = y_start; // c (offset)
         
         // Simple R² calculation
-        let mean_y = data.iter().cloned().fold(T::zero(), |acc, y| acc + y) / num_traits::cast::cast(n as f64).unwrap_or_else(|| T::zero());
+        let mean_y = data.iter().cloned().fold(T::zero(), |acc, y| acc + y) / scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero());
         let mut ss_tot = T::zero();
         let mut ss_res = T::zero();
         
         for (i, &y) in data.iter().enumerate() {
-            let x = num_traits::cast::cast(i as f64).unwrap_or_else(|| T::zero());
+            let x = scirs2_core::numeric::NumCast::from(i as f64).unwrap_or_else(|| T::zero());
             let y_pred = params[0] * (params[1] * x).exp() + params[2];
             
             ss_tot = ss_tot + (y - mean_y) * (y - mean_y);
@@ -434,14 +434,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         let y_end = *data.last().unwrap();
         
         params[0] = y_start; // a
-        params[1] = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()); // b (power)
+        params[1] = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()); // b (power)
         params[2] = y_end - y_start; // c (offset)
         
         Ok(CurveFittingModel {
             model_type: CurveFittingMethod::PowerLaw,
             parameters: params,
-            r_squared: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()), // Simplified
-            confidence: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            r_squared: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()), // Simplified
+            confidence: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
             complexity: 3,
         })
     }
@@ -461,8 +461,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         Ok(CurveFittingModel {
             model_type: CurveFittingMethod::Logarithmic,
             parameters: params,
-            r_squared: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
+            r_squared: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
             complexity: 2,
         })
     }
@@ -480,14 +480,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         // Estimate parameters
         params[2] = y_start; // c
         params[1] = (y_mid - y_start) / T::from((n/2) as f64).unwrap(); // b
-        params[0] = (y_end - y_start - params[1] * num_traits::cast::cast(n as f64).unwrap_or_else(|| T::zero())) / 
-                   (num_traits::cast::cast(n as f64).unwrap_or_else(|| T::zero()) * num_traits::cast::cast(n as f64).unwrap_or_else(|| T::zero())); // a
+        params[0] = (y_end - y_start - params[1] * scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero())) / 
+                   (scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero()) * scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero())); // a
         
         Ok(CurveFittingModel {
             model_type: CurveFittingMethod::Polynomial,
             parameters: params,
-            r_squared: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+            r_squared: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
             complexity: 3,
         })
     }
@@ -501,13 +501,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         let y_end = *data.last().unwrap();
         
         params[0] = y_end; // y_max
-        params[1] = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()); // k (learning rate)
+        params[1] = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()); // k (learning rate)
         
         Ok(CurveFittingModel {
             model_type: CurveFittingMethod::LearningCurve,
             parameters: params,
-            r_squared: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
+            r_squared: scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero()),
             complexity: 2,
         })
     }
@@ -527,15 +527,15 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         Ok(CurveFittingModel {
             model_type: CurveFittingMethod::NeuralPredictor,
             parameters: params,
-            r_squared: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
-            confidence: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
+            r_squared: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
             complexity: input_size + output_size,
         })
     }
     
     /// Extrapolate performance using fitted model
     fn extrapolate_performance(&self, model: &CurveFittingModel<T>, target_epoch: usize) -> Result<T> {
-        let x = num_traits::cast::cast(target_epoch as f64).unwrap_or_else(|| T::zero());
+        let x = scirs2_core::numeric::NumCast::from(target_epoch as f64).unwrap_or_else(|| T::zero());
         
         match model.model_type {
             CurveFittingMethod::Exponential => {
@@ -606,7 +606,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         }
         
         let recent = data.len().saturating_sub(3);
-        let slope = (data[data.len()-1] - data[recent]) / num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero());
+        let slope = (data[data.len()-1] - data[recent]) / scirs2_core::numeric::NumCast::from(3.0).unwrap_or_else(|| T::zero());
         
         Ok(slope < -self.config.early_stop_threshold)
     }
@@ -622,7 +622,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         
         let remaining_epochs = self.config.max_prediction_epochs.saturating_sub(history.epochs.len());
         
-        Ok(avg_epoch_time * num_traits::cast::cast(remaining_epochs as f64).unwrap_or_else(|| T::zero()))
+        Ok(avg_epoch_time * scirs2_core::numeric::NumCast::from(remaining_epochs as f64).unwrap_or_else(|| T::zero()))
     }
     
     /// Get prediction statistics
@@ -653,12 +653,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Per
     fn default() -> Self {
         Self {
             min_epochs: 5,
-            early_stop_threshold: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            early_stop_threshold: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             patience: 5,
             fitting_method: CurveFittingMethod::LearningCurve,
-            confidence_threshold: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            confidence_threshold: scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()),
             max_prediction_epochs: 100,
-            smoothing_factor: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            smoothing_factor: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
         }
     }
 }

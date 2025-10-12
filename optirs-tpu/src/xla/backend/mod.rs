@@ -8,7 +8,7 @@ pub mod code_generation;
 pub mod profiling_integration;
 pub mod runtime_integration;
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use super::frontend::XLAComputation;

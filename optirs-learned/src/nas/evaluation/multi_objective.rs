@@ -6,8 +6,8 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet};
 
 use crate::error::{OptimError, Result};
@@ -445,31 +445,31 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiObjectiveE
         match &objective.evaluator {
             ObjectiveEvaluator::Accuracy => {
                 let acc = data.get("accuracy").unwrap_or(&0.0);
-                Ok(num_traits::cast::cast(*acc).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*acc).unwrap_or_else(|| T::zero()))
             }
             ObjectiveEvaluator::Latency => {
                 let latency = data.get("latency_ms").unwrap_or(&100.0);
-                Ok(num_traits::cast::cast(*latency).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*latency).unwrap_or_else(|| T::zero()))
             }
             ObjectiveEvaluator::Memory => {
                 let memory = data.get("memory_mb").unwrap_or(&512.0);
-                Ok(num_traits::cast::cast(*memory).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*memory).unwrap_or_else(|| T::zero()))
             }
             ObjectiveEvaluator::Energy => {
                 let energy = data.get("energy_j").unwrap_or(&10.0);
-                Ok(num_traits::cast::cast(*energy).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*energy).unwrap_or_else(|| T::zero()))
             }
             ObjectiveEvaluator::ModelSize => {
                 let size = data.get("model_size_mb").unwrap_or(&50.0);
-                Ok(num_traits::cast::cast(*size).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*size).unwrap_or_else(|| T::zero()))
             }
             ObjectiveEvaluator::FLOPS => {
                 let flops = data.get("flops").unwrap_or(&1e9);
-                Ok(num_traits::cast::cast(*flops).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*flops).unwrap_or_else(|| T::zero()))
             }
             ObjectiveEvaluator::Custom(name) => {
                 let value = data.get(name).unwrap_or(&0.0);
-                Ok(num_traits::cast::cast(*value).unwrap_or_else(|| T::zero()))
+                Ok(scirs2_core::numeric::NumCast::from(*value).unwrap_or_else(|| T::zero()))
             }
         }
     }
@@ -702,7 +702,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiObjectiveE
         stats.num_evaluations += 1;
         
         // Update running mean (simplified)
-        let n = num_traits::cast::cast(stats.num_evaluations as f64).unwrap_or_else(|| T::zero());
+        let n = scirs2_core::numeric::NumCast::from(stats.num_evaluations as f64).unwrap_or_else(|| T::zero());
         stats.mean_value = (stats.mean_value * (n - T::one()) + value) / n;
         
         Ok(())
@@ -781,8 +781,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiObjectiveE
             });
             
             // Set boundary solutions to infinite distance
-            self.archive.solutions[0].crowding_distance = num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero());
-            self.archive.solutions[n-1].crowding_distance = num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero());
+            self.archive.solutions[0].crowding_distance = scirs2_core::numeric::NumCast::from(f64::INFINITY).unwrap_or_else(|| T::zero());
+            self.archive.solutions[n-1].crowding_distance = scirs2_core::numeric::NumCast::from(f64::INFINITY).unwrap_or_else(|| T::zero());
             
             // Compute distances for interior solutions
             let obj_range = *self.archive.solutions[n-1].objective_values.get(&objective.id).unwrap_or(&T::zero()) -
@@ -849,10 +849,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiObjectiveE
         }
         
         // Simplified diversity computation
-        let spacing = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()); // Placeholder
-        let spread = num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()); // Placeholder
+        let spacing = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()); // Placeholder
+        let spread = scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()); // Placeholder
         let max_spread = T::one();
-        let diversity_index = num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()); // Placeholder
+        let diversity_index = scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()); // Placeholder
         
         Ok(DiversityMetrics {
             spacing,
@@ -970,7 +970,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Mul
                     id: "accuracy".to_string(),
                     name: "Validation Accuracy".to_string(),
                     direction: ObjectiveDirection::Maximize,
-                    weight: num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
+                    weight: scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()),
                     priority: 1,
                     range: Some((T::zero(), T::one())),
                     constraint_type: ConstraintType::None,
@@ -980,22 +980,22 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Mul
                     id: "latency".to_string(),
                     name: "Inference Latency".to_string(),
                     direction: ObjectiveDirection::Minimize,
-                    weight: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
+                    weight: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
                     priority: 2,
-                    range: Some((T::zero(), num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()))),
-                    constraint_type: ConstraintType::Hard { threshold: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()) },
+                    range: Some((T::zero(), scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero()))),
+                    constraint_type: ConstraintType::Hard { threshold: scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero()) },
                     evaluator: ObjectiveEvaluator::Latency,
                 },
                 Objective {
                     id: "memory".to_string(),
                     name: "Memory Usage".to_string(),
                     direction: ObjectiveDirection::Minimize,
-                    weight: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
+                    weight: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
                     priority: 3,
-                    range: Some((T::zero(), num_traits::cast::cast(2048.0).unwrap_or_else(|| T::zero()))),
+                    range: Some((T::zero(), scirs2_core::numeric::NumCast::from(2048.0).unwrap_or_else(|| T::zero()))),
                     constraint_type: ConstraintType::Soft { 
-                        threshold: num_traits::cast::cast(1024.0).unwrap_or_else(|| T::zero()),
-                        penalty: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())
+                        threshold: scirs2_core::numeric::NumCast::from(1024.0).unwrap_or_else(|| T::zero()),
+                        penalty: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())
                     },
                     evaluator: ObjectiveEvaluator::Memory,
                 },
@@ -1005,7 +1005,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Mul
             num_reference_points: 100,
             population_size: 50,
             normalization_method: NormalizationMethod::MinMax,
-            constraint_handling: ConstraintHandling::Penalty { penalty_factor: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) },
+            constraint_handling: ConstraintHandling::Penalty { penalty_factor: scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) },
         }
     }
 }

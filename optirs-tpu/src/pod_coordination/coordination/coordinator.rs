@@ -2,8 +2,8 @@
 
 use crate::pod_coordination::coordination::config::*;
 use crate::pod_coordination::types::*;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, IxDyn};
+use scirs2_core::ndarray::{Array, IxDyn};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default)]
@@ -41,7 +41,7 @@ impl<
             + Clone
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::iter::Sum,
     > TPUPodCoordinator<T>
 {

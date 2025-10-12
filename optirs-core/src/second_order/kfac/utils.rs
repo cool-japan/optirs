@@ -5,8 +5,8 @@
 // mathematical utilities.
 
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// K-FAC utilities for layer-specific operations
@@ -32,7 +32,7 @@ impl KFACUtils {
 
         // Simple averaging across batch
         if batch_size > 0 {
-            let scale = T::one() / num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+            let scale = T::one() / T::from(batch_size).unwrap_or_else(|| T::zero());
             for i in 0..update.nrows() {
                 for j in 0..update.ncols() {
                     let input_idx = i % input_dim;
@@ -54,7 +54,7 @@ impl KFACUtils {
     }
 
     /// Compute batch normalization statistics for K-FAC
-    pub fn batchnorm_statistics<T: Float + num_traits::FromPrimitive>(
+    pub fn batchnorm_statistics<T: Float + scirs2_core::numeric::FromPrimitive>(
         input: &Array2<T>,
         eps: T,
     ) -> Result<(Array1<T>, Array1<T>)> {
@@ -65,10 +65,10 @@ impl KFACUtils {
             return Ok((Array1::zeros(num_features), Array1::ones(num_features)));
         }
 
-        let batch_size_t = num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+        let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
 
         // Compute mean
-        let mean = input.mean_axis(scirs2_core::ndarray_ext::Axis(0)).unwrap();
+        let mean = input.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
 
         // Compute variance
         let mut var = Array1::zeros(num_features);
@@ -85,7 +85,7 @@ impl KFACUtils {
     }
 
     /// Compute K-FAC update for grouped convolution layers
-    pub fn grouped_conv_kfac<T: Float + scirs2_core::ndarray_ext::ScalarOperand>(
+    pub fn grouped_conv_kfac<T: Float + scirs2_core::ndarray::ScalarOperand>(
         input: &Array2<T>,
         gradients: &Array2<T>,
         num_groups: usize,
@@ -113,16 +113,16 @@ impl KFACUtils {
             let output_end = output_start + output_per_group;
 
             // Extract group data
-            let group_input = input.slice(scirs2_core::ndarray_ext::s![.., input_start..input_end]);
+            let group_input = input.slice(scirs2_core::ndarray::s![.., input_start..input_end]);
             let group_gradients =
-                gradients.slice(scirs2_core::ndarray_ext::s![.., output_start..output_end]);
+                gradients.slice(scirs2_core::ndarray::s![.., output_start..output_end]);
 
             // Compute group covariance
             let group_update = group_input.t().dot(&group_gradients);
 
             // Place back in result
             result
-                .slice_mut(scirs2_core::ndarray_ext::s![
+                .slice_mut(scirs2_core::ndarray::s![
                     input_start..input_end,
                     output_start..output_end
                 ])
@@ -131,7 +131,7 @@ impl KFACUtils {
 
         // Normalize by batch size
         if batch_size > 0 {
-            let scale = T::one() / num_traits::cast::cast(batch_size).unwrap_or_else(|| T::zero());
+            let scale = T::one() / T::from(batch_size).unwrap_or_else(|| T::zero());
             result = result * scale;
         }
 
@@ -273,8 +273,8 @@ impl KFACUtils {
 
         for i in 0..n {
             for j in 0..n {
-                result[[i, j]] = (matrix[[i, j]] + matrix[[j, i]])
-                    / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                result[[i, j]] =
+                    (matrix[[i, j]] + matrix[[j, i]]) / T::from(2.0).unwrap_or_else(|| T::zero());
             }
         }
 

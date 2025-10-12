@@ -12,8 +12,8 @@ use std::fmt::Debug;
 // - Dynamic layout optimization and memory coalescing
 // - Performance profiling and automated benchmarking
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Array2, Dimension};
+use scirs2_core::ndarray::{Array, Array2, Dimension};
+use scirs2_core::numeric::Float;
 use std::sync::Arc;
 
 use crate::backends::{Backend, CompiledKernel, GpuBackend};
@@ -81,8 +81,39 @@ impl Default for TensorCoreConfig {
             wmma_tile_k: 16,
             auto_layout_optimization: true,
             use_tf32: true,
-            sparsity_ratio: 0.0, // No sparsity by default
+            sparsity_ratio: 0.0, // No sparsity by default,
             async_execution: true,
+        }
+    }
+}
+
+/// Adam optimizer hyperparameters
+#[derive(Debug, Clone)]
+pub struct AdamParams<T: Float> {
+    /// Learning rate
+    pub lr: T,
+    /// First moment decay rate
+    pub beta1: T,
+    /// Second moment decay rate
+    pub beta2: T,
+    /// Epsilon for numerical stability
+    pub eps: T,
+    /// Weight decay coefficient
+    pub weight_decay: T,
+    /// Current optimization step
+    pub step: i32,
+}
+
+impl<T: Float> AdamParams<T> {
+    /// Create new Adam parameters with default values
+    pub fn new(lr: T) -> Self {
+        Self {
+            lr,
+            beta1: T::from(0.9).unwrap(),
+            beta2: T::from(0.999).unwrap(),
+            eps: T::from(1e-8).unwrap(),
+            weight_decay: T::from(0.0).unwrap(),
+            step: 0,
         }
     }
 }
@@ -194,9 +225,9 @@ impl TensorCoreOptimizer {
         {
             // This is a placeholder implementation
             // Full tensor core support requires GPU-specific kernel compilation
-            return Err(GpuOptimError::UnsupportedOperation(
+            Err(GpuOptimError::UnsupportedOperation(
                 "Tensor core optimizer not yet fully implemented".to_string(),
-            ));
+            ))
         }
 
         #[cfg(not(any(
@@ -251,9 +282,9 @@ impl TensorCoreOptimizer {
         let tile_k = self.config.wmma_tile_k;
 
         // Calculate padding for tensor core alignment
-        let padding_m = ((m + tile_m - 1) / tile_m * tile_m) - m;
-        let padding_n = ((n + tile_n - 1) / tile_n * tile_n) - n;
-        let padding_k = ((k + tile_k - 1) / tile_k * tile_k) - k;
+        let padding_m = (m.div_ceil(tile_m) * tile_m) - m;
+        let padding_n = (n.div_ceil(tile_n) * tile_n) - n;
+        let padding_k = (k.div_ceil(tile_k) * tile_k) - k;
 
         // Estimate performance improvement
         let alignment_factor = if padding_m + padding_n + padding_k == 0 {
@@ -306,9 +337,9 @@ impl TensorCoreOptimizer {
         ))]
         {
             // Early return as tensor core functionality is not yet implemented
-            return Err(GpuOptimError::UnsupportedOperation(
+            Err(GpuOptimError::UnsupportedOperation(
                 "Tensor core GEMM not yet implemented".to_string(),
-            ));
+            ))
 
             // The following code is unreachable but kept for reference
             /*
@@ -362,10 +393,8 @@ impl TensorCoreOptimizer {
             feature = "wgpu"
         )))]
         {
-            return Err(GpuOptimError::CudaNotAvailable);
+            Err(GpuOptimError::CudaNotAvailable)
         }
-
-        Ok(())
     }
 
     /// Fused Adam update with tensor core optimization
@@ -375,12 +404,7 @@ impl TensorCoreOptimizer {
         grads: &Array2<T>,
         exp_avg: &mut Array2<T>,
         exp_avg_sq: &mut Array2<T>,
-        lr: T,
-        beta1: T,
-        beta2: T,
-        eps: T,
-        weight_decay: T,
-        step: i32,
+        adam_params: &AdamParams<T>,
     ) -> Result<(), GpuOptimError> {
         #[cfg(any(
             feature = "cuda",
@@ -390,9 +414,9 @@ impl TensorCoreOptimizer {
         ))]
         {
             // Early return as tensor core functionality is not yet implemented
-            return Err(GpuOptimError::UnsupportedOperation(
+            Err(GpuOptimError::UnsupportedOperation(
                 "Fused Adam tensor core not yet implemented".to_string(),
-            ));
+            ))
 
             // The following code is unreachable but kept for reference
             /*
@@ -417,23 +441,23 @@ impl TensorCoreOptimizer {
             );
             self.kernels
                 .fused_adam_tc
-                .set_parameter("lr", &lr as *const _ as *const std::ffi::c_void);
+                .set_parameter("lr", &adam_params.lr as *const _ as *const std::ffi::c_void);
             self.kernels
                 .fused_adam_tc
-                .set_parameter("beta1", &beta1 as *const _ as *const std::ffi::c_void);
+                .set_parameter("beta1", &adam_params.beta1 as *const _ as *const std::ffi::c_void);
             self.kernels
                 .fused_adam_tc
-                .set_parameter("beta2", &beta2 as *const _ as *const std::ffi::c_void);
+                .set_parameter("beta2", &adam_params.beta2 as *const _ as *const std::ffi::c_void);
             self.kernels
                 .fused_adam_tc
-                .set_parameter("eps", &eps as *const _ as *const std::ffi::c_void);
+                .set_parameter("eps", &adam_params.eps as *const _ as *const std::ffi::c_void);
             self.kernels.fused_adam_tc.set_parameter(
                 "weight_decay",
-                &weight_decay as *const _ as *const std::ffi::c_void,
+                &adam_params.weight_decay as *const _ as *const std::ffi::c_void,
             );
             self.kernels
                 .fused_adam_tc
-                .set_parameter("step", &step as *const _ as *const std::ffi::c_void);
+                .set_parameter("step", &adam_params.step as *const _ as *const std::ffi::c_void);
             self.kernels
                 .fused_adam_tc
                 .set_parameter("M", &m as *const _ as *const std::ffi::c_void);
@@ -458,10 +482,8 @@ impl TensorCoreOptimizer {
             feature = "wgpu"
         )))]
         {
-            return Err(GpuOptimError::CudaNotAvailable);
+            Err(GpuOptimError::CudaNotAvailable)
         }
-
-        Ok(())
     }
 
     fn calculate_grid_dimensions(
@@ -477,8 +499,8 @@ impl TensorCoreOptimizer {
         let tile_m = self.config.wmma_tile_m;
         let tile_n = self.config.wmma_tile_n;
 
-        let grid_x = (padded_n + tile_n - 1) / tile_n;
-        let grid_y = (padded_m + tile_m - 1) / tile_m;
+        let grid_x = padded_n.div_ceil(tile_n);
+        let grid_y = padded_m.div_ceil(tile_m);
 
         (grid_x as u32, grid_y as u32, 1)
     }
@@ -519,9 +541,9 @@ impl TensorCoreOptimizer {
         ))]
         {
             // Early return as tensor core functionality is not yet implemented
-            return Err(GpuOptimError::UnsupportedOperation(
+            Err(GpuOptimError::UnsupportedOperation(
                 "Sparse tensor core GEMM not yet implemented".to_string(),
-            ));
+            ))
 
             // The following code is unreachable but kept for reference
             /*
@@ -590,10 +612,8 @@ impl TensorCoreOptimizer {
             feature = "wgpu"
         )))]
         {
-            return Err(GpuOptimError::CudaNotAvailable);
+            Err(GpuOptimError::CudaNotAvailable)
         }
-
-        Ok(())
     }
 
     /// Multi-batch tensor core operations for large-scale training
@@ -610,9 +630,9 @@ impl TensorCoreOptimizer {
         ))]
         {
             // Early return as tensor core functionality is not yet implemented
-            return Err(GpuOptimError::UnsupportedOperation(
+            Err(GpuOptimError::UnsupportedOperation(
                 "Multi-batch tensor core ops not yet implemented".to_string(),
-            ));
+            ))
 
             // The following code is unreachable but kept for reference
             /*
@@ -667,9 +687,9 @@ impl TensorCoreOptimizer {
         ))]
         {
             // Early return as tensor core functionality is not yet implemented
-            return Err(GpuOptimError::UnsupportedOperation(
+            Err(GpuOptimError::UnsupportedOperation(
                 "Optimized pipeline GEMM not yet implemented".to_string(),
-            ));
+            ))
 
             // The following code is unreachable but kept for reference
             /*
@@ -779,12 +799,9 @@ impl TensorCoreOptimizer {
         {
             // Prefetch memory for next _operation (simplified implementation)
             // In real GPU code, this would trigger async memory transfers
-            match &next_operation.op_type {
-                TensorCoreOpType::GEMM { a, b, .. } => {
-                    // Prefetch matrices A and B
-                    // This would be actual GPU memory prefetching in real implementation
-                }
-                _ => {}
+            if let TensorCoreOpType::GEMM { a, b, .. } = &next_operation.op_type {
+                // Prefetch matrices A and B
+                // This would be actual GPU memory prefetching in real implementation
             }
         }
 
@@ -904,7 +921,7 @@ impl TensorCoreOptimizer {
             let new_cols = cols + padding_cols;
             let mut padded = Array2::zeros((new_rows, new_cols));
             padded
-                .slice_mut(scirs2_core::ndarray_ext::s![..rows, ..cols])
+                .slice_mut(scirs2_core::ndarray::s![..rows, ..cols])
                 .assign(matrix);
             optimized_data = padded;
         }
@@ -1011,7 +1028,7 @@ impl TensorCoreOptimizer {
         };
         let mut current_stream = 0;
 
-        for (_idx, &op_idx) in sorted_indices.iter().enumerate() {
+        for &op_idx in sorted_indices.iter() {
             operation_order.push(op_idx);
             stream_assignments.push(current_stream);
             current_stream = (current_stream + 1) % num_streams;
@@ -1255,9 +1272,9 @@ impl TensorCoreOptimizer {
         let tile_n = self.config.wmma_tile_n;
         let tile_k = self.config.wmma_tile_k;
 
-        let utilized_tiles_m = (m + tile_m - 1) / tile_m;
-        let utilized_tiles_n = (n + tile_n - 1) / tile_n;
-        let utilized_tiles_k = (k + tile_k - 1) / tile_k;
+        let utilized_tiles_m = m.div_ceil(tile_m);
+        let utilized_tiles_n = n.div_ceil(tile_n);
+        let utilized_tiles_k = k.div_ceil(tile_k);
 
         let total_tensor_cores = utilized_tiles_m * utilized_tiles_n * utilized_tiles_k;
         let theoretical_max = self.estimate_max_tensor_cores();
@@ -1386,7 +1403,7 @@ impl MixedPrecisionTrainer {
         }
 
         // Clamp loss scale to reasonable bounds
-        self.loss_scale = self.loss_scale.max(1.0).min(65536.0);
+        self.loss_scale = self.loss_scale.clamp(1.0, 65536.0);
     }
 
     /// Get current loss scale
@@ -1495,9 +1512,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseTensorCoreMatrix<T> {
                 indexed_values.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
 
                 // Store top 2 values and their positions
-                for i in 0..2.min(indexed_values.len()) {
-                    values.push(indexed_values[i].1);
-                    metadata.push(indexed_values[i].0 as u8);
+                for &(idx, val) in indexed_values.iter().take(2) {
+                    values.push(val);
+                    metadata.push(idx as u8);
                 }
             }
         }
@@ -1552,6 +1569,12 @@ pub struct TensorCorePerformanceBenchmark {
         (usize, usize, usize, TensorCorePrecision),
         TensorCorePerformanceResult,
     >,
+}
+
+impl Default for TensorCorePerformanceBenchmark {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TensorCorePerformanceBenchmark {
@@ -2301,7 +2324,7 @@ mod tests {
 
     #[test]
     fn test_sparse_tensor_core_matrix() {
-        use scirs2_core::ndarray_ext::Array2;
+        use scirs2_core::ndarray::Array2;
 
         let dense = Array2::from_shape_vec((4, 8), (0..32).map(|x| x as f32).collect()).unwrap();
         let sparse = SparseTensorCoreMatrix::from_dense(&dense);

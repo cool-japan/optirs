@@ -38,7 +38,7 @@
 // # }
 // ```
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 pub mod config;
@@ -53,7 +53,7 @@ pub mod anomalies {
 
     use super::config::*;
     use crate::OptimizerError as OptimError;
-    use num_traits::Float;
+    use scirs2_core::numeric::Float;
     use std::collections::VecDeque;
     use std::fmt::Debug;
     use std::time::SystemTime;
@@ -176,7 +176,7 @@ pub mod anomalies {
             let last_value = data[data.len() - 1];
             let z_score = (last_value - mean) / std_dev;
 
-            if z_score.abs() > num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero()) {
+            if z_score.abs() > scirs2_core::numeric::NumCast::from(3.0).unwrap_or_else(|| T::zero()) {
                 Ok(Some(z_score.abs()))
             } else {
                 Ok(None)
@@ -205,7 +205,7 @@ pub mod trends {
 
     use super::config::*;
     use crate::OptimizerError as OptimError;
-    use num_traits::Float;
+    use scirs2_core::numeric::Float;
     use std::collections::VecDeque;
     use std::fmt::Debug;
     use std::time::{Duration, SystemTime};
@@ -337,7 +337,7 @@ pub mod trends {
             let first_avg = first_half.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(first_half.len()).unwrap();
             let second_avg = second_half.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(second_half.len()).unwrap();
 
-            let threshold = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
+            let threshold = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
 
             if second_avg > first_avg + threshold {
                 Ok(TrendDirection::Upward)
@@ -373,7 +373,7 @@ pub mod trends {
 
             // Simple linear extrapolation
             for i in 1..=self.config.prediction_horizon {
-                let predicted = last_value + num_traits::cast::cast(i).unwrap_or_else(|| T::zero()) * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero());
+                let predicted = last_value + scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero()) * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
                 predictions.push(predicted);
             }
 
@@ -408,7 +408,7 @@ pub mod reporting {
 
     use super::config::*;
     use crate::OptimizerError as OptimError;
-    use num_traits::Float;
+    use scirs2_core::numeric::Float;
     use std::collections::HashMap;
     use std::fmt::Debug;
     use std::time::SystemTime;
@@ -510,7 +510,7 @@ pub mod dashboard {
 
     use super::config::*;
     use crate::OptimizerError as OptimError;
-    use num_traits::Float;
+    use scirs2_core::numeric::Float;
     use std::collections::HashMap;
     use std::fmt::Debug;
     use std::time::{Duration, SystemTime};

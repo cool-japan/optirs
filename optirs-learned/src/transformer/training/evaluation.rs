@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements comprehensive evaluation strategies for assessing
 // the performance of transformer-based learned optimizers across various metrics.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
+use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -410,7 +410,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         // Compute convergence rate
         let convergence_rate = if loss_trajectory.len() > 1 {
             let improvement = (initial_loss - final_loss)
-                / initial_loss.max(num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()));
+                / initial_loss
+                    .max(scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()));
             improvement / T::from(loss_trajectory.len() as f64).unwrap()
         } else {
             T::zero()
@@ -441,12 +442,15 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
             let prev_window = &loss_trajectory[i - window_size - 1..i - 1];
 
             let current_avg = current_window.iter().cloned().fold(T::zero(), |a, b| a + b)
-                / num_traits::cast::cast(window_size as f64).unwrap_or_else(|| T::zero());
+                / scirs2_core::numeric::NumCast::from(window_size as f64)
+                    .unwrap_or_else(|| T::zero());
             let prev_avg = prev_window.iter().cloned().fold(T::zero(), |a, b| a + b)
-                / num_traits::cast::cast(window_size as f64).unwrap_or_else(|| T::zero());
+                / scirs2_core::numeric::NumCast::from(window_size as f64)
+                    .unwrap_or_else(|| T::zero());
 
             let change = (current_avg - prev_avg).abs()
-                / prev_avg.max(num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()));
+                / prev_avg
+                    .max(scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()));
 
             if change < tolerance {
                 return Ok((true, Some(i)));
@@ -465,13 +469,15 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
     ) -> Result<EfficiencyMetrics<T>> {
         let flops = (num_steps as u64) * 1000; // Simplified FLOP estimation
         let parameter_efficiency = T::one()
-            / (num_traits::cast::cast(memory_usage as f64).unwrap_or_else(|| T::zero()) + T::one());
-        let sample_efficiency = num_traits::cast::cast(num_steps as f64)
+            / (scirs2_core::numeric::NumCast::from(memory_usage as f64)
+                .unwrap_or_else(|| T::zero())
+                + T::one());
+        let sample_efficiency = scirs2_core::numeric::NumCast::from(num_steps as f64)
             .unwrap_or_else(|| T::zero())
             / (wall_time + T::one());
         let energy_consumption = wall_time
-            * num_traits::cast::cast(memory_usage as f64).unwrap_or_else(|| T::zero())
-            * num_traits::cast::cast(1e-9).unwrap_or_else(|| T::zero());
+            * scirs2_core::numeric::NumCast::from(memory_usage as f64).unwrap_or_else(|| T::zero())
+            * scirs2_core::numeric::NumCast::from(1e-9).unwrap_or_else(|| T::zero());
 
         Ok(EfficiencyMetrics {
             wall_time,
@@ -491,14 +497,15 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         // Simplified statistical significance computation
         // In practice, this would involve proper statistical tests
 
-        let p_value = num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()); // Placeholder
-        let effect_size = num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()); // Cohen's d
+        let p_value = scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()); // Placeholder
+        let effect_size = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()); // Cohen's d
         let confidence_interval = (
-            num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
         );
-        let statistical_power = num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero());
-        let test_statistic = num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+        let statistical_power =
+            scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero());
+        let test_statistic = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
 
         Ok(StatisticalSignificance {
             p_value,
@@ -601,7 +608,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
                 .iter()
                 .filter(|result| result.convergence_info.converged)
                 .count();
-            let success_rate = num_traits::cast::cast(success_count as f64)
+            let success_rate = scirs2_core::numeric::NumCast::from(success_count as f64)
                 .unwrap_or_else(|| T::zero())
                 / T::from(self.performance_history.len() as f64).unwrap();
             summary.insert("success_rate".to_string(), success_rate);
@@ -669,7 +676,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricCalculato
                 .cloned()
                 .fold(T::zero(), |a, b| a.max(b))),
             AggregationMethod::Min => Ok(self.historical_values.iter().cloned().fold(
-                num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(f64::INFINITY).unwrap_or_else(|| T::zero()),
                 |a, b| a.min(b),
             )),
             _ => Ok(self.historical_values.back().copied().unwrap_or(T::zero())),
@@ -686,12 +693,15 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Eva
         Self {
             num_episodes: 10,
             eval_frequency: 100,
-            convergence_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            convergence_tolerance: scirs2_core::numeric::NumCast::from(1e-6)
+                .unwrap_or_else(|| T::zero()),
             max_eval_steps: 10000,
-            confidence_level: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+            confidence_level: scirs2_core::numeric::NumCast::from(0.95)
+                .unwrap_or_else(|| T::zero()),
             bootstrap_samples: 1000,
             cv_folds: 5,
-            robustness_severity: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            robustness_severity: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
         }
     }
 }

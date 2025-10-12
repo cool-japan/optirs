@@ -907,10 +907,10 @@ impl PerformanceRegressionDetector {
                     ),
                     timestamp: SystemTime::now(),
                     severity: self.map_severity(result.severity),
-                    title: format!("Performance Regression Detected: {}", result.metric.to_string()),
+                    title: format!("Performance Regression Detected: {}", result.metric),
                     description: format!(
                         "Performance regression detected for metric '{}'. Change: {:.2}%, Confidence: {:.2}%",
-                        result.metric.to_string(),
+                        result.metric,
                         result.change_percentage,
                         result.confidence * 100.0
                     ),
@@ -1552,6 +1552,65 @@ impl Default for AlertConfig {
     }
 }
 
+impl Default for EnvironmentInfo {
+    fn default() -> Self {
+        Self {
+            os: "linux".to_string(),
+            cpu_model: "unknown".to_string(),
+            cpu_cores: 4,
+            total_memory_mb: 8192,
+            gpu_info: None,
+            compiler_version: "rustc 1.70".to_string(),
+            rust_version: "1.70.0".to_string(),
+            env_vars: HashMap::new(),
+        }
+    }
+}
+
+impl Default for TestConfiguration {
+    fn default() -> Self {
+        Self {
+            test_name: "default_test".to_string(),
+            parameters: HashMap::new(),
+            dataset_size: Some(1000),
+            iterations: Some(100),
+            batch_size: Some(32),
+            precision: "f64".to_string(),
+        }
+    }
+}
+
+// Hash implementations for MetricType
+impl std::hash::Hash for MetricType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            MetricType::Custom(name) => name.hash(state),
+            // For other variants, discriminant is sufficient
+            MetricType::ExecutionTime
+            | MetricType::MemoryUsage
+            | MetricType::Throughput
+            | MetricType::CpuUtilization
+            | MetricType::GpuUtilization
+            | MetricType::CacheHitRate
+            | MetricType::Flops
+            | MetricType::ConvergenceRate
+            | MetricType::ErrorRate => {}
+        }
+    }
+}
+
+impl PartialEq for MetricType {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MetricType::Custom(a), MetricType::Custom(b)) => a == b,
+            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
+        }
+    }
+}
+
+impl Eq for MetricType {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1560,7 +1619,7 @@ mod tests {
     fn test_regression_detector_creation() {
         let config = RegressionConfig::default();
         let detector = PerformanceRegressionDetector::new(config).unwrap();
-        assert!(!detector.regression_analyzer.current_results.is_empty() == false);
+        assert!(detector.regression_analyzer.current_results.is_empty());
     }
 
     #[test]
@@ -1650,62 +1709,3 @@ mod tests {
         assert_eq!(report.regression_count, 0);
     }
 }
-
-impl Default for EnvironmentInfo {
-    fn default() -> Self {
-        Self {
-            os: "linux".to_string(),
-            cpu_model: "unknown".to_string(),
-            cpu_cores: 4,
-            total_memory_mb: 8192,
-            gpu_info: None,
-            compiler_version: "rustc 1.70".to_string(),
-            rust_version: "1.70.0".to_string(),
-            env_vars: HashMap::new(),
-        }
-    }
-}
-
-impl Default for TestConfiguration {
-    fn default() -> Self {
-        Self {
-            test_name: "default_test".to_string(),
-            parameters: HashMap::new(),
-            dataset_size: Some(1000),
-            iterations: Some(100),
-            batch_size: Some(32),
-            precision: "f64".to_string(),
-        }
-    }
-}
-
-// Hash implementations for MetricType
-impl std::hash::Hash for MetricType {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-        match self {
-            MetricType::Custom(name) => name.hash(state),
-            // For other variants, discriminant is sufficient
-            MetricType::ExecutionTime
-            | MetricType::MemoryUsage
-            | MetricType::Throughput
-            | MetricType::CpuUtilization
-            | MetricType::GpuUtilization
-            | MetricType::CacheHitRate
-            | MetricType::Flops
-            | MetricType::ConvergenceRate
-            | MetricType::ErrorRate => {}
-        }
-    }
-}
-
-impl PartialEq for MetricType {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (MetricType::Custom(a), MetricType::Custom(b)) => a == b,
-            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
-        }
-    }
-}
-
-impl Eq for MetricType {}

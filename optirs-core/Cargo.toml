@@ -13,14 +13,18 @@ categories = ["science", "mathematics", "algorithms"]
 workspace = true
 
 [dependencies]
-# Core dependencies - REMOVED: Use scirs2_core::ndarray_ext instead
-# ndarray = { workspace = true }
-# ndarray-rand = { workspace = true }
-num-traits = { workspace = true }
-num-complex = { workspace = true }
+# 🚨 FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# ndarray-rand - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+# num-complex - Use scirs2_core::numeric
+# rand, rand_distr - Use scirs2_core::random
+# fastrand - Use scirs2_core::random
+# rayon - Use scirs2_core::parallel_ops
+# wide - Use scirs2_core::simd_ops
+
+# Standard Rust dependencies (allowed)
 thiserror = { workspace = true }
-# rand = { workspace = true }  # REMOVED: Use scirs2_core::random instead
-# rand_distr = { workspace = true }  # REMOVED: Use scirs2_core::random instead
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
@@ -30,30 +34,37 @@ log = { workspace = true }
 # 🚨 SciRS2 FOUNDATION INTEGRATION 🚨
 #
 # OptiRS-Core uses SciRS2 as its scientific computing foundation.
-# Only essential SciRS2 crates are included based on actual optimization needs.
-# Following evidence-based integration policy from SCIRS2_INTEGRATION_POLICY.md
+# ALL scientific computing MUST go through scirs2-core abstractions.
+# Following SciRS2 Ecosystem Policy (v3.0.0) from SCIRS2_INTEGRATION_POLICY.md
 #
+# PHILOSOPHY: OptiRS is an OPTIMIZATION library, not an autodiff framework.
+# Start minimal - add dependencies only when compilation errors prove necessity.
+#
+# ✅ ESSENTIAL (Always Required):
 scirs2-core = { workspace = true }        # FOUNDATION - Core scientific primitives
+                                          # Provides: random, ndarray, numeric, simd_ops, parallel_ops
 scirs2-optimize = { workspace = true }    # ESSENTIAL - Base optimization interfaces
-scirs2-linalg = { workspace = true }      # ESSENTIAL - Matrix operations for optimization
-scirs2-autograd = { workspace = true }    # ESSENTIAL - Automatic differentiation
-scirs2-neural = { workspace = true }      # ESSENTIAL - Neural network optimization support
-scirs2-metrics = { workspace = true }     # ESSENTIAL - Performance monitoring and benchmarks
-scirs2-stats = { workspace = true }       # ESSENTIAL - Statistical analysis functions
-scirs2-signal = { workspace = true }     # EVIDENCE - Signal processing
-scirs2-series = { workspace = true }     # EVIDENCE - Time series analysis
-scirs2-datasets = { workspace = true }   # EVIDENCE - Dataset handling
+
+# ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
+scirs2-neural = { workspace = true }      # EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = { workspace = true }     # EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = { workspace = true }       # EVIDENCE: multiple modules use distributions
+scirs2-series = { workspace = true }      # EVIDENCE: performance_tracking.rs requires this
+scirs2-datasets = { workspace = true }    # EVIDENCE: cross_platform_tester.rs requires this
+
+# ⚠️ CONDITIONAL (Uncomment only if compilation fails):
+# scirs2-linalg = { workspace = true }      # Only if second-order methods need matrix ops beyond ndarray
+# scirs2-signal = { workspace = true }      # Only if gradient smoothing specifically requires it
+
+# ❌ NOT REQUIRED for OptiRS:
+# scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
+# TODO: Remove scirs2-autograd usage from src/optimizers/adam.rs
+
+# System utilities (allowed - not scientific computing)
 uuid = { workspace = true }               # For generating unique identifiers
 futures = { workspace = true }            # For async operations
 sysinfo = { workspace = true }            # For system information
-fastrand = { workspace = true }           # For fast random number generation
 num_cpus = { workspace = true }           # For CPU count detection
-
-# Parallelization (optional)
-rayon = { workspace = true, optional = true }
-
-# Performance
-wide = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx = { workspace = true }
@@ -63,5 +74,28 @@ tempfile = { workspace = true }
 [features]
 default = ["std"]
 std = []
-parallel = ["rayon"]
-simd = ["wide"]
+# parallel and simd features removed - use scirs2_core::parallel_ops and scirs2_core::simd_ops directly
+
+[[bench]]
+name = "optimizer_benchmarks"
+harness = false
+
+[[bench]]
+name = "simd_benchmarks"
+harness = false
+
+[[bench]]
+name = "parallel_benchmarks"
+harness = false
+
+[[bench]]
+name = "memory_efficient_benchmarks"
+harness = false
+
+[[bench]]
+name = "gpu_benchmarks"
+harness = false
+
+[[bench]]
+name = "metrics_benchmarks"
+harness = false

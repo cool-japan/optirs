@@ -9,7 +9,7 @@ use super::memory_leak_detector::{
     MemoryGrowthAnalysis, MemoryLeakResult, MemoryUsageSnapshot,
 };
 use crate::error::{OptimError, Result};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -308,7 +308,7 @@ impl ReferenceCountingDetector {
         let mut visited = HashSet::new();
         let mut recursion_stack = HashSet::new();
 
-        self.dfs_cycle_detection(
+        Self::dfs_cycle_detection(
             allocation_id,
             reference_graph,
             &mut visited,
@@ -318,7 +318,6 @@ impl ReferenceCountingDetector {
 
     /// Depth-first search for cycle detection
     fn dfs_cycle_detection(
-        &self,
         node: usize,
         graph: &HashMap<usize, HashSet<usize>>,
         visited: &mut HashSet<usize>,
@@ -330,7 +329,7 @@ impl ReferenceCountingDetector {
         if let Some(neighbors) = graph.get(&node) {
             for &neighbor in neighbors {
                 if !visited.contains(&neighbor) {
-                    if self.dfs_cycle_detection(neighbor, graph, visited, recursion_stack) {
+                    if Self::dfs_cycle_detection(neighbor, graph, visited, recursion_stack) {
                         return true;
                     }
                 } else if recursion_stack.contains(&neighbor) {
@@ -594,6 +593,29 @@ pub struct CycleDetector {
     max_depth: usize,
 }
 
+/// State for Tarjan's algorithm
+struct TarjanState {
+    index: usize,
+    stack: Vec<usize>,
+    indices: HashMap<usize, usize>,
+    lowlinks: HashMap<usize, usize>,
+    on_stack: HashSet<usize>,
+    strongly_connected_components: Vec<Vec<usize>>,
+}
+
+impl TarjanState {
+    fn new() -> Self {
+        Self {
+            index: 0,
+            stack: Vec::new(),
+            indices: HashMap::new(),
+            lowlinks: HashMap::new(),
+            on_stack: HashSet::new(),
+            strongly_connected_components: Vec::new(),
+        }
+    }
+}
+
 impl CycleDetector {
     /// Create a new cycle detector
     pub fn new() -> Self {
@@ -602,95 +624,69 @@ impl CycleDetector {
 
     /// Detect cycles in reference graph using Tarjan's algorithm
     pub fn detect_cycles(&self, graph: &HashMap<usize, HashSet<usize>>) -> Vec<Vec<usize>> {
-        let mut index = 0;
-        let mut stack = Vec::new();
-        let mut indices = HashMap::new();
-        let mut lowlinks = HashMap::new();
-        let mut on_stack = HashSet::new();
-        let mut strongly_connected_components = Vec::new();
+        let mut state = TarjanState::new();
 
         for &node in graph.keys() {
-            if !indices.contains_key(&node) {
-                self.strongconnect(
-                    node,
-                    &mut index,
-                    &mut stack,
-                    &mut indices,
-                    &mut lowlinks,
-                    &mut on_stack,
-                    &mut strongly_connected_components,
-                    graph,
-                );
+            if !state.indices.contains_key(&node) {
+                Self::strongconnect(node, &mut state, graph);
             }
         }
 
         // Filter to return only cycles (SCCs with more than one node or self-loops)
-        strongly_connected_components
+        state
+            .strongly_connected_components
             .into_iter()
             .filter(|scc| {
                 scc.len() > 1
                     || (scc.len() == 1
                         && graph
                             .get(&scc[0])
-                            .map_or(false, |neighbors| neighbors.contains(&scc[0])))
+                            .is_some_and(|neighbors| neighbors.contains(&scc[0])))
             })
             .collect()
     }
 
     /// Tarjan's strongly connected components algorithm
-    fn strongconnect(
-        &self,
-        v: usize,
-        index: &mut usize,
-        stack: &mut Vec<usize>,
-        indices: &mut HashMap<usize, usize>,
-        lowlinks: &mut HashMap<usize, usize>,
-        on_stack: &mut HashSet<usize>,
-        strongly_connected_components: &mut Vec<Vec<usize>>,
-        graph: &HashMap<usize, HashSet<usize>>,
-    ) {
-        indices.insert(v, *index);
-        lowlinks.insert(v, *index);
-        *index += 1;
-        stack.push(v);
-        on_stack.insert(v);
+    fn strongconnect(v: usize, state: &mut TarjanState, graph: &HashMap<usize, HashSet<usize>>) {
+        state.indices.insert(v, state.index);
+        state.lowlinks.insert(v, state.index);
+        state.index += 1;
+        state.stack.push(v);
+        state.on_stack.insert(v);
 
         if let Some(neighbors) = graph.get(&v) {
             for &w in neighbors {
-                if !indices.contains_key(&w) {
-                    self.strongconnect(
-                        w,
-                        index,
-                        stack,
-                        indices,
-                        lowlinks,
-                        on_stack,
-                        strongly_connected_components,
-                        graph,
-                    );
-                    let v_lowlink = *lowlinks.get(&v).unwrap();
-                    let w_lowlink = *lowlinks.get(&w).unwrap();
-                    lowlinks.insert(v, v_lowlink.min(w_lowlink));
-                } else if on_stack.contains(&w) {
-                    let v_lowlink = *lowlinks.get(&v).unwrap();
-                    let w_index = *indices.get(&w).unwrap();
-                    lowlinks.insert(v, v_lowlink.min(w_index));
+                if !state.indices.contains_key(&w) {
+                    Self::strongconnect(w, state, graph);
+                    let v_lowlink = *state.lowlinks.get(&v).unwrap();
+                    let w_lowlink = *state.lowlinks.get(&w).unwrap();
+                    state.lowlinks.insert(v, v_lowlink.min(w_lowlink));
+                } else if state.on_stack.contains(&w) {
+                    let v_lowlink = *state.lowlinks.get(&v).unwrap();
+                    let w_index = *state.indices.get(&w).unwrap();
+                    state.lowlinks.insert(v, v_lowlink.min(w_index));
                 }
             }
         }
 
-        if lowlinks.get(&v) == indices.get(&v) {
+        if state.lowlinks.get(&v) == state.indices.get(&v) {
             let mut component = Vec::new();
             loop {
-                let w = stack.pop().unwrap();
-                on_stack.remove(&w);
+                let w = state.stack.pop().unwrap();
+                state.on_stack.remove(&w);
                 component.push(w);
                 if w == v {
                     break;
                 }
             }
-            strongly_connected_components.push(component);
+            state.strongly_connected_components.push(component);
         }
+    }
+}
+
+impl Default for ReferenceTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -820,10 +816,13 @@ pub enum AlertSeverity {
     Critical,
 }
 
+/// Type alias for alert callbacks
+type AlertCallback = Box<dyn Fn(&MemoryAlert) + Send + Sync>;
+
 /// Alert system for memory monitoring
 pub struct AlertSystem {
     /// Alert callbacks
-    alert_callbacks: Vec<Box<dyn Fn(&MemoryAlert) + Send + Sync>>,
+    alert_callbacks: Vec<AlertCallback>,
 }
 
 impl RealTimeMemoryMonitor {

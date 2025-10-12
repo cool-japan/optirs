@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // including dependency-aware scheduling, resource-aware scheduling,
 // latency hiding, and multi-core parallelization.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 
@@ -1224,18 +1224,25 @@ impl PartialEq for CriticalPathItem {
 
 impl Eq for CriticalPathItem {}
 
-impl PartialOrd for CriticalPathItem {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.critical_path_length
-            .partial_cmp(&other.critical_path_length)
-    }
-}
-
 impl Ord for CriticalPathItem {
     fn cmp(&self, other: &Self) -> Ordering {
         self.critical_path_length
             .partial_cmp(&other.critical_path_length)
             .unwrap_or(Ordering::Equal)
+    }
+}
+
+impl PartialOrd for CriticalPathItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for DependencyAnalyzer<T>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1254,6 +1261,12 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Depende
     ) -> Result<DependencyGraph> {
         self.dependency_graph.build_from_computation(computation)?;
         Ok(self.dependency_graph.clone())
+    }
+}
+
+impl Default for DependencyGraph {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1317,6 +1330,14 @@ impl Clone for DependencyGraph {
     }
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for CriticalPathAnalyzer<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> CriticalPathAnalyzer<T> {
     pub fn new() -> Self {
         Self {
@@ -1334,6 +1355,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Critica
     ) -> Result<HashMap<OperationId, f64>> {
         // Simplified critical path computation
         Ok(self.critical_path_lengths.clone())
+    }
+}
+
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for DataFlowAnalyzer<T>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1404,6 +1433,14 @@ impl ResourceManager {
     }
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for LatencyOptimizer<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LatencyOptimizer<T> {
     pub fn new() -> Self {
         Self {
@@ -1415,6 +1452,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Latency
             latency_model: LatencyModel::new(),
             prefetch_opportunities: vec![],
         }
+    }
+}
+
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for LatencyModel<T>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1439,6 +1484,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Latency
     }
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for ParallelizationEngine<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> ParallelizationEngine<T> {
     pub fn new() -> Self {
         Self {
@@ -1456,6 +1509,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Paralle
     }
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for LoadBalancer<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LoadBalancer<T> {
     pub fn new() -> Self {
         Self {
@@ -1470,6 +1531,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LoadBal
     }
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for PerformanceMonitor<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> PerformanceMonitor<T> {
     pub fn new() -> Self {
         Self {
@@ -1477,6 +1546,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Perform
             timeline: vec![],
             _phantom: std::marker::PhantomData,
         }
+    }
+}
+
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for PerformancePredictor<T>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

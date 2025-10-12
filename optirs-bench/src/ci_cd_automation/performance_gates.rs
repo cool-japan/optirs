@@ -956,7 +956,7 @@ impl PerformanceGateEvaluator {
                     .metric_gates
                     .get(&result.metric_type)
                     .cloned()
-                    .unwrap_or_else(|| MetricGate {
+                    .unwrap_or(MetricGate {
                         gate_type: GateType::Absolute,
                         threshold: 0.0,
                         operator: ComparisonOperator::LessThanOrEqual,

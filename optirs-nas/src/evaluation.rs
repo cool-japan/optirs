@@ -4,8 +4,8 @@ use std::fmt::Debug;
 // Provides comprehensive evaluation metrics, benchmarking suites,
 // and performance prediction capabilities for optimizer architectures.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -1483,8 +1483,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         let cv = std_dev
             / mean
                 .abs()
-                .max(num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()));
-        Ok(T::one() / (cv + num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero())))
+                .max(scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()));
+        Ok(
+            T::one()
+                / (cv + scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero())),
+        )
     }
 
     fn compute_memory_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -1496,7 +1499,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
 
         // Efficiency as inverse of memory usage
         let efficiency = 1.0 / (avg_memory + 1e-6);
-        Ok(num_traits::cast::cast(efficiency).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(efficiency).unwrap_or_else(|| T::zero()))
     }
 
     fn compute_computational_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -1508,7 +1511,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
 
         // Efficiency as inverse of CPU time
         let efficiency = 1.0 / (avg_cpu_time + 1e-6);
-        Ok(num_traits::cast::cast(efficiency).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(efficiency).unwrap_or_else(|| T::zero()))
     }
 }
 
@@ -1547,11 +1550,13 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
                 parameters: HashMap::new(),
                 dimensions: 10,
                 max_evaluations: 1000,
-                target_performance: Some(num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero())),
+                target_performance: Some(
+                    scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
+                ),
             },
             expected_range: (
-                num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
-                num_traits::cast::cast(1e-2).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(1e-2).unwrap_or_else(|| T::zero()),
             ),
             difficulty: DifficultyLevel::Medium,
             resource_requirements: ResourceRequirements {
@@ -1572,11 +1577,13 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
                 parameters: HashMap::new(),
                 dimensions: 20,
                 max_evaluations: 500,
-                target_performance: Some(num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero())),
+                target_performance: Some(
+                    scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
+                ),
             },
             expected_range: (
-                num_traits::cast::cast(1e-10).unwrap_or_else(|| T::zero()),
-                num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(1e-10).unwrap_or_else(|| T::zero()),
+                scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
             ),
             difficulty: DifficultyLevel::Easy,
             resource_requirements: ResourceRequirements {
@@ -1609,19 +1616,19 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
         let start_time = Instant::now();
 
         // Simplified benchmark execution
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let score = match benchmark.test_function.function_type {
             TestFunctionType::Rosenbrock => {
                 // Simulate Rosenbrock function optimization
-                T::from(0.01 + rng.random_f64() * 0.1).unwrap()
+                T::from(0.01 + rng.random::<f64>() * 0.1).unwrap()
             }
             TestFunctionType::Quadratic => {
                 // Simulate quadratic function optimization
-                T::from(0.001 + rng.random_f64() * 0.01).unwrap()
+                T::from(0.001 + rng.random::<f64>() * 0.01).unwrap()
             }
             _ => {
                 // Default score
-                num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())
+                scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())
             }
         };
 
@@ -1631,7 +1638,7 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
             test_name: benchmark.name.clone(),
             score,
             normalized_score: score, // Simplified normalization
-            percentile_rank: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), // Simplified percentile
+            percentile_rank: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()), // Simplified percentile
             execution_time,
             resource_usage: ResourceUsage {
                 memory_usage: 100_000, // 100KB as default
@@ -1667,7 +1674,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
         // Simple placeholder implementation
         Ok(crate::nas_engine::EvaluationResults {
             metric_scores: std::collections::HashMap::new(),
-            overall_score: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+            overall_score: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             confidence_intervals: std::collections::HashMap::new(),
             evaluation_time: std::time::Duration::from_millis(100),
             success: true,
@@ -1678,7 +1685,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
         })
     }
 
-    pub fn update_with_results(&mut self, results: &Vec<EvaluationResults<T>>) -> Result<()> {
+    pub fn update_with_results(&mut self, results: &[EvaluationResults<T>]) -> Result<()> {
         // Simple placeholder implementation
         Ok(())
     }
@@ -1731,7 +1738,7 @@ impl<T: Float + Debug + Default + std::iter::Sum + Send + Sync> StatisticalAnaly
                 let mut thresholds = HashMap::new();
                 thresholds.insert(
                     "alpha".to_string(),
-                    num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                    scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()),
                 );
                 thresholds
             },
@@ -1757,7 +1764,8 @@ impl<T: Float + Debug + Default + std::iter::Sum + Send + Sync> StatisticalAnaly
             };
 
             // 95% confidence interval (simplified)
-            let margin = std_dev * num_traits::cast::cast(1.96).unwrap_or_else(|| T::zero())
+            let margin = std_dev
+                * scirs2_core::numeric::NumCast::from(1.96).unwrap_or_else(|| T::zero())
                 / T::from((scores.len() as f64).sqrt()).unwrap();
             intervals.insert(
                 EvaluationMetric::FinalPerformance,
@@ -1785,10 +1793,13 @@ impl<T: Float + Debug + Default + Send + Sync> ResourceMonitor<T> {
             },
             usage_history: VecDeque::new(),
             limits: ResourceLimits {
-                max_memory_mb: num_traits::cast::cast(8192.0).unwrap_or_else(|| T::zero()),
-                max_cpu_percent: num_traits::cast::cast(90.0).unwrap_or_else(|| T::zero()),
-                max_gpu_memory_mb: num_traits::cast::cast(16384.0).unwrap_or_else(|| T::zero()),
-                max_evaluation_time_seconds: num_traits::cast::cast(3600.0)
+                max_memory_mb: scirs2_core::numeric::NumCast::from(8192.0)
+                    .unwrap_or_else(|| T::zero()),
+                max_cpu_percent: scirs2_core::numeric::NumCast::from(90.0)
+                    .unwrap_or_else(|| T::zero()),
+                max_gpu_memory_mb: scirs2_core::numeric::NumCast::from(16384.0)
+                    .unwrap_or_else(|| T::zero()),
+                max_evaluation_time_seconds: scirs2_core::numeric::NumCast::from(3600.0)
                     .unwrap_or_else(|| T::zero()),
             },
             config: MonitoringConfig {
@@ -1817,8 +1828,10 @@ impl<T: Float + Debug + Default + Send + Sync> PredictorModel<T> {
                 hyperparameters: HashMap::new(),
                 regularization: RegularizationParameters {
                     l1_strength: T::zero(),
-                    l2_strength: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-                    dropout_prob: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                    l2_strength: scirs2_core::numeric::NumCast::from(0.01)
+                        .unwrap_or_else(|| T::zero()),
+                    dropout_prob: scirs2_core::numeric::NumCast::from(0.1)
+                        .unwrap_or_else(|| T::zero()),
                     batch_norm: true,
                 },
             },
@@ -1834,8 +1847,10 @@ impl<T: Float + Debug + Default + Send + Sync> PredictorModel<T> {
                 validation_loss_history: Vec::new(),
                 learning_rate_schedule: LearningRateSchedule {
                     schedule_type: ScheduleType::Exponential,
-                    initial_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-                    current_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+                    initial_lr: scirs2_core::numeric::NumCast::from(0.001)
+                        .unwrap_or_else(|| T::zero()),
+                    current_lr: scirs2_core::numeric::NumCast::from(0.001)
+                        .unwrap_or_else(|| T::zero()),
                     parameters: HashMap::new(),
                 },
                 early_stopping_state: EarlyStoppingState {
@@ -1934,8 +1949,10 @@ impl<T: Float + Debug + Default + Send + Sync> UncertaintyEstimator<T> {
             model_ensemble: Vec::new(),
             parameters: UncertaintyParameters {
                 num_samples: 100,
-                confidence_level: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
-                calibration_alpha: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                confidence_level: scirs2_core::numeric::NumCast::from(0.95)
+                    .unwrap_or_else(|| T::zero()),
+                calibration_alpha: scirs2_core::numeric::NumCast::from(0.05)
+                    .unwrap_or_else(|| T::zero()),
                 method_params: HashMap::new(),
             },
             calibration_data: CalibrationData {

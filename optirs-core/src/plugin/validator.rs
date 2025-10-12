@@ -7,8 +7,8 @@
 use super::core::*;
 use super::template_generator::*;
 use crate::error::Result;
-use scirs2_core::ndarray_ext::{Array1, Array2, Axis};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, Axis};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

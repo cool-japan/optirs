@@ -4,8 +4,8 @@ use std::fmt::Debug;
 // This module provides comprehensive shape inference capabilities for XLA computations,
 // including static and dynamic shape analysis, constraint validation, and shape optimization.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, Dimension};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet};
 
 use super::graph_capture::{
@@ -256,6 +256,12 @@ pub struct ShapeInferenceOptions {
 
     /// Propagate constraints backwards
     pub backward_propagation: bool,
+}
+
+impl Default for ShapeInference {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ShapeInference {

@@ -7,7 +7,7 @@
 - [x] **Metrics Collection** - scirs2_core::metrics::MetricRegistry for tracking
 - [x] **Stability Analysis** - scirs2_core::stability for regression detection
 - [x] **Statistical Analysis** - scirs2_core::benchmarking::BenchmarkStatistics
-- [x] **Array Operations** - All benchmarking operations use scirs2_core::ndarray_ext
+- [x] **Array Operations** - All benchmarking operations use scirs2_core::ndarray
 
 ## 🎉 MISSION ACCOMPLISHED: 100% Compilation Success (September 2025)
 ### 🚀 COMPLETE SUCCESS: 180+ compilation errors → 0 errors → 100% WORKING CODEBASE

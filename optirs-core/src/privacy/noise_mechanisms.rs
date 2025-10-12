@@ -5,9 +5,9 @@ use std::fmt::Debug;
 // including Gaussian, Laplace, Exponential, and advanced mechanisms like
 // tree aggregation and truncated noise.
 
-use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{s, Array, Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 // Removed unused import Distribution
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use std::marker::PhantomData;
 
@@ -21,7 +21,7 @@ pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 1D arrays
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -30,7 +30,7 @@ pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 2D arrays
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -39,7 +39,7 @@ pub trait NoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Add noise to maintain differential privacy for 3D arrays
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -158,13 +158,7 @@ pub enum MechanismSelectionStrategy {
 
 impl<T> Default for GaussianMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     fn default() -> Self {
         Self::new()
@@ -173,13 +167,7 @@ where
 
 impl<T> GaussianMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     /// Create a new Gaussian mechanism
     pub fn new() -> Self {
@@ -198,11 +186,9 @@ where
         }
 
         // Standard Gaussian mechanism: σ = √(2 ln(1.25/δ)) * Δ / ε
-        let ln_term =
-            (T::one() + num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()) / delta).ln();
-        let sigma = (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * ln_term).sqrt()
-            * sensitivity
-            / epsilon;
+        let ln_term = (T::one() + T::from(0.25).unwrap_or_else(|| T::zero()) / delta).ln();
+        let sigma =
+            (T::from(2.0).unwrap_or_else(|| T::zero()) * ln_term).sqrt() * sensitivity / epsilon;
 
         Ok(sigma)
     }
@@ -232,7 +218,7 @@ where
             let u1: f64 = self.rng.gen_range(0.0..1.0);
             let u2: f64 = self.rng.gen_range(0.0..1.0);
             let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-            let noise = num_traits::cast::cast(z0 * sigma_f64).unwrap_or_else(|| T::zero());
+            let noise = T::from(z0 * sigma_f64).unwrap_or_else(|| T::zero());
             x + noise
         });
 
@@ -242,17 +228,11 @@ where
 
 impl<T> NoiseMechanism<T> for GaussianMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -262,7 +242,7 @@ where
 
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -272,7 +252,7 @@ where
 
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -303,13 +283,7 @@ where
 
 impl<T> Default for LaplaceMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     fn default() -> Self {
         Self::new()
@@ -318,13 +292,7 @@ where
 
 impl<T> LaplaceMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     /// Create a new Laplace mechanism
     pub fn new() -> Self {
@@ -371,7 +339,7 @@ where
             } else {
                 -scale_f64 * (2.0 * (1.0 - u)).ln()
             };
-            let noise = num_traits::cast::cast(laplace_sample).unwrap_or_else(|| T::zero());
+            let noise = T::from(laplace_sample).unwrap_or_else(|| T::zero());
             x + noise
         });
 
@@ -381,17 +349,11 @@ where
 
 impl<T> NoiseMechanism<T> for LaplaceMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -401,7 +363,7 @@ where
 
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -411,7 +373,7 @@ where
 
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -442,13 +404,7 @@ where
 
 impl<T> ExponentialMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     /// Create a new exponential mechanism
     pub fn new(_qualityfunction: Box<dyn Fn(&T) -> T + Send + Sync>) -> Self {
@@ -480,7 +436,7 @@ where
             .map(|&score| {
                 let normalized_score = score - max_score;
                 let exponent = epsilon * normalized_score
-                    / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * sensitivity);
+                    / (T::from(2.0).unwrap_or_else(|| T::zero()) * sensitivity);
                 exponent.to_f64().unwrap_or(0.0).exp()
             })
             .collect();
@@ -504,13 +460,7 @@ where
 
 impl<T> TruncatedNoiseMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     /// Create a new truncated noise mechanism
     pub fn new(_base_mechanism: Box<dyn NoiseMechanism<T> + Send>, truncationbound: T) -> Self {
@@ -524,17 +474,11 @@ where
 
 impl<T> NoiseMechanism<T> for TruncatedNoiseMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     fn add_noise_1d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix1>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -551,7 +495,7 @@ where
 
     fn add_noise_2d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix2>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix2>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -568,7 +512,7 @@ where
 
     fn add_noise_3d(
         &mut self,
-        data: &mut Array<T, scirs2_core::ndarray_ext::Ix3>,
+        data: &mut Array<T, scirs2_core::ndarray::Ix3>,
         sensitivity: T,
         epsilon: T,
         delta: Option<T>,
@@ -600,14 +544,7 @@ where
 
 impl<T> TreeAggregationMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform
-        + std::iter::Sum,
+    T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum,
 {
     /// Create a new tree aggregation mechanism
     pub fn new(_tree_height: usize, basemechanism: Box<dyn NoiseMechanism<T> + Send>) -> Self {
@@ -631,8 +568,7 @@ where
         }
 
         let mut current_level = values.to_vec();
-        let level_epsilon =
-            epsilon / num_traits::cast::cast(self.tree_height).unwrap_or_else(|| T::zero());
+        let level_epsilon = epsilon / T::from(self.tree_height).unwrap_or_else(|| T::zero());
 
         // Aggregate level by level
         for _level in 0..self.tree_height {
@@ -659,13 +595,7 @@ where
 
 impl<T> SparseVectorMechanism<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform,
+    T: Float + Debug + Default + Clone + Send + Sync,
 {
     /// Create a new sparse vector mechanism
     pub fn new(
@@ -729,15 +659,7 @@ where
 
 impl<T> NoiseCalibrator<T>
 where
-    T: Float
-        + Debug
-        + Default
-        + Clone
-        + Send
-        + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform
-        + std::iter::Sum
-        + 'static,
+    T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static,
 {
     /// Create a new noise calibrator
     pub fn new(
@@ -782,7 +704,7 @@ where
             MechanismSelectionStrategy::Adaptive => {
                 // Choose based on sensitivity characteristics
                 if self.l2_sensitivity
-                    < self.l1_sensitivity * num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero())
+                    < self.l1_sensitivity * T::from(0.7).unwrap_or_else(|| T::zero())
                 {
                     Box::new(GaussianMechanism::new())
                 } else {
@@ -819,7 +741,7 @@ where
         match data.ndim() {
             1 => {
                 // Cast to 1D array
-                let data_1d: &mut Array<T, scirs2_core::ndarray_ext::Ix1> =
+                let data_1d: &mut Array<T, scirs2_core::ndarray::Ix1> =
                     unsafe { std::mem::transmute(data) };
                 mechanism.add_noise_1d(
                     data_1d,
@@ -830,7 +752,7 @@ where
             }
             2 => {
                 // Cast to 2D array
-                let data_2d: &mut Array<T, scirs2_core::ndarray_ext::Ix2> =
+                let data_2d: &mut Array<T, scirs2_core::ndarray::Ix2> =
                     unsafe { std::mem::transmute(data) };
                 mechanism.add_noise_2d(
                     data_2d,
@@ -841,7 +763,7 @@ where
             }
             3 => {
                 // Cast to 3D array
-                let data_3d: &mut Array<T, scirs2_core::ndarray_ext::Ix3> =
+                let data_3d: &mut Array<T, scirs2_core::ndarray::Ix3> =
                     unsafe { std::mem::transmute(data) };
                 mechanism.add_noise_3d(
                     data_3d,
@@ -911,11 +833,7 @@ pub fn generate_correlated_gaussian_noise<T>(
     rng: &mut scirs2_core::random::Random,
 ) -> Result<Array2<T>>
 where
-    T: Float
-        + Default
-        + Clone
-        + scirs2_core::random::distributions::uniform::SampleUniform
-        + 'static,
+    T: Float + Default + Clone + 'static,
 {
     let (rows, cols) = shape;
 
@@ -935,7 +853,7 @@ where
             let u2: f64 = rng.gen_range(0.0..1.0);
             let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
             let gaussian_sample = z0 * scale_f64;
-            noise[[i, j]] = num_traits::cast::cast(gaussian_sample).unwrap_or_else(|| T::zero());
+            noise[[i, j]] = T::from(gaussian_sample).unwrap_or_else(|| T::zero());
         }
     }
 

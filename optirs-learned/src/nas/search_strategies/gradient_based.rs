@@ -6,8 +6,8 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet};
 
 use crate::error::{OptimError, Result};
@@ -569,7 +569,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         let mut gradient = Array3::zeros(self.architecture_parameters.dim());
         
         // Finite difference approximation (simplified)
-        let epsilon = num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero());
+        let epsilon = scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero());
         
         for i in 0..gradient.shape()[0] {
             for j in 0..gradient.shape()[1] {
@@ -589,7 +589,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
                     let perf_minus = objective_fn(&arch_minus)?;
                     
                     // Gradient approximation
-                    gradient[[i, j, k]] = (perf_plus - perf_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * epsilon);
+                    gradient[[i, j, k]] = (perf_plus - perf_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * epsilon);
                 }
             }
         }
@@ -604,7 +604,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         let performance = objective_fn(&current_arch)?;
         
         // Return scalar gradient (in practice would be tensor)
-        Ok(performance * num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()))
+        Ok(performance * scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()))
     }
     
     /// Update architecture parameters with gradient
@@ -656,7 +656,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         let scaled_weights = weights.mapv(|w| w / temperature);
         
         // Compute softmax
-        let max_weight = scaled_weights.iter().cloned().fold(num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()), T::max);
+        let max_weight = scaled_weights.iter().cloned().fold(scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()), T::max);
         let exp_weights = scaled_weights.mapv(|w| (w - max_weight).exp());
         let sum_exp = exp_weights.sum();
         
@@ -729,7 +729,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         
         for (i, (edge_id, mixed_op)) in self.mixed_operations.iter().enumerate() {
             if i < params.shape()[0] {
-                let edge_params = params.slice(scirs2_core::ndarray_ext::s![i, .., 0]);
+                let edge_params = params.slice(scirs2_core::ndarray::s![i, .., 0]);
                 let best_idx = edge_params.iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -752,12 +752,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
     /// Sample Gumbel noise
     fn sample_gumbel_noise(&self, size: usize) -> Result<Array1<T>> {
         use scirs2_core::random::Rng;
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         
         let noise = Array1::from_shape_fn(size, |_| {
             let u: f64 = rng.gen_range(1e-10..1.0);
             let gumbel = -(-u.ln()).ln();
-            num_traits::cast::cast(gumbel).unwrap_or_else(|| T::zero())
+            scirs2_core::numeric::NumCast::from(gumbel).unwrap_or_else(|| T::zero())
         });
         
         Ok(noise)
@@ -846,7 +846,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
             num_edges += 1;
         }
         
-        Ok(total_entropy / num_traits::cast::cast(num_edges as f64).unwrap_or_else(|| T::zero()))
+        Ok(total_entropy / scirs2_core::numeric::NumCast::from(num_edges as f64).unwrap_or_else(|| T::zero()))
     }
     
     /// Compute architecture complexity
@@ -949,18 +949,18 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Per
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for GradientBasedNASConfig<T> {
     fn default() -> Self {
         Self {
-            arch_learning_rate: num_traits::cast::cast(3e-4).unwrap_or_else(|| T::zero()),
-            weight_learning_rate: num_traits::cast::cast(0.025).unwrap_or_else(|| T::zero()),
-            arch_weight_decay: num_traits::cast::cast(1e-3).unwrap_or_else(|| T::zero()),
-            weight_decay: num_traits::cast::cast(3e-4).unwrap_or_else(|| T::zero()),
+            arch_learning_rate: scirs2_core::numeric::NumCast::from(3e-4).unwrap_or_else(|| T::zero()),
+            weight_learning_rate: scirs2_core::numeric::NumCast::from(0.025).unwrap_or_else(|| T::zero()),
+            arch_weight_decay: scirs2_core::numeric::NumCast::from(1e-3).unwrap_or_else(|| T::zero()),
+            weight_decay: scirs2_core::numeric::NumCast::from(3e-4).unwrap_or_else(|| T::zero()),
             search_epochs: 50,
             warmup_epochs: 15,
-            temperature: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            temperature_decay: num_traits::cast::cast(0.96).unwrap_or_else(|| T::zero()),
-            min_temperature: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            arch_regularization: num_traits::cast::cast(1e-3).unwrap_or_else(|| T::zero()),
+            temperature: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            temperature_decay: scirs2_core::numeric::NumCast::from(0.96).unwrap_or_else(|| T::zero()),
+            min_temperature: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+            arch_regularization: scirs2_core::numeric::NumCast::from(1e-3).unwrap_or_else(|| T::zero()),
             early_stopping_patience: 10,
-            pruning_threshold: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            pruning_threshold: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             num_candidate_ops: 8,
         }
     }

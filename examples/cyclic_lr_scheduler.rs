@@ -1,6 +1,6 @@
 //! Example demonstrating cyclic learning rate scheduling
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::{
     optimizers::{Optimizer, SGD},
     schedulers::{CyclicLR, LearningRateScheduler},
@@ -106,7 +106,7 @@ fn run_optimization<LR: LearningRateScheduler<f64>>(
 
         // Get current learning rate from scheduler
         let lr = scheduler.get_learning_rate();
-        scheduler.apply_to::<scirs2_core::ndarray_ext::Ix1, _>(optimizer);
+        scheduler.apply_to::<scirs2_core::ndarray::Ix1, _>(optimizer);
 
         // Update parameters
         params = optimizer.step(&params, &gradient).unwrap();

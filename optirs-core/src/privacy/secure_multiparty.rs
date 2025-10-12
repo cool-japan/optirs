@@ -5,8 +5,8 @@
 // solely on differential privacy noise.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -215,7 +215,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ShamirSecretSharing<T> {
         // Evaluate polynomial at different points
         let mut shares = Vec::new();
         for i in 1..=self.num_shares {
-            let x = num_traits::cast::cast(i).unwrap_or_else(|| T::zero());
+            let x = T::from(i).unwrap_or_else(|| T::zero());
             let y = self.evaluate_polynomial(x);
             shares.push((i, y));
         }
@@ -239,8 +239,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ShamirSecretSharing<T> {
 
             for (j, &(xj, _)) in shares.iter().enumerate().take(self.threshold) {
                 if i != j {
-                    let xi_f = num_traits::cast::cast(xi).unwrap_or_else(|| T::zero());
-                    let xj_f = num_traits::cast::cast(xj).unwrap_or_else(|| T::zero());
+                    let xi_f = T::from(xi).unwrap_or_else(|| T::zero());
+                    let xj_f = T::from(xj).unwrap_or_else(|| T::zero());
                     lagrange_coeff = lagrange_coeff * (T::zero() - xj_f) / (xi_f - xj_f);
                 }
             }
@@ -280,7 +280,7 @@ pub struct CryptographicAggregator<T: Float + Debug + Send + Sync + 'static> {
     aggregation_proofs: Vec<AggregationProof<T>>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     CryptographicAggregator<T>
 {
     /// Create new cryptographic aggregator
@@ -392,7 +392,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::Scalar
         }
 
         if count > 0 {
-            aggregate = aggregate / num_traits::cast::cast(count).unwrap_or_else(|| T::zero());
+            aggregate = aggregate / T::from(count).unwrap_or_else(|| T::zero());
         }
 
         Ok(aggregate)
@@ -665,7 +665,7 @@ impl<T: Float + Debug + Send + Sync + 'static> HomomorphicEngine<T> {
         value_bytes.copy_from_slice(&encrypted[0..8]);
         let value = f64::from_le_bytes(value_bytes);
 
-        Ok(num_traits::cast::cast(value).unwrap_or_else(|| T::zero()))
+        Ok(T::from(value).unwrap_or_else(|| T::zero()))
     }
 
     /// Add encrypted values
@@ -911,7 +911,7 @@ pub struct SecureAggregationResult<T: Float + Debug + Send + Sync + 'static> {
     pub security_level: CommunicationSecurity,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     SMPCCoordinator<T>
 {
     /// Create new SMPC coordinator
@@ -1218,7 +1218,7 @@ pub enum PrivacyLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_secret_sharing() {

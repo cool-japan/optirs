@@ -8,9 +8,9 @@
 use crate::error::Result;
 use crate::optimizers::*;
 use crate::schedulers::*;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
-use scirs2_core::random::Rng;
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -336,7 +336,7 @@ pub trait OptimizerTrait<A: Float + ScalarOperand + Debug, D: Dimension>: Send +
 }
 
 impl<
-        A: Float + ScalarOperand + Debug + Send + Sync + 'static + num_traits::FromPrimitive,
+        A: Float + ScalarOperand + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive,
         D: Dimension + 'static,
     > SelfTuningOptimizer<A, D>
 {
@@ -617,9 +617,9 @@ impl<
 
     /// Epsilon-greedy optimizer selection
     fn select_epsilon_greedy(&self) -> usize {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = thread_rng();
 
-        if A::from(rng.random_f64()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
+        if A::from(rng.random::<f64>()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
             // Explore: random selection
             rng.gen_range(0..self.optimizer_candidates.len())
         } else {
@@ -637,7 +637,7 @@ impl<
     /// Thompson sampling optimizer selection
     fn select_thompson_sampling(&self) -> usize {
         // Simplified Thompson sampling - in practice would use Beta distributions
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = thread_rng();
 
         let mut best_sample = f64::NEG_INFINITY;
         let mut best_idx = 0;
@@ -1021,7 +1021,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + 'static, D: Dimension + 's
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
     use std::time::Duration;
 
     #[test]
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn test_self_tuning_optimizer_creation() {
         let config = SelfTuningConfig::default();
-        let optimizer: Result<SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1>> =
+        let optimizer: Result<SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1>> =
             SelfTuningOptimizer::new(config);
         assert!(optimizer.is_ok());
     }
@@ -1061,7 +1061,7 @@ mod tests {
     #[test]
     fn test_optimizer_step() {
         let config = SelfTuningConfig::default();
-        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let mut params = vec![Array1::zeros(10)];
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_bandit_selection() {
         let config = SelfTuningConfig::default();
-        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let selection = optimizer.select_ucb1();
@@ -1103,7 +1103,7 @@ mod tests {
             target_metric: TargetMetric::Loss,
             ..Default::default()
         };
-        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let stats = PerformanceStats {
@@ -1125,7 +1125,7 @@ mod tests {
     #[test]
     fn test_statistics() {
         let config = SelfTuningConfig::default();
-        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray_ext::Ix1> =
+        let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
             SelfTuningOptimizer::new(config).unwrap();
 
         let stats = optimizer.get_statistics();

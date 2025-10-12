@@ -3,8 +3,8 @@
 // This module provides AMD GPU acceleration through the ROCm platform,
 // offering performance parity with CUDA implementations.
 
-use scirs2_core::ndarray_ext::Dimension;
-use num_traits::Float;
+use scirs2_core::ndarray::Dimension;
+use scirs2_core::numeric::Float;
 use std::marker::PhantomData;
 use std::sync::Arc;
 

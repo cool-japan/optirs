@@ -5,7 +5,7 @@
 // and hardware utilization monitoring.
 
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -413,7 +413,7 @@ pub struct HardwareMonitor {
 }
 
 /// Cache performance counters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CacheCounters {
     /// L1 cache hits
     pub l1_hits: u64,
@@ -1295,19 +1295,6 @@ impl<A: Float + Send + Sync> Default for ConvergenceMetrics<A> {
             estimated_time_to_convergence: None,
             quality_score: 1.0,
             patterns: Vec::new(),
-        }
-    }
-}
-
-impl Default for CacheCounters {
-    fn default() -> Self {
-        Self {
-            l1_hits: 0,
-            l1_misses: 0,
-            l2_hits: 0,
-            l2_misses: 0,
-            l3_hits: 0,
-            l3_misses: 0,
         }
     }
 }

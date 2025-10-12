@@ -5,8 +5,8 @@ use std::fmt::Debug;
 // and other surrogate models for efficient architecture search.
 
 use std::collections::HashMap;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::numeric::Float;
+use scirs2_core::ndarray::{Array1, Array2};
 
 use super::super::architecture::{ArchitectureSpec, ArchitectureCandidate};
 
@@ -429,7 +429,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> SurrogateModel<
                     .fold(T::zero(), |acc, x| acc + x);
                 
                 // exp(-γ * ||x1 - x2||²)
-                let gamma = num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero());
+                let gamma = scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero());
                 (-gamma * squared_distance).exp()
             }
             _ => T::one(), // Placeholder for other kernels

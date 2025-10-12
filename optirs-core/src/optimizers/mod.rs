@@ -3,8 +3,8 @@
 // This module provides various optimization algorithms commonly used in machine learning,
 // such as Stochastic Gradient Descent (SGD), Adam, RMSprop, and others.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -78,6 +78,7 @@ mod radam;
 mod rmsprop;
 mod sam;
 mod sgd;
+mod sgd_simd;
 mod sparse_adam;
 
 // Re-export specific optimizers
@@ -94,4 +95,5 @@ pub use radam::RAdam;
 pub use rmsprop::RMSprop;
 pub use sam::SAM;
 pub use sgd::SGD;
+pub use sgd_simd::SimdSGD;
 pub use sparse_adam::{SparseAdam, SparseGradient};

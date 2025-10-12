@@ -4,8 +4,8 @@
 // gradient compression, and communication optimization for multi-node/multi-GPU training.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -1453,11 +1453,11 @@ impl Default for CompressionStats {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_arithmetic_averaging() {
-        let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
             ParameterAverager::new(AveragingStrategy::Arithmetic, 3);
 
         let params1 = vec![Array1::from_vec(vec![1.0, 2.0])];
@@ -1475,7 +1475,7 @@ mod tests {
 
     #[test]
     fn test_weighted_averaging() {
-        let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
             ParameterAverager::new(AveragingStrategy::WeightedByData, 2);
 
         // Initialize first to avoid overwriting weights
@@ -1497,7 +1497,7 @@ mod tests {
 
     #[test]
     fn test_momentum_averaging() {
-        let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
             ParameterAverager::new(AveragingStrategy::Momentum { momentum: 0.9 }, 2);
 
         let params1 = vec![Array1::from_vec(vec![1.0])];
@@ -1587,7 +1587,7 @@ mod tests {
         ];
 
         for strategy in simple_strategies {
-            let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+            let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
                 ParameterAverager::new(strategy, 2);
 
             let params1 = vec![Array1::from_vec(vec![1.0])];
@@ -1607,7 +1607,7 @@ mod tests {
         ];
 
         for strategy in stateful_strategies {
-            let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+            let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
                 ParameterAverager::new(strategy, 2);
 
             let params1 = vec![Array1::from_vec(vec![1.0])];
@@ -1624,7 +1624,7 @@ mod tests {
 
     #[test]
     fn test_node_weight_validation() {
-        let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
             ParameterAverager::new(AveragingStrategy::WeightedByData, 2);
 
         // Valid node ID
@@ -1637,7 +1637,7 @@ mod tests {
 
     #[test]
     fn test_parameter_dimension_validation() {
-        let mut averager: ParameterAverager<f64, scirs2_core::ndarray_ext::Ix1> =
+        let mut averager: ParameterAverager<f64, scirs2_core::ndarray::Ix1> =
             ParameterAverager::new(AveragingStrategy::Arithmetic, 2);
 
         let params1 = vec![Array1::from_vec(vec![1.0, 2.0])];
@@ -1907,7 +1907,7 @@ mod tests {
         assert!(compressor.compress(&gradients).is_err());
 
         // Invalid decompression data
-        let valid_compressor: GradientCompressor<f64, scirs2_core::ndarray_ext::Ix1> =
+        let valid_compressor: GradientCompressor<f64, scirs2_core::ndarray::Ix1> =
             GradientCompressor::new(CompressionStrategy::None);
         let invalid_compressed = CompressedGradient {
             data: vec![1, 2, 3], // Insufficient data

@@ -5,8 +5,8 @@
 // optimization algorithms.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, Array1, Array2, Dimension};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -226,7 +226,7 @@ struct ComputationCheckpoint<T: Float + Debug + Send + Sync + 'static> {
     memory_usage: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::ndarray_ext::ScalarOperand> AutodiffEngine<T> {
+impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::ndarray::ScalarOperand> AutodiffEngine<T> {
     /// Create a new automatic differentiation engine
     pub fn new(config: AutodiffConfig) -> Self {
         Self {
@@ -326,7 +326,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::n
             return self.compute_second_derivative_checkpointed(outputid, var1, var2);
         }
 
-        let eps = num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero());
 
         // Finite difference approximation for now
         let original_val1 = self.graph[var1].value;
@@ -355,7 +355,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::n
         self.graph[var2].value = original_val2;
 
         // Second derivative approximation
-        let second_deriv = (f_pp - f_pm - f_mp + f_mm) / (num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
+        let second_deriv = (f_pp - f_pm - f_mp + f_mm) / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
 
         Ok(second_deriv)
     }
@@ -368,7 +368,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::n
         var2: usize,
     ) -> Result<T> {
         let chunk_size = self.config.checkpoint_chunk_size;
-        let eps = num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero());
 
         // Create checkpoint
         let checkpoint = self.create_checkpoint();
@@ -405,7 +405,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::n
         // Compute second derivative
         if results.len() >= 4 {
             let second_deriv = (results[0] - results[1] - results[2] + results[3])
-                / (num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
+                / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
             Ok(second_deriv)
         } else {
             Err(OptimError::InvalidConfig(
@@ -499,7 +499,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::n
         let s = step; // Parameter update
 
         let sy = s.dot(&y);
-        if sy.abs() < num_traits::cast::cast(1e-10).unwrap_or_else(|| T::zero()) {
+        if sy.abs() < scirs2_core::numeric::NumCast::from(1e-10).unwrap_or_else(|| T::zero()) {
             return Ok(()); // Skip update if curvature condition not satisfied
         }
 
@@ -946,7 +946,7 @@ impl AutodiffUtils {
             let f_plus = forward_fn(&point_plus);
             let f_minus = forward_fn(&point_minus);
 
-            numerical_grad[i] = (f_plus - f_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * epsilon);
+            numerical_grad[i] = (f_plus - f_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * epsilon);
         }
 
         // Compute relative error
@@ -955,7 +955,7 @@ impl AutodiffUtils {
 
         for i in 0..point.len() {
             let error = (analytical_grad[i] - numerical_grad[i]).abs();
-            let relative_error = if analytical_grad[i].abs() > num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()) {
+            let relative_error = if analytical_grad[i].abs() > scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()) {
                 error / analytical_grad[i].abs()
             } else {
                 error
@@ -975,7 +975,7 @@ impl AutodiffUtils {
             numerical_gradient: numerical_grad,
             max_relative_error: max_error,
             avg_relative_error: avg_error,
-            is_correct: max_error < num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero()),
+            is_correct: max_error < scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero()),
         })
     }
 }

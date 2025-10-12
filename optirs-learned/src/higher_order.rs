@@ -5,8 +5,8 @@ use std::fmt::Debug;
 // Hessians, third-order derivatives, and mixed partial derivatives for
 // advanced optimization algorithms.
 
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2, Array3};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use super::forward_mode::ForwardModeEngine;
@@ -15,7 +15,7 @@ use crate::error::{OptimError, Result};
 
 /// Higher-order differentiation engine
 #[allow(dead_code)]
-pub struct HigherOrderEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand> {
+pub struct HigherOrderEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
     /// Forward-mode engine for directional derivatives
     forward_engine: ForwardModeEngine<T>,
 
@@ -188,7 +188,7 @@ pub enum LayerType {
     Attention,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand>
     HigherOrderEngine<T>
 {
     /// Create a new higher-order differentiation engine
@@ -199,7 +199,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             _maxorder,
             mixed_mode: true,
             derivative_cache: HashMap::new(),
-            finite_diff_eps: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            finite_diff_eps: scirs2_core::numeric::NumCast::from(1e-5).unwrap_or_else(|| T::zero()),
             parallel_computation: true,
             thread_pool_size: 4, // Conservative default
             adaptive_sparsity: true,
@@ -273,7 +273,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         if config.exact {
             for i in 0..n {
                 for j in i + 1..n {
-                    let avg = (hessian[[i, j]] + hessian[[j, i]]) / num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero());
+                    let avg = (hessian[[i, j]] + hessian[[j, i]]) / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
                     hessian[[i, j]] = avg;
                     hessian[[j, i]] = avg;
                 }
@@ -310,7 +310,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                 x_minus[j] = x_minus[j] - self.finite_diff_eps;
 
                 (function(&x_plus) - function(&x_minus))
-                    / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * self.finite_diff_eps)
+                    / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * self.finite_diff_eps)
             };
 
             // Compute gradient of partial derivative
@@ -346,7 +346,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             let f_minus = function(&x_minus);
 
             // Second derivative: f''(x) = (f(x+h) - 2f(x) + f(x-h)) / h^2
-            let second_deriv = (f_plus - num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * f_center + f_minus)
+            let second_deriv = (f_plus - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * f_center + f_minus)
                 / (self.finite_diff_eps * self.finite_diff_eps);
 
             hessian[[i, i]] = second_deriv;
@@ -368,7 +368,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let mut cols = Vec::new();
         let mut values = Vec::new();
 
-        let threshold = num_traits::cast::cast(config.sparsity_threshold).unwrap_or_else(|| T::zero());
+        let threshold = scirs2_core::numeric::NumCast::from(config.sparsity_threshold).unwrap_or_else(|| T::zero());
 
         for i in 0..dense_hessian.nrows() {
             for j in 0..dense_hessian.ncols() {
@@ -495,7 +495,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let avg_error = self.compute_avg_error(computed_hessian, &fd_hessian);
         let relative_error = self.compute_relative_error(computed_hessian, &fd_hessian);
 
-        let is_accurate = max_error < num_traits::cast::cast(1e-4).unwrap_or_else(|| T::zero());
+        let is_accurate = max_error < scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero());
 
         Ok(DerivativeVerification {
             max_absolute_error: max_error,
@@ -637,7 +637,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
         let hvp_fn = move |v: &Array1<T>| -> Result<Array1<T>> {
             // Use finite differences as a fallback to avoid borrow conflicts
-            let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+            let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
             let mut hvp = Array1::zeros(v.len());
 
             for i in 0..v.len() {
@@ -652,7 +652,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                 let grad_minus = Self::finite_diff_gradient(&function_copy, &point_minus)?;
 
                 // Approximate Hessian-vector product
-                let hess_col = (&grad_plus - &grad_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps);
+                let hess_col = (&grad_plus - &grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
                 hvp[i] = hess_col.dot(v);
             }
 
@@ -667,7 +667,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
     where
         F: Fn(&Array1<T>) -> T,
     {
-        let eps = num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero());
+        let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
         let mut gradient = Array1::zeros(point.len());
 
         for i in 0..point.len() {
@@ -680,7 +680,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             let loss_plus = function(&point_plus);
             let loss_minus = function(&point_minus);
 
-            gradient[i] = (loss_plus - loss_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps);
+            gradient[i] = (loss_plus - loss_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
         }
 
         Ok(gradient)
@@ -704,7 +704,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             x_minus[i] = x_minus[i] - self.finite_diff_eps;
 
             gradient[i] = (function(&x_plus) - function(&x_minus))
-                / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * self.finite_diff_eps);
+                / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * self.finite_diff_eps);
         }
 
         Ok(gradient)
@@ -723,7 +723,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let grad_plus = grad_fn(&point_plus);
         let grad_minus = grad_fn(&point_minus);
 
-        Ok((grad_plus - grad_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps))
+        Ok((grad_plus - grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
     }
 
     fn finite_difference_hessian(
@@ -749,7 +749,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                     let f_center = function(point);
                     let f_minus = function(&x_minus);
 
-                    (f_plus - num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * f_center + f_minus)
+                    (f_plus - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * f_center + f_minus)
                         / (self.finite_diff_eps * self.finite_diff_eps)
                 } else {
                     // Off-diagonal element: f''_ij
@@ -772,7 +772,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                     x_mm[j] = x_mm[j] - eps;
 
                     (function(&x_pp) - function(&x_pm) - function(&x_mp) + function(&x_mm))
-                        / (num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero()) * eps * eps)
+                        / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()) * eps * eps)
                 };
 
                 hessian[[i, j]] = second_deriv;
@@ -807,7 +807,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
         // Simplified third derivative approximation
         let third_deriv =
-            (function(&x_ppp) - function(&x_mmm)) / (num_traits::cast::cast(8.0).unwrap_or_else(|| T::zero()) * eps * eps * eps);
+            (function(&x_ppp) - function(&x_mmm)) / (scirs2_core::numeric::NumCast::from(8.0).unwrap_or_else(|| T::zero()) * eps * eps * eps);
 
         Ok(third_deriv)
     }
@@ -886,7 +886,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
             let mixed_partial = (function(&x_pp) - function(&x_pm) - function(&x_mp)
                 + function(&x_mm))
-                / (num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
+                / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
 
             Ok(mixed_partial)
         } else {
@@ -897,7 +897,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
     fn verify_hessian_accuracy(&self, computed: &Array2<T>, reference: &Array2<T>) -> Result<()> {
         let max_error = self.compute_max_error(computed, reference);
-        let threshold = num_traits::cast::cast(1e-3).unwrap_or_else(|| T::zero());
+        let threshold = scirs2_core::numeric::NumCast::from(1e-3).unwrap_or_else(|| T::zero());
 
         if max_error > threshold {
             return Err(OptimError::InvalidConfig(format!(
@@ -930,7 +930,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         a.iter()
             .zip(b.iter())
             .map(|(&x, &y)| {
-                if y.abs() > num_traits::cast::cast(1e-12).unwrap_or_else(|| T::zero()) {
+                if y.abs() > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero()) {
                     ((x - y) / y).abs()
                 } else {
                     (x - y).abs()
@@ -977,7 +977,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
     /// Apply adaptive sparsity to dense matrix
     #[allow(dead_code)]
     fn apply_adaptive_sparsity(&self, mut matrix: Array2<T>, threshold: f64) -> Result<Array2<T>> {
-        let sparsity_threshold = num_traits::cast::cast(threshold).unwrap_or_else(|| T::zero());
+        let sparsity_threshold = scirs2_core::numeric::NumCast::from(threshold).unwrap_or_else(|| T::zero());
 
         for elem in matrix.iter_mut() {
             if elem.abs() < sparsity_threshold {
@@ -1019,7 +1019,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let grad_plus = self.gradient_at_point(function, &point_plus)?;
         let grad_minus = self.gradient_at_point(function, &point_minus)?;
 
-        Ok((grad_plus - grad_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps))
+        Ok((grad_plus - grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
     }
 
     /// Finite difference HVP implementation
@@ -1037,7 +1037,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let grad_plus = self.gradient_at_point(function, &point_plus)?;
         let grad_minus = self.gradient_at_point(function, &point_minus)?;
 
-        Ok((grad_plus - grad_minus) / (num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * eps))
+        Ok((grad_plus - grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
     }
 
     /// Pearlman trick for quadratic functions
@@ -1230,7 +1230,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
         // Simplified diagonal approximation
         for i in 0..n {
-            if matrix[[i, i]].abs() > num_traits::cast::cast(1e-12).unwrap_or_else(|| T::zero()) {
+            if matrix[[i, i]].abs() > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero()) {
                 result[i] = rhs[i] / matrix[[i, i]];
             } else {
                 result[i] = rhs[i];
@@ -1320,7 +1320,7 @@ impl<T: Float + Debug + Default + Send + Sync> Default for HigherOrderConfig<T> 
         Self {
             _maxorder: 3,
             mixed_mode: true,
-            finite_diff_eps: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            finite_diff_eps: scirs2_core::numeric::NumCast::from(1e-5).unwrap_or_else(|| T::zero()),
             parallel_computation: true,
             thread_pool_size: 4, // Conservative default
             adaptive_sparsity: true,

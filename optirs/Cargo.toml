@@ -25,8 +25,9 @@ optirs-nas = { workspace = true, optional = true }
 optirs-bench = { workspace = true, optional = true }
 
 # Basic dependencies
-# ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
-num-traits = { workspace = true }
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
@@ -47,3 +48,7 @@ full = ["gpu", "tpu", "learned", "nas", "bench"]
 [[example]]
 name = "scirs2_integration_demo"
 path = "../examples/scirs2_integration_demo.rs"
+
+[[example]]
+name = "basic_optimization"
+path = "../examples/basic_optimization.rs"

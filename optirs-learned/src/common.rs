@@ -1,7 +1,7 @@
 //! Common types and configurations for learned optimizers
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -86,9 +86,10 @@ impl Default for LearnedOptimizerConfig {
 }
 
 /// Meta-optimization strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MetaOptimizationStrategy {
     /// First-order approximation (FOMAML)
+    #[default]
     FirstOrder,
 
     /// Full second-order gradients (MAML)
@@ -105,12 +106,6 @@ pub enum MetaOptimizationStrategy {
         inner_steps: usize,
         outer_learning_rate: f64,
     },
-}
-
-impl Default for MetaOptimizationStrategy {
-    fn default() -> Self {
-        MetaOptimizationStrategy::FirstOrder
-    }
 }
 
 /// Base optimizer state
@@ -158,7 +153,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizerState<T> {
             step: 0,
             step_count: 0,
             loss: None,
-            learning_rate: T::from(0.001).unwrap(),
+            learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap(),
             metadata: StateMetadata::default(),
         }
     }

@@ -395,31 +395,31 @@ impl CiCdAutomation {
         use std::process::Command;
 
         let commit_hash = Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
 
         let branch = Command::new("git")
-            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
 
         let commit_message = Command::new("git")
-            .args(&["log", "-1", "--pretty=%B"])
+            .args(["log", "-1", "--pretty=%B"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .ok();
 
         let author = Command::new("git")
-            .args(&["log", "-1", "--pretty=%an"])
+            .args(["log", "-1", "--pretty=%an"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .ok();
 
         let is_clean = Command::new("git")
-            .args(&["diff", "--quiet"])
+            .args(["diff", "--quiet"])
             .status()
             .map(|status| status.success())
             .unwrap_or(false);
@@ -456,9 +456,7 @@ impl CiCdAutomation {
         }
 
         // Validate configuration
-        self.config
-            .validate()
-            .map_err(|e| OptimError::InvalidConfig(e))?;
+        self.config.validate().map_err(OptimError::InvalidConfig)?;
 
         Ok(())
     }
@@ -646,9 +644,7 @@ impl CiCdAutomation {
 
     /// Validate automation configuration
     pub fn validate_configuration(&self) -> Result<()> {
-        self.config
-            .validate()
-            .map_err(|e| OptimError::InvalidConfig(e))
+        self.config.validate().map_err(OptimError::InvalidConfig)
     }
 
     /// Get system health status

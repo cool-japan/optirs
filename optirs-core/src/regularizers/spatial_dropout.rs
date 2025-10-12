@@ -4,8 +4,9 @@
 // - Spatial Dropout: drops entire feature maps (useful for CNNs)
 // - Feature Dropout: drops specific features across all spatial locations
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Axis, Dimension, Ix3, ScalarOperand};
+use scirs2_core::ndarray::{Array, Axis, Dimension, Ix3, ScalarOperand};
+use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -19,8 +20,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array4;
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::Array4;
 /// use optirs_core::regularizers::SpatialDropout;
 ///
 /// let spatial_dropout = SpatialDropout::new(0.3).unwrap(); // 30% dropout rate
@@ -67,7 +67,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
     /// Apply spatial dropout to a tensor
     pub fn apply<D>(&self, features: &Array<A, D>, training: bool) -> Array<A, D>
     where
-        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis,
+        D: Dimension + scirs2_core::ndarray::RemoveAxis,
     {
         if !training || self.dropprob == A::zero() {
             return features.clone();
@@ -80,9 +80,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 
         // Create a mask for each feature map
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = thread_rng();
         let feature_mask: Vec<bool> = (0..feature_size)
-            .map(|_| rng.random_bool_with_chance(keep_prob_f64))
+            .map(|_| rng.random_bool(keep_prob_f64))
             .collect();
 
         // Apply mask to each feature map
@@ -111,8 +111,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 /// # Example
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array3;
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::Array3;
 /// use optirs_core::regularizers::FeatureDropout;
 ///
 /// let feature_dropout = FeatureDropout::new(0.5).unwrap(); // 50% dropout rate
@@ -159,7 +158,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
     /// Apply feature dropout to a tensor
     pub fn apply<D>(&self, features: &Array<A, D>, training: bool) -> Array<A, D>
     where
-        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis,
+        D: Dimension + scirs2_core::ndarray::RemoveAxis,
     {
         if !training || self.dropprob == A::zero() {
             return features.clone();
@@ -172,9 +171,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
 
         // Create a consistent mask for each feature
         let keep_prob_f64 = keep_prob.to_f64().unwrap();
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = thread_rng();
         let feature_mask: Vec<bool> = (0..feature_size)
-            .map(|_| rng.random_bool_with_chance(keep_prob_f64))
+            .map(|_| rng.random_bool(keep_prob_f64))
             .collect();
 
         // Apply the same mask across all spatial/temporal locations
@@ -198,7 +197,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
 // Implement Regularizer trait for SpatialDropout - only for dimensions that support RemoveAxis
 impl<
         A: Float + Debug + ScalarOperand + Send + Sync,
-        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis + Send + Sync,
+        D: Dimension + scirs2_core::ndarray::RemoveAxis + Send + Sync,
     > Regularizer<A, D> for SpatialDropout<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
@@ -217,7 +216,7 @@ impl<
 // Implement Regularizer trait for FeatureDropout - only for dimensions that support RemoveAxis
 impl<
         A: Float + Debug + ScalarOperand + Send + Sync,
-        D: Dimension + scirs2_core::ndarray_ext::RemoveAxis + Send + Sync,
+        D: Dimension + scirs2_core::ndarray::RemoveAxis + Send + Sync,
     > Regularizer<A, D> for FeatureDropout<A>
 {
     fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
@@ -237,7 +236,7 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_autograd::ndarray::array;
+    use scirs2_core::ndarray::array;
 
     #[test]
     fn test_spatial_dropout_creation() {

@@ -11,8 +11,8 @@ use super::{
 };
 use crate::error::Result;
 use crate::optimizers::Optimizer;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
@@ -172,27 +172,27 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EnergyEfficientConfig
         let mut component_allocation = HashMap::new();
         component_allocation.insert(
             EnergyComponent::SynapticOps,
-            num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
+            T::from(0.4).unwrap_or_else(|| T::zero()),
         );
         component_allocation.insert(
             EnergyComponent::MembraneDynamics,
-            num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
+            T::from(0.2).unwrap_or_else(|| T::zero()),
         );
         component_allocation.insert(
             EnergyComponent::SpikeGeneration,
-            num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
+            T::from(0.15).unwrap_or_else(|| T::zero()),
         );
         component_allocation.insert(
             EnergyComponent::PlasticityUpdates,
-            num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            T::from(0.1).unwrap_or_else(|| T::zero()),
         );
         component_allocation.insert(
             EnergyComponent::MemoryAccess,
-            num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            T::from(0.1).unwrap_or_else(|| T::zero()),
         );
         component_allocation.insert(
             EnergyComponent::Communication,
-            num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+            T::from(0.05).unwrap_or_else(|| T::zero()),
         );
 
         Self {
@@ -203,33 +203,31 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EnergyEfficientConfig
                 EnergyOptimizationStrategy::SparseComputation,
             ],
             energy_budget: EnergyBudget {
-                total_budget: num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()), // 1 μJ
+                total_budget: T::from(1000.0).unwrap_or_else(|| T::zero()), // 1 μJ
                 current_consumption: T::zero(),
-                per_operation_budget: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()), // 10 nJ per op
+                per_operation_budget: T::from(10.0).unwrap_or_else(|| T::zero()), // 10 nJ per op
                 component_allocation,
                 efficiency_targets: EnergyEfficiencyTargets {
-                    ops_per_joule: num_traits::cast::cast(1e12).unwrap_or_else(|| T::zero()), // 1 TOP/J
-                    spikes_per_joule: num_traits::cast::cast(1e9).unwrap_or_else(|| T::zero()), // 1 GSp/J
-                    synaptic_updates_per_joule: num_traits::cast::cast(1e10)
-                        .unwrap_or_else(|| T::zero()), // 10 GSyOp/J
-                    memory_bandwidth_efficiency: num_traits::cast::cast(1e6)
-                        .unwrap_or_else(|| T::zero()),
-                    thermal_efficiency: num_traits::cast::cast(1e9).unwrap_or_else(|| T::zero()),
+                    ops_per_joule: T::from(1e12).unwrap_or_else(|| T::zero()), // 1 TOP/J
+                    spikes_per_joule: T::from(1e9).unwrap_or_else(|| T::zero()), // 1 GSp/J
+                    synaptic_updates_per_joule: T::from(1e10).unwrap_or_else(|| T::zero()), // 10 GSyOp/J
+                    memory_bandwidth_efficiency: T::from(1e6).unwrap_or_else(|| T::zero()),
+                    thermal_efficiency: T::from(1e9).unwrap_or_else(|| T::zero()),
                 },
-                emergency_reserves: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()), // 100 nJ reserve
+                emergency_reserves: T::from(100.0).unwrap_or_else(|| T::zero()), // 100 nJ reserve
                 monitoring_frequency: Duration::from_micros(100),
             },
             adaptive_strategy_switching: true,
-            strategy_switching_threshold: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // 10% efficiency drop
+            strategy_switching_threshold: T::from(0.1).unwrap_or_else(|| T::zero()), // 10% efficiency drop
             predictive_energy_management: true,
-            prediction_horizon: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()), // 10 ms
+            prediction_horizon: T::from(10.0).unwrap_or_else(|| T::zero()), // 10 ms
             energy_harvesting: false,
-            harvesting_efficiency: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            harvesting_efficiency: T::from(0.1).unwrap_or_else(|| T::zero()),
             distributed_energy_management: false,
             real_time_monitoring: true,
-            monitoring_resolution: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // 1 μs
+            monitoring_resolution: T::from(1.0).unwrap_or_else(|| T::zero()), // 1 μs
             energy_aware_load_balancing: true,
-            optimization_aggressiveness: num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()),
+            optimization_aggressiveness: T::from(0.7).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -239,7 +237,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for EnergyEfficientConfig
 struct EnergyMonitor<
     T: Float
         + Debug
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum
         + Send
@@ -626,7 +624,7 @@ enum CompressionAlgorithm {
 pub struct EnergyEfficientOptimizer<
     T: Float
         + Debug
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum
         + Send
@@ -974,7 +972,7 @@ impl<
             + Debug
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug
             + std::iter::Sum,
     > EnergyEfficientOptimizer<T>
@@ -995,11 +993,11 @@ impl<
             system_state: EnergySystemState {
                 current_energy: T::zero(),
                 current_power: T::zero(),
-                temperature: num_traits::cast::cast(25.0).unwrap_or_else(|| T::zero()), // 25°C ambient
+                temperature: T::from(25.0).unwrap_or_else(|| T::zero()), // 25°C ambient
                 active_neurons: numneurons,
                 active_synapses: numneurons * numneurons,
-                current_voltage: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // 1V
-                current_frequency: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()), // 100 MHz
+                current_voltage: T::from(1.0).unwrap_or_else(|| T::zero()), // 1V
+                current_frequency: T::from(100.0).unwrap_or_else(|| T::zero()), // 100 MHz
                 gated_regions: Vec::new(),
                 sleep_status: SleepStatus::Active,
             },
@@ -1091,9 +1089,8 @@ impl<
         self.system_state.current_power = new_power;
 
         // Update energy consumption
-        let time_delta = num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()); // 1 ms time step
-        let energy_delta =
-            new_power * time_delta / num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()); // nJ
+        let time_delta = T::from(1.0).unwrap_or_else(|| T::zero()); // 1 ms time step
+        let energy_delta = new_power * time_delta / T::from(1000.0).unwrap_or_else(|| T::zero()); // nJ
         self.system_state.current_energy = self.system_state.current_energy + energy_delta;
 
         Ok(EnergyOptimizationResult {
@@ -1102,7 +1099,7 @@ impl<
             power_reduction: initial_power - new_power,
             performance_impact: self.calculate_performance_impact(optimal_frequency),
             thermal_impact: self.calculate_thermal_impact(new_power),
-            optimization_overhead: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // 0.1 nJ overhead
+            optimization_overhead: T::from(0.1).unwrap_or_else(|| T::zero()), // 0.1 nJ overhead
         })
     }
 
@@ -1133,13 +1130,11 @@ impl<
 
         Ok(EnergyOptimizationResult {
             strategy_used: EnergyOptimizationStrategy::PowerGating,
-            energy_saved: total_power_saved
-                * num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()), // Assuming 1ms
+            energy_saved: total_power_saved * T::from(1.0).unwrap_or_else(|| T::zero()), // Assuming 1ms
             power_reduction: total_power_saved,
             performance_impact: T::zero(), // Minimal performance impact
-            thermal_impact: total_power_saved
-                * num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()), // Thermal reduction
-            optimization_overhead: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()), // Low overhead
+            thermal_impact: total_power_saved * T::from(0.8).unwrap_or_else(|| T::zero()), // Thermal reduction
+            optimization_overhead: T::from(0.05).unwrap_or_else(|| T::zero()), // Low overhead
         })
     }
 
@@ -1167,11 +1162,9 @@ impl<
             strategy_used: EnergyOptimizationStrategy::SparseComputation,
             energy_saved: initial_power * energy_savings,
             power_reduction: initial_power - new_power,
-            performance_impact: energy_savings
-                * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Small performance impact
-            thermal_impact: (initial_power - new_power)
-                * num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-            optimization_overhead: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()), // Moderate overhead
+            performance_impact: energy_savings * T::from(0.1).unwrap_or_else(|| T::zero()), // Small performance impact
+            thermal_impact: (initial_power - new_power) * T::from(0.9).unwrap_or_else(|| T::zero()),
+            optimization_overhead: T::from(0.2).unwrap_or_else(|| T::zero()), // Moderate overhead
         })
     }
 
@@ -1240,7 +1233,7 @@ impl<
             power_reduction: T::zero(),
             performance_impact: T::zero(),
             thermal_impact: T::zero(),
-            optimization_overhead: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            optimization_overhead: T::from(0.01).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -1347,8 +1340,7 @@ impl<
     fn evaluate_strategy_effectiveness(&mut self, result: &EnergyOptimizationResult<T>) {
         // Calculate effectiveness score
         let effectiveness = result.energy_saved
-            / (result.optimization_overhead
-                + num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()));
+            / (result.optimization_overhead + T::from(1e-6).unwrap_or_else(|| T::zero()));
 
         // Update strategy effectiveness history
         *self
@@ -1384,9 +1376,8 @@ impl<
     fn update_metrics(&mut self, result: &EnergyOptimizationResult<T>) {
         self.metrics.energy_consumption = self.system_state.current_energy;
         self.metrics.power_consumption = self.system_state.current_power;
-        self.metrics.thermal_efficiency = T::one()
-            / (self.system_state.temperature
-                / num_traits::cast::cast(25.0).unwrap_or_else(|| T::zero()));
+        self.metrics.thermal_efficiency =
+            T::one() / (self.system_state.temperature / T::from(25.0).unwrap_or_else(|| T::zero()));
     }
 
     /// Get current energy budget status
@@ -1466,7 +1457,7 @@ impl<
             + Debug
             + Send
             + Sync
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug
             + std::iter::Sum,
     > EnergyMonitor<T>

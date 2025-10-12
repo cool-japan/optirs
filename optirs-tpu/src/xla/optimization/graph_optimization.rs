@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // constant folding, dead code elimination, common subexpression elimination,
 // and algebraic simplifications.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::super::frontend::{
@@ -548,6 +548,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
     }
 }
 
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for CommonSubexpressionEliminationPass<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
     CommonSubexpressionEliminationPass<T>
 {
@@ -592,6 +600,14 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
 }
 
 // Similar implementations for other optimization passes...
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for AlgebraicSimplificationPass<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
     AlgebraicSimplificationPass<T>
 {
@@ -725,6 +741,12 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
     }
     fn estimate_benefit(&self, _: &XLAComputation<T>) -> f64 {
         0.08
+    }
+}
+
+impl Default for PatternMatcher {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

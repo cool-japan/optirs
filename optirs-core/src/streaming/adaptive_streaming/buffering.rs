@@ -8,7 +8,7 @@ use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 use super::performance::{PerformanceSnapshot, PerformanceTracker};
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
@@ -597,8 +597,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
     /// Calculates distance between feature vectors
     fn calculate_feature_distance(
         &self,
-        features1: &scirs2_core::ndarray_ext::Array1<A>,
-        features2: &scirs2_core::ndarray_ext::Array1<A>,
+        features1: &scirs2_core::ndarray::Array1<A>,
+        features2: &scirs2_core::ndarray::Array1<A>,
     ) -> Result<A, String> {
         if features1.len() != features2.len() {
             return Err("Feature vectors have different lengths".to_string());

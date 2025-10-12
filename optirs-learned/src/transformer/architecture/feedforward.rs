@@ -5,9 +5,9 @@ use std::fmt::Debug;
 // transformer encoder/decoder blocks, including various activation functions
 // and output projection layers.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use scirs2_core::random::{Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;
@@ -57,7 +57,7 @@ pub struct InputEmbedding<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectionLayer<T> {
     /// Create new output projection layer
     pub fn new(input_dim: usize, output_dim: usize) -> Result<Self> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut weights = Array2::zeros((input_dim, output_dim));
 
         // Xavier initialization
@@ -123,8 +123,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
             }
             OutputTransformation::LearnedActivation => {
                 // For now, use a simple learned scaling
-                output
-                    .mapv_inplace(|x| x * num_traits::cast::cast(1.1).unwrap_or_else(|| T::zero()));
+                output.mapv_inplace(|x| {
+                    x * scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero())
+                });
             }
             OutputTransformation::ParameterScaling => {
                 // Apply different scaling per parameter dimension
@@ -187,7 +188,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> InputEmbedding<T> {
     /// Create new input embedding layer
     pub fn new(input_dim: usize, model_dim: usize) -> Result<Self> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let mut weights = Array2::zeros((input_dim, model_dim));
 
         // Xavier initialization

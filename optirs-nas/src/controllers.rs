@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{s, Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{s, Array1, Array2};
+use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use scirs2_core::random::Rng as SCRRng;
 use std::collections::{HashMap, VecDeque};
@@ -139,7 +139,7 @@ pub struct RNNController<
         + 'static
         + std::iter::Sum
         + for<'a> std::iter::Sum<&'a T>
-        + scirs2_core::ndarray_ext::ScalarOperand,
+        + scirs2_core::ndarray::ScalarOperand,
 > {
     /// Controller configuration
     config: RNNControllerConfig,
@@ -528,7 +528,7 @@ impl<
             + 'static
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > RNNController<T>
 {
     /// Create new RNN controller
@@ -658,7 +658,7 @@ impl<
     /// Sample from logits using temperature
     fn sample_from_logits(&self, logits: &Array1<T>) -> Result<usize> {
         // Apply temperature scaling
-        let scaled_logits = logits.mapv(|x| x / num_traits::cast::cast(self.config.temperature).unwrap_or_else(|| T::zero()));
+        let scaled_logits = logits.mapv(|x| x / scirs2_core::numeric::NumCast::from(self.config.temperature).unwrap_or_else(|| T::zero()));
 
         // Softmax
         let max_logit = scaled_logits
@@ -670,8 +670,8 @@ impl<
         let probs = exp_logits / sum_exp;
 
         // Sample from categorical distribution
-        let mut rng = scirs2_core::random::rng();
-        let rand_val = rng.random_f64();
+        let mut rng = scirs2_core::random::thread_rng();
+        let rand_val = rng.random::<f64>();
         let mut cumulative = 0.0;
 
         for (i, &prob) in probs.iter().enumerate() {
@@ -694,18 +694,18 @@ impl<
         // Set default hyperparameters based on component _type
         match component_type {
             ComponentType::Adam => {
-                hyperparameters.insert("learning_rate".to_string(), num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()));
-                hyperparameters.insert("beta1".to_string(), num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()));
-                hyperparameters.insert("beta2".to_string(), num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()));
-                hyperparameters.insert("epsilon".to_string(), num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("learning_rate".to_string(), scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("beta1".to_string(), scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("beta2".to_string(), scirs2_core::numeric::NumCast::from(0.999).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("epsilon".to_string(), scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()));
             }
             ComponentType::SGD => {
-                hyperparameters.insert("learning_rate".to_string(), num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()));
-                hyperparameters.insert("momentum".to_string(), num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()));
-                hyperparameters.insert("weight_decay".to_string(), num_traits::cast::cast(0.0001).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("learning_rate".to_string(), scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("momentum".to_string(), scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("weight_decay".to_string(), scirs2_core::numeric::NumCast::from(0.0001).unwrap_or_else(|| T::zero()));
             }
             _ => {
-                hyperparameters.insert("learning_rate".to_string(), num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()));
+                hyperparameters.insert("learning_rate".to_string(), scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()));
             }
         }
 
@@ -726,7 +726,7 @@ impl<
             + 'static
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > ArchitectureController<T> for RNNController<T>
 {
     fn initialize(&mut self, searchspace: &SearchSpaceConfig) -> Result<()> {
@@ -844,7 +844,7 @@ impl<
             + 'static
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand,
+            + scirs2_core::ndarray::ScalarOperand,
     > RNNController<T>
 {
     fn architecture_to_sequence(
@@ -870,7 +870,7 @@ impl<
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + scirs2_core::ndarray_ext::ScalarOperand>
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
     TransformerController<T>
 {
     /// Create new Transformer controller
@@ -931,9 +931,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
             component_type: ComponentType::Adam,
             hyperparameters: {
                 let mut params = HashMap::new();
-                params.insert("learning_rate".to_string(), num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()));
-                params.insert("beta1".to_string(), num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()));
-                params.insert("beta2".to_string(), num_traits::cast::cast(0.999).unwrap_or_else(|| T::zero()));
+                params.insert("learning_rate".to_string(), scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()));
+                params.insert("beta1".to_string(), scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()));
+                params.insert("beta2".to_string(), scirs2_core::numeric::NumCast::from(0.999).unwrap_or_else(|| T::zero()));
                 params
             },
             connections: Vec::new(),
@@ -1006,7 +1006,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
         use super::architecture_space::{ComponentType, OptimizerComponent};
 
         // Random selection of component type
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = scirs2_core::random::thread_rng();
         let component_type =
             self.component_types[rng.gen_range(0..self.component_types.len())].clone();
 
@@ -1015,31 +1015,31 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
             ComponentType::Adam => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.random_f64() * 0.01).unwrap(),
+                    T::from(rng.random::<f64>() * 0.01).unwrap(),
                 );
                 hyperparameters.insert(
                     "beta1".to_string(),
-                    T::from(0.8 + rng.random_f64() * 0.19).unwrap(),
+                    T::from(0.8 + rng.random::<f64>() * 0.19).unwrap(),
                 );
                 hyperparameters.insert(
                     "beta2".to_string(),
-                    T::from(0.9 + rng.random_f64() * 0.099).unwrap(),
+                    T::from(0.9 + rng.random::<f64>() * 0.099).unwrap(),
                 );
             }
             ComponentType::SGD => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.random_f64() * 0.1).unwrap(),
+                    T::from(rng.random::<f64>() * 0.1).unwrap(),
                 );
                 hyperparameters.insert(
                     "momentum".to_string(),
-                    T::from(rng.random_f64() * 0.99).unwrap(),
+                    T::from(rng.random::<f64>() * 0.99).unwrap(),
                 );
             }
             _ => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.random_f64() * 0.01).unwrap(),
+                    T::from(rng.random::<f64>() * 0.01).unwrap(),
                 );
             }
         }
@@ -1080,7 +1080,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
 }
 
 // Implementation helpers for layers
-impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> RNNLayer<T> {
+impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray::ScalarOperand + Send + Sync> RNNLayer<T> {
     fn new(layer_type: RNNType, input_size: usize, hiddensize: usize) -> Result<Self> {
         let gate_size = match layer_type {
             RNNType::LSTM => hiddensize * 4,
@@ -1186,7 +1186,7 @@ impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray_ext::Sc
     }
 }
 
-impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray_ext::ScalarOperand + Send + Sync> OutputLayer<T> {
+impl<T: Float + Debug + Default + Clone + 'static + scirs2_core::ndarray::ScalarOperand + Send + Sync> OutputLayer<T> {
     fn new(input_size: usize, outputsize: usize, activation: ActivationType) -> Result<Self> {
         Ok(Self {
             weight: Array2::zeros((outputsize, input_size)),
@@ -1296,7 +1296,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LayerNorm<T> {
         Ok(Self {
             scale: Array1::ones(dim),
             shift: Array1::zeros(dim),
-            eps: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            eps: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
         })
     }
 }

@@ -4,8 +4,8 @@ use super::config::PerformanceConfig;
 use super::meta_learning::MetaLearningResult;
 use super::TrainingMetrics;
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
@@ -73,6 +73,12 @@ pub struct TransformerPerformanceTracker<T: Float + Debug + Send + Sync + 'stati
 
     /// Start time for tracking session
     session_start: Instant,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerPerformanceTracker<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> {
@@ -400,9 +406,7 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
         let convergence_score = self.calculate_current_convergence_rate();
         let stability_score = 1.0 - self.trends.get_loss_volatility().min(1.0);
 
-        (loss_score * 0.4 + convergence_score * 0.3 + stability_score * 0.3)
-            .max(0.0)
-            .min(1.0)
+        (loss_score * 0.4 + convergence_score * 0.3 + stability_score * 0.3).clamp(0.0, 1.0)
     }
 
     fn generate_recommendations(&self) -> Vec<String> {
@@ -610,6 +614,12 @@ pub struct PerformanceBaselines {
     pub baseline_convergence_rate: f64,
 }
 
+impl Default for PerformanceBaselines {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceBaselines {
     pub fn new() -> Self {
         Self {
@@ -648,6 +658,12 @@ pub struct PerformanceTrends {
     convergence_trend: TrendAnalyzer,
     memory_trend: TrendAnalyzer,
     timing_trend: TrendAnalyzer,
+}
+
+impl Default for PerformanceTrends {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PerformanceTrends {
@@ -795,6 +811,12 @@ pub struct ProfilingData {
     total_operations: usize,
 }
 
+impl Default for ProfilingData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProfilingData {
     pub fn new() -> Self {
         Self {
@@ -804,10 +826,7 @@ impl ProfilingData {
     }
 
     pub fn record_operation(&mut self, operation: String, duration: Duration) {
-        let timings = self
-            .operation_timings
-            .entry(operation)
-            .or_insert_with(VecDeque::new);
+        let timings = self.operation_timings.entry(operation).or_default();
         timings.push_back(duration);
         if timings.len() > 1000 {
             timings.pop_front();
@@ -919,6 +938,12 @@ pub struct AdaptiveLearningMetrics {
 }
 
 /// Implementation of basic functionality for metric collections
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceMetrics {
     pub fn new() -> Self {
         Self {
@@ -930,6 +955,12 @@ impl PerformanceMetrics {
             resource_metrics: ResourceMetricsCollection::new(),
             optimization_metrics: OptimizationMetricsCollection::new(),
         }
+    }
+}
+
+impl Default for TrainingMetricsCollection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -962,6 +993,12 @@ impl TrainingMetricsCollection {
     }
 }
 
+impl Default for InferenceMetricsCollection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InferenceMetricsCollection {
     pub fn new() -> Self {
         Self {
@@ -988,6 +1025,12 @@ impl InferenceMetricsCollection {
     }
 }
 
+impl Default for MemoryMetricsCollection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryMetricsCollection {
     pub fn new() -> Self {
         Self {
@@ -1005,6 +1048,12 @@ impl MemoryMetricsCollection {
         self.average_usage = (self.average_usage * (self.total_allocations - 1) as f64
             + usage.total_memory as f64)
             / self.total_allocations as f64;
+    }
+}
+
+impl Default for TimingMetricsCollection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1026,6 +1075,12 @@ impl TimingMetricsCollection {
     pub fn record_operation_time(&mut self, operation: &str, duration: Duration) {
         self.operation_timings
             .insert(operation.to_string(), duration);
+    }
+}
+
+impl Default for QualityMetricsCollection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1074,6 +1129,12 @@ impl QualityMetricsCollection {
     }
 }
 
+impl Default for ResourceMetricsCollection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResourceMetricsCollection {
     pub fn new() -> Self {
         Self {
@@ -1108,6 +1169,12 @@ impl ResourceMetricsCollection {
         } else {
             self.memory_usage_history.iter().sum::<f64>() / self.memory_usage_history.len() as f64
         }
+    }
+}
+
+impl Default for OptimizationMetricsCollection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

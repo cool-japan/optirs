@@ -3,8 +3,8 @@
 // This module provides utility functions and helpers for optimization
 // tasks in machine learning.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -24,7 +24,7 @@ use crate::error::{OptimError, Result};
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::utils::clip_gradients;
 ///
 /// let mut gradients = Array1::from_vec(vec![-10.0, 0.5, 8.0, -0.2]);
@@ -67,7 +67,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::utils::clip_gradient_norm;
 ///
 /// let mut gradients = Array1::<f64>::from_vec(vec![3.0, 4.0]); // L2 norm = 5.0
@@ -126,7 +126,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::utils::gradient_centralization;
 ///
 /// let mut gradients = Array1::from_vec(vec![1.0, 2.0, 3.0, 2.0]);
@@ -165,7 +165,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::utils::zero_small_gradients;
 ///
 /// let mut gradients = Array1::from_vec(vec![0.001, 0.02, -0.005, 0.3]);

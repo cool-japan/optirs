@@ -1,7 +1,7 @@
 // GPU-accelerated SGD optimizer implementation
 
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -293,7 +293,7 @@ where
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_sgd_gpu_creation() {

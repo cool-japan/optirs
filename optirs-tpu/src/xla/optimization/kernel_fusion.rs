@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // elementwise fusion, producer-consumer fusion, loop fusion, and
 // multi-output fusion to reduce memory traffic and improve performance.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use super::super::frontend::{
@@ -670,10 +670,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MultiOu
 
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> ConvolutionFusionPass<T> {
     pub fn new(_config: &FusionConfig) -> Self {
-        let mut patterns = Vec::new();
-
-        // Add common convolution fusion patterns
-        patterns.push(ConvolutionPattern {
+        let patterns = vec![ConvolutionPattern {
             name: "conv_bias_relu".to_string(),
             operations: vec![
                 OperationType::Convolution(
@@ -689,7 +686,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Convolu
                 OperationType::Maximum, // ReLU
             ],
             benefit: 0.3,
-        });
+        }];
 
         Self {
             patterns,

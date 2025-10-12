@@ -28,8 +28,8 @@ pub use analytics::{PerformanceAnalyzer, PerformanceSnapshot, PerformanceMetrics
 pub use analytics::performance::ResourceUsage;
 pub use integration::*;
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime};
@@ -224,7 +224,7 @@ impl<
             + Send
             + Sync
             + Default
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug,
     > AdvancedCoordinator<T>
 {
@@ -448,23 +448,23 @@ impl<
         let snapshot = PerformanceSnapshot {
             timestamp: SystemTime::now(),
             step: 0, // Default
-            loss: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // Default
-            accuracy: Some(num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())), // Default
+            loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()), // Default
+            accuracy: Some(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())), // Default
             training_time: elapsed_time,
             memory_usage: 1024, // Default 1MB
             gpu_utilization: Some(0.0), // Default no GPU
-            learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()), // Default
-            gradient_norm: Some(num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())), // Default
+            learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()), // Default
+            gradient_norm: Some(scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())), // Default
             metrics: PerformanceMetrics {
-                loss: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                val_loss: Some(num_traits::cast::cast(0.12).unwrap_or_else(|| T::zero())),
-                accuracy: Some(num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())),
-                val_accuracy: Some(num_traits::cast::cast(0.88).unwrap_or_else(|| T::zero())),
-                learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-                gradient_norm: Some(num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())),
-                parameter_norm: Some(num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero())),
-                throughput: Some(num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())),
-                convergence_rate: Some(num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())),
+                loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                val_loss: Some(scirs2_core::numeric::NumCast::from(0.12).unwrap_or_else(|| T::zero())),
+                accuracy: Some(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())),
+                val_accuracy: Some(scirs2_core::numeric::NumCast::from(0.88).unwrap_or_else(|| T::zero())),
+                learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
+                gradient_norm: Some(scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())),
+                parameter_norm: Some(scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero())),
+                throughput: Some(scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())),
+                convergence_rate: Some(scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())),
                 custom_metrics: HashMap::new(),
             },
             resource_usage: ResourceUsage {
@@ -472,7 +472,7 @@ impl<
                 memory_usage: 1024 * 1024 * 1024, // Default 1GB in bytes
                 gpu_memory_usage: Some(512 * 1024 * 1024), // Default 512MB GPU memory
                 gpu_utilization: Some(0.0), // Default no GPU utilization
-                disk_io_rate: Some(num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero())), // Default 10 MB/s
+                disk_io_rate: Some(scirs2_core::numeric::NumCast::from(10.0).unwrap_or_else(|| T::zero())), // Default 10 MB/s
                 network_io_rate: Some(T::zero()), // Default no network I/O
                 power_consumption: Some(50.0), // Default 50W
             },
@@ -486,7 +486,7 @@ impl<
                 environment: std::collections::HashMap::new(),
                 hyperparameters: {
                     let mut params = std::collections::HashMap::new();
-                    params.insert("dimensionality".to_string(), num_traits::cast::cast(result.len()).unwrap_or_else(|| T::zero()));
+                    params.insert("dimensionality".to_string(), scirs2_core::numeric::NumCast::from(result.len()).unwrap_or_else(|| T::zero()));
                     params
                 },
             },
@@ -650,7 +650,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationAnalyzer<T> {
                 eigenvalue_distribution: EigenvalueDistribution {
                     largest_eigenvalue: T::one(),
                     smallest_eigenvalue: T::zero(),
-                    mean_eigenvalue: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                    mean_eigenvalue: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                     eigenvalue_variance: T::zero(),
                     negative_eigenvalues: 0,
                     spectral_density: Vec::new(),
@@ -670,7 +670,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationAnalyzer<T> {
                 local_minima_density: T::zero(),
                 saddle_point_density: T::zero(),
                 basin_width: T::one(),
-                escape_difficulty: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                escape_difficulty: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                 local_convexity: T::zero(),
                 local_smoothness: T::one(),
                 barrier_height: T::zero(),
@@ -679,28 +679,28 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationAnalyzer<T> {
                 connectivity: T::one(),
                 symmetry: T::one(),
                 hierarchical_structure: T::zero(),
-                fractal_dimension: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()),
-                global_convexity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                fractal_dimension: scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()),
+                global_convexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                 scale_separation: T::one(),
-                modularity: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                modularity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             },
             noise_characteristics: NoiseCharacteristics {
                 noise_level: T::zero(),
                 noise_type: NoiseType::Gaussian,
-                signal_to_noise_ratio: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
+                signal_to_noise_ratio: scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero()),
                 noise_correlation: T::zero(),
                 noise_stationarity: T::one(),
-                noise_predictability: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                noise_predictability: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
                 frequency_spectrum: Vec::new(),
             },
             trajectory_features: TrajectoryFeatures {
                 path_length: T::one(),
                 path_efficiency: T::one(),
                 oscillation: T::zero(),
-                convergence_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                convergence_rate: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
                 step_consistency: T::one(),
                 direction_consistency: T::one(),
-                progress_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                progress_rate: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             },
             extraction_time: SystemTime::now(),
             validity_duration: Duration::from_secs(3600),

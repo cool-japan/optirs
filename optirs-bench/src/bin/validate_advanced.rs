@@ -126,10 +126,11 @@ fn validate_basic_rust_syntax(path: &str) -> Result<(), String> {
     }
 
     // Check for proper module structure
-    if content.contains("pub mod ") || content.contains("mod ") {
-        if !content.contains("use ") && !content.contains("extern crate") {
-            // This might be okay for some modules
-        }
+    if (content.contains("pub mod ") || content.contains("mod "))
+        && !content.contains("use ")
+        && !content.contains("extern crate")
+    {
+        // This might be okay for some modules
     }
 
     if issues.is_empty() {

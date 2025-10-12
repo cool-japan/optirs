@@ -303,7 +303,7 @@ impl FailureDetector {
             FailureDetectionAlgorithm::Timeout => {
                 let ratio =
                     time_since_heartbeat.as_secs_f64() / self.failure_threshold.as_secs_f64();
-                (ratio - 1.0).min(1.0).max(0.0)
+                (ratio - 1.0).clamp(0.0, 1.0)
             }
             FailureDetectionAlgorithm::HeartbeatMissing => {
                 if time_since_heartbeat > self.detection_config.heartbeat_interval * 3 {

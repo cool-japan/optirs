@@ -544,7 +544,7 @@ impl ReportGenerator {
             OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
         })?;
 
-        fs::write(&report_path, json_content).map_err(|e| OptimError::IO(e))?;
+        fs::write(&report_path, json_content).map_err(OptimError::IO)?;
 
         Ok(GeneratedReport {
             report_type: ReportType::JSON,
@@ -571,7 +571,7 @@ impl ReportGenerator {
             OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
         })?;
 
-        fs::write(&report_path, xml_content).map_err(|e| OptimError::IO(e))?;
+        fs::write(&report_path, xml_content).map_err(OptimError::IO)?;
 
         Ok(GeneratedReport {
             report_type: ReportType::JUnit,
@@ -598,7 +598,7 @@ impl ReportGenerator {
             OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
         })?;
 
-        fs::write(&report_path, markdown_content).map_err(|e| OptimError::IO(e))?;
+        fs::write(&report_path, markdown_content).map_err(OptimError::IO)?;
 
         Ok(GeneratedReport {
             report_type: ReportType::Markdown,
@@ -632,7 +632,7 @@ impl ReportGenerator {
             &report_path,
             format!("<!-- PDF Report Content -->\n{}", html_content),
         )
-        .map_err(|e| OptimError::IO(e))?;
+        .map_err(OptimError::IO)?;
 
         Ok(GeneratedReport {
             report_type: ReportType::PDF,
@@ -689,7 +689,7 @@ impl ReportGenerator {
                 data: vec![DataPoint {
                     x: DataValue::String(format!("{:?}", status)),
                     y: DataValue::Number(count as f64),
-                    label: Some(format!("{}: {}", format!("{:?}", status), count)),
+                    label: Some(format!("{:?}: {}", status, count)),
                     metadata: HashMap::new(),
                 }],
                 color: Some(color),
@@ -889,7 +889,7 @@ impl ReportGenerator {
     /// Load HTML template
     fn load_html_template(&self) -> Result<String> {
         if let Some(template_path) = &self.config.templates.html_template_path {
-            fs::read_to_string(template_path).map_err(|e| OptimError::IO(e))
+            fs::read_to_string(template_path).map_err(OptimError::IO)
         } else {
             Ok(self.get_default_html_template())
         }
@@ -1092,7 +1092,7 @@ impl ReportGenerator {
         // Create a PDF-optimized HTML version
         let mut html = String::new();
         html.push_str("<!DOCTYPE html><html><head><title>Performance Report</title></head><body>");
-        html.push_str(&format!("<h1>Performance Test Report</h1>"));
+        html.push_str("<h1>Performance Test Report</h1>");
         html.push_str(&format!("<p>Total Tests: {}</p>", statistics.total_tests));
         html.push_str(&format!(
             "<p>Success Rate: {:.1}%</p>",
@@ -1166,7 +1166,7 @@ impl TemplateEngine {
 
     /// Load template from file
     pub fn load_template(&mut self, name: &str, path: &Path) -> Result<()> {
-        let content = fs::read_to_string(path).map_err(|e| OptimError::IO(e))?;
+        let content = fs::read_to_string(path).map_err(OptimError::IO)?;
         self.templates.insert(name.to_string(), content);
         Ok(())
     }
@@ -1283,7 +1283,7 @@ mod tests {
 
     #[test]
     fn test_template_engine() {
-        let mut engine = TemplateEngine::new().unwrap();
+        let engine = TemplateEngine::new().unwrap();
         let template = "Hello {{name}}!";
         let mut variables = HashMap::new();
         variables.insert("name".to_string(), "World".to_string());

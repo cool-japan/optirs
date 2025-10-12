@@ -2,10 +2,13 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use crate::error::Result;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
+
+/// Type alias for sequence data tuple (gradients, parameters, losses)
+type SequenceDataTuple<T> = (Vec<Array2<T>>, Vec<Array2<T>>, Vec<Array1<T>>);
 
 /// Sequence processing strategy types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,7 +55,9 @@ pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'stati
     chunking: ChunkingStrategy<T>,
 }
 
-impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSequenceProcessor<T> {
+impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
+    OptimizationSequenceProcessor<T>
+{
     /// Create new sequence processor
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let strategy = SequenceProcessingStrategy::SlidingWindow;
@@ -456,7 +461,7 @@ impl<T: Float + Debug + num_traits::FromPrimitive + Send + Sync> OptimizationSeq
     fn detect_change_points(&self, losses: &Array1<T>) -> Result<Vec<usize>> {
         let mut change_points = vec![0]; // Always include start
         let window_size = 5;
-        let threshold = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let threshold = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
         for i in window_size..losses.len() - window_size {
             let before_mean = losses.slice(s![i - window_size..i]).mean().unwrap();
@@ -576,10 +581,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceBuffer<T> {
         self.loss_buffer.clear();
     }
 
-    pub fn get_recent_sequences(
-        &self,
-        count: usize,
-    ) -> (Vec<Array2<T>>, Vec<Array2<T>>, Vec<Array1<T>>) {
+    pub fn get_recent_sequences(&self, count: usize) -> SequenceDataTuple<T> {
         let actual_count = count.min(self.gradient_buffer.len());
 
         let gradients = self
@@ -621,6 +623,12 @@ pub struct SequenceStatistics<T: Float + Debug + Send + Sync + 'static> {
 
     /// Sequence length statistics
     length_stats: StatisticsAccumulator<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for SequenceStatistics<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
@@ -803,6 +811,12 @@ pub struct StatisticsAccumulator<T: Float + Debug + Send + Sync + 'static> {
     max: T,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for StatisticsAccumulator<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
     pub fn new() -> Self {
         Self {
@@ -836,7 +850,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
 
     pub fn mean(&self) -> T {
         if self.count > 0 {
-            self.sum / num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero())
+            self.sum / scirs2_core::numeric::NumCast::from(self.count).unwrap_or_else(|| T::zero())
         } else {
             T::zero()
         }
@@ -845,7 +859,8 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
     pub fn variance(&self) -> T {
         if self.count > 1 {
             let mean = self.mean();
-            (self.sum_sq / num_traits::cast::cast(self.count).unwrap_or_else(|| T::zero()))
+            (self.sum_sq
+                / scirs2_core::numeric::NumCast::from(self.count).unwrap_or_else(|| T::zero()))
                 - (mean * mean)
         } else {
             T::zero()
@@ -874,7 +889,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
 }
 
 // Import for slice macro
-use scirs2_core::ndarray_ext::s;
+use scirs2_core::ndarray::s;
 
 #[cfg(test)]
 mod tests {
@@ -889,7 +904,7 @@ mod tests {
 
     #[test]
     fn test_sequence_buffer() {
-        let mut buffer = SequenceBuffer::<f32>::new(10, 64);
+        let buffer = SequenceBuffer::<f32>::new(10, 64);
         assert!(buffer.is_ok());
 
         let mut buf = buffer.unwrap();
@@ -928,7 +943,7 @@ mod tests {
 
     #[test]
     fn test_chunking_strategy() {
-        let mut chunking = ChunkingStrategy::<f32>::new(10, 2);
+        let chunking = ChunkingStrategy::<f32>::new(10, 2);
         assert!(chunking.is_ok());
 
         let mut strategy = chunking.unwrap();

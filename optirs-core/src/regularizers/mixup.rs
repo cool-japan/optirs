@@ -4,8 +4,8 @@
 // CutMix replaces a random patch of one image with a patch from another image
 // and adjusts the labels proportionally.
 
-use num_traits::{Float, FromPrimitive};
-use scirs2_core::ndarray_ext::{Array, Array2, Array4, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array2, Array4, Dimension, ScalarOperand};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::random::Rng;
 // Removed unused import ScientificNumber
 use std::fmt::Debug;
@@ -21,7 +21,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::MixUp;
 ///
 /// let mixup = MixUp::new(0.2).unwrap();
@@ -151,7 +151,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
 /// # Example
 ///
 /// ```no_run
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::CutMix;
 ///
 /// let cutmix = CutMix::new(1.0).unwrap();
@@ -372,7 +372,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_autograd::ndarray::array;
+    use scirs2_core::ndarray::array;
 
     #[test]
     fn test_mixup_creation() {

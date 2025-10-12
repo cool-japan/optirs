@@ -173,7 +173,7 @@ impl GpuMemorySystem {
 
         let base_ptr = gpu_backend
             .allocate(total_size)
-            .map_err(|e| GpuMemorySystemError::BackendError(e))?;
+            .map_err(GpuMemorySystemError::BackendError)?;
 
         // Initialize allocation engine with GPU memory
         let allocation_engine = UnifiedAllocator::new(
@@ -573,8 +573,8 @@ impl GpuMemorySystem {
         // Calculate fragmentation ratio
         let total_allocated = self
             .memory_regions
-            .iter()
-            .map(|(_, alloc)| alloc.size)
+            .values()
+            .map(|alloc| alloc.size)
             .sum::<usize>();
         let total_managed = self.stats.vendor_stats.bytes_allocated;
         self.stats.fragmentation_ratio = if total_managed > 0 {
@@ -592,6 +592,16 @@ impl GpuMemorySystem {
         };
     }
 }
+
+// Safety: GpuMemorySystem manages GPU memory through multiple components (backend, allocator, manager).
+// While it contains raw pointers via memory_regions HashMap<*mut c_void, MemoryAllocation>,
+// it's safe to share across threads when protected by Arc<Mutex<>> because:
+// 1. All raw pointers point to GPU memory managed by the GPU driver through the backend
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. All contained components (UnifiedGpuBackend, UnifiedAllocator, IntegratedMemoryManager) are already Send+Sync
+// 4. No thread-local state is maintained
+unsafe impl Send for GpuMemorySystem {}
+unsafe impl Sync for GpuMemorySystem {}
 
 /// GPU memory system errors
 #[derive(Debug)]

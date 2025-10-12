@@ -4,7 +4,7 @@
 //! optimizer on a sparse linear regression task, showing how SparseAdam
 //! can be more efficient when dealing with sparse gradients.
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Adam, Optimizer, SparseAdam, SparseGradient};
 use std::time::Instant;
 

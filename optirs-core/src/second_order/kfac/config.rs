@@ -3,7 +3,7 @@
 // This module contains configuration types and data structures for the
 // K-FAC (Kronecker-Factored Approximate Curvature) second-order optimizer.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// K-FAC optimizer configuration
@@ -49,18 +49,18 @@ pub struct KFACConfig<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for KFACConfig<T> {
     fn default() -> Self {
         Self {
-            learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            damping: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            weight_decay: num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()),
+            learning_rate: T::from(0.001).unwrap_or_else(|| T::zero()),
+            damping: T::from(0.001).unwrap_or_else(|| T::zero()),
+            weight_decay: T::from(0.0).unwrap_or_else(|| T::zero()),
             cov_update_freq: 10,
             inv_update_freq: 100,
-            stat_decay: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
-            min_eigenvalue: num_traits::cast::cast(1e-7).unwrap_or_else(|| T::zero()),
+            stat_decay: T::from(0.95).unwrap_or_else(|| T::zero()),
+            min_eigenvalue: T::from(1e-7).unwrap_or_else(|| T::zero()),
             max_inv_iterations: 50,
-            inv_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            inv_tolerance: T::from(1e-6).unwrap_or_else(|| T::zero()),
             use_tikhonov: true,
             auto_damping: true,
-            target_acceptance_ratio: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
+            target_acceptance_ratio: T::from(0.75).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -133,8 +133,8 @@ impl<T: Float + Debug + Send + Sync + 'static> KFACConfig<T> {
         Self {
             cov_update_freq: 20,
             inv_update_freq: 200,
-            stat_decay: num_traits::cast::cast(0.99).unwrap_or_else(|| T::zero()),
-            damping: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            stat_decay: T::from(0.99).unwrap_or_else(|| T::zero()),
+            damping: T::from(0.01).unwrap_or_else(|| T::zero()),
             ..Default::default()
         }
     }
@@ -144,8 +144,8 @@ impl<T: Float + Debug + Send + Sync + 'static> KFACConfig<T> {
         Self {
             cov_update_freq: 5,
             inv_update_freq: 50,
-            stat_decay: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-            damping: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            stat_decay: T::from(0.9).unwrap_or_else(|| T::zero()),
+            damping: T::from(0.001).unwrap_or_else(|| T::zero()),
             ..Default::default()
         }
     }
@@ -153,8 +153,8 @@ impl<T: Float + Debug + Send + Sync + 'static> KFACConfig<T> {
     /// Create configuration with conservative damping for stability
     pub fn for_stability() -> Self {
         Self {
-            damping: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            min_eigenvalue: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            damping: T::from(0.1).unwrap_or_else(|| T::zero()),
+            min_eigenvalue: T::from(1e-5).unwrap_or_else(|| T::zero()),
             auto_damping: false,
             use_tikhonov: true,
             ..Default::default()
@@ -286,9 +286,11 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = KFACConfig::<f32>::default();
+        let mut config = KFACConfig::<f32> {
+            learning_rate: -0.1,
+            ..Default::default()
+        };
 
-        config.learning_rate = -0.1;
         assert!(config.validate().is_err());
 
         config.learning_rate = 0.001;

@@ -5,8 +5,8 @@
 
 #[allow(dead_code)]
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, ArrayBase, ScalarOperand};
+use scirs2_core::ndarray::{Array1, ArrayBase, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -171,7 +171,7 @@ pub enum LearningRateAdaptation {
 pub struct StreamingOptimizer<O, A, D>
 where
     A: Float + Send + Sync + ScalarOperand + Debug,
-    D: scirs2_core::ndarray_ext::Dimension,
+    D: scirs2_core::ndarray::Dimension,
     O: Optimizer<A, D>,
 {
     /// Base optimizer
@@ -354,9 +354,9 @@ struct MemoryTracker {
 
 /// Asynchronous update state
 #[derive(Debug)]
-struct AsyncUpdateState<A: Float, D: scirs2_core::ndarray_ext::Dimension> {
+struct AsyncUpdateState<A: Float, D: scirs2_core::ndarray::Dimension> {
     /// Pending gradients
-    pending_gradients: Vec<ArrayBase<scirs2_core::ndarray_ext::OwnedRepr<A>, D>>,
+    pending_gradients: Vec<ArrayBase<scirs2_core::ndarray::OwnedRepr<A>, D>>,
 
     /// Update queue
     update_queue: VecDeque<AsyncUpdate<A, D>>,
@@ -370,9 +370,9 @@ struct AsyncUpdateState<A: Float, D: scirs2_core::ndarray_ext::Dimension> {
 
 /// Asynchronous update entry
 #[derive(Debug, Clone)]
-struct AsyncUpdate<A: Float, D: scirs2_core::ndarray_ext::Dimension> {
+struct AsyncUpdate<A: Float, D: scirs2_core::ndarray::Dimension> {
     /// Parameter update
-    update: ArrayBase<scirs2_core::ndarray_ext::OwnedRepr<A>, D>,
+    update: ArrayBase<scirs2_core::ndarray::OwnedRepr<A>, D>,
 
     /// Timestamp
     timestamp: Instant,
@@ -404,7 +404,7 @@ where
         + ScalarOperand
         + std::iter::Sum
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray_ext::Dimension,
+    D: scirs2_core::ndarray::Dimension,
     O: Optimizer<A, D> + Send + Sync,
 {
     /// Create a new streaming optimizer
@@ -848,7 +848,7 @@ where
             .step(&params_generic, &gradient_generic)?;
 
         // Convert back to Array1
-        Ok(result.into_dimensionality::<scirs2_core::ndarray_ext::Ix1>()?)
+        Ok(result.into_dimensionality::<scirs2_core::ndarray::Ix1>()?)
     }
 
     fn async_update(&mut self, params: &Array1<A>, gradient: &Array1<A>) -> Result<Array1<A>> {
@@ -894,10 +894,10 @@ where
                 let current_params = self.get_current_parameters()?;
                 // Only works for 1D arrays, need to handle differently for other dimensions
                 if let (Ok(params_1d), Ok(_update_1d)) = (
-                    current_params.into_dimensionality::<scirs2_core::ndarray_ext::Ix1>(),
+                    current_params.into_dimensionality::<scirs2_core::ndarray::Ix1>(),
                     update
                         .update
-                        .into_dimensionality::<scirs2_core::ndarray_ext::Ix1>(),
+                        .into_dimensionality::<scirs2_core::ndarray::Ix1>(),
                 ) {
                     // This only works if D = Ix1, need a better approach
                     // For now, just return the current parameters
@@ -1543,7 +1543,7 @@ pub struct StreamFusionOptimizer<A: Float + Send + Sync> {
 impl<
         A: Float
             + std::ops::DivAssign
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + Send
@@ -1980,7 +1980,7 @@ mod tests {
     fn test_streaming_optimizer_creation() {
         let sgd = SGD::new(0.01);
         let config = StreamingConfig::default();
-        let optimizer: StreamingOptimizer<SGD<f64>, f64, scirs2_core::ndarray_ext::Ix2> =
+        let optimizer: StreamingOptimizer<SGD<f64>, f64, scirs2_core::ndarray::Ix2> =
             StreamingOptimizer::new(sgd, config).unwrap();
 
         assert_eq!(optimizer.step_count, 0);

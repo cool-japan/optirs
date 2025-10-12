@@ -840,13 +840,12 @@ impl SecretDetector {
     ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
         let mut rust_files = Vec::new();
 
-        self.scan_directory_recursive(projectpath, &mut rust_files, excluded_patterns)?;
+        Self::scan_directory_recursive(projectpath, &mut rust_files, excluded_patterns)?;
 
         Ok(rust_files)
     }
 
     fn scan_directory_recursive(
-        &self,
         dir: &Path,
         rust_files: &mut Vec<PathBuf>,
         excluded_patterns: &[String],
@@ -871,7 +870,7 @@ impl SecretDetector {
             }
 
             if path.is_dir() {
-                self.scan_directory_recursive(&path, rust_files, excluded_patterns)?;
+                Self::scan_directory_recursive(&path, rust_files, excluded_patterns)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
                 rust_files.push(path);
             }
@@ -1014,12 +1013,11 @@ impl CodeAnalyzer {
         excluded_patterns: &[String],
     ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
         let mut rust_files = Vec::new();
-        self.scan_directory_recursive(projectpath, &mut rust_files, excluded_patterns)?;
+        Self::scan_directory_recursive(projectpath, &mut rust_files, excluded_patterns)?;
         Ok(rust_files)
     }
 
     fn scan_directory_recursive(
-        &self,
         dir: &Path,
         rust_files: &mut Vec<PathBuf>,
         excluded_patterns: &[String],
@@ -1042,7 +1040,7 @@ impl CodeAnalyzer {
             }
 
             if path.is_dir() {
-                self.scan_directory_recursive(&path, rust_files, excluded_patterns)?;
+                Self::scan_directory_recursive(&path, rust_files, excluded_patterns)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
                 rust_files.push(path);
             }
@@ -1245,7 +1243,7 @@ fn generate_markdownreport(
             if let Some(fixed) = &vuln.fixed_version {
                 report.push_str(&format!("- **Fixed in**: {}\n", fixed));
             }
-            report.push_str("\n");
+            report.push('\n');
         }
     }
 
@@ -1261,7 +1259,7 @@ fn generate_markdownreport(
             report.push_str(&format!("- **Type**: {}\n", secret.secret_type));
             report.push_str(&format!("- **Description**: {}\n", secret.description));
             report.push_str(&format!("- **Severity**: {:?}\n", secret.severity));
-            report.push_str("\n");
+            report.push('\n');
         }
     }
 
@@ -1279,7 +1277,7 @@ fn generate_markdownreport(
                 report.push_str(&format!("- **Severity**: {:?}\n", issue.severity));
                 report.push_str(&format!("- **Description**: {}\n", issue.description));
                 report.push_str(&format!("- **Recommendation**: {}\n", issue.recommendation));
-                report.push_str("\n");
+                report.push('\n');
             }
         }
     }
@@ -1295,7 +1293,7 @@ fn generate_markdownreport(
             for (j, step) in rec.steps.iter().enumerate() {
                 report.push_str(&format!("{}. {}\n", j + 1, step));
             }
-            report.push_str("\n");
+            report.push('\n');
         }
     }
 

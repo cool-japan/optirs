@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // evolution strategies, and other population-based optimization methods.
 
 use std::collections::HashMap;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 
 use super::super::architecture::{ArchitectureSpec, ArchitectureCandidate};
 use super::strategies::{MutationOperator, CrossoverOperator, SelectionMethod};
@@ -313,7 +313,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> EvolutionarySea
     /// Select parent for reproduction
     fn select_parent(&self, fitnesses: &[f64]) -> Result<usize, super::SearchError> {
         if let Some(selection_method) = self.selection_methods.first() {
-            let selected = selection_method.select(&self.population, &fitnesses.iter().map(|&f| num_traits::cast::cast(f).unwrap_or_else(|| T::zero())).collect::<Vec<_>>(), 1);
+            let selected = selection_method.select(&self.population, &fitnesses.iter().map(|&f| scirs2_core::numeric::NumCast::from(f).unwrap_or_else(|| T::zero())).collect::<Vec<_>>(), 1);
             selected.first().copied().ok_or_else(|| {
                 super::SearchError::GenerationFailed("No parent selected".to_string())
             })

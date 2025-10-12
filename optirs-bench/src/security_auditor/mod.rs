@@ -46,9 +46,7 @@ impl SecurityAuditor {
 
     /// Create a security auditor with specific configuration
     pub fn with_config(config: SecurityAuditConfig) -> Result<Self> {
-        config
-            .validate()
-            .map_err(|e| OptimError::InvalidConfig(e))?;
+        config.validate().map_err(OptimError::InvalidConfig)?;
 
         Ok(Self {
             config: config.clone(),
@@ -469,9 +467,7 @@ impl SecurityAuditor {
 
     /// Update the audit configuration
     pub fn update_config(&mut self, config: SecurityAuditConfig) -> Result<()> {
-        config
-            .validate()
-            .map_err(|e| OptimError::InvalidConfig(e))?;
+        config.validate().map_err(OptimError::InvalidConfig)?;
         self.config = config;
         Ok(())
     }
@@ -525,18 +521,14 @@ impl SecurityAuditor {
             for (category, findings) in &self.audit_results.findings_by_category {
                 report.push_str(&format!("### {}\n\n", category));
                 for finding in findings {
-                    report.push_str(&format!(
-                        "**{}** ({})\n",
-                        finding.title,
-                        format!("{:?}", finding.severity)
-                    ));
+                    report.push_str(&format!("**{}** ({:?})\n", finding.title, finding.severity));
                     report.push_str(&format!("{}\n\n", finding.description));
                     if !finding.recommendations.is_empty() {
                         report.push_str("Recommendations:\n");
                         for rec in &finding.recommendations {
                             report.push_str(&format!("- {}\n", rec));
                         }
-                        report.push_str("\n");
+                        report.push('\n');
                     }
                 }
             }
@@ -548,7 +540,7 @@ impl SecurityAuditor {
             for (i, rec) in self.audit_results.recommendations.iter().enumerate() {
                 report.push_str(&format!("{}. {}\n", i + 1, rec));
             }
-            report.push_str("\n");
+            report.push('\n');
         }
 
         report
@@ -610,8 +602,10 @@ mod tests {
 
     #[test]
     fn test_invalid_config() {
-        let mut config = SecurityAuditConfig::default();
-        config.max_test_iterations = 0;
+        let config = SecurityAuditConfig {
+            max_test_iterations: 0,
+            ..Default::default()
+        };
 
         let auditor = SecurityAuditor::with_config(config);
         assert!(auditor.is_err());

@@ -13,8 +13,8 @@ pub mod differentiable;
 pub mod progressive;
 
 use std::collections::{HashMap, VecDeque};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::numeric::Float;
+use scirs2_core::ndarray::{Array1, Array2};
 
 use super::architecture::{ArchitectureSpec, ArchitectureCandidate};
 
@@ -145,7 +145,7 @@ pub enum OptimizationStepType {
 impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> SearchStrategy<T> {
     /// Create new search strategy
     pub fn new(strategy_type: SearchStrategyType, config: SearchConfig) -> Self {
-        let rng = Box::new(scirs2_core::random::rng());
+        let rng = Box::new(scirs2_core::random::thread_rng());
         
         let state = match strategy_type {
             SearchStrategyType::Random => {

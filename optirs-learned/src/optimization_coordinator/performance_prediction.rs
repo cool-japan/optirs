@@ -1,7 +1,7 @@
 // Performance prediction for optimization coordinator
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -275,7 +275,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
             let uncertainty = uncertainty_estimates.get(optimizer_id).cloned().unwrap_or(T::zero());
 
             // Conservative adjustment: reduce prediction confidence when uncertainty is high
-            let adjustment_factor = T::one() - uncertainty * num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+            let adjustment_factor = T::one() - uncertainty * scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
             let adjusted_prediction = prediction * adjustment_factor;
 
             adjusted_predictions.insert(optimizer_id.clone(), adjusted_prediction);
@@ -324,19 +324,19 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
         // Optimizer-specific characteristics (simplified)
         match optimizer_id {
             "adam" => {
-                features.push(num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero())); // Adaptive nature
-                features.push(num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())); // Momentum factor
-                features.push(num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())); // Noise sensitivity
+                features.push(scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero())); // Adaptive nature
+                features.push(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())); // Momentum factor
+                features.push(scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())); // Noise sensitivity
             }
             "sgd_momentum" => {
-                features.push(num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero())); // Adaptive nature
-                features.push(num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero())); // Momentum factor
-                features.push(num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero())); // Noise sensitivity
+                features.push(scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero())); // Adaptive nature
+                features.push(scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero())); // Momentum factor
+                features.push(scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero())); // Noise sensitivity
             }
             _ => {
-                features.push(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
-                features.push(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
-                features.push(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+                features.push(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
+                features.push(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
+                features.push(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
             }
         }
 
@@ -372,12 +372,12 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
                 features.push(variance);
             } else {
                 // No history available
-                features.push(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())); // Neutral values
+                features.push(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())); // Neutral values
                 features.push(T::zero());
                 features.push(T::zero());
             }
         } else {
-            features.push(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+            features.push(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
             features.push(T::zero());
             features.push(T::zero());
         }
@@ -409,9 +409,9 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
     fn apply_optimizer_adjustments(&self, optimizer_id: &str, prediction: T) -> Result<T> {
         // Optimizer-specific adjustment factors (simplified)
         let adjustment_factor = match optimizer_id {
-            "adam" => num_traits::cast::cast(1.1).unwrap_or_else(|| T::zero()), // Slight boost for Adam
-            "sgd_momentum" => num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()), // Slight penalty for SGD
-            "learned_lstm" => num_traits::cast::cast(1.15).unwrap_or_else(|| T::zero()), // Boost for learned optimizers
+            "adam" => scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero()), // Slight boost for Adam
+            "sgd_momentum" => scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()), // Slight penalty for SGD
+            "learned_lstm" => scirs2_core::numeric::NumCast::from(1.15).unwrap_or_else(|| T::zero()), // Boost for learned optimizers
             _ => T::one(),
         };
 
@@ -446,7 +446,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
     fn get_recent_prediction(&self, model_id: &str, optimizer_id: &str) -> Option<T> {
         // This would retrieve the most recent prediction made by this model for this optimizer
         // Simplified implementation
-        Some(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+        Some(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()))
     }
 
     /// Update performance history
@@ -633,7 +633,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionModel<T> {
     // Simplified prediction implementations
     fn linear_predict(&self, features: &FeatureVector<T>) -> Result<T> {
         if self.parameters.is_empty() {
-            return Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+            return Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
         }
 
         let mut prediction = T::zero();
@@ -648,17 +648,17 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionModel<T> {
 
     fn neural_predict(&self, _features: &FeatureVector<T>) -> Result<T> {
         // Simplified neural network prediction
-        Ok(num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()))
     }
 
     fn gp_predict(&self, _features: &FeatureVector<T>) -> Result<T> {
         // Simplified Gaussian process prediction
-        Ok(num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero()))
     }
 
     fn rf_predict(&self, _features: &FeatureVector<T>) -> Result<T> {
         // Simplified random forest prediction
-        Ok(num_traits::cast::cast(0.65).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.65).unwrap_or_else(|| T::zero()))
     }
 
     fn ensemble_predict(&self, features: &FeatureVector<T>) -> Result<T> {
@@ -668,7 +668,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionModel<T> {
         let gp = self.gp_predict(features)?;
         let rf = self.rf_predict(features)?;
 
-        Ok((linear + neural + gp + rf) / num_traits::cast::cast(4.0).unwrap_or_else(|| T::zero()))
+        Ok((linear + neural + gp + rf) / scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()))
     }
 
     // Simplified training implementations
@@ -679,7 +679,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionModel<T> {
 
         // Simple least squares (simplified)
         let feature_dim = self.training_data[0].0.len();
-        self.parameters = vec![num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()); feature_dim];
+        self.parameters = vec![scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()); feature_dim];
 
         // Gradient descent (simplified)
         for _ in 0..10 {
@@ -696,7 +696,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionModel<T> {
                 }
             }
 
-            let learning_rate = num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()) / T::from(self.training_data.len()).unwrap();
+            let learning_rate = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()) / T::from(self.training_data.len()).unwrap();
             for (param, grad) in self.parameters.iter_mut().zip(gradients.iter()) {
                 *param = *param - learning_rate * *grad;
             }
@@ -811,7 +811,7 @@ impl<T: Float + Debug + Send + Sync + 'static> UncertaintyEstimator<T> {
         let mut uncertainties = HashMap::new();
 
         for optimizer_id in optimizers {
-            let prediction = predictions.get(optimizer_id).cloned().unwrap_or(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+            let prediction = predictions.get(optimizer_id).cloned().unwrap_or(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
             let uncertainty = self.variance_model.predict_variance(features, prediction)?;
             uncertainties.insert(optimizer_id.clone(), uncertainty);
         }
@@ -844,7 +844,7 @@ impl<T: Float + Debug + Send + Sync + 'static> VarianceModel<T> {
 
     pub fn predict_variance(&self, _features: &FeatureVector<T>, _prediction: T) -> Result<T> {
         // Simplified variance prediction
-        Ok(num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()))
     }
 }
 
@@ -865,7 +865,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ModelEnsemble<T> {
 
     pub fn combine_predictions(&self, predictions: &HashMap<String, T>) -> Result<T> {
         if predictions.is_empty() {
-            return Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()));
+            return Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
         }
 
         let mut weighted_sum = T::zero();
@@ -880,7 +880,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ModelEnsemble<T> {
         if total_weight > T::zero() {
             Ok(weighted_sum / total_weight)
         } else {
-            Ok(num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()))
+            Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()))
         }
     }
 
@@ -1018,7 +1018,7 @@ macro_rules! impl_feature_extractor {
             ) -> Result<FeatureVector<T>> {
                 let mut features = FeatureVector::new();
                 for i in 0..$feature_count {
-                    features.push(num_traits::cast::cast(i as f64 / $feature_count as f64).unwrap_or_else(|| T::zero()));
+                    features.push(scirs2_core::numeric::NumCast::from(i as f64 / $feature_count as f64).unwrap_or_else(|| T::zero()));
                 }
                 Ok(features)
             }

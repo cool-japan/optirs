@@ -630,7 +630,7 @@ pub struct ArtifactDownloadConfig {
 }
 
 /// Integration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntegrationConfig {
     /// GitHub integration settings
     pub github: Option<GitHubIntegration>,
@@ -967,7 +967,7 @@ pub enum GateFailureAction {
 }
 
 /// Gate failure notification configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GateFailureNotificationConfig {
     /// Send email notifications
     pub send_email: bool,
@@ -1230,18 +1230,6 @@ impl Default for ArtifactDownloadConfig {
     }
 }
 
-impl Default for IntegrationConfig {
-    fn default() -> Self {
-        Self {
-            github: None,
-            slack: None,
-            email: None,
-            webhooks: Vec::new(),
-            custom: HashMap::new(),
-        }
-    }
-}
-
 impl Default for PerformanceGatesConfig {
     fn default() -> Self {
         let mut metric_gates = HashMap::new();
@@ -1286,18 +1274,6 @@ impl Default for GateFailureHandling {
             allow_manual_override: true,
             override_timeout_hours: Some(24),
             notifications: GateFailureNotificationConfig::default(),
-        }
-    }
-}
-
-impl Default for GateFailureNotificationConfig {
-    fn default() -> Self {
-        Self {
-            send_email: false,
-            send_slack: false,
-            send_webhooks: false,
-            create_github_issues: false,
-            escalation: None,
         }
     }
 }
@@ -1451,14 +1427,9 @@ impl MetricGate {
             return Err("Gate threshold cannot be negative".to_string());
         }
 
-        match self.gate_type {
-            GateType::Relative => {
-                if self.threshold > 10.0 {
-                    // 1000% change seems unreasonable
-                    return Err("Relative gate threshold seems unreasonably high".to_string());
-                }
-            }
-            _ => {}
+        if self.gate_type == GateType::Relative && self.threshold > 10.0 {
+            // 1000% change seems unreasonable
+            return Err("Relative gate threshold seems unreasonably high".to_string());
         }
 
         Ok(())
@@ -1727,12 +1698,17 @@ mod tests {
 
     #[test]
     fn test_invalid_test_execution_config() {
-        let mut config = TestExecutionConfig::default();
-        config.test_timeout = 0;
+        let config = TestExecutionConfig {
+            test_timeout: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        config.test_timeout = 3600;
-        config.test_iterations = 0;
+        let config = TestExecutionConfig {
+            test_timeout: 3600,
+            test_iterations: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

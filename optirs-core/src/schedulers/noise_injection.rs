@@ -3,9 +3,9 @@
 // This module provides a learning rate scheduler that adds noise to the learning rate
 // to help escape local minima and improve exploration during training.
 
-use num_traits::{Float, NumCast};
-use scirs2_core::ndarray_ext::ScalarOperand;
-use scirs2_core::random::Rng;
+use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::numeric::{Float, NumCast};
+use scirs2_core::random::{thread_rng, Rng};
 use std::fmt::Debug;
 
 use super::LearningRateScheduler;
@@ -58,7 +58,7 @@ where
     /// Current step number
     step_count: usize,
     /// Random number generator
-    rng: scirs2_core::random::Random,
+    rng: scirs2_core::random::CoreRandom,
     /// Minimum learning rate to ensure training stability
     min_lr: A,
 }
@@ -102,7 +102,7 @@ where
             base_scheduler,
             noise_dist,
             step_count: 0,
-            rng: scirs2_core::random::rng(),
+            rng: thread_rng(),
             min_lr,
         }
     }
@@ -163,7 +163,7 @@ where
         let base_lr = self.base_scheduler.get_learning_rate();
 
         // Use fresh RNG to sample noise since get_learning_rate takes &self
-        let mut rand_rng = scirs2_core::random::rng();
+        let mut rand_rng = thread_rng();
         let noise = match self.noise_dist {
             NoiseDistribution::Uniform { min, max } => {
                 let min_f64 = min.to_f64().unwrap();
@@ -244,7 +244,7 @@ where
             base_scheduler: self.base_scheduler.clone(),
             noise_dist: self.noise_dist,
             step_count: self.step_count,
-            rng: scirs2_core::random::rng(),
+            rng: thread_rng(),
             min_lr: self.min_lr,
         }
     }

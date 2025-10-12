@@ -880,9 +880,9 @@ mod tests {
         manager.load_standard_conferences();
 
         let ml_conferences = manager.search_conferences("Machine Learning");
-        assert!(ml_conferences.len() > 0);
+        assert!(!ml_conferences.is_empty());
 
         let top_tier = manager.get_conferences_by_ranking(ConferenceRanking::TopTier);
-        assert!(top_tier.len() > 0);
+        assert!(!top_tier.is_empty());
     }
 }

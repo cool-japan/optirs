@@ -4,9 +4,9 @@
 // based on problem characteristics, performance monitoring, and learned patterns.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, ScalarOperand};
-use scirs2_core::random::Rng;
+use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
+use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -178,19 +178,19 @@ pub struct SelectionNetwork<A: Float> {
     hidden_size: usize,
 }
 
-impl<A: Float + ScalarOperand + Debug + num_traits::FromPrimitive + Send + Sync>
+impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
     SelectionNetwork<A>
 {
     /// Create a new selection network
     pub fn new(input_size: usize, hidden_size: usize, num_optimizers: usize) -> Self {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = thread_rng();
 
         let input_weights = Array2::from_shape_fn((hidden_size, input_size), |_| {
-            A::from(rng.random_f64()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.random::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
         });
 
         let output_weights = Array2::from_shape_fn((num_optimizers, hidden_size), |_| {
-            A::from(rng.random_f64()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.random::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
         });
 
         let input_bias = Array1::zeros(hidden_size);
@@ -273,7 +273,7 @@ impl<A: Float + ScalarOperand + Debug + num_traits::FromPrimitive + Send + Sync>
     }
 }
 
-impl<A: Float + ScalarOperand + Debug + num_traits::FromPrimitive + Send + Sync>
+impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
     AdaptiveOptimizerSelector<A>
 {
     /// Create a new adaptive optimizer selector
@@ -432,10 +432,10 @@ impl<A: Float + ScalarOperand + Debug + num_traits::FromPrimitive + Send + Sync>
         epsilon: f64,
         confidence: f64,
     ) -> Result<OptimizerType> {
-        let mut rng = scirs2_core::random::rng();
+        let mut rng = thread_rng();
 
         // Epsilon-greedy exploration
-        if rng.random_f64() < epsilon {
+        if rng.random::<f64>() < epsilon {
             // Explore: random selection
             let idx = rng.gen_range(0..self.available_optimizers.len());
             return Ok(self.available_optimizers[idx]);

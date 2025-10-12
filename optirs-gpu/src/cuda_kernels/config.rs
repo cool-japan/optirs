@@ -3,7 +3,7 @@
 // This module contains configuration structures and fundamental types
 // used throughout the CUDA kernel system for GPU-accelerated optimization.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -745,8 +745,8 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AdaptiveKernelConfig<
     fn default() -> Self {
         Self {
             enable_adaptive: false,
-            adaptation_learning_rate: T::from(0.01).unwrap_or_else(|| T::zero()),
-            min_performance_threshold: T::from(0.8).unwrap_or_else(|| T::zero()),
+            adaptation_learning_rate: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
+            min_performance_threshold: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
             max_adaptation_iterations: 100,
             adaptation_strategy: AdaptationStrategy::GradientBased,
             target_metrics: vec![TargetMetric::ExecutionTime, TargetMetric::GpuUtilization],

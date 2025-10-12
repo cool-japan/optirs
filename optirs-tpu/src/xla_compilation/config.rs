@@ -5,7 +5,7 @@ use std::fmt::Debug;
 // including compiler configurations, runtime settings, and various optimization parameters.
 
 use num_cpus;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::time::Duration;
 

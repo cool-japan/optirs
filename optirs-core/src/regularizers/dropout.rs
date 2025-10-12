@@ -1,7 +1,7 @@
 // Dropout regularization
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use scirs2_core::Random;
 use std::fmt::Debug;
@@ -18,7 +18,7 @@ use crate::regularizers::Regularizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::regularizers::Dropout;
 /// use scirs2_core::random::SeedableRng;
 /// use scirs2_core::random::rngs::SmallRng;
@@ -47,7 +47,7 @@ pub struct Dropout<A: Float + Debug> {
     /// Boolean indicating whether in training mode
     training: bool,
     /// Cached dropout mask
-    mask: Option<Array<A, scirs2_core::ndarray_ext::IxDyn>>,
+    mask: Option<Array<A, scirs2_core::ndarray::IxDyn>>,
 }
 
 impl<A: Float + Debug + Send + Sync> Dropout<A> {

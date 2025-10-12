@@ -6,8 +6,8 @@
 
 use crate::error::Result;
 use crate::optimizers::Optimizer;
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -386,8 +386,8 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
         };
 
         let firing_rate = if duration > T::zero() {
-            num_traits::cast::cast(spike_count).unwrap_or_else(|| T::zero())
-                / (duration / num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()))
+            T::from(spike_count).unwrap_or_else(|| T::zero())
+                / (duration / T::from(1000.0).unwrap_or_else(|| T::zero()))
         } else {
             T::zero()
         };
@@ -445,7 +445,7 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
             }
         }
 
-        let three = num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero());
+        let three = T::from(3.0).unwrap_or_else(|| T::zero());
         three * lv_sum / T::from(self.inter_spike_intervals.len() - 1).unwrap()
     }
 }
@@ -528,7 +528,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for NeuromorphicMetrics<T
             average_firing_rate: T::zero(),
             energy_consumption: T::zero(),
             power_consumption: T::zero(),
-            timing_precision: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()), // 0.1ms default
+            timing_precision: T::from(0.1).unwrap_or_else(|| T::zero()), // 0.1ms default
             synaptic_ops_per_sec: T::zero(),
             plasticity_events_per_sec: T::zero(),
             memory_bandwidth_utilization: T::zero(),
@@ -560,14 +560,14 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for NeuromorphicConfig<T>
 impl<T: Float + Debug + Send + Sync + 'static> Default for STDPConfig<T> {
     fn default() -> Self {
         Self {
-            learning_rate_pot: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            learning_rate_dep: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
-            tau_pot: num_traits::cast::cast(20.0).unwrap_or_else(|| T::zero()),
-            tau_dep: num_traits::cast::cast(20.0).unwrap_or_else(|| T::zero()),
+            learning_rate_pot: T::from(0.01).unwrap_or_else(|| T::zero()),
+            learning_rate_dep: T::from(0.01).unwrap_or_else(|| T::zero()),
+            tau_pot: T::from(20.0).unwrap_or_else(|| T::zero()),
+            tau_dep: T::from(20.0).unwrap_or_else(|| T::zero()),
             weight_max: T::one(),
             weight_min: T::zero(),
             enable_triplet: false,
-            triplet_learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            triplet_learning_rate: T::from(0.001).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -575,15 +575,15 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for STDPConfig<T> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for MembraneDynamicsConfig<T> {
     fn default() -> Self {
         Self {
-            tau_membrane: num_traits::cast::cast(20.0).unwrap_or_else(|| T::zero()),
-            resting_potential: num_traits::cast::cast(-70.0).unwrap_or_else(|| T::zero()),
-            threshold_potential: num_traits::cast::cast(-55.0).unwrap_or_else(|| T::zero()),
-            reset_potential: num_traits::cast::cast(-80.0).unwrap_or_else(|| T::zero()),
-            refractory_period: num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()),
-            capacitance: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
-            leak_conductance: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()),
+            tau_membrane: T::from(20.0).unwrap_or_else(|| T::zero()),
+            resting_potential: T::from(-70.0).unwrap_or_else(|| T::zero()),
+            threshold_potential: T::from(-55.0).unwrap_or_else(|| T::zero()),
+            reset_potential: T::from(-80.0).unwrap_or_else(|| T::zero()),
+            refractory_period: T::from(2.0).unwrap_or_else(|| T::zero()),
+            capacitance: T::from(100.0).unwrap_or_else(|| T::zero()),
+            leak_conductance: T::from(10.0).unwrap_or_else(|| T::zero()),
             adaptive_threshold: false,
-            threshold_adaptation_tau: num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()),
+            threshold_adaptation_tau: T::from(100.0).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -605,7 +605,7 @@ impl Default for PopulationConfig {
 impl<T: Float + Debug + Send + Sync + 'static> Default for EnergyOptimizationConfig<T> {
     fn default() -> Self {
         Self {
-            energy_budget: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()), // 10 nJ per operation
+            energy_budget: T::from(10.0).unwrap_or_else(|| T::zero()), // 10 nJ per operation
             strategy: EnergyOptimizationStrategy::DynamicVoltageScaling,
             dynamic_voltage_scaling: true,
             clock_gating: true,
@@ -622,9 +622,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for SleepModeConfig<T> {
         Self {
             enable_sleep_mode: true,
             sleep_threshold: Duration::from_millis(100),
-            wakeup_time: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            sleep_power: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-            wakeup_energy: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            wakeup_time: T::from(1.0).unwrap_or_else(|| T::zero()),
+            sleep_power: T::from(0.1).unwrap_or_else(|| T::zero()),
+            wakeup_energy: T::from(0.01).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -633,9 +633,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for ThermalManagementConf
     fn default() -> Self {
         Self {
             enable_thermal_management: true,
-            target_temperature: num_traits::cast::cast(65.0).unwrap_or_else(|| T::zero()),
-            max_temperature: num_traits::cast::cast(85.0).unwrap_or_else(|| T::zero()),
-            thermal_time_constant: num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero()),
+            target_temperature: T::from(65.0).unwrap_or_else(|| T::zero()),
+            max_temperature: T::from(85.0).unwrap_or_else(|| T::zero()),
+            thermal_time_constant: T::from(10.0).unwrap_or_else(|| T::zero()),
             throttling_strategy: ThermalThrottlingStrategy::FrequencyScaling,
         }
     }

@@ -4,9 +4,9 @@
 // update optimization parameters. The LSTM learns optimization strategies through
 // meta-learning, enabling automatic discovery of effective optimization patterns.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
+use scirs2_core::ndarray::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
+use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -15,7 +15,7 @@ use super::{LearnedOptimizerConfig, MetaOptimizationStrategy};
 use crate::error::{OptimError, Result};
 
 /// LSTM-based neural optimizer with meta-learning capabilities
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LSTMOptimizer<T: Float + Debug + Send + Sync + 'static> {
     /// Configuration for the LSTM optimizer
     config: LearnedOptimizerConfig,
@@ -42,7 +42,7 @@ pub struct LSTMOptimizer<T: Float + Debug + Send + Sync + 'static> {
     step_count: usize,
 
     /// Random number generator for noise and initialization
-    rng: scirs2_core::random::Random,
+    rng: scirs2_core::random::CoreRandom,
 }
 
 /// LSTM network architecture for optimization
@@ -214,7 +214,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LayerNormalizat
         Ok(Self {
             gamma: Array1::ones(features),
             beta: Array1::zeros(features),
-            epsilon: num_traits::cast::cast(1e-5).unwrap_or_else(|| T::zero()),
+            epsilon: scirs2_core::numeric::NumCast::from(1e-5).unwrap_or_else(|| T::zero()),
         })
     }
 
@@ -903,7 +903,7 @@ impl<
             + Sync
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a T>
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + std::fmt::Debug,
     > LSTMOptimizer<T>
 {
@@ -931,7 +931,7 @@ impl<
         let metrics = LSTMOptimizerMetrics::new();
 
         // Initialize RNG
-        let rng = scirs2_core::random::rng();
+        let rng = scirs2_core::random::thread_rng();
 
         Ok(Self {
             config,
@@ -1090,7 +1090,8 @@ impl<
             OutputTransform::Identity => lstm_output.clone(),
             OutputTransform::Tanh => lstm_output.mapv(|x| x.tanh()),
             OutputTransform::ScaledTanh { scale } => {
-                let scale_t = num_traits::cast::cast(scale).unwrap_or_else(|| T::zero());
+                let scale_t =
+                    scirs2_core::numeric::NumCast::from(scale).unwrap_or_else(|| T::zero());
                 lstm_output.mapv(|x| x.tanh() * scale_t)
             }
             OutputTransform::AdaptiveScale => {
@@ -1135,7 +1136,7 @@ impl<
     /// Update LSTM network statistics
     fn update_lstm_stats(&mut self) {
         // Update gate activation statistics
-        for (_i, layer) in self.lstm_network.layers.iter().enumerate() {
+        for layer in self.lstm_network.layers.iter() {
             let hidden_stats = self.compute_state_stats(&layer.hidden_state);
             let cell_stats = self.compute_state_stats(&layer.cell_state);
 
@@ -1355,12 +1356,14 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
     fn apply_dropout(&self, input: &Array1<T>) -> Result<Array1<T>> {
         // Simplified dropout implementation
         Ok(input.mapv(|x| {
-            if T::from(scirs2_core::random::rng().gen_range(0.0..1.0)).unwrap()
-                < num_traits::cast::cast(self.dropout_rate).unwrap_or_else(|| T::zero())
+            if T::from(scirs2_core::random::thread_rng().gen_range(0.0..1.0)).unwrap()
+                < scirs2_core::numeric::NumCast::from(self.dropout_rate)
+                    .unwrap_or_else(|| T::zero())
             {
                 T::zero()
             } else {
-                x / num_traits::cast::cast(1.0 - self.dropout_rate).unwrap_or_else(|| T::zero())
+                x / scirs2_core::numeric::NumCast::from(1.0 - self.dropout_rate)
+                    .unwrap_or_else(|| T::zero())
             }
         }))
     }
@@ -1420,8 +1423,8 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
     /// Xavier initialization
     fn xavier_init(rows: usize, cols: usize, scale: f64) -> Array2<T> {
         Array2::from_shape_fn((rows, cols), |_| {
-            let val = (scirs2_core::random::rng().gen_range(0.0..1.0) - 0.5) * 2.0 * scale;
-            num_traits::cast::cast(val).unwrap_or_else(|| T::zero())
+            let val = (scirs2_core::random::thread_rng().gen_range(0.0..1.0) - 0.5) * 2.0 * scale;
+            scirs2_core::numeric::NumCast::from(val).unwrap_or_else(|| T::zero())
         })
     }
 
@@ -1494,12 +1497,13 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> HistoryBuffer<T
         let prev_loss = self.losses[self.losses.len() - 2];
 
         let loss_change = current_loss - prev_loss;
-        let loss_ratio =
-            if prev_loss.abs() > num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()) {
-                current_loss / prev_loss
-            } else {
-                T::one()
-            };
+        let loss_ratio = if prev_loss.abs()
+            > scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero())
+        {
+            current_loss / prev_loss
+        } else {
+            T::one()
+        };
 
         Some(vec![loss_change, loss_ratio])
     }
@@ -1589,8 +1593,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> 
             task_history: VecDeque::new(),
             meta_state: MetaLearningState {
                 meta_step: 0,
-                meta_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-                adaptation_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+                meta_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
+                adaptation_rate: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::zero()),
                 meta_validation_performance: T::zero(),
                 adaptation_history: VecDeque::new(),
                 inner_loop_state: InnerLoopState {
@@ -1644,15 +1649,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveLearnin
     fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
         // Placeholder implementation
         Ok(Self {
-            base_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
-            current_lr: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            base_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
+            current_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             adaptation_params: LRAdaptationParams {
-                momentum: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                gradient_sensitivity: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                loss_sensitivity: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                min_lr: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
-                max_lr: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                adaptation_rate: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+                momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+                gradient_sensitivity: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::zero()),
+                loss_sensitivity: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::zero()),
+                min_lr: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
+                max_lr: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                adaptation_rate: scirs2_core::numeric::NumCast::from(0.01)
+                    .unwrap_or_else(|| T::zero()),
             },
             lr_history: VecDeque::new(),
             performance_tracker: PerformanceTracker {

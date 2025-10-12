@@ -9,7 +9,7 @@ pub mod search_strategies;
 pub mod evaluation;
 pub mod encoding;
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -686,7 +686,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveNASSyst
                 iterations_completed: 0,
                 evaluations_performed: 0,
                 total_search_time: T::zero(),
-                best_performance: num_traits::cast::cast(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()),
+                best_performance: scirs2_core::numeric::NumCast::from(f64::NEG_INFINITY).unwrap_or_else(|| T::zero()),
                 performance_history: Vec::new(),
                 resource_stats: HashMap::new(),
                 strategy_stats: HashMap::new(),
@@ -980,7 +980,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEva
         };
         
         // Simplified evaluation - in practice would use actual architecture data
-        metrics.insert("performance".to_string(), num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()));
+        metrics.insert("performance".to_string(), scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()));
         
         Ok(EvaluationResult {
             architecture_id: architecture.id.clone(),
@@ -992,7 +992,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEva
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
-                duration: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+                duration: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
                 hardware_info: HashMap::new(),
                 context: HashMap::new(),
             },
@@ -1034,7 +1034,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Ada
                 hardware_aware: None,
                 early_stopping: EarlyStoppingConfig {
                     enabled: true,
-                    improvement_threshold: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+                    improvement_threshold: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
                     patience: 10,
                     min_evaluations: 5,
                 },
@@ -1050,14 +1050,14 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Ada
                 },
             },
             performance_requirements: PerformanceRequirements {
-                min_accuracy: Some(num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())),
-                max_training_time: Some(num_traits::cast::cast(3600.0).unwrap_or_else(|| T::zero())), // 1 hour
-                max_inference_latency: Some(num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero())), // 100ms
+                min_accuracy: Some(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())),
+                max_training_time: Some(scirs2_core::numeric::NumCast::from(3600.0).unwrap_or_else(|| T::zero())), // 1 hour
+                max_inference_latency: Some(scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero())), // 100ms
                 max_memory_usage: Some(2_000_000_000), // 2GB
                 target_metrics: HashMap::new(),
             },
             resource_constraints: ResourceConstraints {
-                max_compute_budget: Some(num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero())),
+                max_compute_budget: Some(scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero())),
                 max_wall_time: Some(7200), // 2 hours
                 max_evaluations: Some(1000),
                 memory_limits: Some(4_000_000_000), // 4GB
@@ -1071,12 +1071,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Ada
                 max_iterations: Some(100),
                 max_evaluations: Some(1000),
                 max_time: Some(7200), // 2 hours
-                target_performance: Some(num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero())),
+                target_performance: Some(scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero())),
                 convergence: Some(ConvergenceCriteria {
-                    improvement_threshold: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+                    improvement_threshold: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
                     patience: 10,
-                    diversity_threshold: Some(num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())),
-                    relative_tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+                    diversity_threshold: Some(scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())),
+                    relative_tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
                 }),
             },
         }

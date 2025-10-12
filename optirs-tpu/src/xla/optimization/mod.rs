@@ -9,7 +9,7 @@ pub mod kernel_fusion;
 pub mod memory_planning;
 pub mod scheduling;
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -17,10 +17,12 @@ use super::frontend::{OperandId, OperationId, XLAComputation};
 use super::{XLACompilerConfig, XLAOptimizationLevel};
 use crate::error::{OptimError, Result};
 
+// Re-export main types selectively to avoid ambiguous glob re-exports
+// (MemoryAccessType and MemoryLevel exist in both memory_planning and scheduling)
 pub use graph_optimization::*;
 pub use kernel_fusion::*;
-pub use memory_planning::*;
-pub use scheduling::*;
+pub use memory_planning::{MemoryPlan, MemoryPlanner};
+pub use scheduling::ExecutionScheduler;
 
 /// Performance analyzer for XLA operations
 pub struct PerformanceAnalyzer<T> {
@@ -183,7 +185,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
     /// Create new optimization pipeline
     pub fn new(config: &XLACompilerConfig) -> Self {
         let pipeline_config = OptimizationPipelineConfig {
-            optimization_level: config.optimization_level.clone(),
+            optimization_level: config.optimization_level,
             enable_graph_optimization: config.enable_fusion,
             enable_kernel_fusion: config.enable_fusion,
             enable_memory_optimization: config.enable_memory_optimization,

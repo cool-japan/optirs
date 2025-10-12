@@ -668,7 +668,7 @@ mod tests {
         let _ = analyzer.run_all_tests().unwrap();
 
         assert!(analyzer.test_count() > 0);
-        assert!(analyzer.get_results().len() > 0);
+        assert!(!analyzer.get_results().is_empty());
 
         analyzer.clear_tests();
         assert_eq!(analyzer.test_count(), 0);

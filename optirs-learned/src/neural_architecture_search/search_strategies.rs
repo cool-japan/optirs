@@ -1,7 +1,7 @@
 // Search strategies for neural architecture search
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
@@ -150,7 +150,7 @@ impl EvolutionarySearchStrategy {
 
         // For simplicity, assume architecture strings are JSON-like
         // In practice, this would be more sophisticated
-        if rng.gen::<f64>() < self.crossover_rate {
+        if rng.random::<f64>() < self.crossover_rate {
             // Perform crossover
             let crossover_point = rng.gen_range(0..parent1.len().min(parent2.len()));
             let mut child = parent1[..crossover_point].to_string();
@@ -165,7 +165,7 @@ impl EvolutionarySearchStrategy {
     fn mutate(&self, architecture: &str, search_space: &ArchitectureSearchSpace) -> Result<String> {
         let mut rng = scirs2_core::random::thread_rng();
 
-        if rng.gen::<f64>() < self.mutation_rate {
+        if rng.random::<f64>() < self.mutation_rate {
             // Perform mutation by regenerating part of the architecture
             search_space.mutate_architecture(architecture)
         } else {
@@ -410,9 +410,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SurrogateModel<T> {
     pub fn predict(&self, _architecture: &str) -> Result<(T, T)> {
         // Return (mean, variance)
         if self.trained {
-            Ok((num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()), num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero())))
+            Ok((scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()), scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())))
         } else {
-            Ok((num_traits::cast::cast(0.0).unwrap_or_else(|| T::zero()), num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())))
+            Ok((scirs2_core::numeric::NumCast::from(0.0).unwrap_or_else(|| T::zero()), scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())))
         }
     }
 }
@@ -438,7 +438,7 @@ impl AcquisitionFunction {
                 Ok(mean + variance.sqrt())
             }
             AcquisitionFunction::UpperConfidenceBound => {
-                Ok(mean + num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) * variance.sqrt())
+                Ok(mean + scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * variance.sqrt())
             }
             AcquisitionFunction::ProbabilityOfImprovement => {
                 Ok(mean)

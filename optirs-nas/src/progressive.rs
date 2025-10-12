@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use super::NASConfig;
 #[allow(unused_imports)]
 use crate::error::Result;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -155,7 +155,8 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
             ProgressionStrategy::Adaptive => {
                 // Adaptive progression based on performance trends
                 if let Some(trend) = self.analyze_performance_trend() {
-                    if trend < num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero())
+                    if trend
+                        < scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero())
                         && self.current_phase != SearchPhase::Final
                     {
                         self.advance_phase();
@@ -183,7 +184,8 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
                     self.architecture_progression.performance_trends.last()
                 {
                     if *latest_performance
-                        > num_traits::cast::cast(threshold).unwrap_or_else(|| T::zero())
+                        > scirs2_core::numeric::NumCast::from(threshold)
+                            .unwrap_or_else(|| T::zero())
                         && self.current_phase != SearchPhase::Final
                     {
                         self.advance_phase();
@@ -216,17 +218,18 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
 
         // Calculate trend (simplified linear regression slope)
         let n = T::from(recent_trends.len()).unwrap();
-        let sum_x = n * (n - T::one()) / num_traits::cast::cast(2).unwrap_or_else(|| T::zero());
+        let sum_x = n * (n - T::one())
+            / scirs2_core::numeric::NumCast::from(2).unwrap_or_else(|| T::zero());
         let sum_y = recent_trends.iter().cloned().sum::<T>();
         let sum_xy = recent_trends
             .iter()
             .enumerate()
-            .map(|(i, &y)| num_traits::cast::cast(i).unwrap_or_else(|| T::zero()) * y)
+            .map(|(i, &y)| scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero()) * y)
             .sum::<T>();
         let sum_x2 = recent_trends
             .iter()
             .enumerate()
-            .map(|(i, _)| num_traits::cast::cast(i * i).unwrap_or_else(|| T::zero()))
+            .map(|(i, _)| scirs2_core::numeric::NumCast::from(i * i).unwrap_or_else(|| T::zero()))
             .sum::<T>();
 
         let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
@@ -237,32 +240,41 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
     pub fn get_current_search_config(&self) -> SearchPhaseConfig<T> {
         match self.current_phase {
             SearchPhase::Initial => SearchPhaseConfig {
-                complexity_limit: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()),
+                complexity_limit: scirs2_core::numeric::NumCast::from(0.25)
+                    .unwrap_or_else(|| T::zero()),
                 max_components: 2,
                 max_depth: 3,
-                exploration_factor: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
-                mutation_rate: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-                population_diversity_weight: num_traits::cast::cast(0.7)
+                exploration_factor: scirs2_core::numeric::NumCast::from(0.8)
+                    .unwrap_or_else(|| T::zero()),
+                mutation_rate: scirs2_core::numeric::NumCast::from(0.3)
+                    .unwrap_or_else(|| T::zero()),
+                population_diversity_weight: scirs2_core::numeric::NumCast::from(0.7)
                     .unwrap_or_else(|| T::zero()),
                 conservative_search: true,
             },
             SearchPhase::Intermediate => SearchPhaseConfig {
-                complexity_limit: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                complexity_limit: scirs2_core::numeric::NumCast::from(0.5)
+                    .unwrap_or_else(|| T::zero()),
                 max_components: 4,
                 max_depth: 5,
-                exploration_factor: num_traits::cast::cast(0.6).unwrap_or_else(|| T::zero()),
-                mutation_rate: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-                population_diversity_weight: num_traits::cast::cast(0.5)
+                exploration_factor: scirs2_core::numeric::NumCast::from(0.6)
+                    .unwrap_or_else(|| T::zero()),
+                mutation_rate: scirs2_core::numeric::NumCast::from(0.2)
+                    .unwrap_or_else(|| T::zero()),
+                population_diversity_weight: scirs2_core::numeric::NumCast::from(0.5)
                     .unwrap_or_else(|| T::zero()),
                 conservative_search: false,
             },
             SearchPhase::Advanced => SearchPhaseConfig {
-                complexity_limit: num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()),
+                complexity_limit: scirs2_core::numeric::NumCast::from(0.75)
+                    .unwrap_or_else(|| T::zero()),
                 max_components: 6,
                 max_depth: 7,
-                exploration_factor: num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
-                mutation_rate: num_traits::cast::cast(0.15).unwrap_or_else(|| T::zero()),
-                population_diversity_weight: num_traits::cast::cast(0.3)
+                exploration_factor: scirs2_core::numeric::NumCast::from(0.4)
+                    .unwrap_or_else(|| T::zero()),
+                mutation_rate: scirs2_core::numeric::NumCast::from(0.15)
+                    .unwrap_or_else(|| T::zero()),
+                population_diversity_weight: scirs2_core::numeric::NumCast::from(0.3)
                     .unwrap_or_else(|| T::zero()),
                 conservative_search: false,
             },
@@ -270,9 +282,11 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
                 complexity_limit: T::one(),
                 max_components: 8,
                 max_depth: 10,
-                exploration_factor: num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()),
-                mutation_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                population_diversity_weight: num_traits::cast::cast(0.2)
+                exploration_factor: scirs2_core::numeric::NumCast::from(0.2)
+                    .unwrap_or_else(|| T::zero()),
+                mutation_rate: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::zero()),
+                population_diversity_weight: scirs2_core::numeric::NumCast::from(0.2)
                     .unwrap_or_else(|| T::zero()),
                 conservative_search: false,
             },
@@ -302,7 +316,7 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
             .architecture_progression
             .best_per_phase
             .entry(current_phase_key)
-            .or_insert_with(Vec::new);
+            .or_default();
 
         // Keep only top 3 architectures per phase
         best_for_phase.push(architecture_id);
@@ -343,9 +357,10 @@ impl<T: Float + Debug + Send + Sync + 'static> ComplexityScheduler<T> {
     /// Create new complexity scheduler
     pub fn new() -> Result<Self> {
         Ok(Self {
-            current_complexity: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            current_complexity: scirs2_core::numeric::NumCast::from(0.1)
+                .unwrap_or_else(|| T::zero()),
             max_complexity: T::one(),
-            increase_rate: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
+            increase_rate: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
             strategy: SchedulingStrategy::Linear,
         })
     }
@@ -356,13 +371,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ComplexityScheduler<T> {
             SchedulingStrategy::Linear => {
                 let phase_factor = match phase {
                     SearchPhase::Initial => {
-                        num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero())
+                        scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero())
                     }
                     SearchPhase::Intermediate => {
-                        num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero())
+                        scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
                     }
                     SearchPhase::Advanced => {
-                        num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero())
+                        scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero())
                     }
                     SearchPhase::Final => T::one(),
                 };
@@ -380,6 +395,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ComplexityScheduler<T> {
         }
 
         self.current_complexity
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ArchitectureProgression<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -6,8 +6,8 @@
 pub mod kfac;
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Array1, Array2, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
@@ -241,13 +241,13 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + Send + Sync> Newton<A> {
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync + Send + Sync>
-    SecondOrderOptimizer<A, scirs2_core::ndarray_ext::Ix1> for Newton<A>
+    SecondOrderOptimizer<A, scirs2_core::ndarray::Ix1> for Newton<A>
 {
     fn step_second_order(
         &mut self,
         params: &Array1<A>,
         gradients: &Array1<A>,
-        hessian_info: &HessianInfo<A, scirs2_core::ndarray_ext::Ix1>,
+        hessian_info: &HessianInfo<A, scirs2_core::ndarray::Ix1>,
     ) -> Result<Array1<A>> {
         match hessian_info {
             HessianInfo::Diagonal(hessian_diag) => {
@@ -389,7 +389,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_diagonal_hessian_approximation() {

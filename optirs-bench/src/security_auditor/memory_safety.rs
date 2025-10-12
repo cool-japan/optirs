@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn test_builtin_tests() {
         let analyzer = MemorySafetyAnalyzer::with_builtin_tests();
-        assert!(analyzer.test_cases.len() > 0);
+        assert!(!analyzer.test_cases.is_empty());
     }
 
     #[test]

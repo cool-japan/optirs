@@ -485,10 +485,7 @@ impl CrossPlatformOrchestrator {
         for result in results {
             // Extract platform from test name (simplified)
             if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
-                platform_results
-                    .entry(platform)
-                    .or_insert_with(Vec::new)
-                    .push(result);
+                platform_results.entry(platform).or_default().push(result);
             }
         }
 
@@ -548,7 +545,7 @@ impl CrossPlatformOrchestrator {
             if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
                 platform_metrics
                     .entry(platform)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(&result.performance_metrics);
             }
         }

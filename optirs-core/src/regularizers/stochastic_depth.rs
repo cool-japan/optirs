@@ -4,8 +4,8 @@
 // certain layers during training, which helps prevent overfitting and
 // improves gradient flow in very deep networks.
 
-use num_traits::{Float, FromPrimitive};
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::{Float, FromPrimitive};
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -19,7 +19,7 @@ use crate::regularizers::Regularizer;
 /// # Example
 ///
 /// ```
-/// use scirs2_autograd::ndarray::array;
+/// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::StochasticDepth;
 ///
 /// let stochastic_depth = StochasticDepth::new(0.2, 10, 50);
@@ -157,7 +157,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_autograd::ndarray::array;
+    use scirs2_core::ndarray::array;
 
     #[test]
     fn test_stochastic_depth_creation() {

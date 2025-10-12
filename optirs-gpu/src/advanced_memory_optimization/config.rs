@@ -4,7 +4,7 @@
 // used throughout the advanced memory optimization system.
 
 use std::time::{Duration, Instant};
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 
 /// Advanced memory optimization configuration
 #[derive(Debug, Clone)]

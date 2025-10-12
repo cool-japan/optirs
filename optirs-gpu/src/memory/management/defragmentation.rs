@@ -187,7 +187,7 @@ pub struct AllocatedBlock {
 }
 
 /// Compaction strategy interface
-pub trait CompactionStrategy {
+pub trait CompactionStrategy: Send + Sync {
     fn name(&self) -> &str;
     fn can_handle(&self, layout: &MemoryLayoutTracker) -> bool;
     fn estimate_benefit(&self, layout: &MemoryLayoutTracker) -> f64;
@@ -230,6 +230,12 @@ pub struct DefragPerformance {
     pub bytes_moved: usize,
     pub algorithm_used: CompactionAlgorithm,
     pub success: bool,
+}
+
+impl Default for MemoryLayoutTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MemoryLayoutTracker {
@@ -414,6 +420,12 @@ pub struct SlidingCompactionStrategy {
     stats: CompactionStats,
 }
 
+impl Default for SlidingCompactionStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SlidingCompactionStrategy {
     pub fn new() -> Self {
         Self {
@@ -538,6 +550,12 @@ pub struct TwoPointerCompactionStrategy {
     stats: CompactionStats,
 }
 
+impl Default for TwoPointerCompactionStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TwoPointerCompactionStrategy {
     pub fn new() -> Self {
         Self {
@@ -599,13 +617,11 @@ impl CompactionStrategy for TwoPointerCompactionStrategy {
         let mut sorted_blocks = movable_blocks;
         sorted_blocks.sort_by_key(|b| b.address);
 
-        let mut left_ptr = 0;
+        let left_ptr = 0;
         let mut compact_addr = sorted_blocks[0].address;
 
         // Two-pointer compaction
-        for i in 0..sorted_blocks.len() {
-            let block = &sorted_blocks[i];
-
+        for block in &sorted_blocks {
             if block.address != compact_addr {
                 // Move block to compact address
                 layout.remove_allocated_block(block.address);
@@ -661,9 +677,10 @@ impl CompactionStrategy for TwoPointerCompactionStrategy {
 
 impl DefragmentationEngine {
     pub fn new(config: DefragConfig) -> Self {
-        let mut strategies: Vec<Box<dyn CompactionStrategy>> = Vec::new();
-        strategies.push(Box::new(SlidingCompactionStrategy::new()));
-        strategies.push(Box::new(TwoPointerCompactionStrategy::new()));
+        let strategies: Vec<Box<dyn CompactionStrategy>> = vec![
+            Box::new(SlidingCompactionStrategy::new()),
+            Box::new(TwoPointerCompactionStrategy::new()),
+        ];
 
         Self {
             config,
@@ -833,6 +850,15 @@ impl DefragmentationEngine {
     }
 }
 
+// Safety: DefragmentationEngine manages memory defragmentation state and compaction strategies.
+// While it contains NonNull pointers via MemoryLayoutTracker and trait objects,
+// it's safe to share across threads when protected by Arc<Mutex<>> because:
+// 1. All pointer operations are protected by the Mutex providing exclusive access
+// 2. CompactionStrategy trait requires Send + Sync
+// 3. No thread-local state is maintained
+unsafe impl Send for DefragmentationEngine {}
+unsafe impl Sync for DefragmentationEngine {}
+
 /// Defragmentation errors
 #[derive(Debug, Clone)]
 pub enum DefragError {
@@ -915,7 +941,7 @@ mod tests {
         tracker.add_free_region(2500, 800);
 
         let fragmentation = tracker.calculate_fragmentation();
-        assert!(fragmentation >= 0.0 && fragmentation <= 1.0);
+        assert!((0.0..=1.0).contains(&fragmentation));
 
         let total_free = tracker.get_total_free_space();
         assert_eq!(total_free, 1000);

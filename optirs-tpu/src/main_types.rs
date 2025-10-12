@@ -3,10 +3,10 @@
 // This module provides TPU acceleration for optimizers using XLA (Accelerated Linear Algebra)
 // compilation for maximum performance on Google Cloud TPUs and other XLA-compatible hardware.
 
-use num_traits::Float;
 use optirs_core::Optimizer;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, Dimension};
+use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use crate::error::Result;
@@ -118,8 +118,8 @@ pub enum TPUMemoryOptimization {
 /// TPU-optimized optimizer wrapper
 pub struct TPUOptimizer<O, A>
 where
-    A: Float + scirs2_core::ndarray_ext::ScalarOperand + std::fmt::Debug,
-    O: Optimizer<A, scirs2_core::ndarray_ext::Ix1>,
+    A: Float + scirs2_core::ndarray::ScalarOperand + std::fmt::Debug,
+    O: Optimizer<A, scirs2_core::ndarray::Ix1>,
 {
     /// Base optimizer
     base_optimizer: O,
@@ -204,7 +204,7 @@ enum ActivationType {
     ReLU,
     Tanh,
     Sigmoid,
-    GELU,
+    Gelu,
     Swish,
 }
 
@@ -616,9 +616,9 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + std::fmt::Debug,
-    O: Optimizer<A, scirs2_core::ndarray_ext::Ix1> + Send + Sync,
+    O: Optimizer<A, scirs2_core::ndarray::Ix1> + Send + Sync,
 {
     /// Create a new TPU optimizer
     pub fn new(base_optimizer: O, config: TPUConfig) -> Result<Self> {

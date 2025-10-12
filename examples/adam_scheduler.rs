@@ -1,6 +1,6 @@
 //! Example of using Adam optimizer with learning rate scheduler
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Adam, Optimizer};
 use optirs_core::schedulers::{ExponentialDecay, LearningRateScheduler};
 

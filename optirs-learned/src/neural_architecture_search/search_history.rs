@@ -1,6 +1,6 @@
 // Search history tracking and analysis
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

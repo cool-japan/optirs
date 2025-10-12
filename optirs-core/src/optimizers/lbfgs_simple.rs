@@ -1,7 +1,7 @@
 // Simplified L-BFGS optimizer implementation
 
-use scirs2_core::ndarray_ext::{Array, Array1, Dimension, ScalarOperand};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 

@@ -34,7 +34,7 @@ pub struct TopologyPerformanceMonitor {
 }
 
 /// Comprehensive monitoring settings for topology
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TopologyMonitoringSettings {
     /// Performance monitoring
     pub performance_monitoring: PerformanceMonitoringSettings,
@@ -173,7 +173,7 @@ pub enum FailureDetectionAlgorithm {
 }
 
 /// Traffic monitoring configuration and settings
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TrafficMonitoringSettings {
     /// Flow monitoring
     pub flow_monitoring: FlowMonitoringSettings,
@@ -644,7 +644,7 @@ pub enum UtilizationTrend {
 }
 
 /// Alert system for managing notifications and responses
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AlertSystem {
     /// Alert configuration
     pub config: AlertSettings,
@@ -765,7 +765,7 @@ pub struct RetryConfig {
 }
 
 /// Metrics collection engine
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MetricsCollector {
     /// Collection configuration
     pub config: MetricsCollectionSettings,
@@ -1137,17 +1137,6 @@ pub enum PredictiveModelType {
 
 // Default implementations
 
-impl Default for TopologyMonitoringSettings {
-    fn default() -> Self {
-        Self {
-            performance_monitoring: PerformanceMonitoringSettings::default(),
-            health_monitoring: HealthMonitoringSettings::default(),
-            traffic_monitoring: TrafficMonitoringSettings::default(),
-            alert_settings: AlertSettings::default(),
-        }
-    }
-}
-
 impl Default for PerformanceMonitoringSettings {
     fn default() -> Self {
         Self {
@@ -1213,16 +1202,6 @@ impl Default for HealthMonitoringSettings {
                 sensitivity: 0.8,
                 false_positive_tolerance: 0.05,
             },
-        }
-    }
-}
-
-impl Default for TrafficMonitoringSettings {
-    fn default() -> Self {
-        Self {
-            flow_monitoring: FlowMonitoringSettings::default(),
-            pattern_analysis: PatternAnalysisSettings::default(),
-            anomaly_detection: AnomalyDetectionSettings::default(),
         }
     }
 }
@@ -1330,28 +1309,6 @@ impl Default for AlertEscalation {
                     recipients: vec!["admin@example.com".to_string()],
                 },
             }],
-        }
-    }
-}
-
-impl Default for AlertSystem {
-    fn default() -> Self {
-        Self {
-            config: AlertSettings::default(),
-            active_alerts: Vec::new(),
-            alert_history: Vec::new(),
-            processors: Vec::new(),
-        }
-    }
-}
-
-impl Default for MetricsCollector {
-    fn default() -> Self {
-        Self {
-            config: MetricsCollectionSettings::default(),
-            metrics: HashMap::new(),
-            history: Vec::new(),
-            collectors: Vec::new(),
         }
     }
 }

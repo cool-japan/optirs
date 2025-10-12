@@ -31,7 +31,7 @@ optirs = "0.1.0-beta.1"
 ```rust
 use optirs::prelude::*;
 use optirs::optimizers::Adam;
-use ndarray::Array2;
+use scirs2_core::ndarray::Array2;  // ✅ CORRECT - Use scirs2_core
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an Adam optimizer

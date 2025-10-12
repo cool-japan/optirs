@@ -5,7 +5,7 @@
 //! various optimization strategies such as grid search, random search,
 //! Bayesian optimization, and evolutionary approaches.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -838,7 +838,7 @@ mod tests {
         let space: HyperparameterSpace<f64> = HyperparameterSpace::new();
         let mut optimizer = HyperparameterOptimizer::new(space, OptimizationStrategy::Random);
 
-        let mut config = HyperparameterConfiguration {
+        let config = HyperparameterConfiguration {
             id: "test_config".to_string(),
             parameters: HashMap::new(),
             categorical_parameters: HashMap::new(),

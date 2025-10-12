@@ -6,7 +6,7 @@
 // - Meta-learning parameters
 // - Performance optimization settings
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -216,10 +216,10 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for MetaLearningConfig<T>
     fn default() -> Self {
         Self {
             strategy: MetaLearningStrategy::Maml,
-            meta_learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            meta_learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             inner_steps: 5,
             meta_batch_size: 16,
-            gradient_clip: Some(num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())),
+            gradient_clip: Some(scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())),
             second_order: false,
             adaptation: AdaptationConfig::default(),
             task_sampling: TaskSamplingConfig::default(),
@@ -269,11 +269,11 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for AdaptationConfig<T> {
     fn default() -> Self {
         Self {
             num_steps: 10,
-            learning_rate: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            learning_rate: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             adaptive_lr: false,
             lr_schedule: LearningRateSchedule::Constant,
             early_stopping: false,
-            tolerance: num_traits::cast::cast(1e-6).unwrap_or_else(|| T::zero()),
+            tolerance: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -690,9 +690,9 @@ pub struct TrainingConfig<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> Default for TrainingConfig<T> {
     fn default() -> Self {
         Self {
-            learning_rate: num_traits::cast::cast(0.001).unwrap_or_else(|| T::zero()),
+            learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
             optimizer: OptimizerType::Adam,
-            weight_decay: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            weight_decay: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
             gradient_clipping: Some(GradientClippingConfig::default()),
             lr_schedule: LearningRateSchedule::Constant,
             warmup: None,
@@ -733,7 +733,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for GradientClippingConfi
     fn default() -> Self {
         Self {
             method: ClippingMethod::Norm,
-            threshold: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+            threshold: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
             adaptive: false,
         }
     }

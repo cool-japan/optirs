@@ -6,8 +6,8 @@
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -1122,20 +1122,20 @@ impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
                 },
             },
             performance: AdaptationPerformance {
-                query_performance: num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()),
-                support_performance: num_traits::cast::cast(0.90).unwrap_or_else(|| T::zero()),
+                query_performance: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
+                support_performance: scirs2_core::numeric::NumCast::from(0.90).unwrap_or_else(|| T::zero()),
                 adaptation_speed: 5,
-                final_loss: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                improvement: num_traits::cast::cast(0.25).unwrap_or_else(|| T::zero()),
-                stability: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
+                final_loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
+                improvement: scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()),
+                stability: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
             },
             task_representation: Array1::zeros(128),
             adaptation_trajectory: Vec::new(),
             resource_usage: ResourceUsage {
                 total_time: Duration::from_secs(15),
-                peak_memory_mb: num_traits::cast::cast(256.0).unwrap_or_else(|| T::zero()),
-                compute_cost: num_traits::cast::cast(5.0).unwrap_or_else(|| T::zero()),
-                energy_consumption: num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()),
+                peak_memory_mb: scirs2_core::numeric::NumCast::from(256.0).unwrap_or_else(|| T::zero()),
+                compute_cost: scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero()),
+                energy_consumption: scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()),
             },
         })
     }

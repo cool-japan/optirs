@@ -12,7 +12,7 @@ use crate::coordination::monitoring::performance_tracking::{
 use crate::coordination::orchestration::pipeline_orchestrator::OrchestratorConfiguration;
 use crate::coordination::scheduling::task_scheduler::SchedulerConfig;
 use crate::research::experiments::ResourceUsage;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -92,7 +92,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for CoordinatorConfig<T> 
             enable_anomaly_detection: true,
             enable_auto_scaling: true,
             enable_fault_tolerance: true,
-            performance_threshold: num_traits::cast::cast(0.01).unwrap_or_else(|| T::zero()),
+            performance_threshold: T::from(0.01).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -543,14 +543,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         // Adaptive resource allocation based on performance
         let current_metrics = &self.metrics;
 
-        if current_metrics.resource_utilization
-            > num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())
-        {
+        if current_metrics.resource_utilization > T::from(0.9).unwrap_or_else(|| T::zero()) {
             // High utilization - consider scaling up
             let _ = self.request_additional_resources();
-        } else if current_metrics.resource_utilization
-            < num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero())
-        {
+        } else if current_metrics.resource_utilization < T::from(0.3).unwrap_or_else(|| T::zero()) {
             // Low utilization - consider scaling down
             let _ = self.release_excess_resources();
         }
@@ -576,7 +572,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
         // Calculate throughput
         if uptime.as_secs() > 0 {
-            self.metrics.throughput = num_traits::cast::cast(self.state.total_tasks_processed)
+            self.metrics.throughput = T::from(self.state.total_tasks_processed)
                 .unwrap_or_else(|| T::zero())
                 / T::from(uptime.as_secs()).unwrap();
         }
@@ -591,12 +587,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
     fn calculate_convergence_rate(&self) -> T {
         // Implementation would calculate convergence success rate
-        num_traits::cast::cast(0.85).unwrap_or_else(|| T::zero()) // Placeholder
+        T::from(0.85).unwrap_or_else(|| T::zero()) // Placeholder
     }
 
     fn calculate_anomaly_rate(&self) -> T {
         // Implementation would calculate anomaly detection rate
-        num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero()) // Placeholder
+        T::from(0.05).unwrap_or_else(|| T::zero()) // Placeholder
     }
 
     fn collect_system_metrics(&self) -> Vec<T> {
@@ -638,12 +634,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         let error_rate = self.metrics.error_rate;
         let resource_utilization = self.metrics.resource_utilization;
 
-        if error_rate > num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()) {
+        if error_rate > T::from(0.1).unwrap_or_else(|| T::zero()) {
             HealthStatus::Unhealthy
-        } else if resource_utilization > num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()) {
+        } else if resource_utilization > T::from(0.95).unwrap_or_else(|| T::zero()) {
             HealthStatus::Degraded
-        } else if error_rate > num_traits::cast::cast(0.05).unwrap_or_else(|| T::zero())
-            || resource_utilization > num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero())
+        } else if error_rate > T::from(0.05).unwrap_or_else(|| T::zero())
+            || resource_utilization > T::from(0.8).unwrap_or_else(|| T::zero())
         {
             HealthStatus::Warning
         } else {
@@ -692,17 +688,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
             self.metrics.total_processed_tasks,
             self.state.total_experiments_completed,
             self.metrics.throughput.to_f64().unwrap_or(0.0),
-            (self.metrics.resource_utilization
-                * num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()))
-            .to_f64()
-            .unwrap_or(0.0),
-            (self.metrics.error_rate * num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()))
+            (self.metrics.resource_utilization * T::from(100.0).unwrap_or_else(|| T::zero()))
                 .to_f64()
                 .unwrap_or(0.0),
-            (self.metrics.convergence_rate
-                * num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()))
-            .to_f64()
-            .unwrap_or(0.0),
+            (self.metrics.error_rate * T::from(100.0).unwrap_or_else(|| T::zero()))
+                .to_f64()
+                .unwrap_or(0.0),
+            (self.metrics.convergence_rate * T::from(100.0).unwrap_or_else(|| T::zero()))
+                .to_f64()
+                .unwrap_or(0.0),
             self.assess_health_status(),
         )
     }

@@ -117,9 +117,9 @@ impl ArchitectureSearchSpace {
         let mut layers = Vec::new();
 
         for i in 0..num_layers {
-            let layer_type = *self.layer_types.choose(&mut scirs2_core::random::rng()).unwrap_or(&LayerType::Linear);
-            let hidden_size = *self.hidden_sizes.choose(&mut scirs2_core::random::rng()).unwrap_or(&128);
-            let activation = *self.activation_functions.choose(&mut scirs2_core::random::rng()).unwrap_or(&ActivationType::ReLU);
+            let layer_type = *self.layer_types.choose(&mut scirs2_core::random::thread_rng()).unwrap_or(&LayerType::Linear);
+            let hidden_size = *self.hidden_sizes.choose(&mut scirs2_core::random::thread_rng()).unwrap_or(&128);
+            let activation = *self.activation_functions.choose(&mut scirs2_core::random::thread_rng()).unwrap_or(&ActivationType::ReLU);
 
             let dimensions = LayerDimensions {
                 input_dim: if i == 0 { hidden_size } else { layers[i-1].dimensions.output_dim },

@@ -4,8 +4,8 @@
 // including generic parameter optimization, lazy registration, and architecture-aware optimizations.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 // use statrs::statistics::Statistics; // statrs not available
@@ -442,7 +442,7 @@ pub mod forward_backward {
                 + ScalarOperand
                 + Debug
                 + 'static
-                + num_traits::FromPrimitive
+                + scirs2_core::numeric::FromPrimitive
                 + std::iter::Sum
                 + Send
                 + Sync,
@@ -1400,7 +1400,7 @@ mod tests {
     #[test]
     fn test_parameter_manager_basic() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray::Ix1>::new(config);
 
         let metadata = ParameterMetadata {
             layername: "layer1".to_string(),
@@ -1426,7 +1426,7 @@ mod tests {
     #[test]
     fn test_lazy_registration() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray::Ix1>::new(config);
 
         manager.enable_lazy_mode();
 
@@ -1463,7 +1463,7 @@ mod tests {
             mixed_precision: false,
             architecture_optimizations: HashMap::new(),
         };
-        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray::Ix1>::new(config);
 
         let rule = LayerOptimizationRule {
             lr_multiplier: 2.0,
@@ -1500,7 +1500,7 @@ mod tests {
     #[test]
     fn test_parameter_sharing() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray::Ix1>::new(config);
 
         let metadata1 = ParameterMetadata {
             layername: "layer1".to_string(),
@@ -1538,7 +1538,7 @@ mod tests {
     #[test]
     fn test_parameter_filtering() {
         let config = OptimizationConfig::default();
-        let mut manager = ParameterManager::<f64, scirs2_core::ndarray_ext::Ix1>::new(config);
+        let mut manager = ParameterManager::<f64, scirs2_core::ndarray::Ix1>::new(config);
 
         let weight_metadata = ParameterMetadata {
             layername: "layer1".to_string(),
@@ -1597,7 +1597,7 @@ mod tests {
         };
 
         let mut optimizer =
-            ArchitectureAwareOptimizer::<f64, scirs2_core::ndarray_ext::Ix1>::new(config, strategy);
+            ArchitectureAwareOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(config, strategy);
 
         // Register a layer architecture
         let layer_arch = LayerArchitecture {

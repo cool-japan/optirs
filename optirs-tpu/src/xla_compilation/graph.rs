@@ -3,7 +3,7 @@
 // This module provides functionality for building, analyzing, and managing XLA computation graphs,
 // including type inference, shape analysis, dependency tracking, and constant folding.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -41,6 +41,14 @@ pub struct ComputationGraphBuilder<T: Float + Debug + Send + Sync + 'static> {
     constant_folder: ConstantFolder<T>,
 }
 
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default
+    for ComputationGraphBuilder<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ComputationGraphBuilder<T> {
     pub fn new() -> Self {
         Self {
@@ -66,6 +74,12 @@ pub struct TypeInferenceEngine<T: Float + Debug + Send + Sync + 'static> {
 
     /// Constraint solver
     constraint_solver: ConstraintSolver<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for TypeInferenceEngine<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> TypeInferenceEngine<T> {
@@ -108,6 +122,12 @@ pub struct TypeEnvironment<T: Float + Debug + Send + Sync + 'static> {
     unification_state: UnificationState<T>,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for TypeEnvironment<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> TypeEnvironment<T> {
     pub fn new() -> Self {
         Self {
@@ -127,6 +147,12 @@ pub struct UnificationState<T: Float + Debug + Send + Sync + 'static> {
     /// Type variables
     type_variables: HashSet<OperandId>,
     _phantom: PhantomData<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for UnificationState<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> UnificationState<T> {
@@ -150,6 +176,12 @@ pub struct ConstraintSolver<T: Float + Debug + Send + Sync + 'static> {
 
     /// Solution state
     solution_state: SolutionState<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ConstraintSolver<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ConstraintSolver<T> {
@@ -184,6 +216,12 @@ pub struct SolutionState<T: Float + Debug + Send + Sync + 'static> {
     statistics: SolverStatistics,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for SolutionState<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> SolutionState<T> {
     pub fn new() -> Self {
         Self {
@@ -215,6 +253,12 @@ pub struct ShapeAnalyzer<T: Float + Debug + Send + Sync + 'static> {
     /// Shape propagation engine
     propagation_engine: ShapePropagationEngine<T>,
     _phantom: PhantomData<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ShapeAnalyzer<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ShapeAnalyzer<T> {
@@ -303,6 +347,12 @@ pub struct ShapePropagationEngine<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> Default for ShapePropagationEngine<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Send + Sync + 'static> ShapePropagationEngine<T> {
     pub fn new() -> Self {
         Self {
@@ -339,6 +389,12 @@ pub struct DependencyTracker {
     analysis: DependencyAnalysis,
 }
 
+impl Default for DependencyTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DependencyTracker {
     pub fn new() -> Self {
         Self {
@@ -363,6 +419,12 @@ pub struct DependencyAnalysis {
     bottlenecks: Vec<OperationId>,
 }
 
+impl Default for DependencyAnalysis {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DependencyAnalysis {
     pub fn new() -> Self {
         Self {
@@ -384,6 +446,12 @@ pub struct ConstantFolder<T: Float + Debug + Send + Sync + 'static> {
 
     /// Folding statistics
     statistics: FoldingStatistics,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> Default for ConstantFolder<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ConstantFolder<T> {

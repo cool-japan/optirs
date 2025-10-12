@@ -99,7 +99,7 @@ pub struct AdvancedMemoryTracker {
 }
 
 /// Detailed memory usage information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MemoryUsage {
     /// Total allocated memory (bytes)
     pub total_allocated: usize,
@@ -842,7 +842,7 @@ impl MemoryOptimizer {
         // Check for leaks
         if self.config.enable_leak_detection {
             self.leak_detector
-                .check_for_leaks(&self.memory_tracker.get_snapshots())?;
+                .check_for_leaks(self.memory_tracker.get_snapshots())?;
         }
 
         Ok(())
@@ -1407,20 +1407,6 @@ impl MemoryPatternAnalyzer {
 }
 
 // Default implementations
-
-impl Default for MemoryUsage {
-    fn default() -> Self {
-        Self {
-            total_allocated: 0,
-            used_memory: 0,
-            available_memory: 0,
-            reserved_memory: 0,
-            by_category: HashMap::new(),
-            virtual_memory: 0,
-            physical_memory: 0,
-        }
-    }
-}
 
 impl Default for GarbageCollectionMetrics {
     fn default() -> Self {

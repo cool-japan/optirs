@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 pub struct BufferError;
 
-pub type Result<T> = std::result::Result<T, BufferError>;
+pub type BufferResult<T> = std::result::Result<T, BufferError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Buffer {

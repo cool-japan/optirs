@@ -3,8 +3,8 @@
 // Based on the paper "Large Batch Optimization for Deep Learning: Training BERT in 76 minutes"
 // by You et al. (2019).
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -30,7 +30,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{LAMB, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -58,9 +58,9 @@ pub struct LAMB<A: Float + ScalarOperand + Debug> {
     /// Whether to use bias correction
     bias_correction: bool,
     /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Current timestep
     t: usize,
 }
@@ -280,7 +280,7 @@ where
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_lamb_basic_creation() {

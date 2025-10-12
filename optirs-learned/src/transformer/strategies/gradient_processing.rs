@@ -4,9 +4,9 @@ use std::fmt::Debug;
 // This module implements various gradient transformation and processing strategies
 // used by the transformer optimizer to improve optimization performance.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -42,7 +42,7 @@ pub struct GradientProcessor<
         + Default
         + Clone
         + std::iter::Sum
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + Send
         + Sync
         + 'static,
@@ -113,7 +113,7 @@ impl<
             + Default
             + Clone
             + std::iter::Sum
-            + scirs2_core::ndarray_ext::ScalarOperand
+            + scirs2_core::ndarray::ScalarOperand
             + Send
             + Sync
             + 'static,
@@ -192,8 +192,9 @@ impl<
 
         if mean_norm > T::zero() {
             let adaptive_scale =
-                num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()) * mean_norm / current_norm
-                    + num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+                scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()) * mean_norm
+                    / current_norm
+                    + scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
             Ok(gradients * adaptive_scale)
         } else {
             Ok(gradients.clone())
@@ -229,11 +230,16 @@ impl<
         }
 
         // Return accumulated gradients if we've reached the target steps
-        if self.gradient_stats.update_count % self.processing_params.accumulation_steps == 0 {
+        if self
+            .gradient_stats
+            .update_count
+            .is_multiple_of(self.processing_params.accumulation_steps)
+        {
             if let Some(accumulated) = self.accumulated_gradients.take() {
-                let scale =
-                    num_traits::cast::cast(1.0 / self.processing_params.accumulation_steps as f64)
-                        .unwrap_or_else(|| T::zero());
+                let scale = scirs2_core::numeric::NumCast::from(
+                    1.0 / self.processing_params.accumulation_steps as f64,
+                )
+                .unwrap_or_else(|| T::zero());
                 Ok(accumulated * scale)
             } else {
                 Ok(gradients.clone())
@@ -263,7 +269,7 @@ impl<
     fn compress_gradients(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
         let mut result = gradients.clone();
         let threshold = self.compute_gradient_norm(gradients)
-            * num_traits::cast::cast(self.processing_params.compression_ratio)
+            * scirs2_core::numeric::NumCast::from(self.processing_params.compression_ratio)
                 .unwrap_or_else(|| T::zero());
 
         // Zero out small gradients
@@ -308,6 +314,12 @@ impl<
     }
 }
 
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for GradientStatistics<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> GradientStatistics<T> {
     /// Create new gradient statistics
     pub fn new() -> Self {
@@ -315,7 +327,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> GradientStatist
             mean_magnitude: T::zero(),
             var_magnitude: T::zero(),
             max_magnitude: T::zero(),
-            min_magnitude: num_traits::cast::cast(f64::INFINITY).unwrap_or_else(|| T::zero()),
+            min_magnitude: scirs2_core::numeric::NumCast::from(f64::INFINITY)
+                .unwrap_or_else(|| T::zero()),
             update_count: 0,
             sparsity: T::zero(),
         }
@@ -330,7 +343,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> GradientStatist
             .sqrt();
 
         self.update_count += 1;
-        let count = num_traits::cast::cast(self.update_count as f64).unwrap_or_else(|| T::zero());
+        let count = scirs2_core::numeric::NumCast::from(self.update_count as f64)
+            .unwrap_or_else(|| T::zero());
 
         // Update running mean
         let delta = magnitude - self.mean_magnitude;
@@ -351,10 +365,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> GradientStatist
         // Update sparsity (fraction of near-zero elements)
         let zero_count = gradients
             .iter()
-            .filter(|&&x| x.abs() < num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()))
+            .filter(|&&x| {
+                x.abs() < scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero())
+            })
             .count();
         let current_sparsity = T::from(zero_count as f64 / gradients.len() as f64).unwrap();
-        let alpha = num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero());
+        let alpha = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
         self.sparsity = self.sparsity * (T::one() - alpha) + current_sparsity * alpha;
     }
 
@@ -388,12 +404,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default
 {
     fn default() -> Self {
         Self {
-            clip_threshold: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
-            smoothing_factor: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+            clip_threshold: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
+            smoothing_factor: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
             accumulation_steps: 4,
             dropout_prob: 0.1,
             compression_ratio: 0.1,
-            norm_eps: num_traits::cast::cast(1e-8).unwrap_or_else(|| T::zero()),
+            norm_eps: scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()),
         }
     }
 }

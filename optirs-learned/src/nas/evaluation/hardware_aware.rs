@@ -6,8 +6,8 @@ use std::fmt::Debug;
 
 #[allow(dead_code)]
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use crate::error::{OptimError, Result};
@@ -842,7 +842,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
             return Ok(PlatformEvaluationResult {
                 platform_id: platform.id.clone(),
                 measurements: cached_measurement.clone(),
-                prediction_accuracy: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()), // Cached, assume good accuracy
+                prediction_accuracy: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()), // Cached, assume good accuracy
                 utilization_efficiency: self.compute_utilization_efficiency(cached_measurement, platform)?,
                 platform_score: self.compute_platform_score(cached_measurement, platform)?,
                 bottlenecks: self.identify_bottlenecks(cached_measurement, platform)?,
@@ -895,30 +895,30 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         let mut latency_measurements = Vec::new();
         for _ in 0..self.config.measurement_config.measurement_runs {
             let variance = 1.0 + (scirs2_core::random::random::<f64>() - 0.5) * 0.2; // ±10% variance
-            let latency = num_traits::cast::cast(base_latency * platform_factor * variance).unwrap_or_else(|| T::zero());
+            let latency = scirs2_core::numeric::NumCast::from(base_latency * platform_factor * variance).unwrap_or_else(|| T::zero());
             latency_measurements.push(latency);
         }
         
         // Compute derived metrics
         let avg_latency = latency_measurements.iter().cloned().fold(T::zero(), |acc, x| acc + x) /
                          T::from(latency_measurements.len() as f64).unwrap();
-        let throughput = num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero()) / avg_latency; // inferences per second
-        let power_consumption = num_traits::cast::cast(base_power * platform_factor).unwrap_or_else(|| T::zero());
-        let energy_per_inference = power_consumption * avg_latency / num_traits::cast::cast(1000.0).unwrap_or_else(|| T::zero());
+        let throughput = scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero()) / avg_latency; // inferences per second
+        let power_consumption = scirs2_core::numeric::NumCast::from(base_power * platform_factor).unwrap_or_else(|| T::zero());
+        let energy_per_inference = power_consumption * avg_latency / scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero());
         
         // Generate temperature measurements
         let base_temp = 40.0 + base_power * platform_factor * 0.3;
         let temperatures = vec![
-            num_traits::cast::cast(base_temp).unwrap_or_else(|| T::zero()),
-            num_traits::cast::cast(base_temp + 5.0).unwrap_or_else(|| T::zero()),
-            num_traits::cast::cast(base_temp + 2.0).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(base_temp).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(base_temp + 5.0).unwrap_or_else(|| T::zero()),
+            scirs2_core::numeric::NumCast::from(base_temp + 2.0).unwrap_or_else(|| T::zero()),
         ];
         
         // Generate utilization data
         let mut utilizations = HashMap::new();
-        utilizations.insert("compute".to_string(), num_traits::cast::cast(0.75).unwrap_or_else(|| T::zero()));
-        utilizations.insert("memory".to_string(), num_traits::cast::cast(0.60).unwrap_or_else(|| T::zero()));
-        utilizations.insert("bandwidth".to_string(), num_traits::cast::cast(0.45).unwrap_or_else(|| T::zero()));
+        utilizations.insert("compute".to_string(), scirs2_core::numeric::NumCast::from(0.75).unwrap_or_else(|| T::zero()));
+        utilizations.insert("memory".to_string(), scirs2_core::numeric::NumCast::from(0.60).unwrap_or_else(|| T::zero()));
+        utilizations.insert("bandwidth".to_string(), scirs2_core::numeric::NumCast::from(0.45).unwrap_or_else(|| T::zero()));
         
         // Compute quality metrics
         let variance = latency_measurements.iter()
@@ -927,9 +927,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         
         let quality_metrics = MeasurementQuality {
             variance,
-            confidence_interval: (avg_latency * num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()), avg_latency * num_traits::cast::cast(1.05).unwrap_or_else(|| T::zero())),
+            confidence_interval: (avg_latency * scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()), avg_latency * scirs2_core::numeric::NumCast::from(1.05).unwrap_or_else(|| T::zero())),
             outliers_removed: 0,
-            signal_noise_ratio: num_traits::cast::cast(20.0).unwrap_or_else(|| T::zero()),
+            signal_noise_ratio: scirs2_core::numeric::NumCast::from(20.0).unwrap_or_else(|| T::zero()),
         };
         
         Ok(PerformanceMeasurement {
@@ -965,7 +965,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
                     constraint_type: "max_latency".to_string(),
                     expected: max_latency,
                     actual: avg_latency,
-                    severity: if avg_latency > max_latency * num_traits::cast::cast(2.0).unwrap_or_else(|| T::zero()) {
+                    severity: if avg_latency > max_latency * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) {
                         ViolationSeverity::Critical
                     } else {
                         ViolationSeverity::Error
@@ -984,8 +984,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
             if measurement.memory_usage > max_memory {
                 violations.push(ConstraintViolation {
                     constraint_type: "max_memory".to_string(),
-                    expected: num_traits::cast::cast(max_memory as f64).unwrap_or_else(|| T::zero()),
-                    actual: num_traits::cast::cast(measurement.memory_usage as f64).unwrap_or_else(|| T::zero()),
+                    expected: scirs2_core::numeric::NumCast::from(max_memory as f64).unwrap_or_else(|| T::zero()),
+                    actual: scirs2_core::numeric::NumCast::from(measurement.memory_usage as f64).unwrap_or_else(|| T::zero()),
                     severity: ViolationSeverity::Error,
                     suggested_fixes: vec![
                         "Reduce batch size".to_string(),
@@ -1041,9 +1041,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         let bandwidth_util = measurement.utilizations.get("bandwidth").unwrap_or(&T::zero());
         
         // Weighted average of utilizations
-        let efficiency = (*compute_util * num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()) + 
-                         *memory_util * num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()) + 
-                         *bandwidth_util * num_traits::cast::cast(0.2).unwrap_or_else(|| T::zero()));
+        let efficiency = (*compute_util * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()) + 
+                         *memory_util * scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()) + 
+                         *bandwidth_util * scirs2_core::numeric::NumCast::from(0.2).unwrap_or_else(|| T::zero()));
         
         Ok(efficiency)
     }
@@ -1052,12 +1052,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
     fn compute_platform_score(&self, measurement: &PerformanceMeasurement<T>,
                              platform: &HardwarePlatform) -> Result<T> {
         // Simple scoring based on multiple factors
-        let latency_score = num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero()) / measurement.latency_ms.iter().cloned().fold(T::zero(), |acc, x| acc + x);
-        let throughput_score = measurement.throughput / num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero());
+        let latency_score = scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero()) / measurement.latency_ms.iter().cloned().fold(T::zero(), |acc, x| acc + x);
+        let throughput_score = measurement.throughput / scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero());
         let efficiency_score = self.compute_utilization_efficiency(measurement, platform)?;
         
-        let overall_score = (latency_score + throughput_score + efficiency_score) / num_traits::cast::cast(3.0).unwrap_or_else(|| T::zero());
-        Ok(overall_score.min(num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero())))
+        let overall_score = (latency_score + throughput_score + efficiency_score) / scirs2_core::numeric::NumCast::from(3.0).unwrap_or_else(|| T::zero());
+        Ok(overall_score.min(scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero())))
     }
     
     /// Identify system bottlenecks
@@ -1067,10 +1067,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         
         // Check compute utilization
         if let Some(&compute_util) = measurement.utilizations.get("compute") {
-            if compute_util < num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()) {
+            if compute_util < scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()) {
                 bottlenecks.push(Bottleneck {
                     bottleneck_type: BottleneckType::Compute,
-                    severity: (num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()) - compute_util).to_f64().unwrap_or(0.0) * 3.33,
+                    severity: (scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()) - compute_util).to_f64().unwrap_or(0.0) * 3.33,
                     description: "Low compute utilization detected".to_string(),
                     affected_operations: vec!["conv2d".to_string(), "matmul".to_string()],
                 });
@@ -1079,10 +1079,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         
         // Check memory utilization
         if let Some(&memory_util) = measurement.utilizations.get("memory") {
-            if memory_util > num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()) {
+            if memory_util > scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()) {
                 bottlenecks.push(Bottleneck {
                     bottleneck_type: BottleneckType::MemoryCapacity,
-                    severity: (memory_util - num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero())).to_f64().unwrap_or(0.0) * 10.0,
+                    severity: (memory_util - scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())).to_f64().unwrap_or(0.0) * 10.0,
                     description: "High memory utilization detected".to_string(),
                     affected_operations: vec!["large_tensors".to_string(), "activations".to_string()],
                 });
@@ -1091,10 +1091,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         
         // Check thermal issues
         let max_temp = measurement.temperatures.iter().cloned().fold(T::zero(), T::max);
-        if max_temp > num_traits::cast::cast(80.0).unwrap_or_else(|| T::zero()) {
+        if max_temp > scirs2_core::numeric::NumCast::from(80.0).unwrap_or_else(|| T::zero()) {
             bottlenecks.push(Bottleneck {
                 bottleneck_type: BottleneckType::Thermal,
-                severity: (max_temp - num_traits::cast::cast(80.0).unwrap_or_else(|| T::zero())).to_f64().unwrap_or(0.0) / 20.0,
+                severity: (max_temp - scirs2_core::numeric::NumCast::from(80.0).unwrap_or_else(|| T::zero())).to_f64().unwrap_or(0.0) / 20.0,
                 description: "High temperature detected".to_string(),
                 affected_operations: vec!["all_operations".to_string()],
             });
@@ -1112,7 +1112,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         let actual_latency = measurement.latency_ms.iter().cloned().fold(T::zero(), |acc, x| acc + x) /
                            T::from(measurement.latency_ms.len() as f64).unwrap();
         
-        let error = (num_traits::cast::cast(*predicted_latency).unwrap_or_else(|| T::zero()) - actual_latency).abs() / actual_latency;
+        let error = (scirs2_core::numeric::NumCast::from(*predicted_latency).unwrap_or_else(|| T::zero()) - actual_latency).abs() / actual_latency;
         let accuracy = T::one() - error.min(T::one());
         
         Ok(accuracy.max(T::zero()))
@@ -1209,13 +1209,13 @@ impl Default for MeasurementConfig {
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for HardwareConstraints<T> {
     fn default() -> Self {
         Self {
-            max_latency: Some(num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero())), // 100ms
+            max_latency: Some(scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero())), // 100ms
             max_memory: Some(2_000_000_000), // 2GB
-            max_power: Some(num_traits::cast::cast(150.0).unwrap_or_else(|| T::zero())), // 150W
-            max_energy_per_inference: Some(num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero())), // 1J
-            min_throughput: Some(num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero())), // 10 inferences/sec
+            max_power: Some(scirs2_core::numeric::NumCast::from(150.0).unwrap_or_else(|| T::zero())), // 150W
+            max_energy_per_inference: Some(scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())), // 1J
+            min_throughput: Some(scirs2_core::numeric::NumCast::from(10.0).unwrap_or_else(|| T::zero())), // 10 inferences/sec
             max_model_size: Some(100_000_000), // 100MB
-            max_temperature: Some(num_traits::cast::cast(85.0).unwrap_or_else(|| T::zero())), // 85°C
+            max_temperature: Some(scirs2_core::numeric::NumCast::from(85.0).unwrap_or_else(|| T::zero())), // 85°C
         }
     }
 }
@@ -1284,22 +1284,22 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Har
                 HardwareObjective {
                     id: "latency".to_string(),
                     objective_type: HardwareObjectiveType::MinimizeLatency,
-                    target_value: Some(num_traits::cast::cast(50.0).unwrap_or_else(|| T::zero())),
-                    weight: num_traits::cast::cast(0.4).unwrap_or_else(|| T::zero()),
-                    constraint_threshold: Some(num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero())),
+                    target_value: Some(scirs2_core::numeric::NumCast::from(50.0).unwrap_or_else(|| T::zero())),
+                    weight: scirs2_core::numeric::NumCast::from(0.4).unwrap_or_else(|| T::zero()),
+                    constraint_threshold: Some(scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero())),
                 },
                 HardwareObjective {
                     id: "throughput".to_string(),
                     objective_type: HardwareObjectiveType::MaximizeThroughput,
-                    target_value: Some(num_traits::cast::cast(100.0).unwrap_or_else(|| T::zero())),
-                    weight: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
-                    constraint_threshold: Some(num_traits::cast::cast(10.0).unwrap_or_else(|| T::zero())),
+                    target_value: Some(scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero())),
+                    weight: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
+                    constraint_threshold: Some(scirs2_core::numeric::NumCast::from(10.0).unwrap_or_else(|| T::zero())),
                 },
                 HardwareObjective {
                     id: "efficiency".to_string(),
                     objective_type: HardwareObjectiveType::MaximizeEfficiency,
                     target_value: None,
-                    weight: num_traits::cast::cast(0.3).unwrap_or_else(|| T::zero()),
+                    weight: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
                     constraint_threshold: None,
                 },
             ],

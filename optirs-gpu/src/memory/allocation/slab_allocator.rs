@@ -69,7 +69,7 @@ pub struct Slab {
 impl Slab {
     pub fn new(base_ptr: NonNull<u8>, slab_size: usize, object_size: usize) -> Self {
         let object_count = slab_size / object_size;
-        let bitmap_size = (object_count + 63) / 64; // Round up to nearest 64-bit word
+        let bitmap_size = object_count.div_ceil(64); // Round up to nearest 64-bit word
 
         let mut free_objects = VecDeque::with_capacity(object_count);
         for i in 0..object_count {
@@ -127,7 +127,7 @@ impl Slab {
         }
 
         let offset = ptr_addr - base_addr;
-        if offset % self.object_size != 0 {
+        if !offset.is_multiple_of(self.object_size) {
             return Err(SlabError::InvalidPointer(
                 "Pointer not aligned to object boundary".to_string(),
             ));
@@ -676,11 +676,11 @@ impl SlabAllocator {
         let aligned_size = (size + self.config.alignment - 1) & !(self.config.alignment - 1);
 
         // Get or create cache for this size
-        if !self.caches.contains_key(&aligned_size) {
+        self.caches.entry(aligned_size).or_insert_with(|| {
             let cache_config = CacheConfig::default();
-            let cache = SlabCache::new(aligned_size, cache_config);
-            self.caches.insert(aligned_size, cache);
-        }
+
+            SlabCache::new(aligned_size, cache_config)
+        });
 
         let cache = self.caches.get_mut(&aligned_size).unwrap();
         cache.allocate(&mut self.memory_pool)
@@ -775,6 +775,14 @@ impl SlabAllocator {
         self.memory_pool.get_usage()
     }
 }
+
+// Safety: SlabAllocator manages GPU memory pointers via NonNull<u8>. While NonNull is not Send/Sync by default,
+// it's safe to share SlabAllocator across threads when protected by Arc<Mutex<>> because:
+// 1. The pointers point to GPU memory managed by the GPU driver
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for SlabAllocator {}
+unsafe impl Sync for SlabAllocator {}
 
 /// Slab allocator statistics
 #[derive(Debug, Clone)]

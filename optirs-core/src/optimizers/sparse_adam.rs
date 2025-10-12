@@ -4,8 +4,8 @@
 // handles sparse gradients by only updating the parameters and moments
 // for indices that have non-zero gradients.
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Ix1, ScalarOperand};
+use scirs2_core::ndarray::{Array, Ix1, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -102,7 +102,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SparseGradient<A> {
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{SparseAdam, SparseGradient, Optimizer};
 ///
 /// // Initialize parameters
@@ -362,7 +362,7 @@ where
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_sparse_gradient_creation() {

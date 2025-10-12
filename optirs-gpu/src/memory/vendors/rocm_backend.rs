@@ -936,6 +936,15 @@ impl RocmMemoryBackend {
     }
 }
 
+// Safety: RocmMemoryBackend manages ROCm/HIP GPU memory pointers via *mut c_void.
+// While raw pointers are not Send/Sync by default, it's safe to share across threads
+// when protected by Arc<Mutex<>> because:
+// 1. All pointers point to HIP GPU memory managed by the ROCm driver
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for RocmMemoryBackend {}
+unsafe impl Sync for RocmMemoryBackend {}
+
 /// ROCm memory copy kinds
 #[derive(Debug, Clone)]
 pub enum RocmMemcpyKind {

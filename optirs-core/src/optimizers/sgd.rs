@@ -1,7 +1,7 @@
 // Stochastic Gradient Descent optimizer
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 // SciRS2 Integration - CRITICAL for OptiRS functionality
@@ -22,7 +22,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{SGD, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -44,7 +44,7 @@ pub struct SGD<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
     /// Velocity (momentum state)
-    velocity: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    velocity: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> SGD<A> {

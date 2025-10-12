@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module handles the lowering of high-level operations to XLA primitives,
 // including operation decomposition and primitive mapping.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
 use super::graph_capture::{
@@ -246,6 +246,12 @@ pub struct ComputeUnits {
     pub matrix_dims: (usize, usize),
 }
 
+impl Default for OperationLowering {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OperationLowering {
     /// Create new operation lowering engine
     pub fn new() -> Self {
@@ -409,7 +415,7 @@ impl OperationLowering {
         context: &LoweringContext<T>,
     ) -> Result<Vec<XLAOperation<T>>> {
         let mut result_operations = Vec::new();
-        let mut current_intermediates = context.intermediates.clone();
+        let current_intermediates = context.intermediates.clone();
 
         for template in &pattern.target_sequence {
             let new_op = self.instantiate_template(operation, template, &current_intermediates)?;

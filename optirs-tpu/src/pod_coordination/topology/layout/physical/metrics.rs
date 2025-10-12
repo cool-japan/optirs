@@ -4,7 +4,7 @@
 // including space utilization, power, thermal, connectivity, and performance metrics.
 
 /// Physical layout metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PhysicalLayoutMetrics {
     /// Space utilization
     pub space_utilization: SpaceUtilizationMetrics,
@@ -16,18 +16,6 @@ pub struct PhysicalLayoutMetrics {
     pub connectivity_metrics: PhysicalConnectivityMetrics,
     /// Performance metrics
     pub performance_metrics: PhysicalPerformanceMetrics,
-}
-
-impl Default for PhysicalLayoutMetrics {
-    fn default() -> Self {
-        Self {
-            space_utilization: SpaceUtilizationMetrics::default(),
-            power_metrics: PhysicalPowerMetrics::default(),
-            thermal_metrics: PhysicalThermalMetrics::default(),
-            connectivity_metrics: PhysicalConnectivityMetrics::default(),
-            performance_metrics: PhysicalPerformanceMetrics::default(),
-        }
-    }
 }
 
 /// Space utilization metrics

@@ -8,7 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 /// Available allocation strategies
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AllocationStrategy {
     /// First-fit allocation (fastest)
     FirstFit,
@@ -21,17 +21,12 @@ pub enum AllocationStrategy {
     /// Segregated list allocation (size-based pools)
     SegregatedList,
     /// Adaptive strategy based on workload
+    #[default]
     Adaptive,
     /// Machine learning based allocation
     MLBased,
     /// Hybrid strategy combining multiple approaches
     Hybrid,
-}
-
-impl Default for AllocationStrategy {
-    fn default() -> Self {
-        AllocationStrategy::Adaptive
-    }
 }
 
 /// Memory block representation
@@ -463,14 +458,14 @@ impl AllocationStrategyManager {
         let utilization_level = self.calculate_utilization_level();
 
         // Choose primary or secondary strategy based on thresholds
-        let chosen_strategy =
-            if fragmentation_level > self.hybrid_config.switch_threshold_fragmentation as f64 {
-                self.hybrid_config.secondary_strategy.clone()
-            } else if utilization_level > self.hybrid_config.switch_threshold_utilization as f64 {
-                self.hybrid_config.secondary_strategy.clone()
-            } else {
-                self.hybrid_config.primary_strategy.clone()
-            };
+        let chosen_strategy = if fragmentation_level
+            > self.hybrid_config.switch_threshold_fragmentation as f64
+            || utilization_level > self.hybrid_config.switch_threshold_utilization as f64
+        {
+            self.hybrid_config.secondary_strategy.clone()
+        } else {
+            self.hybrid_config.primary_strategy.clone()
+        };
 
         // Apply chosen strategy
         self.apply_fallback_strategy(size, &chosen_strategy)
@@ -632,28 +627,28 @@ impl AllocationStrategyManager {
             self.score_strategy_for_features(features, &AllocationStrategy::SegregatedList);
 
         let mut best_strategy = AllocationStrategy::BestFit;
-        let mut best_score = score_best_fit;
+        let mut _best_score = score_best_fit;
         let mut confidence = 0.5;
 
-        if score_first_fit > best_score {
+        if score_first_fit > _best_score {
             best_strategy = AllocationStrategy::FirstFit;
-            best_score = score_first_fit;
+            _best_score = score_first_fit;
         }
-        if score_worst_fit > best_score {
+        if score_worst_fit > _best_score {
             best_strategy = AllocationStrategy::WorstFit;
-            best_score = score_worst_fit;
+            _best_score = score_worst_fit;
         }
-        if score_buddy > best_score {
+        if score_buddy > _best_score {
             best_strategy = AllocationStrategy::BuddySystem;
-            best_score = score_buddy;
+            _best_score = score_buddy;
         }
-        if score_segregated > best_score {
+        if score_segregated > _best_score {
             best_strategy = AllocationStrategy::SegregatedList;
-            best_score = score_segregated;
+            _best_score = score_segregated;
         }
 
         // Calculate confidence based on score difference
-        let mut scores = vec![
+        let mut scores = [
             score_first_fit,
             score_best_fit,
             score_worst_fit,
@@ -662,7 +657,7 @@ impl AllocationStrategyManager {
         ];
         scores.sort_by(|a, b| b.partial_cmp(a).unwrap());
         if scores.len() >= 2 {
-            confidence = (scores[0] - scores[1]).max(0.0).min(1.0);
+            confidence = (scores[0] - scores[1]).clamp(0.0, 1.0);
         }
 
         MLPrediction {
@@ -709,30 +704,30 @@ impl AllocationStrategyManager {
             }
             AllocationStrategy::WorstFit => {
                 // Worst fit is good for reducing fragmentation
-                let frag_score = if features.fragmentation_level > 0.4 {
+
+                if features.fragmentation_level > 0.4 {
                     0.8
                 } else {
                     0.3
-                };
-                frag_score
+                }
             }
             AllocationStrategy::BuddySystem => {
                 // Buddy system is good for power-of-2 sizes
-                let size_score = if features.requested_size.log2().fract() < 0.1 {
+
+                if features.requested_size.log2().fract() < 0.1 {
                     0.9
                 } else {
                     0.4
-                };
-                size_score
+                }
             }
             AllocationStrategy::SegregatedList => {
                 // Segregated lists are good for diverse sizes with patterns
-                let pattern_score = if features.cache_hit_rate > 0.6 {
+
+                if features.cache_hit_rate > 0.6 {
                     0.7
                 } else {
                     0.5
-                };
-                pattern_score
+                }
             }
             _ => 0.5, // Default score
         }
@@ -757,7 +752,7 @@ impl AllocationStrategyManager {
         } else {
             let avg_block_size = total_free_space as f64 / free_block_count as f64;
             let fragmentation = 1.0 - (avg_block_size / total_free_space as f64);
-            fragmentation.max(0.0).min(1.0)
+            fragmentation.clamp(0.0, 1.0)
         }
     }
 
@@ -769,7 +764,7 @@ impl AllocationStrategyManager {
         if total_capacity == 0.0 {
             0.0
         } else {
-            (current_allocated / total_capacity).max(0.0).min(1.0)
+            (current_allocated / total_capacity).clamp(0.0, 1.0)
         }
     }
 
@@ -798,7 +793,7 @@ impl AllocationStrategyManager {
         let size_class = self.get_size_class(block.size);
         self.free_blocks
             .entry(size_class)
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_back(block);
     }
 
@@ -927,6 +922,6 @@ mod tests {
         manager.add_free_block(MemoryBlock::new(0x3000 as *mut u8, 512));
 
         let fragmentation = manager.calculate_fragmentation_level();
-        assert!(fragmentation >= 0.0 && fragmentation <= 1.0);
+        assert!((0.0..=1.0).contains(&fragmentation));
     }
 }

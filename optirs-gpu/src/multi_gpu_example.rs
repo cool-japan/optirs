@@ -10,8 +10,8 @@ use crate::gpu::multi_gpu_sync::{
 };
 use crate::optimizers::adam::Adam;
 
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -154,7 +154,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
         for (name, param) in params.iter_mut() {
             if let Some(gradient) = self.gradient_buffers.get(name) {
                 // Scale gradients by world size for averaging
-                let scaled_gradient = gradient.mapv(|x| x / num_traits::cast::cast(self.world_size).unwrap_or_else(|| T::zero()));
+                let scaled_gradient = gradient.mapv(|x| x / scirs2_core::numeric::NumCast::from(self.world_size).unwrap_or_else(|| T::zero()));
 
                 // Apply optimizer step
                 self.local_optimizer
@@ -332,7 +332,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
         for (name, param) in params.iter_mut() {
             if let Some(gradient) = self.gradient_buffers.get(name) {
                 // Scale gradients by world size for averaging
-                let scaled_gradient = gradient.mapv(|x| x / num_traits::cast::cast(self.world_size).unwrap_or_else(|| T::zero()));
+                let scaled_gradient = gradient.mapv(|x| x / scirs2_core::numeric::NumCast::from(self.world_size).unwrap_or_else(|| T::zero()));
 
                 // Apply optimizer step
                 self.local_optimizer

@@ -4,8 +4,8 @@
 // micro-batches to simulate larger batch sizes without increasing memory usage.
 
 use crate::error::{OptimError, Result};
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 /// Type alias for adaptive step conditions
@@ -348,7 +348,7 @@ pub mod utils {
 
         // Choose micro-batch _size that divides total batch _size evenly
         let mut micro_batch_size = max_samples.min(total_batch_size);
-        while total_batch_size % micro_batch_size != 0 && micro_batch_size > 1 {
+        while !total_batch_size.is_multiple_of(micro_batch_size) && micro_batch_size > 1 {
             micro_batch_size -= 1;
         }
 
@@ -402,7 +402,7 @@ pub mod utils {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray_ext::Array1;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_gradient_accumulator_sum() {

@@ -4,10 +4,11 @@
 // and privacy budget tracking for training machine learning models with
 // formal privacy guarantees.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::{Array, ArrayBase, Data, DataMut, Dimension};
-use scirs2_core::random::distributions::Normal;
+use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::numeric::Float;
+use scirs2_core::random::RandNormal;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::{HashMap, VecDeque};
 
 use super::moment_accountant::MomentsAccountant;
@@ -21,12 +22,12 @@ where
     A: Float
         + Send
         + Sync
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + std::fmt::Debug
         + Default
         + Clone
         + std::iter::Sum,
-    D: scirs2_core::ndarray_ext::Dimension,
+    D: scirs2_core::ndarray::Dimension,
     O: Optimizer<A, D>,
 {
     /// Base optimizer (SGD, Adam, etc.)
@@ -39,7 +40,7 @@ where
     accountant: MomentsAccountant,
 
     /// Random number generator for noise
-    rng: scirs2_core::random::Random,
+    rng: scirs2_core::random::CoreRandom,
 
     /// Adaptive clipping state
     adaptive_clipping: Option<AdaptiveClippingState>,
@@ -216,11 +217,10 @@ where
         + Clone
         + Send
         + Sync
-        + scirs2_core::random::distributions::uniform::SampleUniform
-        + scirs2_core::ndarray_ext::ScalarOperand
+        + scirs2_core::ndarray::ScalarOperand
         + std::fmt::Debug
         + std::iter::Sum,
-    D: scirs2_core::ndarray_ext::Dimension,
+    D: scirs2_core::ndarray::Dimension,
     O: Optimizer<A, D> + Send + Sync,
 {
     /// Create a new DP-SGD optimizer
@@ -232,7 +232,7 @@ where
             config.dataset_size,
         );
 
-        let rng = scirs2_core::random::rng();
+        let rng = thread_rng();
 
         let adaptive_clipping = if config.adaptive_clipping {
             Some(AdaptiveClippingState::new(
@@ -473,7 +473,7 @@ where
 
         match self.config.noise_mechanism {
             NoiseMechanism::Gaussian => {
-                let normal = Normal::new(0.0, noise_scale)
+                let normal = RandNormal::new(0.0, noise_scale)
                     .map_err(|_| OptimError::InvalidConfig("Invalid noise scale".to_string()))?;
                 gradients.mapv_inplace(|g| {
                     // Use scirs2_core random for Gaussian noise
@@ -484,7 +484,7 @@ where
             }
             NoiseMechanism::Laplace => {
                 // Simplified Laplace noise using Normal distribution approximation
-                let normal = Normal::new(0.0, noise_scale * 1.414)
+                let normal = RandNormal::new(0.0, noise_scale * 1.414)
                     .map_err(|_| OptimError::InvalidConfig("Invalid noise scale".to_string()))?;
                 gradients.mapv_inplace(|g| {
                     // Use scirs2_core random for Laplace-approximated noise
@@ -495,7 +495,7 @@ where
             }
             _ => {
                 // Default to Gaussian
-                let normal = Normal::new(0.0, noise_scale)
+                let normal = RandNormal::new(0.0, noise_scale)
                     .map_err(|_| OptimError::InvalidConfig("Invalid noise scale".to_string()))?;
                 gradients.mapv_inplace(|g| {
                     // Use scirs2_core random for Gaussian noise
@@ -900,7 +900,7 @@ mod tests {
     fn test_dp_sgd_creation() {
         let sgd = SGD::new(0.01);
         let config = DifferentialPrivacyConfig::default();
-        let dp_sgd = DPSGDOptimizer::<_, f64, scirs2_core::ndarray_ext::Ix1>::new(sgd, config);
+        let dp_sgd = DPSGDOptimizer::<_, f64, scirs2_core::ndarray::Ix1>::new(sgd, config);
         assert!(dp_sgd.is_ok());
     }
 

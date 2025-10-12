@@ -4,7 +4,7 @@
 // running on TPU hardware, including performance counters, trace collection,
 // memory profiling, and power consumption tracking.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Debug;
 use std::fs::File;
@@ -1336,6 +1336,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ProfilingIntegration<T> {
     }
 }
 
+impl Default for PerformanceCounterManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceCounterManager {
     /// Create new performance counter manager
     pub fn new() -> Self {
@@ -1488,6 +1494,12 @@ impl MemoryProfiler {
     }
 }
 
+impl Default for AllocationTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AllocationTracker {
     /// Create new allocation tracker
     pub fn new() -> Self {
@@ -1562,6 +1574,12 @@ impl<T> TimelineProfiler<T> {
     pub fn reset(&mut self) {
         self.sessions.clear();
         self.timeline_data.clear();
+    }
+}
+
+impl Default for ProfilingDataAggregator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

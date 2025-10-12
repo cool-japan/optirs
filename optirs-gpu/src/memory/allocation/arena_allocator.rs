@@ -544,6 +544,14 @@ impl ArenaAllocator {
     }
 }
 
+// Safety: ArenaAllocator manages GPU memory pointers. While NonNull<u8> is not Send/Sync by default,
+// it's safe to share ArenaAllocator across threads when protected by Arc<Mutex<>> because:
+// 1. The pointers point to GPU memory managed by the GPU driver
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for ArenaAllocator {}
+unsafe impl Sync for ArenaAllocator {}
+
 /// Checkpoint handle for rollback operations
 #[derive(Debug, Clone)]
 pub struct CheckpointHandle {

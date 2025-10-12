@@ -12,7 +12,7 @@ pub mod population;
 pub mod history;
 
 use std::collections::HashMap;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 
 // Re-export key types
 pub use architecture::*;
@@ -323,7 +323,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + From<f64 + Send + Sy
     /// Predict performance using predictor
     fn predict_performance(&self, _candidate: &ArchitectureCandidate) -> Result<T, NASError> {
         // Simplified prediction
-        Ok(num_traits::cast::cast(0.7).unwrap_or_else(|| T::zero())) // Placeholder
+        Ok(scirs2_core::numeric::NumCast::from(0.7).unwrap_or_else(|| T::zero())) // Placeholder
     }
 
     /// Full evaluation of architecture
@@ -337,7 +337,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + From<f64 + Send + Sy
         let efficiency_score = 1.0 / (layer_count as f64 / 10.0 + 1.0); // Prefer fewer layers
 
         let performance = 0.3 * capacity_score + 0.7 * efficiency_score;
-        Ok(num_traits::cast::cast(performance).unwrap_or_else(|| T::zero()))
+        Ok(scirs2_core::numeric::NumCast::from(performance).unwrap_or_else(|| T::zero()))
     }
 
     /// Check if should early stop

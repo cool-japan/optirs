@@ -19,7 +19,7 @@ unpredictable_function_pointer_comparisons = "allow"
 unknown_lints = "allow"
 
 [workspace.package]
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2021"
 authors = ["OptiRS Team"]
 description = "Advanced ML optimization and hardware acceleration library"
@@ -34,62 +34,57 @@ categories = ["science", "mathematics", "algorithms", "development-tools"]
 # ndarray-stats = "0.6.0"
 # ndarray-rand = "0.15.0"
 
-# Numerical libraries
-num-traits = "0.2.19"
-num-complex = "0.4.6"
-num-integer = "0.1.46"
+# 🚨 FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# num-traits - Use scirs2_core::numeric
+# num-complex - Use scirs2_core::numeric
+# num-integer - Use scirs2_core::numeric
+# rayon - Use scirs2_core::parallel_ops
+# wide - Use scirs2_core::simd_ops
+# rand, rand_distr, rand_core - Use scirs2_core::random
+# fastrand - Use scirs2_core::random
+# ndarray, ndarray-stats, ndarray-rand - Use scirs2_core::ndarray
 
-# Parallelization and performance
-rayon = "1.10.0"
-wide = "0.7.33"
-num_cpus = "1.16.0"
-
-# Random number generation - REMOVED: Use scirs2_core::random instead
-# rand = "0.9.2"
-# rand_distr = "0.5.1"
-# rand_core = "0.9.3"
-# rand_pcg = "0.9.0"
-# rand_chacha = "0.9.0"
-fastrand = "2.0.1"
+# System utilities (allowed - not scientific computing)
+num_cpus = "1.17.0"
 
 # Development and testing
-thiserror = "1.0.69"
+thiserror = "2.0.17"
 anyhow = "1.0"
 approx = "0.5.1"
-criterion = "0.6.0"
+criterion = "0.7.0"
 once_cell = "1.21.3"
-tempfile = "3.20.0"
+tempfile = "3.23.0"
 tokio-test = "0.4.4"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-bincode = "1.3.3"
-chrono = "0.4.41"
+bincode = "2.0.1"
+chrono = "0.4.42"
 
 # GPU backends - cross-platform only
-cudarc = { version = "0.12", features = ["cuda-12000"] }
-opencl3 = { version = "0.11" }
-wgpu = { version = "22.1" }
+cudarc = { version = "0.17", features = ["cuda-12000"] }
+opencl3 = { version = "0.12" }
+wgpu = { version = "27.0" }
 pollster = { version = "0.4" }
 
 # ML specific
-tokenizers = "0.21.2"
+tokenizers = "0.22.1"
 autograd = "1.1.1"
 smallvec = "1.15.1"
 uuid = { version = "1.18.1", features = ["v4"] }
 rustc-hash = "2.1.1"
-matrixmultiply = "0.3.9"
+matrixmultiply = "0.3.10"
 
 # System information
-sysinfo = "0.35.2"
+sysinfo = "0.37.2"
 
 # Async dependencies
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 futures = "0.3.31"
 futures-util = "0.3.31"
-async-trait = "0.1.83"
+async-trait = "0.1.89"
 
 # Logging
 log = "0.4"
@@ -97,44 +92,47 @@ log = "0.4"
 # Utilities
 sha2 = "0.10"
 md5 = "0.8.0"
-clap = { version = "4.4", features = ["derive"] }
-regex = "1.11.1"
+clap = { version = "4.5", features = ["derive"] }
+regex = "1.12.1"
 
 # Cryptography
 rsa = { version = "0.9" }
-x509-parser = { version = "0.16" }
+x509-parser = { version = "0.18" }
 
 # OptiRS crates
-optirs-core = { version = "0.1.0-beta.1", path = "./optirs-core" }
-optirs-gpu = { version = "0.1.0-beta.1", path = "./optirs-gpu" }
-optirs-tpu = { version = "0.1.0-beta.1", path = "./optirs-tpu" }
-optirs-learned = { version = "0.1.0-beta.1", path = "./optirs-learned" }
-optirs-nas = { version = "0.1.0-beta.1", path = "./optirs-nas" }
-optirs-bench = { version = "0.1.0-beta.1", path = "./optirs-bench" }
+optirs-core = { version = "0.1.0-beta.2", path = "./optirs-core" }
+optirs-gpu = { version = "0.1.0-beta.2", path = "./optirs-gpu" }
+optirs-tpu = { version = "0.1.0-beta.2", path = "./optirs-tpu" }
+optirs-learned = { version = "0.1.0-beta.2", path = "./optirs-learned" }
+optirs-nas = { version = "0.1.0-beta.2", path = "./optirs-nas" }
+optirs-bench = { version = "0.1.0-beta.2", path = "./optirs-bench" }
 
 # 🚨 CRITICAL: SciRS2 ECOSYSTEM DEPENDENCIES 🚨
 #
 # OptiRS MUST use SciRS2 as its scientific computing foundation.
-# This section implements evidence-based integration as per SCIRS2_INTEGRATION_POLICY.md
+# This section implements minimal dependency policy as per SCIRS2_INTEGRATION_POLICY.md
 #
-# MINIMAL ESSENTIAL START (as per integration policy):
-# Only these crates are included initially. Additional crates will be added
-# based on compilation evidence and actual usage requirements.
+# PHILOSOPHY: OptiRS is an OPTIMIZATION library, not an autodiff framework.
+# Start minimal - add dependencies only when compilation errors prove necessity.
 #
-scirs2-core = "0.1.0-beta.2"           # FOUNDATION - Core scientific primitives
-scirs2-optimize = "0.1.0-beta.2"   # ESSENTIAL - Base optimization interfaces
-scirs2-linalg = "0.1.0-beta.2"       # EVIDENCE: Matrix operations for optimization
-scirs2-autograd = "0.1.0-beta.2"   # EVIDENCE: Automatic differentiation
-scirs2-neural = "0.1.0-beta.2"       # EVIDENCE: Neural network optimization
-scirs2-metrics = "0.1.0-beta.2"     # EVIDENCE: Performance monitoring
-scirs2-stats = "0.1.0-beta.2"         # EVIDENCE: Statistical analysis - compilation errors show this is needed
-scirs2-signal = "0.1.0-beta.2"       # EVIDENCE: Signal processing - compilation errors show this is needed
-scirs2-series = "0.1.0-beta.2"       # EVIDENCE: Time series analysis - compilation errors show this is needed
-scirs2-datasets = "0.1.0-beta.2"   # EVIDENCE: Dataset handling - compilation errors show this is needed
+# ✅ ESSENTIAL (Always Required):
+scirs2-core = "0.1.0-rc.1"           # FOUNDATION - Core scientific primitives
+scirs2-optimize = "0.1.0-rc.1"       # ESSENTIAL - Base optimization interfaces
 
-# CONDITIONAL ADDITIONS (add only when compilation errors prove they're needed):
-# scirs2-signal = "0.1.0-beta.2"      # If signal processing needed
-# scirs2-series = "0.1.0-beta.2"      # If time-series analysis
+# ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
+scirs2-neural = "0.1.0-rc.1"         # EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = "0.1.0-rc.1"        # EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = "0.1.0-rc.1"          # EVIDENCE: multiple modules use distributions
+scirs2-series = "0.1.0-rc.1"         # EVIDENCE: performance_tracking.rs requires this
+scirs2-datasets = "0.1.0-rc.1"       # EVIDENCE: cross_platform_tester.rs requires this
+
+# ⚠️ CONDITIONAL (Uncomment only if compilation fails):
+# scirs2-linalg = "0.1.0-rc.1"       # Only if second-order methods need matrix ops beyond ndarray
+# scirs2-signal = "0.1.0-rc.1"       # Only if gradient smoothing specifically requires it
+
+# ❌ NOT REQUIRED for OptiRS:
+# scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
+# TODO: Remove scirs2-autograd usage from optirs-core/src/optimizers/adam.rs
 
 [profile.release]
 opt-level = 3

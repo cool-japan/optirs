@@ -904,7 +904,7 @@ impl CrossPlatformTester {
         self.results
             .results
             .entry(platform)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(test_name.to_string(), result);
     }
 

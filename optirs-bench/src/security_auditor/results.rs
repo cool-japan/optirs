@@ -234,7 +234,7 @@ impl SecurityAuditResults {
         let category = finding.category.clone();
         self.findings_by_category
             .entry(category)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(finding);
     }
 
@@ -256,7 +256,7 @@ impl SecurityAuditResults {
     pub fn generate_executive_summary(&self) -> String {
         let mut summary = String::new();
 
-        summary.push_str(&format!("Security Audit Summary\n====================\n\n"));
+        summary.push_str("Security Audit Summary\n====================\n\n");
 
         summary.push_str(&format!(
             "Overall Security Score: {:.1}/100\n",

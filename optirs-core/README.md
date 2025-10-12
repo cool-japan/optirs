@@ -55,14 +55,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.1"
+optirs-core = "0.1.0-beta.2"
 ```
 
 ### Basic Example
 
 ```rust
 use optirs_core::optimizers::{Adam, Optimizer};
-use ndarray::Array1;
+use scirs2_core::ndarray::Array1;  // ✅ CORRECT - Use scirs2_core
 
 // Create an Adam optimizer
 let mut optimizer = Adam::new(0.001)

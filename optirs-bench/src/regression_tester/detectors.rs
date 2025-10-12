@@ -9,7 +9,7 @@ use crate::regression_tester::types::{
     PerformanceRecord, RegressionAnalysis, RegressionDetector, RegressionResult,
     StatisticalTestResult, TrendAnalysis, TrendDirection,
 };
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -708,7 +708,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.test_id, "change_point");
-        assert!(result.analysis.change_point_analysis.change_points.len() > 0);
+        assert!(!result
+            .analysis
+            .change_point_analysis
+            .change_points
+            .is_empty());
     }
 
     #[test]

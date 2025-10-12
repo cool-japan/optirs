@@ -4,7 +4,7 @@ use std::fmt::Debug;
 // This module implements memory layout optimization, buffer allocation strategies,
 // memory bandwidth optimization, and memory hierarchy utilization for TPU execution.
 
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -12,7 +12,8 @@ use super::super::frontend::{
     DataType, Layout, MemorySpace, OperandId, OperationId, OperationType, TensorShape, Tile,
     XLAComputation, XLAOperation,
 };
-use super::super::{HardwareTarget, TPUConfig};
+use super::super::TPUConfig;
+use super::HardwareTarget;
 use crate::error::{OptimError, Result};
 
 /// Memory planner for XLA computations
@@ -1009,7 +1010,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LayoutO
         self.access_analyzer.analyze_computation(computation)?;
 
         // Assign optimal layouts
-        for (operand_id, _operand) in &computation.operands {
+        for operand_id in computation.operands.keys() {
             let optimal_layout = self.select_optimal_layout(*operand_id)?;
             layout_assignments.insert(*operand_id, optimal_layout);
         }
@@ -1028,6 +1029,12 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LayoutO
     }
 }
 
+impl Default for AccessPatternAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AccessPatternAnalyzer {
     pub fn new() -> Self {
         Self {
@@ -1043,6 +1050,14 @@ impl AccessPatternAnalyzer {
     ) -> Result<()> {
         // Access pattern analysis implementation
         Ok(())
+    }
+}
+
+impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
+    for BufferManager<T>
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1130,6 +1145,12 @@ impl MemoryAllocator {
     }
 }
 
+impl Default for BufferReuseTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BufferReuseTracker {
     pub fn new() -> Self {
         Self {
@@ -1158,12 +1179,24 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Bandwid
     }
 }
 
+impl Default for MemoryAccessSchedule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryAccessSchedule {
     pub fn new() -> Self {
         Self {
             accesses: vec![],
             pressure_timeline: vec![],
         }
+    }
+}
+
+impl Default for CacheManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1211,7 +1244,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryH
     ) -> Result<HashMap<OperandId, MemorySpace>> {
         let mut assignments = HashMap::new();
 
-        for (operand_id, _operand_info) in &analysis.operand_info {
+        for operand_id in analysis.operand_info.keys() {
             // Simplified memory level assignment
             assignments.insert(*operand_id, MemorySpace::Default);
         }

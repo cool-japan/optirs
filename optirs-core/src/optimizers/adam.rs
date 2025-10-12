@@ -1,12 +1,11 @@
 // Adam optimizer implementation
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-// SciRS2 Integration - ESSENTIAL for OptiRS Adam optimizer
-use scirs2_autograd::tensor_ops as T;
-use scirs2_core::ScientificNumber;
+// SciRS2 Integration
+// Note: OptiRS receives pre-computed gradients, so scirs2-autograd is not needed
 use scirs2_optimize::stochastic::{minimize_adam, AdamOptions};
 
 use crate::error::Result;
@@ -27,7 +26,7 @@ use crate::optimizers::Optimizer;
 /// # Examples
 ///
 /// ```
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 /// use optirs_core::optimizers::{Adam, Optimizer};
 ///
 /// // Initialize parameters and gradients
@@ -53,9 +52,9 @@ pub struct Adam<A: Float + ScalarOperand + Debug> {
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
     /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray_ext::IxDyn>>>,
+    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
     /// Current timestep
     t: usize,
 }

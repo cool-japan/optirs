@@ -43,7 +43,7 @@ impl ResultAggregator {
             if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
                 platform_results
                     .entry(platform.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(result.clone());
 
                 // Update performance comparison

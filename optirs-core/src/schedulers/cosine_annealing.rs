@@ -1,7 +1,7 @@
 // Cosine annealing learning rate scheduler
 
-use num_traits::Float;
-use scirs2_core::ndarray_ext::ScalarOperand;
+use scirs2_core::ndarray::ScalarOperand;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use crate::schedulers::LearningRateScheduler;
@@ -23,7 +23,7 @@ use crate::schedulers::LearningRateScheduler;
 /// ```
 /// use optirs_core::schedulers::{CosineAnnealing, LearningRateScheduler};
 /// use optirs_core::optimizers::SGD;
-/// use scirs2_core::ndarray_ext::Array1;
+/// use scirs2_core::ndarray::Array1;
 ///
 /// // Create a scheduler with initial learning rate 0.1, minimum learning rate 0.001,
 /// // cycle length 100 steps, and with warm restarts enabled
@@ -89,7 +89,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
         self.step += 1;
 
         // Reset step if warm restart is enabled and we've completed a cycle
-        if self.warm_restart && self.step % self.t_max == 0 && self.step > 0 {
+        if self.warm_restart && self.step.is_multiple_of(self.t_max) && self.step > 0 {
             self.step = 0;
         }
 

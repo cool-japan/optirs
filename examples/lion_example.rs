@@ -3,7 +3,7 @@
 //! This example demonstrates how to use the Lion optimizer to minimize
 //! a simple function and compares it with other optimizers.
 
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::optimizers::{Adam, Lion, Optimizer, SGD};
 use std::collections::HashMap;
 
@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let num_iterations = 50;
 
     // Initialize optimizers
-    let mut optimizers: HashMap<String, Box<dyn Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>> = HashMap::new();
+    let mut optimizers: HashMap<String, Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>> = HashMap::new();
     optimizers.insert("Lion".to_string(), Box::new(Lion::new(learning_rate)));
     optimizers.insert("Adam".to_string(), Box::new(Adam::new(learning_rate)));
     optimizers.insert("SGD".to_string(), Box::new(SGD::new(learning_rate)));

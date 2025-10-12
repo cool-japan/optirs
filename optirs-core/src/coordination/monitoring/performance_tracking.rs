@@ -4,9 +4,9 @@
 // metric collection, aggregation, alerting, and performance analysis for
 // optimization workflows.
 
-use num_traits::Float;
 #[allow(dead_code)]
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -1785,11 +1785,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceTrac
                 custom: HashMap::new(),
             },
             quality: MetricsQuality {
-                completeness: num_traits::cast::cast(0.95).unwrap_or_else(|| T::zero()),
-                accuracy: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
-                timeliness: num_traits::cast::cast(0.98).unwrap_or_else(|| T::zero()),
-                consistency: num_traits::cast::cast(0.92).unwrap_or_else(|| T::zero()),
-                overall_quality: num_traits::cast::cast(0.94).unwrap_or_else(|| T::zero()),
+                completeness: T::from(0.95).unwrap_or_else(|| T::zero()),
+                accuracy: T::from(0.9).unwrap_or_else(|| T::zero()),
+                timeliness: T::from(0.98).unwrap_or_else(|| T::zero()),
+                consistency: T::from(0.92).unwrap_or_else(|| T::zero()),
+                overall_quality: T::from(0.94).unwrap_or_else(|| T::zero()),
             },
         };
 
@@ -1830,23 +1830,23 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricCollector
                     metrics.insert(
                         metric_name.clone(),
                         MetricValue {
-                            value: num_traits::cast::cast(0.5).unwrap_or_else(|| T::zero()),
+                            value: T::from(0.5).unwrap_or_else(|| T::zero()),
                             value_type: MetricType::Gauge,
                             unit: "unit".to_string(),
                             bounds: None,
-                            confidence: num_traits::cast::cast(0.9).unwrap_or_else(|| T::zero()),
+                            confidence: T::from(0.9).unwrap_or_else(|| T::zero()),
                             tags: Vec::new(),
                         },
                     );
                     metrics
                 },
-                weight: num_traits::cast::cast(1.0).unwrap_or_else(|| T::zero()),
+                weight: T::from(1.0).unwrap_or_else(|| T::zero()),
                 status: CategoryStatus::Normal,
                 trends: CategoryTrends {
                     short_term: TrendDirection::Stable,
                     long_term: TrendDirection::Stable,
-                    trend_strength: num_traits::cast::cast(0.1).unwrap_or_else(|| T::zero()),
-                    trend_confidence: num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()),
+                    trend_strength: T::from(0.1).unwrap_or_else(|| T::zero()),
+                    trend_confidence: T::from(0.8).unwrap_or_else(|| T::zero()),
                     predictions: Vec::new(),
                 },
             };

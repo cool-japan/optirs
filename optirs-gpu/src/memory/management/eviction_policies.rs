@@ -231,6 +231,12 @@ pub struct LRUPolicy {
     stats: PolicyStats,
 }
 
+impl Default for LRUPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LRUPolicy {
     pub fn new() -> Self {
         Self {
@@ -331,6 +337,12 @@ pub struct LFUPolicy {
     stats: PolicyStats,
 }
 
+impl Default for LFUPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LFUPolicy {
     pub fn new() -> Self {
         Self {
@@ -357,7 +369,7 @@ impl LFUPolicy {
         // Add to new bucket
         self.frequency_buckets
             .entry(new_freq)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(address);
         self.frequency_map.insert(address, new_freq);
     }
@@ -373,7 +385,7 @@ impl EvictionPolicy for LFUPolicy {
         let mut bytes_selected = 0;
 
         // Select from lowest frequency buckets first
-        for (_freq, addresses) in &self.frequency_buckets {
+        for addresses in self.frequency_buckets.values() {
             for &address in addresses {
                 if let Some(object) = region.objects.get(&address) {
                     victims.push(address);
@@ -436,6 +448,12 @@ pub struct FIFOPolicy {
     insertion_order: VecDeque<usize>,
     /// Statistics
     stats: PolicyStats,
+}
+
+impl Default for FIFOPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FIFOPolicy {
@@ -523,6 +541,12 @@ pub struct ClockPolicy {
 struct ClockEntry {
     address: usize,
     reference_bit: bool,
+}
+
+impl Default for ClockPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ClockPolicy {
@@ -1002,7 +1026,7 @@ impl EvictionPerformanceMonitor {
         let scores = self
             .policy_performance
             .entry(performance.policy_name.clone())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         scores.push(performance.accuracy_score);
         if scores.len() > self.config.performance_window {
@@ -1320,7 +1344,7 @@ mod tests {
     fn test_eviction_engine_creation() {
         let config = EvictionConfig::default();
         let engine = EvictionEngine::new(config);
-        assert!(engine.policies.len() > 0);
+        assert!(!engine.policies.is_empty());
     }
 
     #[test]

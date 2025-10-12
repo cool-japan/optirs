@@ -6,8 +6,8 @@
 
 use super::config::*;
 use crate::OptimizerError as OptimError;
-use scirs2_core::ndarray_ext::{Array1, Array2};
-use num_traits::Float;
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime};
@@ -622,7 +622,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceAnal
             }
         }
 
-        Ok(num_traits::cast::cast(improvement_count).unwrap_or_else(|| T::zero()) / T::from(snapshots.len() - 1).unwrap())
+        Ok(scirs2_core::numeric::NumCast::from(improvement_count).unwrap_or_else(|| T::zero()) / T::from(snapshots.len() - 1).unwrap())
     }
 }
 
@@ -738,7 +738,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceMode
         let trend = (recent_losses[0] - recent_losses[recent_losses.len() - 1]) /
                    T::from(recent_losses.len() - 1).unwrap();
 
-        Ok(recent_losses[0] + trend * num_traits::cast::cast(steps_ahead).unwrap_or_else(|| T::zero()))
+        Ok(recent_losses[0] + trend * scirs2_core::numeric::NumCast::from(steps_ahead).unwrap_or_else(|| T::zero()))
     }
 
     /// Predict accuracy for future step
@@ -778,7 +778,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ConfidenceEstim
     /// Estimate confidence for predictions
     pub fn estimate_confidence(&self, _predictions: &[PerformanceSnapshot<T>]) -> Result<Vec<T>> {
         // Simplified confidence estimation
-        Ok(vec![num_traits::cast::cast(0.8).unwrap_or_else(|| T::zero()); _predictions.len()])
+        Ok(vec![scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()); _predictions.len()])
     }
 }
 

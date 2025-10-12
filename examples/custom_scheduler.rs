@@ -1,5 +1,5 @@
 //! Example demonstrating the custom scheduler framework
-use scirs2_core::ndarray_ext::Array1;
+use scirs2_core::ndarray::Array1;
 use optirs_core::{
     optimizers::{Optimizer, SGD},
     schedulers::{CombinedScheduler, CustomScheduler, LearningRateScheduler, SchedulerBuilder},
@@ -45,7 +45,7 @@ fn test_scheduler<S: LearningRateScheduler<f64>>(
         }
 
         // Update optimizer with current learning rate
-        <SGD<f64> as Optimizer<f64, scirs2_core::ndarray_ext::Ix1>>::set_learning_rate(
+        <SGD<f64> as Optimizer<f64, scirs2_core::ndarray::Ix1>>::set_learning_rate(
             &mut optimizer,
             scheduler.get_learning_rate(),
         );
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // 5. Create a noisy scheduler
-    let mut rng = scirs2_core::random::rng();
+    let mut rng = scirs2_core::random::thread_rng();
     let noisy_scheduler = CustomScheduler::new(0.1, move |step| {
         // Exponential decay with noise
         let base_lr = 0.1 * 0.95f64.powi((step / 10) as i32);

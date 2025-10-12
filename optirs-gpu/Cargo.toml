@@ -16,8 +16,11 @@ workspace = true
 # Core dependencies
 optirs-core = { workspace = true }
 scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
-# ndarray = { workspace = true }  # REMOVED: Use scirs2_core::ndarray_ext instead
-num-traits = { workspace = true }
+
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 log = { workspace = true }
@@ -34,10 +37,10 @@ futures = { workspace = true }
 
 # Platform-specific GPU backends
 [target.'cfg(target_os = "macos")'.dependencies]
-metal = { version = "0.31.0", optional = true }
+metal = { version = "0.32.0", optional = true }
 objc2 = { version = "0.6.2", optional = true }
-objc2-foundation = { version = "0.3.0", optional = true }
-objc2-metal-performance-shaders = { version = "0.3.0", optional = true }
+objc2-foundation = { version = "0.3.1", optional = true }
+objc2-metal-performance-shaders = { version = "0.3.1", optional = true }
 
 [dev-dependencies]
 approx = { workspace = true }

@@ -941,6 +941,15 @@ impl MetalMemoryBackend {
     }
 }
 
+// Safety: MetalMemoryBackend manages Metal GPU memory pointers via *mut c_void.
+// While raw pointers are not Send/Sync by default, it's safe to share across threads
+// when protected by Arc<Mutex<>> because:
+// 1. All pointers point to Metal GPU memory managed by the Metal framework
+// 2. The Mutex provides exclusive access for all mutable operations
+// 3. No thread-local state is maintained
+unsafe impl Send for MetalMemoryBackend {}
+unsafe impl Sync for MetalMemoryBackend {}
+
 /// Metal errors
 #[derive(Debug, Clone)]
 pub enum MetalError {

@@ -4,7 +4,7 @@
 // shared across different search strategies.
 
 use std::collections::HashMap;
-use num_traits::Float;
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use super::super::architecture::{ArchitectureSpec, ArchitectureCandidate};
