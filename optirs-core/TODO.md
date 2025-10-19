@@ -1,4 +1,4 @@
-# OptiRS Core TODO
+# OptiRS Core TODO (v0.1.0-beta.3)
 
 ## Vision & Goals
 Build a state-of-the-art, production-ready optimization library for Rust that rivals PyTorch and TensorFlow optimizers in performance and exceeds them in memory safety and ergonomics.

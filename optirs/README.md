@@ -23,7 +23,7 @@ Add OptiRS to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs = "0.1.0-beta.1"
+optirs = "0.1.0-beta.3"
 ```
 
 ### Basic Example
@@ -59,41 +59,41 @@ OptiRS uses feature gates to allow selective compilation of functionality:
 ### Core Features
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["core"] }  # Always included
+optirs = { version = "0.1.0-beta.3", features = ["core"] }  # Always included
 ```
 
 ### Hardware Acceleration
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["gpu"] }  # GPU acceleration
+optirs = { version = "0.1.0-beta.3", features = ["gpu"] }  # GPU acceleration
 ```
 
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["tpu"] }  # TPU coordination
+optirs = { version = "0.1.0-beta.3", features = ["tpu"] }  # TPU coordination
 ```
 
 ### Advanced Optimization
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["learned"] }  # Learned optimizers
+optirs = { version = "0.1.0-beta.3", features = ["learned"] }  # Learned optimizers
 ```
 
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["nas"] }  # Neural Architecture Search
+optirs = { version = "0.1.0-beta.3", features = ["nas"] }  # Neural Architecture Search
 ```
 
 ### Development and Analysis
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["bench"] }  # Benchmarking tools
+optirs = { version = "0.1.0-beta.3", features = ["bench"] }  # Benchmarking tools
 ```
 
 ### Full Feature Set
 ```toml
 [dependencies]
-optirs = { version = "0.1.0-beta.1", features = ["full"] }  # All features
+optirs = { version = "0.1.0-beta.3", features = ["full"] }  # All features
 ```
 
 ## Architecture Overview

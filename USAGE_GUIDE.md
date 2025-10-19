@@ -1,6 +1,6 @@
 # OptiRS Usage Guide
 
-**Version:** 0.1.0-beta.2
+**Version:** 0.1.0-beta.3
 **Status:** Production-Ready with SciRS2 Integration
 
 ## Table of Contents
@@ -24,8 +24,8 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.2"
-scirs2-core = "0.1.0-rc.1"  # Required - OptiRS foundation
+optirs-core = "0.1.0-beta.3"
+scirs2-core = "0.1.0-rc.2"  # Required - OptiRS foundation
 ```
 
 ### Your First Optimizer

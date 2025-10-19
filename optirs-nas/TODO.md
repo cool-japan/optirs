@@ -1,4 +1,4 @@
-# OptiRS NAS TODO - Post SciRS2 Integration
+# OptiRS NAS TODO (v0.1.0-beta.3) - Post SciRS2 Integration
 
 ## ✅ COMPLETED: SciRS2 Integration
 - [x] **Full SciRS2-Core Integration** - 100% complete

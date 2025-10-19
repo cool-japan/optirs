@@ -1,6 +1,6 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.1.0-beta.2  
+**Version:** 0.1.0-beta.3
 **Status:** Production-Ready Core with Experimental Extensions
 
 OptiRS is a comprehensive optimization library for machine learning that **extends and leverages the full power of SciRS2-Core**. It provides specialized optimization algorithms and hardware acceleration while making **FULL USE** of SciRS2's scientific computing capabilities.
@@ -168,11 +168,11 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.2"
-scirs2-core = "0.1.0-rc.1"  # Required foundation
+optirs-core = "0.1.0-beta.3"
+scirs2-core = "0.1.0-rc.2"  # Required foundation
 
 # Optional: GPU acceleration (experimental)
-optirs-gpu = { version = "0.1.0-beta.2", optional = true }
+optirs-gpu = { version = "0.1.0-beta.3", optional = true }
 ```
 
 ### Basic Usage

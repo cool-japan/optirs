@@ -1,4 +1,4 @@
-# OptiRS Main Crate TODO
+# OptiRS Main Crate TODO (v0.1.0-beta.3)
 
 ## High Priority Items
 

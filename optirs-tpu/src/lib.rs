@@ -1,6 +1,6 @@
 //! # OptiRS TPU - TPU Coordination and Pod Management
 //!
-//! **Version:** 0.1.0-beta.2  
+//! **Version:** 0.1.0-beta.3
 //! **Status:** Coming Soon (Framework Only)
 //!
 //! ⚠️ **Warning:** This crate is under active development. No functional implementation yet.
@@ -11,10 +11,10 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.1 - Required foundation
-//! - `optirs-core` 0.1.0-beta.2 - Core optimizers
+//! - `scirs2-core` 0.1.0-rc.2 - Required foundation
+//! - `optirs-core` 0.1.0-beta.3 - Core optimizers
 //!
-//! ## Implementation Status (Beta.2)
+//! ## Implementation Status (Beta.3)
 //!
 //! - 📝 Type definitions only
 //! - 📝 Architecture planning
