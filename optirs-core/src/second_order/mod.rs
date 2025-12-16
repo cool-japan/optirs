@@ -4,6 +4,7 @@
 // that use curvature information (Hessian matrix) to improve convergence.
 
 pub mod kfac;
+pub mod newton_cg;
 
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, ScalarOperand};
@@ -12,6 +13,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 
 pub use self::kfac::{KFACConfig, KFACLayerState, KFACStats, LayerInfo, LayerType, KFAC};
+pub use self::newton_cg::NewtonCG;
 
 /// Trait for second-order optimization methods
 pub trait SecondOrderOptimizer<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension> {

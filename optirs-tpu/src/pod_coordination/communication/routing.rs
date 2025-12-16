@@ -4,33 +4,23 @@ use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LoadBalancingAlgorithm {
+    #[default]
     RoundRobin,
     LeastConnections,
     Random,
 }
 
-impl Default for LoadBalancingAlgorithm {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkTopology;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum OptimizationObjective {
+    #[default]
     MinLatency,
     MaxThroughput,
     MinCost,
-}
-
-impl Default for OptimizationObjective {
-    fn default() -> Self {
-        Self::MinLatency
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -44,17 +34,12 @@ pub struct RouteMetrics {
     pub bandwidth_gbps: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RouteState {
+    #[default]
     Active,
     Inactive,
     Failed,
-}
-
-impl Default for RouteState {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

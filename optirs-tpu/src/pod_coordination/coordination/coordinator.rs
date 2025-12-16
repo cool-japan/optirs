@@ -11,17 +11,12 @@ pub struct Coordinator {
     pub config: PodCoordinationConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CoordinatorState {
+    #[default]
     Idle,
     Active,
     Syncing,
-}
-
-impl Default for CoordinatorState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -64,16 +64,29 @@ impl MemorySafetyValidator {
 
     /// Validate memory canary to detect buffer overflows
     pub fn validate_canary(ptr: *mut u8, expected_canary: u64) -> Result<(), GpuOptimError> {
-        // In a real implementation, this would check memory protection
-        // For now, we'll do basic validation
+        // FEATURE STATUS (v1.0.0): Basic pointer validation implemented
+        //
+        // For v1.0.0, this function validates pointer validity. Full canary memory
+        // reading and comparison requires GPU vendor-specific APIs for safe memory
+        // access, which is planned for v1.1.0+.
+        //
+        // Current implementation:
+        // - Validates pointer is not null (✓)
+        // - Canary generation is functional (✓)
+        //
+        // PLANNED (v1.1.0+): Full canary memory validation with:
+        // - GPU memory read via vendor APIs (CUDA: cudaMemcpy, Metal: MTLBuffer copy)
+        // - Canary comparison with expected_canary value
+        // - Buffer overflow detection and reporting
+        //
+        // For v1.0.0, users should rely on GPU vendor tools (CUDA memcheck, Metal
+        // memory validation) for comprehensive memory corruption detection.
         if ptr.is_null() {
             return Err(GpuOptimError::InvalidState(
                 "Null pointer during canary validation".to_string(),
             ));
         }
 
-        // TODO: In full implementation, read canary from memory and compare
-        // This would require GPU memory read capabilities
         Ok(())
     }
 

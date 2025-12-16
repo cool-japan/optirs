@@ -40,7 +40,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-bench = "0.1.0-beta.3"
+optirs-bench = "0.1.0-rc.1"
 scirs2-core = "0.1.0-rc.2"  # Required foundation
 ```
 
@@ -50,7 +50,7 @@ Enable specific benchmarking features:
 
 ```toml
 [dependencies]
-optirs-bench = { version = "0.1.0-beta.3", features = ["profiling", "regression_detection", "security_auditing"] }
+optirs-bench = { version = "0.1.0-rc.1", features = ["profiling", "regression_detection", "security_auditing"] }
 ```
 
 Available features:

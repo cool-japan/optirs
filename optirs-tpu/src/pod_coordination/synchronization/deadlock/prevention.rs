@@ -8,17 +8,12 @@ pub struct PreventionTechnique;
 
 pub type WoundWaitStrategy = PreventionTechnique;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PreventionPolicy {
+    #[default]
     WoundWait,
     WaitDie,
     NoWait,
-}
-
-impl Default for PreventionPolicy {
-    fn default() -> Self {
-        Self::WoundWait
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -28,17 +23,12 @@ pub struct DeadlockPreventer {
 }
 
 // Additional prevention types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AllocationPolicy {
+    #[default]
     Conservative,
     Optimistic,
     Adaptive,
-}
-
-impl Default for AllocationPolicy {
-    fn default() -> Self {
-        Self::Conservative
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -98,30 +88,20 @@ pub struct OptimisticStrategy {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum OrderingStrategy {
+    #[default]
     Total,
     Partial,
     None,
 }
 
-impl Default for OrderingStrategy {
-    fn default() -> Self {
-        Self::Total
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PreemptionPolicy {
     Allow,
     Deny,
+    #[default]
     Conditional,
-}
-
-impl Default for PreemptionPolicy {
-    fn default() -> Self {
-        Self::Conditional
-    }
 }
 
 #[derive(Debug, Clone, Default)]

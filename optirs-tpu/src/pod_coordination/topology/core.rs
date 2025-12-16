@@ -24,16 +24,11 @@ pub struct TopologyPerformanceMonitor {
     pub sampling_interval_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TopologyEvent {
     DeviceAdded(DeviceId),
     DeviceRemoved(DeviceId),
+    #[default]
     TopologyChanged,
     PerformanceUpdate(HashMap<String, f64>),
-}
-
-impl Default for TopologyEvent {
-    fn default() -> Self {
-        Self::TopologyChanged
-    }
 }

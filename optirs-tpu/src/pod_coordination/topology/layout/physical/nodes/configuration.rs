@@ -9,15 +9,10 @@ pub struct NodeConfiguration {
     pub cooling_type: CoolingType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CoolingType {
+    #[default]
     Air,
     Liquid,
     Hybrid,
-}
-
-impl Default for CoolingType {
-    fn default() -> Self {
-        Self::Air
-    }
 }

@@ -1208,12 +1208,21 @@ impl SystemProfiler {
     }
 
     fn start_profiling(&mut self) -> Result<()> {
-        // TODO: Implement system profiling integration
+        // INTEGRATION STUB (v1.0.0): System profiling integration planned for v1.1.0+
+        //
+        // This method provides a placeholder for external profiling tool integration
+        // (perf, valgrind, heaptrack, etc.). For v1.0.0, profiling is available
+        // through the core profiling infrastructure in scirs2_core::profiling.
+        //
+        // PLANNED (v1.1.0+): Integration with system-level profiling tools
         Ok(())
     }
 
     fn stop_profiling(&mut self) -> Result<()> {
-        // TODO: Stop all active profiling sessions
+        // INTEGRATION STUB (v1.0.0): Profiling session management planned for v1.1.0+
+        //
+        // This will coordinate stopping all active external profiling sessions
+        // when integrated profiling tools are supported.
         Ok(())
     }
 
@@ -1264,7 +1273,16 @@ impl MachineLearningDetector {
     }
 
     fn initialize_models(&mut self) -> Result<()> {
-        // TODO: Initialize ML models
+        // INTEGRATION STUB (v1.0.0): ML model initialization planned for v1.1.0+
+        //
+        // This method will initialize machine learning models for anomaly detection,
+        // leak prediction, and performance forecasting. Requires integration with
+        // ML frameworks (e.g., linfa, smartcore) which is planned for v1.1.0+.
+        //
+        // For v1.0.0, anomaly detection uses statistical methods available in
+        // scirs2_core::stats.
+        //
+        // PLANNED (v1.1.0+): Full ML model pipeline with training and inference
         Ok(())
     }
 

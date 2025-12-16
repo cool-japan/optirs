@@ -5,17 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Deadlock performance types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AllocationStrategy {
     FirstFit,
+    #[default]
     BestFit,
     WorstFit,
-}
-
-impl Default for AllocationStrategy {
-    fn default() -> Self {
-        Self::BestFit
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -70,17 +65,12 @@ pub struct DetectionTimeStatistics {
     pub percentiles: DetectionTimePercentiles,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum EvictionPolicy {
+    #[default]
     LRU,
     LFU,
     FIFO,
-}
-
-impl Default for EvictionPolicy {
-    fn default() -> Self {
-        Self::LRU
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -88,17 +78,12 @@ pub struct GarbageCollection {
     pub strategy: GcStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum GcStrategy {
+    #[default]
     Concurrent,
     Stop,
     Incremental,
-}
-
-impl Default for GcStrategy {
-    fn default() -> Self {
-        Self::Concurrent
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -141,17 +126,12 @@ pub struct LoadBalancing {
     pub strategy: LoadBalancingStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LoadBalancingMetric {
+    #[default]
     CPU,
     Memory,
     IO,
-}
-
-impl Default for LoadBalancingMetric {
-    fn default() -> Self {
-        Self::CPU
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -159,17 +139,12 @@ pub struct LoadBalancingMonitoring {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LoadBalancingStrategy {
+    #[default]
     RoundRobin,
     LeastConnections,
     Random,
-}
-
-impl Default for LoadBalancingStrategy {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -193,17 +168,12 @@ pub struct MemoryMonitoring {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PerformanceMetric {
+    #[default]
     Throughput,
     Latency,
     Utilization,
-}
-
-impl Default for PerformanceMetric {
-    fn default() -> Self {
-        Self::Throughput
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -238,30 +208,20 @@ pub struct ScalabilityConfiguration {
     pub vertical: VerticalScaling,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ScalingTrigger {
+    #[default]
     Load,
     Time,
     Manual,
 }
 
-impl Default for ScalingTrigger {
-    fn default() -> Self {
-        Self::Load
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SpawningStrategy {
     Eager,
     Lazy,
+    #[default]
     OnDemand,
-}
-
-impl Default for SpawningStrategy {
-    fn default() -> Self {
-        Self::OnDemand
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -275,17 +235,12 @@ pub struct ThreadManagement {
     pub spawning: SpawningStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum UpdateStrategy {
+    #[default]
     RollingUpdate,
     BlueGreen,
     Canary,
-}
-
-impl Default for UpdateStrategy {
-    fn default() -> Self {
-        Self::RollingUpdate
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -293,16 +248,11 @@ pub struct VerticalLimits {
     pub max_scale: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum VerticalMetric {
+    #[default]
     CPU,
     Memory,
-}
-
-impl Default for VerticalMetric {
-    fn default() -> Self {
-        Self::CPU
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -316,30 +266,20 @@ pub struct VerticalScaling {
 }
 
 // Performance analysis types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AlertSeverity {
+    #[default]
     Info,
     Warning,
     Critical,
 }
 
-impl Default for AlertSeverity {
-    fn default() -> Self {
-        Self::Info
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AlertType {
+    #[default]
     Performance,
     Resource,
     Error,
-}
-
-impl Default for AlertType {
-    fn default() -> Self {
-        Self::Performance
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -348,17 +288,12 @@ pub struct DevicePerformanceMetrics {
     pub metrics: HashMap<String, f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum EffortLevel {
     Low,
+    #[default]
     Medium,
     High,
-}
-
-impl Default for EffortLevel {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -394,42 +329,27 @@ pub struct PodPerformanceMetrics {
     pub aggregated_tflops: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecommendationPriority {
     Low,
+    #[default]
     Medium,
     High,
     Critical,
 }
 
-impl Default for RecommendationPriority {
-    fn default() -> Self {
-        Self::Medium
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecommendationType {
+    #[default]
     Configuration,
     Scaling,
     Optimization,
 }
 
-impl Default for RecommendationType {
-    fn default() -> Self {
-        Self::Configuration
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TrendDirection {
     Improving,
+    #[default]
     Stable,
     Declining,
-}
-
-impl Default for TrendDirection {
-    fn default() -> Self {
-        Self::Stable
-    }
 }

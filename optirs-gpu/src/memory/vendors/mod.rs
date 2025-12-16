@@ -116,7 +116,7 @@ impl GpuBackendFactory {
             } else if vendors.contains(&GpuVendor::Intel) {
                 return GpuVendor::Intel;
             }
-            return GpuVendor::Unknown;
+            GpuVendor::Unknown
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]

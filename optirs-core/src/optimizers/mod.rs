@@ -65,6 +65,8 @@ where
 }
 
 // Import specific optimizers
+mod adabound;
+mod adadelta;
 mod adagrad;
 mod adam;
 mod adamw;
@@ -75,6 +77,7 @@ mod lbfgs;
 mod lion;
 mod lookahead;
 mod radam;
+mod ranger;
 mod rmsprop;
 mod sam;
 mod sgd;
@@ -82,6 +85,8 @@ mod sgd_simd;
 mod sparse_adam;
 
 // Re-export specific optimizers
+pub use adabound::AdaBound;
+pub use adadelta::AdaDelta;
 pub use adagrad::Adagrad;
 pub use adam::Adam;
 pub use adamw::AdamW;
@@ -92,6 +97,7 @@ pub use lbfgs::LBFGS;
 pub use lion::Lion;
 pub use lookahead::Lookahead;
 pub use radam::RAdam;
+pub use ranger::Ranger;
 pub use rmsprop::RMSprop;
 pub use sam::SAM;
 pub use sgd::SGD;

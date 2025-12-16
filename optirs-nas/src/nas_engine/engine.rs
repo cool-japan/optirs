@@ -593,9 +593,44 @@ impl<
 
     /// Create search strategy based on configuration
     fn create_search_strategy(config: &NASConfig<T>) -> Result<Box<dyn SearchStrategy<T>>> {
-        // For now, return a simple random strategy for all types
-        // TODO: Implement actual strategies
-        Ok(Box::new(RandomStrategy::new(config)?))
+        match config.search_strategy {
+            SearchStrategyType::Random => Ok(Box::new(RandomStrategy::new(config)?)),
+            SearchStrategyType::Evolutionary => Ok(Box::new(EvolutionaryStrategy::new(config)?)),
+            // NOTE (v1.0.0): Additional strategies supported in future versions
+            // RL, Differentiable, and Bayesian strategies require more complex infrastructure
+            // that is planned for v1.1.0+. For v1.0.0, we provide Random and Evolutionary
+            // as proven baseline strategies.
+            SearchStrategyType::ReinforcementLearning => {
+                // Fallback to Evolutionary for v1.0.0
+                eprintln!("Warning: ReinforcementLearning strategy not fully implemented in v1.0.0, using Evolutionary as fallback");
+                Ok(Box::new(EvolutionaryStrategy::new(config)?))
+            }
+            SearchStrategyType::Differentiable => {
+                // Fallback to Random for v1.0.0 (Differentiable requires specialized ops)
+                eprintln!("Warning: Differentiable strategy not fully implemented in v1.0.0, using Random as fallback");
+                Ok(Box::new(RandomStrategy::new(config)?))
+            }
+            SearchStrategyType::BayesianOptimization => {
+                // Fallback to Evolutionary for v1.0.0
+                eprintln!("Warning: BayesianOptimization strategy not fully implemented in v1.0.0, using Evolutionary as fallback");
+                Ok(Box::new(EvolutionaryStrategy::new(config)?))
+            }
+            SearchStrategyType::Progressive => {
+                // Fallback to Evolutionary for v1.0.0
+                eprintln!("Warning: Progressive strategy not fully implemented in v1.0.0, using Evolutionary as fallback");
+                Ok(Box::new(EvolutionaryStrategy::new(config)?))
+            }
+            SearchStrategyType::MultiObjectiveEvolutionary => {
+                // Fallback to Evolutionary for v1.0.0
+                eprintln!("Warning: MultiObjectiveEvolutionary strategy not fully implemented in v1.0.0, using Evolutionary as fallback");
+                Ok(Box::new(EvolutionaryStrategy::new(config)?))
+            }
+            SearchStrategyType::NeuralPredictorBased => {
+                // Fallback to Evolutionary for v1.0.0
+                eprintln!("Warning: NeuralPredictorBased strategy not fully implemented in v1.0.0, using Evolutionary as fallback");
+                Ok(Box::new(EvolutionaryStrategy::new(config)?))
+            }
+        }
     }
 
     /// Create multi-objective optimizer

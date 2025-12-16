@@ -9,17 +9,12 @@ pub struct BufferPoolConfig {
     pub max_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum BufferStatus {
+    #[default]
     Available,
     InUse,
     Full,
-}
-
-impl Default for BufferStatus {
-    fn default() -> Self {
-        Self::Available
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -28,44 +23,29 @@ pub struct GarbageCollector;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemoryAllocator;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MemoryManagementStrategy {
+    #[default]
     Dynamic,
     Static,
     Hybrid,
 }
 
-impl Default for MemoryManagementStrategy {
-    fn default() -> Self {
-        Self::Dynamic
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MessageBufferPool;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MessagePriority {
     High,
+    #[default]
     Normal,
     Low,
 }
 
-impl Default for MessagePriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PoolGrowthStrategy {
+    #[default]
     Linear,
     Exponential,
     Fixed,
-}
-
-impl Default for PoolGrowthStrategy {
-    fn default() -> Self {
-        Self::Linear
-    }
 }

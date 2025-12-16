@@ -5,17 +5,12 @@ use serde::{Deserialize, Serialize};
 
 pub use super::algorithms::CombinationStrategy;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum EnsembleMethod {
+    #[default]
     Bagging,
     Boosting,
     Stacking,
-}
-
-impl Default for EnsembleMethod {
-    fn default() -> Self {
-        Self::Bagging
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,17 +24,12 @@ pub struct GraphFeature {
     pub edge_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MLModelType {
+    #[default]
     DecisionTree,
     NeuralNetwork,
     SVM,
-}
-
-impl Default for MLModelType {
-    fn default() -> Self {
-        Self::DecisionTree
-    }
 }
 
 #[derive(Debug, Clone, Default)]

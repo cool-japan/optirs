@@ -55,7 +55,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.3"
+optirs-core = "0.1.0-rc.1"
 scirs2-core = "0.1.0-rc.2"  # Required foundation
 ```
 
@@ -107,7 +107,7 @@ Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.1.0-beta.3", features = ["parallel", "simd"] }
+optirs-core = { version = "0.1.0-rc.1", features = ["parallel", "simd"] }
 ```
 
 ## Architecture

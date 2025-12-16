@@ -19,15 +19,10 @@ pub struct BufferManager {
     pub buffers: Vec<Buffer>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum BufferStrategy {
     RingBuffer,
+    #[default]
     DoubleBuffer,
     TripleBuffer,
-}
-
-impl Default for BufferStrategy {
-    fn default() -> Self {
-        Self::DoubleBuffer
-    }
 }

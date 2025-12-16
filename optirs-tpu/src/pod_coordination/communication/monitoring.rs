@@ -7,30 +7,20 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AlertManager;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AlertSeverity {
     Critical,
     Warning,
+    #[default]
     Info,
 }
 
-impl Default for AlertSeverity {
-    fn default() -> Self {
-        Self::Info
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum HealthState {
+    #[default]
     Healthy,
     Degraded,
     Unhealthy,
-}
-
-impl Default for HealthState {
-    fn default() -> Self {
-        Self::Healthy
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -38,17 +28,12 @@ pub struct HealthStatus {
     pub state: HealthState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MetricType {
     Counter,
+    #[default]
     Gauge,
     Histogram,
-}
-
-impl Default for MetricType {
-    fn default() -> Self {
-        Self::Gauge
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

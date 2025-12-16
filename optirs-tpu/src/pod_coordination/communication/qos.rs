@@ -14,17 +14,12 @@ pub struct FlowControl;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PriorityScheduling;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum QoSClass {
     RealTime,
     Interactive,
+    #[default]
     BestEffort,
-}
-
-impl Default for QoSClass {
-    fn default() -> Self {
-        Self::BestEffort
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -41,28 +36,18 @@ pub struct QoSRequirements {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ReliabilityRequirements;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TrafficClass {
     Control,
+    #[default]
     Data,
     Management,
 }
 
-impl Default for TrafficClass {
-    fn default() -> Self {
-        Self::Data
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TrafficPriority {
     High,
+    #[default]
     Medium,
     Low,
-}
-
-impl Default for TrafficPriority {
-    fn default() -> Self {
-        Self::Medium
-    }
 }

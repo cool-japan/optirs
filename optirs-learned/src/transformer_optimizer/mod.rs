@@ -7,20 +7,20 @@
 //
 // The system is organized into focused modules:
 //
-// - `config`: Configuration types and settings
-// - `network`: Core transformer network architecture (TODO)
-// - `attention`: Attention mechanisms and optimizations (TODO)
-// - `layers`: Neural network layers (feed-forward, layer norm, etc.) (TODO)
-// - `embedding`: Input/output embeddings and positional encoding (TODO)
-// - `sequence`: Sequence buffer and history management (TODO)
-// - `strategy`: Strategy prediction and selection (TODO)
-// - `meta_learning`: Meta-learning components (TODO)
-// - `domain`: Domain adaptation mechanisms (TODO)
-// - `metrics`: Performance tracking and evaluation (TODO)
+// - `config`: Configuration types and settings (✓ v1.0.0)
+// - `network`: Core transformer network architecture (ROADMAP v1.1.0+)
+// - `attention`: Attention mechanisms and optimizations (ROADMAP v1.1.0+)
+// - `layers`: Neural network layers (feed-forward, layer norm, etc.) (ROADMAP v1.1.0+)
+// - `embedding`: Input/output embeddings and positional encoding (ROADMAP v1.1.0+)
+// - `sequence`: Sequence buffer and history management (ROADMAP v1.1.0+)
+// - `strategy`: Strategy prediction and selection (ROADMAP v1.1.0+)
+// - `meta_learning`: Meta-learning components (ROADMAP v1.1.0+)
+// - `domain`: Domain adaptation mechanisms (ROADMAP v1.1.0+)
+// - `metrics`: Performance tracking and evaluation (ROADMAP v1.1.0+)
 
 pub mod config;
 
-// TODO: Additional modules to be extracted from transformer_optimizer.rs
+// ROADMAP (v1.1.0+): Additional modules planned for future releases from transformer_optimizer.rs
 // pub mod network;      // TransformerNetwork, TransformerLayer, etc.
 // pub mod attention;    // MultiHeadAttention, RelativePositionBias, RoPEEmbeddings, etc.
 // pub mod layers;       // FeedForwardNetwork, LayerNorm, DropoutLayer, etc.
@@ -36,7 +36,7 @@ pub use config::{
     AttentionOptimization, PositionalEncodingType, TransformerOptimizerConfig,
 };
 
-// TODO: Re-export other types once modules are created
+// ROADMAP (v1.1.0+): Additional re-exports once modules are created
 // pub use network::*;
 // pub use attention::*;
 // pub use layers::*;
@@ -47,4 +47,6 @@ pub use config::{
 // pub use domain::*;
 // pub use metrics::*;
 
-// TODO: Main TransformerOptimizer struct to be moved here once refactoring is complete
+// ROADMAP (v1.1.0+): Main TransformerOptimizer struct to be moved here from transformer_optimizer.rs
+// once modular refactoring is complete. For v1.0.0, the implementation remains in the parent
+// transformer_optimizer.rs file to maintain stability.

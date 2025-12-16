@@ -8,18 +8,13 @@ pub struct SchedulingError;
 
 pub type SchedulingResult<T> = std::result::Result<T, SchedulingError>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SchedulingPolicy {
     FIFO,
+    #[default]
     Priority,
     RoundRobin,
     Weighted,
-}
-
-impl Default for SchedulingPolicy {
-    fn default() -> Self {
-        Self::Priority
-    }
 }
 
 #[derive(Debug, Clone, Default)]

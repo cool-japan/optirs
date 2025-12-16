@@ -8,18 +8,13 @@ pub struct ProtocolError;
 
 pub type ProtocolResult<T> = std::result::Result<T, ProtocolError>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ProtocolType {
     HTTP,
+    #[default]
     GRPC,
     TCP,
     UDP,
-}
-
-impl Default for ProtocolType {
-    fn default() -> Self {
-        Self::GRPC
-    }
 }
 
 #[derive(Debug, Clone, Default)]

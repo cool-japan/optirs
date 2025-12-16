@@ -1,7 +1,7 @@
 //! # OptiRS Core - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.1.0-beta.3
-//! **Status:** Production Ready
+//! **Version:** 0.1.0-rc.1
+//! **Status:** Release Candidate - Production Ready
 //!
 //! `optirs-core` provides state-of-the-art optimization algorithms for machine learning,
 //! built exclusively on the [SciRS2](https://github.com/cool-japan/scirs) scientific computing ecosystem.
@@ -32,13 +32,16 @@
 //!
 //! ## Features
 //!
-//! ### 16 State-of-the-Art Optimizers
+//! ### 19 State-of-the-Art Optimizers (NEW in RC.1!)
 //!
 //! **First-Order Methods:**
 //! - **SGD** - Stochastic Gradient Descent with optional momentum
 //! - **SimdSGD** - SIMD-accelerated SGD (2-4x faster)
 //! - **Adam** - Adaptive Moment Estimation
 //! - **AdamW** - Adam with decoupled weight decay
+//! - **AdaDelta** - Adaptive LR without manual tuning ⭐ NEW!
+//! - **AdaBound** - Smooth Adam→SGD transition ⭐ NEW!
+//! - **Ranger** - RAdam + Lookahead combination ⭐ NEW!
 //! - **RMSprop** - Root Mean Square Propagation
 //! - **Adagrad** - Adaptive Gradient Algorithm
 //! - **LAMB** - Layer-wise Adaptive Moments for Batch training
@@ -52,7 +55,8 @@
 //!
 //! **Second-Order Methods:**
 //! - **L-BFGS** - Limited-memory BFGS
-//! - **Newton** - Newton's method with Hessian
+//! - **K-FAC** - Kronecker-Factored Approximate Curvature
+//! - **Newton-CG** - Newton Conjugate Gradient ⭐ NEW!
 //!
 //! ### Performance Optimizations (Phase 2 Complete)
 //!
@@ -358,7 +362,9 @@ pub use privacy::{
     AccountingMethod, ClippingStats, DifferentialPrivacyConfig, DifferentiallyPrivateOptimizer,
     MomentsAccountant, NoiseMechanism, PrivacyBudget, PrivacyValidation,
 };
-pub use second_order::{HessianInfo, Newton, SecondOrderOptimizer, LBFGS as SecondOrderLBFGS};
+pub use second_order::{
+    HessianInfo, Newton, NewtonCG, SecondOrderOptimizer, LBFGS as SecondOrderLBFGS,
+};
 pub use self_tuning::{
     OptimizerInfo, OptimizerTrait, PerformanceStats, SelfTuningConfig, SelfTuningOptimizer,
     SelfTuningStatistics, TargetMetric,

@@ -18,32 +18,22 @@ use super::processing::ProcessingCapabilities;
 use super::reliability::ReliabilityMetrics;
 use super::storage::StorageCapabilities;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NodeType {
+    #[default]
     Compute,
     Storage,
     Network,
     Management,
 }
 
-impl Default for NodeType {
-    fn default() -> Self {
-        Self::Compute
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NodeStatus {
     Online,
+    #[default]
     Offline,
     Maintenance,
     Failed,
-}
-
-impl Default for NodeStatus {
-    fn default() -> Self {
-        Self::Offline
-    }
 }
 
 #[derive(Debug, Clone, Default)]

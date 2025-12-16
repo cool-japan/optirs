@@ -3,8 +3,9 @@
 use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BatchParallelizationStrategy {
+    #[default]
     DataParallel,
     ModelParallel,
     PipelineParallel,
@@ -12,14 +13,9 @@ pub enum BatchParallelizationStrategy {
     Adaptive,
 }
 
-impl Default for BatchParallelizationStrategy {
-    fn default() -> Self {
-        Self::DataParallel
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CommunicationPattern {
+    #[default]
     AllReduce,
     AllGather,
     AllToAll,
@@ -27,14 +23,9 @@ pub enum CommunicationPattern {
     Broadcast,
 }
 
-impl Default for CommunicationPattern {
-    fn default() -> Self {
-        Self::AllReduce
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CoordinationStrategy {
+    #[default]
     Centralized,
     Decentralized,
     Hierarchical,
@@ -42,52 +33,31 @@ pub enum CoordinationStrategy {
     Mesh,
 }
 
-impl Default for CoordinationStrategy {
-    fn default() -> Self {
-        Self::Centralized
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GradientAggregationMethod {
+    #[default]
     Average,
     Sum,
     WeightedAverage,
     LocalSGD,
 }
 
-impl Default for GradientAggregationMethod {
-    fn default() -> Self {
-        Self::Average
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LoadBalancingStrategy {
     Static,
+    #[default]
     Dynamic,
     Adaptive,
     LatencyAware,
     BandwidthAware,
 }
 
-impl Default for LoadBalancingStrategy {
-    fn default() -> Self {
-        Self::Dynamic
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum MemoryManagementStrategy {
     StaticPartitioning,
+    #[default]
     DynamicPartitioning,
     Pooling,
-}
-
-impl Default for MemoryManagementStrategy {
-    fn default() -> Self {
-        Self::DynamicPartitioning
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -108,16 +78,11 @@ pub struct PodCoordinationConfig {
     pub adaptive_optimization: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SynchronizationMode {
+    #[default]
     Synchronous,
     Asynchronous,
     BulkSynchronous,
     Adaptive,
-}
-
-impl Default for SynchronizationMode {
-    fn default() -> Self {
-        Self::Synchronous
-    }
 }

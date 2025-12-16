@@ -8,30 +8,20 @@ pub struct ActiveRecovery {
     pub in_progress: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CoordinatorSelection {
     Random,
+    #[default]
     Priority,
     LoadBased,
 }
 
-impl Default for CoordinatorSelection {
-    fn default() -> Self {
-        Self::Priority
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CoordinatorState {
     Active,
+    #[default]
     Standby,
     Failed,
-}
-
-impl Default for CoordinatorState {
-    fn default() -> Self {
-        Self::Standby
-    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -51,18 +41,13 @@ impl DeadlockRecoverySystem {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DeadlockSeverity {
     Low,
+    #[default]
     Medium,
     High,
     Critical,
-}
-
-impl Default for DeadlockSeverity {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -75,17 +60,12 @@ pub struct DistributedRecovery {
     pub strategy: DistributedRecoveryStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DistributedRecoveryStrategy {
+    #[default]
     Centralized,
     Decentralized,
     Hybrid,
-}
-
-impl Default for DistributedRecoveryStrategy {
-    fn default() -> Self {
-        Self::Centralized
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,31 +94,21 @@ pub struct PhaseRecord {
     pub result: PhaseResult,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PhaseResult {
+    #[default]
     Success,
     Failure,
     Skipped,
 }
 
-impl Default for PhaseResult {
-    fn default() -> Self {
-        Self::Success
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryAction {
     Abort,
+    #[default]
     Retry,
     Rollback,
     Kill,
-}
-
-impl Default for RecoveryAction {
-    fn default() -> Self {
-        Self::Retry
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,17 +116,12 @@ pub struct RecoveryConstraint {
     pub type_: RecoveryConstraintType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryConstraintType {
+    #[default]
     Time,
     Resource,
     Priority,
-}
-
-impl Default for RecoveryConstraintType {
-    fn default() -> Self {
-        Self::Time
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -174,17 +139,12 @@ pub struct RecoveryExecutor {
     pub strategy: RecoveryExecutorStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryExecutorStrategy {
+    #[default]
     Sequential,
     Parallel,
     Adaptive,
-}
-
-impl Default for RecoveryExecutorStrategy {
-    fn default() -> Self {
-        Self::Sequential
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -197,31 +157,21 @@ pub struct RecoveryOptimization {
     pub algorithm: RecoveryOptimizationAlgorithm,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryOptimizationAlgorithm {
+    #[default]
     Greedy,
     Dynamic,
     Heuristic,
 }
 
-impl Default for RecoveryOptimizationAlgorithm {
-    fn default() -> Self {
-        Self::Greedy
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryPhase {
+    #[default]
     Detection,
     Analysis,
     Execution,
     Verification,
-}
-
-impl Default for RecoveryPhase {
-    fn default() -> Self {
-        Self::Detection
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -244,17 +194,12 @@ pub struct RecoveryStatistics {
     pub total_recoveries: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryStrategy {
+    #[default]
     VictimSelection,
     Rollback,
     Timeout,
-}
-
-impl Default for RecoveryStrategy {
-    fn default() -> Self {
-        Self::VictimSelection
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -262,43 +207,28 @@ pub struct RecoveryVerification {
     pub method: RecoveryVerificationMethod,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryVerificationMethod {
+    #[default]
     StateCheck,
     Invariants,
     Monitoring,
 }
 
-impl Default for RecoveryVerificationMethod {
-    fn default() -> Self {
-        Self::StateCheck
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RollbackMechanism {
+    #[default]
     Checkpoint,
     Log,
     Snapshot,
 }
 
-impl Default for RollbackMechanism {
-    fn default() -> Self {
-        Self::Checkpoint
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SelectionCriterion {
+    #[default]
     LeastWork,
     MostWork,
     Random,
-}
-
-impl Default for SelectionCriterion {
-    fn default() -> Self {
-        Self::LeastWork
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -311,30 +241,20 @@ pub struct StrategyStatistics {
     pub success_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SynchronizationProtocol {
+    #[default]
     TwoPhase,
     ThreePhase,
     Paxos,
 }
 
-impl Default for SynchronizationProtocol {
-    fn default() -> Self {
-        Self::TwoPhase
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SystemHealth {
+    #[default]
     Healthy,
     Degraded,
     Critical,
-}
-
-impl Default for SystemHealth {
-    fn default() -> Self {
-        Self::Healthy
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -352,15 +272,10 @@ pub struct VictimSelection {
     pub algorithm: VictimSelectionAlgorithm,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum VictimSelectionAlgorithm {
     YoungestTransaction,
+    #[default]
     LeastCost,
     Random,
-}
-
-impl Default for VictimSelectionAlgorithm {
-    fn default() -> Self {
-        Self::LeastCost
-    }
 }

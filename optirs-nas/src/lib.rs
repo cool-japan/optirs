@@ -1,6 +1,6 @@
 //! # OptiRS NAS - Neural Architecture Search
 //!
-//! **Version:** 0.1.0-beta.3
+//! **Version:** 0.1.0-rc.1
 //! **Status:** Research Phase (Early Development)
 //!
 //! ⚠️ **Warning:** This crate is in early research phase. APIs are unstable and may change
@@ -12,9 +12,9 @@
 //! ## Dependencies
 //!
 //! - `scirs2-core` 0.1.0-rc.2 - Required foundation
-//! - `optirs-core` 0.1.0-beta.3 - Core optimizers
+//! - `optirs-core` 0.1.0-rc.1 - Core optimizers
 //!
-//! ## Implementation Status (Beta.3)
+//! ## Implementation Status (RC.1)
 //!
 //! - 🚧 Bayesian optimization (in development)
 //! - 🚧 Evolutionary algorithms (planned)

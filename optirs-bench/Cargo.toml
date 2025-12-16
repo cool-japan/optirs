@@ -75,7 +75,9 @@ path = "src/bin/regression_detector.rs"
 [[bin]]
 name = "memory-leak-reporter"
 path = "src/bin/memory_reporter.rs"
+doc = false
 
 [[bin]]
 name = "security-audit-scanner"
 path = "src/bin/security_scanner.rs"
+doc = false

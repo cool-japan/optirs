@@ -37,18 +37,13 @@ pub struct CommunicationStep {
     pub devices: Vec<DeviceId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CommunicationStepType {
+    #[default]
     Send,
     Receive,
     Broadcast,
     AllReduce,
-}
-
-impl Default for CommunicationStepType {
-    fn default() -> Self {
-        Self::Send
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,17 +51,12 @@ pub struct DeviceLayout {
     pub devices: Vec<DeviceId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LinkType {
+    #[default]
     Direct,
     Switch,
     Hierarchical,
-}
-
-impl Default for LinkType {
-    fn default() -> Self {
-        Self::Direct
-    }
 }
 
 pub type RoutingTable = HashMap<(DeviceId, DeviceId), Vec<DeviceId>>;

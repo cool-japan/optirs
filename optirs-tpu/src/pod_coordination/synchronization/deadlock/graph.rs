@@ -4,17 +4,12 @@ use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ChangeType {
+    #[default]
     Added,
     Removed,
     Modified,
-}
-
-impl Default for ChangeType {
-    fn default() -> Self {
-        Self::Added
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -78,18 +73,13 @@ pub struct EdgeMetadata {
     pub weight: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum EdgeType {
+    #[default]
     Dependency,
     Resource,
     Communication,
     WaitsFor,
-}
-
-impl Default for EdgeType {
-    fn default() -> Self {
-        Self::Dependency
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -155,43 +145,28 @@ pub struct NodeMetadata {
     pub properties: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NodeState {
+    #[default]
     Active,
     Waiting,
     Blocked,
 }
 
-impl Default for NodeState {
-    fn default() -> Self {
-        Self::Active
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NodeType {
+    #[default]
     Process,
     Resource,
     Lock,
 }
 
-impl Default for NodeType {
-    fn default() -> Self {
-        Self::Process
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum OptimizationOperation {
+    #[default]
     Merge,
     Split,
     Remove,
-}
-
-impl Default for OptimizationOperation {
-    fn default() -> Self {
-        Self::Merge
-    }
 }
 
 #[derive(Debug, Clone, Default)]

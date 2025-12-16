@@ -3,17 +3,12 @@
 use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LoadBalancingAlgorithm {
+    #[default]
     RoundRobin,
     LeastConnections,
     WeightedRoundRobin,
-}
-
-impl Default for LoadBalancingAlgorithm {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -21,17 +16,12 @@ pub struct MessagePassingConfig {
     pub buffer_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MessagePriority {
     Low,
+    #[default]
     Normal,
     High,
-}
-
-impl Default for MessagePriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,41 +53,26 @@ pub struct NetworkSynchronizationManager {
     pub config: NetworkSyncConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NetworkTopology {
     Star,
     Ring,
+    #[default]
     Mesh,
 }
 
-impl Default for NetworkTopology {
-    fn default() -> Self {
-        Self::Mesh
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SyncMessageType {
+    #[default]
     Request,
     Response,
     Heartbeat,
 }
 
-impl Default for SyncMessageType {
-    fn default() -> Self {
-        Self::Request
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum NetworkTimeProtocol {
+    #[default]
     NTP,
     SNTP,
     PTP,
-}
-
-impl Default for NetworkTimeProtocol {
-    fn default() -> Self {
-        Self::NTP
-    }
 }

@@ -8,17 +8,12 @@ pub struct BerkeleyConfig {
     pub timeout_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ClockSyncProtocol {
+    #[default]
     NTP,
     PTP,
     Custom,
-}
-
-impl Default for ClockSyncProtocol {
-    fn default() -> Self {
-        Self::NTP
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -75,42 +70,27 @@ pub struct SntpSynchronizer {
     pub config: SntpConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PtpVersion {
     V1,
+    #[default]
     V2,
     V2_1,
 }
 
-impl Default for PtpVersion {
-    fn default() -> Self {
-        Self::V2
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PtpTransport {
+    #[default]
     UDP,
     Ethernet,
     Serial,
 }
 
-impl Default for PtpTransport {
-    fn default() -> Self {
-        Self::UDP
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PtpProfile {
+    #[default]
     Default,
     Telecom,
     Power,
     Industrial,
-}
-
-impl Default for PtpProfile {
-    fn default() -> Self {
-        Self::Default
-    }
 }

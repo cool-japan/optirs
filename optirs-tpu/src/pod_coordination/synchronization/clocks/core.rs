@@ -86,30 +86,20 @@ impl ClockSynchronizationManager {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ClockSynchronizationState {
     Synced,
     Syncing,
+    #[default]
     OutOfSync,
 }
 
-impl Default for ClockSynchronizationState {
-    fn default() -> Self {
-        Self::OutOfSync
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ClockSynchronizationStatus {
     Active,
+    #[default]
     Inactive,
     Error,
-}
-
-impl Default for ClockSynchronizationStatus {
-    fn default() -> Self {
-        Self::Inactive
-    }
 }
 
 #[derive(Debug, Clone, Default)]

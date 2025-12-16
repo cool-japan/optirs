@@ -27,17 +27,12 @@ pub struct GpsErrorCorrection {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum GpsReceiverType {
+    #[default]
     Standard,
     HighPrecision,
     Military,
-}
-
-impl Default for GpsReceiverType {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -19,43 +19,28 @@ pub use core::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BarrierId(pub u64);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum BarrierState {
     Active,
+    #[default]
     Waiting,
     Complete,
 }
 
-impl Default for BarrierState {
-    fn default() -> Self {
-        Self::Waiting
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum BarrierType {
+    #[default]
     Global,
     Local,
     Hierarchical,
 }
 
-impl Default for BarrierType {
-    fn default() -> Self {
-        Self::Global
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DeviceStatus {
     Active,
+    #[default]
     Idle,
     Failed,
-}
-
-impl Default for DeviceStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -6,17 +6,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default)]
 pub struct EventHandler;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum HandlerType {
     Sync,
+    #[default]
     Async,
     Buffered,
-}
-
-impl Default for HandlerType {
-    fn default() -> Self {
-        Self::Async
-    }
 }
 
 #[derive(Debug, Clone, Default)]

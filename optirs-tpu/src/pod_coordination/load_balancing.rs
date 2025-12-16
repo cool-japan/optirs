@@ -4,17 +4,12 @@ use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DeviceAvailability {
+    #[default]
     Available,
     Busy,
     Offline,
-}
-
-impl Default for DeviceAvailability {
-    fn default() -> Self {
-        Self::Available
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -26,17 +21,12 @@ pub struct DeviceLoad {
 #[derive(Debug, Clone, Default)]
 pub struct LoadBalancer;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LoadBalancingAlgorithm {
+    #[default]
     RoundRobin,
     LeastLoaded,
     Random,
-}
-
-impl Default for LoadBalancingAlgorithm {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
 }
 
 #[derive(Debug, Clone, Default)]

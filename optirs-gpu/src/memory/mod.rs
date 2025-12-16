@@ -214,8 +214,16 @@ impl GpuMemorySystem {
             self.monitoring_enabled = true;
         }
 
-        // TODO: Implement initialize method in UnifiedAllocator
-        // self.allocation_engine.initialize()?;
+        // FEATURE STATUS (v1.0.0): UnifiedAllocator initialization pending
+        //
+        // The allocation engine is functional without explicit initialization.
+        // Explicit initialization will be added in v1.1.0+ for:
+        // - Pre-allocation of memory pools
+        // - GPU device capability detection
+        // - Optimal allocator strategy selection
+        //
+        // For v1.0.0, initialization happens lazily on first allocation.
+        // PLANNED (v1.1.0+): self.allocation_engine.initialize()?;
 
         Ok(())
     }
@@ -367,7 +375,18 @@ impl GpuMemorySystem {
             total_deallocations: unified_stats.total_deallocations,
             cache_hits: unified_stats.routing_cache_hits,
             cache_misses: unified_stats.routing_decisions - unified_stats.routing_cache_hits,
-            fragmentation_events: 0, // TODO: Track fragmentation events in UnifiedAllocator
+            // FEATURE STATUS (v1.0.0): Fragmentation tracking integration pending
+            //
+            // The defragmentation engine tracks fragmentation internally, but exposing
+            // this metric through SystemStats requires aggregation across multiple
+            // allocation strategies, which is planned for v1.1.0.
+            //
+            // For v1.0.0, users can access fragmentation data directly through:
+            // - memory_manager.get_stats().fragmentation_ratio
+            // - Defragmentation engine metrics
+            //
+            // PLANNED (v1.1.0+): Aggregate fragmentation events from all allocators
+            fragmentation_events: 0,
             total_allocated_bytes: unified_stats.bytes_allocated,
             peak_allocated_bytes: unified_stats.peak_memory_usage as u64,
             average_allocation_size: if unified_stats.total_allocations > 0 {

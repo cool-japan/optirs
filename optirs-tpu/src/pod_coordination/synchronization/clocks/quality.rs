@@ -18,31 +18,21 @@ pub struct QualityAssessment {
     pub grade: QualityGrade,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum QualityGrade {
     Excellent,
     Good,
+    #[default]
     Fair,
     Poor,
 }
 
-impl Default for QualityGrade {
-    fn default() -> Self {
-        Self::Fair
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum QualityMetric {
+    #[default]
     Accuracy,
     Stability,
     Reliability,
-}
-
-impl Default for QualityMetric {
-    fn default() -> Self {
-        Self::Accuracy
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -72,17 +62,12 @@ pub struct SourceQualityMonitoring {
     pub config: QualityMonitoringConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TrendDirection {
     Improving,
+    #[default]
     Stable,
     Declining,
-}
-
-impl Default for TrendDirection {
-    fn default() -> Self {
-        Self::Stable
-    }
 }
 
 #[derive(Debug, Clone)]

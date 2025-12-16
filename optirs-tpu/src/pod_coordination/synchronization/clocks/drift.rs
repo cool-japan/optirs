@@ -14,30 +14,20 @@ pub struct DriftCorrector {
     pub current_drift: ClockDrift,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CorrectionMethod {
+    #[default]
     Linear,
     Exponential,
     Adaptive,
 }
 
-impl Default for CorrectionMethod {
-    fn default() -> Self {
-        Self::Linear
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DriftCompensationAlgorithm {
+    #[default]
     Linear,
     Quadratic,
     Adaptive,
-}
-
-impl Default for DriftCompensationAlgorithm {
-    fn default() -> Self {
-        Self::Linear
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,17 +44,12 @@ impl std::fmt::Display for DriftCompensationError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DriftCompensationStatus {
     Active,
+    #[default]
     Inactive,
     Error,
-}
-
-impl Default for DriftCompensationStatus {
-    fn default() -> Self {
-        Self::Inactive
-    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -27,31 +27,21 @@ pub struct CommunicationStatistics {
     pub messages_received: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CommunicationStatus {
     Active,
+    #[default]
     Pending,
     Complete,
     Failed,
 }
 
-impl Default for CommunicationStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MessageType {
+    #[default]
     Data,
     Control,
     Heartbeat,
-}
-
-impl Default for MessageType {
-    fn default() -> Self {
-        Self::Data
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,28 +53,18 @@ pub struct PerformanceTargets {
     pub throughput_gbps: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum Priority {
     High,
+    #[default]
     Medium,
     Low,
 }
 
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Medium
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SchedulingAlgorithm {
+    #[default]
     FIFO,
     Priority,
     RoundRobin,
-}
-
-impl Default for SchedulingAlgorithm {
-    fn default() -> Self {
-        Self::FIFO
-    }
 }

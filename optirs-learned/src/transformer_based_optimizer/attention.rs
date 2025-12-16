@@ -99,8 +99,17 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
         let total_seq_len = query.shape()[0];
         let model_dim = query.shape()[1];
 
-        // For now, assume batch_size = 1 and seq_length = total_seq_len
-        // TODO: This should be passed as parameters or inferred properly
+        // NOTE: For v1.0.0, batch_size=1 is intentional (single optimization task per forward pass)
+        //
+        // Optimization tasks typically process one trajectory at a time. Multi-batch support
+        // would enable parallel optimization of multiple independent tasks, which is planned
+        // for v1.1.0+ when used with distributed training features.
+        //
+        // For v1.0.0:
+        // - batch_size = 1 (single task)
+        // - seq_length = total_seq_len (full optimization history)
+        //
+        // PLANNED (v1.1.0+): Explicit batch dimension in forward() signature for parallel tasks
         let batch_size = 1;
         let seq_length = total_seq_len;
 

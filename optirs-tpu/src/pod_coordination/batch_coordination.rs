@@ -3,18 +3,13 @@
 use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AggregationMethod {
     Sum,
+    #[default]
     Average,
     Max,
     Min,
-}
-
-impl Default for AggregationMethod {
-    fn default() -> Self {
-        Self::Average
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -34,17 +29,12 @@ pub struct BatchExecution {
     pub status: BatchExecutionResult,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum BatchExecutionResult {
+    #[default]
     Success,
     PartialSuccess,
     Failed,
-}
-
-impl Default for BatchExecutionResult {
-    fn default() -> Self {
-        Self::Success
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -65,17 +55,12 @@ pub struct BatchPartition<T> {
     pub completed_at: Option<std::time::Instant>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum BatchPriority {
     Low,
+    #[default]
     Normal,
     High,
-}
-
-impl Default for BatchPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,17 +69,12 @@ pub struct BatchProgress {
     pub total: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum CachingStrategy {
     None,
+    #[default]
     LRU,
     Adaptive,
-}
-
-impl Default for CachingStrategy {
-    fn default() -> Self {
-        Self::LRU
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -108,32 +88,22 @@ pub struct DeviceExecutionStatistics {
     pub batches_processed: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum DistributionStrategy {
     Broadcast,
+    #[default]
     Scatter,
     AllGather,
 }
 
-impl Default for DistributionStrategy {
-    fn default() -> Self {
-        Self::Scatter
-    }
-}
-
 pub type PartitionId = u64;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum PartitionStatus {
+    #[default]
     Ready,
     Processing,
     Complete,
-}
-
-impl Default for PartitionStatus {
-    fn default() -> Self {
-        Self::Ready
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -142,17 +112,12 @@ pub struct PipelineStage {
     pub status: PipelineStageStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum PipelineStageStatus {
+    #[default]
     Idle,
     Running,
     Complete,
-}
-
-impl Default for PipelineStageStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, Default)]

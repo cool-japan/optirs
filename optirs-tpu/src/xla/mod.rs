@@ -331,39 +331,26 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
         }
 
         // Run compilation pipeline
-        let mut progress = CompilationProgress {
-            current_phase: CompilationPhase::GraphCapture,
-            progress: 0.0,
-            started_at: start_time,
-            estimated_completion: None,
-        };
-
-        // Graph capture and shape inference
-        progress.current_phase = CompilationPhase::ShapeInference;
+        // Shape inference
         let shaped_computation = self.run_shape_inference(computation)?;
 
         // Operation lowering
-        progress.current_phase = CompilationPhase::OperationLowering;
         let lowered_computation = self.run_operation_lowering(shaped_computation)?;
 
         // Graph optimization
-        progress.current_phase = CompilationPhase::GraphOptimization;
         let optimized_computation = self.optimization_pipeline.optimize(lowered_computation)?;
 
         // Memory planning
-        progress.current_phase = CompilationPhase::MemoryPlanning;
         let memory_plan = self
             .memory_planner
             .create_memory_plan(&optimized_computation)?;
 
         // Code generation
-        progress.current_phase = CompilationPhase::CodeGeneration;
         let generated_code = self
             .code_generator
             .generate_code(&optimized_computation, &memory_plan)?;
 
         // Runtime integration
-        progress.current_phase = CompilationPhase::RuntimeIntegration;
         let binary = self.integrate_runtime(generated_code)?;
 
         // Cache the result

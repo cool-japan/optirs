@@ -6,18 +6,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AdaptiveCompressionSettings;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CompressionAlgorithm {
+    #[default]
     None,
     Gzip,
     Lz4,
     Zstd,
-}
-
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

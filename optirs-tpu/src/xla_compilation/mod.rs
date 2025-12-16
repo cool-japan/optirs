@@ -12,10 +12,13 @@ pub use config::*;
 pub use graph::*;
 pub use types::*;
 
-// TODO: Additional modules to be created:
+// ROADMAP (v1.1.0+): Additional modules planned for future releases:
 // pub mod optimization;  // OptimizationPipeline, PassManager, etc.
 // pub mod memory;        // MemoryPlanner, memory allocation
 // pub mod performance;   // PerformanceAnalyzer, profiling
 // pub mod codegen;       // TPUCodeGenerator
 // pub mod cache;         // CompilationCache
 // pub mod parallel;      // ParallelCompilationManager
+//
+// v1.0.0 provides the core XLA compilation infrastructure.
+// Advanced features above will be added in future releases.

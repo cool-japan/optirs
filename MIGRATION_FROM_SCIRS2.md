@@ -1,7 +1,7 @@
 # Migration Guide: From SciRS2-Optim to OptiRS
 
-**Version:** 0.1.0-beta.3
-**Status:** Production-Ready with SciRS2 Integration
+**Version:** 0.1.0-rc.1
+**Status:** Release Candidate - Pre-release Testing with SciRS2 Integration
 
 This guide helps users migrate from `scirs2-optim` (the optimization module within SciRS2) to the standalone **OptiRS** library, which provides extended optimization capabilities while maintaining full compatibility with the SciRS2 ecosystem.
 
@@ -32,7 +32,7 @@ scirs2-optim = "0.1.0-rc.2"  # Part of SciRS2 ecosystem
 ### OptiRS (Standalone)
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.3"
+optirs-core = "0.1.0-rc.1"
 scirs2-core = "0.1.0-rc.2"  # Required foundation
 ```
 
@@ -54,12 +54,12 @@ scirs2-optim = "0.1.0-rc.2"
 **After (OptiRS):**
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.3"
+optirs-core = "0.1.0-rc.1"
 scirs2-core = "0.1.0-rc.2"  # Required foundation
 
 # Optional modules
-optirs-gpu = { version = "0.1.0-beta.3", optional = true }
-optirs-bench = { version = "0.1.0-beta.3", optional = true }
+optirs-gpu = { version = "0.1.0-rc.1", optional = true }
+optirs-bench = { version = "0.1.0-rc.1", optional = true }
 ```
 
 ### Step 2: Update Imports

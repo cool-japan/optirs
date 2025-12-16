@@ -3,17 +3,12 @@
 use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
+    #[default]
     Healthy,
     Degraded,
     Failed,
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        Self::Healthy
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -32,17 +27,12 @@ pub struct AlertConfiguration {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AlertSeverity {
+    #[default]
     Info,
     Warning,
     Critical,
-}
-
-impl Default for AlertSeverity {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -50,17 +40,12 @@ pub struct HealthAlert {
     pub severity: AlertSeverity,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum HealthCheckType {
+    #[default]
     Connectivity,
     Performance,
     Resource,
-}
-
-impl Default for HealthCheckType {
-    fn default() -> Self {
-        Self::Connectivity
-    }
 }
 
 #[derive(Debug, Clone, Default)]

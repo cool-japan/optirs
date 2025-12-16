@@ -8,18 +8,13 @@ pub struct AggregationConfig {
     pub method: crate::pod_coordination::coordination::config::GradientAggregationMethod,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum AggregationState {
+    #[default]
     Idle,
     Collecting,
     Aggregating,
     Broadcasting,
-}
-
-impl Default for AggregationState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -73,17 +68,12 @@ pub struct GradientBuffer {
     pub status: GradientBufferStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum GradientBufferStatus {
+    #[default]
     Empty,
     Partial,
     Full,
-}
-
-impl Default for GradientBufferStatus {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -91,18 +81,13 @@ pub struct LocalSGDParams {
     pub local_steps: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum QuantizationMethod {
+    #[default]
     None,
     Int8,
     Int16,
     Dynamic,
-}
-
-impl Default for QuantizationMethod {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -115,17 +100,12 @@ pub struct SCAFFOLDParams {
     pub control_variates: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum SparsificationMethod {
+    #[default]
     TopK,
     Threshold,
     Random,
-}
-
-impl Default for SparsificationMethod {
-    fn default() -> Self {
-        Self::TopK
-    }
 }
 
 #[derive(Debug, Clone, Default)]

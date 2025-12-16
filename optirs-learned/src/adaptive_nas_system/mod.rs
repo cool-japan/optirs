@@ -5,20 +5,20 @@
 //
 // The system is organized into focused modules:
 //
-// - `config`: Configuration types and settings
-// - `searcher`: Performance-aware architecture search components (TODO)
-// - `generator`: Architecture generation and candidate creation (TODO)
-// - `database`: Performance database and storage (TODO)
-// - `optimizer`: Multi-objective optimization (TODO)
-// - `predictor`: Performance prediction ensemble (TODO)
-// - `adaptation`: Continuous learning and adaptation (TODO)
-// - `quality`: Architecture quality assessment (TODO)
-// - `space`: Search space management (TODO)
-// - `state`: System state tracking (TODO)
+// - `config`: Configuration types and settings (✓ v1.0.0)
+// - `searcher`: Performance-aware architecture search components (ROADMAP v1.1.0+)
+// - `generator`: Architecture generation and candidate creation (ROADMAP v1.1.0+)
+// - `database`: Performance database and storage (ROADMAP v1.1.0+)
+// - `optimizer`: Multi-objective optimization (ROADMAP v1.1.0+)
+// - `predictor`: Performance prediction ensemble (ROADMAP v1.1.0+)
+// - `adaptation`: Continuous learning and adaptation (ROADMAP v1.1.0+)
+// - `quality`: Architecture quality assessment (ROADMAP v1.1.0+)
+// - `space`: Search space management (ROADMAP v1.1.0+)
+// - `state`: System state tracking (ROADMAP v1.1.0+)
 
 pub mod config;
 
-// TODO: Additional modules to be extracted from adaptive_nas_system.rs
+// ROADMAP (v1.1.0+): Additional modules planned for future releases from adaptive_nas_system.rs
 // pub mod searcher;     // PerformanceAwareSearcher, SearchHistory, etc.
 // pub mod generator;    // LearningBasedGenerator, ArchitectureCandidateGenerator, etc.
 // pub mod database;     // ArchitecturePerformanceDatabase, etc.
@@ -32,7 +32,7 @@ pub mod config;
 // Re-export configuration types
 pub use config::{AdaptiveNASConfig, BudgetAllocationStrategy, QualityCriterion};
 
-// TODO: Re-export other types once modules are created
+// ROADMAP (v1.1.0+): Additional re-exports once modules are created
 // pub use searcher::*;
 // pub use generator::*;
 // pub use database::*;

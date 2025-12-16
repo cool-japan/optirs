@@ -1,6 +1,6 @@
 //! # OptiRS Bench - Benchmarking and Performance Analysis
 //!
-//! **Version:** 0.1.0-beta.3
+//! **Version:** 0.1.0-rc.1
 //! **Status:** Available
 //!
 //! This crate provides comprehensive benchmarking, profiling, performance analysis, and regression
@@ -9,7 +9,7 @@
 //! ## Dependencies
 //!
 //! - `scirs2-core` 0.1.0-rc.2 - Required foundation
-//! - `optirs-core` 0.1.0-beta.3 - Core optimizers
+//! - `optirs-core` 0.1.0-rc.1 - Core optimizers
 //!
 //! ## Features
 //!
@@ -114,7 +114,7 @@ pub mod prelude {
     };
 
     pub use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
-    pub use scirs2_core::random::{rng, Random};
+    pub use scirs2_core::random::{thread_rng, Rng};
 }
 
 #[cfg(test)]

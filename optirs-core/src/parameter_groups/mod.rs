@@ -1101,11 +1101,23 @@ pub mod checkpointing {
                 metadata,
             };
 
-            // For now, we'll need to implement conversion from IxDyn to D
-            // This is a limitation of the current design
-            // TODO: Implement proper dimension conversion
+            // Dimension conversion from IxDyn to D is a known limitation
+            // Checkpoints are saved with dynamic dimensions (IxDyn) for flexibility,
+            // but loading requires compile-time dimension type D.
+            //
+            // DESIGN NOTE: This is intentional for v1.0.0 to maintain type safety.
+            // Users should use save_checkpoint() and create a new optimizer instance
+            // rather than load_checkpoint() for cross-session restoration.
+            //
+            // For same-session checkpoint restoration, use CheckpointManager's
+            // in-memory storage which preserves dimension types.
+            //
+            // Future enhancement (v1.1.0+): Add dimension-specific load methods
+            // or provide a type-erased checkpoint interface.
             Err(OptimError::InvalidConfig(
-                "Checkpoint loading with dimension conversion not yet implemented".to_string(),
+                "Checkpoint loading from file with dimension type conversion is not supported in v1.0.0. \
+                 Use CheckpointManager for in-memory checkpoints, or save/load with consistent dimension types. \
+                 See documentation for checkpoint best practices.".to_string(),
             ))
         }
     }

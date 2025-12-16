@@ -56,17 +56,12 @@ pub struct ActiveCommunication {
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum BufferStatus {
+    #[default]
     Empty,
     Partial,
     Full,
-}
-
-impl Default for BufferStatus {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -86,18 +81,13 @@ pub struct CommunicationProgress {
     pub bytes_total: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CompressionAlgorithm {
+    #[default]
     None,
     Gzip,
     Lz4,
     Zstd,
-}
-
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Default)]

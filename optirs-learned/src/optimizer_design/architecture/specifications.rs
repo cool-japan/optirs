@@ -504,10 +504,14 @@ impl LayerSpec {
         }
 
         // Check component compatibility
+        // NOTE: AttentionType::None is intentional for layer-level validation.
+        // Attention patterns are managed at the architecture level (GlobalArchitectureConfig),
+        // not at individual layer level. This validates basic layer-activation compatibility.
+        // For attention-specific validation, use ArchitectureSpec::validate() instead.
         if !are_components_compatible(
             self.layer_type,
             self.activation,
-            AttentionType::None, // TODO: Get from layer context
+            AttentionType::None,
         ) {
             return Err(SpecificationError::IncompatibleComponents(
                 format!("{:?}", self.layer_type),

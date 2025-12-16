@@ -17,21 +17,17 @@ pub use radio::*;
 pub use selection::*;
 pub use time_sources::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AtomicClockType {
+    #[default]
     Cesium,
     Rubidium,
     Hydrogen,
 }
 
-impl Default for AtomicClockType {
-    fn default() -> Self {
-        Self::Cesium
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ClockSource {
+    #[default]
     System,
     GPS,
     NTP,
@@ -39,37 +35,21 @@ pub enum ClockSource {
     Atomic,
 }
 
-impl Default for ClockSource {
-    fn default() -> Self {
-        Self::System
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RadioTimeStation {
+    #[default]
     WWV,
     WWVB,
     DCF77,
     MSF,
 }
 
-impl Default for RadioTimeStation {
-    fn default() -> Self {
-        Self::WWV
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SourceSelectionAlgorithm {
+    #[default]
     BestQuality,
     RoundRobin,
     Priority,
-}
-
-impl Default for SourceSelectionAlgorithm {
-    fn default() -> Self {
-        Self::BestQuality
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -106,30 +86,20 @@ impl std::fmt::Display for SourceManagementError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CalibrationReference {
+    #[default]
     GPS,
     Atomic,
     Network,
 }
 
-impl Default for CalibrationReference {
-    fn default() -> Self {
-        Self::GPS
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CalibrationMethod {
+    #[default]
     Linear,
     Polynomial,
     Adaptive,
-}
-
-impl Default for CalibrationMethod {
-    fn default() -> Self {
-        Self::Linear
-    }
 }
 
 #[derive(Debug, Clone, Default)]

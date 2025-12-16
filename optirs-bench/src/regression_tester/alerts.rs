@@ -194,8 +194,12 @@ impl AlertSystem {
         eprintln!("Body:\n{}", email_body);
         eprintln!("---");
 
-        // TODO: Integrate with actual email service
-        // Example with lettre crate:
+        // INTEGRATION STUB (v1.0.0): Email service integration planned for v1.1.0+
+        //
+        // For v1.0.0, alerts are printed to stderr for logging/monitoring integration.
+        // Production systems should redirect stderr to their alerting infrastructure.
+        //
+        // PLANNED (v1.1.0+): Direct email integration with lettre crate:
         // let email = Message::builder()
         //     .from("alerts@company.com".parse()?)
         //     .to("performance-team@company.com".parse()?)
@@ -222,8 +226,12 @@ impl AlertSystem {
         eprintln!("Message: {}", slack_message);
         eprintln!("---");
 
-        // TODO: Integrate with actual Slack API
-        // Example:
+        // INTEGRATION STUB (v1.0.0): Slack API integration planned for v1.1.0+
+        //
+        // For v1.0.0, alerts are printed to stderr for logging/monitoring integration.
+        // Production systems should redirect stderr to their alerting infrastructure.
+        //
+        // PLANNED (v1.1.0+): Direct Slack webhook integration:
         // let webhook_url = std::env::var("SLACK_WEBHOOK_URL")?;
         // let payload = json!({
         //     "text": slack_message,
@@ -254,8 +262,12 @@ impl AlertSystem {
         eprintln!("Labels: performance, regression, automated");
         eprintln!("---");
 
-        // TODO: Integrate with actual GitHub API
-        // Example with octocrab:
+        // INTEGRATION STUB (v1.0.0): GitHub API integration planned for v1.1.0+
+        //
+        // For v1.0.0, issue information is printed to stderr for manual issue creation
+        // or integration with existing issue tracking systems.
+        //
+        // PLANNED (v1.1.0+): Direct GitHub API integration with octocrab:
         // let token = std::env::var("GITHUB_TOKEN")?;
         // let octocrab = octocrab::Octocrab::builder().personal_token(token).build()?;
         // octocrab.issues("company", "performance-monitoring")

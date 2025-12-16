@@ -15,17 +15,12 @@ pub struct StatisticsCollector {
     pub history: Vec<Statistics>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum StatisticType {
+    #[default]
     Mean,
     Median,
     Percentile,
-}
-
-impl Default for StatisticType {
-    fn default() -> Self {
-        Self::Mean
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,44 +73,29 @@ impl std::fmt::Display for StatisticsError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TrendDirection {
     Improving,
+    #[default]
     Stable,
     Declining,
 }
 
-impl Default for TrendDirection {
-    fn default() -> Self {
-        Self::Stable
-    }
-}
-
 // Add missing types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PerformanceMetric {
+    #[default]
     Latency,
     Throughput,
     ErrorRate,
 }
 
-impl Default for PerformanceMetric {
-    fn default() -> Self {
-        Self::Latency
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ReportFormat {
+    #[default]
     Json,
     Text,
     Html,
-}
-
-impl Default for ReportFormat {
-    fn default() -> Self {
-        Self::Json
-    }
 }
 
 #[derive(Debug, Clone, Default)]

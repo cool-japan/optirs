@@ -1,7 +1,7 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.1.0-beta.3
-**Status:** Production-Ready Core with Experimental Extensions
+**Version:** 0.1.0-rc.1
+**Status:** 🚀 RELEASE CANDIDATE - Pre-release Testing Phase
 
 OptiRS is a comprehensive optimization library for machine learning that **extends and leverages the full power of SciRS2-Core**. It provides specialized optimization algorithms and hardware acceleration while making **FULL USE** of SciRS2's scientific computing capabilities.
 
@@ -51,23 +51,32 @@ OptiRS extends SciRS2's scientific computing capabilities with specialized ML op
 
 ### Core Optimizers (`optirs-core`) ✅ Production Ready
 
-#### 16 State-of-the-Art Optimizers
+#### 19 Production-Ready Optimizers
 All optimizers built exclusively on SciRS2-Core:
+
+**First-Order Optimizers (17)**
 - **SGD** - Stochastic Gradient Descent with optional momentum
 - **SimdSGD** - SIMD-accelerated SGD (2-4x faster for large arrays)
 - **Adam** - Adaptive Moment Estimation
 - **AdamW** - Adam with decoupled weight decay
 - **RMSprop** - Root Mean Square Propagation
 - **Adagrad** - Adaptive Gradient Algorithm
-- **LAMB** - Layer-wise Adaptive Moments optimizer for Batch training
+- **AdaDelta** - ✨ Adaptive learning rate method (v1.0.0)
+- **AdaBound** - ✨ Adaptive gradient with dynamic bound (v1.0.0)
+- **LAMB** - Layer-wise Adaptive Moments for Batch training
 - **LARS** - Layer-wise Adaptive Rate Scaling
-- **L-BFGS** - Limited-memory BFGS (second-order method)
 - **Lion** - Evolved Sign Momentum optimizer
 - **Lookahead** - Look ahead optimizer wrapper
 - **RAdam** - Rectified Adam
+- **Ranger** - ✨ RAdam + Lookahead hybrid (v1.0.0)
 - **SAM** - Sharpness-Aware Minimization
-- **SparseAdam** - Adam variant optimized for sparse gradients
+- **SparseAdam** - Adam variant for sparse gradients
 - **GroupedAdam** - Adam with parameter groups
+
+**Second-Order Optimizers (2)**
+- **L-BFGS** - Limited-memory Broyden-Fletcher-Goldfarb-Shanno
+- **K-FAC** - Kronecker-Factored Approximate Curvature
+- **Newton-CG** - ✨ Newton Conjugate Gradient (v1.0.0)
 
 #### Learning Rate Schedulers
 - **ExponentialDecay** - Exponential learning rate decay
@@ -168,11 +177,11 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-beta.3"
+optirs-core = "0.1.0-rc.1"
 scirs2-core = "0.1.0-rc.2"  # Required foundation
 
 # Optional: GPU acceleration (experimental)
-optirs-gpu = { version = "0.1.0-beta.3", optional = true }
+optirs-gpu = { version = "0.1.0-rc.1", optional = true }
 ```
 
 ### Basic Usage

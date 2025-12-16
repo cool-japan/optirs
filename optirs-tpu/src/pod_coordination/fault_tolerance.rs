@@ -9,30 +9,20 @@ pub struct CheckpointInfo {
     pub timestamp_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CheckpointType {
+    #[default]
     Full,
     Incremental,
     Differential,
 }
 
-impl Default for CheckpointType {
-    fn default() -> Self {
-        Self::Full
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ConsistencyLevel {
+    #[default]
     Strong,
     Eventual,
     Weak,
-}
-
-impl Default for ConsistencyLevel {
-    fn default() -> Self {
-        Self::Strong
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -41,17 +31,12 @@ pub struct DetectionConfig {
     pub retry_count: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum FailureDetectionAlgorithm {
+    #[default]
     Heartbeat,
     Gossip,
     Adaptive,
-}
-
-impl Default for FailureDetectionAlgorithm {
-    fn default() -> Self {
-        Self::Heartbeat
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -67,32 +52,22 @@ pub struct FailureInfo {
     pub failure_type: FailureType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum FailureStatus {
+    #[default]
     Detected,
     Recovering,
     Recovered,
     Failed,
 }
 
-impl Default for FailureStatus {
-    fn default() -> Self {
-        Self::Detected
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum FailureType {
     Hardware,
     Software,
     Network,
+    #[default]
     Unknown,
-}
-
-impl Default for FailureType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -101,45 +76,30 @@ pub struct FaultToleranceManager {
     pub recovery_strategy: RecoveryStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryAction {
+    #[default]
     Restart,
     Migrate,
     Replace,
     NoOp,
 }
 
-impl Default for RecoveryAction {
-    fn default() -> Self {
-        Self::Restart
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryPriority {
     Critical,
     High,
+    #[default]
     Normal,
     Low,
 }
 
-impl Default for RecoveryPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RecoveryStrategy {
+    #[default]
     Immediate,
     Delayed,
     Manual,
-}
-
-impl Default for RecoveryStrategy {
-    fn default() -> Self {
-        Self::Immediate
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -148,17 +108,12 @@ pub struct RedundancyConfig {
     pub strategy: RedundancyStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RedundancyStrategy {
+    #[default]
     Active,
     Passive,
     Hybrid,
-}
-
-impl Default for RedundancyStrategy {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 #[derive(Debug, Clone, Default)]

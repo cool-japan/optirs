@@ -12,15 +12,10 @@ pub struct EventQueue {
 #[derive(Debug, Clone)]
 pub struct Event;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum QueuePolicy {
+    #[default]
     FIFO,
     LIFO,
     Priority,
-}
-
-impl Default for QueuePolicy {
-    fn default() -> Self {
-        Self::FIFO
-    }
 }
