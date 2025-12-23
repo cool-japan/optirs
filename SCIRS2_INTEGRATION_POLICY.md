@@ -302,9 +302,9 @@ OptiRS is an **optimization library**, not an autodiff or data processing framew
    use scirs2_optimize::*;
    ```
 
-2. **Array Macro Import Pattern (Updated v0.1.0-beta.4+)**
+2. **Array Macro Import Pattern **
    ```rust
-   // ✅ CORRECT - Use scirs2_core::ndarray for array! macro (v0.1.0-beta.4+)
+   // ✅ CORRECT - Use scirs2_core::ndarray for array! macro 
    use scirs2_core::ndarray_ext::{array, Array1, Array2, s, azip};
 
    // ❌ WRONG - Don't use ndarray directly
@@ -365,7 +365,7 @@ OptiRS is an **optimization library**, not an autodiff or data processing framew
 ### **Current Policy Status**
 - **Version**: 3.0.0 (Aligned with SciRS2 POLICY v3.0.0)
 - **Effective Date**: 2025-10-11
-- **SciRS2 Version**: v0.1.0-RC.1
+- **SciRS2 Version**: v0.1.0-RC.4
 - **Migration Status**: In Progress - Removing prohibited dependencies
 - **Next Review**: Q4 2025
 - **Base Policy**: [SciRS2 Ecosystem Policy v3.0.0](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
@@ -374,7 +374,7 @@ OptiRS is an **optimization library**, not an autodiff or data processing framew
 
 ### **SciRS2 Version Management**
 - Track SciRS2 release cycle
-- Test OptiRS against SciRS2 beta releases
+- Test OptiRS against SciRS2 releases
 - Coordinate breaking change migrations
 
 ### **Performance Monitoring**
@@ -394,8 +394,8 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 ---
 
 **Document Version**: 3.0.0 (Aligned with SciRS2 Ecosystem Policy v3.0.0)
-**Last Updated**: 2025-10-11
-**SciRS2 Version**: v0.1.0-RC.1
+**Last Updated**: 2025-12-23
+**SciRS2 Version**: v0.1.0-RC.4
 **Next Review**: Q4 2025
 **Owner**: OptiRS Architecture Team
 **Reference**: [SciRS2 Ecosystem Policy v3.0.0](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)

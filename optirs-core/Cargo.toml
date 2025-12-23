@@ -12,6 +12,10 @@ categories = ["science", "mathematics", "algorithms"]
 [lints]
 workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 # 🚨 FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
 # ndarray - Use scirs2_core::ndarray

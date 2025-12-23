@@ -1,8 +1,8 @@
-# OptiRS TODO - v0.1.0-rc.1 (Release Candidate)
+# OptiRS TODO - v0.1.0-rc.2 (Release Candidate)
 
 ## Project Status: Release Candidate - Pre-release Testing
 
-**Current Version**: v0.1.0-rc.1
+**Current Version**: v0.1.0-rc.2
 **Total Tests**: 1,134 tests passing (100% pass rate)
 **SLoC**: 307,820 lines of Rust code
 **SciRS2 Compliance**: 100%
@@ -82,7 +82,7 @@
 - [x] **GroupedAdam** - Parameter group support
   - [x] Different hyperparameters per group
 
-### NEW RC1 Optimizers (v0.1.0-rc.1)
+### NEW RC1 Optimizers (v0.1.0-rc.2)
 - [x] **AdaDelta Optimizer** - Adaptive learning rate without manual tuning
   - [x] Automatic step size adaptation using RMS of gradients/updates
   - [x] 10-step warmup boost for cold-start problem
@@ -242,7 +242,7 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests
 
 ---
 
-## Release Checklist (v0.1.0-rc.1)
+## Release Checklist (v0.1.0-rc.2)
 
 - [x] All core optimizers implemented (19 total)
 - [x] Full SciRS2 integration verified

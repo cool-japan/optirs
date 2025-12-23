@@ -1,7 +1,7 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.1.0-rc.1
-//! **Release Date:** 2025-12-16 (Release Candidate)
+//! **Version:** 0.1.0-rc.2
+//! **Release Date:** 2025-12-23 (Release Candidate 2)
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -13,9 +13,9 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.2 - Required foundation
+//! - `scirs2-core` 0.1.0-rc.4 - Required foundation
 //!
-//! ## Sub-Crate Status (RC.1)
+//! ## Sub-Crate Status (RC.2)
 //!
 //! - ✅ `optirs-core` - Release Candidate (19 optimizers, SIMD, parallel, metrics)
 //! - ✅ `optirs-bench` - Release Candidate (comprehensive benchmarking and profiling)
@@ -30,7 +30,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-core = "0.1.0-rc.1"
+//! optirs-core = "0.1.0-rc.2"
 //! ```
 //!
 //! Basic usage:
@@ -77,7 +77,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-gpu = { version = "0.1.0-rc.1", features = ["cuda"] }
+//! optirs-gpu = { version = "0.1.0-rc.2", features = ["cuda"] }
 //! ```
 //!
 //! - **Multi-Backend**: CUDA, Metal, OpenCL, WebGPU
@@ -89,7 +89,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-tpu = "0.1.0-rc.1"
+//! optirs-tpu = "0.1.0-rc.2"
 //! ```
 //!
 //! - **Pod Management**: TPU pod coordination
@@ -116,11 +116,11 @@
 //! OptiRS is organized into feature-gated modules:
 //!
 //! - [`core`] - Core optimizers and utilities (always available)
-//! - [`gpu`] - GPU acceleration (feature: `gpu`)
-//! - [`tpu`] - TPU coordination (feature: `tpu`)
-//! - [`learned`] - Learned optimizers (feature: `learned`)
-//! - [`nas`] - Neural architecture search (feature: `nas`)
-//! - [`bench`] - Benchmarking tools (feature: `bench`)
+//! - `gpu` - GPU acceleration (feature: `gpu`)
+//! - `tpu` - TPU coordination (feature: `tpu`)
+//! - `learned` - Learned optimizers (feature: `learned`)
+//! - `nas` - Neural architecture search (feature: `nas`)
+//! - `bench` - Benchmarking tools (feature: `bench`)
 //!
 //! ## Examples
 //!

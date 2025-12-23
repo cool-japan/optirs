@@ -142,11 +142,11 @@ pub struct CitationStyle {
 pub enum InTextFormat {
     /// Author-year format: (Smith, 2023)
     AuthorYear,
-    /// Numbered format: [1]
+    /// Numbered format: \[1\]
     Numbered,
     /// Superscript format: ¹
     Superscript,
-    /// Author-number format: Smith [1]
+    /// Author-number format: Smith \[1\]
     AuthorNumber,
     /// Footnote format
     Footnote,

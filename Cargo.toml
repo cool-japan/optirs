@@ -19,9 +19,9 @@ unpredictable_function_pointer_comparisons = "allow"
 unknown_lints = "allow"
 
 [workspace.package]
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition = "2021"
-authors = ["OptiRS Team"]
+authors = ["COOLJAPAN OU (Team KitaSan)"]
 description = "Advanced ML optimization and hardware acceleration library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cool-japan/optirs"
@@ -51,7 +51,7 @@ num_cpus = "1.17.0"
 thiserror = "2.0.17"
 anyhow = "1.0"
 approx = "0.5.1"
-criterion = "0.7.0"
+criterion = "0.8.1"
 once_cell = "1.21.3"
 tempfile = "3.23.0"
 tokio-test = "0.4.4"
@@ -64,16 +64,16 @@ bincode = "2.0.1"
 chrono = "0.4.42"
 
 # GPU backends - cross-platform only
-cudarc = { version = "0.17", features = ["cuda-12000"] }
+cudarc = { version = "0.18", features = ["cuda-12000"] }
 opencl3 = { version = "0.12" }
-wgpu = { version = "27.0" }
+wgpu = { version = "28.0" }
 pollster = { version = "0.4" }
 
 # ML specific
-tokenizers = "0.22.1"
+tokenizers = "0.22.2"
 autograd = "1.1.1"
 smallvec = "1.15.1"
-uuid = { version = "1.18.1", features = ["v4"] }
+uuid = { version = "1.19.0", features = ["v4"] }
 rustc-hash = "2.1.1"
 matrixmultiply = "0.3.10"
 
@@ -81,7 +81,7 @@ matrixmultiply = "0.3.10"
 sysinfo = "0.37.2"
 
 # Async dependencies
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full"] }
 futures = "0.3.31"
 futures-util = "0.3.31"
 async-trait = "0.1.89"
@@ -93,19 +93,19 @@ log = "0.4"
 sha2 = "0.10"
 md5 = "0.8.0"
 clap = { version = "4.5", features = ["derive"] }
-regex = "1.12.1"
+regex = "1.12.2"
 
 # Cryptography
 rsa = { version = "0.9" }
 x509-parser = { version = "0.18" }
 
 # OptiRS crates
-optirs-core = { version = "0.1.0-rc.1", path = "./optirs-core" }
-optirs-gpu = { version = "0.1.0-rc.1", path = "./optirs-gpu" }
-optirs-tpu = { version = "0.1.0-rc.1", path = "./optirs-tpu" }
-optirs-learned = { version = "0.1.0-rc.1", path = "./optirs-learned" }
-optirs-nas = { version = "0.1.0-rc.1", path = "./optirs-nas" }
-optirs-bench = { version = "0.1.0-rc.1", path = "./optirs-bench" }
+optirs-core = { version = "0.1.0-rc.2", path = "./optirs-core" }
+optirs-gpu = { version = "0.1.0-rc.2", path = "./optirs-gpu" }
+optirs-tpu = { version = "0.1.0-rc.2", path = "./optirs-tpu" }
+optirs-learned = { version = "0.1.0-rc.2", path = "./optirs-learned" }
+optirs-nas = { version = "0.1.0-rc.2", path = "./optirs-nas" }
+optirs-bench = { version = "0.1.0-rc.2", path = "./optirs-bench" }
 
 # 🚨 CRITICAL: SciRS2 ECOSYSTEM DEPENDENCIES 🚨
 #
@@ -116,19 +116,19 @@ optirs-bench = { version = "0.1.0-rc.1", path = "./optirs-bench" }
 # Start minimal - add dependencies only when compilation errors prove necessity.
 #
 # ✅ ESSENTIAL (Always Required):
-scirs2-core = "0.1.0-rc.2"           # FOUNDATION - Core scientific primitives
-scirs2-optimize = "0.1.0-rc.2"       # ESSENTIAL - Base optimization interfaces
+scirs2-core = "0.1.0-rc.4"           # FOUNDATION - Core scientific primitives
+scirs2-optimize = "0.1.0-rc.4"       # ESSENTIAL - Base optimization interfaces
 
 # ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
-scirs2-neural = "0.1.0-rc.2"         # EVIDENCE: neuromorphic/spike_based.rs requires this
-scirs2-metrics = "0.1.0-rc.2"        # EVIDENCE: benchmarking and monitoring require this
-scirs2-stats = "0.1.0-rc.2"          # EVIDENCE: multiple modules use distributions
-scirs2-series = "0.1.0-rc.2"         # EVIDENCE: performance_tracking.rs requires this
-scirs2-datasets = "0.1.0-rc.2"       # EVIDENCE: cross_platform_tester.rs requires this
+scirs2-neural = "0.1.0-rc.4"         # EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = "0.1.0-rc.4"        # EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = "0.1.0-rc.4"          # EVIDENCE: multiple modules use distributions
+scirs2-series = "0.1.0-rc.4"         # EVIDENCE: performance_tracking.rs requires this
+scirs2-datasets = "0.1.0-rc.4"       # EVIDENCE: cross_platform_tester.rs requires this
 
 # ⚠️ CONDITIONAL (Uncomment only if compilation fails):
-# scirs2-linalg = "0.1.0-rc.2"       # Only if second-order methods need matrix ops beyond ndarray
-# scirs2-signal = "0.1.0-rc.2"       # Only if gradient smoothing specifically requires it
+# scirs2-linalg = "0.1.0-rc.4"       # Only if second-order methods need matrix ops beyond ndarray
+# scirs2-signal = "0.1.0-rc.4"       # Only if gradient smoothing specifically requires it
 
 # ❌ NOT REQUIRED for OptiRS:
 # scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them

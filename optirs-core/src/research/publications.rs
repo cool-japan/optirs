@@ -556,7 +556,7 @@ pub struct Margins {
 /// Citation format
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CitationFormat {
-    /// Numbered citations [1]
+    /// Numbered citations \[1\]
     Numbered,
     /// Author-year citations (Author, 2023)
     AuthorYear,

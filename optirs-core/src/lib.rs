@@ -1,14 +1,14 @@
 //! # OptiRS Core - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.1.0-rc.1
-//! **Status:** Release Candidate - Production Ready
+//! **Version:** 0.1.0-rc.2
+//! **Status:** Release Candidate 2 - Production Ready
 //!
 //! `optirs-core` provides state-of-the-art optimization algorithms for machine learning,
 //! built exclusively on the [SciRS2](https://github.com/cool-japan/scirs) scientific computing ecosystem.
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.2 - Required foundation
+//! - `scirs2-core` 0.1.0-rc.4 - Required foundation
 //!
 //! ## Quick Start
 //!
@@ -32,7 +32,7 @@
 //!
 //! ## Features
 //!
-//! ### 19 State-of-the-Art Optimizers (NEW in RC.1!)
+//! ### 19 State-of-the-Art Optimizers 
 //!
 //! **First-Order Methods:**
 //! - **SGD** - Stochastic Gradient Descent with optional momentum

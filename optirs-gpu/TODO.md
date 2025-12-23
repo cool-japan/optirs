@@ -1,4 +1,4 @@
-# OptiRS GPU TODO (v0.1.0-rc.1)
+# OptiRS GPU TODO (v0.1.0-rc.2)
 
 ## Module Status: Production Ready
 
@@ -160,4 +160,4 @@
 ---
 
 **Status**: Production Ready
-**Version**: v0.1.0-rc.1
+**Version**: v0.1.0-rc.2

@@ -9,7 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🎯 Planned for Stable Release
 
-After successful RC.1 testing and community feedback, OptiRS v1.0.0 will represent a complete, production-ready ML optimization library for Rust with 19 state-of-the-art optimizers, full hardware acceleration support, and comprehensive SciRS2 ecosystem integration.
+After successful RC.2 testing and community feedback, OptiRS v1.0.0 will represent a complete, production-ready ML optimization library for Rust with 19 state-of-the-art optimizers, full hardware acceleration support, and comprehensive SciRS2 ecosystem integration.
+
+---
+
+## [0.1.0-rc.2] - 2025-12-23
+
+### 🔧 Release Candidate 2 - Documentation & Quality Improvements
+
+This release candidate focuses on documentation quality, docs.rs compatibility, and preparing all crates for publication.
+
+### Changed
+
+#### Documentation
+- **Updated all lib.rs files** - Comprehensive documentation for all 7 crates
+  - Updated version numbers from rc.1 to rc.2
+  - Enhanced module-level documentation with detailed examples
+  - Fixed rustdoc warnings for proper docs.rs builds
+
+- **docs.rs Metadata** - All Cargo.toml files now include proper docs.rs configuration
+  - Added `[package.metadata.docs.rs]` sections for all subcrates
+  - Configured `all-features = true` for comprehensive documentation
+  - Set `rustdoc-args = ["--cfg", "docsrs"]` for conditional compilation
+  - Special configuration for optirs-gpu to use wgpu feature by default
+
+- **Documentation Fixes**
+  - Escaped bracket characters in citation documentation
+  - Fixed ambiguous link warnings in module references
+  - All 73 doctests passing (4 in optirs, 67 in optirs-core, 1 in optirs-bench, 1 in optirs-tpu)
+  - 3 doctests properly marked as `ignore` for future implementations
+
+#### Workspace
+- **Version Consistency** - All workspace members updated to 0.1.0-rc.2
+  - Updated workspace package version
+  - Updated all inter-crate dependencies
+  - Synchronized version references in documentation
+
+### Fixed
+- **Rustdoc Warnings**
+  - Fixed broken intra-doc links in citation management
+  - Fixed ambiguous `bench` reference in main lib.rs
+  - All documentation now builds without warnings
+
+### Quality Assurance
+- **Documentation Build** - Full documentation generated successfully
+  - Zero errors in doc generation
+  - All public APIs properly documented
+  - Examples compile and run correctly
+
+- **Doctest Coverage**
+  - 73 total doctests passing
+  - All code examples in documentation verified
+  - Integration examples validated
+
+### Notes
+This release ensures all crates are ready for publication to crates.io with proper documentation and metadata configuration.
 
 ---
 
@@ -197,7 +251,7 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests (100% pass rate)
 
 ### Dependencies
 
-#### SciRS2 Ecosystem (All v0.1.0-rc.2)
+#### SciRS2 Ecosystem (All v0.1.0-rc.4)
 - `scirs2-core` - Core scientific primitives (REQUIRED)
 - `scirs2-optimize` - Base optimization interfaces (REQUIRED)
 - `scirs2-neural` - Neural network support
@@ -247,27 +301,5 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests (100% pass rate)
 
 ---
 
-## Earlier Versions
-
-### [0.1.0-beta.3] - 2025-10-18
-- SIMD acceleration implemented
-- Parallel processing support
-- Memory efficiency improvements
-- GPU integration foundation
-
-### [0.1.0-beta.2] - 2025-10-17
-- Core optimizer implementations
-- Learning rate schedulers
-- Basic benchmarking framework
-
-### [0.1.0-beta.1] - 2025-10-16
-- Basic SGD, Adam, AdamW implementations
-- SciRS2 integration started
-- Initial test framework
-
----
-
+[0.1.0-rc.2]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0-rc.1
-[0.1.0-beta.3]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0-beta.3
-[0.1.0-beta.2]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0-beta.2
-[0.1.0-beta.1]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0-beta.1

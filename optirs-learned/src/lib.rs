@@ -1,6 +1,6 @@
 //! # OptiRS Learned - Learned Optimizers and Meta-Learning
 //!
-//! **Version:** 0.1.0-rc.1
+//! **Version:** 0.1.0-rc.2
 //! **Status:** Research Phase (Early Implementation)
 //!
 //! ⚠️ **Warning:** This crate is in early research phase. APIs may change significantly
@@ -11,10 +11,10 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.2 - Required foundation
-//! - `optirs-core` 0.1.0-rc.1 - Core optimizers
+//! - `scirs2-core` 0.1.0-rc.4 - Required foundation
+//! - `optirs-core` 0.1.0-rc.2 - Core optimizers
 //!
-//! ## Implementation Status (RC.1)
+//! ## Implementation Status (RC.2)
 //!
 //! - 🚧 Transformer-based optimizers (in development)
 //! - 🚧 LSTM optimizers (planned)

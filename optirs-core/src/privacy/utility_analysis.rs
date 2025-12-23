@@ -1449,7 +1449,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 random_seed: 42,
                 software_versions: {
                     let mut versions = HashMap::new();
-                    versions.insert("scirs2-optim".to_string(), "0.1.0-beta.1".to_string());
+                    versions.insert("scirs2-optim".to_string(), "0.1.0-beta.2".to_string());
                     versions
                 },
                 hardware_info: "x86_64".to_string(),
