@@ -1,0 +1,87 @@
+[package]
+name = "optirs-bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS benchmarking, profiling, and performance analysis tools"
+license.workspace = true
+repository.workspace = true
+keywords = ["benchmarking", "profiling", "performance", "regression", "monitoring"]
+categories = ["development-tools", "development-tools::profiling", "development-tools::testing"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
+
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+log = { workspace = true }
+
+# Benchmarking
+criterion = { workspace = true }
+approx = { workspace = true }
+
+# System monitoring
+sysinfo = { workspace = true }
+num_cpus = { workspace = true }
+
+# Time and utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# Security auditing
+sha2 = { workspace = true }
+md5 = { workspace = true }
+
+# Crypto for plugin security
+rsa = { workspace = true, optional = true }
+x509-parser = { workspace = true, optional = true }
+
+# Async support
+tokio = { workspace = true, features = ["rt"] }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[features]
+default = ["profiling"]
+profiling = []
+regression_detection = []
+security_auditing = ["rsa", "x509-parser"]
+ci_integration = []
+
+[[bin]]
+name = "optirs-bench"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "performance-regression-detector"
+path = "src/bin/regression_detector.rs"
+
+[[bin]]
+name = "memory-leak-reporter"
+path = "src/bin/memory_reporter.rs"
+doc = false
+
+[[bin]]
+name = "security-audit-scanner"
+path = "src/bin/security_scanner.rs"
+doc = false

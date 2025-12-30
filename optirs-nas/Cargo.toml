@@ -1,0 +1,64 @@
+[package]
+name = "optirs-nas"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS Neural Architecture Search and hyperparameter optimization"
+license.workspace = true
+repository.workspace = true
+keywords = ["nas", "neural-architecture", "hyperparameter", "bayesian", "evolutionary"]
+categories = ["science", "science::neuroscience", "algorithms"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+optirs-learned = { workspace = true, optional = true }
+scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
+
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+log = { workspace = true }
+
+# Random generation and distributions - REMOVED: Use scirs2_core::random instead
+# rand = { workspace = true }
+# rand_distr = { workspace = true }
+
+# Optimization and search
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
+
+# System information
+num_cpus = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# Async support
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+approx = { workspace = true }
+tempfile = { workspace = true }
+
+[features]
+default = ["bayesian"]
+bayesian = []
+evolutionary = []
+reinforcement = []
+progressive = []
+multi_objective = []
+learned_integration = ["dep:optirs-learned"]

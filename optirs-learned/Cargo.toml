@@ -1,0 +1,55 @@
+[package]
+name = "optirs-learned"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "OptiRS learned optimizers and meta-learning"
+license.workspace = true
+repository.workspace = true
+keywords = ["meta-learning", "learned-optimizers", "transformer", "lstm", "neural"]
+categories = ["science", "science::neuroscience", "algorithms"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+scirs2-core = { workspace = true }
+
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+# ML dependencies
+autograd = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+smallvec = { workspace = true }
+
+# Random generation - REMOVED: Use scirs2_core::random instead
+# rand = { workspace = true }
+# rand_distr = { workspace = true }
+
+# Async support for training
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+approx = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+default = ["transformer"]
+transformer = []
+lstm = []
+meta_learning = []
+autograd_integration = ["autograd"]
+nlp = ["tokenizers"]

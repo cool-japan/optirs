@@ -1,0 +1,58 @@
+[package]
+name = "optirs"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+description = "OptiRS - Advanced ML optimization and hardware acceleration library (main integration crate)"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# Core dependencies
+optirs-core = { workspace = true }
+scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
+
+# Feature-gated dependencies
+optirs-gpu = { workspace = true, optional = true }
+optirs-tpu = { workspace = true, optional = true }
+optirs-learned = { workspace = true, optional = true }
+optirs-nas = { workspace = true, optional = true }
+optirs-bench = { workspace = true, optional = true }
+
+# Basic dependencies
+# ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
+# ndarray - Use scirs2_core::ndarray
+# num-traits - Use scirs2_core::numeric
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+tempfile = { workspace = true }
+
+[features]
+default = ["core"]
+core = []
+gpu = ["dep:optirs-gpu"]
+tpu = ["dep:optirs-tpu"]
+learned = ["dep:optirs-learned"]
+nas = ["dep:optirs-nas"]
+bench = ["dep:optirs-bench"]
+full = ["gpu", "tpu", "learned", "nas", "bench"]
+
+[[example]]
+name = "scirs2_integration_demo"
+path = "../examples/scirs2_integration_demo.rs"
+
+[[example]]
+name = "basic_optimization"
+path = "../examples/basic_optimization.rs"
