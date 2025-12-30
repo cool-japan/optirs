@@ -105,7 +105,7 @@ Example: `cargo build --features "gpu,learned"`
 See detailed policy in: `SCIRS2_INTEGRATION_POLICY.md`
 
 **Important**:
-1. From SciRS2 v0.1.0-beta.4+, the `array!` macro is available directly from `scirs2_core::ndarray`
+1. From SciRS2 v0.1.0+, the `array!` macro is available directly from `scirs2_core::ndarray`
 2. OptiRS does **NOT** require `scirs2-autograd` - OptiRS is an optimization library that receives pre-computed gradients, not an automatic differentiation library
 
 ### Prohibited Dependencies (NEVER USE)
@@ -188,7 +188,7 @@ use ndarray::{array, s};  // NEVER USE
 
 #### Random Number Generation (replaces rand/rand_distr)
 ```rust
-// ✅ CORRECT - Use scirs2-core's random module (v0.1.0-beta.4+)
+// ✅ CORRECT - Use scirs2-core's random module (v0.1.0+)
 use scirs2_core::random::*;  // Complete rand + rand_distr functionality
 use scirs2_core::random::{thread_rng, Rng};
 // ALL distributions available: Beta, Cauchy, ChiSquared, FisherF, LogNormal,
@@ -347,7 +347,7 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 - `scirs2_core::ndarray`: Standard ndarray re-exports (basic array operations, views, slicing)
 - **Both are valid and encouraged** depending on your needs. Choose based on required functionality.
 
-**Key Updates (v0.1.0-beta.4+)**:
+**Key Updates (v0.1.0+)**:
 1. The `array!` macro is now available directly from `scirs2_core::ndarray`
 2. OptiRS does **NOT** use `scirs2-autograd` - OptiRS receives gradients, doesn't compute them
 
@@ -368,7 +368,7 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 - Use `approx` for floating-point comparisons
 - Mock GPU/TPU for hardware tests when not available
 
-## Key Implementation Patterns (Updated v0.1.0-beta.4+)
+## Key Implementation Patterns (Updated v0.1.0+)
 
 1. **Error Handling**: Use `scirs2_core::error::CoreError` and `scirs2_core::error::Result`
 2. **Parameter Validation**: Use `scirs2_core::validation` functions (check_positive, check_finite, check_shape, etc.)
@@ -394,7 +394,7 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 ### optirs-core
 - Use `scirs2_core::ndarray_ext` for array operations with NumPy-like extensions (fancy indexing, stats, broadcasting)
-- Use `scirs2_core::ndarray` for standard ndarray operations (both include `array!`, `s!`, `azip!` macros - v0.1.0-beta.4+)
+- Use `scirs2_core::ndarray` for standard ndarray operations (both include `array!`, `s!`, `azip!` macros - v0.1.0+)
 - Use `scirs2_core::random` for all RNG operations (includes ALL distributions: Normal, Beta, Cauchy, etc.)
 - Use `scirs2_core::numeric` for numerical traits (Float, Zero, One, Complex)
 - Use `scirs2_core::validation` for parameter validation (check_positive, check_finite, etc.)
@@ -441,9 +441,9 @@ use scirs2_core::array_protocol::{DifferentiableArray, AsyncArray, ZeroCopyArray
 
 ## Common Workflows
 
-### Importing Core Types - FULL SciRS2 Usage (CORRECT) - v0.1.0-beta.4+
+### Importing Core Types - FULL SciRS2 Usage (CORRECT) - v0.1.0+
 ```rust
-// ✅ Arrays and numerical operations (SciRS2 v0.1.0-beta.4+)
+// ✅ Arrays and numerical operations (SciRS2 v0.1.0+)
 use scirs2_core::ndarray_ext::*;  // Includes array!, s!, azip! macros - ALL AVAILABLE
 use scirs2_core::ndarray_ext::{Array, Array1, Array2, ArrayView, ArrayViewMut};
 use scirs2_core::ndarray_ext::{Ix1, Ix2, IxDyn, Axis};
@@ -651,7 +651,7 @@ When reviewing or writing OptiRS code, verify these requirements:
 - [ ] NO direct `Array`, `Array1`, `Array2` from ndarray
 - [ ] YES `use scirs2_core::ndarray_ext::*` for NumPy-like extensions (fancy indexing, stats, broadcasting)
 - [ ] YES `use scirs2_core::ndarray::*` for standard ndarray operations
-- [ ] YES both modules include `array!`, `s!`, `azip!` macros (v0.1.0-beta.4+)
+- [ ] YES both modules include `array!`, `s!`, `azip!` macros (v0.1.0+)
 - [ ] YES `use scirs2_core::ndarray_ext::{Array, Array1, Array2, array, s}` (with extensions)
 - [ ] YES `use scirs2_core::ndarray::{Array, Array1, Array2, array, s}` (standard)
 
@@ -659,7 +659,7 @@ When reviewing or writing OptiRS code, verify these requirements:
 - [ ] NO direct `use rand::{...}`
 - [ ] NO direct `use rand_distr::{...}`
 - [ ] NO `rng()` function calls without proper import
-- [ ] YES `use scirs2_core::random::*` (v0.1.0-beta.4+ includes ALL distributions)
+- [ ] YES `use scirs2_core::random::*` (v0.1.0+ includes ALL distributions)
 - [ ] YES `use scirs2_core::random::{thread_rng, Rng, Normal, RandBeta, Cauchy, ...}`
 - [ ] YES use `thread_rng()` instead of `rng()`
 - [ ] NOTE: Use `RandBeta` instead of `Beta` to avoid naming conflicts
@@ -685,7 +685,7 @@ When reviewing or writing OptiRS code, verify these requirements:
 - [ ] YES use `scirs2_core::metrics` for monitoring
 - [ ] YES use `scirs2_core::benchmarking` for benchmarks
 
-### Common Anti-Patterns to Avoid (Updated v0.1.0-beta.4+)
+### Common Anti-Patterns to Avoid (Updated v0.1.0+)
 ```rust
 // ❌ WRONG - Direct external dependencies (FORBIDDEN - CRITICAL ERROR)
 use ndarray::{Array2, array};       // NEVER USE
@@ -698,7 +698,7 @@ use rayon::prelude::*;               // NEVER USE
 
 let mut rng = rng();  // WRONG - function not available
 
-// ✅ CORRECT - SciRS2-Core abstractions (REQUIRED - v0.1.0-beta.4+)
+// ✅ CORRECT - SciRS2-Core abstractions (REQUIRED - v0.1.0+)
 use scirs2_core::ndarray_ext::{Array2, array, s};  // With NumPy-like extensions
 // OR
 use scirs2_core::ndarray::{Array2, array, s};      // Standard ndarray operations

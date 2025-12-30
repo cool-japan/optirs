@@ -1,6 +1,6 @@
 //! # OptiRS GPU - GPU Acceleration for ML Optimization
 //!
-//! **Version:** 0.1.0-rc.2
+//! **Version:** 0.1.0
 //! **Status:** Framework Ready (GPU Kernels Coming Soon)
 //!
 //! `optirs-gpu` provides GPU acceleration for OptiRS optimizers, built on
@@ -8,9 +8,9 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.4 - Required foundation
+//! - `scirs2-core` 0.1.1 - Required foundation
 //!
-//! ## Implementation Status (RC.2)
+//! ## Implementation Status (v0.1.0)
 //!
 //! - ✅ GPU context management
 //! - ✅ Multi-backend support framework (CUDA, Metal, OpenCL, WebGPU)

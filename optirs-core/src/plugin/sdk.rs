@@ -5,6 +5,7 @@
 
 #[allow(dead_code)]
 use super::core::*;
+#[cfg(feature = "cross-platform-testing")]
 use crate::benchmarking::cross_platform_tester::{PerformanceBaseline, PlatformTarget};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
@@ -130,6 +131,7 @@ pub trait PerformanceTest<A: Float>: Debug {
     fn name(&self) -> &str;
 
     /// Get performance baseline
+    #[cfg(feature = "cross-platform-testing")]
     fn baseline(&self) -> PerformanceBaseline;
 }
 
@@ -430,6 +432,7 @@ min_rust_version = "1.70.0"
     }
 
     /// Create performance baseline from existing optimizer
+    #[cfg(feature = "cross-platform-testing")]
     pub fn create_performance_baseline<A>(
         optimizer: &mut dyn OptimizerPlugin<A>,
         test_data: &[(Array1<A>, Array1<A>)],

@@ -1,6 +1,6 @@
 //! # OptiRS Bench - Benchmarking and Performance Analysis
 //!
-//! **Version:** 0.1.0-rc.2
+//! **Version:** 0.1.0
 //! **Status:** Available
 //!
 //! This crate provides comprehensive benchmarking, profiling, performance analysis, and regression
@@ -8,8 +8,8 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.4 - Required foundation
-//! - `optirs-core` 0.1.0-rc.2 - Core optimizers
+//! - `scirs2-core` 0.1.1 - Required foundation
+//! - `optirs-core` 0.1.0 - Core optimizers
 //!
 //! ## Features
 //!

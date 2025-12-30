@@ -766,7 +766,7 @@ impl GpuOptimizerBenchmark {
             driver_version: "525.0".to_string(),
             os_info: "Linux 6.8.0".to_string(),
             rust_version: "1.75.0".to_string(),
-            scirs2_version: "0.1.0-rc.4".to_string(),
+            scirs2_version: "0.1.1".to_string(),
         };
 
         Ok(TestMetadata {

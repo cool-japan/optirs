@@ -1,7 +1,7 @@
 # OptiRS Usage Guide
 
-**Version:** 0.1.0-rc.2
-**Status:** Release Candidate 2 - Documentation & Quality Improvements
+**Version:** 0.1.0
+**Status:** Stable Release - Production Ready
 
 ## Table of Contents
 
@@ -24,8 +24,8 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-rc.2"
-scirs2-core = "0.1.0-rc.4"  # Required - OptiRS foundation
+optirs-core = "0.1.0"
+scirs2-core = "0.1.1"  # Required - OptiRS foundation
 ```
 
 ### Your First Optimizer

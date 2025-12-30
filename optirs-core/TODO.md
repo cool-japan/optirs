@@ -1,7 +1,8 @@
-# OptiRS Core TODO (v0.1.0-rc.2)
+# OptiRS Core TODO (v0.1.0)
 
 ## Module Status: Production Ready
 
+**Release Date**: 2025-12-30
 **Tests**: 581 unit tests + doc tests passing (3 ignored)
 **Optimizers**: 19 fully implemented
 **SciRS2 Compliance**: 100%
@@ -48,12 +49,12 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] Basic AdaGrad with accumulator
   - [x] Diagonal approximation for memory efficiency
 
-- [x] **AdaDelta** (NEW in RC1)
+- [x] **AdaDelta** - Adaptive learning rate without manual tuning
   - [x] Automatic step size adaptation using RMS
   - [x] 10-step warmup boost for cold-start
   - [x] Full convergence validation (7 tests)
 
-- [x] **AdaBound** (NEW in RC1)
+- [x] **AdaBound** - Dynamic bounds converging to SGD
   - [x] Dynamic learning rate bounds
   - [x] Smooth transition from adaptive to SGD
   - [x] AMSBound variant support
@@ -79,7 +80,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] Interpolation mechanism
   - [x] Compatibility wrapper for any base optimizer
 
-- [x] **Ranger** (NEW in RC1)
+- [x] **Ranger** - RAdam + Lookahead combination
   - [x] RAdam + Lookahead combination
   - [x] Variance rectification + trajectory smoothing
   - [x] Proper slow/fast weight synchronization
@@ -112,7 +113,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] Easier configuration
   - [x] Good default parameters
 
-- [x] **Newton-CG** (NEW in RC1)
+- [x] **Newton-CG** - Newton Conjugate Gradient
   - [x] Conjugate gradient solver for Newton system
   - [x] O(n) memory using only Hessian-vector products
   - [x] Trust region control
@@ -245,5 +246,6 @@ Doc tests: All passing
 
 ---
 
-**Status**: Production Ready
-**Version**: v0.1.0-rc.2
+**Status**: ✅ Production Ready
+**Version**: v0.1.0
+**Release Date**: 2025-12-30

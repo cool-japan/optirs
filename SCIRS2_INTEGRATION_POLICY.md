@@ -364,9 +364,9 @@ OptiRS is an **optimization library**, not an autodiff or data processing framew
 
 ### **Current Policy Status**
 - **Version**: 3.0.0 (Aligned with SciRS2 POLICY v3.0.0)
-- **Effective Date**: 2025-10-11
-- **SciRS2 Version**: v0.1.0-RC.4
-- **Migration Status**: In Progress - Removing prohibited dependencies
+- **Effective Date**: 2025-12-30
+- **SciRS2 Version**: v0.1.1
+- **Migration Status**: Complete - 100% SciRS2 Integration
 - **Next Review**: Q4 2025
 - **Base Policy**: [SciRS2 Ecosystem Policy v3.0.0](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
 
@@ -394,15 +394,15 @@ This policy ensures OptiRS properly leverages SciRS2's scientific computing foun
 ---
 
 **Document Version**: 3.0.0 (Aligned with SciRS2 Ecosystem Policy v3.0.0)
-**Last Updated**: 2025-12-23
-**SciRS2 Version**: v0.1.0-RC.4
+**Last Updated**: 2025-12-30
+**SciRS2 Version**: v0.1.1
 **Next Review**: Q4 2025
 **Owner**: OptiRS Architecture Team
 **Reference**: [SciRS2 Ecosystem Policy v3.0.0](https://github.com/cool-japan/scirs/blob/master/SCIRS2_POLICY.md)
 
 ## Key Updates from v2.0.0 to v3.0.0
 
-### Major Changes (v0.1.0-beta.4+)
+### Major Changes (v0.1.0+)
 1. **Unified NDArray Module**: `array!` macro now available directly via `scirs2_core::ndarray_ext::*`
 2. **Complete Random Module**: All `rand_distr` distributions now in `scirs2_core::random::*`
 3. **Deprecation**: `scirs2_autograd` no longer needed for `array!` macro
@@ -443,7 +443,7 @@ scirs2-optimize = { path = "../scirs/scirs2-optimize" }  # Core optimization int
 # num-complex = { workspace = true }    # REMOVE - Use scirs2-core::numeric
 ```
 
-### Correct Import Patterns (Updated v0.1.0-beta.4+)
+### Correct Import Patterns (v0.1.0+)
 ```rust
 // ✅ CORRECT - Always use these patterns
 use scirs2_core::random::*;           // For RNG and all distributions (Beta, Normal, etc.)

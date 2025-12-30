@@ -1,17 +1,17 @@
-//! # OptiRS RC.2 New Optimizers Example
+//! # OptiRS v0.1.0 New Optimizers Example
 //!
-//! Demonstrates the new optimizers introduced in v0.1.0-rc.2:
+//! Demonstrates the new optimizers introduced in v0.1.0:
 //! - AdaDelta: Adaptive learning rate without manual tuning
 //! - AdaBound: Smooth transition from Adam to SGD
 //!
-//! Run with: cargo run --example new_optimizers_rc1
+//! Run with: cargo run --example new_optimizers
 
 use optirs_core::optimizers::{AdaBound, AdaDelta};
 use scirs2_core::ndarray_ext::array;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔═══════════════════════════════════════════════════════════╗");
-    println!("║  OptiRS v0.1.0-rc.2 - New Optimizers Demonstration      ║");
+    println!("║  OptiRS v0.1.0 - New Optimizers Demonstration           ║");
     println!("╚═══════════════════════════════════════════════════════════╝\n");
 
     // Example problem: Optimize quadratic function f(x,y) = x² + y²

@@ -1,7 +1,7 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.1.0-rc.2
-//! **Release Date:** 2025-12-23 (Release Candidate 2)
+//! **Version:** 0.1.0
+//! **Release Date:** 2025-12-30 (Stable Release)
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -13,12 +13,12 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.0-rc.4 - Required foundation
+//! - `scirs2-core` 0.1.1 - Required foundation
 //!
-//! ## Sub-Crate Status (RC.2)
+//! ## Sub-Crate Status (v0.1.0)
 //!
-//! - ✅ `optirs-core` - Release Candidate (19 optimizers, SIMD, parallel, metrics)
-//! - ✅ `optirs-bench` - Release Candidate (comprehensive benchmarking and profiling)
+//! - ✅ `optirs-core` - Production Ready (19 optimizers, SIMD, parallel, metrics)
+//! - ✅ `optirs-bench` - Production Ready (comprehensive benchmarking and profiling)
 //! - 🚧 `optirs-gpu` - Framework Ready (GPU kernels in development)
 //! - 🔬 `optirs-learned` - Research Phase (meta-learning and learned optimizers)
 //! - 🔬 `optirs-nas` - Research Phase (neural architecture search)
@@ -30,7 +30,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-core = "0.1.0-rc.2"
+//! optirs-core = "0.1.0"
 //! ```
 //!
 //! Basic usage:
@@ -77,7 +77,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-gpu = { version = "0.1.0-rc.2", features = ["cuda"] }
+//! optirs-gpu = { version = "0.1.0", features = ["cuda"] }
 //! ```
 //!
 //! - **Multi-Backend**: CUDA, Metal, OpenCL, WebGPU
@@ -89,7 +89,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-tpu = "0.1.0-rc.2"
+//! optirs-tpu = "0.1.0"
 //! ```
 //!
 //! - **Pod Management**: TPU pod coordination

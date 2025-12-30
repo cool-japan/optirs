@@ -8,13 +8,13 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 
 ## Features
 
-- **Core Optimizers**: SGD, Adam, AdamW, RMSprop with adaptive learning rates
-- **SciRS2 Integration**: Built on top of SciRS2's scientific computing primitives
-- **Automatic Differentiation**: Full integration with SciRS2's autograd system
-- **Linear Algebra**: High-performance matrix operations via SciRS2-linalg
-- **Performance Monitoring**: Built-in metrics and benchmarking via SciRS2-metrics
+- **19 Production-Ready Optimizers**: SGD, Adam, AdamW, RMSprop, AdaDelta, AdaBound, Ranger, LAMB, LARS, Lion, SAM, RAdam, Lookahead, L-BFGS, Newton-CG, and more
+- **100% SciRS2 Integration**: Built exclusively on SciRS2's scientific computing primitives
+- **High Performance**: SIMD acceleration, parallel processing, GPU support via scirs2-core
+- **Linear Algebra**: High-performance matrix operations via scirs2-linalg
+- **Performance Monitoring**: Built-in metrics and benchmarking via scirs2-metrics
 - **Serialization**: Complete Serde support for checkpointing and model persistence
-- **Optional Features**: Parallelization with Rayon, SIMD acceleration
+- **Memory Efficient**: Gradient accumulation, chunked processing for billion-parameter models
 
 ## Optimization Algorithms
 
@@ -35,19 +35,26 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 
 ## Dependencies
 
-### Core Dependencies
-- `ndarray`: N-dimensional arrays for tensor operations
-- `serde`: Serialization and deserialization
-- `thiserror`: Error handling
-- `rand`: Random number generation
+### Required Dependencies (SciRS2 Ecosystem)
+- `scirs2-core` 0.1.1: Foundation scientific primitives (REQUIRED)
+  - Provides: arrays, random, numeric traits, SIMD, parallel ops, GPU abstractions
+- `scirs2-optimize` 0.1.1: Base optimization interfaces (REQUIRED)
 
-### SciRS2 Integration
-- `scirs2-core`: Foundation scientific primitives
-- `scirs2-optimize`: Base optimization interfaces
-- `scirs2-linalg`: Matrix operations and linear algebra
-- `scirs2-autograd`: Automatic differentiation
+### Additional SciRS2 Dependencies
 - `scirs2-neural`: Neural network optimization support
 - `scirs2-metrics`: Performance monitoring and benchmarks
+- `scirs2-stats`: Statistical analysis
+- `scirs2-series`: Time series support
+- `scirs2-datasets`: Dataset utilities (optional)
+- `scirs2-linalg`: Linear algebra operations
+- `scirs2-signal`: Signal processing
+
+### External Dependencies
+- `serde`, `serde_json`: Serialization
+- `thiserror`, `anyhow`: Error handling
+- `approx`, `criterion`: Testing and benchmarking
+
+**Note**: OptiRS does **NOT** use `scirs2-autograd`. OptiRS receives pre-computed gradients and does not perform automatic differentiation.
 
 ## Usage
 
@@ -55,8 +62,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-rc.2"
-scirs2-core = "0.1.0-rc.4"  # Required foundation
+optirs-core = "0.1.0"
+scirs2-core = "0.1.1"  # Required foundation
 ```
 
 ### Basic Example
@@ -80,18 +87,24 @@ let grads = Array1::from(vec![0.1, 0.2, 0.3]);
 optimizer.step(&mut params, &grads);
 ```
 
-### With SciRS2 Integration
+### With Learning Rate Scheduling
 
 ```rust
 use optirs_core::optimizers::Adam;
-use scirs2_autograd::Variable;
+use optirs_core::schedulers::{ExponentialDecay, LRScheduler};
+use scirs2_core::ndarray::Array1;
 
-// Create optimizer with SciRS2 autograd integration
-let mut optimizer = Adam::new(0.001).with_autograd().build();
+// Create optimizer with learning rate scheduler
+let mut optimizer = Adam::new(0.001);
+let mut scheduler = ExponentialDecay::new(0.001, 0.95);
 
-// Use with SciRS2 variables for automatic differentiation
-let mut params = Variable::new(params_tensor);
-optimizer.step_autograd(&mut params);
+let mut params = Array1::from(vec![1.0, 2.0, 3.0]);
+let grads = Array1::from(vec![0.1, 0.2, 0.3]);
+
+// Update with scheduled learning rate
+let current_lr = scheduler.step();
+optimizer.set_learning_rate(current_lr);
+optimizer.step(&mut params, &grads);
 ```
 
 ## Features
@@ -100,15 +113,16 @@ optimizer.step_autograd(&mut params);
 - `std`: Standard library support (enabled by default)
 
 ### Optional Features
-- `parallel`: Enable Rayon-based parallelization
-- `simd`: Enable SIMD acceleration with wide vectors
+- `cross-platform-testing`: Enable cross-platform compatibility testing (requires scirs2-datasets)
 
 Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.1.0-rc.2", features = ["parallel", "simd"] }
+optirs-core = { version = "0.1.0", features = ["cross-platform-testing"] }
 ```
+
+**Note**: SIMD and parallel processing are built-in via scirs2-core and automatically enabled when beneficial.
 
 ## Architecture
 
@@ -133,11 +147,13 @@ optirs-core/
 
 OptiRS-Core is optimized for high-performance machine learning workloads:
 
-- Memory-efficient gradient updates
-- Vectorized operations with ndarray
-- Optional SIMD acceleration
-- Zero-copy operations where possible
-- Numerical stability guarantees
+- **SIMD Acceleration**: 2-4x speedup via scirs2_core::simd_ops
+- **Parallel Processing**: 4-8x speedup via scirs2_core::parallel_ops
+- **GPU Support**: Multi-backend acceleration via scirs2_core::gpu
+- **Memory Efficient**: Gradient accumulation, chunked processing
+- **Vectorized Operations**: Via scirs2_core::ndarray abstractions
+- **Zero-Copy Operations**: Where possible for maximum efficiency
+- **Numerical Stability**: Validated on standard optimization benchmarks
 
 ## Development Guidelines
 

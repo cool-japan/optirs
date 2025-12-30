@@ -54,7 +54,7 @@ scirs2-neural = { workspace = true }      # EVIDENCE: neuromorphic/spike_based.r
 scirs2-metrics = { workspace = true }     # EVIDENCE: benchmarking and monitoring require this
 scirs2-stats = { workspace = true }       # EVIDENCE: multiple modules use distributions
 scirs2-series = { workspace = true }      # EVIDENCE: performance_tracking.rs requires this
-scirs2-datasets = { workspace = true }    # EVIDENCE: cross_platform_tester.rs requires this
+scirs2-datasets = { workspace = true, optional = true }    # OPTIONAL: cross_platform_tester.rs (benchmarking only)
 
 # ⚠️ CONDITIONAL (Uncomment only if compilation fails):
 # scirs2-linalg = { workspace = true }      # Only if second-order methods need matrix ops beyond ndarray
@@ -78,6 +78,7 @@ tempfile = { workspace = true }
 [features]
 default = ["std"]
 std = []
+cross-platform-testing = ["scirs2-datasets"]
 # parallel and simd features removed - use scirs2_core::parallel_ops and scirs2_core::simd_ops directly
 
 [[bench]]

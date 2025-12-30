@@ -1,7 +1,7 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.1.0-rc.2
-**Status:** 🚀 RELEASE CANDIDATE 2 - Documentation & Quality Improvements
+**Version:** 0.1.0
+**Status:** 🚀 Production Ready - Stable Release
 
 OptiRS is a comprehensive optimization library for machine learning that **extends and leverages the full power of SciRS2-Core**. It provides specialized optimization algorithms and hardware acceleration while making **FULL USE** of SciRS2's scientific computing capabilities.
 
@@ -16,31 +16,26 @@ OptiRS is a comprehensive optimization library for machine learning that **exten
 - ✅ **Profiling**: Uses `scirs2_core::profiling` and `benchmarking`
 - ✅ **Error Handling**: Uses `scirs2_core::error::Result`
 
-### Required SciRS2 Dependencies:
-- **scirs2-core**: Core scientific computing primitives and utilities
-- **scirs2-optimize**: Base optimization algorithms and interfaces
-- **scirs2-optim**: Additional optimization methods
-- **scirs2-linalg**: Linear algebra operations
+### SciRS2 Dependencies:
+
+**Required (Always):**
+- **scirs2-core** 0.1.1: Core scientific computing primitives (arrays, random, GPU, SIMD, parallel)
+- **scirs2-optimize** 0.1.1: Base optimization algorithms and interfaces
+
+**Evidence-Based (Used by OptiRS):**
 - **scirs2-neural**: Neural network components
-- **scirs2-autograd**: Automatic differentiation engine
 - **scirs2-metrics**: Performance monitoring and metrics
 - **scirs2-stats**: Statistical functions and distributions
-- **scirs2-cluster**: Clustering algorithms
-- **scirs2-datasets**: Dataset handling and preprocessing
+- **scirs2-series**: Time series support
+- **scirs2-datasets**: Dataset handling (optional, feature-gated)
+- **scirs2-linalg**: Linear algebra operations
 - **scirs2-signal**: Signal processing capabilities
-- **scirs2-fft**: Fast Fourier Transform operations
-- **scirs2-transform**: Mathematical transformations
-- **scirs2-sparse**: Sparse matrix operations
-- **scirs2-vision**: Computer vision utilities
-- **scirs2-io**: Input/output operations
-- **scirs2-integrate**: Numerical integration
-- **scirs2-interpolate**: Interpolation methods
-- **scirs2-series**: Time series analysis
-- **scirs2-spatial**: Spatial data structures
-- **scirs2-special**: Special mathematical functions
-- **scirs2-text**: Text processing utilities
-- **scirs2-ndimage**: N-dimensional image processing
-- **scirs2-graph**: Graph algorithms
+
+**Not Used by OptiRS:**
+- ❌ **scirs2-autograd**: OptiRS receives pre-computed gradients, does not perform automatic differentiation
+- ❌ **scirs2-optim**: Replaced by optirs-core
+- ❌ **scirs2-cluster**, **scirs2-fft**, **scirs2-transform**, **scirs2-sparse**, **scirs2-vision**, **scirs2-graph**: Not required for optimization
+- ❌ **scirs2-io**, **scirs2-integrate**, **scirs2-interpolate**, **scirs2-spatial**, **scirs2-special**, **scirs2-text**, **scirs2-ndimage**: Not required for optimization
 
 ### Architecture Philosophy:
 OptiRS extends SciRS2's scientific computing capabilities with specialized ML optimization features. It leverages SciRS2's robust numerical foundation while adding advanced optimization algorithms, hardware acceleration, and learned optimizers.
@@ -61,14 +56,14 @@ All optimizers built exclusively on SciRS2-Core:
 - **AdamW** - Adam with decoupled weight decay
 - **RMSprop** - Root Mean Square Propagation
 - **Adagrad** - Adaptive Gradient Algorithm
-- **AdaDelta** - ✨ Adaptive learning rate method (v1.0.0)
-- **AdaBound** - ✨ Adaptive gradient with dynamic bound (v1.0.0)
+- **AdaDelta** - Adaptive learning rate method
+- **AdaBound** - Adaptive gradient with dynamic bound
 - **LAMB** - Layer-wise Adaptive Moments for Batch training
 - **LARS** - Layer-wise Adaptive Rate Scaling
 - **Lion** - Evolved Sign Momentum optimizer
 - **Lookahead** - Look ahead optimizer wrapper
 - **RAdam** - Rectified Adam
-- **Ranger** - ✨ RAdam + Lookahead hybrid (v1.0.0)
+- **Ranger** - RAdam + Lookahead hybrid
 - **SAM** - Sharpness-Aware Minimization
 - **SparseAdam** - Adam variant for sparse gradients
 - **GroupedAdam** - Adam with parameter groups
@@ -76,7 +71,7 @@ All optimizers built exclusively on SciRS2-Core:
 **Second-Order Optimizers (2)**
 - **L-BFGS** - Limited-memory Broyden-Fletcher-Goldfarb-Shanno
 - **K-FAC** - Kronecker-Factored Approximate Curvature
-- **Newton-CG** - ✨ Newton Conjugate Gradient (v1.0.0)
+- **Newton-CG** - Newton Conjugate Gradient
 
 #### Learning Rate Schedulers
 - **ExponentialDecay** - Exponential learning rate decay
@@ -85,7 +80,7 @@ All optimizers built exclusively on SciRS2-Core:
 - **LinearWarmup** - Linear warmup with decay
 - **OneCycleLR** - One cycle learning rate policy
 
-#### Advanced Performance Features (Phase 2 Complete)
+#### Advanced Performance Features
 
 **SIMD Acceleration** (2-4x speedup)
 - Automatic SIMD vectorization for f32/f64
@@ -177,11 +172,11 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ```toml
 [dependencies]
-optirs-core = "0.1.0-rc.2"
-scirs2-core = "0.1.0-rc.4"  # Required foundation
+optirs-core = "0.1.0"
+scirs2-core = "0.1.1"  # Required foundation
 
 # Optional: GPU acceleration (experimental)
-optirs-gpu = { version = "0.1.0-rc.2", optional = true }
+optirs-gpu = { version = "0.1.0", optional = true }
 ```
 
 ### Basic Usage

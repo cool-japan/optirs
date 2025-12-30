@@ -435,7 +435,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             let identifier = OptimizerIdentifier {
                 framework: Framework::SciRS2,
                 name: name.clone(),
-                version: Some("0.1.0-beta.1".to_string()),
+                version: Some("0.1.0".to_string()),
             };
 
             let summary =
@@ -591,7 +591,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             optimizer: OptimizerIdentifier {
                 framework: Framework::SciRS2,
                 name: "SciRS2".to_string(),
-                version: Some("0.1.0-beta.1".to_string()),
+                version: Some("0.1.0".to_string()),
             },
             successful_runs,
             total_runs: self.config.num_runs,

@@ -1,7 +1,8 @@
-# OptiRS NAS TODO (v0.1.0-rc.2)
+# OptiRS NAS TODO (v0.1.0)
 
 ## Module Status: Production Ready
 
+**Release Date**: 2025-12-30
 **Tests**: 44 tests passing (1 ignored)
 **Features**: Bayesian optimization, Evolutionary algorithms, RL-based NAS
 **SciRS2 Compliance**: 100%
@@ -144,5 +145,6 @@
 
 ---
 
-**Status**: Production Ready
-**Version**: v0.1.0-rc.2
+**Status**: ✅ Production Ready
+**Version**: v0.1.0
+**Release Date**: 2025-12-30

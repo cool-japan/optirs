@@ -1,15 +1,16 @@
-# OptiRS TODO - v0.1.0-rc.2 (Release Candidate)
+# OptiRS TODO - v0.1.0 (Stable Release)
 
-## Project Status: Release Candidate - Pre-release Testing
+## Project Status: Stable Release - Production Ready
 
-**Current Version**: v0.1.0-rc.2
+**Current Version**: v0.1.0
+**Release Date**: 2025-12-30
 **Total Tests**: 1,134 tests passing (100% pass rate)
 **SLoC**: 307,820 lines of Rust code
 **SciRS2 Compliance**: 100%
 
 ---
 
-## Phase 0: SciRS2 Migration
+## Completed: v0.1.0 Release
 
 ### SciRS2 Core Integration
 - [x] **Remove ALL direct ndarray imports** - All 474 imports updated to scirs2_core::ndarray
@@ -18,11 +19,9 @@
 - [x] **SIMD operations** - Using scirs2_core::simd_ops::SimdUnifiedOps
 - [x] **Parallel processing** - Using scirs2_core::parallel_ops
 
----
+### Core Optimizer Implementation (19 total)
 
-## Phase 1: Core Optimizers (v0.1.0-beta.2)
-
-### Core Optimizer Implementation
+**First-Order Optimizers (17)**
 - [x] **SGD Optimizer** - Complete with momentum, Nesterov, weight decay
   - [x] Basic SGD with learning rate
   - [x] Classical momentum (Polyak)
@@ -49,7 +48,6 @@
   - [x] Basic AdaGrad with accumulator
   - [x] Sparse variant (sparse_adam.rs)
 
-### Modern Optimizer Variants (v0.1.0-beta.3)
 - [x] **LAMB Optimizer** - Large batch training
   - [x] Layer-wise adaptation mechanism
   - [x] Trust ratio computation
@@ -82,7 +80,6 @@
 - [x] **GroupedAdam** - Parameter group support
   - [x] Different hyperparameters per group
 
-### NEW RC1 Optimizers (v0.1.0-rc.2)
 - [x] **AdaDelta Optimizer** - Adaptive learning rate without manual tuning
   - [x] Automatic step size adaptation using RMS of gradients/updates
   - [x] 10-step warmup boost for cold-start problem
@@ -100,11 +97,7 @@
   - [x] Proper slow/fast weight synchronization
   - [x] 7 comprehensive tests
 
----
-
-## Phase 2: Advanced Features (v0.1.0-beta.3)
-
-### Second-Order Methods
+**Second-Order Methods (2)**
 - [x] **L-BFGS** - Limited-memory BFGS
   - [x] Two-loop recursion algorithm
   - [x] Line search with Wolfe conditions
@@ -114,14 +107,16 @@
   - [x] Easier configuration
   - [x] Good default parameters
 
-- [x] **Newton-CG** - NEW in RC1
+- [x] **Newton-CG** - Newton Conjugate Gradient
   - [x] Conjugate gradient solver for Newton system
   - [x] O(n) memory using only Hessian-vector products
   - [x] Trust region control
   - [x] Negative curvature detection
   - [x] 7 comprehensive tests
 
-### SIMD Acceleration
+### Advanced Features
+
+**SIMD Acceleration**
 - [x] SimdOptimizer trait for f32/f64
 - [x] SIMD-accelerated SGD (SimdSGD)
 - [x] SIMD operations for momentum, Adam moments
@@ -129,20 +124,20 @@
 - [x] 15 SIMD tests passing
 - [x] Expected 2-4x speedup achieved
 
-### Parallel Processing
+**Parallel Processing**
 - [x] ParallelOptimizer wrapper
 - [x] Parameter group parallelization
 - [x] ParallelBatchProcessor
 - [x] 9 parallel tests passing
 - [x] Expected 4-8x speedup achieved
 
-### Memory Efficiency
+**Memory Efficiency**
 - [x] GradientAccumulator for micro-batch training
 - [x] ChunkedOptimizer for billion-parameter models
 - [x] MemoryUsageEstimator utilities
 - [x] 7 memory-efficient tests passing
 
-### GPU Integration
+**GPU Integration**
 - [x] GpuOptimizer wrapper
 - [x] GPU context management
 - [x] Tensor cores support
@@ -151,7 +146,7 @@
 - [x] 11 GPU integration tests passing
 - [x] Multi-backend support (CUDA, Metal, OpenCL, WebGPU)
 
-### Production Tools
+**Production Tools**
 - [x] Profiling integration using scirs2_core::metrics
 - [x] OptimizerMetrics tracking
 - [x] GradientStatistics analysis
@@ -162,17 +157,17 @@
 
 ---
 
-## Phase 3: Research Features (v0.2.0+) - FUTURE WORK
+## Future Work (v0.2.0+)
 
 ### Learned Optimizers
-- [ ] Meta-learning framework completion
-- [ ] Transformer-based optimization enhancements
+- [ ] Meta-learning framework enhancements
+- [ ] Transformer-based optimization improvements
 - [ ] Cross-domain transfer learning
 - [ ] Online meta-learning
 
 ### Neural Architecture Search
 - [ ] Differentiable architecture search (DARTS)
-- [ ] Hardware-aware NAS completion
+- [ ] Hardware-aware NAS enhancements
 - [ ] Multi-objective search improvements
 
 ### Distributed Training
@@ -242,7 +237,7 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests
 
 ---
 
-## Release Checklist (v0.1.0-rc.2)
+## Release Status (v0.1.0)
 
 - [x] All core optimizers implemented (19 total)
 - [x] Full SciRS2 integration verified
@@ -251,10 +246,10 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests
 - [x] CHANGELOG.md created
 - [x] Examples working
 - [x] Benchmarks validated
-- [ ] crates.io publication (pending final review)
-- [ ] GitHub release (pending)
+- [x] crates.io publication
+- [x] GitHub release tag
 
 ---
 
-**Status**: Ready for Release
-**Next Milestone**: v1.0.0 stable release
+**Status**: ✅ Released (2025-12-30)
+**Next Milestone**: v0.2.0 - Enhanced features and research implementations
