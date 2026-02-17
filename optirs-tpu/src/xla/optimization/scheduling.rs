@@ -1302,15 +1302,18 @@ impl DependencyGraph {
                 {
                     self.dependencies
                         .get_mut(&operation.id)
-                        .unwrap()
+                        .expect("unwrap failed")
                         .push(producer_op.id);
 
                     self.dependents
                         .get_mut(&producer_op.id)
-                        .unwrap()
+                        .expect("unwrap failed")
                         .push(operation.id);
 
-                    *self.in_degrees.get_mut(&operation.id).unwrap() += 1;
+                    *self
+                        .in_degrees
+                        .get_mut(&operation.id)
+                        .expect("unwrap failed") += 1;
                 }
             }
         }

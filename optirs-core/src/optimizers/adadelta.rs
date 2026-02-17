@@ -52,10 +52,10 @@ pub struct AdaDelta<T: Float> {
 impl<T: Float> Default for AdaDelta<T> {
     fn default() -> Self {
         Self::new(
-            T::from(0.95).unwrap(), // rho
-            T::from(1e-6).unwrap(), // epsilon
+            T::from(0.95).expect("unwrap failed"), // rho
+            T::from(1e-6).expect("unwrap failed"), // epsilon
         )
-        .unwrap()
+        .expect("unwrap failed")
     }
 }
 
@@ -73,11 +73,11 @@ impl<T: Float> AdaDelta<T> {
     /// ```
     /// use optirs_core::optimizers::AdaDelta;
     ///
-    /// let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).unwrap();
+    /// let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
     /// ```
     pub fn new(rho: T, epsilon: T) -> Result<Self> {
-        let rho_f64 = rho.to_f64().unwrap();
-        let epsilon_f64 = epsilon.to_f64().unwrap();
+        let rho_f64 = rho.to_f64().expect("unwrap failed");
+        let epsilon_f64 = epsilon.to_f64().expect("unwrap failed");
 
         if rho_f64 <= 0.0 || rho_f64 >= 1.0 {
             return Err(OptimError::InvalidParameter(format!(
@@ -124,11 +124,11 @@ impl<T: Float> AdaDelta<T> {
     /// use optirs_core::optimizers::AdaDelta;
     /// use scirs2_core::ndarray_ext::array;
     ///
-    /// let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).unwrap();
+    /// let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
     /// let params = array![1.0, 2.0, 3.0];
     /// let grads = array![0.1, 0.2, 0.3];
     ///
-    /// let updated_params = optimizer.step(params.view(), grads.view()).unwrap();
+    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
     /// ```
     pub fn step(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
         let n = params.len();
@@ -147,8 +147,8 @@ impl<T: Float> AdaDelta<T> {
             self.accumulated_updates = Some(Array1::zeros(n));
         }
 
-        let acc_grad = self.accumulated_gradients.as_mut().unwrap();
-        let acc_update = self.accumulated_updates.as_mut().unwrap();
+        let acc_grad = self.accumulated_gradients.as_mut().expect("unwrap failed");
+        let acc_update = self.accumulated_updates.as_mut().expect("unwrap failed");
 
         // Update exponentially decaying average of squared gradients
         // E[g²]_t = ρ * E[g²]_{t-1} + (1 - ρ) * g_t²
@@ -168,7 +168,7 @@ impl<T: Float> AdaDelta<T> {
         // On first few steps, use a larger step size to bootstrap the algorithm
         // This helps AdaDelta overcome the cold-start problem
         let warmup_boost = if self.step_count < 10 {
-            T::from(10.0).unwrap() // Initial step size multiplier for first 10 steps
+            T::from(10.0).expect("unwrap failed") // Initial step size multiplier for first 10 steps
         } else {
             T::one()
         };
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_adadelta_creation() {
-        let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).unwrap();
+        let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
         assert_eq!(optimizer.step_count(), 0);
     }
 
@@ -258,11 +258,13 @@ mod tests {
 
     #[test]
     fn test_adadelta_single_step() {
-        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6).unwrap();
+        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6).expect("unwrap failed");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
-        let updated_params = optimizer.step(params.view(), grads.view()).unwrap();
+        let updated_params = optimizer
+            .step(params.view(), grads.view())
+            .expect("unwrap failed");
 
         // First step should have small updates (RMS[Δθ]_{-1} = 0)
         assert!(updated_params.len() == 3);
@@ -276,12 +278,14 @@ mod tests {
 
     #[test]
     fn test_adadelta_multiple_steps() {
-        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).unwrap();
+        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
         let mut params = array![1.0, 2.0, 3.0];
 
         for _ in 0..10 {
             let grads = array![0.1, 0.2, 0.3];
-            params = optimizer.step(params.view(), grads.view()).unwrap();
+            params = optimizer
+                .step(params.view(), grads.view())
+                .expect("unwrap failed");
         }
 
         assert_eq!(optimizer.step_count(), 10);
@@ -294,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_adadelta_shape_mismatch() {
-        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).unwrap();
+        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2]; // Wrong shape
 
@@ -303,11 +307,13 @@ mod tests {
 
     #[test]
     fn test_adadelta_reset() {
-        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).unwrap();
+        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
-        optimizer.step(params.view(), grads.view()).unwrap();
+        optimizer
+            .step(params.view(), grads.view())
+            .expect("unwrap failed");
         assert_eq!(optimizer.step_count(), 1);
         assert!(optimizer.accumulated_gradients.is_some());
 
@@ -322,13 +328,15 @@ mod tests {
         // Test convergence on a simple quadratic function: f(x) = x²
         // Gradient: f'(x) = 2x
         // Using higher rho (0.99) for better long-term memory
-        let mut optimizer = AdaDelta::<f64>::new(0.99, 1e-6).unwrap();
+        let mut optimizer = AdaDelta::<f64>::new(0.99, 1e-6).expect("unwrap failed");
         let mut params = array![10.0]; // Start far from optimum
 
         for _ in 0..500 {
             // AdaDelta needs warmup + convergence time
             let grads = params.mapv(|x| 2.0 * x); // Gradient of x²
-            params = optimizer.step(params.view(), grads.view()).unwrap();
+            params = optimizer
+                .step(params.view(), grads.view())
+                .expect("unwrap failed");
         }
 
         // Should converge reasonably close to zero with warmup boost
@@ -341,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_adadelta_rms_values() {
-        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6).unwrap();
+        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6).expect("unwrap failed");
 
         // No RMS values before first step
         assert!(optimizer.rms_gradients().is_none());
@@ -350,23 +358,27 @@ mod tests {
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
-        optimizer.step(params.view(), grads.view()).unwrap();
+        optimizer
+            .step(params.view(), grads.view())
+            .expect("unwrap failed");
 
         // RMS values should exist after first step
         assert!(optimizer.rms_gradients().is_some());
         assert!(optimizer.rms_updates().is_some());
 
-        let rms_grads = optimizer.rms_gradients().unwrap();
+        let rms_grads = optimizer.rms_gradients().expect("unwrap failed");
         assert_eq!(rms_grads.len(), 3);
     }
 
     #[test]
     fn test_adadelta_f64() {
-        let mut optimizer = AdaDelta::<f64>::new(0.95, 1e-8).unwrap();
+        let mut optimizer = AdaDelta::<f64>::new(0.95, 1e-8).expect("unwrap failed");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
-        let updated_params = optimizer.step(params.view(), grads.view()).unwrap();
+        let updated_params = optimizer
+            .step(params.view(), grads.view())
+            .expect("unwrap failed");
         assert_eq!(updated_params.len(), 3);
     }
 }

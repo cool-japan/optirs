@@ -1451,7 +1451,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         }
 
         let sum: T = results.iter().map(|r| r.normalized_score).sum();
-        Ok(sum / T::from(results.len()).unwrap())
+        Ok(sum / T::from(results.len()).expect("unwrap failed"))
     }
 
     fn compute_convergence_speed(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -1463,7 +1463,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             / results.len() as f64;
 
         // Inverse of average time (higher is better)
-        Ok(T::from(1.0 / (avg_time + 1e-6)).unwrap())
+        Ok(T::from(1.0 / (avg_time + 1e-6)).expect("unwrap failed"))
     }
 
     fn compute_stability(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -1472,9 +1472,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         }
 
         let scores: Vec<T> = results.iter().map(|r| r.score).collect();
-        let mean = scores.iter().cloned().sum::<T>() / T::from(scores.len()).unwrap();
+        let mean = scores.iter().cloned().sum::<T>() / T::from(scores.len()).expect("unwrap failed");
         let variance = scores.iter().map(|&s| (s - mean) * (s - mean)).sum::<T>()
-            / T::from(scores.len()).unwrap();
+            / T::from(scores.len()).expect("unwrap failed");
         let std_dev = variance.sqrt();
 
         // Stability as inverse of coefficient of variation
@@ -1490,7 +1490,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             / results.len() as f64;
 
         // Efficiency as inverse of memory usage
-        Ok(T::from(1.0 / (avg_memory + 1e-6)).unwrap())
+        Ok(T::from(1.0 / (avg_memory + 1e-6)).expect("unwrap failed"))
     }
 
     fn compute_computational_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -1501,7 +1501,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             / results.len() as f64;
 
         // Efficiency as inverse of CPU time
-        Ok(T::from(1.0 / (avg_cpu_time + 1e-6)).unwrap())
+        Ok(T::from(1.0 / (avg_cpu_time + 1e-6)).expect("unwrap failed"))
     }
 }
 
@@ -1600,11 +1600,11 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
         let score = match benchmark.test_function.function_type {
             TestFunctionType::Rosenbrock => {
                 // Simulate Rosenbrock function optimization
-                T::from(0.01 + rng.random::<f64>() * 0.1).unwrap()
+                T::from(0.01 + rng.random::<f64>() * 0.1).expect("unwrap failed")
             }
             TestFunctionType::Quadratic => {
                 // Simulate quadratic function optimization
-                T::from(0.001 + rng.random::<f64>() * 0.01).unwrap()
+                T::from(0.001 + rng.random::<f64>() * 0.01).expect("unwrap failed")
             }
             _ => {
                 // Default score
@@ -1622,7 +1622,7 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
             execution_time,
             resource_usage: ResourceUsage {
                 memory_gb: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
-                cpu_time_seconds: T::from(execution_time.as_secs_f64()).unwrap(),
+                cpu_time_seconds: T::from(execution_time.as_secs_f64()).expect("unwrap failed"),
                 gpu_time_seconds: T::zero(),
                 energy_kwh: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
                 cost_usd: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
@@ -1725,10 +1725,10 @@ impl<T: Float + Debug + Default + std::iter::Sum + Send + Sync> StatisticalAnaly
 
         if !results.is_empty() {
             let scores: Vec<T> = results.iter().map(|r| r.score).collect();
-            let mean = scores.iter().cloned().sum::<T>() / T::from(scores.len()).unwrap();
+            let mean = scores.iter().cloned().sum::<T>() / T::from(scores.len()).expect("unwrap failed");
             let std_dev = if scores.len() > 1 {
                 let variance = scores.iter().map(|&s| (s - mean) * (s - mean)).sum::<T>()
-                    / T::from(scores.len() - 1).unwrap();
+                    / T::from(scores.len() - 1).expect("unwrap failed");
                 variance.sqrt()
             } else {
                 T::zero()
@@ -1736,7 +1736,7 @@ impl<T: Float + Debug + Default + std::iter::Sum + Send + Sync> StatisticalAnaly
 
             // 95% confidence interval (simplified)
             let margin =
-                std_dev * scirs2_core::numeric::NumCast::from(1.96).unwrap_or_else(|| T::zero()) / T::from((scores.len() as f64).sqrt()).unwrap();
+                std_dev * scirs2_core::numeric::NumCast::from(1.96).unwrap_or_else(|| T::zero()) / T::from((scores.len() as f64).sqrt()).expect("unwrap failed");
             intervals.insert(
                 EvaluationMetric::FinalPerformance,
                 (mean - margin, mean + margin),

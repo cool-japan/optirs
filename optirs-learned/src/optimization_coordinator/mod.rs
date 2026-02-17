@@ -539,8 +539,8 @@ impl<
             return Ok(T::zero());
         }
 
-        let initial_score = recent_scores.last().unwrap();
-        let final_score = recent_scores.first().unwrap();
+        let initial_score = recent_scores.last().expect("unwrap failed");
+        let final_score = recent_scores.first().expect("unwrap failed");
 
         if *initial_score > T::zero() {
             Ok((*final_score - *initial_score) / *initial_score)
@@ -722,7 +722,7 @@ mod tests {
     #[test]
     fn test_coordinator_reset() {
         let config = AdvancedConfig::<f32>::default();
-        let mut coordinator = AdvancedCoordinator::new(config).unwrap();
+        let mut coordinator = AdvancedCoordinator::new(config).expect("unwrap failed");
         assert!(coordinator.reset().is_ok());
     }
 }

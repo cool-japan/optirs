@@ -139,30 +139,30 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdagradGpu<A> {
         // Set kernel parameters
         #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
-            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
-            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
-            kernel.set_buffer("sum_sq_grad", gpu_memory.v_gpu.as_ref().unwrap()); // Accumulated squared gradients
+            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("sum_sq_grad", gpu_memory.v_gpu.as_ref().expect("unwrap failed")); // Accumulated squared gradients
 
             // Calculate effective learning rate with decay
             let effective_lr = self.cpu_optimizer.learning_rate
                 / (A::one()
                     + self.cpu_optimizer.lr_decay
-                        * A::from(self.cpu_optimizer.step_count).unwrap());
+                        * A::from(self.cpu_optimizer.step_count).expect("unwrap failed"));
 
             // Convert Float values to concrete types for kernel
             if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
-                kernel.set_f32("lr", effective_lr.to_f32().unwrap());
-                kernel.set_f32("eps", self.cpu_optimizer.epsilon.to_f32().unwrap());
+                kernel.set_f32("lr", effective_lr.to_f32().expect("unwrap failed"));
+                kernel.set_f32("eps", self.cpu_optimizer.epsilon.to_f32().expect("unwrap failed"));
                 kernel.set_f32(
                     "weight_decay",
-                    self.cpu_optimizer.weight_decay.to_f32().unwrap(),
+                    self.cpu_optimizer.weight_decay.to_f32().expect("unwrap failed"),
                 );
             } else {
-                kernel.set_f64("lr", effective_lr.to_f64().unwrap());
-                kernel.set_f64("eps", self.cpu_optimizer.epsilon.to_f64().unwrap());
+                kernel.set_f64("lr", effective_lr.to_f64().expect("unwrap failed"));
+                kernel.set_f64("eps", self.cpu_optimizer.epsilon.to_f64().expect("unwrap failed"));
                 kernel.set_f64(
                     "weight_decay",
-                    self.cpu_optimizer.weight_decay.to_f64().unwrap(),
+                    self.cpu_optimizer.weight_decay.to_f64().expect("unwrap failed"),
                 );
             }
 
@@ -240,7 +240,7 @@ mod tests {
         let result = optimizer.step(&params, &grads);
         assert!(result.is_ok());
 
-        let updated = result.unwrap();
+        let updated = result.expect("unwrap failed");
         assert_eq!(updated.len(), 3);
     }
 

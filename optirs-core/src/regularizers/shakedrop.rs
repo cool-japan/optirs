@@ -84,8 +84,8 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
     /// Get a random value between the given range
     fn random_in_range(&mut self, range: (A, A)) -> A {
         let (min, max) = range;
-        let min_f = min.to_f64().unwrap();
-        let max_f = max.to_f64().unwrap();
+        let min_f = min.to_f64().expect("unwrap failed");
+        let max_f = max.to_f64().expect("unwrap failed");
 
         // Handle equal min and max to avoid "empty range" error
         if (max_f - min_f).abs() < 1e-10 {
@@ -93,7 +93,7 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
         }
 
         let random_val = self.rng.gen_range(min_f..max_f);
-        A::from_f64(random_val).unwrap()
+        A::from_f64(random_val).expect("unwrap failed")
     }
 
     /// Get a forward pass gate for the ShakeDrop
@@ -110,7 +110,7 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
 
         // Determine if the gate is active
         let u: f64 = self.rng.gen_range(0.0..1.0);
-        let b = if u < self.p.to_f64().unwrap() {
+        let b = if u < self.p.to_f64().expect("unwrap failed") {
             one
         } else {
             zero
@@ -325,7 +325,7 @@ mod tests {
         assert!(sd.apply(&params, &mut grads).is_err());
 
         // penalty() should return zero
-        let penalty = sd.penalty(&params).unwrap();
+        let penalty = sd.penalty(&params).expect("unwrap failed");
         assert_eq!(penalty, 0.0);
     }
 }

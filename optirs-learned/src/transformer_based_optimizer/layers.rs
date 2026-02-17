@@ -102,7 +102,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LayerNormalization<T> {
             let row = input.row(i);
 
             // Calculate mean
-            let mean = row.sum() / T::from(row.len()).unwrap();
+            let mean = row.sum() / T::from(row.len()).expect("unwrap failed");
 
             // Calculate variance
             let variance = row
@@ -112,7 +112,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LayerNormalization<T> {
                     diff * diff
                 })
                 .fold(T::zero(), |acc, x| acc + x)
-                / T::from(row.len()).unwrap();
+                / T::from(row.len()).expect("unwrap failed");
 
             // Normalize
             let std_dev = (variance + self.epsilon).sqrt();
@@ -390,7 +390,7 @@ mod tests {
         let embedding = EmbeddingLayer::<f32>::new(100, 64);
         assert!(embedding.is_ok());
 
-        let emb = embedding.unwrap();
+        let emb = embedding.expect("unwrap failed");
         assert_eq!(emb.parameter_count(), 100 * 64);
     }
 
@@ -399,7 +399,7 @@ mod tests {
         let layer_norm = LayerNormalization::<f32>::new(128);
         assert!(layer_norm.is_ok());
 
-        let ln = layer_norm.unwrap();
+        let ln = layer_norm.expect("unwrap failed");
         let input = Array2::<f32>::ones((2, 128));
         let result = ln.forward(&input);
         assert!(result.is_ok());
@@ -424,12 +424,12 @@ mod tests {
         let projection = OutputProjection::<f32>::new(128, 64);
         assert!(projection.is_ok());
 
-        let proj = projection.unwrap();
+        let proj = projection.expect("unwrap failed");
         let input = Array2::<f32>::zeros((2, 128));
         let result = proj.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[2, 64]);
     }
 
@@ -442,13 +442,14 @@ mod tests {
         let result = residual.add(&input, &res_input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output[[0, 0]], 1.5);
     }
 
     #[test]
     fn test_activation_functions() {
-        let input = Array2::<f32>::from_shape_vec((2, 2), vec![-1.0, 0.0, 0.5, 1.0]).unwrap();
+        let input = Array2::<f32>::from_shape_vec((2, 2), vec![-1.0, 0.0, 0.5, 1.0])
+            .expect("unwrap failed");
 
         let relu_output = ActivationLayer::apply(&input, ActivationFunction::ReLU);
         assert_eq!(relu_output[[0, 0]], 0.0);

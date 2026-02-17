@@ -115,14 +115,14 @@ mod tests {
         let manager = ResourceManager::new(100);
         assert!(manager.is_ok());
 
-        let rm = manager.unwrap();
+        let rm = manager.expect("unwrap failed");
         assert!(rm.has_budget_remaining());
         assert_eq!(rm.usage.evaluations_used, 0);
     }
 
     #[test]
     fn test_budget_consumption() {
-        let mut manager = ResourceManager::new(10).unwrap();
+        let mut manager = ResourceManager::new(10).expect("unwrap failed");
 
         let result = manager.consume_evaluation_budget(5);
         assert!(result.is_ok());

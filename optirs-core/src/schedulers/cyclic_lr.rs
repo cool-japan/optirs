@@ -73,7 +73,7 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
     /// * `mode` - Cycling mode (Triangular, Triangular2, or ExpRange)
     pub fn new(base_lr: A, max_lr: A, step_size: usize, mode: CyclicMode) -> Self {
         let gamma = match mode {
-            CyclicMode::ExpRange(g) => A::from(g).unwrap(),
+            CyclicMode::ExpRange(g) => A::from(g).expect("unwrap failed"),
             _ => A::one(),
         };
 
@@ -82,7 +82,7 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
             CyclicMode::Triangular2 => Box::new(|current, cycle_half, _, _| {
                 A::one()
                     / (A::from(2)
-                        .unwrap()
+                        .expect("unwrap failed")
                         .powi(current as i32 / (2 * cycle_half) as i32))
             }),
             CyclicMode::ExpRange(_) => Box::new(|current, cycle_half, gamma, _| {
@@ -135,10 +135,12 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
         let cycle_position = self.current_step % (2 * self.step_size);
         if cycle_position < self.step_size {
             // First half: increasing
-            A::from(cycle_position).unwrap() / A::from(self.step_size).unwrap()
+            A::from(cycle_position).expect("unwrap failed")
+                / A::from(self.step_size).expect("unwrap failed")
         } else {
             // Second half: decreasing
-            A::from(2 * self.step_size - cycle_position).unwrap() / A::from(self.step_size).unwrap()
+            A::from(2 * self.step_size - cycle_position).expect("unwrap failed")
+                / A::from(self.step_size).expect("unwrap failed")
         }
     }
 }

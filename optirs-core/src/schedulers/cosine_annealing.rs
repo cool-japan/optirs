@@ -102,11 +102,13 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
 
         // Calculate cosine annealing learning rate
         // lr = min_lr + 0.5 * (initial_lr - min_lr) * (1 + cos(pi * t_cur / T_max))
-        let pi = A::from(std::f64::consts::PI).unwrap();
-        let cos_term =
-            A::one() + (pi * A::from(t_cur).unwrap() / A::from(self.t_max).unwrap()).cos();
-        self.current_lr =
-            self.min_lr + A::from(0.5).unwrap() * (self.initial_lr - self.min_lr) * cos_term;
+        let pi = A::from(std::f64::consts::PI).expect("unwrap failed");
+        let cos_term = A::one()
+            + (pi * A::from(t_cur).expect("unwrap failed")
+                / A::from(self.t_max).expect("unwrap failed"))
+            .cos();
+        self.current_lr = self.min_lr
+            + A::from(0.5).expect("unwrap failed") * (self.initial_lr - self.min_lr) * cos_term;
 
         self.current_lr
     }

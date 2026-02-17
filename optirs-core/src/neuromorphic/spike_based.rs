@@ -856,7 +856,7 @@ impl<T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + std:
 
         // Normalize by number of spike pairs
         if !spikes1.is_empty() && !spikes2.is_empty() {
-            correlation / T::from(spikes1.len() * spikes2.len()).unwrap()
+            correlation / T::from(spikes1.len() * spikes2.len()).expect("unwrap failed")
         } else {
             T::zero()
         }

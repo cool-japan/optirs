@@ -32,7 +32,9 @@ fn bench_sequential_vs_parallel(c: &mut Criterion) {
                 b.iter(|| {
                     let mut results = Vec::with_capacity(params_list.len());
                     for (params, grads) in params_list.iter().zip(grads_list.iter()) {
-                        let result = optimizer.step(black_box(params), black_box(grads)).unwrap();
+                        let result = optimizer
+                            .step(black_box(params), black_box(grads))
+                            .expect("unwrap failed");
                         results.push(result);
                     }
                     black_box(results)
@@ -52,7 +54,7 @@ fn bench_sequential_vs_parallel(c: &mut Criterion) {
                         black_box(&params_list),
                         black_box(&grads_list),
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     black_box(result)
                 });
             },
@@ -87,7 +89,7 @@ fn bench_parallel_optimizer_wrapper(c: &mut Criterion) {
                 b.iter(|| {
                     let result = parallel_opt
                         .step_parallel_groups(black_box(&params_list), black_box(&grads_list))
-                        .unwrap();
+                        .expect("unwrap failed");
                     black_box(result)
                 });
             },
@@ -118,7 +120,9 @@ fn bench_parameter_size_scaling(c: &mut Criterion) {
             b.iter(|| {
                 let mut results = Vec::with_capacity(params_list.len());
                 for (params, grads) in params_list.iter().zip(grads_list.iter()) {
-                    let result = optimizer.step(black_box(params), black_box(grads)).unwrap();
+                    let result = optimizer
+                        .step(black_box(params), black_box(grads))
+                        .expect("unwrap failed");
                     results.push(result);
                 }
                 black_box(results)
@@ -134,7 +138,7 @@ fn bench_parameter_size_scaling(c: &mut Criterion) {
                     black_box(&params_list),
                     black_box(&grads_list),
                 )
-                .unwrap();
+                .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -167,7 +171,7 @@ fn bench_optimizer_types(c: &mut Criterion) {
                 black_box(&params_list),
                 black_box(&grads_list),
             )
-            .unwrap();
+            .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -181,7 +185,7 @@ fn bench_optimizer_types(c: &mut Criterion) {
                 black_box(&params_list),
                 black_box(&grads_list),
             )
-            .unwrap();
+            .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -213,7 +217,7 @@ fn bench_memory_overhead(c: &mut Criterion) {
                         black_box(&params_list),
                         black_box(&grads_list),
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     black_box(result)
                 });
             },
@@ -250,7 +254,7 @@ fn bench_parallel_efficiency(c: &mut Criterion) {
                         black_box(&params_list),
                         black_box(&grads_list),
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     black_box(result)
                 });
             },

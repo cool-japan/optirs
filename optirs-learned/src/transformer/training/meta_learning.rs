@@ -440,7 +440,7 @@ impl<
                     1.0 / self.meta_params.inner_steps as f64,
                 )
                 .unwrap_or_else(|| T::zero()),
-                sample_efficiency: T::from(support_data.len() as f64).unwrap(),
+                sample_efficiency: T::from(support_data.len() as f64).expect("unwrap failed"),
                 generalization: T::one() / (T::one() + query_loss),
                 stability: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                 resource_usage: scirs2_core::numeric::NumCast::from(
@@ -533,7 +533,7 @@ impl<
             total_loss = total_loss + loss;
         }
 
-        Ok(total_loss / T::from(support_data.len() as f64).unwrap())
+        Ok(total_loss / T::from(support_data.len() as f64).expect("unwrap failed"))
     }
 
     /// Compute loss on query set
@@ -549,7 +549,7 @@ impl<
             total_loss = total_loss + loss;
         }
 
-        Ok(total_loss / T::from(query_data.len() as f64).unwrap())
+        Ok(total_loss / T::from(query_data.len() as f64).expect("unwrap failed"))
     }
 
     /// Get meta-learning statistics
@@ -558,11 +558,11 @@ impl<
 
         stats.insert(
             "meta_events_count".to_string(),
-            T::from(self.meta_history.len() as f64).unwrap(),
+            T::from(self.meta_history.len() as f64).expect("unwrap failed"),
         );
         stats.insert(
             "task_embeddings_count".to_string(),
-            T::from(self.task_embeddings.len() as f64).unwrap(),
+            T::from(self.task_embeddings.len() as f64).expect("unwrap failed"),
         );
 
         // Compute average performance
@@ -572,7 +572,7 @@ impl<
                 .iter()
                 .map(|event| event.performance.final_performance)
                 .fold(T::zero(), |a, b| a + b)
-                / T::from(self.meta_history.len() as f64).unwrap();
+                / T::from(self.meta_history.len() as f64).expect("unwrap failed");
             stats.insert("average_performance".to_string(), avg_performance);
         }
 
@@ -664,7 +664,7 @@ impl<
             .fold(T::zero(), |a, b| a + b);
 
         Ok((support_loss + query_loss)
-            / T::from((support_data.len() + query_data.len()) as f64).unwrap())
+            / T::from((support_data.len() + query_data.len()) as f64).expect("unwrap failed"))
     }
 
     fn reset(&mut self) {

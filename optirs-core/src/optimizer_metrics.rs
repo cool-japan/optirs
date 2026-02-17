@@ -140,13 +140,16 @@ impl GradientStatistics {
         }
 
         // Calculate statistics
-        let sum: f64 = gradients.iter().map(|&g| g.to_f64().unwrap()).sum();
+        let sum: f64 = gradients
+            .iter()
+            .map(|&g| g.to_f64().expect("unwrap failed"))
+            .sum();
         self.mean = sum / n as f64;
 
         let variance: f64 = gradients
             .iter()
             .map(|&g| {
-                let diff = g.to_f64().unwrap() - self.mean;
+                let diff = g.to_f64().expect("unwrap failed") - self.mean;
                 diff * diff
             })
             .sum::<f64>()
@@ -155,17 +158,17 @@ impl GradientStatistics {
 
         self.max = gradients
             .iter()
-            .map(|&g| g.to_f64().unwrap())
+            .map(|&g| g.to_f64().expect("unwrap failed"))
             .fold(f64::NEG_INFINITY, f64::max);
         self.min = gradients
             .iter()
-            .map(|&g| g.to_f64().unwrap())
+            .map(|&g| g.to_f64().expect("unwrap failed"))
             .fold(f64::INFINITY, f64::min);
 
         self.norm = gradients
             .iter()
             .map(|&g| {
-                let val = g.to_f64().unwrap();
+                let val = g.to_f64().expect("unwrap failed");
                 val * val
             })
             .sum::<f64>()
@@ -173,7 +176,7 @@ impl GradientStatistics {
 
         self.num_zeros = gradients
             .iter()
-            .filter(|&&g| g.to_f64().unwrap().abs() < 1e-10)
+            .filter(|&&g| g.to_f64().expect("unwrap failed").abs() < 1e-10)
             .count();
     }
 }
@@ -204,14 +207,17 @@ impl ParameterStatistics {
         }
 
         // Calculate mean
-        let sum: f64 = params_after.iter().map(|&p| p.to_f64().unwrap()).sum();
+        let sum: f64 = params_after
+            .iter()
+            .map(|&p| p.to_f64().expect("unwrap failed"))
+            .sum();
         self.mean = sum / n as f64;
 
         // Calculate std dev
         let variance: f64 = params_after
             .iter()
             .map(|&p| {
-                let diff = p.to_f64().unwrap() - self.mean;
+                let diff = p.to_f64().expect("unwrap failed") - self.mean;
                 diff * diff
             })
             .sum::<f64>()
@@ -223,7 +229,8 @@ impl ParameterStatistics {
             .iter()
             .zip(params_after.iter())
             .map(|(&before, &after)| {
-                let diff = after.to_f64().unwrap() - before.to_f64().unwrap();
+                let diff = after.to_f64().expect("unwrap failed")
+                    - before.to_f64().expect("unwrap failed");
                 diff * diff
             })
             .sum::<f64>()
@@ -233,7 +240,7 @@ impl ParameterStatistics {
         let params_norm: f64 = params_before
             .iter()
             .map(|&p| {
-                let val = p.to_f64().unwrap();
+                let val = p.to_f64().expect("unwrap failed");
                 val * val
             })
             .sum::<f64>()
@@ -502,7 +509,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let metrics = collector.get_metrics("sgd").unwrap();
+        let metrics = collector.get_metrics("sgd").expect("unwrap failed");
         assert_eq!(metrics.step_count, 1);
     }
 
@@ -525,10 +532,10 @@ mod tests {
                     &before.view(),
                     &after.view(),
                 )
-                .unwrap();
+                .expect("unwrap failed");
         }
 
-        let metrics = collector.get_metrics("adam").unwrap();
+        let metrics = collector.get_metrics("adam").expect("unwrap failed");
         assert_eq!(metrics.step_count, 10);
         assert!(metrics.throughput() > 0.0);
     }
@@ -573,7 +580,7 @@ mod tests {
                 &before.view(),
                 &after.view(),
             )
-            .unwrap();
+            .expect("unwrap failed");
 
         let report = collector.summary_report();
         assert!(report.contains("Optimizer: sgd"));

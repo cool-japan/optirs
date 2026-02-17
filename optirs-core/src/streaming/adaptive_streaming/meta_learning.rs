@@ -693,13 +693,13 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
 
     /// Creates episode context for experience
     fn create_episode_context(&self, reward: A) -> Result<EpisodeContext<A>, String> {
-        let outcome = if reward > A::from(0.8).unwrap() {
+        let outcome = if reward > A::from(0.8).expect("unwrap failed") {
             EpisodeOutcome::Success
-        } else if reward > A::from(0.5).unwrap() {
+        } else if reward > A::from(0.5).expect("unwrap failed") {
             EpisodeOutcome::PartialSuccess
-        } else if reward > A::from(0.2).unwrap() {
+        } else if reward > A::from(0.2).expect("unwrap failed") {
             EpisodeOutcome::Neutral
-        } else if reward > A::from(-0.2).unwrap() {
+        } else if reward > A::from(-0.2).expect("unwrap failed") {
             EpisodeOutcome::Failure
         } else {
             EpisodeOutcome::CriticalFailure
@@ -709,7 +709,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
             episode_id: self.statistics.training_episodes as u64,
             start_time: Instant::now(),
             duration: Duration::from_secs(60), // Simplified
-            initial_performance: A::from(0.5).unwrap(), // Simplified
+            initial_performance: A::from(0.5).expect("unwrap failed"), // Simplified
             final_performance: reward,
             adaptation_count: 1, // Simplified
             outcome,
@@ -720,8 +720,8 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     fn calculate_experience_priority(&self, reward: A) -> A {
         // Higher priority for experiences with extreme rewards (positive or negative)
         let abs_reward = reward.abs();
-        if abs_reward > A::from(0.8).unwrap() {
-            A::from(1.0).unwrap()
+        if abs_reward > A::from(0.8).expect("unwrap failed") {
+            A::from(1.0).expect("unwrap failed")
         } else {
             abs_reward
         }
@@ -788,10 +788,13 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         };
 
         // Extract resource state (simplified)
-        let resource_state = vec![A::from(0.5).unwrap(), A::from(0.3).unwrap()];
+        let resource_state = vec![
+            A::from(0.5).expect("unwrap failed"),
+            A::from(0.3).expect("unwrap failed"),
+        ];
 
         // Extract drift indicators (simplified)
-        let drift_indicators = vec![A::from(0.1).unwrap()];
+        let drift_indicators = vec![A::from(0.1).expect("unwrap failed")];
 
         Ok(MetaState {
             performance_metrics,
@@ -812,7 +815,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
 
         // Generate adaptations based on predicted action
         for (i, &magnitude) in predicted_action.adaptation_magnitudes.iter().enumerate() {
-            if magnitude.abs() > A::from(0.05).unwrap() {
+            if magnitude.abs() > A::from(0.05).expect("unwrap failed") {
                 // Minimum threshold
                 let adaptation_type = if i < predicted_action.adaptation_types.len() {
                     predicted_action.adaptation_types[i].clone()
@@ -825,7 +828,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
                     magnitude,
                     target_component: "meta_learner".to_string(),
                     parameters: std::collections::HashMap::new(),
-                    priority: if magnitude.abs() > A::from(0.3).unwrap() {
+                    priority: if magnitude.abs() > A::from(0.3).expect("unwrap failed") {
                         AdaptationPriority::High
                     } else {
                         AdaptationPriority::Normal
@@ -973,7 +976,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> NoveltyDetector<
     fn new() -> Self {
         Self {
             reference_experiences: VecDeque::with_capacity(1000),
-            novelty_threshold: A::from(0.5).unwrap(),
+            novelty_threshold: A::from(0.5).expect("unwrap failed"),
             feature_weights: Vec::new(),
         }
     }
@@ -983,39 +986,39 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
     fn new(complexity: MetaModelComplexity) -> Result<Self, String> {
         let parameters = match complexity {
             MetaModelComplexity::Low => MetaModelParameters {
-                weights: vec![vec![A::from(0.1).unwrap(); 10]; 2],
+                weights: vec![vec![A::from(0.1).expect("unwrap failed"); 10]; 2],
                 biases: vec![A::zero(); 10],
-                learning_rate: A::from(0.01).unwrap(),
+                learning_rate: A::from(0.01).expect("unwrap failed"),
                 regularization: RegularizationParams {
-                    l1_lambda: A::from(0.001).unwrap(),
-                    l2_lambda: A::from(0.001).unwrap(),
-                    dropout_rate: A::from(0.1).unwrap(),
+                    l1_lambda: A::from(0.001).expect("unwrap failed"),
+                    l2_lambda: A::from(0.001).expect("unwrap failed"),
+                    dropout_rate: A::from(0.1).expect("unwrap failed"),
                     early_stopping_patience: 10,
                 },
                 optimization: OptimizationParams {
-                    momentum: A::from(0.9).unwrap(),
-                    beta1: A::from(0.9).unwrap(),
-                    beta2: A::from(0.999).unwrap(),
-                    epsilon: A::from(1e-8).unwrap(),
-                    grad_clip_threshold: A::from(1.0).unwrap(),
+                    momentum: A::from(0.9).expect("unwrap failed"),
+                    beta1: A::from(0.9).expect("unwrap failed"),
+                    beta2: A::from(0.999).expect("unwrap failed"),
+                    epsilon: A::from(1e-8).expect("unwrap failed"),
+                    grad_clip_threshold: A::from(1.0).expect("unwrap failed"),
                 },
             },
             _ => MetaModelParameters {
-                weights: vec![vec![A::from(0.1).unwrap(); 50]; 3],
+                weights: vec![vec![A::from(0.1).expect("unwrap failed"); 50]; 3],
                 biases: vec![A::zero(); 50],
-                learning_rate: A::from(0.001).unwrap(),
+                learning_rate: A::from(0.001).expect("unwrap failed"),
                 regularization: RegularizationParams {
-                    l1_lambda: A::from(0.0001).unwrap(),
-                    l2_lambda: A::from(0.0001).unwrap(),
-                    dropout_rate: A::from(0.2).unwrap(),
+                    l1_lambda: A::from(0.0001).expect("unwrap failed"),
+                    l2_lambda: A::from(0.0001).expect("unwrap failed"),
+                    dropout_rate: A::from(0.2).expect("unwrap failed"),
                     early_stopping_patience: 20,
                 },
                 optimization: OptimizationParams {
-                    momentum: A::from(0.9).unwrap(),
-                    beta1: A::from(0.9).unwrap(),
-                    beta2: A::from(0.999).unwrap(),
-                    epsilon: A::from(1e-8).unwrap(),
-                    grad_clip_threshold: A::from(1.0).unwrap(),
+                    momentum: A::from(0.9).expect("unwrap failed"),
+                    beta1: A::from(0.9).expect("unwrap failed"),
+                    beta2: A::from(0.999).expect("unwrap failed"),
+                    epsilon: A::from(1e-8).expect("unwrap failed"),
+                    grad_clip_threshold: A::from(1.0).expect("unwrap failed"),
                 },
             },
         };
@@ -1025,11 +1028,11 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
             parameters,
             training_history: VecDeque::with_capacity(1000),
             performance_metrics: ModelPerformanceMetrics {
-                prediction_accuracy: A::from(0.5).unwrap(),
-                decision_quality: A::from(0.5).unwrap(),
-                adaptation_effectiveness: A::from(0.5).unwrap(),
-                transfer_success_rate: A::from(0.5).unwrap(),
-                generalization_performance: A::from(0.5).unwrap(),
+                prediction_accuracy: A::from(0.5).expect("unwrap failed"),
+                decision_quality: A::from(0.5).expect("unwrap failed"),
+                adaptation_effectiveness: A::from(0.5).expect("unwrap failed"),
+                transfer_success_rate: A::from(0.5).expect("unwrap failed"),
+                generalization_performance: A::from(0.5).expect("unwrap failed"),
             },
             feature_importance: Vec::new(),
         })
@@ -1041,13 +1044,16 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
         }
 
         // Simplified training - in practice would implement proper neural network training
-        let avg_reward = batch.iter().map(|e| e.reward).sum::<A>() / A::from(batch.len()).unwrap();
+        let avg_reward = batch.iter().map(|e| e.reward).sum::<A>()
+            / A::from(batch.len()).expect("unwrap failed");
 
         // Update learning rate based on performance
-        if avg_reward > A::from(0.5).unwrap() {
-            self.parameters.learning_rate = self.parameters.learning_rate * A::from(1.01).unwrap();
+        if avg_reward > A::from(0.5).expect("unwrap failed") {
+            self.parameters.learning_rate =
+                self.parameters.learning_rate * A::from(1.01).expect("unwrap failed");
         } else {
-            self.parameters.learning_rate = self.parameters.learning_rate * A::from(0.99).unwrap();
+            self.parameters.learning_rate =
+                self.parameters.learning_rate * A::from(0.99).expect("unwrap failed");
         }
 
         // Update performance metrics
@@ -1059,10 +1065,13 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
     fn predict_action(&self, state: &MetaState<A>) -> Result<MetaAction<A>, String> {
         // Simplified prediction - in practice would use trained neural network
         let action = MetaAction {
-            adaptation_magnitudes: vec![A::from(0.1).unwrap(), A::from(-0.05).unwrap()],
+            adaptation_magnitudes: vec![
+                A::from(0.1).expect("unwrap failed"),
+                A::from(-0.05).expect("unwrap failed"),
+            ],
             adaptation_types: vec![AdaptationType::LearningRate, AdaptationType::BufferSize],
-            learning_rate_change: A::from(0.01).unwrap(),
-            buffer_size_change: A::from(5.0).unwrap(),
+            learning_rate_change: A::from(0.01).expect("unwrap failed"),
+            buffer_size_change: A::from(5.0).expect("unwrap failed"),
             timestamp: Instant::now(),
         };
 
@@ -1082,7 +1091,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
                 parameters: HashMap::new(),
                 strategy_type: StrategyType::Conservative,
                 conditions: Vec::new(),
-                expected_outcomes: vec![A::from(0.05).unwrap()],
+                expected_outcomes: vec![A::from(0.05).expect("unwrap failed")],
             },
         );
 
@@ -1093,7 +1102,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
                 parameters: HashMap::new(),
                 strategy_type: StrategyType::Aggressive,
                 conditions: Vec::new(),
-                expected_outcomes: vec![A::from(0.2).unwrap()],
+                expected_outcomes: vec![A::from(0.2).expect("unwrap failed")],
             },
         );
 
@@ -1102,11 +1111,11 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
             strategy_performance: HashMap::new(),
             selection_policy: SelectionPolicy::EpsilonGreedy { epsilon: 0.1 },
             exploration_params: ExplorationParams {
-                exploration_rate: A::from(0.1).unwrap(),
-                exploration_decay: A::from(0.99).unwrap(),
-                min_exploration_rate: A::from(0.01).unwrap(),
-                curiosity_weight: A::from(0.1).unwrap(),
-                novelty_weight: A::from(0.1).unwrap(),
+                exploration_rate: A::from(0.1).expect("unwrap failed"),
+                exploration_decay: A::from(0.99).expect("unwrap failed"),
+                min_exploration_rate: A::from(0.01).expect("unwrap failed"),
+                curiosity_weight: A::from(0.1).expect("unwrap failed"),
+                novelty_weight: A::from(0.1).expect("unwrap failed"),
             },
             context_selector: ContextBasedSelector::new(),
         }
@@ -1141,8 +1150,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ContextBasedSele
             context_model: ContextModel {
                 parameters: Vec::new(),
                 feature_weights: Vec::new(),
-                threshold: A::from(0.5).unwrap(),
-                accuracy: A::from(0.5).unwrap(),
+                threshold: A::from(0.5).expect("unwrap failed"),
+                accuracy: A::from(0.5).expect("unwrap failed"),
             },
         }
     }
@@ -1157,12 +1166,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> TransferLearning
                 source_characteristics: Vec::new(),
                 target_characteristics: Vec::new(),
                 adaptation_weights: Vec::new(),
-                domain_similarity: A::from(0.5).unwrap(),
+                domain_similarity: A::from(0.5).expect("unwrap failed"),
             },
             transfer_metrics: TransferMetrics {
-                success_rate: A::from(0.5).unwrap(),
-                improvement: A::from(0.1).unwrap(),
-                efficiency: A::from(0.7).unwrap(),
+                success_rate: A::from(0.5).expect("unwrap failed"),
+                improvement: A::from(0.1).expect("unwrap failed"),
+                efficiency: A::from(0.7).expect("unwrap failed"),
                 negative_transfer_count: 0,
             },
         }
@@ -1172,12 +1181,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> TransferLearning
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> LearningRateAdapter<A> {
     fn new(initial_rate: f64) -> Self {
         Self {
-            current_rate: A::from(initial_rate).unwrap(),
+            current_rate: A::from(initial_rate).expect("unwrap failed"),
             rate_history: VecDeque::with_capacity(100),
             performance_feedback: VecDeque::with_capacity(100),
             adaptation_strategy: LearningRateStrategy::PerformanceBased,
-            min_rate: A::from(1e-6).unwrap(),
-            max_rate: A::from(0.1).unwrap(),
+            min_rate: A::from(1e-6).expect("unwrap failed"),
+            max_rate: A::from(0.1).expect("unwrap failed"),
         }
     }
 

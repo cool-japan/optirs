@@ -25,13 +25,13 @@ use crate::regularizers::Regularizer;
 ///
 /// // Set up similarity matrix based on data structure
 /// let similarity = array![[1.0, 0.8], [0.8, 1.0]];
-/// manifold_reg.set_similarity_matrix(similarity).unwrap();
+/// manifold_reg.set_similarity_matrix(similarity).expect("unwrap failed");
 ///
 /// let params = array![[1.0, 2.0], [3.0, 4.0]];
 /// let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
 ///
 /// // Apply manifold regularization
-/// let penalty = manifold_reg.apply(&params, &mut gradient).unwrap();
+/// let penalty = manifold_reg.apply(&params, &mut gradient).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct ManifoldRegularization<A: Float> {
@@ -126,7 +126,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> ManifoldReg
             .ok_or_else(|| OptimError::InvalidConfig("Similarity matrix not set".to_string()))?;
 
         // Gradient = 2 * λ * L * F
-        let gradient = laplacian.dot(params) * (A::from_f64(2.0).unwrap() * self.lambda);
+        let gradient =
+            laplacian.dot(params) * (A::from_f64(2.0).expect("unwrap failed") * self.lambda);
         Ok(gradient)
     }
 }
@@ -203,7 +204,7 @@ mod tests {
         assert!(manifold.laplacian.is_some());
 
         // Check Laplacian computation
-        let laplacian = manifold.laplacian.as_ref().unwrap();
+        let laplacian = manifold.laplacian.as_ref().expect("unwrap failed");
         // For matrix [[1.0, 0.5], [0.5, 1.0]]:
         // Degree matrix is [[1.5, 0.0], [0.0, 1.5]]
         // Laplacian is [[1.5, 0.0], [0.0, 1.5]] - [[1.0, 0.5], [0.5, 1.0]] = [[0.5, -0.5], [-0.5, 0.5]]
@@ -235,11 +236,13 @@ mod tests {
 
         // Set up similarity matrix
         let similarity = array![[1.0, 0.8], [0.8, 1.0]];
-        manifold.set_similarity_matrix(similarity).unwrap();
+        manifold
+            .set_similarity_matrix(similarity)
+            .expect("unwrap failed");
 
         // Test penalty computation
         let params = array![[1.0, 0.0], [0.0, 1.0]];
-        let penalty = manifold.compute_penalty(&params).unwrap();
+        let penalty = manifold.compute_penalty(&params).expect("unwrap failed");
 
         // Penalty should be positive for non-similar parameters
         assert!(penalty > 0.0);
@@ -251,10 +254,12 @@ mod tests {
 
         // Set up similarity matrix
         let similarity = array![[1.0, 0.8], [0.8, 1.0]];
-        manifold.set_similarity_matrix(similarity).unwrap();
+        manifold
+            .set_similarity_matrix(similarity)
+            .expect("unwrap failed");
 
         let params = array![[1.0, 2.0], [3.0, 4.0]];
-        let gradient = manifold.compute_gradient(&params).unwrap();
+        let gradient = manifold.compute_gradient(&params).expect("unwrap failed");
 
         // Gradient should be non-zero
         assert!(gradient.abs().sum() > 0.0);
@@ -266,13 +271,17 @@ mod tests {
 
         // Set up similarity matrix
         let similarity = array![[1.0, 0.6], [0.6, 1.0]];
-        manifold.set_similarity_matrix(similarity).unwrap();
+        manifold
+            .set_similarity_matrix(similarity)
+            .expect("unwrap failed");
 
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradient = gradient.clone();
 
-        let penalty = manifold.apply(&params, &mut gradient).unwrap();
+        let penalty = manifold
+            .apply(&params, &mut gradient)
+            .expect("unwrap failed");
 
         // Penalty should be positive
         assert!(penalty > 0.0);
@@ -287,10 +296,12 @@ mod tests {
 
         // Identity similarity matrix (no connections)
         let similarity = array![[1.0, 0.0], [0.0, 1.0]];
-        manifold.set_similarity_matrix(similarity).unwrap();
+        manifold
+            .set_similarity_matrix(similarity)
+            .expect("unwrap failed");
 
         let params = array![[1.0, 2.0], [3.0, 4.0]];
-        let penalty = manifold.compute_penalty(&params).unwrap();
+        let penalty = manifold.compute_penalty(&params).expect("unwrap failed");
 
         // With identity similarity, penalty depends on diagonal structure
         assert!(penalty >= 0.0);

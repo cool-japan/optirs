@@ -220,7 +220,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
                         .performance_history
                         .iter()
                         .fold(A::zero(), |acc, &perf| acc + perf)
-                        / A::from(self.performance_history.len()).unwrap();
+                        / A::from(self.performance_history.len()).expect("unwrap failed");
 
                     let avg_perf_f64 = avg_performance.to_f64().unwrap_or(0.0);
 
@@ -347,8 +347,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
         min_weight: f64,
     ) -> Result<()> {
         // Compute softmax weights based on losses
-        let temp = A::from(temperature).unwrap();
-        let min_w = A::from(min_weight).unwrap();
+        let temp = A::from(temperature).expect("unwrap failed");
+        let min_w = A::from(min_weight).expect("unwrap failed");
 
         // Find max loss for numerical stability
         let max_loss = losses.iter().fold(A::neg_infinity(), |a, &b| A::max(a, b));
@@ -381,8 +381,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
         temperature: f64,
         min_weight: f64,
     ) -> Result<()> {
-        let temp = A::from(temperature).unwrap();
-        let min_w = A::from(min_weight).unwrap();
+        let temp = A::from(temperature).expect("unwrap failed");
+        let min_w = A::from(min_weight).expect("unwrap failed");
 
         // Find max gradient norm for numerical stability
         let max_norm = gradient_norms
@@ -416,8 +416,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
         temperature: f64,
         min_weight: f64,
     ) -> Result<()> {
-        let temp = A::from(temperature).unwrap();
-        let min_w = A::from(min_weight).unwrap();
+        let temp = A::from(temperature).expect("unwrap failed");
+        let min_w = A::from(min_weight).expect("unwrap failed");
 
         // Find max uncertainty for numerical stability
         let max_uncertainty = uncertainties
@@ -445,11 +445,11 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
 
     /// Compute age-based weights
     fn compute_age_based_weights(&mut self, sampleids: &[usize], decayfactor: f64) -> Result<()> {
-        let decay = A::from(decayfactor).unwrap();
+        let decay = A::from(decayfactor).expect("unwrap failed");
 
         for &sampleid in sampleids {
             // Simple age-based weighting (older samples get exponentially higher weight)
-            let age = A::from(self.step_count.saturating_sub(sampleid)).unwrap();
+            let age = A::from(self.step_count.saturating_sub(sampleid)).expect("unwrap failed");
             let weight = A::exp(decay * age);
             self.sample_weights.insert(sampleid, weight);
         }
@@ -548,7 +548,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
     ) -> Result<Array<A, D>> {
         // BIM is similar to PGD but with smaller steps
         let mut modified_config = config.clone();
-        modified_config.step_size = config.epsilon / A::from(config.num_steps).unwrap();
+        modified_config.step_size =
+            config.epsilon / A::from(config.num_steps).expect("unwrap failed");
 
         self.pgd_attack(inputs, gradients, &modified_config)
     }
@@ -562,7 +563,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
     ) -> Result<Array<A, D>> {
         let mut adversarial = inputs.clone();
         let mut momentum = Array::zeros(inputs.raw_dim());
-        let decayfactor = A::from(1.0).unwrap(); // Momentum decay factor
+        let decayfactor = A::from(1.0).expect("unwrap failed"); // Momentum decay factor
 
         for _ in 0..config.num_steps {
             // Update momentum
@@ -749,7 +750,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> AdaptiveCurri
             A::zero()
         } else {
             let sum = perf_history.iter().fold(A::zero(), |acc, &perf| acc + perf);
-            sum / A::from(perf_history.len()).unwrap()
+            sum / A::from(perf_history.len()).expect("unwrap failed")
         }
     }
 
@@ -799,7 +800,7 @@ mod tests {
 
         // Update curriculum multiple times
         for _ in 0..5 {
-            curriculum.update_curriculum(0.8).unwrap();
+            curriculum.update_curriculum(0.8).expect("unwrap failed");
         }
 
         // Difficulty should have increased
@@ -824,7 +825,7 @@ mod tests {
 
         // Simulate good performance (should increase difficulty)
         for _ in 0..5 {
-            curriculum.update_curriculum(0.9).unwrap();
+            curriculum.update_curriculum(0.9).expect("unwrap failed");
         }
 
         assert!(curriculum.get_current_difficulty() > initial_difficulty);
@@ -879,7 +880,7 @@ mod tests {
 
         curriculum
             .compute_sample_weights(&sampleids, &losses, None, None)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Sample with highest loss should have highest weight
         let weight1 = curriculum.get_sample_weight(1);
@@ -917,10 +918,13 @@ mod tests {
 
         let adversarial = curriculum
             .generate_adversarial_examples(&inputs, &gradients)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Adversarial examples should be different from original
-        assert_ne!(adversarial.as_slice().unwrap(), inputs.as_slice().unwrap());
+        assert_ne!(
+            adversarial.as_slice().expect("unwrap failed"),
+            inputs.as_slice().expect("unwrap failed")
+        );
 
         // Check that perturbation is bounded
         for (orig, adv) in inputs.iter().zip(adversarial.iter()) {
@@ -958,7 +962,7 @@ mod tests {
 
         // Update with some performance values
         for _ in 0..150 {
-            adaptive.update(0.7).unwrap();
+            adaptive.update(0.7).expect("unwrap failed");
         }
 
         // Should potentially have switched curriculum
@@ -978,7 +982,7 @@ mod tests {
         let mut curriculum =
             CurriculumManager::<f64, scirs2_core::ndarray::Ix1>::new(strategy, importance_strategy);
 
-        curriculum.update_curriculum(0.8).unwrap();
+        curriculum.update_curriculum(0.8).expect("unwrap failed");
         let state = curriculum.export_state();
 
         assert_eq!(state.step_count, 1);

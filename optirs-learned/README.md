@@ -39,7 +39,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-learned = "0.1.0"
+optirs-learned = "0.2.0"
 scirs2-core = "0.1.1"  # Required foundation
 ```
 
@@ -49,7 +49,7 @@ Enable specific learned optimizer types:
 
 ```toml
 [dependencies]
-optirs-learned = { version = "0.1.0", features = ["transformer", "lstm", "meta_learning"] }
+optirs-learned = { version = "0.2.0", features = ["transformer", "lstm", "meta_learning"] }
 ```
 
 Available features:
@@ -318,8 +318,4 @@ This crate implements techniques from various research papers:
 
 ## License
 
-This project is licensed under either of:
-- Apache License, Version 2.0
-- MIT License
-
-at your option.
+This project is licensed under the Apache License, Version 2.0.

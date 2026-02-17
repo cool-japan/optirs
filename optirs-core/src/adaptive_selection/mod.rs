@@ -186,11 +186,15 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         let mut rng = thread_rng();
 
         let input_weights = Array2::from_shape_fn((hidden_size, input_size), |_| {
-            A::from(rng.random::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.random::<f64>()).expect("unwrap failed")
+                * A::from(0.1).expect("unwrap failed")
+                - A::from(0.05).expect("unwrap failed")
         });
 
         let output_weights = Array2::from_shape_fn((num_optimizers, hidden_size), |_| {
-            A::from(rng.random::<f64>()).unwrap() * A::from(0.1).unwrap() - A::from(0.05).unwrap()
+            A::from(rng.random::<f64>()).expect("unwrap failed")
+                * A::from(0.1).expect("unwrap failed")
+                - A::from(0.05).expect("unwrap failed")
         });
 
         let input_bias = Array1::zeros(hidden_size);
@@ -508,7 +512,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
             }
 
             // Sort by similarity
-            similarities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            similarities.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("unwrap failed"));
 
             // Take k _nearest and vote
             let mut votes: HashMap<OptimizerType, f64> = HashMap::new();
@@ -520,7 +524,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
             // Return optimizer with highest weighted vote
             let best_optimizer = votes
                 .iter()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .max_by(|a, b| a.1.partial_cmp(b.1).expect("unwrap failed"))
                 .map(|(optimizer_, _)| *optimizer_)
                 .unwrap_or(OptimizerType::Adam);
 
@@ -642,17 +646,17 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
     /// Extract numerical features from problem characteristics
     fn extract_problem_features(&self, problem: &ProblemCharacteristics) -> Array1<A> {
         Array1::from_vec(vec![
-            A::from((problem.dataset_size as f64).ln()).unwrap(),
-            A::from((problem.input_dim as f64).ln()).unwrap(),
-            A::from((problem.output_dim as f64).ln()).unwrap(),
-            A::from(problem.problem_type as u8 as f64).unwrap(),
-            A::from(problem.gradient_sparsity).unwrap(),
-            A::from(problem.gradient_noise).unwrap(),
-            A::from((problem.memory_budget as f64).ln()).unwrap(),
-            A::from(problem.time_budget.ln()).unwrap(),
-            A::from((problem.batch_size as f64).ln()).unwrap(),
-            A::from(problem.lr_sensitivity).unwrap(),
-            A::from(problem.regularization_strength).unwrap(),
+            A::from((problem.dataset_size as f64).ln()).expect("unwrap failed"),
+            A::from((problem.input_dim as f64).ln()).expect("unwrap failed"),
+            A::from((problem.output_dim as f64).ln()).expect("unwrap failed"),
+            A::from(problem.problem_type as u8 as f64).expect("unwrap failed"),
+            A::from(problem.gradient_sparsity).expect("unwrap failed"),
+            A::from(problem.gradient_noise).expect("unwrap failed"),
+            A::from((problem.memory_budget as f64).ln()).expect("unwrap failed"),
+            A::from(problem.time_budget.ln()).expect("unwrap failed"),
+            A::from((problem.batch_size as f64).ln()).expect("unwrap failed"),
+            A::from(problem.lr_sensitivity).expect("unwrap failed"),
+            A::from(problem.regularization_strength).expect("unwrap failed"),
         ])
     }
 
@@ -785,7 +789,7 @@ mod tests {
         };
 
         selector.set_problem(large_problem);
-        let optimizer = selector.select_optimizer().unwrap();
+        let optimizer = selector.select_optimizer().expect("unwrap failed");
         assert_eq!(optimizer, OptimizerType::AdamW);
     }
 
@@ -794,7 +798,7 @@ mod tests {
         let network = SelectionNetwork::<f64>::new(5, 10, 3);
         let features = Array1::from_vec(vec![1.0, 0.5, 2.0, 0.8, 1.5]);
 
-        let probabilities = network.forward(&features).unwrap();
+        let probabilities = network.forward(&features).expect("unwrap failed");
         assert_eq!(probabilities.len(), 3);
 
         // Probabilities should sum to 1
@@ -832,7 +836,7 @@ mod tests {
         selector.set_problem(problem);
 
         // Should select an optimizer (any is valid initially)
-        let optimizer = selector.select_optimizer().unwrap();
+        let optimizer = selector.select_optimizer().expect("unwrap failed");
         assert!(selector.available_optimizers.contains(&optimizer));
     }
 
@@ -852,11 +856,11 @@ mod tests {
 
         selector
             .update_performance(OptimizerType::Adam, metrics)
-            .unwrap();
+            .expect("unwrap failed");
 
         let stats = selector
             .get_optimizer_statistics(OptimizerType::Adam)
-            .unwrap();
+            .expect("unwrap failed");
         assert_eq!(stats.num_trials, 1);
         assert_relative_eq!(stats.mean_performance, 0.95, epsilon = 1e-6);
     }

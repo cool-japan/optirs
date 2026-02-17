@@ -182,7 +182,7 @@ impl<T: scirs2_core::numeric::Float + Default + std::fmt::Debug + Clone + Send +
             let performances: Vec<T> = self.records.iter().map(|r| r.performance).collect();
             
             let sum = performances.iter().fold(T::zero(), |acc, &x| acc + x);
-            self.stats.avg_performance = sum / T::from(performances.len()).unwrap();
+            self.stats.avg_performance = sum / T::from(performances.len()).expect("unwrap failed");
             
             // Calculate improvement rate
             if self.records.len() > 1 {

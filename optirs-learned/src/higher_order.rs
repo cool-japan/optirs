@@ -923,7 +923,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             .map(|(&x, &y)| (x - y).abs())
             .sum::<T>();
 
-        sum / T::from(a.len()).unwrap()
+        sum / T::from(a.len()).expect("unwrap failed")
     }
 
     fn compute_relative_error(&self, a: &Array2<T>, b: &Array2<T>) -> T {
@@ -1479,7 +1479,7 @@ mod tests {
         let function = |x: &Array1<f64>| x[0] * x[0] + 2.0 * x[1] * x[1];
         let point = Array1::from_vec(vec![1.0, 1.0]);
 
-        let hessian = engine.hessian_diagonal(&function, &point).unwrap();
+        let hessian = engine.hessian_diagonal(&function, &point).expect("unwrap failed");
 
         // Expected diagonal: [2, 4]
         assert!((hessian[[0, 0]] - 2.0).abs() < 1e-5);
@@ -1495,7 +1495,7 @@ mod tests {
         let function = |x: &Array1<f64>| x[0] * x[0] + x[0] * x[1] + x[1] * x[1];
         let point = Array1::from_vec(vec![1.0, 1.0]);
 
-        let hessian = engine.finite_difference_hessian(&function, &point).unwrap();
+        let hessian = engine.finite_difference_hessian(&function, &point).expect("unwrap failed");
 
         // Expected Hessian: [[2, 1], [1, 2]]
         assert!((hessian[[0, 0]] - 2.0).abs() < 1e-5);
@@ -1520,7 +1520,7 @@ mod tests {
                 &[1, 1],
                 MixedPartialMethod::FiniteDifference,
             )
-            .unwrap();
+            .expect("unwrap failed");
 
         // ∂²f/∂x∂y = 2x + 2y = 4 at (1,1)
         assert!((mixed_partial.value - 4.0).abs() < 1e-6);
@@ -1540,7 +1540,7 @@ mod tests {
             ..Default::default()
         };
 
-        let sparse_hessian = engine.sparse_hessian(function, &point, &config).unwrap();
+        let sparse_hessian = engine.sparse_hessian(function, &point, &config).expect("unwrap failed");
 
         // Should have 2 non-zero elements (diagonal)
         assert_eq!(sparse_hessian.nnz, 2);

@@ -87,7 +87,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
 
     pub fn prepare_round(&mut self, selectedclients: &[String]) -> Result<SecureAggregationPlan> {
         // Generate round-specific keys
-        let mut seed = self.shared_randomness.lock().unwrap();
+        let mut seed = self.shared_randomness.lock().expect("lock poisoned");
         *seed = seed.wrapping_add(1);
         let round_seed = *seed;
         self.round_keys.push(round_seed);
@@ -99,7 +99,8 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             let mask_size = self.config.masking_dimension;
 
             let mask = Array1::from_iter(
-                (0..mask_size).map(|_| T::from(client_rng.gen_range(-1.0..1.0)).unwrap()),
+                (0..mask_size)
+                    .map(|_| T::from(client_rng.gen_range(-1.0..1.0)).expect("unwrap failed")),
             );
 
             self.client_masks.insert(clientid.clone(), mask);
@@ -125,7 +126,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         }
 
         // Simplified secure aggregation (in practice, would use more sophisticated protocols)
-        let first_update = clientupdates.values().next().unwrap();
+        let first_update = clientupdates.values().next().expect("unwrap failed");
         let mut aggregated = Array1::zeros(first_update.len());
 
         for (clientid, update) in clientupdates {
@@ -143,7 +144,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         }
 
         // Remove aggregated masks (simplified)
-        let num_clients = T::from(clientupdates.len()).unwrap();
+        let num_clients = T::from(clientupdates.len()).expect("unwrap failed");
         aggregated = aggregated / num_clients;
 
         Ok(aggregated)
@@ -207,7 +208,7 @@ mod tests {
         let aggregator = SecureAggregator::<f64>::new(config.clone());
 
         assert!(aggregator.is_ok());
-        let agg = aggregator.unwrap();
+        let agg = aggregator.expect("unwrap failed");
         assert_eq!(agg.aggregation_threshold(), config.min_clients);
         assert!(agg.is_enabled());
     }
@@ -215,13 +216,13 @@ mod tests {
     #[test]
     fn test_secure_aggregation_plan() {
         let config = SecureAggregationConfig::default();
-        let mut aggregator = SecureAggregator::<f64>::new(config).unwrap();
+        let mut aggregator = SecureAggregator::<f64>::new(config).expect("unwrap failed");
 
         let clients = vec!["client1".to_string(), "client2".to_string()];
         let plan = aggregator.prepare_round(&clients);
 
         assert!(plan.is_ok());
-        let plan = plan.unwrap();
+        let plan = plan.expect("unwrap failed");
         assert_eq!(plan.participating_clients.len(), 2);
         assert!(plan.masking_enabled);
     }

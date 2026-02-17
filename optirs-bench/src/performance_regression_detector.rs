@@ -625,7 +625,7 @@ impl PerformanceRegressionDetector {
                 p_value: statisticalresult.p_value,
                 effect_size: statisticalresult.effect_size,
                 baseline_value: baseline.clone().map(|b| b.value).unwrap_or(0.0),
-                current_value: *values.last().unwrap(),
+                current_value: *values.last().expect("unwrap failed"),
                 change_percentage: self.calculate_change_percentage(&values, baseline.as_ref()),
                 regression_type: self.classify_regression_type(metrictype, &values),
                 evidence: statisticalresult.evidence.clone(),
@@ -648,7 +648,7 @@ impl PerformanceRegressionDetector {
     /// Calculate percentage change
     fn calculate_change_percentage(&self, values: &[f64], baseline: Option<&MetricValue>) -> f64 {
         if let Some(baseline) = baseline {
-            let current = *values.last().unwrap();
+            let current = *values.last().expect("unwrap failed");
             if baseline.value != 0.0 {
                 ((current - baseline.value) / baseline.value) * 100.0
             } else {
@@ -656,7 +656,7 @@ impl PerformanceRegressionDetector {
             }
         } else if values.len() >= 2 {
             let previous = values[values.len() - 2];
-            let current = *values.last().unwrap();
+            let current = *values.last().expect("unwrap failed");
             if previous != 0.0 {
                 ((current - previous) / previous) * 100.0
             } else {
@@ -843,7 +843,7 @@ impl PerformanceRegressionDetector {
         }
 
         let first = values[0];
-        let last = *values.last().unwrap();
+        let last = *values.last().expect("unwrap failed");
         let max_value = values.iter().fold(f64::NEG_INFINITY, |acc, &x| acc.max(x));
         let min_value = values.iter().fold(f64::INFINITY, |acc, &x| acc.min(x));
 
@@ -1104,7 +1104,7 @@ impl PerformanceRegressionDetector {
                 metric_summaries.insert(
                     metrictype.clone(),
                     MetricSummary {
-                        current_value: *values.last().unwrap(),
+                        current_value: *values.last().expect("unwrap failed"),
                         trend_direction: trend
                             .map(|t| t.direction.clone())
                             .unwrap_or(TrendDirection::Uncertain),
@@ -1618,14 +1618,14 @@ mod tests {
     #[test]
     fn test_regression_detector_creation() {
         let config = RegressionConfig::default();
-        let detector = PerformanceRegressionDetector::new(config).unwrap();
+        let detector = PerformanceRegressionDetector::new(config).expect("unwrap failed");
         assert!(detector.regression_analyzer.current_results.is_empty());
     }
 
     #[test]
     fn test_trend_direction_calculation() {
         let config = RegressionConfig::default();
-        let detector = PerformanceRegressionDetector::new(config).unwrap();
+        let detector = PerformanceRegressionDetector::new(config).expect("unwrap failed");
 
         // Improving trend (decreasing values for execution time)
         let improving_values = vec![10.0, 9.0, 8.0, 7.0, 6.0];
@@ -1646,7 +1646,7 @@ mod tests {
     #[test]
     fn test_baseline_quality_calculation() {
         let config = RegressionConfig::default();
-        let detector = PerformanceRegressionDetector::new(config).unwrap();
+        let detector = PerformanceRegressionDetector::new(config).expect("unwrap failed");
 
         // Create test measurements
         let mut measurements = Vec::new();
@@ -1684,7 +1684,7 @@ mod tests {
     #[test]
     fn test_regression_type_classification() {
         let config = RegressionConfig::default();
-        let detector = PerformanceRegressionDetector::new(config).unwrap();
+        let detector = PerformanceRegressionDetector::new(config).expect("unwrap failed");
 
         // Memory leak pattern (monotonic increase)
         let memory_leak_values = vec![100.0, 105.0, 110.0, 115.0, 120.0];
@@ -1702,9 +1702,9 @@ mod tests {
     #[test]
     fn test_ci_cd_report_generation() {
         let config = RegressionConfig::default();
-        let detector = PerformanceRegressionDetector::new(config).unwrap();
+        let detector = PerformanceRegressionDetector::new(config).expect("unwrap failed");
 
-        let report = detector.export_for_ci_cd().unwrap();
+        let report = detector.export_for_ci_cd().expect("unwrap failed");
         assert!(matches!(report.status, CiCdStatus::Passed));
         assert_eq!(report.regression_count, 0);
     }

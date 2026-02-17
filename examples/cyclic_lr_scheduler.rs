@@ -109,7 +109,7 @@ fn run_optimization<LR: LearningRateScheduler<f64>>(
         scheduler.apply_to::<scirs2_core::ndarray::Ix1, _>(optimizer);
 
         // Update parameters
-        params = optimizer.step(&params, &gradient).unwrap();
+        params = optimizer.step(&params, &gradient).expect("unwrap failed");
 
         // Compute loss
         let loss = simulate_loss(&params);

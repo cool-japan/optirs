@@ -834,7 +834,7 @@ impl MultiGpuCommunicator {
 
     /// Get communication performance metrics
     pub fn get_performance_metrics(&self) -> CommunicationMetrics {
-        self.metrics.lock().unwrap().clone()
+        self.metrics.lock().expect("lock poisoned").clone()
     }
 
     /// Update compression settings
@@ -931,7 +931,7 @@ impl MultiGpuCommunicator {
         self.comm_streams
             .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| a.utilization.partial_cmp(&b.utilization).unwrap())
+            .min_by(|(_, a), (_, b)| a.utilization.partial_cmp(&b.utilization).expect("unwrap failed"))
             .map(|(idx, _)| idx)
             .unwrap_or(0)
     }
@@ -954,7 +954,7 @@ impl MultiGpuCommunicator {
         duration: Duration,
         compression_ratio: Option<f64>,
     ) {
-        let mut metrics = self.metrics.lock().unwrap();
+        let mut metrics = self.metrics.lock().expect("lock poisoned");
 
         metrics.total_operations += 1;
         metrics.total_bytes_transferred += data_size;
@@ -1291,7 +1291,7 @@ impl MultiGpuCommunicator {
             .map(|(i, &g)| (i, g.abs()))
             .collect();
 
-        indexed_grads.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        indexed_grads.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
         // Zero out all but top-k elements
         let mut mask = vec![false; gradients.len()];
@@ -1350,7 +1350,7 @@ impl MultiGpuCommunicator {
             .map(|(i, &g)| (i, g.abs()))
             .collect();
 
-        indexed_grads.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        indexed_grads.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
         // Keep only top components proportional to rank
         let keep_count = (n * effective_rank) / 100;
@@ -1402,7 +1402,7 @@ impl MultiGpuCommunicator {
 
     /// Adaptive compression based on network conditions
     pub fn adaptive_compression_selection(&self) -> CompressionAlgorithm {
-        let metrics = self.metrics.lock().unwrap();
+        let metrics = self.metrics.lock().expect("lock poisoned");
 
         // Select compression based on bandwidth and latency
         if metrics.average_bandwidth < 1e9 {

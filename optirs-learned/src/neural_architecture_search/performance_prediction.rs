@@ -396,7 +396,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictorMetrics<T> {
         }
 
         let avg_error: T = self.prediction_errors.iter().cloned().fold(T::zero(), |acc, x| acc + x)
-            / T::from(self.prediction_errors.len()).unwrap();
+            / T::from(self.prediction_errors.len()).expect("unwrap failed");
 
         (T::one() - avg_error).to_f64().unwrap_or(0.0).max(0.0).min(1.0)
     }
@@ -428,7 +428,7 @@ mod tests {
         let features = extractor.extract_features("test_architecture");
         assert!(features.is_ok());
 
-        let feature_vec = features.unwrap();
+        let feature_vec = features.expect("unwrap failed");
         assert_eq!(feature_vec.len(), 20);
     }
 
@@ -442,7 +442,7 @@ mod tests {
             enable_cross_validation: false,
         };
 
-        let mut model = PredictionModel::<f32>::new(&config).unwrap();
+        let mut model = PredictionModel::<f32>::new(&config).expect("unwrap failed");
         assert!(!model.is_trained());
     }
 }

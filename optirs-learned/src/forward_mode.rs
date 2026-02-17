@@ -622,7 +622,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
             ForwardOpType::Mean => {
                 let input = &values[op.inputs[0]];
                 // Mean derivative is mean of input derivatives
-                let n = T::from(input.value.len()).unwrap();
+                let n = T::from(input.value.len()).expect("unwrap failed");
                 let value = Array1::from_elem(1, input.value.sum() / n);
                 let tangent = Array1::from_elem(1, input.tangent.sum() / n);
                 Ok(VectorDual::new(value, tangent))
@@ -756,14 +756,14 @@ mod tests {
         let y_val = Array1::from_vec(vec![3.0]);
         let y_id = engine.create_variable("y", y_val.clone());
 
-        let sum_id = engine.add(x_id, y_id).unwrap();
+        let sum_id = engine.add(x_id, y_id).expect("unwrap failed");
 
         let mut inputs = HashMap::new();
         inputs.insert("x".to_string(), x_val);
         inputs.insert("y".to_string(), y_val);
 
         let direction = Array1::from_vec(vec![1.0, 0.0]);
-        let results = engine.forward_pass(&inputs, &direction).unwrap();
+        let results = engine.forward_pass(&inputs, &direction).expect("unwrap failed");
 
         assert!(results.len() > sum_id);
         assert_eq!(results[sum_id].value[0], 5.0);

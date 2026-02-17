@@ -537,7 +537,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
             
             let winner = tournament.into_iter().max_by(|a, b|
                 a.fitness.partial_cmp(&b.fitness).unwrap_or(std::cmp::Ordering::Equal)
-            ).unwrap();
+            ).expect("unwrap failed");
             
             selected.push(winner.clone());
         }
@@ -716,7 +716,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
             .unwrap_or(T::zero());
         
         let avg_fitness = self.population.iter().map(|ind| ind.fitness).fold(T::zero(), |acc, f| acc + f) /
-            T::from(self.population.len() as f64).unwrap();
+            T::from(self.population.len() as f64).expect("unwrap failed");
         
         let diversity = self.calculate_population_diversity()?;
         
@@ -753,8 +753,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EvolutionarySea
 
     /// Calculate difference between two architectures
     fn calculate_architecture_difference(&self, arch1: &ArchitectureSpecification<T>, arch2: &ArchitectureSpecification<T>) -> T {
-        let layer_diff = T::from((arch1.layers.len() as i32 - arch2.layers.len() as i32).abs() as f64).unwrap();
-        let param_diff = T::from((arch1.parameter_count as i32 - arch2.parameter_count as i32).abs() as f64).unwrap() / scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero());
+        let layer_diff = T::from((arch1.layers.len() as i32 - arch2.layers.len() as i32).abs() as f64).expect("unwrap failed");
+        let param_diff = T::from((arch1.parameter_count as i32 - arch2.parameter_count as i32).abs() as f64).expect("unwrap failed") / scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero());
         
         layer_diff + param_diff
     }

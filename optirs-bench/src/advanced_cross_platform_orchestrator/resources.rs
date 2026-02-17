@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn test_resource_allocation() {
         let limits = ResourceLimits::default();
-        let mut manager = PlatformResourceManager::new(limits).unwrap();
+        let mut manager = PlatformResourceManager::new(limits).expect("unwrap failed");
 
         let mut required = HashMap::new();
         required.insert(ResourceType::CPU, 2.0);
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_cost_tracking() {
         let limits = ResourceLimits::default();
-        let mut manager = PlatformResourceManager::new(limits).unwrap();
+        let mut manager = PlatformResourceManager::new(limits).expect("unwrap failed");
 
         manager.track_cost("aws", "ec2", 0.50, "Test instance");
         assert_eq!(manager.get_total_cost(), 0.50);

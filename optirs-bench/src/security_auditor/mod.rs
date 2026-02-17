@@ -569,7 +569,7 @@ mod tests {
         let auditor = SecurityAuditor::new();
         assert!(auditor.is_ok());
 
-        let auditor = auditor.unwrap();
+        let auditor = auditor.expect("unwrap failed");
         assert!(auditor.get_config().any_analysis_enabled());
     }
 
@@ -578,7 +578,7 @@ mod tests {
         let auditor = SecurityAuditor::lightweight();
         assert!(auditor.is_ok());
 
-        let auditor = auditor.unwrap();
+        let auditor = auditor.expect("unwrap failed");
         let config = auditor.get_config();
         assert!(config.enable_input_validation);
         assert!(config.enable_memory_safety);
@@ -590,7 +590,7 @@ mod tests {
         let auditor = SecurityAuditor::comprehensive();
         assert!(auditor.is_ok());
 
-        let auditor = auditor.unwrap();
+        let auditor = auditor.expect("unwrap failed");
         let config = auditor.get_config();
         assert!(config.enable_input_validation);
         assert!(config.enable_privacy_analysis);
@@ -613,18 +613,18 @@ mod tests {
 
     #[test]
     fn test_complete_audit() {
-        let mut auditor = SecurityAuditor::lightweight().unwrap();
+        let mut auditor = SecurityAuditor::lightweight().expect("unwrap failed");
         let results = auditor.run_complete_audit();
         assert!(results.is_ok());
 
-        let results = results.unwrap();
+        let results = results.expect("unwrap failed");
         assert!(results.execution_summary.total_tests > 0);
     }
 
     #[test]
     fn test_reset_auditor() {
-        let mut auditor = SecurityAuditor::lightweight().unwrap();
-        let _ = auditor.run_complete_audit().unwrap();
+        let mut auditor = SecurityAuditor::lightweight().expect("unwrap failed");
+        let _ = auditor.run_complete_audit().expect("unwrap failed");
 
         // Should have some results
         assert!(auditor.get_results().execution_summary.total_tests > 0);
@@ -637,8 +637,8 @@ mod tests {
 
     #[test]
     fn test_report_generation() {
-        let mut auditor = SecurityAuditor::lightweight().unwrap();
-        let _ = auditor.run_complete_audit().unwrap();
+        let mut auditor = SecurityAuditor::lightweight().expect("unwrap failed");
+        let _ = auditor.run_complete_audit().expect("unwrap failed");
 
         let report = auditor.generate_report();
         assert!(report.contains("Security Audit Report"));
@@ -647,13 +647,13 @@ mod tests {
 
     #[test]
     fn test_json_export() {
-        let mut auditor = SecurityAuditor::lightweight().unwrap();
-        let _ = auditor.run_complete_audit().unwrap();
+        let mut auditor = SecurityAuditor::lightweight().expect("unwrap failed");
+        let _ = auditor.run_complete_audit().expect("unwrap failed");
 
         let json_result = auditor.export_json();
         assert!(json_result.is_ok());
 
-        let json = json_result.unwrap();
+        let json = json_result.expect("unwrap failed");
         assert!(json.contains("execution_summary"));
         assert!(json.contains("vulnerability_summary"));
     }

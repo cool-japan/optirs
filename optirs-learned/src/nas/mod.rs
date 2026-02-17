@@ -751,7 +751,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveNASSyst
             self.statistics.iterations_completed += 1;
         }
         
-        self.statistics.total_search_time = T::from(start_time.elapsed().as_secs_f64()).unwrap();
+        self.statistics.total_search_time = T::from(start_time.elapsed().as_secs_f64()).expect("unwrap failed");
         
         Ok(self.results.clone())
     }

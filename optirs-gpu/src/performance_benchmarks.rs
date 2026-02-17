@@ -633,8 +633,8 @@ impl GpuOptimizerBenchmark {
 
         let std_dev = Duration::from_secs_f64(variance.sqrt());
 
-        let min_time = *sorted_times.first().unwrap();
-        let max_time = *sorted_times.last().unwrap();
+        let min_time = *sorted_times.first().expect("unwrap failed");
+        let max_time = *sorted_times.last().expect("unwrap failed");
         let median_time = sorted_times[times.len() / 2];
         let p95_time = sorted_times[(times.len() as f64 * 0.95) as usize];
         let p99_time = sorted_times[(times.len() as f64 * 0.99) as usize];
@@ -1317,7 +1317,7 @@ mod tests {
         let result = normal_gen.generate(1000);
         assert!(result.is_ok());
 
-        let (params, grads) = result.unwrap();
+        let (params, grads) = result.expect("unwrap failed");
         assert_eq!(params.len(), 1000);
         assert_eq!(grads.len(), 1000);
     }
@@ -1328,7 +1328,7 @@ mod tests {
         let result = sparse_gen.generate(1000);
         assert!(result.is_ok());
 
-        let (params_grads) = result.unwrap();
+        let (params_grads) = result.expect("unwrap failed");
         let zero_count = params.iter().filter(|&&x| x == 0.0).count();
 
         // Should have approximately 90% zeros (some variance expected)

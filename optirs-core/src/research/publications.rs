@@ -1203,7 +1203,7 @@ mod tests {
         publication.abstracttext = "This is a test abstract.".to_string();
         publication.keywords = vec!["test".to_string(), "paper".to_string()];
 
-        let markdown = publication.generate_markdown().unwrap();
+        let markdown = publication.generate_markdown().expect("unwrap failed");
         assert!(markdown.contains("# Test Paper"));
         assert!(markdown.contains("## Abstract"));
         assert!(markdown.contains("This is a test abstract."));

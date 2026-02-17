@@ -36,7 +36,7 @@
 //
 // // Register layers
 // let layer_info = LayerInfo::dense("layer1".to_string(), 128, 64, true);
-// kfac.register_layer(layer_info).unwrap();
+// kfac.register_layer(layer_info).expect("unwrap failed");
 //
 // // Optimization step with activations and gradients
 // let activations = Array2::zeros((32, 128)); // batch_size x input_dim
@@ -45,7 +45,7 @@
 // let mut layer_gradients = std::collections::HashMap::new();
 // layer_gradients.insert("layer1".to_string(), (&activations, &gradients));
 //
-// let updates = kfac.step(layer_gradients, None).unwrap();
+// let updates = kfac.step(layer_gradients, None).expect("unwrap failed");
 // ```
 //
 // # Algorithm Details
@@ -105,15 +105,18 @@ mod integration_tests {
                 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
             ],
         )
-        .unwrap();
+        .expect("unwrap failed");
 
-        let gradients = Array2::from_shape_vec((3, 2), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).unwrap();
+        let gradients = Array2::from_shape_vec((3, 2), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+            .expect("unwrap failed");
 
         // Perform optimization step
         let mut layer_gradients = HashMap::new();
         layer_gradients.insert("dense1".to_string(), (&activations, &gradients));
 
-        let updates = kfac.step::<fn() -> f32>(layer_gradients, None).unwrap();
+        let updates = kfac
+            .step::<fn() -> f32>(layer_gradients, None)
+            .expect("unwrap failed");
         assert!(updates.contains_key("dense1"));
         assert_eq!(updates["dense1"].dim(), gradients.dim());
     }
@@ -150,7 +153,7 @@ mod integration_tests {
         for step in 0..5 {
             let updates = kfac
                 .step::<fn() -> f64>(layer_gradients.clone(), None)
-                .unwrap();
+                .expect("unwrap failed");
 
             assert_eq!(updates.len(), 2);
             assert!(updates.contains_key("layer1"));
@@ -177,7 +180,7 @@ mod integration_tests {
 
         // Register a large layer to test memory estimation
         let layer_info = LayerInfo::dense("large_layer".to_string(), 512, 256, true);
-        kfac.register_layer(layer_info).unwrap();
+        kfac.register_layer(layer_info).expect("unwrap failed");
 
         let memory_usage = kfac.estimate_memory_usage();
         assert!(memory_usage > 0);
@@ -199,7 +202,7 @@ mod integration_tests {
         let mut kfac = KFAC::new(config);
 
         let layer_info = LayerInfo::dense("test_layer".to_string(), 4, 2, false);
-        kfac.register_layer(layer_info).unwrap();
+        kfac.register_layer(layer_info).expect("unwrap failed");
 
         let activations = Array2::ones((2, 4));
         let gradients = Array2::ones((2, 2)) * 0.1;
@@ -209,18 +212,20 @@ mod integration_tests {
 
         // Test with improving loss
         let loss_fn = || 1.0; // Constant loss for first step
-        kfac.step(layer_gradients.clone(), Some(loss_fn)).unwrap();
+        kfac.step(layer_gradients.clone(), Some(loss_fn))
+            .expect("unwrap failed");
 
         let improving_loss_fn = || 0.8; // Improving loss
         kfac.step(layer_gradients.clone(), Some(improving_loss_fn))
-            .unwrap();
+            .expect("unwrap failed");
 
         // Acceptance ratio should reflect the improvement
         assert!(kfac.acceptance_ratio() >= 1.0);
 
         // Test with worsening loss
         let worsening_loss_fn = || 1.2; // Worsening loss
-        kfac.step(layer_gradients, Some(worsening_loss_fn)).unwrap();
+        kfac.step(layer_gradients, Some(worsening_loss_fn))
+            .expect("unwrap failed");
 
         // Acceptance ratio should decrease
         assert!(kfac.acceptance_ratio() < 1.2);
@@ -232,12 +237,12 @@ mod integration_tests {
         let mut kfac = KFAC::new(config);
 
         let layer_info = LayerInfo::dense("test_layer".to_string(), 3, 2, false);
-        kfac.register_layer(layer_info).unwrap();
+        kfac.register_layer(layer_info).expect("unwrap failed");
 
         // Set custom damping for the layer
         assert!(kfac.set_layer_damping("test_layer", 0.01, 0.02).is_ok());
 
-        let state = kfac.get_layer_state("test_layer").unwrap();
+        let state = kfac.get_layer_state("test_layer").expect("unwrap failed");
         assert!((state.damping_a - 0.01).abs() < 1e-10);
         assert!((state.damping_g - 0.02).abs() < 1e-10);
 
@@ -251,7 +256,7 @@ mod integration_tests {
         let mut kfac = KFAC::new(config);
 
         let layer_info = LayerInfo::dense("test_layer".to_string(), 2, 2, false);
-        kfac.register_layer(layer_info).unwrap();
+        kfac.register_layer(layer_info).expect("unwrap failed");
 
         let activations = Array2::ones((2, 2));
         let gradients = Array2::ones((2, 2)) * 0.1;
@@ -261,8 +266,9 @@ mod integration_tests {
 
         // Perform some steps
         kfac.step::<fn() -> f32>(layer_gradients.clone(), None)
-            .unwrap();
-        kfac.step::<fn() -> f32>(layer_gradients, None).unwrap();
+            .expect("unwrap failed");
+        kfac.step::<fn() -> f32>(layer_gradients, None)
+            .expect("unwrap failed");
 
         assert_eq!(kfac.step_count(), 2);
         assert!(kfac.get_stats().total_steps > 0);
@@ -276,7 +282,7 @@ mod integration_tests {
 
         // Layer should still be registered but reset
         assert!(kfac.has_layer("test_layer"));
-        let state = kfac.get_layer_state("test_layer").unwrap();
+        let state = kfac.get_layer_state("test_layer").expect("unwrap failed");
         assert_eq!(state.num_updates, 0);
         assert!(!state.is_ready()); // Inverses should be cleared
     }

@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn test_random_architecture_sampling() {
         let constraints = SearchConstraints::default();
-        let space = ArchitectureSearchSpace::new(&constraints).unwrap();
+        let space = ArchitectureSearchSpace::new(&constraints).expect("unwrap failed");
         let mut rng = scirs2_core::random::thread_rng();
 
         let architecture = space.sample_random_architecture(&mut rng);

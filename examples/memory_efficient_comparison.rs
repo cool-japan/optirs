@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "  Step {}: Loss = {:.6}, Approx Memory = {} bytes",
                 step,
                 loss,
-                regular_adam_memory.last().unwrap()
+                regular_adam_memory.last().expect("unwrap failed")
             );
         }
     }
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "  Step {} (in-place): Loss = {:.6}, Approx Memory = {} bytes",
                 step,
                 loss,
-                inplace_adam_memory.last().unwrap()
+                inplace_adam_memory.last().expect("unwrap failed")
             );
         }
     }
@@ -121,7 +121,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "  Step {}: Loss = {:.6}, Approx Memory = {} bytes",
                 step,
                 loss,
-                regular_sgd_memory.last().unwrap()
+                regular_sgd_memory.last().expect("unwrap failed")
             );
         }
     }
@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "  Step {} (in-place): Loss = {:.6}, Approx Memory = {} bytes",
                 step,
                 loss,
-                inplace_sgd_memory.last().unwrap()
+                inplace_sgd_memory.last().expect("unwrap failed")
             );
         }
     }

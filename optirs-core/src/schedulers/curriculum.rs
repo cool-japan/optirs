@@ -114,7 +114,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> CurriculumScheduler<A> {
         }
 
         let mut stages = VecDeque::from(stages);
-        let current_stage = stages.pop_front().unwrap();
+        let current_stage = stages.pop_front().expect("unwrap failed");
         let next_stage = if !stages.is_empty() {
             Some(stages[0].clone())
         } else {
@@ -174,7 +174,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> CurriculumScheduler<A> {
             self.step_in_stage = 0;
             true
         } else if self.next_stage.is_some() {
-            self.current_stage = self.next_stage.take().unwrap();
+            self.current_stage = self.next_stage.take().expect("unwrap failed");
             self.next_stage = None;
             self.step_in_stage = 0;
             true
@@ -191,7 +191,8 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> CurriculumScheduler<A> {
         if self.current_stage.duration == 0 {
             A::one()
         } else {
-            A::from(self.step_in_stage).unwrap() / A::from(self.current_stage.duration).unwrap()
+            A::from(self.step_in_stage).expect("unwrap failed")
+                / A::from(self.current_stage.duration).expect("unwrap failed")
         }
     }
 
@@ -221,7 +222,8 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> CurriculumScheduler<A> {
                 A::one()
             } else {
                 // Calculate based on total steps
-                A::from(self.total_steps).unwrap() / A::from(total_duration).unwrap()
+                A::from(self.total_steps).expect("unwrap failed")
+                    / A::from(total_duration).expect("unwrap failed")
             }
         }
     }
@@ -244,8 +246,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
 
                     // If we're within the blending period and there's a next stage
                     if remaining_steps < blend_steps {
-                        let blend_frac = A::from(blend_steps - remaining_steps).unwrap()
-                            / A::from(blend_steps).unwrap();
+                        let blend_frac = A::from(blend_steps - remaining_steps)
+                            .expect("unwrap failed")
+                            / A::from(blend_steps).expect("unwrap failed");
                         self.current_stage.learning_rate
                             + blend_frac
                                 * (next_stage.learning_rate - self.current_stage.learning_rate)

@@ -354,12 +354,12 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
                     .rev()
                     .take(10)
                     .map(|record| record.performance_score)
-                    .fold(T::zero(), |acc, x| acc + x) / T::from(history.len().min(10)).unwrap();
+                    .fold(T::zero(), |acc, x| acc + x) / T::from(history.len().min(10)).expect("unwrap failed");
                 features.push(recent_avg);
 
                 // Performance trend
                 if history.len() >= 2 {
-                    let recent = history.back().unwrap().performance_score;
+                    let recent = history.back().expect("unwrap failed").performance_score;
                     let older = history.iter().rev().nth(5).map(|r| r.performance_score).unwrap_or(recent);
                     let trend = recent - older;
                     features.push(trend);
@@ -393,14 +393,14 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> PerformancePred
 
         let mean = history.iter()
             .map(|record| record.performance_score)
-            .fold(T::zero(), |acc, x| acc + x) / T::from(history.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(history.len()).expect("unwrap failed");
 
         let variance = history.iter()
             .map(|record| {
                 let diff = record.performance_score - mean;
                 diff * diff
             })
-            .fold(T::zero(), |acc, x| acc + x) / T::from(history.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(history.len()).expect("unwrap failed");
 
         Ok(variance)
     }
@@ -538,10 +538,10 @@ impl<T: Float + Debug + Send + Sync + 'static> FeatureVector<T> {
         }
 
         // Z-score normalization
-        let mean = self.features.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(self.features.len()).unwrap();
+        let mean = self.features.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(self.features.len()).expect("unwrap failed");
         let variance = self.features.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(self.features.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(self.features.len()).expect("unwrap failed");
         let std_dev = variance.sqrt();
 
         if std_dev > T::zero() {
@@ -696,7 +696,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionModel<T> {
                 }
             }
 
-            let learning_rate = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()) / T::from(self.training_data.len()).unwrap();
+            let learning_rate = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()) / T::from(self.training_data.len()).expect("unwrap failed");
             for (param, grad) in self.parameters.iter_mut().zip(gradients.iter()) {
                 *param = *param - learning_rate * *grad;
             }
@@ -954,11 +954,11 @@ impl<T: Float + Debug + Send + Sync + 'static> AccuracyTracker<T> {
         for (model_id, accuracies) in &self.model_accuracies {
             if !accuracies.is_empty() {
                 let average_accuracy = accuracies.iter().fold(T::zero(), |acc, &x| acc + x)
-                    / T::from(accuracies.len()).unwrap();
+                    / T::from(accuracies.len()).expect("unwrap failed");
 
                 let variance = accuracies.iter()
                     .map(|&x| (x - average_accuracy) * (x - average_accuracy))
-                    .fold(T::zero(), |acc, x| acc + x) / T::from(accuracies.len()).unwrap();
+                    .fold(T::zero(), |acc, x| acc + x) / T::from(accuracies.len()).expect("unwrap failed");
 
                 comparison.insert(model_id.clone(), ModelPerformance {
                     average_accuracy,
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[test]
     fn test_prediction_model() {
-        let mut model = PredictionModel::<f32>::new(ModelType::LinearRegression).unwrap();
+        let mut model = PredictionModel::<f32>::new(ModelType::LinearRegression).expect("unwrap failed");
         let features = FeatureVector::<f32>::new();
 
         let prediction = model.predict(&features);
@@ -1065,7 +1065,7 @@ mod tests {
 
     #[test]
     fn test_prediction_cache() {
-        let mut cache = PredictionCache::<f32>::new(2).unwrap();
+        let mut cache = PredictionCache::<f32>::new(2).expect("unwrap failed");
         let mut predictions = HashMap::new();
         predictions.insert("optimizer1".to_string(), 0.8);
 

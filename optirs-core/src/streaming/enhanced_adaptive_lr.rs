@@ -709,7 +709,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
                 .collect();
 
             let mean_lr = lr_values.iter().fold(A::zero(), |acc, &lr| acc + lr)
-                / A::from(lr_values.len()).unwrap();
+                / A::from(lr_values.len()).expect("unwrap failed");
 
             let variance = lr_values
                 .iter()
@@ -718,7 +718,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
                     diff * diff
                 })
                 .fold(A::zero(), |acc, var| acc + var)
-                / A::from(lr_values.len()).unwrap();
+                / A::from(lr_values.len()).expect("unwrap failed");
 
             variance.sqrt()
         } else {
@@ -736,8 +736,8 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
     /// Apply meta-learning adjustment to base decision
     fn apply_meta_adjustment(&self, base_lr: A, meta_adjustment: A) -> A {
         // Combine base decision with meta-learning recommendation
-        let alpha = A::from(0.7).unwrap(); // Weight for base decision
-        let beta = A::from(0.3).unwrap(); // Weight for meta-learning
+        let alpha = A::from(0.7).expect("unwrap failed"); // Weight for base decision
+        let beta = A::from(0.3).expect("unwrap failed"); // Weight for meta-learning
 
         alpha * base_lr + beta * meta_adjustment
     }
@@ -788,7 +788,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> MultiSignalAdaptati
     ) -> Result<AdaptationDecision<A>> {
         if signals.is_empty() {
             return Ok(AdaptationDecision {
-                new_lr: A::from(0.001).unwrap(),
+                new_lr: A::from(0.001).expect("unwrap failed"),
                 lr_multiplier: A::one(),
                 contributing_signals: vec![],
                 confidence: A::zero(),
@@ -812,10 +812,10 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> MultiSignalAdaptati
         let contributing_signals = signals.iter().map(|s| s.signal_type).collect();
 
         Ok(AdaptationDecision {
-            new_lr: A::from(0.001).unwrap() * weighted_change,
+            new_lr: A::from(0.001).expect("unwrap failed") * weighted_change,
             lr_multiplier: weighted_change,
             contributing_signals,
-            confidence: total_weight / A::from(signals.len()).unwrap(),
+            confidence: total_weight / A::from(signals.len()).expect("unwrap failed"),
             rationale: "Weighted average of adaptation signals".to_string(),
             timestamp: Instant::now(),
         })
@@ -825,10 +825,10 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> MultiSignalAdaptati
         let reliability = self
             .signal_reliability
             .entry(signal_type)
-            .or_insert(A::from(0.5).unwrap());
+            .or_insert(A::from(0.5).expect("unwrap failed"));
 
         // Update reliability using exponential moving average
-        let alpha = A::from(0.1).unwrap();
+        let alpha = A::from(0.1).expect("unwrap failed");
         *reliability = (*reliability) * (A::one() - alpha) + effectiveness * alpha;
     }
 }
@@ -857,10 +857,10 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> GradientBasedAdapte
         }
 
         // Simple adaptation based on gradient magnitude
-        let recommended_change = if magnitude > A::from(1.0).unwrap() {
-            A::from(0.9).unwrap() // Decrease LR for large gradients
-        } else if magnitude < A::from(0.01).unwrap() {
-            A::from(1.1).unwrap() // Increase LR for small gradients
+        let recommended_change = if magnitude > A::from(1.0).expect("unwrap failed") {
+            A::from(0.9).expect("unwrap failed") // Decrease LR for large gradients
+        } else if magnitude < A::from(0.01).expect("unwrap failed") {
+            A::from(1.1).expect("unwrap failed") // Increase LR for small gradients
         } else {
             A::one() // No change
         };
@@ -868,7 +868,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> GradientBasedAdapte
         Ok(SignalVote {
             signal_type: AdaptationSignalType::GradientMagnitude,
             recommended_lr_change: recommended_change,
-            confidence: A::from(0.7).unwrap(),
+            confidence: A::from(0.7).expect("unwrap failed"),
             reasoning: "Gradient magnitude-based adaptation".to_string(),
             timestamp: Instant::now(),
         })
@@ -906,13 +906,15 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> PerformanceBasedAda
 
         // Simple trend analysis
         let recommended_change = if loss_history.len() >= 2 {
-            let recent_loss = loss_history.back().unwrap();
-            let prev_loss = loss_history.get(loss_history.len() - 2).unwrap();
+            let recent_loss = loss_history.back().expect("unwrap failed");
+            let prev_loss = loss_history
+                .get(loss_history.len() - 2)
+                .expect("unwrap failed");
 
             if *recent_loss > *prev_loss {
-                A::from(0.95).unwrap() // Decrease LR if loss increased
+                A::from(0.95).expect("unwrap failed") // Decrease LR if loss increased
             } else {
-                A::from(1.02).unwrap() // Slight increase if loss decreased
+                A::from(1.02).expect("unwrap failed") // Slight increase if loss decreased
             }
         } else {
             A::one()
@@ -921,7 +923,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> PerformanceBasedAda
         Ok(SignalVote {
             signal_type: AdaptationSignalType::LossProgression,
             recommended_lr_change: recommended_change,
-            confidence: A::from(0.8).unwrap(),
+            confidence: A::from(0.8).expect("unwrap failed"),
             reasoning: "Loss progression analysis".to_string(),
             timestamp: Instant::now(),
         })
@@ -947,7 +949,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> DriftAwareAdapter<A
         Ok(SignalVote {
             signal_type: AdaptationSignalType::ConceptDrift,
             recommended_lr_change: A::one(),
-            confidence: A::from(0.5).unwrap(),
+            confidence: A::from(0.5).expect("unwrap failed"),
             reasoning: "No drift detected".to_string(),
             timestamp: Instant::now(),
         })
@@ -965,16 +967,16 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> ResourceAwareAdapte
             compute_tracker: ComputationTimeTracker::default(),
             energy_tracker: EnergyConsumptionTracker::default(),
             throughput_requirements: ThroughputRequirements {
-                min_samples_per_second: A::from(100.0).unwrap(),
-                target_samples_per_second: A::from(1000.0).unwrap(),
-                current_throughput: A::from(500.0).unwrap(),
+                min_samples_per_second: A::from(100.0).expect("unwrap failed"),
+                target_samples_per_second: A::from(1000.0).expect("unwrap failed"),
+                current_throughput: A::from(500.0).expect("unwrap failed"),
                 throughput_deficit: A::zero(),
             },
             budget_manager: ResourceBudgetManager {
                 memory_budget_mb: 1000.0,
                 compute_budget_seconds: 3600.0,
                 energy_budget_joules: 1000.0,
-                budget_utilization: A::from(0.5).unwrap(),
+                budget_utilization: A::from(0.5).expect("unwrap failed"),
                 budget_violations: 0,
             },
         })
@@ -985,9 +987,9 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> ResourceAwareAdapte
         let memory_pressure = self.memory_tracker.memory_pressure;
 
         let recommended_change = if memory_pressure > 0.8 {
-            A::from(0.9).unwrap() // Reduce LR to decrease memory usage
+            A::from(0.9).expect("unwrap failed") // Reduce LR to decrease memory usage
         } else if memory_pressure < 0.3 {
-            A::from(1.05).unwrap() // Can afford to increase LR
+            A::from(1.05).expect("unwrap failed") // Can afford to increase LR
         } else {
             A::one()
         };
@@ -995,7 +997,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> ResourceAwareAdapte
         Ok(SignalVote {
             signal_type: AdaptationSignalType::ResourceUtilization,
             recommended_lr_change: recommended_change,
-            confidence: A::from(0.6).unwrap(),
+            confidence: A::from(0.6).expect("unwrap failed"),
             reasoning: format!("Memory pressure: {:.2}", memory_pressure),
             timestamp: Instant::now(),
         })
@@ -1020,7 +1022,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> MetaOptimizer<A> {
 
     fn meta_optimize(&mut self, decision: &AdaptationDecision<A>, step: usize) -> Result<A> {
         // Simplified meta-optimization
-        Ok(A::from(0.001).unwrap())
+        Ok(A::from(0.001).expect("unwrap failed"))
     }
 
     fn reset(&mut self) {
@@ -1239,14 +1241,15 @@ mod tests {
             use_ensemble_voting: true,
         };
 
-        let mut controller = EnhancedAdaptiveLRController::<f32>::new(config).unwrap();
+        let mut controller =
+            EnhancedAdaptiveLRController::<f32>::new(config).expect("unwrap failed");
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.05]);
         let loss = 0.5;
         let metrics = HashMap::new();
 
         let new_lr = controller.update_learning_rate(&gradients, loss, &metrics, 1);
         assert!(new_lr.is_ok());
-        assert!(new_lr.unwrap() > 0.0);
+        assert!(new_lr.expect("unwrap failed") > 0.0);
     }
 
     #[test]
@@ -1266,7 +1269,7 @@ mod tests {
             use_ensemble_voting: true,
         };
 
-        let controller = EnhancedAdaptiveLRController::<f32>::new(config).unwrap();
+        let controller = EnhancedAdaptiveLRController::<f32>::new(config).expect("unwrap failed");
         let stats = controller.get_adaptation_statistics();
 
         assert_eq!(stats.total_adaptations, 0);

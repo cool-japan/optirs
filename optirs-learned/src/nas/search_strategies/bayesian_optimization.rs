@@ -293,7 +293,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
             if iteration % 10 == 0 {
                 println!("BO Iteration {}: Best performance = {:.4}", 
                     iteration, 
-                    self.best_architecture.as_ref().unwrap().1.to_f64().unwrap_or(0.0)
+                    self.best_architecture.as_ref().expect("unwrap failed").1.to_f64().unwrap_or(0.0)
                 );
             }
         }
@@ -323,10 +323,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
         // Generate random feature vector
         let features = Array1::from_shape_fn(self.architecture_encoder.encoding_dim, |_| {
-            T::from(rng.random::<f64>()).unwrap()
+            T::from(rng.random::<f64>()).expect("unwrap failed")
         });
 
-        let complexity = T::from(rng.gen_range(0.1..1.0)).unwrap();
+        let complexity = T::from(rng.gen_range(0.1..1.0)).expect("unwrap failed");
 
         let metadata = ArchitectureMetadata {
             num_layers: rng.gen_range(2..10),
@@ -396,7 +396,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
         // Start with random point
         let mut current_features = Array1::from_shape_fn(
             self.architecture_encoder.encoding_dim,
-            |_| T::from(rng.random::<f64>()).unwrap()
+            |_| T::from(rng.random::<f64>()).expect("unwrap failed")
         );
 
         let step_size = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
@@ -416,7 +416,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
         // Convert to architecture representation
         let complexity = current_features.iter().cloned().fold(T::zero(), |acc, x| acc + x) / 
-            T::from(current_features.len() as f64).unwrap();
+            T::from(current_features.len() as f64).expect("unwrap failed");
 
         let metadata = ArchitectureMetadata {
             num_layers: 5, // Simplified
@@ -549,7 +549,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
     /// Standard normal CDF (simplified approximation)
     fn standard_normal_cdf(&self, x: T) -> T {
         // Using error function approximation
-        scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()) * (T::one() + self.erf(x / T::from(2.0_f64.sqrt()).unwrap()))
+        scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()) * (T::one() + self.erf(x / T::from(2.0_f64.sqrt()).expect("unwrap failed")))
     }
 
     /// Error function approximation
@@ -616,7 +616,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> BayesianArchite
 
         if !self.search_history.best_performance_history.is_empty() {
             let initial_best = self.search_history.best_performance_history[0];
-            let current_best = *self.search_history.best_performance_history.last().unwrap();
+            let current_best = *self.search_history.best_performance_history.last().expect("unwrap failed");
             let improvement = current_best - initial_best;
             stats.insert("total_improvement".to_string(), improvement.to_f64().unwrap_or(0.0));
         }
@@ -729,7 +729,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> GaussianProcess
             Kernel::Matern32 { length_scale } => {
                 let diff = x1 - x2;
                 let distance = diff.iter().map(|&x| x * x).fold(T::zero(), |acc, x| acc + x).sqrt();
-                let scaled_distance = distance * T::from(3.0_f64.sqrt()).unwrap() / *length_scale;
+                let scaled_distance = distance * T::from(3.0_f64.sqrt()).expect("unwrap failed") / *length_scale;
                 Ok((T::one() + scaled_distance) * (-scaled_distance).exp())
             }
             _ => {

@@ -63,7 +63,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
         // Xavier initialization
         let bound = (6.0 / (input_dim + output_dim) as f64).sqrt();
         for elem in weights.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
 
         let bias = Array1::zeros(output_dim);
@@ -130,7 +130,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
             OutputTransformation::ParameterScaling => {
                 // Apply different scaling per parameter dimension
                 for j in 0..weight_out {
-                    let scale = T::from(1.0 + 0.1 * (j as f64).sin()).unwrap();
+                    let scale = T::from(1.0 + 0.1 * (j as f64).sin()).expect("unwrap failed");
                     for i in 0..seq_len {
                         output[[i, j]] = output[[i, j]] * scale;
                     }
@@ -194,7 +194,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> InputEmbedding<
         // Xavier initialization
         let bound = (6.0 / (input_dim + model_dim) as f64).sqrt();
         for elem in weights.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
 
         Ok(Self {

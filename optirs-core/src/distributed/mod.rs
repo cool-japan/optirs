@@ -83,7 +83,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         }
 
         // Initialize uniform weights
-        let uniform_weight = A::one() / A::from(self.numnodes).unwrap();
+        let uniform_weight = A::one() / A::from(self.numnodes).expect("unwrap failed");
         for nodeid in 0..self.numnodes {
             self.node_weights.insert(nodeid, uniform_weight);
         }
@@ -166,7 +166,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             param.fill(A::zero());
         }
 
-        let numnodes = A::from(nodeparameters.len()).unwrap();
+        let numnodes = A::from(nodeparameters.len()).expect("unwrap failed");
 
         // Sum all _parameters
         for (_node_id, params) in nodeparameters {
@@ -231,7 +231,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         nodeparameters: &[(usize, Vec<Array<A, D>>)],
         momentum: f64,
     ) -> Result<()> {
-        let momentum_factor = A::from(momentum).unwrap();
+        let momentum_factor = A::from(momentum).expect("unwrap failed");
         let one_minus_momentum = A::one() - momentum_factor;
 
         // First compute arithmetic average of incoming _parameters
@@ -241,7 +241,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             .map(|param| Array::zeros(param.raw_dim()))
             .collect();
 
-        let numnodes = A::from(nodeparameters.len()).unwrap();
+        let numnodes = A::from(nodeparameters.len()).expect("unwrap failed");
         for (_node_id, params) in nodeparameters {
             for (avg_param, param) in current_average.iter_mut().zip(params.iter()) {
                 Zip::from(avg_param).and(param).for_each(|avg, &p| {
@@ -279,7 +279,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         nodeparameters: &[(usize, Vec<Array<A, D>>)],
         decay: f64,
     ) -> Result<()> {
-        let decay_factor = A::from(decay).unwrap();
+        let decay_factor = A::from(decay).expect("unwrap failed");
         let one_minus_decay = A::one() - decay_factor;
 
         // First compute arithmetic average of incoming _parameters
@@ -289,7 +289,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             .map(|param| Array::zeros(param.raw_dim()))
             .collect();
 
-        let numnodes = A::from(nodeparameters.len()).unwrap();
+        let numnodes = A::from(nodeparameters.len()).expect("unwrap failed");
         for (_node_id, params) in nodeparameters {
             for (avg_param, param) in current_average.iter_mut().zip(params.iter()) {
                 Zip::from(avg_param).and(param).for_each(|avg, &p| {
@@ -525,7 +525,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         Self {
             parameter_server: ParameterServer::new(strategy, numnodes, expected_updates_per_round),
             communication_rounds: 0,
-            convergence_threshold: A::from(1e-6).unwrap(),
+            convergence_threshold: A::from(1e-6).expect("unwrap failed"),
             max_rounds,
             training_stats: TrainingStats::new(),
         }
@@ -832,9 +832,10 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             CompressionStrategy::None => self.compress_none(&working_gradients)?,
             CompressionStrategy::TopK { k } => self.compress_topk(&working_gradients, *k)?,
             CompressionStrategy::RandomK { k } => self.compress_randomk(&working_gradients, *k)?,
-            CompressionStrategy::Threshold { threshold } => {
-                self.compress_threshold(&working_gradients, A::from(*threshold).unwrap())?
-            }
+            CompressionStrategy::Threshold { threshold } => self.compress_threshold(
+                &working_gradients,
+                A::from(*threshold).expect("unwrap failed"),
+            )?,
             CompressionStrategy::Quantization { bits } => {
                 self.compress_quantization(&working_gradients, *bits)?
             }
@@ -862,7 +863,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 clip_value,
             } => {
                 // Clip gradients first
-                let clip_val = A::from(*clip_value).unwrap();
+                let clip_val = A::from(*clip_value).expect("unwrap failed");
                 for grad in &mut working_gradients {
                     grad.mapv_inplace(|x| {
                         if x > clip_val {
@@ -931,7 +932,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         // Simple serialization: store all gradient values sequentially
         for grad in gradients {
             for &val in grad.iter() {
-                data.extend_from_slice(&val.to_f64().unwrap().to_le_bytes());
+                data.extend_from_slice(&val.to_f64().expect("unwrap failed").to_le_bytes());
             }
         }
 
@@ -967,13 +968,13 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 .collect();
 
             // Sort by absolute value (descending)
-            value_indices.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            value_indices.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("unwrap failed"));
 
             // Take top k elements
             let k_local = k.min(value_indices.len());
             for (_, orig_idx) in value_indices.iter().take(k_local) {
                 indices.push((grad_idx as u32, *orig_idx as u32));
-                values.push(grad.iter().nth(*orig_idx).copied().unwrap());
+                values.push(grad.iter().nth(*orig_idx).copied().expect("unwrap failed"));
             }
         }
 
@@ -987,7 +988,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for ((grad_idx, elem_idx), value) in indices.iter().zip(values.iter()) {
             data.extend_from_slice(&grad_idx.to_le_bytes());
             data.extend_from_slice(&elem_idx.to_le_bytes());
-            data.extend_from_slice(&value.to_f64().unwrap().to_le_bytes());
+            data.extend_from_slice(&value.to_f64().expect("unwrap failed").to_le_bytes());
         }
 
         let metadata = CompressionMetadata {
@@ -1026,7 +1027,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 
             for &idx in selected_indices.iter().take(k_local) {
                 indices.push((grad_idx as u32, idx as u32));
-                values.push(grad.iter().nth(idx).copied().unwrap());
+                values.push(grad.iter().nth(idx).copied().expect("unwrap failed"));
             }
         }
 
@@ -1037,7 +1038,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for ((grad_idx, elem_idx), value) in indices.iter().zip(values.iter()) {
             data.extend_from_slice(&grad_idx.to_le_bytes());
             data.extend_from_slice(&elem_idx.to_le_bytes());
-            data.extend_from_slice(&value.to_f64().unwrap().to_le_bytes());
+            data.extend_from_slice(&value.to_f64().expect("unwrap failed").to_le_bytes());
         }
 
         let metadata = CompressionMetadata {
@@ -1079,12 +1080,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for ((grad_idx, elem_idx), value) in indices.iter().zip(values.iter()) {
             data.extend_from_slice(&grad_idx.to_le_bytes());
             data.extend_from_slice(&elem_idx.to_le_bytes());
-            data.extend_from_slice(&value.to_f64().unwrap().to_le_bytes());
+            data.extend_from_slice(&value.to_f64().expect("unwrap failed").to_le_bytes());
         }
 
         let metadata = CompressionMetadata {
             strategy: CompressionStrategy::Threshold {
-                threshold: threshold.to_f64().unwrap(),
+                threshold: threshold.to_f64().expect("unwrap failed"),
             },
             compression_ratio: data.len() as f64 / (total_elements * 8) as f64,
             nnz_count: indices.len(),
@@ -1118,7 +1119,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 
             let range = max_val - min_val;
             let scale = if range > A::zero() {
-                range / A::from(levels).unwrap()
+                range / A::from(levels).expect("unwrap failed")
             } else {
                 A::one()
             };
@@ -1128,7 +1129,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             // Quantize each value
             for &val in grad.iter() {
                 let normalized = (val - min_val) / scale;
-                let quantized = normalized.to_u64().unwrap().min(levels) as u32;
+                let quantized = normalized.to_u64().expect("unwrap failed").min(levels) as u32;
 
                 // Store quantized value
                 match bits {
@@ -1140,7 +1141,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             }
 
             // Store min value for reconstruction
-            data.extend_from_slice(&min_val.to_f64().unwrap().to_le_bytes());
+            data.extend_from_slice(&min_val.to_f64().expect("unwrap failed").to_le_bytes());
         }
 
         let total_elements: usize = gradients.iter().map(|g| g.len()).sum();
@@ -1172,8 +1173,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 }
 
                 let bytes = &compressed.data[data_offset..data_offset + 8];
-                let value = f64::from_le_bytes(bytes.try_into().unwrap());
-                values.push(A::from(value).unwrap());
+                let value = f64::from_le_bytes(bytes.try_into().expect("unwrap failed"));
+                values.push(A::from(value).expect("unwrap failed"));
                 data_offset += 8;
             }
 
@@ -1210,7 +1211,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             ));
         }
 
-        let num_elements = u32::from_le_bytes(compressed.data[0..4].try_into().unwrap()) as usize;
+        let num_elements =
+            u32::from_le_bytes(compressed.data[0..4].try_into().expect("unwrap failed")) as usize;
         let mut data_offset = 4;
 
         // Restore sparse elements
@@ -1224,15 +1226,18 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             let grad_idx = u32::from_le_bytes(
                 compressed.data[data_offset..data_offset + 4]
                     .try_into()
-                    .unwrap(),
+                    .expect("unwrap failed"),
             ) as usize;
             let elem_idx = u32::from_le_bytes(
                 compressed.data[data_offset + 4..data_offset + 8]
                     .try_into()
-                    .unwrap(),
+                    .expect("unwrap failed"),
             ) as usize;
             let value_bytes = &compressed.data[data_offset + 8..data_offset + 16];
-            let value = A::from(f64::from_le_bytes(value_bytes.try_into().unwrap())).unwrap();
+            let value = A::from(f64::from_le_bytes(
+                value_bytes.try_into().expect("unwrap failed"),
+            ))
+            .expect("unwrap failed");
 
             data_offset += 16;
 
@@ -1290,7 +1295,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                         let val = u16::from_le_bytes(
                             compressed.data[data_offset..data_offset + 2]
                                 .try_into()
-                                .unwrap(),
+                                .expect("unwrap failed"),
                         ) as u32;
                         data_offset += 2;
                         val
@@ -1304,7 +1309,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                         let val = u32::from_le_bytes(
                             compressed.data[data_offset..data_offset + 4]
                                 .try_into()
-                                .unwrap(),
+                                .expect("unwrap failed"),
                         );
                         data_offset += 4;
                         val
@@ -1326,7 +1331,10 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 ));
             }
             let min_bytes = &compressed.data[data_offset..data_offset + 8];
-            let min_val = A::from(f64::from_le_bytes(min_bytes.try_into().unwrap())).unwrap();
+            let min_val = A::from(f64::from_le_bytes(
+                min_bytes.try_into().expect("unwrap failed"),
+            ))
+            .expect("unwrap failed");
             data_offset += 8;
 
             // Get scale factor
@@ -1341,7 +1349,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             // Dequantize values
             let dequantized_values: Vec<A> = values
                 .into_iter()
-                .map(|q| min_val + A::from(q).unwrap() * scale)
+                .map(|q| min_val + A::from(q).expect("unwrap failed") * scale)
                 .collect();
 
             let dynamic_array = Array::from_shape_vec(shape.as_slice(), dequantized_values)
@@ -1466,7 +1474,9 @@ mod tests {
 
         let nodeparameters = vec![(0, params1), (1, params2), (2, params3)];
 
-        averager.average_parameters(&nodeparameters).unwrap();
+        averager
+            .average_parameters(&nodeparameters)
+            .expect("unwrap failed");
 
         let result = averager.get_averaged_parameters();
         assert_relative_eq!(result[0][0], 3.0, epsilon = 1e-6); // (1+3+5)/3
@@ -1482,13 +1492,15 @@ mod tests {
         let params1 = vec![Array1::from_vec(vec![2.0])];
         let params2 = vec![Array1::from_vec(vec![6.0])];
         let nodeparameters = vec![(0, params1.clone()), (1, params2.clone())];
-        averager.initialize(&params1).unwrap();
+        averager.initialize(&params1).expect("unwrap failed");
 
         // Set different weights after initialization
-        averager.set_node_weight(0, 0.75).unwrap(); // 75% weight
-        averager.set_node_weight(1, 0.25).unwrap(); // 25% weight
+        averager.set_node_weight(0, 0.75).expect("unwrap failed"); // 75% weight
+        averager.set_node_weight(1, 0.25).expect("unwrap failed"); // 25% weight
 
-        averager.average_parameters(&nodeparameters).unwrap();
+        averager
+            .average_parameters(&nodeparameters)
+            .expect("unwrap failed");
 
         let result = averager.get_averaged_parameters();
         // Weighted average: 0.75 * 2.0 + 0.25 * 6.0 = 1.5 + 1.5 = 3.0
@@ -1505,7 +1517,9 @@ mod tests {
 
         // First update: average = (1+3)/2 = 2.0, momentum buffer starts at 0, so result = 0.1 * 2.0 = 0.2
         let node_parameters1 = vec![(0, params1.clone()), (1, params2.clone())];
-        averager.average_parameters(&node_parameters1).unwrap();
+        averager
+            .average_parameters(&node_parameters1)
+            .expect("unwrap failed");
 
         let result1 = averager.get_averaged_parameters();
         // First result should be small due to zero initialization
@@ -1514,7 +1528,9 @@ mod tests {
         // Several more updates to let momentum build up
         for _ in 0..10 {
             let nodeparameters = vec![(0, params1.clone()), (1, params2.clone())];
-            averager.average_parameters(&nodeparameters).unwrap();
+            averager
+                .average_parameters(&nodeparameters)
+                .expect("unwrap failed");
         }
 
         let final_result = averager.get_averaged_parameters();
@@ -1528,16 +1544,16 @@ mod tests {
         let mut server = ParameterServer::new(AveragingStrategy::Arithmetic, 2, 2);
 
         let initialparams = vec![Array1::from_vec(vec![0.0, 0.0])];
-        server.initialize(&initialparams).unwrap();
+        server.initialize(&initialparams).expect("unwrap failed");
 
         // Submit updates from both nodes
         let update1 = vec![Array1::from_vec(vec![1.0, 2.0])];
         let update2 = vec![Array1::from_vec(vec![3.0, 4.0])];
 
-        let ready1 = server.submit_update(0, update1).unwrap();
+        let ready1 = server.submit_update(0, update1).expect("unwrap failed");
         assert!(!ready1); // Not ready yet, waiting for second node
 
-        let ready2 = server.submit_update(1, update2).unwrap();
+        let ready2 = server.submit_update(1, update2).expect("unwrap failed");
         assert!(ready2); // Ready after both nodes submitted
 
         let global_params = server.get_global_parameters();
@@ -1557,7 +1573,9 @@ mod tests {
         );
 
         let initialparams = vec![Array1::from_vec(vec![0.0])];
-        coordinator.initialize(&initialparams).unwrap();
+        coordinator
+            .initialize(&initialparams)
+            .expect("unwrap failed");
 
         // Simulate training rounds
         for round in 1..=3 {
@@ -1566,7 +1584,9 @@ mod tests {
 
             let node_updates = vec![(0, update1), (1, update2)];
 
-            let result = coordinator.communication_round(node_updates).unwrap();
+            let result = coordinator
+                .communication_round(node_updates)
+                .expect("unwrap failed");
 
             assert_eq!(result.round, round);
             assert!(result.should_continue);
@@ -1595,7 +1615,9 @@ mod tests {
 
             let nodeparameters = vec![(0, params1), (1, params2)];
 
-            averager.average_parameters(&nodeparameters).unwrap();
+            averager
+                .average_parameters(&nodeparameters)
+                .expect("unwrap failed");
             let result = averager.get_averaged_parameters();
             assert!(result[0][0] >= 1.0 && result[0][0] <= 3.0);
         }
@@ -1615,7 +1637,9 @@ mod tests {
 
             let nodeparameters = vec![(0, params1), (1, params2)];
 
-            averager.average_parameters(&nodeparameters).unwrap();
+            averager
+                .average_parameters(&nodeparameters)
+                .expect("unwrap failed");
             let result = averager.get_averaged_parameters();
             // First result from momentum/EMA will be smaller due to zero initialization
             assert!(result[0][0] >= 0.0 && result[0][0] <= 3.0);
@@ -1651,7 +1675,7 @@ mod tests {
         }));
 
         // Either it returns an error or panics due to dimension mismatch
-        assert!(result.is_err() || (result.is_ok() && result.unwrap().is_err()));
+        assert!(result.is_err() || (result.is_ok() && result.expect("unwrap failed").is_err()));
     }
 
     #[test]
@@ -1678,14 +1702,20 @@ mod tests {
             Array1::from_vec(vec![4.0, 5.0]),
         ];
 
-        let compressed = compressor.compress(&gradients).unwrap();
+        let compressed = compressor.compress(&gradients).expect("unwrap failed");
         assert_eq!(compressed.metadata.strategy, CompressionStrategy::None);
         assert_eq!(compressed.metadata.compression_ratio, 1.0);
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
         assert_eq!(decompressed.len(), 2);
-        assert_eq!(decompressed[0].as_slice().unwrap(), &[1.0, 2.0, 3.0]);
-        assert_eq!(decompressed[1].as_slice().unwrap(), &[4.0, 5.0]);
+        assert_eq!(
+            decompressed[0].as_slice().expect("unwrap failed"),
+            &[1.0, 2.0, 3.0]
+        );
+        assert_eq!(
+            decompressed[1].as_slice().expect("unwrap failed"),
+            &[4.0, 5.0]
+        );
     }
 
     #[test]
@@ -1694,11 +1724,11 @@ mod tests {
 
         let gradients = vec![Array1::from_vec(vec![0.1, 3.0, 0.2, 4.0, 0.05])];
 
-        let compressed = compressor.compress(&gradients).unwrap();
+        let compressed = compressor.compress(&gradients).expect("unwrap failed");
         assert!(compressed.metadata.compression_ratio < 1.0);
         assert_eq!(compressed.metadata.nnz_count, 2); // Top 2 elements
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
         assert_eq!(decompressed.len(), 1);
 
         // Should have only the top 2 elements (4.0 and 3.0), others should be 0
@@ -1717,11 +1747,11 @@ mod tests {
 
         let gradients = vec![Array1::from_vec(vec![0.5, 2.0, 0.8, 3.0, 0.3])];
 
-        let compressed = compressor.compress(&gradients).unwrap();
+        let compressed = compressor.compress(&gradients).expect("unwrap failed");
         assert!(compressed.metadata.compression_ratio < 1.0);
         assert_eq!(compressed.metadata.nnz_count, 2); // Elements > 1.0: 2.0 and 3.0
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
         let result = &decompressed[0];
 
         // Only elements > 1.0 should remain
@@ -1738,10 +1768,10 @@ mod tests {
 
         let gradients = vec![Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0])];
 
-        let compressed = compressor.compress(&gradients).unwrap();
+        let compressed = compressor.compress(&gradients).expect("unwrap failed");
         assert!(compressed.metadata.compression_ratio < 1.0); // Should use less space with 8-bit quantization
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
         let result = &decompressed[0];
 
         // Values should be approximately restored (with quantization error)
@@ -1760,12 +1790,12 @@ mod tests {
             1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
         ])];
 
-        let compressed = compressor.compress(&gradients).unwrap();
+        let compressed = compressor.compress(&gradients).expect("unwrap failed");
         // With 3 out of 10 elements, compression should be effective
         assert!(compressed.metadata.compression_ratio < 1.0);
         assert_eq!(compressed.metadata.nnz_count, 3); // Exactly 3 elements should be kept
 
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
         let result = &decompressed[0];
 
         // Exactly 3 elements should be non-zero
@@ -1789,12 +1819,12 @@ mod tests {
         compressor.initialize_error_state(&gradients);
 
         // First compression
-        let compressed1 = compressor.compress(&gradients).unwrap();
-        let decompressed1 = compressor.decompress(&compressed1).unwrap();
+        let compressed1 = compressor.compress(&gradients).expect("unwrap failed");
+        let decompressed1 = compressor.decompress(&compressed1).expect("unwrap failed");
 
         // Second compression (should include error feedback)
-        let compressed2 = compressor.compress(&gradients).unwrap();
-        let decompressed2 = compressor.decompress(&compressed2).unwrap();
+        let compressed2 = compressor.compress(&gradients).expect("unwrap failed");
+        let decompressed2 = compressor.decompress(&compressed2).expect("unwrap failed");
 
         // Both should be valid compressions
         assert_eq!(decompressed1.len(), 1);
@@ -1813,8 +1843,8 @@ mod tests {
 
         let gradients = vec![Array1::from_vec(vec![1.0, 5.0, -3.0, 2.0])];
 
-        let compressed = compressor.compress(&gradients).unwrap();
-        let decompressed = compressor.decompress(&compressed).unwrap();
+        let compressed = compressor.compress(&gradients).expect("unwrap failed");
+        let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
 
         let result = &decompressed[0];
 
@@ -1867,8 +1897,8 @@ mod tests {
         for strategy in strategies {
             let mut compressor = GradientCompressor::new(strategy.clone());
 
-            let compressed = compressor.compress(&gradients).unwrap();
-            let decompressed = compressor.decompress(&compressed).unwrap();
+            let compressed = compressor.compress(&gradients).expect("unwrap failed");
+            let decompressed = compressor.decompress(&compressed).expect("unwrap failed");
 
             // Should decompress to same number of arrays
             assert_eq!(decompressed.len(), gradients.len());
@@ -1929,7 +1959,7 @@ mod tests {
         // Test parameter server with compressed gradients
         let mut server = ParameterServer::new(AveragingStrategy::Arithmetic, 2, 2);
         let initialparams = vec![Array1::from_vec(vec![0.0, 0.0])];
-        server.initialize(&initialparams).unwrap();
+        server.initialize(&initialparams).expect("unwrap failed");
 
         let mut compressor = GradientCompressor::new(CompressionStrategy::TopK { k: 1 });
 
@@ -1937,15 +1967,19 @@ mod tests {
         let gradients1 = vec![Array1::from_vec(vec![1.0, 3.0])]; // Top-1 should keep 3.0
         let gradients2 = vec![Array1::from_vec(vec![2.0, 1.0])]; // Top-1 should keep 2.0
 
-        let compressed1 = compressor.compress(&gradients1).unwrap();
-        let compressed2 = compressor.compress(&gradients2).unwrap();
+        let compressed1 = compressor.compress(&gradients1).expect("unwrap failed");
+        let compressed2 = compressor.compress(&gradients2).expect("unwrap failed");
 
-        let decompressed1 = compressor.decompress(&compressed1).unwrap();
-        let decompressed2 = compressor.decompress(&compressed2).unwrap();
+        let decompressed1 = compressor.decompress(&compressed1).expect("unwrap failed");
+        let decompressed2 = compressor.decompress(&compressed2).expect("unwrap failed");
 
         // Submit decompressed gradients to server
-        server.submit_update(0, decompressed1).unwrap();
-        server.submit_update(1, decompressed2).unwrap();
+        server
+            .submit_update(0, decompressed1)
+            .expect("unwrap failed");
+        server
+            .submit_update(1, decompressed2)
+            .expect("unwrap failed");
 
         let global_params = server.get_global_parameters();
 

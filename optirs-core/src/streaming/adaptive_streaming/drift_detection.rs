@@ -354,7 +354,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             // Apply sensitivity factor
             result.confidence = result.confidence * self.sensitivity_factor;
             result.drift_detected = result.p_value
-                < A::from(self.config.significance_level).unwrap() * self.sensitivity_factor;
+                < A::from(self.config.significance_level).expect("unwrap failed")
+                    * self.sensitivity_factor;
 
             Ok(result)
         } else {
@@ -482,14 +483,14 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         };
 
         // Aggregate confidence and p-values
-        let avg_confidence =
-            results.iter().map(|r| r.confidence).sum::<A>() / A::from(results.len()).unwrap();
+        let avg_confidence = results.iter().map(|r| r.confidence).sum::<A>()
+            / A::from(results.len()).expect("unwrap failed");
 
-        let avg_p_value =
-            results.iter().map(|r| r.p_value).sum::<A>() / A::from(results.len()).unwrap();
+        let avg_p_value = results.iter().map(|r| r.p_value).sum::<A>()
+            / A::from(results.len()).expect("unwrap failed");
 
-        let avg_test_statistic =
-            results.iter().map(|r| r.test_statistic).sum::<A>() / A::from(results.len()).unwrap();
+        let avg_test_statistic = results.iter().map(|r| r.test_statistic).sum::<A>()
+            / A::from(results.len()).expect("unwrap failed");
 
         Ok(DriftTestResult {
             drift_detected,
@@ -564,15 +565,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         // Check if sensitivity should be adjusted based on false positive rate
         if self.config.enable_false_positive_tracking {
             let current_fp_rate = self.false_positive_tracker.current_fp_rate;
-            let target_fp_rate = A::from(0.05).unwrap(); // 5% target false positive rate
+            let target_fp_rate = A::from(0.05).expect("unwrap failed"); // 5% target false positive rate
 
-            if (current_fp_rate - target_fp_rate).abs() > A::from(0.02).unwrap() {
+            if (current_fp_rate - target_fp_rate).abs() > A::from(0.02).expect("unwrap failed") {
                 let adjustment = if current_fp_rate > target_fp_rate {
                     // Too many false positives, decrease sensitivity
-                    -A::from(0.1).unwrap()
+                    -A::from(0.1).expect("unwrap failed")
                 } else {
                     // Too few detections (potentially missing true positives), increase sensitivity
-                    A::from(0.1).unwrap()
+                    A::from(0.1).expect("unwrap failed")
                 };
 
                 let adaptation = Adaptation {
@@ -598,8 +599,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
     ) -> Result<(), String> {
         if adaptation.adaptation_type == AdaptationType::DriftSensitivity {
             self.sensitivity_factor = (self.sensitivity_factor + adaptation.magnitude)
-                .max(A::from(0.1).unwrap())
-                .min(A::from(2.0).unwrap());
+                .max(A::from(0.1).expect("unwrap failed"))
+                .min(A::from(2.0).expect("unwrap failed"));
         }
         Ok(())
     }
@@ -662,7 +663,7 @@ impl<A: Float + Send + Sync + Send + Sync> FalsePositiveTracker<A> {
             false_positives: VecDeque::new(),
             true_positives: VecDeque::new(),
             current_fp_rate: A::zero(),
-            target_fp_rate: A::from(0.05).unwrap(),
+            target_fp_rate: A::from(0.05).expect("unwrap failed"),
         }
     }
 
@@ -683,8 +684,8 @@ impl<A: Float + Send + Sync + Send + Sync> FalsePositiveTracker<A> {
         // Update false positive rate
         let total_detections = self.false_positives.len() + self.true_positives.len();
         if total_detections > 0 {
-            self.current_fp_rate =
-                A::from(self.false_positives.len()).unwrap() / A::from(total_detections).unwrap();
+            self.current_fp_rate = A::from(self.false_positives.len()).expect("unwrap failed")
+                / A::from(total_detections).expect("unwrap failed");
         }
 
         Ok(())
@@ -713,7 +714,7 @@ struct ADWINTest<A: Float + Send + Sync> {
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ADWINTest<A> {
     fn new(sensitivity: f64) -> Result<Self, String> {
         Ok(Self {
-            sensitivity: A::from(sensitivity).unwrap(),
+            sensitivity: A::from(sensitivity).expect("unwrap failed"),
             window: VecDeque::new(),
         })
     }
@@ -728,8 +729,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<
         current: &[A],
     ) -> Result<DriftTestResult<A>, String> {
         // Simplified ADWIN implementation
-        let ref_mean = reference.iter().cloned().sum::<A>() / A::from(reference.len()).unwrap();
-        let cur_mean = current.iter().cloned().sum::<A>() / A::from(current.len()).unwrap();
+        let ref_mean =
+            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
+        let cur_mean =
+            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
 
         let difference = (ref_mean - cur_mean).abs();
         let threshold = self.sensitivity;
@@ -739,15 +742,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<
         Ok(DriftTestResult {
             drift_detected,
             p_value: if drift_detected {
-                A::from(0.01).unwrap()
+                A::from(0.01).expect("unwrap failed")
             } else {
-                A::from(0.5).unwrap()
+                A::from(0.5).expect("unwrap failed")
             },
             test_statistic: difference,
             confidence: if drift_detected {
-                A::from(0.9).unwrap()
+                A::from(0.9).expect("unwrap failed")
             } else {
-                A::from(0.1).unwrap()
+                A::from(0.1).expect("unwrap failed")
             },
             metadata: HashMap::new(),
         })
@@ -771,7 +774,7 @@ struct DDMTest<A: Float + Send + Sync> {
 impl<A: Float + Default + Send + Sync + std::iter::Sum> DDMTest<A> {
     fn new(sensitivity: f64) -> Result<Self, String> {
         Ok(Self {
-            sensitivity: A::from(sensitivity).unwrap(),
+            sensitivity: A::from(sensitivity).expect("unwrap failed"),
             error_rate: A::zero(),
             std_dev: A::zero(),
         })
@@ -785,8 +788,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<
         current: &[A],
     ) -> Result<DriftTestResult<A>, String> {
         // Simplified DDM implementation
-        let ref_mean = reference.iter().cloned().sum::<A>() / A::from(reference.len()).unwrap();
-        let cur_mean = current.iter().cloned().sum::<A>() / A::from(current.len()).unwrap();
+        let ref_mean =
+            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
+        let cur_mean =
+            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
 
         let difference = (ref_mean - cur_mean).abs();
         let drift_detected = difference > self.sensitivity;
@@ -794,15 +799,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<
         Ok(DriftTestResult {
             drift_detected,
             p_value: if drift_detected {
-                A::from(0.02).unwrap()
+                A::from(0.02).expect("unwrap failed")
             } else {
-                A::from(0.6).unwrap()
+                A::from(0.6).expect("unwrap failed")
             },
             test_statistic: difference,
             confidence: if drift_detected {
-                A::from(0.85).unwrap()
+                A::from(0.85).expect("unwrap failed")
             } else {
-                A::from(0.15).unwrap()
+                A::from(0.15).expect("unwrap failed")
             },
             metadata: HashMap::new(),
         })
@@ -826,7 +831,7 @@ struct PageHinkleyTest<A: Float + Send + Sync> {
 impl<A: Float + Default + Send + Sync + std::iter::Sum> PageHinkleyTest<A> {
     fn new(sensitivity: f64) -> Result<Self, String> {
         Ok(Self {
-            sensitivity: A::from(sensitivity).unwrap(),
+            sensitivity: A::from(sensitivity).expect("unwrap failed"),
             cumulative_sum: A::zero(),
         })
     }
@@ -841,8 +846,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<
         current: &[A],
     ) -> Result<DriftTestResult<A>, String> {
         // Simplified Page-Hinkley test
-        let ref_mean = reference.iter().cloned().sum::<A>() / A::from(reference.len()).unwrap();
-        let cur_mean = current.iter().cloned().sum::<A>() / A::from(current.len()).unwrap();
+        let ref_mean =
+            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
+        let cur_mean =
+            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
 
         let difference = cur_mean - ref_mean;
         self.cumulative_sum = self.cumulative_sum + difference;
@@ -852,15 +859,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<
         Ok(DriftTestResult {
             drift_detected,
             p_value: if drift_detected {
-                A::from(0.015).unwrap()
+                A::from(0.015).expect("unwrap failed")
             } else {
-                A::from(0.7).unwrap()
+                A::from(0.7).expect("unwrap failed")
             },
             test_statistic: self.cumulative_sum,
             confidence: if drift_detected {
-                A::from(0.88).unwrap()
+                A::from(0.88).expect("unwrap failed")
             } else {
-                A::from(0.12).unwrap()
+                A::from(0.12).expect("unwrap failed")
             },
             metadata: HashMap::new(),
         })
@@ -882,7 +889,7 @@ struct KLDivergenceComparator<A: Float + Send + Sync> {
 impl<A: Float + Send + Sync + Send + Sync> KLDivergenceComparator<A> {
     fn new(sensitivity: f64) -> Result<Self, String> {
         Ok(Self {
-            threshold: A::from(sensitivity).unwrap(),
+            threshold: A::from(sensitivity).expect("unwrap failed"),
         })
     }
 }
@@ -896,8 +903,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> DistributionComp
         current: &[A],
     ) -> Result<DistributionComparison<A>, String> {
         // Simplified KL divergence calculation
-        let ref_mean = reference.iter().cloned().sum::<A>() / A::from(reference.len()).unwrap();
-        let cur_mean = current.iter().cloned().sum::<A>() / A::from(current.len()).unwrap();
+        let ref_mean =
+            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
+        let cur_mean =
+            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
 
         let distance = (ref_mean - cur_mean).abs();
         let drift_detected = distance > self.threshold;
@@ -907,9 +916,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> DistributionComp
             threshold: self.threshold,
             drift_detected,
             confidence: if drift_detected {
-                A::from(0.8).unwrap()
+                A::from(0.8).expect("unwrap failed")
             } else {
-                A::from(0.2).unwrap()
+                A::from(0.2).expect("unwrap failed")
             },
         })
     }
@@ -930,7 +939,7 @@ struct JSDivergenceComparator<A: Float + Send + Sync> {
 impl<A: Float + Send + Sync + Send + Sync> JSDivergenceComparator<A> {
     fn new(sensitivity: f64) -> Result<Self, String> {
         Ok(Self {
-            threshold: A::from(sensitivity).unwrap(),
+            threshold: A::from(sensitivity).expect("unwrap failed"),
         })
     }
 }
@@ -944,10 +953,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> DistributionComp
         current: &[A],
     ) -> Result<DistributionComparison<A>, String> {
         // Simplified JS divergence calculation
-        let ref_mean = reference.iter().cloned().sum::<A>() / A::from(reference.len()).unwrap();
-        let cur_mean = current.iter().cloned().sum::<A>() / A::from(current.len()).unwrap();
+        let ref_mean =
+            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
+        let cur_mean =
+            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
 
-        let distance = (ref_mean - cur_mean).abs() * A::from(0.5).unwrap(); // Simplified
+        let distance = (ref_mean - cur_mean).abs() * A::from(0.5).expect("unwrap failed"); // Simplified
         let drift_detected = distance > self.threshold;
 
         Ok(DistributionComparison {
@@ -955,9 +966,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> DistributionComp
             threshold: self.threshold,
             drift_detected,
             confidence: if drift_detected {
-                A::from(0.75).unwrap()
+                A::from(0.75).expect("unwrap failed")
             } else {
-                A::from(0.25).unwrap()
+                A::from(0.25).expect("unwrap failed")
             },
         })
     }
@@ -999,15 +1010,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ModelBasedDetect
     ) -> Result<ModelDriftResult<A>, String> {
         // Simplified drift detection based on performance degradation
         let performance_degradation = self.baseline_performance - self.model_performance;
-        let drift_detected = performance_degradation > A::from(0.1).unwrap();
+        let drift_detected = performance_degradation > A::from(0.1).expect("unwrap failed");
 
         Ok(ModelDriftResult {
             drift_detected,
             performance_degradation,
             confidence: if drift_detected {
-                A::from(0.7).unwrap()
+                A::from(0.7).expect("unwrap failed")
             } else {
-                A::from(0.3).unwrap()
+                A::from(0.3).expect("unwrap failed")
             },
             feature_importance_changes: Vec::new(),
         })

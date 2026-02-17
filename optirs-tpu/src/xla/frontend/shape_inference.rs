@@ -512,8 +512,8 @@ impl ShapeInference {
             ));
         }
 
-        let shape1 = input_shapes[0].unwrap();
-        let shape2 = input_shapes[1].unwrap();
+        let shape1 = input_shapes[0].expect("unwrap failed");
+        let shape2 = input_shapes[1].expect("unwrap failed");
 
         // Broadcast shapes
         if let (Some(static1), Some(static2)) = (&shape1.static_shape, &shape2.static_shape) {
@@ -550,8 +550,8 @@ impl ShapeInference {
             ));
         }
 
-        let shape1 = input_shapes[0].unwrap();
-        let shape2 = input_shapes[1].unwrap();
+        let shape1 = input_shapes[0].expect("unwrap failed");
+        let shape2 = input_shapes[1].expect("unwrap failed");
 
         if let (Some(static1), Some(static2)) = (&shape1.static_shape, &shape2.static_shape) {
             // Matrix multiplication: [M, K] x [K, N] -> [M, N]
@@ -872,7 +872,9 @@ mod tests {
             tuple_shapes: vec![],
         };
 
-        let result = inference.broadcast_shapes(&shape1, &shape2).unwrap();
+        let result = inference
+            .broadcast_shapes(&shape1, &shape2)
+            .expect("unwrap failed");
         assert_eq!(result.dimensions, vec![3, 4]);
         assert_eq!(result.element_count, 12);
     }
@@ -924,8 +926,10 @@ mod tests {
             options: ShapeInferenceOptions::default(),
         };
 
-        let result = inference.infer_dot_shape(&input_shapes, &context).unwrap();
-        let static_shape = result.static_shape.unwrap();
+        let result = inference
+            .infer_dot_shape(&input_shapes, &context)
+            .expect("unwrap failed");
+        let static_shape = result.static_shape.expect("unwrap failed");
         assert_eq!(static_shape.dimensions, vec![2, 4]);
         assert_eq!(static_shape.element_count, 8);
     }

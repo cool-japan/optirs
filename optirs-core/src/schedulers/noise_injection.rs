@@ -111,26 +111,26 @@ where
     fn sample_noise(&mut self) -> A {
         match self.noise_dist {
             NoiseDistribution::Uniform { min, max } => {
-                let min_f64 = min.to_f64().unwrap();
-                let max_f64 = max.to_f64().unwrap();
+                let min_f64 = min.to_f64().expect("unwrap failed");
+                let max_f64 = max.to_f64().expect("unwrap failed");
                 let sample = self.rng.gen_range(min_f64..max_f64);
-                <A as NumCast>::from(sample).unwrap()
+                <A as NumCast>::from(sample).expect("unwrap failed")
             }
             NoiseDistribution::Gaussian { mean, std_dev } => {
-                let mean_f64 = mean.to_f64().unwrap();
-                let std_dev_f64 = std_dev.to_f64().unwrap();
+                let mean_f64 = mean.to_f64().expect("unwrap failed");
+                let std_dev_f64 = std_dev.to_f64().expect("unwrap failed");
                 // Box-Muller transformation for Gaussian
                 let u1: f64 = self.rng.gen_range(0.0..1.0);
                 let u2: f64 = self.rng.gen_range(0.0..1.0);
                 let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
                 let sample = mean_f64 + std_dev_f64 * z0;
-                <A as NumCast>::from(sample).unwrap()
+                <A as NumCast>::from(sample).expect("unwrap failed")
             }
             NoiseDistribution::Cyclical { amplitude, period } => {
-                let period_f: A = <A as NumCast>::from(period).unwrap();
-                let step: A = <A as NumCast>::from(self.step_count).unwrap();
-                let angle: A = <A as NumCast>::from(2.0).unwrap()
-                    * <A as NumCast>::from(std::f64::consts::PI).unwrap()
+                let period_f: A = <A as NumCast>::from(period).expect("unwrap failed");
+                let step: A = <A as NumCast>::from(self.step_count).expect("unwrap failed");
+                let angle: A = <A as NumCast>::from(2.0).expect("unwrap failed")
+                    * <A as NumCast>::from(std::f64::consts::PI).expect("unwrap failed")
                     * (step / period_f);
                 amplitude * angle.sin()
             }
@@ -139,15 +139,16 @@ where
                 final_scale,
                 decay_steps,
             } => {
-                let decay_steps_a: A = <A as NumCast>::from(decay_steps).unwrap();
-                let decay_steps_usize: usize = <usize as NumCast>::from(decay_steps).unwrap();
+                let decay_steps_a: A = <A as NumCast>::from(decay_steps).expect("unwrap failed");
+                let decay_steps_usize: usize =
+                    <usize as NumCast>::from(decay_steps).expect("unwrap failed");
                 let step_count_min = self.step_count.min(decay_steps_usize);
-                let step: A = <A as NumCast>::from(step_count_min).unwrap();
+                let step: A = <A as NumCast>::from(step_count_min).expect("unwrap failed");
                 let scale = initial_scale - (step / decay_steps_a) * (initial_scale - final_scale);
 
                 // Sample from uniform distribution and scale by the decaying factor
                 let sample = self.rng.gen_range(-1.0..1.0);
-                scale * NumCast::from(sample).unwrap()
+                scale * NumCast::from(sample).expect("unwrap failed")
             }
         }
     }
@@ -166,26 +167,26 @@ where
         let mut rand_rng = thread_rng();
         let noise = match self.noise_dist {
             NoiseDistribution::Uniform { min, max } => {
-                let min_f64 = min.to_f64().unwrap();
-                let max_f64 = max.to_f64().unwrap();
+                let min_f64 = min.to_f64().expect("unwrap failed");
+                let max_f64 = max.to_f64().expect("unwrap failed");
                 let sample = rand_rng.gen_range(min_f64..max_f64);
-                <A as NumCast>::from(sample).unwrap()
+                <A as NumCast>::from(sample).expect("unwrap failed")
             }
             NoiseDistribution::Gaussian { mean, std_dev } => {
-                let mean_f64 = mean.to_f64().unwrap();
-                let std_dev_f64 = std_dev.to_f64().unwrap();
+                let mean_f64 = mean.to_f64().expect("unwrap failed");
+                let std_dev_f64 = std_dev.to_f64().expect("unwrap failed");
                 // Box-Muller transformation
                 let u1: f64 = rand_rng.gen_range(0.0..1.0);
                 let u2: f64 = rand_rng.gen_range(0.0..1.0);
                 let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
                 let sample = mean_f64 + std_dev_f64 * z0;
-                <A as NumCast>::from(sample).unwrap()
+                <A as NumCast>::from(sample).expect("unwrap failed")
             }
             NoiseDistribution::Cyclical { amplitude, period } => {
-                let period_f: A = <A as NumCast>::from(period).unwrap();
-                let step: A = <A as NumCast>::from(self.step_count).unwrap();
-                let angle: A = <A as NumCast>::from(2.0).unwrap()
-                    * <A as NumCast>::from(std::f64::consts::PI).unwrap()
+                let period_f: A = <A as NumCast>::from(period).expect("unwrap failed");
+                let step: A = <A as NumCast>::from(self.step_count).expect("unwrap failed");
+                let angle: A = <A as NumCast>::from(2.0).expect("unwrap failed")
+                    * <A as NumCast>::from(std::f64::consts::PI).expect("unwrap failed")
                     * (step / period_f);
                 amplitude * angle.sin()
             }
@@ -194,15 +195,16 @@ where
                 final_scale,
                 decay_steps,
             } => {
-                let decay_steps_a: A = <A as NumCast>::from(decay_steps).unwrap();
-                let decay_steps_usize: usize = <usize as NumCast>::from(decay_steps).unwrap();
+                let decay_steps_a: A = <A as NumCast>::from(decay_steps).expect("unwrap failed");
+                let decay_steps_usize: usize =
+                    <usize as NumCast>::from(decay_steps).expect("unwrap failed");
                 let step_count_min = self.step_count.min(decay_steps_usize);
-                let step: A = <A as NumCast>::from(step_count_min).unwrap();
+                let step: A = <A as NumCast>::from(step_count_min).expect("unwrap failed");
                 let scale = initial_scale - (step / decay_steps_a) * (initial_scale - final_scale);
 
                 // Sample from uniform distribution and scale by the decaying factor
                 let sample = rand_rng.gen_range(-1.0..1.0);
-                scale * NumCast::from(sample).unwrap()
+                scale * NumCast::from(sample).expect("unwrap failed")
             }
         };
 

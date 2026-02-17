@@ -1130,7 +1130,7 @@ impl PerformanceTrendAnalyzer {
             slope,
             duration: data
                 .last()
-                .unwrap()
+                .expect("unwrap failed")
                 .timestamp
                 .duration_since(data[0].timestamp)
                 .unwrap_or_default(),

@@ -801,7 +801,7 @@ impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync + Send + Sync>
         // Store historical data
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("unwrap failed")
             .as_secs();
 
         let snapshot = MetricsSnapshot {
@@ -1152,8 +1152,14 @@ impl<A: Float + Send + Sync + Send + Sync> HistoricalMetrics<A> {
         start_time: SystemTime,
         end_time: SystemTime,
     ) -> Result<Vec<MetricsSnapshot<A>>> {
-        let start_ts = start_time.duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let end_ts = end_time.duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let start_ts = start_time
+            .duration_since(UNIX_EPOCH)
+            .expect("unwrap failed")
+            .as_secs();
+        let end_ts = end_time
+            .duration_since(UNIX_EPOCH)
+            .expect("unwrap failed")
+            .as_secs();
 
         let snapshots = self
             .time_series

@@ -98,7 +98,7 @@ fn test_lion_convergence() {
     for _ in 0..1000 {
         // Increased iterations significantly
         let gradients = Array1::from_vec(vec![2.0 * params[0], 2.0 * params[1]]);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }
 
     // Lion converges more slowly, so use a more forgiving threshold

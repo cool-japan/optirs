@@ -119,7 +119,7 @@ impl OptimizationMetric {
     pub fn add_value(&mut self, value: f64, step: usize) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("unwrap failed")
             .as_secs();
 
         self.values.push_back(value);
@@ -518,14 +518,14 @@ impl OptimizationVisualizer {
                     writeln!(&mut plotdata,
                         "traces.push({{x: {:?}, y: {:?}, name: '{}', type: 'scatter', mode: 'lines'}});",
                         x_values, values, comparison.name
-                    ).unwrap();
+                    ).expect("unwrap failed");
                 }
             }
 
             plotdata.push_str("Plotly.newPlot('comparison-plot', traces, {\n");
             plotdata.push_str("  title: 'Optimizer Comparison',\n");
             plotdata.push_str("  xaxis: {title: 'Training Steps'},\n");
-            writeln!(&mut plotdata, "  yaxis: {{title: '{metricname}'}}").unwrap();
+            writeln!(&mut plotdata, "  yaxis: {{title: '{metricname}'}}").expect("unwrap failed");
             plotdata.push_str("});\n");
             plotdata.push_str("</script>\n");
             plotdata.push_str("</body></html>\n");
@@ -697,7 +697,7 @@ impl OptimizationVisualizer {
                         "<div><strong>{}:</strong> {:.4} {}</div>",
                         name, latest_value, metric.units
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
             }
 
@@ -717,7 +717,7 @@ impl OptimizationVisualizer {
                     "<div class='plot-container'><div id='plot-{}'></div></div>",
                     plot_id
                 )
-                .unwrap();
+                .expect("unwrap failed");
 
                 plot_id += 1;
             }
@@ -739,7 +739,7 @@ impl OptimizationVisualizer {
                 writeln!(&mut dashboard,
                     "Plotly.newPlot('plot-{}', [{{x: {:?}, y: {:?}, type: 'scatter', mode: 'lines', name: '{}'}}], {{title: '{}', xaxis: {{title: 'Steps'}}, yaxis: {{title: '{}'}}}});",
                     plot_id, steps, values, name, name, metric.units
-                ).unwrap();
+                ).expect("unwrap failed");
 
                 plot_id += 1;
             }
@@ -829,12 +829,12 @@ impl OptimizationVisualizer {
             "const trace = {{x: {:?}, y: {:?}, type: 'scatter', mode: 'lines', name: '{}'}};",
             x_values, y_values, title
         )
-        .unwrap();
+        .expect("unwrap failed");
 
         writeln!(&mut plot,
             "Plotly.newPlot('plot', [trace], {{title: '{}', xaxis: {{title: '{}'}}, yaxis: {{title: '{}'}}}});",
             title, x_label, y_label
-        ).unwrap();
+        ).expect("unwrap failed");
 
         plot.push_str("</script></body></html>");
 
@@ -864,12 +864,12 @@ impl OptimizationVisualizer {
             "const trace = {{x: {:?}, y: {:?}, type: 'scatter', mode: 'markers', name: '{}'}};",
             x_values, y_values, title
         )
-        .unwrap();
+        .expect("unwrap failed");
 
         writeln!(&mut plot,
             "Plotly.newPlot('plot', [trace], {{title: '{}', xaxis: {{title: '{}'}}, yaxis: {{title: '{}'}}}});",
             title, x_label, y_label
-        ).unwrap();
+        ).expect("unwrap failed");
 
         plot.push_str("</script></body></html>");
 
@@ -999,7 +999,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut visualizer = OptimizationVisualizer::new(config).unwrap();
+        let mut visualizer = OptimizationVisualizer::new(config).expect("unwrap failed");
 
         visualizer.add_metric("loss".to_string(), 1.0, false, "nats".to_string());
         visualizer.step();
@@ -1050,7 +1050,7 @@ mod tests {
             ..Default::default()
         };
 
-        let visualizer = OptimizationVisualizer::new(config).unwrap();
+        let visualizer = OptimizationVisualizer::new(config).expect("unwrap failed");
         let color = visualizer.get_color(0);
         assert_eq!(color, "#000000");
     }

@@ -45,12 +45,12 @@ use std::marker::PhantomData;
 /// // First step to compute perturbed parameters and store perturbed gradients
 /// let params = Array1::zeros(10);
 /// let gradients = Array1::ones(10);
-/// let (perturbed_params_) = optimizer.first_step(&params, &gradients).unwrap();
+/// let (perturbed_params_) = optimizer.first_step(&params, &gradients).expect("unwrap failed");
 ///
 /// // Second step to update original parameters using gradients at perturbed parameters
 /// // Normally, you would compute new gradients at perturbed_params
 /// let new_gradients = Array1::ones(10) * 0.5; // Example new gradients
-/// let updated_params = optimizer.second_step(&params, &new_gradients).unwrap();
+/// let updated_params = optimizer.second_step(&params, &new_gradients).expect("unwrap failed");
 /// ```
 pub struct SAM<A, O, D>
 where
@@ -84,8 +84,8 @@ where
     pub fn new(inner_optimizer: O) -> Self {
         Self {
             inner_optimizer,
-            rho: A::from(0.05).unwrap(),
-            epsilon: A::from(1e-12).unwrap(),
+            rho: A::from(0.05).expect("unwrap failed"),
+            epsilon: A::from(1e-12).expect("unwrap failed"),
             adaptive: false,
             perturbed_params: None,
             original_params: None,
@@ -98,7 +98,7 @@ where
         Self {
             inner_optimizer,
             rho,
-            epsilon: A::from(1e-12).unwrap(),
+            epsilon: A::from(1e-12).expect("unwrap failed"),
             adaptive,
             perturbed_params: None,
             original_params: None,
@@ -371,7 +371,9 @@ mod tests {
         let expected_perturb = normalized_grads.mapv(|g| g * 0.05);
         let expected_params = &params + &expected_perturb;
 
-        let (perturbed_params, perturb_size) = optimizer.first_step(&params, &gradients).unwrap();
+        let (perturbed_params, perturb_size) = optimizer
+            .first_step(&params, &gradients)
+            .expect("unwrap failed");
 
         // Verify perturbed parameters
         assert_abs_diff_eq!(perturbed_params[0], expected_params[0], epsilon = 1e-6);
@@ -392,7 +394,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // With the more stable implementation, we'll just verify the behavior makes sense
-        let (perturbed_params, perturb_size) = optimizer.first_step(&params, &gradients).unwrap();
+        let (perturbed_params, perturb_size) = optimizer
+            .first_step(&params, &gradients)
+            .expect("unwrap failed");
 
         // Verify perturbed parameters make sense
         assert!(perturb_size > 0.0 && perturb_size < 1.0); // Perturbation size should be reasonable
@@ -417,13 +421,17 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // First step to set up perturbed parameters
-        let _ = optimizer.first_step(&params, &gradients).unwrap();
+        let _ = optimizer
+            .first_step(&params, &gradients)
+            .expect("unwrap failed");
 
         // Simulate computing new gradients at perturbed point
         let new_gradients = Array1::from_vec(vec![0.15, 0.25, 0.35]);
 
         // Second step should update original parameters with new gradients
-        let updated_params = optimizer.second_step(&params, &new_gradients).unwrap();
+        let updated_params = optimizer
+            .second_step(&params, &new_gradients)
+            .expect("unwrap failed");
 
         // Expected update: params - lr * new_gradients
         let expected_params =
@@ -443,7 +451,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // First step
-        let _ = optimizer.first_step(&params, &gradients).unwrap();
+        let _ = optimizer
+            .first_step(&params, &gradients)
+            .expect("unwrap failed");
 
         // Reset
         optimizer.reset();

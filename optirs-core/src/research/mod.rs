@@ -716,7 +716,7 @@ impl ResearchProjectManager {
         self.projects.insert(name.to_string(), project);
         self.save_project(name)?;
 
-        Ok(self.projects.get_mut(name).unwrap())
+        Ok(self.projects.get_mut(name).expect("unwrap failed"))
     }
 
     /// Load an existing project
@@ -735,7 +735,7 @@ impl ResearchProjectManager {
             }
         }
 
-        Ok(self.projects.get_mut(name).unwrap())
+        Ok(self.projects.get_mut(name).expect("unwrap failed"))
     }
 
     /// Save a project to disk
@@ -811,18 +811,23 @@ mod tests {
 
     #[test]
     fn test_project_manager() {
-        let temp_dir = tempdir().unwrap();
-        let mut manager = ResearchProjectManager::new(temp_dir.path().to_path_buf()).unwrap();
+        let temp_dir = tempdir().expect("unwrap failed");
+        let mut manager =
+            ResearchProjectManager::new(temp_dir.path().to_path_buf()).expect("unwrap failed");
 
-        let project = manager.create_project("Test Project").unwrap();
+        let project = manager
+            .create_project("Test Project")
+            .expect("unwrap failed");
         project.description = "Test description".to_string();
 
-        manager.save_project("Test Project").unwrap();
+        manager.save_project("Test Project").expect("unwrap failed");
 
         let projects = manager.list_projects();
         assert!(projects.contains(&"Test Project"));
 
-        manager.delete_project("Test Project").unwrap();
+        manager
+            .delete_project("Test Project")
+            .expect("unwrap failed");
         let projects = manager.list_projects();
         assert!(!projects.contains(&"Test Project"));
     }

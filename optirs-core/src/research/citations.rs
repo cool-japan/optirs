@@ -804,7 +804,11 @@ impl CitationManager {
         }
 
         let mut chars = s.chars();
-        let first = chars.next().unwrap().to_uppercase().collect::<String>();
+        let first = chars
+            .next()
+            .expect("unwrap failed")
+            .to_uppercase()
+            .collect::<String>();
         first + &chars.as_str().to_lowercase()
     }
 
@@ -1356,7 +1360,7 @@ mod tests {
             modified_at: Utc::now(),
         };
 
-        manager.add_citation(citation).unwrap();
+        manager.add_citation(citation).expect("unwrap failed");
 
         let results = manager.search_citations("optimization");
         assert_eq!(results.len(), 1);

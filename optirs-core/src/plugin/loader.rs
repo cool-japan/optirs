@@ -1728,8 +1728,8 @@ mod tests {
 
         let dependents = graph.get_dependents("dep1");
         assert!(dependents.is_some());
-        assert_eq!(dependents.unwrap().len(), 1);
-        assert_eq!(dependents.unwrap()[0], "plugin_a");
+        assert_eq!(dependents.expect("unwrap failed").len(), 1);
+        assert_eq!(dependents.expect("unwrap failed")[0], "plugin_a");
     }
 
     #[test]

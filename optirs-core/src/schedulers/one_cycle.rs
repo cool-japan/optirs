@@ -73,7 +73,7 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> OneCycle<A> {
     pub fn new(initial_lr: A, max_lr: A, total_steps: usize, warmup_frac: f64) -> Self {
         let warmup_steps = (total_steps as f64 * warmup_frac) as usize;
         let div_factor = max_lr / initial_lr;
-        let final_div_factor = A::from(10000.0).unwrap(); // Very small final LR
+        let final_div_factor = A::from(10000.0).expect("unwrap failed"); // Very small final LR
 
         Self {
             initial_lr,
@@ -118,24 +118,26 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> OneCycle<A> {
             (Some(min_mom), Some(max_mom)) => {
                 if self.current_step < self.warmup_steps {
                     // During warm-up: momentum decreases
-                    let progress =
-                        A::from(self.current_step).unwrap() / A::from(self.warmup_steps).unwrap();
+                    let progress = A::from(self.current_step).expect("unwrap failed")
+                        / A::from(self.warmup_steps).expect("unwrap failed");
                     Some(max_mom - (max_mom - min_mom) * progress)
                 } else {
                     // During cool-down: momentum increases
                     let remaining_steps = self.total_steps - self.warmup_steps;
-                    let cool_progress = A::from(self.current_step - self.warmup_steps).unwrap()
-                        / A::from(remaining_steps).unwrap();
+                    let cool_progress = A::from(self.current_step - self.warmup_steps)
+                        .expect("unwrap failed")
+                        / A::from(remaining_steps).expect("unwrap failed");
 
                     match self.anneal_strategy {
                         AnnealStrategy::Linear => {
                             Some(min_mom + (max_mom - min_mom) * cool_progress)
                         }
                         AnnealStrategy::Cosine => {
-                            let cos_out =
-                                ((cool_progress * A::from(std::f64::consts::PI).unwrap()).cos()
-                                    + A::one())
-                                    / A::from(2.0).unwrap();
+                            let cos_out = ((cool_progress
+                                * A::from(std::f64::consts::PI).expect("unwrap failed"))
+                            .cos()
+                                + A::one())
+                                / A::from(2.0).expect("unwrap failed");
                             Some(min_mom + (max_mom - min_mom) * (A::one() - cos_out))
                         }
                     }
@@ -147,7 +149,8 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> OneCycle<A> {
 
     /// Get percentage of completion
     pub fn get_percentage_complete(&self) -> A {
-        A::from(self.current_step).unwrap() / A::from(self.total_steps).unwrap()
+        A::from(self.current_step).expect("unwrap failed")
+            / A::from(self.total_steps).expect("unwrap failed")
     }
 }
 
@@ -155,14 +158,15 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LearningRateScheduler<A> fo
     fn get_learning_rate(&self) -> A {
         if self.current_step < self.warmup_steps {
             // Warm-up phase: increase from initial to max
-            let progress =
-                A::from(self.current_step).unwrap() / A::from(self.warmup_steps).unwrap();
+            let progress = A::from(self.current_step).expect("unwrap failed")
+                / A::from(self.warmup_steps).expect("unwrap failed");
             self.initial_lr + (self.max_lr - self.initial_lr) * progress
         } else {
             // Cool-down phase: decrease from max to final
             let remaining_steps = self.total_steps - self.warmup_steps;
-            let cool_progress = A::from(self.current_step - self.warmup_steps).unwrap()
-                / A::from(remaining_steps).unwrap();
+            let cool_progress = A::from(self.current_step - self.warmup_steps)
+                .expect("unwrap failed")
+                / A::from(remaining_steps).expect("unwrap failed");
 
             let final_lr = self
                 .final_lr
@@ -171,9 +175,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LearningRateScheduler<A> fo
             match self.anneal_strategy {
                 AnnealStrategy::Linear => self.max_lr - (self.max_lr - final_lr) * cool_progress,
                 AnnealStrategy::Cosine => {
-                    let cos_out = ((cool_progress * A::from(std::f64::consts::PI).unwrap()).cos()
+                    let cos_out = ((cool_progress
+                        * A::from(std::f64::consts::PI).expect("unwrap failed"))
+                    .cos()
                         + A::one())
-                        / A::from(2.0).unwrap();
+                        / A::from(2.0).expect("unwrap failed");
                     final_lr + (self.max_lr - final_lr) * cos_out
                 }
             }
@@ -234,19 +240,27 @@ mod tests {
         let mut scheduler = OneCycle::new(0.0001, 0.001, 100, 0.25).with_momentum(0.85, 0.95, 0.9);
 
         // Initial momentum (max during warm-up)
-        assert_relative_eq!(scheduler.get_momentum().unwrap(), 0.95, epsilon = 1e-6);
+        assert_relative_eq!(
+            scheduler.get_momentum().expect("unwrap failed"),
+            0.95,
+            epsilon = 1e-6
+        );
 
         // At end of warm-up (min momentum)
         for _ in 0..25 {
             scheduler.step();
         }
-        assert_relative_eq!(scheduler.get_momentum().unwrap(), 0.85, epsilon = 1e-6);
+        assert_relative_eq!(
+            scheduler.get_momentum().expect("unwrap failed"),
+            0.85,
+            epsilon = 1e-6
+        );
 
         // Final momentum (back to max)
         for _ in 25..100 {
             scheduler.step();
         }
-        let final_momentum = scheduler.get_momentum().unwrap();
+        let final_momentum = scheduler.get_momentum().expect("unwrap failed");
         assert!(final_momentum > 0.94); // Should be close to max
     }
 

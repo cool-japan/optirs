@@ -475,11 +475,11 @@ mod tests {
 
     #[test]
     fn test_surrogate_model() {
-        let mut model = SurrogateModel::<f32>::new().unwrap();
+        let mut model = SurrogateModel::<f32>::new().expect("unwrap failed");
         assert!(!model.trained);
 
         let observations = vec![("arch1".to_string(), 0.8), ("arch2".to_string(), 0.9)];
-        model.fit(&observations).unwrap();
+        model.fit(&observations).expect("unwrap failed");
         assert!(model.trained);
     }
 }

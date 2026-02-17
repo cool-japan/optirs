@@ -809,7 +809,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         
         // Normalize overall score
         if !self.config.target_platforms.is_empty() {
-            overall_score = overall_score / T::from(self.config.target_platforms.len() as f64).unwrap();
+            overall_score = overall_score / T::from(self.config.target_platforms.len() as f64).expect("unwrap failed");
         }
         
         // Generate optimization recommendations
@@ -901,7 +901,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         
         // Compute derived metrics
         let avg_latency = latency_measurements.iter().cloned().fold(T::zero(), |acc, x| acc + x) /
-                         T::from(latency_measurements.len() as f64).unwrap();
+                         T::from(latency_measurements.len() as f64).expect("unwrap failed");
         let throughput = scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero()) / avg_latency; // inferences per second
         let power_consumption = scirs2_core::numeric::NumCast::from(base_power * platform_factor).unwrap_or_else(|| T::zero());
         let energy_per_inference = power_consumption * avg_latency / scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero());
@@ -923,7 +923,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         // Compute quality metrics
         let variance = latency_measurements.iter()
             .map(|&x| (x - avg_latency) * (x - avg_latency))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(latency_measurements.len() as f64).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(latency_measurements.len() as f64).expect("unwrap failed");
         
         let quality_metrics = MeasurementQuality {
             variance,
@@ -959,7 +959,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         // Check latency constraint
         if let Some(max_latency) = constraints.max_latency {
             let avg_latency = measurement.latency_ms.iter().cloned().fold(T::zero(), |acc, x| acc + x) /
-                             T::from(measurement.latency_ms.len() as f64).unwrap();
+                             T::from(measurement.latency_ms.len() as f64).expect("unwrap failed");
             if avg_latency > max_latency {
                 violations.push(ConstraintViolation {
                     constraint_type: "max_latency".to_string(),
@@ -1110,7 +1110,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HardwareAwareEv
         // Compare predicted vs actual performance
         let predicted_latency = architecture_data.get("estimated_latency").unwrap_or(&50.0);
         let actual_latency = measurement.latency_ms.iter().cloned().fold(T::zero(), |acc, x| acc + x) /
-                           T::from(measurement.latency_ms.len() as f64).unwrap();
+                           T::from(measurement.latency_ms.len() as f64).expect("unwrap failed");
         
         let error = (scirs2_core::numeric::NumCast::from(*predicted_latency).unwrap_or_else(|| T::zero()) - actual_latency).abs() / actual_latency;
         let accuracy = T::one() - error.min(T::one());

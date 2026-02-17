@@ -22,7 +22,7 @@ fn main() {
     processor.set_max_norm(10.0);
 
     // Clip gradients
-    processor.process(&mut large_gradients).unwrap();
+    processor.process(&mut large_gradients).expect("unwrap failed");
     println!("Clipped gradients (L2 norm): {:?}", large_gradients);
     println!(
         "L2 norm of clipped gradients: {:.4}",
@@ -34,7 +34,7 @@ fn main() {
     let mut value_processor = GradientProcessor::new();
     value_processor.set_max_value(50.0).set_min_value(-50.0);
 
-    value_processor.process(&mut value_gradients).unwrap();
+    value_processor.process(&mut value_gradients).expect("unwrap failed");
     println!("\nValue clipped gradients (±50): {:?}", value_gradients);
 
     // Use L1 norm clipping
@@ -42,7 +42,7 @@ fn main() {
     let mut l1_processor = GradientProcessor::new();
     l1_processor.set_max_l1_norm(100.0);
 
-    l1_processor.process(&mut l1_gradients).unwrap();
+    l1_processor.process(&mut l1_gradients).expect("unwrap failed");
     println!("\nL1 norm clipped gradients: {:?}", l1_gradients);
 
     // Apply gradient clipping in optimization loop
@@ -61,10 +61,10 @@ fn main() {
         ]);
 
         // Clip gradients before optimization
-        processor.process(&mut gradients).unwrap();
+        processor.process(&mut gradients).expect("unwrap failed");
 
         // Update parameters with clipped gradients
-        current_params = optimizer.step(&current_params, &gradients).unwrap();
+        current_params = optimizer.step(&current_params, &gradients).expect("unwrap failed");
 
         println!(
             "\nEpoch {}: param_norm={:.4}",
@@ -81,7 +81,7 @@ fn main() {
     let mut zeroing_processor = GradientProcessor::new();
     zeroing_processor.set_zero_threshold(0.0002);
 
-    zeroing_processor.process(&mut small_gradients).unwrap();
+    zeroing_processor.process(&mut small_gradients).expect("unwrap failed");
     println!(
         "Gradients after zeroing small values: {:?}",
         small_gradients
@@ -99,13 +99,13 @@ fn main() {
 
     central_processor
         .process(&mut grad_for_centralization)
-        .unwrap();
+        .expect("unwrap failed");
     println!(
         "Gradients after centralization: {:?}",
         grad_for_centralization
     );
     println!(
         "Mean after centralization: {:.6}",
-        grad_for_centralization.mean().unwrap()
+        grad_for_centralization.mean().expect("unwrap failed")
     );
 }

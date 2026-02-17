@@ -669,7 +669,7 @@ mod tests {
         let mut accumulator = GradientAccumulator::<f32>::new(4);
 
         let grad1 = Array1::from_vec(vec![1.0, 2.0, 3.0]);
-        accumulator.accumulate_gradients("param1", grad1).unwrap();
+        accumulator.accumulate_gradients("param1", grad1).expect("unwrap failed");
         accumulator.increment_step();
 
         assert!(!accumulator.is_ready_for_step());
@@ -678,7 +678,7 @@ mod tests {
         // Accumulate more steps
         for _ in 0..3 {
             let grad = Array1::from_vec(vec![1.0, 1.0, 1.0]);
-            accumulator.accumulate_gradients("param1", grad).unwrap();
+            accumulator.accumulate_gradients("param1", grad).expect("unwrap failed");
             accumulator.increment_step();
         }
 
@@ -692,7 +692,7 @@ mod tests {
         let mut parameters = HashMap::new();
         parameters.insert("param1".to_string(), Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]));
 
-        zero_state.initialize_partitions(&parameters, 2, 0).unwrap();
+        zero_state.initialize_partitions(&parameters, 2, 0).expect("unwrap failed");
 
         let owned = zero_state.get_owned_partitions();
         assert!(!owned.is_empty());
@@ -706,7 +706,7 @@ mod tests {
         let mut parameters = HashMap::new();
         parameters.insert("param1".to_string(), Array1::from_vec(vec![1.0, 2.0, 3.0]));
 
-        mp_manager.initialize_parameters(&parameters).unwrap();
+        mp_manager.initialize_parameters(&parameters).expect("unwrap failed");
 
         assert!(mp_manager.get_fp16_parameters().contains_key("param1"));
         assert!(mp_manager.get_memory_savings() > 0);
@@ -727,7 +727,7 @@ mod tests {
 
         // Add a large gradient that should be clipped
         let large_grad = Array1::from_vec(vec![10.0, 10.0, 10.0]);
-        accumulator.accumulate_gradients("param1", large_grad).unwrap();
+        accumulator.accumulate_gradients("param1", large_grad).expect("unwrap failed");
         accumulator.increment_step();
 
         let result = accumulator.get_accumulated_gradients();

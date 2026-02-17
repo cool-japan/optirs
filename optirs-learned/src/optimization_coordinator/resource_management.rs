@@ -207,11 +207,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
             let weight = performance_weights.get(optimizer_id).cloned().unwrap_or(T::one());
             let weight_ratio = weight / total_weight;
 
-            let cpu_allocation = availability.cpu_cores as f64 * weight_ratio.to_f64().unwrap();
-            let memory_allocation = (availability.memory_mb as f64 * weight_ratio.to_f64().unwrap()) as usize;
-            let gpu_allocation = (availability.gpu_memory_mb as f64 * weight_ratio.to_f64().unwrap()) as usize;
+            let cpu_allocation = availability.cpu_cores as f64 * weight_ratio.to_f64().expect("unwrap failed");
+            let memory_allocation = (availability.memory_mb as f64 * weight_ratio.to_f64().expect("unwrap failed")) as usize;
+            let gpu_allocation = (availability.gpu_memory_mb as f64 * weight_ratio.to_f64().expect("unwrap failed")) as usize;
             let time_allocation = Duration::from_secs_f64(
-                availability.time_budget.as_secs_f64() * weight_ratio.to_f64().unwrap()
+                availability.time_budget.as_secs_f64() * weight_ratio.to_f64().expect("unwrap failed")
             );
 
             let optimizer_resources = OptimizerResources {
@@ -269,11 +269,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
             let cpu_scale = self.calculate_cpu_scaling_factor(optimizer_id, context)?;
             let memory_scale = self.calculate_memory_scaling_factor(optimizer_id, context)?;
 
-            let cpu_allocation = availability.cpu_cores as f64 * weight_ratio.to_f64().unwrap() * cpu_scale;
-            let memory_allocation = (availability.memory_mb as f64 * weight_ratio.to_f64().unwrap() * memory_scale) as usize;
-            let gpu_allocation = (availability.gpu_memory_mb as f64 * weight_ratio.to_f64().unwrap()) as usize;
+            let cpu_allocation = availability.cpu_cores as f64 * weight_ratio.to_f64().expect("unwrap failed") * cpu_scale;
+            let memory_allocation = (availability.memory_mb as f64 * weight_ratio.to_f64().expect("unwrap failed") * memory_scale) as usize;
+            let gpu_allocation = (availability.gpu_memory_mb as f64 * weight_ratio.to_f64().expect("unwrap failed")) as usize;
             let time_allocation = Duration::from_secs_f64(
-                availability.time_budget.as_secs_f64() * weight_ratio.to_f64().unwrap()
+                availability.time_budget.as_secs_f64() * weight_ratio.to_f64().expect("unwrap failed")
             );
 
             let optimizer_resources = OptimizerResources {
@@ -303,7 +303,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
         // Get priority rankings
         let priorities = self.get_optimizer_priorities(optimizers, context)?;
         let mut sorted_optimizers: Vec<_> = priorities.iter().collect();
-        sorted_optimizers.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap());
+        sorted_optimizers.sort_by(|a, b| b.1.partial_cmp(a.1).expect("unwrap failed"));
 
         // Allocate resources in priority order
         let mut remaining_cpu = availability.cpu_cores as f64;
@@ -408,7 +408,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
             .collect();
 
         let average_score = recent_scores.iter().fold(T::zero(), |acc, &score| acc + score)
-            / T::from(recent_scores.len()).unwrap();
+            / T::from(recent_scores.len()).expect("unwrap failed");
 
         Ok(average_score)
     }
@@ -602,7 +602,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
 
         for (i, optimizer_id) in optimizers.iter().enumerate() {
             // Simple priority based on order and performance
-            let base_priority = T::from(1.0 - (i as f64 / optimizers.len() as f64) * 0.5).unwrap();
+            let base_priority = T::from(1.0 - (i as f64 / optimizers.len() as f64) * 0.5).expect("unwrap failed");
             let performance_adjustment = self.get_historical_performance_adjustment(optimizer_id)?;
             let final_priority = base_priority * performance_adjustment;
 
@@ -648,7 +648,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceManager<T> {
         let memory_utilization = total_usage.total_memory_mb as f64 / available.memory_mb as f64;
 
         let efficiency = (cpu_utilization + memory_utilization) / 2.0;
-        Ok(T::from(efficiency.min(1.0)).unwrap())
+        Ok(T::from(efficiency.min(1.0)).expect("unwrap failed"))
     }
 
     /// Reset resource manager state
@@ -1118,7 +1118,7 @@ mod tests {
         let pool = ResourcePool::new();
         assert!(pool.is_ok());
 
-        let p = pool.unwrap();
+        let p = pool.expect("unwrap failed");
         assert!(p.cpu_cores > 0);
         assert!(p.memory_mb > 0);
     }

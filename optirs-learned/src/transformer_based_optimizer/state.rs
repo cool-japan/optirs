@@ -532,7 +532,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
             self.loss_history
                 .iter()
                 .fold(T::zero(), |acc, &loss| acc + loss)
-                / T::from(self.loss_history.len()).unwrap()
+                / T::from(self.loss_history.len()).expect("unwrap failed")
         }
     }
 
@@ -552,8 +552,8 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
             return T::zero();
         }
 
-        let initial = recent_losses.last().unwrap();
-        let final_loss = recent_losses.first().unwrap();
+        let initial = recent_losses.last().expect("unwrap failed");
+        let final_loss = recent_losses.first().expect("unwrap failed");
 
         if *initial > T::zero() {
             (*initial - *final_loss) / *initial
@@ -875,7 +875,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
         }
 
         let first = self.recent_losses[0];
-        let last = *self.recent_losses.back().unwrap();
+        let last = *self.recent_losses.back().expect("unwrap failed");
 
         if first > T::zero() {
             (first - last) / first
@@ -890,13 +890,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
         }
 
         let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(self.recent_losses.len()).unwrap();
+            / T::from(self.recent_losses.len()).expect("unwrap failed");
         let variance = self
             .recent_losses
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(self.recent_losses.len()).unwrap();
+            / T::from(self.recent_losses.len()).expect("unwrap failed");
 
         T::one() / (T::one() + variance.sqrt())
     }
@@ -1266,7 +1266,7 @@ mod tests {
         let state = TransformerOptimizerState::new(&config);
         assert!(state.is_ok());
 
-        let s = state.unwrap();
+        let s = state.expect("unwrap failed");
         assert_eq!(s.version, 0);
         assert!(!s.current_parameters.is_empty());
     }
@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn test_state_update() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).unwrap();
+        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
 
         let update = Array1::<f32>::ones(state.current_parameters.len());
         let result = state.update_with_step(&update, Some(1.5));
@@ -1285,12 +1285,12 @@ mod tests {
     #[test]
     fn test_snapshot_creation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let state = TransformerOptimizerState::new(&config).unwrap();
+        let state = TransformerOptimizerState::new(&config).expect("unwrap failed");
 
         let snapshot = state.create_snapshot();
         assert!(snapshot.is_ok());
 
-        let snap = snapshot.unwrap();
+        let snap = snapshot.expect("unwrap failed");
         assert_eq!(snap.version, 0);
         assert_eq!(snap.parameters.len(), state.current_parameters.len());
     }
@@ -1298,12 +1298,12 @@ mod tests {
     #[test]
     fn test_checkpoint_management() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).unwrap();
+        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
 
         let checkpoint_id = state.save_checkpoint("test_checkpoint".to_string());
         assert!(checkpoint_id.is_ok());
 
-        let id = checkpoint_id.unwrap();
+        let id = checkpoint_id.expect("unwrap failed");
         let load_result = state.load_checkpoint(&id);
         assert!(load_result.is_ok());
     }
@@ -1313,7 +1313,7 @@ mod tests {
         let history = ParameterHistory::<f32>::new(10, 5);
         assert!(history.is_ok());
 
-        let mut h = history.unwrap();
+        let mut h = history.expect("unwrap failed");
         let params = Array1::<f32>::ones(5);
         assert!(h.record_parameters(&params).is_ok());
 
@@ -1339,12 +1339,12 @@ mod tests {
     #[test]
     fn test_state_validation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let state = TransformerOptimizerState::new(&config).unwrap();
+        let state = TransformerOptimizerState::new(&config).expect("unwrap failed");
 
         let validation = state.validate_state();
         assert!(validation.is_ok());
 
-        let report = validation.unwrap();
+        let report = validation.expect("unwrap failed");
         assert!(report.is_valid);
     }
 }

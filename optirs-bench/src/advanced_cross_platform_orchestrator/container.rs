@@ -235,16 +235,16 @@ mod tests {
     #[test]
     fn test_image_selection() {
         let config = ContainerConfig::default();
-        let manager = ContainerManager::new(config).unwrap();
+        let manager = ContainerManager::new(config).expect("unwrap failed");
 
         let linux_image = manager
             .get_image_for_platform(&PlatformTarget::LinuxX86_64)
-            .unwrap();
+            .expect("unwrap failed");
         assert!(linux_image.contains("ubuntu"));
 
         let windows_image = manager
             .get_image_for_platform(&PlatformTarget::WindowsX86_64)
-            .unwrap();
+            .expect("unwrap failed");
         assert!(windows_image.contains("windows"));
     }
 }

@@ -38,7 +38,7 @@ use std::fmt::Debug;
 /// // Use the sequential optimizer
 /// let params = Array1::zeros(5);
 /// let gradients = Array1::ones(5);
-/// let updated_params = seq_optimizer.step(&params, &gradients).unwrap();
+/// let updated_params = seq_optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 pub struct SequentialOptimizer<A, D>
 where
@@ -141,7 +141,7 @@ where
         if let Some(optimizer) = self.optimizers.first() {
             optimizer.get_learning_rate()
         } else {
-            A::from(0.01).unwrap() // Default learning rate
+            A::from(0.01).expect("unwrap failed") // Default learning rate
         }
     }
 
@@ -470,7 +470,7 @@ where
         if let Some(optimizer) = self.optimizers.first() {
             optimizer.get_learning_rate()
         } else {
-            A::from(0.01).unwrap() // Default learning rate
+            A::from(0.01).expect("unwrap failed") // Default learning rate
         }
     }
 
@@ -505,7 +505,7 @@ where
 /// // Use the chained optimizer
 /// let params = Array1::zeros(5);
 /// let gradients = Array1::ones(5);
-/// let updated_params = chained_optimizer.step(&params, &gradients).unwrap();
+/// let updated_params = chained_optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 pub struct ChainedOptimizer<A, D>
 where
@@ -600,7 +600,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![1.0, 2.0, 3.0]);
 
         // Apply the sequential optimizer
-        let updated_params = seq_optimizer.step(&params, &gradients).unwrap();
+        let updated_params = seq_optimizer
+            .step(&params, &gradients)
+            .expect("unwrap failed");
 
         // Verify the result
         // First SGD updates: params - 0.1 * gradients = [0, 0, 0] - 0.1 * [1, 2, 3] = [-0.1, -0.2, -0.3]
@@ -632,7 +634,7 @@ mod tests {
         // Update the parameters
         let updated_params = parallel_optimizer
             .update_all_parameters(&[gradients1, gradients2])
-            .unwrap();
+            .expect("unwrap failed");
 
         // Verify the results
         // Group 1 (SGD): params - 0.1 * gradients = [0, 0] - 0.1 * [1, 2] = [-0.1, -0.2]
@@ -660,7 +662,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![1.0, 2.0, 3.0]);
 
         // Apply the chained optimizer
-        let updated_params = chained_optimizer.step(&params, &gradients).unwrap();
+        let updated_params = chained_optimizer
+            .step(&params, &gradients)
+            .expect("unwrap failed");
 
         // Verify the result
         // Inner (SGD): params - 0.1 * gradients = [0, 0, 0] - 0.1 * [1, 2, 3] = [-0.1, -0.2, -0.3]
@@ -688,11 +692,17 @@ mod tests {
         // Verify the learning rate has been set for both optimizers
         assert_abs_diff_eq!(seq_optimizer.get_learning_rate(), 0.05);
         assert_abs_diff_eq!(
-            seq_optimizer.get_optimizer(0).unwrap().get_learning_rate(),
+            seq_optimizer
+                .get_optimizer(0)
+                .expect("unwrap failed")
+                .get_learning_rate(),
             0.05
         );
         assert_abs_diff_eq!(
-            seq_optimizer.get_optimizer(1).unwrap().get_learning_rate(),
+            seq_optimizer
+                .get_optimizer(1)
+                .expect("unwrap failed")
+                .get_learning_rate(),
             0.05
         );
     }
@@ -721,7 +731,7 @@ mod tests {
 
         let updated_params = parallel_optimizer
             .step_list(&params_refs, &gradients_refs)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Verify the results
         // Group 1 (SGD): params - 0.1 * gradients = [0, 0] - 0.1 * [1, 2] = [-0.1, -0.2]

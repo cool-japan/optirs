@@ -25,7 +25,7 @@ fn bench_optimizer_without_metrics(c: &mut Criterion) {
             b.iter(|| {
                 let result = optimizer
                     .step(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -53,7 +53,7 @@ fn bench_optimizer_with_metrics(c: &mut Criterion) {
                 let params_before = params.clone();
                 let result = optimizer
                     .step(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
 
                 collector
                     .update(
@@ -64,7 +64,7 @@ fn bench_optimizer_with_metrics(c: &mut Criterion) {
                         &params_before.view(),
                         &result.view(),
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
 
                 black_box(result)
             });
@@ -194,7 +194,7 @@ fn bench_multi_optimizer_metrics(c: &mut Criterion) {
                                 black_box(&params_before.view()),
                                 black_box(&params_after.view()),
                             )
-                            .unwrap();
+                            .expect("unwrap failed");
                     }
                     black_box(collector.elapsed())
                 });
@@ -219,7 +219,7 @@ fn bench_metrics_overhead_percentage(c: &mut Criterion) {
         b.iter(|| {
             let result = optimizer
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -234,7 +234,7 @@ fn bench_metrics_overhead_percentage(c: &mut Criterion) {
             let params_before = params.clone();
             let result = optimizer
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
 
             collector
                 .update(
@@ -245,7 +245,7 @@ fn bench_metrics_overhead_percentage(c: &mut Criterion) {
                     &params_before.view(),
                     &result.view(),
                 )
-                .unwrap();
+                .expect("unwrap failed");
 
             black_box(result)
         });

@@ -819,7 +819,7 @@ impl<
 
         // Update adaptive processing
         let processing_rate = T::from(processed_count).unwrap_or_else(|| T::zero())
-            / T::from(start_time.elapsed().as_millis()).unwrap();
+            / T::from(start_time.elapsed().as_millis()).expect("unwrap failed");
         self.adaptive_handler.adapt_processing(processing_rate);
 
         Ok(processed_count)

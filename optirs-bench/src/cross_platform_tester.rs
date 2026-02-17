@@ -1101,7 +1101,7 @@ impl CrossPlatformTester {
                     .iter()
                     .map(|(platform, &score)| (platform.clone(), score))
                     .collect();
-                performance_ranking.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                performance_ranking.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
                 comparisons.push(PerformanceComparison {
                     test_name,
@@ -1616,7 +1616,7 @@ mod tests {
     #[test]
     fn test_basic_functionality_test() {
         let test = BasicFunctionalityTest::new();
-        let platform_info = PlatformDetector::detect_platform_info().unwrap();
+        let platform_info = PlatformDetector::detect_platform_info().expect("unwrap failed");
         let result = test.run_test(&platform_info);
         assert!(matches!(result.status, TestStatus::Passed));
     }

@@ -1193,7 +1193,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationKnowledgeBase<T> {
         let complexity_similarity = scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero())
             - (characteristics.complexity
                 - T::from(context.dimensionality as f64 / 10000.0)
-                    .unwrap())
+                    .expect("unwrap failed"))
             .abs();
 
         let effectiveness_similarity = characteristics.effectiveness;
@@ -1488,13 +1488,13 @@ mod tests {
         let kb = OptimizationKnowledgeBase::<f32>::new();
         assert!(kb.is_ok());
 
-        let kb = kb.unwrap();
+        let kb = kb.expect("unwrap failed");
         assert!(!kb.optimization_patterns.is_empty());
     }
 
     #[test]
     fn test_pattern_similarity() {
-        let kb = OptimizationKnowledgeBase::<f32>::new().unwrap();
+        let kb = OptimizationKnowledgeBase::<f32>::new().expect("unwrap failed");
         let context = OptimizationContext::default();
 
         let characteristics = PatternCharacteristics {

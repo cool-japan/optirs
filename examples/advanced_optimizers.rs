@@ -163,14 +163,14 @@ fn plot_paths(
 
         // Draw markers at start and end
         chart.draw_series(PointSeries::of_element(
-            vec![*path.first().unwrap()],
+            vec![*path.first().expect("unwrap failed")],
             5,
             color,
             &|c, s, st| Circle::new(c, s, st.filled()),
         ))?;
 
         chart.draw_series(PointSeries::of_element(
-            vec![*path.last().unwrap()],
+            vec![*path.last().expect("unwrap failed")],
             5,
             color,
             &|c, s, st| {
@@ -211,7 +211,7 @@ fn plot_loss_history(
         .iter()
         .map(|losses| losses.len())
         .max()
-        .unwrap();
+        .expect("unwrap failed");
 
     let mut chart = ChartBuilder::on(&root)
         .caption("Loss History Comparison", ("sans-serif", 30))

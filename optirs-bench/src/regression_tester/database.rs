@@ -332,7 +332,10 @@ mod tests {
         }
 
         // Should maintain limit
-        assert_eq!(db.get_history("test_key").unwrap().len(), 1000);
+        assert_eq!(
+            db.get_history("test_key").expect("unwrap failed").len(),
+            1000
+        );
     }
 
     #[test]

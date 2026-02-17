@@ -657,7 +657,7 @@ mod tests {
         let mut analyzer = InputValidationAnalyzer::with_builtin_tests();
         let initial_count = analyzer.test_count();
 
-        let results = analyzer.run_all_tests().unwrap();
+        let results = analyzer.run_all_tests().expect("unwrap failed");
         assert_eq!(results.len(), initial_count);
         assert_eq!(analyzer.get_results().len(), initial_count);
     }
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn test_clear_operations() {
         let mut analyzer = InputValidationAnalyzer::with_builtin_tests();
-        let _ = analyzer.run_all_tests().unwrap();
+        let _ = analyzer.run_all_tests().expect("unwrap failed");
 
         assert!(analyzer.test_count() > 0);
         assert!(!analyzer.get_results().is_empty());
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn test_statistics_update() {
         let mut analyzer = InputValidationAnalyzer::with_builtin_tests();
-        let _ = analyzer.run_all_tests().unwrap();
+        let _ = analyzer.run_all_tests().expect("unwrap failed");
 
         let stats = analyzer.get_statistics();
         assert!(stats.total_tests > 0);

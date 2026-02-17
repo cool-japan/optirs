@@ -183,7 +183,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
             task_timeout: config.default_timeout,
             priority_update_interval: Duration::from_secs(5),
             load_balance_interval: Duration::from_secs(10),
-            estimation_threshold: T::from(0.9).unwrap(),
+            estimation_threshold: T::from(0.9).expect("unwrap failed"),
             enable_adaptive_scheduling: true,
             enable_performance_learning: true,
         })
@@ -574,7 +574,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         if uptime.as_secs() > 0 {
             self.metrics.throughput = T::from(self.state.total_tasks_processed)
                 .unwrap_or_else(|| T::zero())
-                / T::from(uptime.as_secs()).unwrap();
+                / T::from(uptime.as_secs()).expect("unwrap failed");
         }
 
         // Update resource utilization
@@ -600,8 +600,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         vec![
             self.metrics.resource_utilization,
             self.metrics.throughput,
-            T::from(self.state.active_tasks.len()).unwrap(),
-            T::from(self.state.active_pipelines.len()).unwrap(),
+            T::from(self.state.active_tasks.len()).expect("unwrap failed"),
+            T::from(self.state.active_pipelines.len()).expect("unwrap failed"),
         ]
     }
 
@@ -812,7 +812,7 @@ mod tests {
         let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default());
         let task = OptimizationTask::new("test_task".to_string());
 
-        let task_id = coordinator.submit_task(task).unwrap();
+        let task_id = coordinator.submit_task(task).expect("unwrap failed");
         assert!(!task_id.is_empty());
 
         let status = coordinator.get_status();

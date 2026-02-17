@@ -826,7 +826,7 @@ mod tests {
     #[test]
     fn test_platform_extraction() {
         let config = OrchestratorConfig::default();
-        let orchestrator = CrossPlatformOrchestrator::new(config).unwrap();
+        let orchestrator = CrossPlatformOrchestrator::new(config).expect("unwrap failed");
 
         assert_eq!(
             orchestrator.extract_platform_from_test_name("test_linux_build"),

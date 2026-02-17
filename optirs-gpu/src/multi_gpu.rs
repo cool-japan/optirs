@@ -457,7 +457,10 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
 
             // Set kernel parameters
             kernel.set_buffer("data", &grad_buffer);
-            kernel.set_buffer("recv_buffer", self.workspace.recv_buffer.as_ref().unwrap());
+            kernel.set_buffer(
+                "recv_buffer",
+                self.workspace.recv_buffer.as_ref().expect("unwrap failed"),
+            );
             kernel.set_i32("chunk_size", chunk_size as i32);
             kernel.set_i32("rank", self.config.rank as i32);
             kernel.set_i32("world_size", self.config.num_gpus as i32);
@@ -511,7 +514,10 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
 
             // Set kernel parameters
             kernel.set_buffer("data", &grad_buffer);
-            kernel.set_buffer("workspace", self.workspace.workspace.as_ref().unwrap());
+            kernel.set_buffer(
+                "workspace",
+                self.workspace.workspace.as_ref().expect("unwrap failed"),
+            );
             kernel.set_i32("rank", self.config.rank as i32);
             kernel.set_i32("world_size", self.config.num_gpus as i32);
             kernel.set_i32("data_size", grad_len as i32);
@@ -578,7 +584,10 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
 
             // Phase 1: Reduce-scatter within local group
             kernel.set_buffer("data", &grad_buffer);
-            kernel.set_buffer("workspace", self.workspace.workspace.as_ref().unwrap());
+            kernel.set_buffer(
+                "workspace",
+                self.workspace.workspace.as_ref().expect("unwrap failed"),
+            );
             kernel.set_i32("local_rank", local_rank as i32);
             kernel.set_i32("local_size", self.config.local_group_size as i32);
             kernel.set_i32("global_rank", global_rank as i32);

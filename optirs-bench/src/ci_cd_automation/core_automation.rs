@@ -547,7 +547,11 @@ impl CiCdAutomation {
                 &report.file_path,
                 &format!(
                     "reports/{}",
-                    report.file_path.file_name().unwrap().to_string_lossy()
+                    report
+                        .file_path
+                        .file_name()
+                        .expect("unwrap failed")
+                        .to_string_lossy()
                 ),
                 tags,
             )?;
@@ -765,7 +769,7 @@ mod tests {
         let env = CiCdAutomation::detect_environment();
         assert!(env.is_ok());
 
-        let env_info = env.unwrap();
+        let env_info = env.expect("unwrap failed");
         assert!(!env_info.os.is_empty());
         assert!(!env_info.cpu_model.is_empty());
         assert!(env_info.cpu_cores > 0);

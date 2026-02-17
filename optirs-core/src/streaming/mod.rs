@@ -410,7 +410,7 @@ where
     /// Create a new streaming optimizer
     pub fn new(baseoptimizer: O, config: StreamingConfig) -> Result<Self> {
         let lr_adaptation_state = LearningRateAdaptationState {
-            current_lr: A::from(0.01).unwrap(), // Default learning rate
+            current_lr: A::from(0.01).expect("unwrap failed"), // Default learning rate
             accumulated_gradients: None,
             ema_squared_gradients: None,
             performance_history: VecDeque::with_capacity(100),
@@ -422,7 +422,7 @@ where
             loss_window: VecDeque::with_capacity(config.drift_window_size),
             historical_mean: A::zero(),
             historical_std: A::one(),
-            threshold: A::from(config.drift_threshold).unwrap(),
+            threshold: A::from(config.drift_threshold).expect("unwrap failed"),
             last_drift: None,
             drift_count: 0,
         };
@@ -613,7 +613,7 @@ where
         }
 
         // Average over batch
-        let batch_size_a = A::from(batch_size).unwrap();
+        let batch_size_a = A::from(batch_size).expect("unwrap failed");
         gradient.mapv_inplace(|g| g / batch_size_a);
 
         Ok(gradient)
@@ -630,7 +630,7 @@ where
             .map(|(i, &g)| (i, g.abs()))
             .collect();
 
-        abs_values.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        abs_values.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
         // Zero out all but top-k elements
         for (i, _) in abs_values.iter().skip(k) {
@@ -684,7 +684,7 @@ where
             .lr_adaptation_state
             .accumulated_gradients
             .as_mut()
-            .unwrap();
+            .expect("unwrap failed");
 
         // Update accumulated gradients
         for i in 0..gradient.len() {
@@ -692,8 +692,8 @@ where
         }
 
         // Compute adaptive learning rate (simplified)
-        let base_lr = A::from(0.01).unwrap();
-        let eps = A::from(1e-8).unwrap();
+        let base_lr = A::from(0.01).expect("unwrap failed");
+        let eps = A::from(1e-8).expect("unwrap failed");
         let norm_sum = acc_grads.iter().copied().sum::<A>();
         let adaptive_factor = (norm_sum + eps).sqrt();
 
@@ -711,8 +711,8 @@ where
             .lr_adaptation_state
             .ema_squared_gradients
             .as_mut()
-            .unwrap();
-        let decay = A::from(0.9).unwrap();
+            .expect("unwrap failed");
+        let decay = A::from(0.9).expect("unwrap failed");
         let one_minus_decay = A::one() - decay;
 
         // Update exponential moving average
@@ -721,8 +721,8 @@ where
         }
 
         // Compute adaptive learning rate
-        let base_lr = A::from(0.01).unwrap();
-        let eps = A::from(1e-8).unwrap();
+        let base_lr = A::from(0.01).expect("unwrap failed");
+        let eps = A::from(1e-8).expect("unwrap failed");
         let rms = ema_grads.iter().copied().sum::<A>().sqrt();
 
         self.lr_adaptation_state.current_lr = base_lr / (rms + eps);
@@ -736,23 +736,27 @@ where
             return Ok(());
         }
 
-        let recent_perf = self.lr_adaptation_state.performance_history.back().unwrap();
+        let recent_perf = self
+            .lr_adaptation_state
+            .performance_history
+            .back()
+            .expect("unwrap failed");
         let prev_perf = self
             .lr_adaptation_state
             .performance_history
             .get(self.lr_adaptation_state.performance_history.len() - 2)
-            .unwrap();
+            .expect("unwrap failed");
 
         let improvement = *prev_perf - *recent_perf; // Assuming lower is better
 
         if improvement > A::zero() {
             // Performance improved, slightly increase LR
             self.lr_adaptation_state.current_lr =
-                self.lr_adaptation_state.current_lr * A::from(1.01).unwrap();
+                self.lr_adaptation_state.current_lr * A::from(1.01).expect("unwrap failed");
         } else {
             // Performance degraded, decrease LR
             self.lr_adaptation_state.current_lr =
-                self.lr_adaptation_state.current_lr * A::from(0.99).unwrap();
+                self.lr_adaptation_state.current_lr * A::from(0.99).expect("unwrap failed");
         }
 
         Ok(())
@@ -765,7 +769,7 @@ where
             if time_since_drift < Duration::from_secs(60) {
                 // Recent drift detected, increase learning rate
                 self.lr_adaptation_state.current_lr =
-                    self.lr_adaptation_state.current_lr * A::from(1.5).unwrap();
+                    self.lr_adaptation_state.current_lr * A::from(1.5).expect("unwrap failed");
             }
         }
 
@@ -774,7 +778,7 @@ where
 
     fn check_concept_drift(&mut self, update: &Array1<A>) -> Result<()> {
         // Simplified concept drift detection based on loss
-        let current_loss = A::from(self.metrics.current_loss).unwrap();
+        let current_loss = A::from(self.metrics.current_loss).expect("unwrap failed");
 
         self.drift_detector.loss_window.push_back(current_loss);
         if self.drift_detector.loss_window.len() > self.config.drift_window_size {
@@ -784,7 +788,7 @@ where
         if self.drift_detector.loss_window.len() >= 10 {
             // Compute statistics
             let mean = self.drift_detector.loss_window.iter().cloned().sum::<A>()
-                / A::from(self.drift_detector.loss_window.len()).unwrap();
+                / A::from(self.drift_detector.loss_window.len()).expect("unwrap failed");
 
             let variance = self
                 .drift_detector
@@ -795,13 +799,13 @@ where
                     diff * diff
                 })
                 .sum::<A>()
-                / A::from(self.drift_detector.loss_window.len()).unwrap();
+                / A::from(self.drift_detector.loss_window.len()).expect("unwrap failed");
 
             let std = variance.sqrt();
 
             // Check for drift (simplified statistical test)
             let z_score = (current_loss - self.drift_detector.historical_mean).abs()
-                / (self.drift_detector.historical_std + A::from(1e-8).unwrap());
+                / (self.drift_detector.historical_std + A::from(1e-8).expect("unwrap failed"));
 
             if z_score > self.drift_detector.threshold {
                 // Drift detected
@@ -1035,8 +1039,8 @@ where
             .lr_adaptation_state
             .ema_squared_gradients
             .as_mut()
-            .unwrap();
-        let beta = A::from(0.9).unwrap();
+            .expect("unwrap failed");
+        let beta = A::from(0.9).expect("unwrap failed");
         let one_minus_beta = A::one() - beta;
 
         // Update momentum
@@ -1046,8 +1050,8 @@ where
 
         // Adapt learning rate based on momentum magnitude
         let momentum_norm = momentum.iter().map(|&m| m * m).sum::<A>().sqrt();
-        let base_lr = A::from(0.01).unwrap();
-        let adaptation_factor = A::one() + momentum_norm * A::from(0.1).unwrap();
+        let base_lr = A::from(0.01).expect("unwrap failed");
+        let adaptation_factor = A::one() + momentum_norm * A::from(0.1).expect("unwrap failed");
 
         self.lr_adaptation_state.current_lr = base_lr / adaptation_factor;
 
@@ -1066,14 +1070,14 @@ where
             .lr_adaptation_state
             .accumulated_gradients
             .as_mut()
-            .unwrap();
+            .expect("unwrap failed");
         let mean_squared_grad = self
             .lr_adaptation_state
             .ema_squared_gradients
             .as_mut()
-            .unwrap();
+            .expect("unwrap failed");
 
-        let alpha = A::from(0.99).unwrap(); // Decay for moving average
+        let alpha = A::from(0.99).expect("unwrap failed"); // Decay for moving average
         let one_minus_alpha = A::one() - alpha;
 
         // Update running means
@@ -1089,11 +1093,11 @@ where
             .zip(mean_grad.iter())
             .map(|(&sq, &m)| sq - m * m)
             .sum::<A>()
-            / A::from(gradient.len()).unwrap();
+            / A::from(gradient.len()).expect("unwrap failed");
 
         // Adapt learning rate inversely to variance
-        let base_lr = A::from(0.01).unwrap();
-        let var_factor = A::one() + variance.sqrt() * A::from(10.0).unwrap();
+        let base_lr = A::from(0.01).expect("unwrap failed");
+        let var_factor = A::one() + variance.sqrt() * A::from(10.0).expect("unwrap failed");
 
         self.lr_adaptation_state.current_lr = base_lr / var_factor;
 
@@ -1128,17 +1132,17 @@ where
         // Adjust learning rate based on predicted trend
         let adjustment = if recent_trend > A::zero() {
             // Performance is accelerating (getting worse), decrease LR
-            A::from(0.95).unwrap()
+            A::from(0.95).expect("unwrap failed")
         } else {
             // Performance is improving or stable, slightly increase LR
-            A::from(1.02).unwrap()
+            A::from(1.02).expect("unwrap failed")
         };
 
         self.lr_adaptation_state.current_lr = self.lr_adaptation_state.current_lr * adjustment;
 
         // Clamp to reasonable bounds
-        let min_lr = A::from(1e-6).unwrap();
-        let max_lr = A::from(1.0).unwrap();
+        let min_lr = A::from(1e-6).expect("unwrap failed");
+        let max_lr = A::from(1.0).expect("unwrap failed");
 
         self.lr_adaptation_state.current_lr =
             self.lr_adaptation_state.current_lr.max(min_lr).min(max_lr);
@@ -1446,8 +1450,8 @@ impl<A: Float + Send + Sync + Send + Sync> PredictiveStreamingEngine<A> {
             prediction_model: PredictionModel::new(config.buffer_size)?,
             historical_buffer: VecDeque::with_capacity(config.buffer_size * 2),
             prediction_horizon: 10,
-            confidence_threshold: A::from(0.8).unwrap(),
-            adaptation_rate: A::from(0.1).unwrap(),
+            confidence_threshold: A::from(0.8).expect("unwrap failed"),
+            adaptation_rate: A::from(0.1).expect("unwrap failed"),
         })
     }
 
@@ -1981,7 +1985,7 @@ mod tests {
         let sgd = SGD::new(0.01);
         let config = StreamingConfig::default();
         let optimizer: StreamingOptimizer<SGD<f64>, f64, scirs2_core::ndarray::Ix2> =
-            StreamingOptimizer::new(sgd, config).unwrap();
+            StreamingOptimizer::new(sgd, config).expect("unwrap failed");
 
         assert_eq!(optimizer.step_count, 0);
         assert!(optimizer.data_buffer.is_empty());

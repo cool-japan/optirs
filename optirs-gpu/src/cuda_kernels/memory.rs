@@ -274,7 +274,7 @@ impl CudaMemoryManager {
 
     /// Attempts to get allocation from cache
     fn try_get_from_cache<T>(&self, size: usize, memory_type: &MemoryType) -> Result<Option<ManagedAllocation<T>>> {
-        let mut pool = self.memory_pool.lock().unwrap();
+        let mut pool = self.memory_pool.lock().expect("lock poisoned");
 
         if let Some(cached_list) = pool.get_mut(&size) {
             while let Some(cached) = cached_list.pop_front() {
@@ -295,7 +295,7 @@ impl CudaMemoryManager {
 
                     // Update statistics
                     {
-                        let mut stats = self.stats.write().unwrap();
+                        let mut stats = self.stats.write().expect("lock poisoned");
                         stats.cache_hits += 1;
                         stats.currently_used += size;
                         stats.active_allocations += 1;
@@ -311,7 +311,7 @@ impl CudaMemoryManager {
                             None => None,
                         },
                         host_ptr: if cached.host_ptr.is_some() {
-                            Some(cached.host_ptr.unwrap() as *mut T)
+                            Some(cached.host_ptr.expect("unwrap failed") as *mut T)
                         } else {
                             None
                         },
@@ -327,7 +327,7 @@ impl CudaMemoryManager {
 
         // Cache miss
         {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = self.stats.write().expect("lock poisoned");
             stats.cache_misses += 1;
         }
 
@@ -401,7 +401,7 @@ impl CudaMemoryManager {
 
         // Track the allocation
         {
-            let mut allocations = self.allocations.write().unwrap();
+            let mut allocations = self.allocations.write().expect("lock poisoned");
             allocations.insert(allocation_id, info.clone());
         }
 
@@ -420,7 +420,7 @@ impl CudaMemoryManager {
     /// Deallocates managed memory
     pub fn deallocate(&self, allocation_id: u64) -> Result<()> {
         let info = {
-            let mut allocations = self.allocations.write().unwrap();
+            let mut allocations = self.allocations.write().expect("lock poisoned");
             allocations.remove(&allocation_id)
         };
 
@@ -439,7 +439,7 @@ impl CudaMemoryManager {
 
     /// Adds allocation to cache for reuse
     fn add_to_cache(&self, allocation_id: u64, size: usize, memory_type: MemoryType) -> Result<()> {
-        let mut pool = self.memory_pool.lock().unwrap();
+        let mut pool = self.memory_pool.lock().expect("lock poisoned");
         let cached_list = pool.entry(size).or_insert_with(VecDeque::new);
 
         // Limit cache size
@@ -464,7 +464,7 @@ impl CudaMemoryManager {
 
         // Update statistics
         {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = self.stats.write().expect("lock poisoned");
             stats.cached_allocations += 1;
             stats.currently_used -= size;
             stats.active_allocations -= 1;
@@ -480,7 +480,7 @@ impl CudaMemoryManager {
 
         // Update statistics
         {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = self.stats.write().expect("lock poisoned");
             stats.cached_allocations = stats.cached_allocations.saturating_sub(1);
             stats.total_deallocations += 1;
         }
@@ -490,7 +490,7 @@ impl CudaMemoryManager {
 
     /// Updates statistics for new allocation
     fn update_stats_allocation(&self, size: usize) {
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self.stats.write().expect("lock poisoned");
         stats.total_allocated += size;
         stats.currently_used += size;
         stats.peak_usage = stats.peak_usage.max(stats.currently_used);
@@ -504,7 +504,7 @@ impl CudaMemoryManager {
 
     /// Updates statistics for deallocation
     fn update_stats_deallocation(&self, size: usize) {
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self.stats.write().expect("lock poisoned");
         stats.currently_used = stats.currently_used.saturating_sub(size);
         stats.active_allocations = stats.active_allocations.saturating_sub(1);
         stats.total_deallocations += 1;
@@ -521,7 +521,7 @@ impl CudaMemoryManager {
 
     /// Gets the next unique allocation ID
     fn get_next_id(&self) -> u64 {
-        let mut id = self.next_id.lock().unwrap();
+        let mut id = self.next_id.lock().expect("lock poisoned");
         let current = *id;
         *id += 1;
         current
@@ -535,7 +535,7 @@ impl CudaMemoryManager {
 
     /// Gets current memory statistics
     pub fn get_stats(&self) -> MemoryStats {
-        self.stats.read().unwrap().clone()
+        self.stats.read().expect("lock poisoned").clone()
     }
 
     /// Performs memory cleanup based on usage thresholds
@@ -556,14 +556,14 @@ impl CudaMemoryManager {
 
     /// Forces cleanup of old cached allocations
     fn force_cleanup(&self) -> Result<usize> {
-        let mut pool = self.memory_pool.lock().unwrap();
+        let mut pool = self.memory_pool.lock().expect("lock poisoned");
         let mut cleaned = 0;
         let cutoff_time = Instant::now() - Duration::from_secs(300); // 5 minutes
 
         for cached_list in pool.values_mut() {
             while let Some(cached) = cached_list.front() {
                 if cached.cached_at < cutoff_time {
-                    let old = cached_list.pop_front().unwrap();
+                    let old = cached_list.pop_front().expect("unwrap failed");
                     self.free_cached_allocation(old)?;
                     cleaned += 1;
                 } else {
@@ -577,14 +577,14 @@ impl CudaMemoryManager {
 
     /// Resets all statistics
     pub fn reset_stats(&self) {
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self.stats.write().expect("lock poisoned");
         *stats = MemoryStats::default();
     }
 
     /// Generates memory usage report
     pub fn generate_report(&self) -> MemoryReport {
         let stats = self.get_stats();
-        let allocations = self.allocations.read().unwrap();
+        let allocations = self.allocations.read().expect("lock poisoned");
 
         let mut allocation_summary = HashMap::new();
         for info in allocations.values() {
@@ -611,7 +611,7 @@ impl CudaMemoryManager {
     fn calculate_fragmentation(&self) -> f32 {
         // Simplified fragmentation calculation
         // Real implementation would analyze actual memory layout
-        let pool = self.memory_pool.lock().unwrap();
+        let pool = self.memory_pool.lock().expect("lock poisoned");
         let total_cached = pool.values().map(|v| v.len()).sum::<usize>();
 
         if total_cached > 0 {

@@ -224,9 +224,9 @@ impl MemoryPressureMonitor {
             return 0.0;
         }
 
-        let total_change = recent_readings.first().unwrap().pressure - recent_readings.last().unwrap().pressure;
-        let total_time = recent_readings.first().unwrap().timestamp
-            .duration_since(recent_readings.last().unwrap().timestamp)
+        let total_change = recent_readings.first().expect("unwrap failed").pressure - recent_readings.last().expect("unwrap failed").pressure;
+        let total_time = recent_readings.first().expect("unwrap failed").timestamp
+            .duration_since(recent_readings.last().expect("unwrap failed").timestamp)
             .as_secs_f32();
 
         if total_time > 0.0 {

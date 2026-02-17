@@ -622,8 +622,8 @@ impl<T: Float + Debug + Default + Send + Sync> StateRepresentation<T> {
     pub fn update(&mut self, architecture: &ArchitectureSpec, performance: f64) {
         // Update architecture state
         self.architecture_state = vec![
-            T::from(architecture.layers.len()).unwrap(),
-            T::from(architecture.parameter_count()).unwrap(),
+            T::from(architecture.layers.len()).expect("unwrap failed"),
+            T::from(architecture.parameter_count()).expect("unwrap failed"),
         ];
 
         // Update performance history

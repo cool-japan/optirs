@@ -391,7 +391,7 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
         }
 
         let initial_loss = self.loss_history[0];
-        let final_loss = *self.loss_history.back().unwrap();
+        let final_loss = *self.loss_history.back().expect("unwrap failed");
 
         if initial_loss > 0.0 {
             (initial_loss - final_loss) / initial_loss
@@ -1256,6 +1256,6 @@ mod tests {
         });
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        assert_eq!(result.expect("unwrap failed"), 42);
     }
 }

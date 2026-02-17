@@ -129,7 +129,7 @@ impl<A: Float + Debug + Send + Sync> Dropout<A> {
         // and scaled by 1/(1-rate)
         let mut mask = Array::zeros(shape);
         for elem in mask.iter_mut() {
-            let rand_val = A::from(self.rng.gen_range(0.0..1.0)).unwrap();
+            let rand_val = A::from(self.rng.gen_range(0.0..1.0)).expect("unwrap failed");
             if rand_val > self.rate {
                 *elem = scale;
             }
@@ -154,7 +154,7 @@ where
         let mask = match &self.mask {
             Some(m) if m.shape() == gradients.shape() => {
                 // Use cached mask if shapes match
-                m.clone().into_dimensionality::<D>().unwrap()
+                m.clone().into_dimensionality::<D>().expect("unwrap failed")
             }
             _ => {
                 // Create a new mask

@@ -24,13 +24,13 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::MixUp;
 ///
-/// let mixup = MixUp::new(0.2).unwrap();
+/// let mixup = MixUp::new(0.2).expect("unwrap failed");
 ///
 /// // Apply MixUp to batch of inputs and labels
 /// let inputs = array![[1.0, 2.0], [3.0, 4.0]];
 /// let labels = array![[1.0, 0.0], [0.0, 1.0]];
 ///
-/// let (mixed_inputs, mixed_labels) = mixup.apply_batch(&inputs, &labels, 42).unwrap();
+/// let (mixed_inputs, mixed_labels) = mixup.apply_batch(&inputs, &labels, 42).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct MixUp<A: Float> {
@@ -74,7 +74,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
         // Use simple uniform distribution to approximate Beta for simplicity
         // For actual Beta distribution, we'd need more complex sampling
         let x: f64 = rng.gen_range(0.0..1.0);
-        A::from_f64(x).unwrap()
+        A::from_f64(x).expect("unwrap failed")
     }
 
     /// Apply MixUp to a batch of examples
@@ -154,13 +154,13 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::CutMix;
 ///
-/// let cutmix = CutMix::new(1.0).unwrap();
+/// let cutmix = CutMix::new(1.0).expect("unwrap failed");
 ///
 /// // Apply CutMix to a batch of images (4D array: batch, channels, height, width)
 /// let images = array![[[[1.0, 2.0], [3.0, 4.0]]], [[[5.0, 6.0], [7.0, 8.0]]]];
 /// let labels = array![[1.0, 0.0], [0.0, 1.0]];
 ///
-/// let (mixed_images, mixed_labels) = cutmix.apply_batch(&images, &labels, 42).unwrap();
+/// let (mixed_images, mixed_labels) = cutmix.apply_batch(&images, &labels, 42).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct CutMix<A: Float> {
@@ -210,8 +210,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
     ) -> (usize, usize, usize, usize) {
         let cut_ratio = A::sqrt(A::one() - lambda);
 
-        let h_ratio = cut_ratio.to_f64().unwrap();
-        let w_ratio = cut_ratio.to_f64().unwrap();
+        let h_ratio = cut_ratio.to_f64().expect("unwrap failed");
+        let w_ratio = cut_ratio.to_f64().expect("unwrap failed");
 
         let cut_h = (height as f64 * h_ratio) as usize;
         let cut_w = (width as f64 * w_ratio) as usize;
@@ -251,7 +251,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
         // For simplicity, we use a uniform distribution between 0 and 1
         // A proper Beta distribution would be used in a production implementation
         let x: f64 = rng.gen_range(0.0..1.0);
-        A::from_f64(x).unwrap()
+        A::from_f64(x).expect("unwrap failed")
     }
 
     /// Apply CutMix to a batch of images
@@ -316,7 +316,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
                 // Calculate actual lambda based on the box size
                 let box_area = (y_max - y_min) * (x_max - x_min);
                 let image_area = height * width;
-                let actual_lambda = A::from_f64(box_area as f64 / image_area as f64).unwrap();
+                let actual_lambda =
+                    A::from_f64(box_area as f64 / image_area as f64).expect("unwrap failed");
 
                 // Apply CutMix to image
                 for c in 0..channels {
@@ -376,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_mixup_creation() {
-        let mixup = MixUp::<f64>::new(0.2).unwrap();
+        let mixup = MixUp::<f64>::new(0.2).expect("unwrap failed");
         assert_eq!(mixup.alpha, 0.2);
 
         // Alpha <= 0 should fail
@@ -386,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_cutmix_creation() {
-        let cutmix = CutMix::<f64>::new(1.0).unwrap();
+        let cutmix = CutMix::<f64>::new(1.0).expect("unwrap failed");
         assert_eq!(cutmix.beta, 1.0);
 
         // Beta <= 0 should fail
@@ -396,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_mixing_factor() {
-        let mixup = MixUp::new(0.2).unwrap();
+        let mixup = MixUp::new(0.2).expect("unwrap failed");
 
         // With fixed seeds, should get deterministic values
         let lambda1 = mixup.get_mixing_factor(42);
@@ -416,13 +417,15 @@ mod tests {
 
     #[test]
     fn test_mixup_batch() {
-        let mixup = MixUp::new(0.5).unwrap();
+        let mixup = MixUp::new(0.5).expect("unwrap failed");
 
         // Create 2 examples with 2 features
         let inputs = array![[1.0, 2.0], [3.0, 4.0]];
         let labels = array![[1.0, 0.0], [0.0, 1.0]];
 
-        let (mixed_inputs, mixed_labels) = mixup.apply_batch(&inputs, &labels, 42).unwrap();
+        let (mixed_inputs, mixed_labels) = mixup
+            .apply_batch(&inputs, &labels, 42)
+            .expect("unwrap failed");
 
         // Should have same shape
         assert_eq!(mixed_inputs.shape(), inputs.shape());
@@ -456,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_cutmix_batch() {
-        let cutmix = CutMix::new(1.0).unwrap();
+        let cutmix = CutMix::new(1.0).expect("unwrap failed");
 
         // Create 2 5x5 images with 1 channel (larger for more reliable mixing)
         let images =
@@ -464,7 +467,9 @@ mod tests {
 
         let labels = array![[1.0, 0.0], [0.0, 1.0]];
 
-        let (mixed_images, mixed_labels) = cutmix.apply_batch(&images, &labels, 123).unwrap(); // Use different seed
+        let (mixed_images, mixed_labels) = cutmix
+            .apply_batch(&images, &labels, 123)
+            .expect("unwrap failed"); // Use different seed
 
         // Should have same shape
         assert_eq!(mixed_images.shape(), images.shape());
@@ -523,12 +528,12 @@ mod tests {
 
     #[test]
     fn test_mixup_regularizer_trait() {
-        let mixup = MixUp::new(0.5).unwrap();
+        let mixup = MixUp::new(0.5).expect("unwrap failed");
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradients = gradients.clone();
 
-        let penalty = mixup.apply(&params, &mut gradients).unwrap();
+        let penalty = mixup.apply(&params, &mut gradients).expect("unwrap failed");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);
@@ -539,12 +544,14 @@ mod tests {
 
     #[test]
     fn test_cutmix_regularizer_trait() {
-        let cutmix = CutMix::new(1.0).unwrap();
+        let cutmix = CutMix::new(1.0).expect("unwrap failed");
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradients = gradients.clone();
 
-        let penalty = cutmix.apply(&params, &mut gradients).unwrap();
+        let penalty = cutmix
+            .apply(&params, &mut gradients)
+            .expect("unwrap failed");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);

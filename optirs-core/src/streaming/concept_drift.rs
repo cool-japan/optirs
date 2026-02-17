@@ -154,7 +154,7 @@ impl<A: Float + Send + Sync + Send + Sync> PageHinkleyDetector<A> {
         self.sample_count += 1;
 
         // Update cumulative sum (assuming we want to detect increases in loss)
-        let mean_loss = A::from(0.1).unwrap(); // Estimated mean under H0
+        let mean_loss = A::from(0.1).expect("unwrap failed"); // Estimated mean under H0
         self.sum = self.sum + loss - mean_loss;
 
         // Update minimum
@@ -243,8 +243,10 @@ impl<A: Float + Sum + Send + Sync + Send + Sync> AdwinDetector<A> {
         let first_half: Vec<_> = self.window.iter().take(mid).cloned().collect();
         let second_half: Vec<_> = self.window.iter().skip(mid).cloned().collect();
 
-        let mean1 = first_half.iter().cloned().sum::<A>() / A::from(first_half.len()).unwrap();
-        let mean2 = second_half.iter().cloned().sum::<A>() / A::from(second_half.len()).unwrap();
+        let mean1 = first_half.iter().cloned().sum::<A>()
+            / A::from(first_half.len()).expect("unwrap failed");
+        let mean2 = second_half.iter().cloned().sum::<A>()
+            / A::from(second_half.len()).expect("unwrap failed");
 
         // Compute variance
         let var1 = first_half
@@ -254,7 +256,7 @@ impl<A: Float + Sum + Send + Sync + Send + Sync> AdwinDetector<A> {
                 diff * diff
             })
             .sum::<A>()
-            / A::from(first_half.len()).unwrap();
+            / A::from(first_half.len()).expect("unwrap failed");
 
         let var2 = second_half
             .iter()
@@ -263,11 +265,11 @@ impl<A: Float + Sum + Send + Sync + Send + Sync> AdwinDetector<A> {
                 diff * diff
             })
             .sum::<A>()
-            / A::from(second_half.len()).unwrap();
+            / A::from(second_half.len()).expect("unwrap failed");
 
         // Simplified change detection
         let diff = (mean1 - mean2).abs();
-        let threshold = (var1 + var2 + A::from(0.01).unwrap()).sqrt();
+        let threshold = (var1 + var2 + A::from(0.01).expect("unwrap failed")).sqrt();
 
         diff > threshold
     }
@@ -304,8 +306,8 @@ impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
         Self {
             error_rate: A::zero(),
             error_std: A::one(),
-            min_error_plus_2_std: A::from(f64::MAX).unwrap(),
-            min_error_plus_3_std: A::from(f64::MAX).unwrap(),
+            min_error_plus_2_std: A::from(f64::MAX).expect("unwrap failed"),
+            min_error_plus_3_std: A::from(f64::MAX).expect("unwrap failed"),
             sample_count: 0,
             error_count: 0,
         }
@@ -323,17 +325,19 @@ impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
         }
 
         // Update _error rate and standard deviation
-        self.error_rate = A::from(self.error_count as f64 / self.sample_count as f64).unwrap();
+        self.error_rate =
+            A::from(self.error_count as f64 / self.sample_count as f64).expect("unwrap failed");
         let p = self.error_rate;
-        let n = A::from(self.sample_count as f64).unwrap();
+        let n = A::from(self.sample_count as f64).expect("unwrap failed");
         self.error_std = (p * (A::one() - p) / n).sqrt();
 
-        let current_level = self.error_rate + A::from(2.0).unwrap() * self.error_std;
+        let current_level = self.error_rate + A::from(2.0).expect("unwrap failed") * self.error_std;
 
         // Update minimums
         if current_level < self.min_error_plus_2_std {
             self.min_error_plus_2_std = current_level;
-            self.min_error_plus_3_std = self.error_rate + A::from(3.0).unwrap() * self.error_std;
+            self.min_error_plus_3_std =
+                self.error_rate + A::from(3.0).expect("unwrap failed") * self.error_std;
         }
 
         // Check for drift
@@ -353,8 +357,8 @@ impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
         self.error_count = 0;
         self.error_rate = A::zero();
         self.error_std = A::one();
-        self.min_error_plus_2_std = A::from(f64::MAX).unwrap();
-        self.min_error_plus_3_std = A::from(f64::MAX).unwrap();
+        self.min_error_plus_2_std = A::from(f64::MAX).expect("unwrap failed");
+        self.min_error_plus_3_std = A::from(f64::MAX).expect("unwrap failed");
     }
 }
 
@@ -391,9 +395,9 @@ pub struct ConceptDriftDetector<A: Float + Send + Sync> {
 impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftDetector<A> {
     /// Create a new concept drift detector
     pub fn new(config: DriftDetectorConfig) -> Self {
-        let threshold = A::from(config.threshold).unwrap();
-        let warningthreshold = A::from(config.warningthreshold).unwrap();
-        let delta = A::from(config.alpha).unwrap();
+        let threshold = A::from(config.threshold).expect("unwrap failed");
+        let warningthreshold = A::from(config.warningthreshold).expect("unwrap failed");
+        let delta = A::from(config.alpha).expect("unwrap failed");
 
         Self {
             ph_detector: PageHinkleyDetector::new(threshold, warningthreshold),
@@ -427,7 +431,7 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
         if final_status == DriftStatus::Drift {
             let event = DriftEvent {
                 timestamp: Instant::now(),
-                confidence: A::from(0.8).unwrap(), // Simplified confidence
+                confidence: A::from(0.8).expect("unwrap failed"), // Simplified confidence
                 drift_type: self.classify_drift_type(),
                 adaptation_recommendation: self.generate_adaptation_recommendation(),
             };
@@ -490,13 +494,13 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
     fn generate_adaptation_recommendation(&self) -> AdaptationRecommendation {
         let recent_performance = self.performance_tracker.get_recent_performance_change();
 
-        if recent_performance > A::from(0.5).unwrap() {
+        if recent_performance > A::from(0.5).expect("unwrap failed") {
             // Significant performance degradation
             AdaptationRecommendation::Reset
-        } else if recent_performance > A::from(0.2).unwrap() {
+        } else if recent_performance > A::from(0.2).expect("unwrap failed") {
             // Moderate degradation
             AdaptationRecommendation::IncreaseLearningRate { factor: 1.5 }
-        } else if recent_performance < A::from(-0.1).unwrap() {
+        } else if recent_performance < A::from(-0.1).expect("unwrap failed") {
             // Performance improved (suspicious)
             AdaptationRecommendation::DecreaseLearningRate { factor: 0.8 }
         } else {
@@ -535,7 +539,7 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
                 .iter()
                 .map(|event| event.confidence)
                 .sum::<A>();
-            Some(sum / A::from(self.drift_events.len()).unwrap())
+            Some(sum / A::from(self.drift_events.len()).expect("unwrap failed"))
         }
     }
 
@@ -600,9 +604,10 @@ impl<A: Float + std::iter::Sum + Send + Sync + Send + Sync> PerformanceDriftTrac
             return A::zero();
         }
 
-        let recent_avg =
-            recent.iter().map(|(p, _, _)| *p).sum::<A>() / A::from(recent.len()).unwrap();
-        let older_avg = older.iter().map(|(p, _, _)| *p).sum::<A>() / A::from(older.len()).unwrap();
+        let recent_avg = recent.iter().map(|(p, _, _)| *p).sum::<A>()
+            / A::from(recent.len()).expect("unwrap failed");
+        let older_avg = older.iter().map(|(p, _, _)| *p).sum::<A>()
+            / A::from(older.len()).expect("unwrap failed");
 
         recent_avg - older_avg
     }
@@ -1104,19 +1109,20 @@ pub mod advanced_drift_analysis {
             let pattern_confidence = matched_pattern
                 .as_ref()
                 .map(|p| p.adaptation_success_rate)
-                .unwrap_or(A::from(0.5).unwrap());
+                .unwrap_or(A::from(0.5).expect("unwrap failed"));
 
             let status = if drift_votes >= 2 {
                 DriftStatus::Drift
             } else if warning_votes >= 2
-                || (drift_votes >= 1 && pattern_confidence > A::from(0.7).unwrap())
+                || (drift_votes >= 1 && pattern_confidence > A::from(0.7).expect("unwrap failed"))
             {
                 DriftStatus::Warning
             } else {
                 DriftStatus::Stable
             };
 
-            let confidence = A::from(drift_votes as f64 / base_results.len() as f64).unwrap()
+            let confidence = A::from(drift_votes as f64 / base_results.len() as f64)
+                .expect("unwrap failed")
                 * pattern_confidence;
 
             CombinedDetectionResult { status, confidence }
@@ -1171,16 +1177,17 @@ pub mod advanced_drift_analysis {
             Self {
                 pattern_buffer: VecDeque::new(),
                 known_patterns: HashMap::new(),
-                matching_threshold: A::from(0.8).unwrap(),
+                matching_threshold: A::from(0.8).expect("unwrap failed"),
                 feature_extractors: Vec::new(),
             }
         }
 
         fn extract_features(&mut self, data: &[A]) -> Result<PatternFeatures<A>> {
             // Simplified feature extraction
-            let mean = data.iter().cloned().sum::<A>() / A::from(data.len()).unwrap();
+            let mean =
+                data.iter().cloned().sum::<A>() / A::from(data.len()).expect("unwrap failed");
             let variance = data.iter().map(|&x| (x - mean) * (x - mean)).sum::<A>()
-                / A::from(data.len()).unwrap();
+                / A::from(data.len()).expect("unwrap failed");
 
             Ok(PatternFeatures {
                 mean,
@@ -1194,7 +1201,7 @@ pub mod advanced_drift_analysis {
                 temporal_locality: A::zero(),
                 persistence: A::zero(),
                 entropy: variance.ln().abs(), // Simplified entropy
-                fractal_dimension: A::from(1.5).unwrap(), // Default
+                fractal_dimension: A::from(1.5).expect("unwrap failed"), // Default
             })
         }
 
@@ -1212,7 +1219,7 @@ pub mod advanced_drift_analysis {
             // Simplified similarity calculation
             let mean_diff = (p1.mean - p2.mean).abs();
             let var_diff = (p1.variance - p2.variance).abs();
-            A::one() - (mean_diff + var_diff) / A::from(2.0).unwrap()
+            A::one() - (mean_diff + var_diff) / A::from(2.0).expect("unwrap failed")
         }
     }
 
@@ -1222,7 +1229,7 @@ pub mod advanced_drift_analysis {
                 thresholds: HashMap::new(),
                 threshold_history: VecDeque::new(),
                 performance_feedback: VecDeque::new(),
-                learning_rate: A::from(0.01).unwrap(),
+                learning_rate: A::from(0.01).expect("unwrap failed"),
             }
         }
 
@@ -1234,13 +1241,13 @@ pub mod advanced_drift_analysis {
                     .thresholds
                     .get(&detector_name)
                     .cloned()
-                    .unwrap_or(A::from(1.0).unwrap());
+                    .unwrap_or(A::from(1.0).expect("unwrap failed"));
 
                 // Adjust threshold based on recent performance
                 let adjustment = if *result == DriftStatus::Drift {
                     -self.learning_rate // Lower threshold if drift detected
                 } else {
-                    self.learning_rate * A::from(0.1).unwrap() // Slightly raise threshold
+                    self.learning_rate * A::from(0.1).expect("unwrap failed") // Slightly raise threshold
                 };
 
                 let new_threshold = current_threshold + adjustment;
@@ -1271,7 +1278,9 @@ pub mod advanced_drift_analysis {
             self.context_features = features.to_vec();
 
             // Simplified context classification
-            let context_id = if !features.is_empty() && features[0].value > A::from(0.5).unwrap() {
+            let context_id = if !features.is_empty()
+                && features[0].value > A::from(0.5).expect("unwrap failed")
+            {
                 "high_activity".to_string()
             } else {
                 "low_activity".to_string()
@@ -1297,7 +1306,7 @@ pub mod advanced_drift_analysis {
             _pattern: &Option<DriftPattern<A>>,
         ) -> Result<DriftImpact<A>> {
             let performance_degradation = features.variance; // Simplified
-            let urgency_level = if performance_degradation > A::from(1.0).unwrap() {
+            let urgency_level = if performance_degradation > A::from(1.0).expect("unwrap failed") {
                 UrgencyLevel::High
             } else {
                 UrgencyLevel::Medium
@@ -1307,7 +1316,7 @@ pub mod advanced_drift_analysis {
                 performance_degradation,
                 affected_metrics: vec!["accuracy".to_string(), "loss".to_string()],
                 estimated_recovery_time: Duration::from_secs(300),
-                confidence: A::from(0.8).unwrap(),
+                confidence: A::from(0.8).expect("unwrap failed"),
                 business_impact_score: performance_degradation,
                 urgency_level,
             })
@@ -1319,7 +1328,7 @@ pub mod advanced_drift_analysis {
             Self {
                 strategies: Vec::new(),
                 strategy_performance: HashMap::new(),
-                bandit: EpsilonGreedyBandit::new(A::from(0.1).unwrap()),
+                bandit: EpsilonGreedyBandit::new(A::from(0.1).expect("unwrap failed")),
                 context_strategy_map: HashMap::new(),
             }
         }
@@ -1336,12 +1345,15 @@ pub mod advanced_drift_analysis {
                 strategy_type: AdaptationStrategyType::ParameterTuning,
                 parameters: {
                     let mut params = HashMap::new();
-                    params.insert("learning_rate_factor".to_string(), A::from(1.5).unwrap());
+                    params.insert(
+                        "learning_rate_factor".to_string(),
+                        A::from(1.5).expect("unwrap failed"),
+                    );
                     params
                 },
                 applicability_conditions: Vec::new(),
-                expected_effectiveness: A::from(0.7).unwrap(),
-                computational_cost: A::from(0.1).unwrap(),
+                expected_effectiveness: A::from(0.7).expect("unwrap failed"),
+                computational_cost: A::from(0.1).expect("unwrap failed"),
             };
 
             Ok(Some(strategy))
@@ -1371,7 +1383,7 @@ pub mod advanced_drift_analysis {
                     applied_strategy: strat.id.clone(),
                     outcome: AdaptationOutcome {
                         success: true, // Simplified
-                        performance_improvement: A::from(0.1).unwrap(),
+                        performance_improvement: A::from(0.1).expect("unwrap failed"),
                         adaptation_time: Duration::from_secs(60),
                         stability_period: Duration::from_secs(300),
                         side_effects: Vec::new(),
@@ -1388,7 +1400,7 @@ pub mod advanced_drift_analysis {
         fn new() -> Self {
             Self {
                 feature_vectors: Vec::new(),
-                similarity_threshold: A::from(0.8).unwrap(),
+                similarity_threshold: A::from(0.8).expect("unwrap failed"),
                 distance_metric: DistanceMetric::Euclidean,
             }
         }
@@ -1519,7 +1531,7 @@ mod tests {
         for i in 0..30 {
             let loss = 0.1 + (i as f64) * 0.001;
             let iserror = i % 10 == 0;
-            let status = detector.update(loss, iserror).unwrap();
+            let status = detector.update(loss, iserror).expect("unwrap failed");
             assert_ne!(status, DriftStatus::Drift); // Should be stable
         }
 
@@ -1527,7 +1539,7 @@ mod tests {
         for i in 0..20 {
             let loss = 0.5 + (i as f64) * 0.01; // Much higher loss
             let iserror = i % 2 == 0; // Higher error rate
-            let _status = detector.update(loss, iserror).unwrap();
+            let _status = detector.update(loss, iserror).expect("unwrap failed");
         }
 
         let stats = detector.get_statistics();

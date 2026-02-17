@@ -37,7 +37,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-tpu = "0.1.0"
+optirs-tpu = "0.2.0"
 scirs2-core = "0.1.1"  # Required foundation
 ```
 
@@ -357,8 +357,4 @@ OptiRS follows the Cool Japan organization's development standards. See the main
 
 ## License
 
-This project is licensed under either of:
-- Apache License, Version 2.0
-- MIT License
-
-at your option.
+This project is licensed under the Apache License, Version 2.0.

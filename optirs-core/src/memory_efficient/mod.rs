@@ -108,9 +108,9 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A
     pub fn new(_learningrate: A) -> Self {
         Self {
             _learningrate,
-            beta1: A::from(0.9).unwrap(),
-            beta2: A::from(0.999).unwrap(),
-            epsilon: A::from(1e-8).unwrap(),
+            beta1: A::from(0.9).expect("unwrap failed"),
+            beta2: A::from(0.999).expect("unwrap failed"),
+            epsilon: A::from(1e-8).expect("unwrap failed"),
             weight_decay: A::zero(),
             t: 0,
             m: None,
@@ -155,7 +155,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceOptimi
 {
     fn step_inplace(&mut self, params: &mut Array<A, D>, gradients: &Array<A, D>) -> Result<()> {
         self.t += 1;
-        let _t = A::from(self.t).unwrap();
+        let _t = A::from(self.t).expect("unwrap failed");
 
         // Initialize momentum and variance if needed
         if self.m.is_none() {
@@ -165,8 +165,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceOptimi
             self.v = Some(Array::zeros(params.raw_dim()));
         }
 
-        let m = self.m.as_mut().unwrap();
-        let v = self.v.as_mut().unwrap();
+        let m = self.m.as_mut().expect("unwrap failed");
+        let v = self.v.as_mut().expect("unwrap failed");
 
         // Apply weight decay if configured
         let grad_with_decay = if self.weight_decay > A::zero() {
@@ -520,7 +520,7 @@ pub mod mixed_precision {
             A: Float + ScalarOperand,
             D: Dimension,
         {
-            let inv_scale = A::one() / A::from(self.scale).unwrap();
+            let inv_scale = A::one() / A::from(self.scale).expect("unwrap failed");
             for g in gradients.iter_mut() {
                 *g = *g * inv_scale;
             }
@@ -1130,7 +1130,9 @@ mod tests {
         let mut params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
-        optimizer.step_inplace(&mut params, &gradients).unwrap();
+        optimizer
+            .step_inplace(&mut params, &gradients)
+            .expect("unwrap failed");
 
         assert_relative_eq!(params[0], 0.99, epsilon = 1e-6);
         assert_relative_eq!(params[1], 1.98, epsilon = 1e-6);
@@ -1145,7 +1147,9 @@ mod tests {
 
         // Multiple steps to see momentum effects
         for _ in 0..5 {
-            optimizer.step_inplace(&mut params, &gradients).unwrap();
+            optimizer
+                .step_inplace(&mut params, &gradients)
+                .expect("unwrap failed");
         }
 
         // Verify parameters have been updated
@@ -1159,7 +1163,7 @@ mod tests {
         let mut array = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         utils::scale_inplace(&mut array, 2.0);
 
-        assert_eq!(array.as_slice().unwrap(), &[2.0, 4.0, 6.0]);
+        assert_eq!(array.as_slice().expect("unwrap failed"), &[2.0, 4.0, 6.0]);
     }
 
     #[test]
@@ -1167,7 +1171,7 @@ mod tests {
         let mut array = Array1::from_vec(vec![0.5, 1.5, 2.5]);
         utils::clip_inplace(&mut array, 1.0, 2.0);
 
-        assert_eq!(array.as_slice().unwrap(), &[1.0, 1.5, 2.0]);
+        assert_eq!(array.as_slice().expect("unwrap failed"), &[1.0, 1.5, 2.0]);
     }
 
     #[test]
@@ -1178,7 +1182,9 @@ mod tests {
         let params_ptr = params.as_ptr();
 
         let mut optimizer = InPlaceSGD::new(0.1);
-        optimizer.step_inplace(&mut params, &gradients).unwrap();
+        optimizer
+            .step_inplace(&mut params, &gradients)
+            .expect("unwrap failed");
 
         // Verify the same memory is being used
         assert_eq!(params_ptr, params.as_ptr());
@@ -1334,10 +1340,10 @@ mod tests {
         checkpointer.store_checkpoint(2, activation.clone());
 
         // Retrieve checkpoint
-        let retrieved = checkpointer.get_checkpoint(2).unwrap();
+        let retrieved = checkpointer.get_checkpoint(2).expect("unwrap failed");
         assert_eq!(
-            retrieved.as_slice().unwrap(),
-            activation.as_slice().unwrap()
+            retrieved.as_slice().expect("unwrap failed"),
+            activation.as_slice().expect("unwrap failed")
         );
 
         // Non-checkpointed depth should return None
@@ -1437,12 +1443,15 @@ mod tests {
 
         let (output, checkpoint) = checkpointer
             .checkpointed_forward(0, &input, forward_fn)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(output, 6.0); // 1 + 2 + 3
         assert!(checkpoint.is_some());
-        let checkpoint = checkpoint.unwrap();
-        assert_eq!(checkpoint.as_slice().unwrap(), &[2.0, 4.0, 6.0]);
+        let checkpoint = checkpoint.expect("unwrap failed");
+        assert_eq!(
+            checkpoint.as_slice().expect("unwrap failed"),
+            &[2.0, 4.0, 6.0]
+        );
     }
 
     #[test]
@@ -1469,10 +1478,10 @@ mod tests {
         // Recompute from checkpoint 2 to depth 4
         let result = checkpointer
             .recompute_from_checkpoint(2, 4, recompute_fn)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Should be [3,4] + 1 + 1 = [5,6]
-        assert_eq!(result.as_slice().unwrap(), &[5.0, 6.0]);
+        assert_eq!(result.as_slice().expect("unwrap failed"), &[5.0, 6.0]);
     }
 
     #[test]
@@ -1496,7 +1505,7 @@ mod tests {
         for depth in 0..5 {
             let (output_checkpoint, _) = auto_checkpointer
                 .auto_step(depth, &input, forward_fn)
-                .unwrap();
+                .expect("unwrap failed");
             assert_eq!(output_checkpoint, 3.0); // 1 + 2
         }
 

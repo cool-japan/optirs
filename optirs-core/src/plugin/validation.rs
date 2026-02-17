@@ -895,8 +895,14 @@ impl<A: Float + Debug + Send + Sync + 'static> FunctionalityTestSuite<A> {
         let start_time = Instant::now();
 
         // Create test data
-        let params = Array1::from_vec(vec![A::from(1.0).unwrap(), A::from(2.0).unwrap()]);
-        let gradients = Array1::from_vec(vec![A::from(0.1).unwrap(), A::from(0.2).unwrap()]);
+        let params = Array1::from_vec(vec![
+            A::from(1.0).expect("unwrap failed"),
+            A::from(2.0).expect("unwrap failed"),
+        ]);
+        let gradients = Array1::from_vec(vec![
+            A::from(0.1).expect("unwrap failed"),
+            A::from(0.2).expect("unwrap failed"),
+        ]);
 
         match plugin.step(&params, &gradients) {
             Ok(result) => {

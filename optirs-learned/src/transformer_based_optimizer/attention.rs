@@ -48,7 +48,7 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
             ));
         }
 
-        let scale_factor = T::from(1.0 / (head_dimension as f64).sqrt()).unwrap();
+        let scale_factor = T::from(1.0 / (head_dimension as f64).sqrt()).expect("unwrap failed");
 
         // Initialize weights with Xavier/Glorot initialization
         let xavier_std = (2.0 / (model_dimension + head_dimension) as f64).sqrt();
@@ -314,7 +314,10 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
             let mut exp_scores = vec![T::zero(); seq_length];
 
             for j in 0..seq_length {
-                let exp_val = (scores[[i, j]] - max_score).to_f64().unwrap().exp();
+                let exp_val = (scores[[i, j]] - max_score)
+                    .to_f64()
+                    .expect("unwrap failed")
+                    .exp();
                 exp_scores[j] =
                     scirs2_core::numeric::NumCast::from(exp_val).unwrap_or_else(|| T::zero());
                 exp_sum = exp_sum + exp_scores[j];
@@ -484,7 +487,7 @@ impl<T: Float + Debug + 'static + Send + Sync> AttentionVisualizer<T> {
                     if idx < seq_length_squared {
                         let prob = attention_weights[[0, head, idx]]; // Use first batch
                         if prob > T::zero() {
-                            let log_prob = prob.to_f64().unwrap().ln();
+                            let log_prob = prob.to_f64().expect("unwrap failed").ln();
                             entropy = entropy
                                 - prob
                                     * scirs2_core::numeric::NumCast::from(log_prob)
@@ -525,7 +528,7 @@ mod tests {
         let attention = MultiHeadAttention::<f32>::new(8, 512, 64);
         assert!(attention.is_ok());
 
-        let mha = attention.unwrap();
+        let mha = attention.expect("unwrap failed");
         assert_eq!(mha.num_heads, 8);
         assert_eq!(mha.model_dimension, 512);
         assert_eq!(mha.head_dimension, 64);
@@ -533,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_attention_forward_pass() {
-        let mut attention = MultiHeadAttention::<f32>::new(4, 128, 32).unwrap();
+        let mut attention = MultiHeadAttention::<f32>::new(4, 128, 32).expect("unwrap failed");
 
         let seq_length = 10;
         let batch_size = 2;
@@ -542,25 +545,25 @@ mod tests {
         let result = attention.forward(&input, &input, &input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[batch_size * seq_length, 128]);
     }
 
     #[test]
     fn test_self_attention() {
-        let mut self_attention = SelfAttention::<f32>::new(4, 128, 32).unwrap();
+        let mut self_attention = SelfAttention::<f32>::new(4, 128, 32).expect("unwrap failed");
 
         let input = Array2::<f32>::zeros((20, 128)); // batch_size * seq_length = 20
         let result = self_attention.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), input.shape());
     }
 
     #[test]
     fn test_parameter_count() {
-        let attention = MultiHeadAttention::<f32>::new(8, 512, 64).unwrap();
+        let attention = MultiHeadAttention::<f32>::new(8, 512, 64).expect("unwrap failed");
         let param_count = attention.parameter_count();
 
         // 4 weight matrices of size 512x512

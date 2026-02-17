@@ -71,7 +71,7 @@ where
 /// use optirs_core::utils::clip_gradient_norm;
 ///
 /// let mut gradients = Array1::<f64>::from_vec(vec![3.0, 4.0]); // L2 norm = 5.0
-/// clip_gradient_norm(&mut gradients, 1.0f64).unwrap();
+/// clip_gradient_norm(&mut gradients, 1.0f64).expect("unwrap failed");
 /// // After clipping, L2 norm = 1.0
 /// let diff0 = (gradients[0] - 0.6f64).abs();
 /// let diff1 = (gradients[1] - 0.8f64).abs();

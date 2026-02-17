@@ -502,7 +502,7 @@ impl ProductionMemoryProfiler {
 
         // Update monitoring state
         {
-            let mut state = self.monitoring_state.write().unwrap();
+            let mut state = self.monitoring_state.write().expect("lock poisoned");
             state.active = true;
             state.last_update = Instant::now();
         }
@@ -522,7 +522,7 @@ impl ProductionMemoryProfiler {
 
         // Update monitoring state
         {
-            let mut state = self.monitoring_state.write().unwrap();
+            let mut state = self.monitoring_state.write().expect("lock poisoned");
             state.active = false;
         }
 
@@ -590,7 +590,7 @@ impl ProductionMemoryProfiler {
         thread::spawn(move || {
             loop {
                 {
-                    let state = monitoring_state.read().unwrap();
+                    let state = monitoring_state.read().expect("lock poisoned");
                     if !state.active {
                         break;
                     }
@@ -598,7 +598,7 @@ impl ProductionMemoryProfiler {
 
                 // Take memory snapshot
                 if let Ok(snapshot) = Self::take_system_snapshot() {
-                    let mut history = profile_history.lock().unwrap();
+                    let mut history = profile_history.lock().expect("lock poisoned");
                     history.push_back(snapshot);
                     
                     // Maintain history size
@@ -683,7 +683,7 @@ impl ProductionMemoryProfiler {
     /// Generate comprehensive profiling report
     fn generate_comprehensive_report(&self) -> Result<MemoryProfileReport> {
         let leak_report = self.leak_detector.generate_optimization_report()?;
-        let history = self.profile_history.lock().unwrap();
+        let history = self.profile_history.lock().expect("lock poisoned");
         
         let current_memory = self.get_current_memory_usage()?;
         let peak_memory = history.iter()
@@ -1178,12 +1178,12 @@ impl AlertSystem {
 
         // Store alert
         {
-            let mut active_alerts = self.active_alerts.lock().unwrap();
+            let mut active_alerts = self.active_alerts.lock().expect("lock poisoned");
             active_alerts.insert(alert.id.clone(), alert.clone());
         }
 
         {
-            let mut history = self.alert_history.lock().unwrap();
+            let mut history = self.alert_history.lock().expect("lock poisoned");
             history.push_back(alert.clone());
             
             // Maintain history size
@@ -1233,7 +1233,7 @@ mod tests {
     #[test]
     fn test_profiler_creation() {
         let config = MemoryProfilerConfig::default();
-        let profiler = ProductionMemoryProfiler::new(config).unwrap();
+        let profiler = ProductionMemoryProfiler::new(config).expect("unwrap failed");
         assert!(!profiler.external_tools.is_empty() || !profiler.config.enable_external_profilers);
     }
 

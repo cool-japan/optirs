@@ -220,8 +220,14 @@ fn multi_layer_optimization() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nOptimization complete!");
-    println!("Final layer 1 mean: {:.4}", w1.mean().unwrap());
-    println!("Final layer 2 mean: {:.4}", w2.mean().unwrap());
+    println!(
+        "Final layer 1 mean: {:.4}",
+        w1.mean().expect("unwrap failed")
+    );
+    println!(
+        "Final layer 2 mean: {:.4}",
+        w2.mean().expect("unwrap failed")
+    );
 
     Ok(())
 }

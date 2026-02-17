@@ -440,7 +440,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
         
         // Initialize architecture parameters
         let architecture_parameters = Array3::from_shape_fn((num_edges, num_ops, 1), |_| {
-            T::from(scirs2_core::random::random::<f64>() * 0.1).unwrap()
+            T::from(scirs2_core::random::random::<f64>() * 0.1).expect("unwrap failed")
         });
         
         // Initialize mixed operations
@@ -868,7 +868,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
             }
         }
         
-        let diversity = T::from(operation_types.len() as f64).unwrap();
+        let diversity = T::from(operation_types.len() as f64).expect("unwrap failed");
         let depth = operations.len();
         
         Ok(ArchitectureComplexity {
@@ -876,7 +876,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DARTSSearcher<T
             total_flops,
             memory_usage: total_memory,
             depth,
-            connectivity: T::from(operations.len() as f64).unwrap(),
+            connectivity: T::from(operations.len() as f64).expect("unwrap failed"),
             diversity,
         })
     }

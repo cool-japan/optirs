@@ -869,7 +869,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiObjectiveE
         // Generate uniform reference points (Das & Dennis method)
         for i in 0..num_points {
             for j in 0..num_objectives {
-                let value = T::from((i + j) as f64 / (num_points + num_objectives) as f64).unwrap();
+                let value = T::from((i + j) as f64 / (num_points + num_objectives) as f64).expect("unwrap failed");
                 points[[i, j]] = value;
             }
             

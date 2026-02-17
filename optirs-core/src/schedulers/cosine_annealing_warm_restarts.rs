@@ -139,9 +139,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
 
     fn step(&mut self) -> A {
         // Calculate the cosine annealing learning rate
-        let pi = A::from(std::f64::consts::PI).unwrap();
-        let t_cur = A::from(self.t_cur).unwrap();
-        let t_i = A::from(self.t_i).unwrap();
+        let pi = A::from(std::f64::consts::PI).expect("unwrap failed");
+        let t_cur = A::from(self.t_cur).expect("unwrap failed");
+        let t_i = A::from(self.t_i).expect("unwrap failed");
 
         // Using the formula from the paper: η_t = η_min + 0.5(η_max - η_min)(1 + cos(π * t_cur/T_i))
         // For t_cur from 0 to T_i, cosine goes from 1 to -1, making the learning rate decrease from initial_lr to min_lr
@@ -149,7 +149,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
 
         // Calculate the learning rate
         self.current_lr = self.min_lr
-            + A::from(0.5).unwrap() * (self.initial_lr - self.min_lr) * (A::one() + cos_term);
+            + A::from(0.5).expect("unwrap failed")
+                * (self.initial_lr - self.min_lr)
+                * (A::one() + cos_term);
 
         // Store the current learning rate to return
         let return_lr = self.current_lr;

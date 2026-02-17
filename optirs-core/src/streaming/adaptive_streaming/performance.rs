@@ -578,18 +578,18 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
             return Ok(A::zero());
         }
 
-        let n = A::from(values.len()).unwrap();
+        let n = A::from(values.len()).expect("unwrap failed");
         // Compute sum_x = 1 + 2 + ... + n = n*(n+1)/2
-        let sum_x = n * (n + A::one()) / A::from(2.0).unwrap();
+        let sum_x = n * (n + A::one()) / A::from(2.0).expect("unwrap failed");
         let sum_y = values.iter().cloned().sum::<A>();
         let sum_xy = values
             .iter()
             .enumerate()
-            .map(|(i, &y)| A::from(i + 1).unwrap() * y)
+            .map(|(i, &y)| A::from(i + 1).expect("unwrap failed") * y)
             .sum::<A>();
         // Compute sum_x_squared = 1^2 + 2^2 + ... + n^2 = n*(n+1)*(2n+1)/6
-        let two = A::from(2.0).unwrap();
-        let six = A::from(6.0).unwrap();
+        let two = A::from(2.0).expect("unwrap failed");
+        let six = A::from(6.0).expect("unwrap failed");
         let sum_x_squared = n * (n + A::one()) * (two * n + A::one()) / six;
 
         let denominator = n * sum_x_squared - sum_x * sum_x;
@@ -608,11 +608,13 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
 
         // Simplified correlation with time index
         let n = values.len();
-        let time_values: Vec<A> = (1..=n).map(|i| A::from(i).unwrap()).collect();
+        let time_values: Vec<A> = (1..=n)
+            .map(|i| A::from(i).expect("unwrap failed"))
+            .collect();
         let value_vec: Vec<A> = values.iter().cloned().collect();
 
-        let mean_time = time_values.iter().cloned().sum::<A>() / A::from(n).unwrap();
-        let mean_value = value_vec.iter().cloned().sum::<A>() / A::from(n).unwrap();
+        let mean_time = time_values.iter().cloned().sum::<A>() / A::from(n).expect("unwrap failed");
+        let mean_value = value_vec.iter().cloned().sum::<A>() / A::from(n).expect("unwrap failed");
 
         let numerator = time_values
             .iter()
@@ -643,9 +645,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
             return Ok(A::zero());
         }
 
-        let mean = values.iter().cloned().sum::<A>() / A::from(values.len()).unwrap();
+        let mean =
+            values.iter().cloned().sum::<A>() / A::from(values.len()).expect("unwrap failed");
         let variance = values.iter().map(|&v| (v - mean) * (v - mean)).sum::<A>()
-            / A::from(values.len()).unwrap();
+            / A::from(values.len()).expect("unwrap failed");
 
         Ok(variance.sqrt())
     }
@@ -736,15 +739,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
 
         // Simple linear extrapolation using last two points
         let n = values.len();
-        let x1 = A::from(n - 1).unwrap();
+        let x1 = A::from(n - 1).expect("unwrap failed");
         let y1 = values[n - 1];
-        let x2 = A::from(n).unwrap();
+        let x2 = A::from(n).expect("unwrap failed");
         let y2 = values[n - 1]; // Use same point for stability
 
         // Use trend from last few points
         if n >= 3 {
-            let slope = (values[n - 1] - values[n - 3]) / A::from(2).unwrap();
-            let predicted = values[n - 1] + slope * A::from(steps_ahead).unwrap();
+            let slope = (values[n - 1] - values[n - 3]) / A::from(2).expect("unwrap failed");
+            let predicted = values[n - 1] + slope * A::from(steps_ahead).expect("unwrap failed");
             Ok(predicted)
         } else {
             Ok(values[n - 1])
@@ -757,7 +760,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         }
 
         // Simple exponential smoothing
-        let alpha = A::from(0.3).unwrap();
+        let alpha = A::from(0.3).expect("unwrap failed");
         let mut forecast = values[0];
 
         for &value in values.iter().skip(1) {
@@ -766,7 +769,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
 
         // Project forward (simplified)
         for _ in 0..steps_ahead {
-            forecast = forecast * A::from(0.99).unwrap(); // Assume slight improvement
+            forecast = forecast * A::from(0.99).expect("unwrap failed"); // Assume slight improvement
         }
 
         Ok(forecast)
@@ -780,12 +783,13 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         let recent_count = values.len().min(10);
         let recent_values = &values[values.len() - recent_count..];
 
-        let mean = recent_values.iter().cloned().sum::<A>() / A::from(recent_count).unwrap();
+        let mean = recent_values.iter().cloned().sum::<A>()
+            / A::from(recent_count).expect("unwrap failed");
         let variance = recent_values
             .iter()
             .map(|&v| (v - mean) * (v - mean))
             .sum::<A>()
-            / A::from(recent_count).unwrap();
+            / A::from(recent_count).expect("unwrap failed");
 
         Ok(variance.sqrt())
     }
@@ -817,7 +821,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
     fn update_accuracy_metrics(&mut self, prediction: &PredictionResult<A>) -> Result<(), String> {
         if let Some(actual) = prediction.actual_value {
             let error = (prediction.predicted_value - actual).abs();
-            let relative_error = error / actual.max(A::from(1e-8).unwrap());
+            let relative_error = error / actual.max(A::from(1e-8).expect("unwrap failed"));
 
             // Update accuracy for this method
             let accuracy = A::one() - relative_error.min(A::one());
@@ -835,7 +839,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         }
 
         let sum: A = self.model_accuracies.values().cloned().sum();
-        let avg = sum / A::from(self.model_accuracies.len()).unwrap();
+        let avg = sum / A::from(self.model_accuracies.len()).expect("unwrap failed");
         avg.to_f64().unwrap_or(0.0)
     }
 
@@ -854,7 +858,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync>
             baseline_metrics: HashMap::new(),
             improvement_rates: HashMap::new(),
             improvement_history: VecDeque::with_capacity(1000),
-            plateau_detector: PlateauDetector::new(50, A::from(0.01).unwrap()),
+            plateau_detector: PlateauDetector::new(50, A::from(0.01).expect("unwrap failed")),
         }
     }
 
@@ -877,7 +881,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync>
                     timestamp: snapshot.timestamp,
                     metric_name: "loss".to_string(),
                     improvement,
-                    improvement_rate: improvement / A::from(1.0).unwrap(), // Simplified rate
+                    improvement_rate: improvement / A::from(1.0).expect("unwrap failed"), // Simplified rate
                     context: "optimization_step".to_string(),
                 };
 
@@ -962,7 +966,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PlateauDetector<
 impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAnomalyDetector<A> {
     fn new(threshold: f64) -> Self {
         Self {
-            threshold: A::from(threshold).unwrap(),
+            threshold: A::from(threshold).expect("unwrap failed"),
             historical_stats: HashMap::new(),
             recent_anomalies: VecDeque::with_capacity(100),
             adaptive_threshold: true,
@@ -1015,7 +1019,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
         // Update running statistics
         stats.count += 1;
         let delta = value - stats.mean;
-        stats.mean = stats.mean + delta / A::from(stats.count).unwrap();
+        stats.mean = stats.mean + delta / A::from(stats.count).expect("unwrap failed");
         let delta2 = value - stats.mean;
         stats.variance = stats.variance + delta * delta2;
         stats.min_value = stats.min_value.min(value);
@@ -1024,13 +1028,14 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
 
         // Check for anomaly after sufficient samples
         if stats.count >= 10 {
-            let std_dev = (stats.variance / A::from(stats.count - 1).unwrap()).sqrt();
-            let z_score = (value - stats.mean) / std_dev.max(A::from(1e-8).unwrap());
+            let std_dev =
+                (stats.variance / A::from(stats.count - 1).expect("unwrap failed")).sqrt();
+            let z_score = (value - stats.mean) / std_dev.max(A::from(1e-8).expect("unwrap failed"));
 
             if z_score.abs() > self.threshold {
-                let severity = if z_score.abs() > A::from(3.0).unwrap() {
+                let severity = if z_score.abs() > A::from(3.0).expect("unwrap failed") {
                     AnomalySeverity::Critical
-                } else if z_score.abs() > A::from(2.5).unwrap() {
+                } else if z_score.abs() > A::from(2.5).expect("unwrap failed") {
                     AnomalySeverity::Major
                 } else {
                     AnomalySeverity::Moderate

@@ -5,6 +5,72 @@ All notable changes to OptiRS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-02-16
+
+### Changed
+
+#### Licensing
+- **License changed from dual MIT/Apache-2.0 to Apache-2.0 only** - OptiRS now uses Apache-2.0 as its sole license, aligning with the broader SciRS2 ecosystem
+- Removed `LICENSE-MIT` and `LICENSE-APACHE` files in favor of single `LICENSE` file
+- Updated all crate manifests and documentation to reflect Apache-2.0 license
+
+#### SciRS2 Integration
+- **Updated to SciRS2 v0.2.0** - Upgraded all SciRS2 dependencies from v0.1.1 to v0.2.0
+  - `scirs2-core` 0.2.0 - Core scientific computing primitives
+  - `scirs2-optimize` 0.2.0 - Base optimization interfaces
+  - `scirs2-neural` 0.2.0 - Neural network support
+  - `scirs2-metrics` 0.2.0 - Performance monitoring
+  - `scirs2-stats` 0.2.0 - Statistical analysis
+  - `scirs2-series` 0.2.0 - Time series support
+  - `scirs2-datasets` 0.2.0 - Dataset utilities
+  - `scirs2-linalg` 0.2.0 - Linear algebra operations
+  - `scirs2-signal` 0.2.0 - Signal processing
+
+#### Documentation
+- Moved `CLAUDE.md` from repository to temporary directory (per project policy)
+- Updated version references across all documentation to v0.2.0
+- Updated `MIGRATION_FROM_SCIRS2.md` to reflect new version
+- Updated all subcrate documentation headers
+
+#### Build System
+- Updated workspace version to 0.2.0 across all crates
+- Refined workspace dependency management for SciRS2 v0.2.0
+- Updated `optirs-gpu` dependency configuration
+
+### Removed
+- **MIT License** - Now Apache-2.0 only
+- `LICENSE-MIT` file
+- `LICENSE-APACHE` file (replaced by single `LICENSE`)
+- `CLAUDE.md` from repository (moved to temporary directory per policy)
+
+### Maintenance
+- Minor version updates to library headers
+- Improved consistency across crate versions
+- Streamlined license file structure
+
+### Migration Notes
+For users upgrading from 0.1.0 to 0.2.0:
+- **License Change**: OptiRS is now Apache-2.0 only. If your project required MIT license compatibility, please review your legal requirements
+- **SciRS2 Dependencies**: Update all SciRS2 dependencies to v0.2.0
+- **No API Changes**: The public API remains fully compatible with v0.1.0
+- **No Breaking Changes**: This release is backward compatible at the API level
+
+### Dependencies
+All SciRS2 dependencies updated to v0.2.0:
+```toml
+scirs2-core = "0.2.0"
+scirs2-optimize = "0.2.0"
+scirs2-neural = "0.2.0"
+scirs2-metrics = "0.2.0"
+scirs2-stats = "0.2.0"
+scirs2-series = "0.2.0"
+scirs2-datasets = "0.2.0"
+scirs2-linalg = "0.2.0"
+scirs2-signal = "0.2.0"
+```
+
+---
+
 ## [0.1.0] - 2025-12-30
 
 ### 🎉 Initial Release
@@ -187,4 +253,5 @@ Legend: ✅ Production Ready | 🚧 In Development | 🔬 Research Phase | ❌ N
 
 ---
 
+[0.2.0]: https://github.com/cool-japan/optirs/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0

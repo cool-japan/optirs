@@ -456,7 +456,14 @@ mod tests {
             metadata: EncodingMetadata::default(),
         };
 
-        assert_eq!(encoding.binary_encoding.as_ref().unwrap().len(), 4);
+        assert_eq!(
+            encoding
+                .binary_encoding
+                .as_ref()
+                .expect("unwrap failed")
+                .len(),
+            4
+        );
         assert_eq!(encoding.hash, 12345);
     }
 

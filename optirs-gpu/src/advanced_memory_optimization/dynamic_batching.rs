@@ -586,13 +586,13 @@ mod tests {
         let mut controller = DynamicBatchController::new(64, 16, 128);
 
         // Low pressure should not trigger adjustment
-        let result = controller.adjust_for_memory_pressure(0.5).unwrap();
+        let result = controller.adjust_for_memory_pressure(0.5).expect("unwrap failed");
         assert!(result.is_none());
 
         // High pressure should trigger reduction
-        let result = controller.adjust_for_memory_pressure(0.9).unwrap();
+        let result = controller.adjust_for_memory_pressure(0.9).expect("unwrap failed");
         assert!(result.is_some());
-        assert!(result.unwrap() < 64);
+        assert!(result.expect("unwrap failed") < 64);
     }
 
     #[test]
@@ -600,7 +600,7 @@ mod tests {
         let mut controller = DynamicBatchController::new(32, 8, 128);
 
         let metrics = PerformanceMetrics::new(100.0, 0.8, 0.9, 0.7);
-        controller.optimize_for_performance(metrics).unwrap();
+        controller.optimize_for_performance(metrics).expect("unwrap failed");
 
         // Should record the metrics
         assert!(!controller.performance_metrics.is_empty());

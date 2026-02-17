@@ -462,7 +462,7 @@ mod tests {
     fn test_checkpoint_creation_and_retrieval() {
         let mut manager = CheckpointManager::<f32>::new(CheckpointStrategy::Uniform(4), 10);
 
-        let activations = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+        let activations = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).expect("unwrap failed");
         let cost = RecomputationCost {
             compute_cost: 1000,
             memory_cost: 24, // 6 f32s * 4 bytes
@@ -470,7 +470,7 @@ mod tests {
             cost_benefit_ratio: 1.5,
         };
 
-        manager.create_checkpoint("layer1".to_string(), activations, cost).unwrap();
+        manager.create_checkpoint("layer1".to_string(), activations, cost).expect("unwrap failed");
 
         assert_eq!(manager.checkpoints.len(), 1);
         assert!(manager.get_checkpoint("layer1").is_some());
@@ -508,19 +508,19 @@ mod tests {
     fn test_checkpoint_eviction() {
         let mut manager = CheckpointManager::<f32>::new(CheckpointStrategy::Uniform(1), 2);
 
-        let activations1 = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).unwrap();
-        let activations2 = Array2::from_shape_vec((1, 2), vec![3.0, 4.0]).unwrap();
-        let activations3 = Array2::from_shape_vec((1, 2), vec![5.0, 6.0]).unwrap();
+        let activations1 = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).expect("unwrap failed");
+        let activations2 = Array2::from_shape_vec((1, 2), vec![3.0, 4.0]).expect("unwrap failed");
+        let activations3 = Array2::from_shape_vec((1, 2), vec![5.0, 6.0]).expect("unwrap failed");
 
         let cost = RecomputationCost::default();
 
-        manager.create_checkpoint("layer1".to_string(), activations1, cost.clone()).unwrap();
-        manager.create_checkpoint("layer2".to_string(), activations2, cost.clone()).unwrap();
+        manager.create_checkpoint("layer1".to_string(), activations1, cost.clone()).expect("unwrap failed");
+        manager.create_checkpoint("layer2".to_string(), activations2, cost.clone()).expect("unwrap failed");
 
         assert_eq!(manager.checkpoints.len(), 2);
 
         // Adding third checkpoint should trigger eviction
-        manager.create_checkpoint("layer3".to_string(), activations3, cost).unwrap();
+        manager.create_checkpoint("layer3".to_string(), activations3, cost).expect("unwrap failed");
 
         assert_eq!(manager.checkpoints.len(), 2);
         assert!(manager.stats.total_evictions > 0);
@@ -534,13 +534,13 @@ mod tests {
         optimizer.add_layer("layer2".to_string(), 200, 300, vec!["layer1".to_string()]);
         optimizer.add_layer("layer3".to_string(), 150, 250, vec!["layer2".to_string()]);
 
-        let checkpoints = optimizer.optimize_checkpoints().unwrap();
+        let checkpoints = optimizer.optimize_checkpoints().expect("unwrap failed");
         assert!(!checkpoints.is_empty());
     }
 
     #[test]
     fn test_activation_checkpoint_metrics() {
-        let activations = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+        let activations = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("unwrap failed");
         let cost = RecomputationCost {
             compute_cost: 1000,
             memory_cost: 16,

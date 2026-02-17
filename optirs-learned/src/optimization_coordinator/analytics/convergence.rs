@@ -604,8 +604,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ConvergenceAnal
             }
         }
 
-        let convergence_probability = scirs2_core::numeric::NumCast::from(converged_count).unwrap_or_else(|| T::zero()) / T::from(detections.len()).unwrap();
-        let consensus_confidence = confidence_sum / T::from(detections.len()).unwrap();
+        let convergence_probability = scirs2_core::numeric::NumCast::from(converged_count).unwrap_or_else(|| T::zero()) / T::from(detections.len()).expect("unwrap failed");
+        let consensus_confidence = confidence_sum / T::from(detections.len()).expect("unwrap failed");
         let method_agreement = self.calculate_method_agreement(&voting_results)?;
 
         Ok(ConvergenceConsensus {
@@ -823,8 +823,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ConvergenceDete
             }
 
             // Calculate loss change rate
-            let first_loss = recent_losses.front().unwrap();
-            let last_loss = recent_losses.back().unwrap();
+            let first_loss = recent_losses.front().expect("unwrap failed");
+            let last_loss = recent_losses.back().expect("unwrap failed");
             let loss_change = (*first_loss - *last_loss).abs();
             let relative_change = loss_change / *first_loss;
 
@@ -1171,22 +1171,22 @@ mod tests {
     #[test]
     fn test_early_stopping_controller() {
         let config = EarlyStoppingConfig::<f32>::default();
-        let mut controller = EarlyStoppingController::new(config).unwrap();
+        let mut controller = EarlyStoppingController::new(config).expect("unwrap failed");
 
         // Should not stop initially
         assert!(!controller.should_stop());
 
         // Add some improving values
-        controller.update(&1.0).unwrap();
-        controller.update(&0.9).unwrap();
-        controller.update(&0.8).unwrap();
+        controller.update(&1.0).expect("unwrap failed");
+        controller.update(&0.9).expect("unwrap failed");
+        controller.update(&0.8).expect("unwrap failed");
 
         // Should not stop with improvements
         assert!(!controller.should_stop());
 
         // Add non-improving values
         for _ in 0..15 {
-            controller.update(&0.9).unwrap();
+            controller.update(&0.9).expect("unwrap failed");
         }
 
         // Should trigger early stopping after patience exceeded

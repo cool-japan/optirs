@@ -535,7 +535,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         };
 
         // Add to appropriate buffer based on quality
-        if priority_score >= A::from(self.config.quality_threshold).unwrap() {
+        if priority_score >= A::from(self.config.quality_threshold).expect("unwrap failed") {
             self.buffer.push(prioritized_point);
         } else {
             // Add to secondary buffer for potential later processing
@@ -555,12 +555,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
 
         // Adjust score based on recency
         let age = data_point.timestamp.elapsed().as_secs_f64();
-        let recency_bonus = A::from(1.0 / (1.0 + age / 3600.0)).unwrap(); // Hour-based decay
-        score = score + recency_bonus * A::from(0.1).unwrap();
+        let recency_bonus = A::from(1.0 / (1.0 + age / 3600.0)).expect("unwrap failed"); // Hour-based decay
+        score = score + recency_bonus * A::from(0.1).expect("unwrap failed");
 
         // Adjust score based on feature variance (novelty)
         let novelty_score = self.calculate_novelty_score(data_point)?;
-        score = score + novelty_score * A::from(0.2).unwrap();
+        score = score + novelty_score * A::from(0.2).expect("unwrap failed");
 
         Ok(score)
     }
@@ -569,13 +569,13 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
     fn calculate_novelty_score(&self, data_point: &StreamingDataPoint<A>) -> Result<A, String> {
         // Simple novelty calculation based on distance from recent data
         if self.buffer.is_empty() {
-            return Ok(A::from(0.5).unwrap()); // Medium novelty for first data
+            return Ok(A::from(0.5).expect("unwrap failed")); // Medium novelty for first data
         }
 
         // Calculate average distance from recent buffer content
         let recent_points: Vec<_> = self.buffer.iter().take(10).collect();
         if recent_points.is_empty() {
-            return Ok(A::from(0.5).unwrap());
+            return Ok(A::from(0.5).expect("unwrap failed"));
         }
 
         let mut total_distance = A::zero();
@@ -587,7 +587,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             total_distance = total_distance + distance;
         }
 
-        let avg_distance = total_distance / A::from(recent_points.len()).unwrap();
+        let avg_distance = total_distance / A::from(recent_points.len()).expect("unwrap failed");
 
         // Normalize to 0-1 range
         let normalized_novelty = avg_distance / (avg_distance + A::one());
@@ -619,14 +619,14 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let max_age = 3600.0; // 1 hour maximum age
 
         let freshness = (max_age - age_seconds.min(max_age)) / max_age;
-        A::from(freshness.max(0.0)).unwrap()
+        A::from(freshness.max(0.0)).expect("unwrap failed")
     }
 
     /// Calculates relevance score for current model context
     fn calculate_relevance_score(&self, _data_point: &StreamingDataPoint<A>) -> Result<A, String> {
         // Simplified relevance calculation
         // In practice, this would consider current model parameters, recent performance, etc.
-        Ok(A::from(0.7).unwrap()) // Default moderate relevance
+        Ok(A::from(0.7).expect("unwrap failed")) // Default moderate relevance
     }
 
     /// Gets a batch of data for processing
@@ -703,7 +703,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         }
 
         if !quality_values.is_empty() {
-            let count = A::from(quality_values.len()).unwrap();
+            let count = A::from(quality_values.len()).expect("unwrap failed");
             self.quality_metrics.average_quality = quality_sum / count;
 
             // Update min/max quality
@@ -741,12 +741,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         if trend.recent_changes.len() >= 10 {
             let recent: Vec<A> = trend.recent_changes.iter().cloned().collect();
             let first_half_avg = recent.iter().take(recent.len() / 2).cloned().sum::<A>()
-                / A::from(recent.len() / 2).unwrap();
+                / A::from(recent.len() / 2).expect("unwrap failed");
             let second_half_avg = recent.iter().skip(recent.len() / 2).cloned().sum::<A>()
-                / A::from(recent.len() - recent.len() / 2).unwrap();
+                / A::from(recent.len() - recent.len() / 2).expect("unwrap failed");
 
             let change = second_half_avg - first_half_avg;
-            let change_threshold = A::from(0.05).unwrap(); // 5% change threshold
+            let change_threshold = A::from(0.05).expect("unwrap failed"); // 5% change threshold
 
             trend.trend_direction = if change > change_threshold {
                 TrendDirection::Improving
@@ -757,7 +757,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             };
 
             trend.trend_magnitude = change.abs();
-            trend.confidence = A::from(0.8).unwrap(); // Simplified confidence
+            trend.confidence = A::from(0.8).expect("unwrap failed"); // Simplified confidence
         }
 
         Ok(())
@@ -911,9 +911,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let freshness_score = self.calculate_freshness_score(data_point);
 
         // Weighted combination
-        let retention_score = quality_score * A::from(0.5).unwrap()
-            + freshness_score * A::from(0.3).unwrap()
-            + age_score * A::from(0.2).unwrap();
+        let retention_score = quality_score * A::from(0.5).expect("unwrap failed")
+            + freshness_score * A::from(0.3).expect("unwrap failed")
+            + age_score * A::from(0.2).expect("unwrap failed");
 
         Ok(retention_score)
     }
@@ -924,7 +924,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let max_age = 7200.0; // 2 hours
 
         let age_score = (max_age - age_seconds.min(max_age)) / max_age;
-        A::from(age_score.max(0.0)).unwrap()
+        A::from(age_score.max(0.0)).expect("unwrap failed")
     }
 
     /// Updates throughput statistics
@@ -932,12 +932,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let time_since_last = self.last_processing.elapsed().as_secs_f64();
         if time_since_last > 0.0 {
             let current_throughput = items_processed as f64 / time_since_last;
-            let throughput_value = A::from(current_throughput).unwrap();
+            let throughput_value = A::from(current_throughput).expect("unwrap failed");
 
             self.statistics.throughput_stats.current_throughput = throughput_value;
 
             // Update average throughput (simple moving average)
-            let alpha = A::from(0.1).unwrap(); // Smoothing factor
+            let alpha = A::from(0.1).expect("unwrap failed"); // Smoothing factor
             self.statistics.throughput_stats.avg_throughput = alpha * throughput_value
                 + (A::one() - alpha) * self.statistics.throughput_stats.avg_throughput;
 
@@ -990,7 +990,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             // More than 1 second
             let adaptation = Adaptation {
                 adaptation_type: AdaptationType::BufferSize,
-                magnitude: A::from(-0.2).unwrap(), // Reduce by 20%
+                magnitude: A::from(-0.2).expect("unwrap failed"), // Reduce by 20%
                 target_component: "adaptive_buffer".to_string(),
                 parameters: std::collections::HashMap::new(),
                 priority: AdaptationPriority::Normal,
@@ -1004,7 +1004,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         if avg_processing_time < 100.0 && avg_utilization < 0.3 {
             let adaptation = Adaptation {
                 adaptation_type: AdaptationType::BufferSize,
-                magnitude: A::from(0.3).unwrap(), // Increase by 30%
+                magnitude: A::from(0.3).expect("unwrap failed"), // Increase by 30%
                 target_component: "adaptive_buffer".to_string(),
                 parameters: std::collections::HashMap::new(),
                 priority: AdaptationPriority::Low,
@@ -1131,12 +1131,12 @@ impl<A: Float + Send + Sync + Send + Sync> BufferSizingStrategy<A> {
             strategy_type,
             target_size: initial_size,
             adjustment_params: SizeAdjustmentParams {
-                growth_rate: A::from(0.2).unwrap(),
-                shrinkage_rate: A::from(0.15).unwrap(),
-                stability_threshold: A::from(0.05).unwrap(),
-                performance_sensitivity: A::from(0.1).unwrap(),
-                quality_sensitivity: A::from(0.1).unwrap(),
-                memory_sensitivity: A::from(0.2).unwrap(),
+                growth_rate: A::from(0.2).expect("unwrap failed"),
+                shrinkage_rate: A::from(0.15).expect("unwrap failed"),
+                stability_threshold: A::from(0.05).expect("unwrap failed"),
+                performance_sensitivity: A::from(0.1).expect("unwrap failed"),
+                quality_sensitivity: A::from(0.1).expect("unwrap failed"),
+                memory_sensitivity: A::from(0.2).expect("unwrap failed"),
             },
             performance_feedback: VecDeque::with_capacity(100),
             sizing_history: VecDeque::with_capacity(100),
@@ -1155,22 +1155,22 @@ impl<A: Float + Send + Sync + Send + Sync> DataRetentionPolicy<A> {
                 adaptive_limits: true,
             },
             quality_policy: QualityBasedRetention {
-                min_quality_threshold: A::from(0.3).unwrap(),
-                quality_weight: A::from(0.5).unwrap(),
+                min_quality_threshold: A::from(0.3).expect("unwrap failed"),
+                quality_weight: A::from(0.5).expect("unwrap failed"),
                 adaptive_thresholds: true,
                 quality_targets: QualityDistributionTargets {
-                    high_quality_target: A::from(0.3).unwrap(),
-                    medium_quality_target: A::from(0.5).unwrap(),
-                    low_quality_target: A::from(0.2).unwrap(),
-                    high_quality_threshold: A::from(0.8).unwrap(),
-                    medium_quality_threshold: A::from(0.5).unwrap(),
+                    high_quality_target: A::from(0.3).expect("unwrap failed"),
+                    medium_quality_target: A::from(0.5).expect("unwrap failed"),
+                    low_quality_target: A::from(0.2).expect("unwrap failed"),
+                    high_quality_threshold: A::from(0.8).expect("unwrap failed"),
+                    medium_quality_threshold: A::from(0.5).expect("unwrap failed"),
                 },
             },
             relevance_policy: RelevanceBasedRetention {
                 relevance_method: RelevanceMethod::Similarity,
-                relevance_weight: A::from(0.2).unwrap(),
+                relevance_weight: A::from(0.2).expect("unwrap failed"),
                 temporal_decay: true,
-                decay_rate: A::from(0.1).unwrap(),
+                decay_rate: A::from(0.1).expect("unwrap failed"),
             },
             retention_scorer: RetentionScorer::new(),
         }
@@ -1181,12 +1181,12 @@ impl<A: Float + Send + Sync + Send + Sync> RetentionScorer<A> {
     fn new() -> Self {
         Self {
             weights: RetentionWeights {
-                age_weight: A::from(0.2).unwrap(),
-                quality_weight: A::from(0.3).unwrap(),
-                relevance_weight: A::from(0.2).unwrap(),
-                priority_weight: A::from(0.15).unwrap(),
-                freshness_weight: A::from(0.1).unwrap(),
-                diversity_weight: A::from(0.05).unwrap(),
+                age_weight: A::from(0.2).expect("unwrap failed"),
+                quality_weight: A::from(0.3).expect("unwrap failed"),
+                relevance_weight: A::from(0.2).expect("unwrap failed"),
+                priority_weight: A::from(0.15).expect("unwrap failed"),
+                freshness_weight: A::from(0.1).expect("unwrap failed"),
+                diversity_weight: A::from(0.05).expect("unwrap failed"),
             },
             scoring_history: VecDeque::with_capacity(1000),
             performance_feedback: VecDeque::with_capacity(100),

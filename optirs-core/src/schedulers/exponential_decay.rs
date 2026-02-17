@@ -80,7 +80,8 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
 
         // Calculate learning rate decay
         // lr = initial_lr * decay_rate^(step / decay_steps)
-        let power = A::from(self.step).unwrap() / A::from(self.decay_steps).unwrap();
+        let power = A::from(self.step).expect("unwrap failed")
+            / A::from(self.decay_steps).expect("unwrap failed");
         self.current_lr = self.initial_lr * self.decay_rate.powf(power);
 
         self.current_lr

@@ -675,7 +675,7 @@ impl PerformanceTestSuite {
 
             // Check if we should stop on failure
             if let TestExecutionStatus::Failed | TestExecutionStatus::Error =
-                results.last().unwrap().status
+                results.last().expect("unwrap failed").status
             {
                 // For now, continue execution even on failures
                 // In the future, this could be configurable
@@ -1409,7 +1409,8 @@ mod tests {
 
     #[test]
     fn test_test_case_filtering() {
-        let mut suite = PerformanceTestSuite::new(TestSuiteConfig::default()).unwrap();
+        let mut suite =
+            PerformanceTestSuite::new(TestSuiteConfig::default()).expect("unwrap failed");
 
         let test_case = PerformanceTestCase {
             name: "test1".to_string(),
@@ -1432,7 +1433,7 @@ mod tests {
 
     #[test]
     fn test_environment_requirements_validation() {
-        let suite = PerformanceTestSuite::new(TestSuiteConfig::default()).unwrap();
+        let suite = PerformanceTestSuite::new(TestSuiteConfig::default()).expect("unwrap failed");
         let requirements = EnvironmentRequirements::default();
         assert!(suite.check_environment_requirements(&requirements).is_ok());
     }

@@ -960,7 +960,7 @@ mod tests {
         let cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
         assert!(cache.is_ok());
 
-        let mut c = cache.unwrap();
+        let mut c = cache.expect("unwrap failed");
         let tensor = Array2::<f32>::ones((10, 10));
         assert!(c.store("test".to_string(), tensor).is_ok());
         assert!(c.contains("test"));
@@ -971,12 +971,12 @@ mod tests {
         let compression = CompressionManager::<f32>::new(0.5);
         assert!(compression.is_ok());
 
-        let comp = compression.unwrap();
+        let comp = compression.expect("unwrap failed");
         let tensor = Array2::<f32>::ones((5, 5));
         let compressed = comp.compress(&tensor);
         assert!(compressed.is_ok());
 
-        let decompressed = comp.decompress(&compressed.unwrap());
+        let decompressed = comp.decompress(&compressed.expect("unwrap failed"));
         assert!(decompressed.is_ok());
     }
 

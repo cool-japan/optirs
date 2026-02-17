@@ -58,15 +58,15 @@ pub struct Ranger<T: Float + ScalarOperand> {
 impl<T: Float + ScalarOperand> Default for Ranger<T> {
     fn default() -> Self {
         Self::new(
-            T::from(0.001).unwrap(), // learning_rate
-            T::from(0.9).unwrap(),   // beta1
-            T::from(0.999).unwrap(), // beta2
-            T::from(1e-8).unwrap(),  // epsilon
-            T::zero(),               // weight_decay
-            5,                       // lookahead_k
-            T::from(0.5).unwrap(),   // lookahead_alpha
+            T::from(0.001).expect("unwrap failed"), // learning_rate
+            T::from(0.9).expect("unwrap failed"),   // beta1
+            T::from(0.999).expect("unwrap failed"), // beta2
+            T::from(1e-8).expect("unwrap failed"),  // epsilon
+            T::zero(),                              // weight_decay
+            5,                                      // lookahead_k
+            T::from(0.5).expect("unwrap failed"),   // lookahead_alpha
         )
-        .unwrap()
+        .expect("unwrap failed")
     }
 }
 
@@ -94,7 +94,7 @@ impl<T: Float + ScalarOperand> Ranger<T> {
     ///     0.0,    // weight_decay
     ///     5,      // lookahead_k
     ///     0.5     // lookahead_alpha
-    /// ).unwrap();
+    /// ).expect("unwrap failed");
     /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -107,34 +107,38 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         lookahead_alpha: T,
     ) -> Result<Self> {
         // Validate parameters
-        if learning_rate.to_f64().unwrap() <= 0.0 {
+        if learning_rate.to_f64().expect("unwrap failed") <= 0.0 {
             return Err(OptimError::InvalidParameter(format!(
                 "learning_rate must be positive, got {}",
-                learning_rate.to_f64().unwrap()
+                learning_rate.to_f64().expect("unwrap failed")
             )));
         }
-        if beta1.to_f64().unwrap() <= 0.0 || beta1.to_f64().unwrap() >= 1.0 {
+        if beta1.to_f64().expect("unwrap failed") <= 0.0
+            || beta1.to_f64().expect("unwrap failed") >= 1.0
+        {
             return Err(OptimError::InvalidParameter(format!(
                 "beta1 must be in (0, 1), got {}",
-                beta1.to_f64().unwrap()
+                beta1.to_f64().expect("unwrap failed")
             )));
         }
-        if beta2.to_f64().unwrap() <= 0.0 || beta2.to_f64().unwrap() >= 1.0 {
+        if beta2.to_f64().expect("unwrap failed") <= 0.0
+            || beta2.to_f64().expect("unwrap failed") >= 1.0
+        {
             return Err(OptimError::InvalidParameter(format!(
                 "beta2 must be in (0, 1), got {}",
-                beta2.to_f64().unwrap()
+                beta2.to_f64().expect("unwrap failed")
             )));
         }
-        if epsilon.to_f64().unwrap() <= 0.0 {
+        if epsilon.to_f64().expect("unwrap failed") <= 0.0 {
             return Err(OptimError::InvalidParameter(format!(
                 "epsilon must be positive, got {}",
-                epsilon.to_f64().unwrap()
+                epsilon.to_f64().expect("unwrap failed")
             )));
         }
-        if weight_decay.to_f64().unwrap() < 0.0 {
+        if weight_decay.to_f64().expect("unwrap failed") < 0.0 {
             return Err(OptimError::InvalidParameter(format!(
                 "weight_decay must be non-negative, got {}",
-                weight_decay.to_f64().unwrap()
+                weight_decay.to_f64().expect("unwrap failed")
             )));
         }
         if lookahead_k == 0 {
@@ -142,10 +146,12 @@ impl<T: Float + ScalarOperand> Ranger<T> {
                 "lookahead_k must be positive".to_string(),
             ));
         }
-        if lookahead_alpha.to_f64().unwrap() <= 0.0 || lookahead_alpha.to_f64().unwrap() > 1.0 {
+        if lookahead_alpha.to_f64().expect("unwrap failed") <= 0.0
+            || lookahead_alpha.to_f64().expect("unwrap failed") > 1.0
+        {
             return Err(OptimError::InvalidParameter(format!(
                 "lookahead_alpha must be in (0, 1], got {}",
-                lookahead_alpha.to_f64().unwrap()
+                lookahead_alpha.to_f64().expect("unwrap failed")
             )));
         }
 
@@ -178,7 +184,7 @@ impl<T: Float + ScalarOperand> Ranger<T> {
     /// let params = array![1.0, 2.0, 3.0];
     /// let grads = array![0.1, 0.2, 0.3];
     ///
-    /// let updated_params = optimizer.step(params.view(), grads.view()).unwrap();
+    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
     /// ```
     pub fn step(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
         let n = params.len();
@@ -199,13 +205,13 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         }
 
         self.step_count += 1;
-        let t = T::from(self.step_count).unwrap();
+        let t = T::from(self.step_count).expect("unwrap failed");
 
-        let momentum = self.momentum.as_mut().unwrap();
-        let velocity = self.velocity.as_mut().unwrap();
+        let momentum = self.momentum.as_mut().expect("unwrap failed");
+        let velocity = self.velocity.as_mut().expect("unwrap failed");
 
         let one = T::one();
-        let two = T::from(2).unwrap();
+        let two = T::from(2).expect("unwrap failed");
 
         // Apply weight decay if configured
         let effective_grads = if self.weight_decay > T::zero() {
@@ -236,11 +242,12 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         // RAdam: Apply variance rectification
         let mut updated_params = params.to_owned();
 
-        if rho_t.to_f64().unwrap() > 4.0 {
+        if rho_t.to_f64().expect("unwrap failed") > 4.0 {
             // Use adaptive learning rate with variance rectification
-            let rect_term = ((rho_t - T::from(4).unwrap()) * (rho_t - two) * rho_inf
-                / ((rho_inf - T::from(4).unwrap()) * (rho_inf - two) * rho_t))
-                .sqrt();
+            let rect_term =
+                ((rho_t - T::from(4).expect("unwrap failed")) * (rho_t - two) * rho_inf
+                    / ((rho_inf - T::from(4).expect("unwrap failed")) * (rho_inf - two) * rho_t))
+                    .sqrt();
 
             for i in 0..n {
                 let m_hat = momentum[i] / bias_correction1;
@@ -258,7 +265,7 @@ impl<T: Float + ScalarOperand> Ranger<T> {
 
         // Lookahead: Update slow weights every k steps
         if self.step_count.is_multiple_of(self.lookahead_k) {
-            let slow = self.slow_weights.as_mut().unwrap();
+            let slow = self.slow_weights.as_mut().expect("unwrap failed");
             for i in 0..n {
                 slow[i] = slow[i] + self.lookahead_alpha * (updated_params[i] - slow[i]);
             }
@@ -302,13 +309,13 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         if self.step_count == 0 {
             return false;
         }
-        let t = T::from(self.step_count).unwrap();
+        let t = T::from(self.step_count).expect("unwrap failed");
         let one = T::one();
-        let two = T::from(2).unwrap();
+        let two = T::from(2).expect("unwrap failed");
         let bias_correction2 = one - self.beta2.powf(t);
         let rho_inf = two / (one - self.beta2) - one;
         let rho_t = rho_inf - two * t * self.beta2.powf(t) / bias_correction2;
-        rho_t.to_f64().unwrap() > 4.0
+        rho_t.to_f64().expect("unwrap failed") > 4.0
     }
 }
 
@@ -327,7 +334,8 @@ mod tests {
 
     #[test]
     fn test_ranger_custom_creation() {
-        let optimizer = Ranger::<f32>::new(0.002, 0.95, 0.9999, 1e-7, 0.01, 6, 0.6).unwrap();
+        let optimizer =
+            Ranger::<f32>::new(0.002, 0.95, 0.9999, 1e-7, 0.01, 6, 0.6).expect("unwrap failed");
         assert_eq!(optimizer.step_count(), 0);
     }
 
@@ -337,7 +345,9 @@ mod tests {
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
-        let updated_params = optimizer.step(params.view(), grads.view()).unwrap();
+        let updated_params = optimizer
+            .step(params.view(), grads.view())
+            .expect("unwrap failed");
         assert_eq!(updated_params.len(), 3);
         assert_eq!(optimizer.step_count(), 1);
 
@@ -348,12 +358,15 @@ mod tests {
 
     #[test]
     fn test_ranger_slow_updates() {
-        let mut optimizer = Ranger::<f32>::new(0.001, 0.9, 0.999, 1e-8, 0.0, 3, 0.5).unwrap();
+        let mut optimizer =
+            Ranger::<f32>::new(0.001, 0.9, 0.999, 1e-8, 0.0, 3, 0.5).expect("unwrap failed");
         let mut params = array![1.0, 2.0, 3.0];
 
         for _ in 0..3 {
             let grads = array![0.1, 0.2, 0.3];
-            params = optimizer.step(params.view(), grads.view()).unwrap();
+            params = optimizer
+                .step(params.view(), grads.view())
+                .expect("unwrap failed");
         }
         assert_eq!(optimizer.slow_update_count(), 1);
     }
@@ -371,13 +384,15 @@ mod tests {
             5,     // lookahead_k
             0.5,   // lookahead_alpha
         )
-        .unwrap();
+        .expect("unwrap failed");
         let mut params = array![5.0];
 
         // Ranger combines RAdam (adaptive LR) with Lookahead (slow updates)
         for _ in 0..500 {
             let grads = params.mapv(|x| 2.0 * x);
-            params = optimizer.step(params.view(), grads.view()).unwrap();
+            params = optimizer
+                .step(params.view(), grads.view())
+                .expect("unwrap failed");
         }
 
         assert!(
@@ -394,7 +409,9 @@ mod tests {
         let grads = array![0.1, 0.2, 0.3];
 
         for _ in 0..10 {
-            optimizer.step(params.view(), grads.view()).unwrap();
+            optimizer
+                .step(params.view(), grads.view())
+                .expect("unwrap failed");
         }
 
         optimizer.reset();
@@ -414,7 +431,9 @@ mod tests {
 
         // After several steps, should be rectified
         for _ in 0..10 {
-            optimizer.step(params.view(), grads.view()).unwrap();
+            optimizer
+                .step(params.view(), grads.view())
+                .expect("unwrap failed");
         }
         assert!(optimizer.is_rectified());
     }

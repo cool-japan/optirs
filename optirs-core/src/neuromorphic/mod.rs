@@ -415,14 +415,14 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
         }
 
         let mean = self.inter_spike_intervals.iter().cloned().sum::<T>()
-            / T::from(self.inter_spike_intervals.len()).unwrap();
+            / T::from(self.inter_spike_intervals.len()).expect("unwrap failed");
 
         let variance = self
             .inter_spike_intervals
             .iter()
             .map(|&isi| (isi - mean) * (isi - mean))
             .sum::<T>()
-            / T::from(self.inter_spike_intervals.len()).unwrap();
+            / T::from(self.inter_spike_intervals.len()).expect("unwrap failed");
 
         variance.sqrt() / mean
     }
@@ -446,7 +446,7 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
         }
 
         let three = T::from(3.0).unwrap_or_else(|| T::zero());
-        three * lv_sum / T::from(self.inter_spike_intervals.len() - 1).unwrap()
+        three * lv_sum / T::from(self.inter_spike_intervals.len() - 1).expect("unwrap failed")
     }
 }
 

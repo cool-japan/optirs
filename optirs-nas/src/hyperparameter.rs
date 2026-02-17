@@ -384,7 +384,7 @@ impl<T: Float + Default + Clone + Send + Sync> HyperparameterOptimizer<T> {
                 || self
                     .best_config
                     .as_ref()
-                    .unwrap()
+                    .expect("unwrap failed")
                     .score
                     .unwrap_or_else(T::zero)
                     < score
@@ -464,19 +464,21 @@ impl<T: Float + Default + Clone + Send + Sync> HyperparameterOptimizer<T> {
                     if range.log_scale {
                         let log_min = range.min_value.ln();
                         let log_max = range.max_value.ln();
-                        let log_val =
-                            rng.gen_range(log_min.to_f64().unwrap()..=log_max.to_f64().unwrap());
+                        let log_val = rng.gen_range(
+                            log_min.to_f64().expect("unwrap failed")
+                                ..=log_max.to_f64().expect("unwrap failed"),
+                        );
                         T::from(log_val.exp()).unwrap_or_else(T::zero)
                     } else {
-                        let min_f64 = range.min_value.to_f64().unwrap();
-                        let max_f64 = range.max_value.to_f64().unwrap();
+                        let min_f64 = range.min_value.to_f64().expect("unwrap failed");
+                        let max_f64 = range.max_value.to_f64().expect("unwrap failed");
                         T::from(rng.gen_range(min_f64..=max_f64)).unwrap_or_else(T::zero)
                     }
                 }
                 _ => {
                     // For simplicity, use uniform for other distributions
-                    let min_f64 = range.min_value.to_f64().unwrap();
-                    let max_f64 = range.max_value.to_f64().unwrap();
+                    let min_f64 = range.min_value.to_f64().expect("unwrap failed");
+                    let max_f64 = range.max_value.to_f64().expect("unwrap failed");
                     T::from(rng.gen_range(min_f64..=max_f64)).unwrap_or_else(T::zero)
                 }
             };
@@ -866,6 +868,9 @@ mod tests {
 
         assert_eq!(optimizer.state.num_evaluations, 1);
         assert!(optimizer.best_config.is_some());
-        assert_eq!(optimizer.best_config.as_ref().unwrap().score, Some(0.85));
+        assert_eq!(
+            optimizer.best_config.as_ref().expect("unwrap failed").score,
+            Some(0.85)
+        );
     }
 }

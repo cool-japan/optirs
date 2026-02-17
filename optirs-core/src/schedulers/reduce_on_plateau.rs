@@ -76,7 +76,7 @@ impl<A: Float + Debug + Send + Sync> ReduceOnPlateau<A> {
             min_lr,
             stagnation_count: 0,
             best_metric: None,
-            threshold: A::from(1e-4).unwrap(),
+            threshold: A::from(1e-4).expect("unwrap failed"),
             mode_is_min: true,
         }
     }

@@ -224,7 +224,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleTensor<T>
     pub fn randn(shape: &[usize], dtype: CandleDataType, device: CandleDevice) -> Self {
         let size = shape.iter().product();
         let data = Array1::from_vec(
-            (0..size).map(|_| T::from(scirs2_core::random::f32()).unwrap()).collect()
+            (0..size).map(|_| T::from(scirs2_core::random::f32()).expect("unwrap failed")).collect()
         );
         
         Self::new(data, false, dtype, device)
@@ -450,7 +450,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleOptimizer
                 // Distribute gradients to tensors
                 for (name_tensor) in &mut self.tensors {
                     if tensor.requires_grad && tensor.node_id.is_some() {
-                        let node_id = tensor.node_id.unwrap();
+                        let node_id = tensor.node_id.expect("unwrap failed");
                         if node_id < gradients.len() {
                             let scaled_grad = gradients[node_id] / scale_factor;
                             
@@ -567,7 +567,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> CandleOptimizer
                 let mut total_norm_squared = 0.0f32;
                 for tensor in self.tensors.values() {
                     if let Some(ref grad) = tensor.grad {
-                        total_norm_squared += grad.mapv(|g| g.to_f32().unwrap().powi(2)).sum();
+                        total_norm_squared += grad.mapv(|g| g.to_f32().expect("unwrap failed").powi(2)).sum();
                     }
                 }
                 

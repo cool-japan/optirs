@@ -361,7 +361,7 @@ impl AdaptiveOptimizer {
 
         // Add to history
         {
-            let mut history = self.performance_history.write().unwrap();
+            let mut history = self.performance_history.write().expect("lock poisoned");
             if history.len() >= 10000 {
                 history.pop_front();
             }
@@ -370,7 +370,7 @@ impl AdaptiveOptimizer {
 
         // Update baseline if first measurement
         {
-            let mut baseline = self.baseline_metrics.write().unwrap();
+            let mut baseline = self.baseline_metrics.write().expect("lock poisoned");
             if baseline.is_none() {
                 *baseline = Some(metrics.clone());
             }
@@ -378,7 +378,7 @@ impl AdaptiveOptimizer {
 
         // Increment operation counter
         {
-            let mut counter = self.operation_counter.lock().unwrap();
+            let mut counter = self.operation_counter.lock().expect("lock poisoned");
             *counter += 1;
         }
 
@@ -394,7 +394,7 @@ impl AdaptiveOptimizer {
     fn should_trigger_adaptation(&self, current_metrics: &AdaptationMetrics) -> Result<bool> {
         // Check operation count trigger
         {
-            let counter = self.operation_counter.lock().unwrap();
+            let counter = self.operation_counter.lock().expect("lock poisoned");
             if *counter >= self.triggers.operation_count {
                 return Ok(true);
             }
@@ -402,14 +402,14 @@ impl AdaptiveOptimizer {
 
         // Check time interval trigger
         {
-            let last_adaptation = self.last_adaptation.lock().unwrap();
+            let last_adaptation = self.last_adaptation.lock().expect("lock poisoned");
             if last_adaptation.elapsed() >= self.triggers.time_interval {
                 return Ok(true);
             }
         }
 
         // Check performance threshold trigger
-        if let Some(baseline) = self.baseline_metrics.read().unwrap().as_ref() {
+        if let Some(baseline) = self.baseline_metrics.read().expect("lock poisoned").as_ref() {
             let performance_degradation = (baseline.performance_score() - current_metrics.performance_score()) / baseline.performance_score();
             if performance_degradation > self.triggers.performance_threshold as f64 {
                 return Ok(true);
@@ -436,10 +436,10 @@ impl AdaptiveOptimizer {
 
     /// Heuristic-based adaptation
     fn adapt_heuristic(&self) -> Result<()> {
-        let mut state = self.optimization_state.lock().unwrap();
+        let mut state = self.optimization_state.lock().expect("lock poisoned");
 
         if let OptimizationState::Heuristic { improvement_trend, last_performance } = &mut *state {
-            let history = self.performance_history.read().unwrap();
+            let history = self.performance_history.read().expect("lock poisoned");
 
             if let Some(latest) = history.back() {
                 let current_performance = latest.metrics.performance_score();
@@ -466,7 +466,7 @@ impl AdaptiveOptimizer {
         let mut new_params = current_params.clone();
 
         // Simple heuristic: if occupancy is low, try smaller blocks
-        let history = self.performance_history.read().unwrap();
+        let history = self.performance_history.read().expect("lock poisoned");
         if let Some(latest) = history.back() {
             if latest.metrics.occupancy < 0.5 {
                 new_params.block_dims.0 = (new_params.block_dims.0 / 2).max(32);
@@ -483,8 +483,8 @@ impl AdaptiveOptimizer {
         }
 
         // Store the adjusted parameters
-        let workload_key = self.create_workload_key(&history.back().unwrap().workload_context);
-        let mut best_params = self.best_parameters.write().unwrap();
+        let workload_key = self.create_workload_key(&history.back().expect("unwrap failed").workload_context);
+        let mut best_params = self.best_parameters.write().expect("lock poisoned");
         best_params.insert(workload_key, new_params);
 
         Ok(())
@@ -492,7 +492,7 @@ impl AdaptiveOptimizer {
 
     /// Genetic algorithm adaptation
     fn adapt_genetic(&self) -> Result<()> {
-        let mut state = self.optimization_state.lock().unwrap();
+        let mut state = self.optimization_state.lock().expect("lock poisoned");
 
         if let OptimizationState::Genetic { population, generation, fitness_scores } = &mut *state {
             // Evaluate fitness for current population
@@ -508,10 +508,10 @@ impl AdaptiveOptimizer {
                 .position(|&score| score == fitness_scores.iter().fold(0.0, |a, &b| a.max(b)))
                 .unwrap_or(0);
 
-            let history = self.performance_history.read().unwrap();
+            let history = self.performance_history.read().expect("lock poisoned");
             if let Some(latest) = history.back() {
                 let workload_key = self.create_workload_key(&latest.workload_context);
-                let mut best_params = self.best_parameters.write().unwrap();
+                let mut best_params = self.best_parameters.write().expect("lock poisoned");
                 best_params.insert(workload_key, population[best_idx].clone());
             }
         }
@@ -522,7 +522,7 @@ impl AdaptiveOptimizer {
 
     /// Evaluates fitness for genetic algorithm
     fn evaluate_genetic_fitness(&self, population: &[KernelParameters], fitness_scores: &mut [f64]) -> Result<()> {
-        let history = self.performance_history.read().unwrap();
+        let history = self.performance_history.read().expect("lock poisoned");
 
         for (i, params) in population.iter().enumerate() {
             // Find similar configurations in history
@@ -553,7 +553,7 @@ impl AdaptiveOptimizer {
         // Keep best individuals (elitism)
         let elite_count = population.len() / 10; // Top 10%
         let mut sorted_indices: Vec<usize> = (0..population.len()).collect();
-        sorted_indices.sort_by(|&a, &b| fitness_scores[b].partial_cmp(&fitness_scores[a]).unwrap());
+        sorted_indices.sort_by(|&a, &b| fitness_scores[b].partial_cmp(&fitness_scores[a]).expect("unwrap failed"));
 
         for &idx in sorted_indices.iter().take(elite_count) {
             new_population.push(population[idx].clone());
@@ -709,23 +709,23 @@ impl AdaptiveOptimizer {
 
     /// Updates the last adaptation timestamp
     fn update_adaptation_timestamp(&self) {
-        *self.last_adaptation.lock().unwrap() = Instant::now();
-        *self.operation_counter.lock().unwrap() = 0;
+        *self.last_adaptation.lock().expect("lock poisoned") = Instant::now();
+        *self.operation_counter.lock().expect("lock poisoned") = 0;
     }
 
     /// Gets the best parameters for a given workload
     pub fn get_best_parameters(&self, workload: &WorkloadContext) -> Option<KernelParameters> {
         let workload_key = self.create_workload_key(workload);
-        self.best_parameters.read().unwrap().get(&workload_key).cloned()
+        self.best_parameters.read().expect("lock poisoned").get(&workload_key).cloned()
     }
 
     /// Gets adaptation statistics
     pub fn get_adaptation_statistics(&self) -> AdaptationStatistics {
-        let history = self.performance_history.read().unwrap();
-        let best_params = self.best_parameters.read().unwrap();
+        let history = self.performance_history.read().expect("lock poisoned");
+        let best_params = self.best_parameters.read().expect("lock poisoned");
 
-        let total_adaptations = *self.operation_counter.lock().unwrap();
-        let last_adaptation_time = *self.last_adaptation.lock().unwrap();
+        let total_adaptations = *self.operation_counter.lock().expect("lock poisoned");
+        let last_adaptation_time = *self.last_adaptation.lock().expect("lock poisoned");
 
         let performance_improvement = if history.len() >= 2 {
             let recent_avg = history.iter().rev().take(100)

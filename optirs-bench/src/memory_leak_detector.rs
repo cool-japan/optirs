@@ -1362,11 +1362,11 @@ mod tests {
             optimizer_context: None,
         };
 
-        tracker.record_allocation(event).unwrap();
+        tracker.record_allocation(event).expect("unwrap failed");
         assert_eq!(tracker.total_allocations.load(Ordering::Relaxed), 1);
         assert_eq!(tracker.current_memory_usage.load(Ordering::Relaxed), 1024);
 
-        tracker.record_deallocation(1).unwrap();
+        tracker.record_deallocation(1).expect("unwrap failed");
         assert_eq!(tracker.total_deallocations.load(Ordering::Relaxed), 1);
         assert_eq!(tracker.current_memory_usage.load(Ordering::Relaxed), 0);
     }
@@ -1395,7 +1395,9 @@ mod tests {
             fragmentation_level: 0.1,
         });
 
-        let result = detector.detect_leaks(&VecDeque::new(), &snapshots).unwrap();
+        let result = detector
+            .detect_leaks(&VecDeque::new(), &snapshots)
+            .expect("unwrap failed");
         assert!(result.leak_detected);
         assert!(result.severity > 0.0);
         assert_eq!(result.leaked_memory_bytes, 1000);

@@ -432,8 +432,8 @@ impl<A: Float + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync> Reg
                     custom_efficiency: HashMap::new(),
                 },
                 convergence: ConvergenceStatistics {
-                    mean_objective: A::from(0.01).unwrap(),
-                    std_objective: A::from(0.001).unwrap(),
+                    mean_objective: A::from(0.01).expect("unwrap failed"),
+                    std_objective: A::from(0.001).expect("unwrap failed"),
                     mean_convergence_rate: 0.95,
                     convergence_consistency: 0.9,
                 },

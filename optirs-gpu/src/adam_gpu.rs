@@ -159,40 +159,40 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdamGpu<A> {
         // Set kernel parameters
         #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
-            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
-            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
-            kernel.set_buffer("m", gpu_memory.m_gpu.as_ref().unwrap());
-            kernel.set_buffer("v", gpu_memory.v_gpu.as_ref().unwrap());
+            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("m", gpu_memory.m_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("v", gpu_memory.v_gpu.as_ref().expect("unwrap failed"));
 
             // Convert Float values to concrete types for kernel
             if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                 kernel.set_f32(
                     "lr",
-                    self.cpu_optimizer.get_learning_rate().to_f32().unwrap(),
+                    self.cpu_optimizer.get_learning_rate().to_f32().expect("unwrap failed"),
                 );
-                kernel.set_f32("beta1", self.cpu_optimizer.beta1.to_f32().unwrap());
-                kernel.set_f32("beta2", self.cpu_optimizer.beta2.to_f32().unwrap());
-                kernel.set_f32("eps", self.cpu_optimizer.epsilon.to_f32().unwrap());
+                kernel.set_f32("beta1", self.cpu_optimizer.beta1.to_f32().expect("unwrap failed"));
+                kernel.set_f32("beta2", self.cpu_optimizer.beta2.to_f32().expect("unwrap failed"));
+                kernel.set_f32("eps", self.cpu_optimizer.epsilon.to_f32().expect("unwrap failed"));
                 kernel.set_f32(
                     "weight_decay",
-                    self.cpu_optimizer.weight_decay.to_f32().unwrap(),
+                    self.cpu_optimizer.weight_decay.to_f32().expect("unwrap failed"),
                 );
-                kernel.set_f32("bias_correction1", bias_correction1.to_f32().unwrap());
-                kernel.set_f32("bias_correction2", bias_correction2.to_f32().unwrap());
+                kernel.set_f32("bias_correction1", bias_correction1.to_f32().expect("unwrap failed"));
+                kernel.set_f32("bias_correction2", bias_correction2.to_f32().expect("unwrap failed"));
             } else {
                 kernel.set_f64(
                     "lr",
-                    self.cpu_optimizer.get_learning_rate().to_f64().unwrap(),
+                    self.cpu_optimizer.get_learning_rate().to_f64().expect("unwrap failed"),
                 );
-                kernel.set_f64("beta1", self.cpu_optimizer.beta1.to_f64().unwrap());
-                kernel.set_f64("beta2", self.cpu_optimizer.beta2.to_f64().unwrap());
-                kernel.set_f64("eps", self.cpu_optimizer.epsilon.to_f64().unwrap());
+                kernel.set_f64("beta1", self.cpu_optimizer.beta1.to_f64().expect("unwrap failed"));
+                kernel.set_f64("beta2", self.cpu_optimizer.beta2.to_f64().expect("unwrap failed"));
+                kernel.set_f64("eps", self.cpu_optimizer.epsilon.to_f64().expect("unwrap failed"));
                 kernel.set_f64(
                     "weight_decay",
-                    self.cpu_optimizer.weight_decay.to_f64().unwrap(),
+                    self.cpu_optimizer.weight_decay.to_f64().expect("unwrap failed"),
                 );
-                kernel.set_f64("bias_correction1", bias_correction1.to_f64().unwrap());
-                kernel.set_f64("bias_correction2", bias_correction2.to_f64().unwrap());
+                kernel.set_f64("bias_correction1", bias_correction1.to_f64().expect("unwrap failed"));
+                kernel.set_f64("bias_correction2", bias_correction2.to_f64().expect("unwrap failed"));
             }
 
             kernel.set_i32("n", params.len() as i32);
@@ -268,7 +268,7 @@ mod tests {
         let result = optimizer.step(&params, &grads);
         assert!(result.is_ok());
 
-        let updated = result.unwrap();
+        let updated = result.expect("unwrap failed");
         assert_eq!(updated.len(), 3);
     }
 

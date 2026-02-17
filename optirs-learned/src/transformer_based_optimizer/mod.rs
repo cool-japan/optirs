@@ -253,7 +253,7 @@ impl<
         let diff = prediction - target;
         let squared_diff = &diff * &diff;
         let sum = squared_diff.sum();
-        let mse = sum / T::from(prediction.len()).unwrap();
+        let mse = sum / T::from(prediction.len()).expect("unwrap failed");
 
         Ok(mse)
     }
@@ -278,8 +278,8 @@ impl<
             return Ok(0.0);
         }
 
-        let initial_loss = *recent_losses.last().unwrap();
-        let final_loss = *recent_losses.first().unwrap();
+        let initial_loss = *recent_losses.last().expect("unwrap failed");
+        let final_loss = *recent_losses.first().expect("unwrap failed");
 
         let improvement = (initial_loss - final_loss) / initial_loss;
         let improvement_f64 = improvement.to_f64().unwrap_or(0.0);

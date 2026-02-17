@@ -1033,13 +1033,13 @@ mod tests {
         let y_val = Array1::from_vec(vec![3.0]);
         let y_id = engine.create_variable("y", y_val, true);
 
-        let sum_id = engine.add(x_id, y_id).unwrap();
+        let sum_id = engine.add(x_id, y_id).expect("unwrap failed");
 
         let output_grad = Array1::from_vec(vec![1.0]);
-        engine.backward(sum_id, Some(output_grad)).unwrap();
+        engine.backward(sum_id, Some(output_grad)).expect("unwrap failed");
 
-        let x_grad = engine.get_gradient(x_id).unwrap();
-        let y_grad = engine.get_gradient(y_id).unwrap();
+        let x_grad = engine.get_gradient(x_id).expect("unwrap failed");
+        let y_grad = engine.get_gradient(y_id).expect("unwrap failed");
 
         assert_eq!(x_grad[0], 1.0);
         assert_eq!(y_grad[0], 1.0);
@@ -1072,7 +1072,7 @@ mod tests {
         let x_val = Array1::from_vec(vec![1.0]);
         let x_id = engine.create_variable("x", x_val, true);
 
-        let _exp_id = engine.exp(x_id).unwrap();
+        let _exp_id = engine.exp(x_id).expect("unwrap failed");
 
         let stats = engine.get_tape_stats();
         assert_eq!(stats.tape_length, 2);

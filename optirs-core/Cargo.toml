@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 description = "OptiRS core optimization algorithms and utilities"
+readme = "README.md"
 license.workspace = true
 repository.workspace = true
 keywords = ["optimization", "sgd", "adam", "adamw", "rmsprop"]
@@ -51,9 +52,8 @@ scirs2-optimize = { workspace = true }    # ESSENTIAL - Base optimization interf
 
 # ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
 scirs2-neural = { workspace = true }      # EVIDENCE: neuromorphic/spike_based.rs requires this
-scirs2-metrics = { workspace = true }     # EVIDENCE: benchmarking and monitoring require this
+scirs2-metrics = { workspace = true, optional = true }  # OPTIONAL: only used behind metrics-integration feature
 scirs2-stats = { workspace = true }       # EVIDENCE: multiple modules use distributions
-scirs2-series = { workspace = true }      # EVIDENCE: performance_tracking.rs requires this
 scirs2-datasets = { workspace = true, optional = true }    # OPTIONAL: cross_platform_tester.rs (benchmarking only)
 
 # ⚠️ CONDITIONAL (Uncomment only if compilation fails):
@@ -79,6 +79,7 @@ tempfile = { workspace = true }
 default = ["std"]
 std = []
 cross-platform-testing = ["scirs2-datasets"]
+metrics-integration = ["scirs2-metrics"]
 # parallel and simd features removed - use scirs2_core::parallel_ops and scirs2_core::simd_ops directly
 
 [[bench]]

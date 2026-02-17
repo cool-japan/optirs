@@ -401,15 +401,16 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for ChangePointDetect
         let first_mean = first_half.iter().sum::<f64>() / first_half.len() as f64;
         let second_mean = second_half.iter().sum::<f64>() / second_half.len() as f64;
 
-        let change_percent =
-            A::from((second_mean - first_mean) / first_mean).unwrap() * A::from(100.0).unwrap();
-        let change_detected = change_percent.abs() > A::from(5.0).unwrap(); // 5% change threshold
+        let change_percent = A::from((second_mean - first_mean) / first_mean)
+            .expect("unwrap failed")
+            * A::from(100.0).expect("unwrap failed");
+        let change_detected = change_percent.abs() > A::from(5.0).expect("unwrap failed"); // 5% change threshold
 
         Ok(RegressionResult {
             test_id: "change_point".to_string(),
             regression_detected: change_detected && change_percent > A::zero(),
             severity: if change_detected {
-                (change_percent.abs() / A::from(100.0).unwrap())
+                (change_percent.abs() / A::from(100.0).expect("unwrap failed"))
                     .min(A::one())
                     .to_f64()
                     .unwrap_or(0.0)
@@ -570,11 +571,11 @@ mod tests {
             sample_count: 100,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_secs(),
             updated_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_secs(),
         }
     }
@@ -625,7 +626,7 @@ mod tests {
 
         let result = detector
             .detect_regression(&baseline, &current_metrics, &history)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(result.test_id, "statistical_test");
         assert!(result.performance_change_percent > 15.0); // Should detect significant change
@@ -643,7 +644,7 @@ mod tests {
             let record = PerformanceRecord {
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .expect("unwrap failed")
                     .as_secs(),
                 commit_hash: None,
                 branch: None,
@@ -656,7 +657,7 @@ mod tests {
 
         let result = detector
             .detect_regression(&baseline, &current_metrics, &history)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(result.test_id, "sliding_window");
         assert!(result.performance_change_percent > 15.0);
@@ -676,7 +677,7 @@ mod tests {
             let record = PerformanceRecord {
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .expect("unwrap failed")
                     .as_secs(),
                 commit_hash: None,
                 branch: None,
@@ -692,7 +693,7 @@ mod tests {
             let record = PerformanceRecord {
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .expect("unwrap failed")
                     .as_secs(),
                 commit_hash: None,
                 branch: None,
@@ -705,7 +706,7 @@ mod tests {
 
         let result = detector
             .detect_regression(&baseline, &current_metrics, &history)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(result.test_id, "change_point");
         assert!(!result
@@ -724,7 +725,7 @@ mod tests {
 
         let result = detector
             .detect_regression(&baseline, &current_metrics, &history)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert!(!result.regression_detected);
         assert!(result

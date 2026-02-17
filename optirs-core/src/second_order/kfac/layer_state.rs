@@ -235,7 +235,9 @@ impl<
         let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
 
         // Center the data
-        let mean = data.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
+        let mean = data
+            .mean_axis(scirs2_core::ndarray::Axis(0))
+            .expect("unwrap failed");
         let centered = data - &mean;
 
         // Compute covariance: (1/(n-1)) * X^T * X
@@ -323,7 +325,8 @@ mod tests {
 
         let mut state = KFACLayerState::<f64>::new(layer_info, 0.001);
         let activations =
-            Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]).unwrap();
+            Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+                .expect("unwrap failed");
 
         state.update_input_covariance(&activations, 0.95);
 

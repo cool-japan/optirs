@@ -68,7 +68,9 @@ impl KFACUtils {
         let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
 
         // Compute mean
-        let mean = input.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
+        let mean = input
+            .mean_axis(scirs2_core::ndarray::Axis(0))
+            .expect("unwrap failed");
 
         // Compute variance
         let mut var = Array1::zeros(num_features);
@@ -316,14 +318,15 @@ mod tests {
     fn test_trace_computation() {
         let matrix =
             Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
-                .unwrap();
+                .expect("unwrap failed");
         let trace = KFACUtils::trace(&matrix);
         assert!((trace - 15.0).abs() < 1e-10); // 1 + 5 + 9 = 15
     }
 
     #[test]
     fn test_frobenius_norm() {
-        let matrix = Array2::from_shape_vec((2, 2), vec![3.0, 4.0, 0.0, 0.0]).unwrap();
+        let matrix =
+            Array2::from_shape_vec((2, 2), vec![3.0, 4.0, 0.0, 0.0]).expect("unwrap failed");
         let norm = KFACUtils::frobenius_norm(&matrix);
         assert!((norm - 5.0).abs() < 1e-10); // sqrt(9 + 16) = 5
     }
@@ -341,8 +344,9 @@ mod tests {
 
     #[test]
     fn test_matrices_approx_equal() {
-        let a = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
-        let b = Array2::from_shape_vec((2, 2), vec![1.001, 2.001, 3.001, 4.001]).unwrap();
+        let a = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("unwrap failed");
+        let b = Array2::from_shape_vec((2, 2), vec![1.001, 2.001, 3.001, 4.001])
+            .expect("unwrap failed");
 
         assert!(KFACUtils::matrices_approx_equal(&a, &b, 0.01));
         assert!(!KFACUtils::matrices_approx_equal(&a, &b, 0.0001));
@@ -350,7 +354,8 @@ mod tests {
 
     #[test]
     fn test_symmetrize() {
-        let matrix = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+        let matrix =
+            Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("unwrap failed");
         let symmetric = KFACUtils::symmetrize(&matrix);
 
         assert!((symmetric[[0, 0]] - 1.0).abs() < 1e-10);
@@ -384,10 +389,10 @@ mod tests {
 
     #[test]
     fn test_batchnorm_statistics() {
-        let input =
-            Array2::from_shape_vec((4, 2), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]).unwrap();
+        let input = Array2::from_shape_vec((4, 2), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+            .expect("unwrap failed");
 
-        let (mean, var) = KFACUtils::batchnorm_statistics(&input, 1e-8).unwrap();
+        let (mean, var) = KFACUtils::batchnorm_statistics(&input, 1e-8).expect("unwrap failed");
 
         // Expected mean: [4.0, 5.0] (column-wise average)
         assert!((mean[0] - 4.0).abs() < 1e-6);

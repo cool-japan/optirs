@@ -112,14 +112,14 @@ impl<T: scirs2_core::numeric::Float + Default + std::fmt::Debug + Send + Sync> P
         self.stats.worst_fitness = fitnesses.iter().copied().fold(T::infinity(), T::min);
         
         let sum = fitnesses.iter().fold(T::zero(), |acc, &x| acc + x);
-        self.stats.avg_fitness = sum / T::from(fitnesses.len()).unwrap();
+        self.stats.avg_fitness = sum / T::from(fitnesses.len()).expect("unwrap failed");
         
         // Calculate variance
         let mean = self.stats.avg_fitness;
         let variance_sum = fitnesses.iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x);
-        self.stats.fitness_variance = variance_sum / T::from(fitnesses.len()).unwrap();
+        self.stats.fitness_variance = variance_sum / T::from(fitnesses.len()).expect("unwrap failed");
     }
 }
 

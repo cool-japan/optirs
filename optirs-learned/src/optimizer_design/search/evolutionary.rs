@@ -615,8 +615,8 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> NSGA2State<T> {
                 });
 
                 // Set boundary points to infinite distance
-                *self.crowding_distances.get_mut(&sorted_front[0]).unwrap() = f64::INFINITY;
-                *self.crowding_distances.get_mut(&sorted_front[sorted_front.len() - 1]).unwrap() = f64::INFINITY;
+                *self.crowding_distances.get_mut(&sorted_front[0]).expect("unwrap failed") = f64::INFINITY;
+                *self.crowding_distances.get_mut(&sorted_front[sorted_front.len() - 1]).expect("unwrap failed") = f64::INFINITY;
 
                 // Calculate distances for intermediate points
                 let obj_range = self.get_objective_value(sorted_front[sorted_front.len() - 1], obj_idx)
@@ -628,7 +628,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Send + Sync> NSGA2State<T> {
                             - self.get_objective_value(sorted_front[i - 1], obj_idx))
                             / obj_range;
                         
-                        *self.crowding_distances.get_mut(&sorted_front[i]).unwrap() += distance_contrib;
+                        *self.crowding_distances.get_mut(&sorted_front[i]).expect("unwrap failed") += distance_contrib;
                     }
                 }
             }

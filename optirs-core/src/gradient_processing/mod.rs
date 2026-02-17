@@ -311,13 +311,12 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientAccum
     ///
     /// `true` if enough gradients have been accumulated and it's time to step
     pub fn accumulate(&mut self, gradients: &Array<A, D>) -> bool {
-        if self.accumulated_gradients.is_none() {
-            self.accumulated_gradients = Some(gradients.clone());
-        } else {
-            let acc = self.accumulated_gradients.as_mut().unwrap();
+        if let Some(acc) = &mut self.accumulated_gradients {
             for (acc_val, &grad_val) in acc.iter_mut().zip(gradients.iter()) {
                 *acc_val = *acc_val + grad_val;
             }
+        } else {
+            self.accumulated_gradients = Some(gradients.clone());
         }
 
         self.num_accumulated += 1;
@@ -434,7 +433,7 @@ where
     // Create noise array manually to avoid trait compatibility issues
     let shape = gradients.raw_dim();
     let mut noise = Array::zeros(shape);
-    let normal = RandNormal::new(0.0, noise_std.to_f64().unwrap_or(0.01)).unwrap();
+    let normal = RandNormal::new(0.0, noise_std.to_f64().unwrap_or(0.01)).expect("unwrap failed");
 
     for elem in noise.iter_mut() {
         *elem = A::from(rng.sample(normal)).unwrap_or(A::zero());
@@ -588,7 +587,7 @@ mod tests {
         let processor = GradientProcessor::with_config(config);
 
         let mut gradients = Array1::from_vec(vec![-8.0, 3.0, 7.0, -2.0, 6.0]);
-        processor.process(&mut gradients).unwrap();
+        processor.process(&mut gradients).expect("unwrap failed");
 
         // Check value clipping
         assert_eq!(gradients[0], -5.0);
@@ -602,7 +601,7 @@ mod tests {
         let parameters = Array1::from_vec(vec![1.0, 0.0]); // norm = 1
 
         // Gradient/parameter ratio = 5/1 = 5, max_ratio = 2
-        adaptive_gradient_clipping(&mut gradients, &parameters, 2.0).unwrap();
+        adaptive_gradient_clipping(&mut gradients, &parameters, 2.0).expect("unwrap failed");
 
         // After clipping, ratio should be 2
         let new_grad_norm = gradients.iter().fold(0.0, |acc, &x| acc + x * x).sqrt();
@@ -629,7 +628,7 @@ mod tests {
         assert!(accumulator.is_ready());
 
         // Get accumulated gradients (should be averaged)
-        let final_grads = accumulator.get_and_reset().unwrap();
+        let final_grads = accumulator.get_and_reset().expect("unwrap failed");
         assert_relative_eq!(final_grads[0], 2.0, epsilon = 1e-6); // (1+2+3)/3
         assert_relative_eq!(final_grads[1], 3.0, epsilon = 1e-6); // (2+3+4)/3
         assert_relative_eq!(final_grads[2], 4.0, epsilon = 1e-6); // (3+4+5)/3
@@ -649,7 +648,7 @@ mod tests {
         accumulator.accumulate(&grad1);
         accumulator.accumulate(&grad2);
 
-        let final_grads = accumulator.get_and_reset().unwrap();
+        let final_grads = accumulator.get_and_reset().expect("unwrap failed");
         assert_relative_eq!(final_grads[0], 4.0, epsilon = 1e-6); // 1+3
         assert_relative_eq!(final_grads[1], 6.0, epsilon = 1e-6); // 2+4
     }
@@ -704,7 +703,10 @@ mod tests {
 
         grad_mask.apply_mask(&mut gradients);
 
-        assert_eq!(gradients.as_slice().unwrap(), &[1.0, 0.0, 3.0]);
+        assert_eq!(
+            gradients.as_slice().expect("unwrap failed"),
+            &[1.0, 0.0, 3.0]
+        );
     }
 
     #[test]
@@ -713,12 +715,12 @@ mod tests {
         let mut grad_mask: GradientMask<f64, scirs2_core::ndarray::Ix1> = GradientMask::new(mask);
 
         // Freeze some indices
-        grad_mask.freeze_indices(&[0, 2]).unwrap();
+        grad_mask.freeze_indices(&[0, 2]).expect("unwrap failed");
         assert_eq!(grad_mask.num_frozen(), 2);
         assert_eq!(grad_mask.num_active(), 1);
 
         // Unfreeze one index
-        grad_mask.unfreeze_indices(&[0]).unwrap();
+        grad_mask.unfreeze_indices(&[0]).expect("unwrap failed");
         assert_eq!(grad_mask.num_frozen(), 1);
         assert_eq!(grad_mask.num_active(), 2);
     }

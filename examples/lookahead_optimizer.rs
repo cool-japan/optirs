@@ -23,7 +23,7 @@ fn compute_loss_and_gradient(
     let diff = &preds - y;
 
     // L2 loss
-    let loss = diff.mapv(|v| v * v).mean().unwrap();
+    let loss = diff.mapv(|v| v * v).mean().expect("unwrap failed");
 
     // Gradient for weights: 2/n * X^T * (X*w + b - y)
     let n = x.nrows() as f64;
@@ -158,25 +158,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sgd_weight_error = (&sgd_weights - &true_weights)
         .mapv(|v| v.abs())
         .mean()
-        .unwrap();
+        .expect("unwrap failed");
     let sgd_bias_error = (sgd_bias - true_bias).abs();
 
     let adam_weight_error = (&adam_weights - &true_weights)
         .mapv(|v| v.abs())
         .mean()
-        .unwrap();
+        .expect("unwrap failed");
     let adam_bias_error = (adam_bias - true_bias).abs();
 
     let lookahead_sgd_weight_error = (&lookahead_sgd_weights - &true_weights)
         .mapv(|v| v.abs())
         .mean()
-        .unwrap();
+        .expect("unwrap failed");
     let lookahead_sgd_bias_error = (lookahead_sgd_bias - true_bias).abs();
 
     let lookahead_adam_weight_error = (&lookahead_adam_weights - &true_weights)
         .mapv(|v| v.abs())
         .mean()
-        .unwrap();
+        .expect("unwrap failed");
     let lookahead_adam_bias_error = (lookahead_adam_bias - true_bias).abs();
 
     println!(

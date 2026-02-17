@@ -326,8 +326,8 @@ where
         self.noise_calibrator.update_calibration(
             self.step_count,
             pre_clip_norm,
-            A::from(clipping_threshold).unwrap(),
-            A::from(epsilon_spent).unwrap(),
+            A::from(clipping_threshold).expect("unwrap failed"),
+            A::from(epsilon_spent).expect("unwrap failed"),
         );
 
         // Apply base optimizer step
@@ -448,7 +448,7 @@ where
         DIM: Dimension,
     {
         let norm = self.compute_gradient_norm(gradients);
-        let threshold_a = A::from(threshold).unwrap();
+        let threshold_a = A::from(threshold).expect("unwrap failed");
 
         if norm > threshold_a {
             let scale = threshold_a / norm;
@@ -478,7 +478,7 @@ where
                 gradients.mapv_inplace(|g| {
                     // Use scirs2_core random for Gaussian noise
                     let noise_f64 = self.rng.sample(normal);
-                    let noise = A::from(noise_f64).unwrap();
+                    let noise = A::from(noise_f64).expect("unwrap failed");
                     g + noise
                 });
             }
@@ -489,7 +489,7 @@ where
                 gradients.mapv_inplace(|g| {
                     // Use scirs2_core random for Laplace-approximated noise
                     let noise_f64 = self.rng.sample(normal);
-                    let noise = A::from(noise_f64).unwrap();
+                    let noise = A::from(noise_f64).expect("unwrap failed");
                     g + noise
                 });
             }
@@ -500,7 +500,7 @@ where
                 gradients.mapv_inplace(|g| {
                     // Use scirs2_core random for Gaussian noise
                     let noise_f64 = self.rng.sample(normal);
-                    let noise = A::from(noise_f64).unwrap();
+                    let noise = A::from(noise_f64).expect("unwrap failed");
                     g + noise
                 });
             }
@@ -724,7 +724,8 @@ impl P2AlgorithmState {
         if self.count < 5 {
             self.values[self.count] = value;
             if self.count == 4 {
-                self.values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                self.values
+                    .sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
                 for i in 0..5 {
                     self.markers[i] = i as f64;
                 }
@@ -799,7 +800,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync> GradientStatisti
         }
 
         // Update statistics
-        let n = A::from(self.norm_history.len()).unwrap();
+        let n = A::from(self.norm_history.len()).expect("unwrap failed");
         self.avg_norm = self.norm_history.iter().cloned().sum::<A>() / n;
 
         let variance = self
@@ -821,8 +822,9 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync> GradientStatisti
 impl<A: Float + Default + Clone + Send + Sync> NoiseCalibrator<A> {
     fn new(config: &DifferentialPrivacyConfig) -> Self {
         Self {
-            noise_multiplier: A::from(config.noise_multiplier).unwrap(),
-            base_noise_scale: A::from(config.noise_multiplier * config.l2_norm_clip).unwrap(),
+            noise_multiplier: A::from(config.noise_multiplier).expect("unwrap failed"),
+            base_noise_scale: A::from(config.noise_multiplier * config.l2_norm_clip)
+                .expect("unwrap failed"),
             adaptive_scaling: false,
             mechanism: config.noise_mechanism,
             calibration_history: Vec::new(),
@@ -909,7 +911,7 @@ mod tests {
         let state = AdaptiveClippingState::new(1.0, 0.1);
         assert!(state.is_ok());
 
-        let state = state.unwrap();
+        let state = state.expect("unwrap failed");
         assert_eq!(state.current_threshold, 1.0);
         assert_eq!(state.adaptationlr, 0.1);
     }

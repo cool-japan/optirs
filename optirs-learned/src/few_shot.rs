@@ -1117,7 +1117,7 @@ impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
                 step: 0,
                 step_count: 0,
                 loss: None,
-                learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap(),
+                learning_rate: scirs2_core::numeric::NumCast::from(0.001).expect("unwrap failed"),
                 metadata: super::StateMetadata {
                     task_id: None,
                     optimizer_type: None,

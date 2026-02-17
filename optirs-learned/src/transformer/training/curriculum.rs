@@ -483,13 +483,13 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             .iter()
             .cloned()
             .fold(T::zero(), |a, b| a + b)
-            / T::from(task_performances.len() as f64).unwrap();
+            / T::from(task_performances.len() as f64).expect("unwrap failed");
 
         let variance = task_performances
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |a, b| a + b)
-            / T::from((task_performances.len() - 1) as f64).unwrap();
+            / T::from((task_performances.len() - 1) as f64).expect("unwrap failed");
 
         variance
     }
@@ -570,7 +570,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         );
         stats.insert(
             "active_tasks_count".to_string(),
-            T::from(self.curriculum_state.active_tasks.len() as f64).unwrap(),
+            T::from(self.curriculum_state.active_tasks.len() as f64).expect("unwrap failed"),
         );
 
         // Average competency across all tasks
@@ -581,7 +581,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
                 .values()
                 .cloned()
                 .fold(T::zero(), |a, b| a + b)
-                / T::from(self.progress_tracker.competency_levels.len() as f64).unwrap();
+                / T::from(self.progress_tracker.competency_levels.len() as f64)
+                    .expect("unwrap failed");
             stats.insert("average_competency".to_string(), avg_competency);
         }
 
@@ -590,7 +591,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
 
     /// Reset curriculum state
     pub fn reset(&mut self) {
-        self.curriculum_state = CurriculumState::new().unwrap();
+        self.curriculum_state = CurriculumState::new().expect("unwrap failed");
         self.progress_tracker.reset();
         self.performance_history.clear();
         self.task_scheduler.reset();

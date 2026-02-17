@@ -119,7 +119,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SparseGradient<A> {
 /// let mut optimizer = SparseAdam::new(0.001);
 ///
 /// // Update parameters with sparse gradient
-/// let new_params = optimizer.step_sparse(&params, &sparse_grad).unwrap();
+/// let new_params = optimizer.step_sparse(&params, &sparse_grad).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct SparseAdam<A: Float + ScalarOperand + Debug> {
@@ -150,9 +150,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SparseAdam<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).unwrap(),
-            beta2: A::from(0.999).unwrap(),
-            epsilon: A::from(1e-8).unwrap(),
+            beta1: A::from(0.9).expect("unwrap failed"),
+            beta2: A::from(0.999).expect("unwrap failed"),
+            epsilon: A::from(1e-8).expect("unwrap failed"),
             weight_decay: A::zero(),
             m: HashMap::new(),
             v: HashMap::new(),
@@ -426,7 +426,9 @@ mod tests {
         );
 
         // First update
-        let updated_params = optimizer.step_sparse(&params, &sparse_grad).unwrap();
+        let updated_params = optimizer
+            .step_sparse(&params, &sparse_grad)
+            .expect("unwrap failed");
 
         // Only the parameters at indices 1 and 3 should be updated
         assert_abs_diff_eq!(updated_params[0], 0.0);
@@ -454,8 +456,12 @@ mod tests {
         let sparse_grad = SparseGradient::from_array(&dense_grad);
 
         // Update with both optimizers
-        let sparse_result = sparse_optimizer.step_sparse(&params, &sparse_grad).unwrap();
-        let dense_result = dense_optimizer.step(&params, &dense_grad).unwrap();
+        let sparse_result = sparse_optimizer
+            .step_sparse(&params, &sparse_grad)
+            .expect("unwrap failed");
+        let dense_result = dense_optimizer
+            .step(&params, &dense_grad)
+            .expect("unwrap failed");
 
         // Results should be nearly identical
         assert_abs_diff_eq!(sparse_result[0], dense_result[0]);
@@ -477,7 +483,9 @@ mod tests {
             5,              // Total dimension
         );
 
-        params = optimizer.step_sparse(&params, &sparse_grad1).unwrap();
+        params = optimizer
+            .step_sparse(&params, &sparse_grad1)
+            .expect("unwrap failed");
 
         // Second step - update indices 0 and 2
         let sparse_grad2 = SparseGradient::new(
@@ -486,7 +494,9 @@ mod tests {
             5,              // Total dimension
         );
 
-        params = optimizer.step_sparse(&params, &sparse_grad2).unwrap();
+        params = optimizer
+            .step_sparse(&params, &sparse_grad2)
+            .expect("unwrap failed");
 
         // All parameters except index 4 should now be updated
         assert!(params[0] < 0.0);
@@ -496,13 +506,17 @@ mod tests {
         assert_abs_diff_eq!(params[4], 0.0);
 
         // Third step - update the same indices again (accumulates momentum)
-        params = optimizer.step_sparse(&params, &sparse_grad2).unwrap();
+        params = optimizer
+            .step_sparse(&params, &sparse_grad2)
+            .expect("unwrap failed");
 
         // Parameters at indices 0 and 2 should have larger updates now
         let prev_param0 = params[0];
         let prev_param2 = params[2];
 
-        params = optimizer.step_sparse(&params, &sparse_grad2).unwrap();
+        params = optimizer
+            .step_sparse(&params, &sparse_grad2)
+            .expect("unwrap failed");
 
         assert!(params[0].abs() > prev_param0.abs());
         assert!(params[2].abs() > prev_param2.abs());
@@ -525,10 +539,12 @@ mod tests {
         // Create a version without weight decay for comparison
         let mut optimizer_no_decay = SparseAdam::<f64>::new(0.1);
 
-        let with_decay = optimizer.step_sparse(&params, &sparse_grad).unwrap();
+        let with_decay = optimizer
+            .step_sparse(&params, &sparse_grad)
+            .expect("unwrap failed");
         let without_decay = optimizer_no_decay
             .step_sparse(&params, &sparse_grad)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Parameters with non-zero gradients should be different when weight decay is applied
         assert!(with_decay[1] != without_decay[1]);
@@ -555,7 +571,9 @@ mod tests {
         );
 
         // No parameters should change
-        let result = optimizer.step_sparse(&params, &sparse_grad).unwrap();
+        let result = optimizer
+            .step_sparse(&params, &sparse_grad)
+            .expect("unwrap failed");
         assert_eq!(result, params);
     }
 
@@ -575,7 +593,9 @@ mod tests {
 
         // Do several steps to build up momentum
         for _ in 0..10 {
-            optimizer.step_sparse(&params, &sparse_grad).unwrap();
+            optimizer
+                .step_sparse(&params, &sparse_grad)
+                .expect("unwrap failed");
         }
 
         // Reset optimizer
@@ -583,8 +603,12 @@ mod tests {
 
         // The next step should be the same as the first step with a new optimizer
         let mut new_optimizer = SparseAdam::<f64>::new(0.1);
-        let reset_result = optimizer.step_sparse(&params, &sparse_grad).unwrap();
-        let new_result = new_optimizer.step_sparse(&params, &sparse_grad).unwrap();
+        let reset_result = optimizer
+            .step_sparse(&params, &sparse_grad)
+            .expect("unwrap failed");
+        let new_result = new_optimizer
+            .step_sparse(&params, &sparse_grad)
+            .expect("unwrap failed");
 
         assert_abs_diff_eq!(reset_result[1], new_result[1], epsilon = 1e-10);
         assert_abs_diff_eq!(reset_result[3], new_result[3], epsilon = 1e-10);

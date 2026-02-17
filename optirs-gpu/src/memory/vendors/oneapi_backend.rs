@@ -321,7 +321,7 @@ impl OneApiMemoryPool {
         // Try to find suitable free block
         for i in 0..self.free_blocks.len() {
             if self.free_blocks[i].size >= size {
-                let mut block = self.free_blocks.remove(i).unwrap();
+                let mut block = self.free_blocks.remove(i).expect("unwrap failed");
 
                 // Split block if much larger
                 if block.size > size * 2 {
@@ -1029,17 +1029,17 @@ impl ThreadSafeOneApiBackend {
         size: usize,
         memory_type: OneApiMemoryType,
     ) -> Result<*mut c_void, OneApiError> {
-        let mut backend = self.backend.lock().unwrap();
+        let mut backend = self.backend.lock().expect("lock poisoned");
         backend.allocate(size, memory_type)
     }
 
     pub fn free(&self, ptr: *mut c_void, memory_type: OneApiMemoryType) -> Result<(), OneApiError> {
-        let mut backend = self.backend.lock().unwrap();
+        let mut backend = self.backend.lock().expect("lock poisoned");
         backend.free(ptr, memory_type)
     }
 
     pub fn get_stats(&self) -> OneApiStats {
-        let backend = self.backend.lock().unwrap();
+        let backend = self.backend.lock().expect("lock poisoned");
         backend.get_stats().clone()
     }
 }
@@ -1061,7 +1061,7 @@ mod tests {
         let ptr = pool.allocate(1024);
         assert!(ptr.is_ok());
 
-        let ptr = ptr.unwrap();
+        let ptr = ptr.expect("unwrap failed");
         let result = pool.free(ptr);
         assert!(result.is_ok());
     }
@@ -1072,7 +1072,7 @@ mod tests {
         let queue_id = manager.create_queue(None);
         assert!(queue_id.is_ok());
 
-        let queue_id = queue_id.unwrap();
+        let queue_id = queue_id.expect("unwrap failed");
         let result = manager.destroy_queue(queue_id);
         assert!(result.is_ok());
     }
@@ -1083,7 +1083,7 @@ mod tests {
         let backend = ThreadSafeOneApiBackend::new(config);
         assert!(backend.is_ok());
 
-        let backend = backend.unwrap();
+        let backend = backend.expect("unwrap failed");
         let stats = backend.get_stats();
         assert_eq!(stats.total_allocations, 0);
     }

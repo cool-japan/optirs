@@ -850,7 +850,7 @@ impl AdvancedMemoryLeakDetector {
             loop {
                 // Check if session still exists
                 {
-                    let sessions = active_sessions.lock().unwrap();
+                    let sessions = active_sessions.lock().expect("lock poisoned");
                     if !sessions.contains_key(&sessionid) {
                         break;
                     }
@@ -860,7 +860,7 @@ impl AdvancedMemoryLeakDetector {
                 if let Ok(snapshot) = Self::take_memory_snapshot() {
                     // Add to session snapshots
                     {
-                        let mut sessions = active_sessions.lock().unwrap();
+                        let mut sessions = active_sessions.lock().expect("lock poisoned");
                         if let Some(session) = sessions.get_mut(&sessionid) {
                             session.snapshots.push_back(snapshot.clone());
 
@@ -873,7 +873,7 @@ impl AdvancedMemoryLeakDetector {
 
                     // Add to global history
                     {
-                        let mut history = memory_history.write().unwrap();
+                        let mut history = memory_history.write().expect("lock poisoned");
                         history.push_back(snapshot);
 
                         // Limit global history
@@ -1042,7 +1042,7 @@ impl AdvancedMemoryLeakDetector {
                 "Memory leak detected in optimizer: {}",
                 session.config.optimizer_name
             ),
-            memory_metrics: session.snapshots.back().unwrap().clone(),
+            memory_metrics: session.snapshots.back().expect("unwrap failed").clone(),
             recommended_actions: analysis_result.recommendations.clone(),
         };
 
@@ -1096,7 +1096,8 @@ impl LeakAnalysisEngine {
     fn analyze_growth(&self, memoryvalues: &[f64]) -> Result<GrowthAnalysis> {
         // Simplified implementation - would use proper statistical analysis
         let linear_rate = if memoryvalues.len() > 1 {
-            (memoryvalues.last().unwrap() - memoryvalues.first().unwrap())
+            (memoryvalues.last().expect("unwrap failed")
+                - memoryvalues.first().expect("unwrap failed"))
                 / memoryvalues.len() as f64
         } else {
             0.0
@@ -1311,14 +1312,14 @@ mod tests {
     #[test]
     fn test_memory_leak_detector_creation() {
         let config = MemoryLeakConfig::default();
-        let _detector = AdvancedMemoryLeakDetector::new(config).unwrap();
+        let _detector = AdvancedMemoryLeakDetector::new(config).expect("unwrap failed");
         // Test basic functionality
     }
 
     #[test]
     fn test_monitoring_session_lifecycle() {
         let config = MemoryLeakConfig::default();
-        let detector = AdvancedMemoryLeakDetector::new(config).unwrap();
+        let detector = AdvancedMemoryLeakDetector::new(config).expect("unwrap failed");
 
         let session_config = SessionConfig {
             optimizer_name: "test_optimizer".to_string(),
@@ -1329,16 +1330,16 @@ mod tests {
 
         let sessionid = detector
             .start_monitoring("test_optimizer".to_string(), session_config)
-            .unwrap();
+            .expect("unwrap failed");
         assert!(!sessionid.is_empty());
     }
 
     #[test]
     fn test_memory_snapshot() {
         let config = MemoryLeakConfig::default();
-        let detector = AdvancedMemoryLeakDetector::new(config).unwrap();
+        let detector = AdvancedMemoryLeakDetector::new(config).expect("unwrap failed");
 
-        let snapshot = detector.get_memory_snapshot().unwrap();
+        let snapshot = detector.get_memory_snapshot().expect("unwrap failed");
         // Verify snapshot structure
         assert!(snapshot
             .timestamp

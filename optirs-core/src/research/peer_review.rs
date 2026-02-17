@@ -479,7 +479,7 @@ impl PeerReviewSystem {
 
         let mut assignment_ids = Vec::new();
         let now = Utc::now();
-        let session = self.sessions.get(session_id).unwrap();
+        let session = self.sessions.get(session_id).expect("unwrap failed");
 
         for reviewer_id in reviewer_ids {
             if !self.reviewers.contains_key(reviewer_id) {
@@ -570,7 +570,7 @@ impl PeerReviewSystem {
         };
 
         // Now update the session with mutable access
-        let session = self.sessions.get_mut(session_id).unwrap(); // Safe because we just checked it exists
+        let session = self.sessions.get_mut(session_id).expect("unwrap failed"); // Safe because we just checked it exists
         session.meta_review = Some(meta_review);
         session.status = ReviewSessionStatus::Complete;
 

@@ -134,7 +134,7 @@ fn grid_search_example() -> Result<()> {
         println!("Total trials: {}", optimizer.get_trial_history().len());
         println!(
             "Best performance: {:.4}",
-            optimizer.get_best_performance().unwrap()
+            optimizer.get_best_performance().expect("unwrap failed")
         );
         println!("Best hyperparameters:");
         for (param, value) in best_params {
@@ -143,7 +143,7 @@ fn grid_search_example() -> Result<()> {
     }
 
     // Find top 5 configurations
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
     println!("\nTop 5 configurations:");
     for (i, (params, perf)) in results.iter().take(5).enumerate() {
         println!("{}. Performance: {:.4}", i + 1, perf);
@@ -208,7 +208,7 @@ fn random_search_example() -> Result<()> {
         println!("Random Search Results:");
         println!(
             "Best performance: {:.4}",
-            optimizer.get_best_performance().unwrap()
+            optimizer.get_best_performance().expect("unwrap failed")
         );
         println!("Best hyperparameters:");
         for (param, value) in best_params {
@@ -228,7 +228,7 @@ fn random_search_example() -> Result<()> {
     println!("Improvements found at trials: {:?}", improvement_steps);
     println!(
         "Final convergence: {:.4}",
-        convergence_history.last().unwrap()
+        convergence_history.last().expect("unwrap failed")
     );
 
     Ok(())
@@ -295,7 +295,7 @@ fn bayesian_optimization_example() -> Result<()> {
         println!("Bayesian Optimization Results:");
         println!(
             "Best performance: {:.4}",
-            optimizer.get_best_performance().unwrap()
+            optimizer.get_best_performance().expect("unwrap failed")
         );
         println!("Best hyperparameters:");
         for (param, value) in best_params {
@@ -309,7 +309,7 @@ fn bayesian_optimization_example() -> Result<()> {
 
     for trial in trial_history.iter().skip(1) {
         let current_lr = trial["learning_rate"];
-        let best_lr = optimizer.get_best_hyperparameters().unwrap()["learning_rate"];
+        let best_lr = optimizer.get_best_hyperparameters().expect("unwrap failed")["learning_rate"];
 
         if (current_lr - best_lr).abs() > 0.01 {
             exploration_trials += 1;
@@ -368,7 +368,7 @@ fn population_based_training_example() -> Result<()> {
     // Evolution loop
     for generation in 0..25 {
         // Sort population by performance
-        population.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        population.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
         // Keep top 50%, evolve bottom 50%
         let num_elite = population.len() / 2;
@@ -405,7 +405,7 @@ fn population_based_training_example() -> Result<()> {
         let best_performance = population[0].1;
         let avg_performance: f64 =
             population.iter().map(|(_, perf_, _)| *perf_).sum::<f64>() / population.len() as f64;
-        let worst_performance = population.last().unwrap().1;
+        let worst_performance = population.last().expect("unwrap failed").1;
 
         if generation % 5 == 4 {
             println!(
@@ -419,7 +419,7 @@ fn population_based_training_example() -> Result<()> {
     }
 
     // Final results
-    population.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    population.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
     println!("Population-Based Training Results:");
     println!("Best performance: {:.4}", population[0].1);
     println!("Best hyperparameters:");
@@ -498,7 +498,7 @@ fn neural_predictor_example() -> Result<()> {
         println!("Test case {}:", test_case + 1);
         println!(
             "  Problem features: {:?}",
-            test_features.as_slice().unwrap()
+            test_features.as_slice().expect("unwrap failed")
         );
         println!("  Predicted hyperparameters:");
         for (param, value) in &predicted_hyperparams {
@@ -655,19 +655,19 @@ fn sensitivity_analysis_example() -> Result<()> {
             // Apply reasonable bounds
             match param_name {
                 "learning_rate" => {
-                    let val = test_hyperparams.get_mut("learning_rate").unwrap();
+                    let val = test_hyperparams.get_mut("learning_rate").expect("unwrap failed");
                     *val = val.clamp(1e-6, 1.0);
                 }
                 "weight_decay" => {
-                    let val = test_hyperparams.get_mut("weight_decay").unwrap();
+                    let val = test_hyperparams.get_mut("weight_decay").expect("unwrap failed");
                     *val = val.clamp(0.0, 1.0);
                 }
                 "batch_size" => {
-                    let val = test_hyperparams.get_mut("batch_size").unwrap();
+                    let val = test_hyperparams.get_mut("batch_size").expect("unwrap failed");
                     *val = val.clamp(1.0, 512.0);
                 }
                 "momentum" => {
-                    let val = test_hyperparams.get_mut("momentum").unwrap();
+                    let val = test_hyperparams.get_mut("momentum").expect("unwrap failed");
                     *val = val.clamp(0.0, 0.999);
                 }
                 _ => {}
@@ -680,7 +680,7 @@ fn sensitivity_analysis_example() -> Result<()> {
         }
 
         // Find optimal value and sensitivity
-        results.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+        results.sort_by(|a, b| b.2.partial_cmp(&a.2).expect("unwrap failed"));
         let best_result = &results[0];
 
         println!("  Base value: {:.6}", base_value);

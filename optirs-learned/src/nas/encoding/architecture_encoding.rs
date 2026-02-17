@@ -662,7 +662,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
             // Initialize with random values
             for i in 0..vocab_size {
                 for j in 0..dim {
-                    embedding[[i, j]] = T::from(rng.gen_range(-0.1..0.1)).unwrap();
+                    embedding[[i, j]] = T::from(rng.gen_range(-0.1..0.1)).expect("unwrap failed");
                 }
             }
             
@@ -751,7 +751,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
     fn apply_zscore_normalization(&self, data: &mut Array2<T>) -> Result<()> {
         for j in 0..data.ncols() {
             let mut col = data.column_mut(j);
-            let n = T::from(col.len() as f64).unwrap();
+            let n = T::from(col.len() as f64).expect("unwrap failed");
             
             // Compute mean
             let mean = col.iter().cloned().fold(T::zero(), |acc, x| acc + x) / n;
@@ -780,8 +780,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ArchitectureEnc
         }
         
         // Cosine similarity
-        let flat1 = encoded1.primary_encoding.as_slice().unwrap();
-        let flat2 = encoded2.primary_encoding.as_slice().unwrap();
+        let flat1 = encoded1.primary_encoding.as_slice().expect("unwrap failed");
+        let flat2 = encoded2.primary_encoding.as_slice().expect("unwrap failed");
         
         if flat1.len() != flat2.len() {
             return Err(OptimError::InvalidInput(
@@ -873,7 +873,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> SequentialEncod
         for pos in 0..max_length {
             for i in 0..(embedding_dim / 2) {
                 let angle = scirs2_core::numeric::NumCast::from(pos as f64).unwrap_or_else(|| T::zero()) / 
-                           T::from(10000.0_f64.powf(2.0 * i as f64 / embedding_dim as f64)).unwrap();
+                           T::from(10000.0_f64.powf(2.0 * i as f64 / embedding_dim as f64)).expect("unwrap failed");
                 pos_encoding[[pos, 2 * i]] = angle.sin();
                 pos_encoding[[pos, 2 * i + 1]] = angle.cos();
             }
@@ -923,7 +923,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
                     .as_secs(),
                 quality_metrics: EncodingQualityMetrics {
                     information_preservation: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
-                    compression_ratio: T::from(seq_len as f64 / architecture.operations.len() as f64).unwrap(),
+                    compression_ratio: T::from(seq_len as f64 / architecture.operations.len() as f64).expect("unwrap failed"),
                     stability: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
                     semantic_consistency: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
                 },
@@ -1028,7 +1028,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
         for (i, operation) in architecture.operations.iter().enumerate().take(num_nodes) {
             // Simple encoding - in practice would be more sophisticated
             node_features[[i, 0]] = scirs2_core::numeric::NumCast::from(i as f64).unwrap_or_else(|| T::zero()); // Node index
-            node_features[[i, 1]] = T::from(operation.parameters.len() as f64).unwrap(); // Parameter count
+            node_features[[i, 1]] = T::from(operation.parameters.len() as f64).expect("unwrap failed"); // Parameter count
         }
         
         Ok(EncodedArchitecture {
@@ -1052,7 +1052,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> EncodingStrateg
                     .as_secs(),
                 quality_metrics: EncodingQualityMetrics {
                     information_preservation: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
-                    compression_ratio: T::from(num_nodes as f64 / architecture.operations.len() as f64).unwrap(),
+                    compression_ratio: T::from(num_nodes as f64 / architecture.operations.len() as f64).expect("unwrap failed"),
                     stability: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                     semantic_consistency: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
                 },

@@ -244,7 +244,7 @@ mod tests {
         let ptr = 0x1000 as *mut u8;
         let result = MemorySafetyValidator::safe_ptr_add(ptr, 256);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap() as usize, 0x1100);
+        assert_eq!(result.expect("unwrap failed") as usize, 0x1100);
     }
 
     #[test]

@@ -1,7 +1,7 @@
-// Security Audit Scanner CLI Tool
-//
-// A comprehensive command-line utility for scanning dependencies, detecting vulnerabilities,
-// and performing security audits on Rust projects using the scirs2-optim library.
+//! Security Audit Scanner CLI Tool
+//!
+//! A comprehensive command-line utility for scanning dependencies, detecting vulnerabilities,
+//! and performing security audits on Rust projects using the scirs2-optim library.
 
 use clap::{Arg, ArgMatches, Command};
 use serde::{Deserialize, Serialize};
@@ -109,7 +109,11 @@ fn main() {
 /// Run the complete security audit process
 #[allow(dead_code)]
 fn run_security_audit(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
-    let projectpath = Path::new(matches.get_one::<String>("project-path").unwrap());
+    let projectpath = Path::new(
+        matches
+            .get_one::<String>("project-path")
+            .ok_or("Project path is required")?,
+    );
     let verbose = matches.get_flag("verbose");
 
     if verbose {
@@ -129,7 +133,9 @@ fn run_security_audit(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Er
     let _auditresult = auditor.run_comprehensive_audit(projectpath)?;
 
     // Generate and output report
-    let format = matches.get_one::<String>("format").unwrap();
+    let format = matches
+        .get_one::<String>("format")
+        .ok_or("Format is required")?;
     let report = generate_auditreport(&_auditresult, format)?;
 
     // Output the report
@@ -170,7 +176,11 @@ fn build_audit_config(matches: &ArgMatches) -> Result<AuditConfig, Box<dyn std::
         scan_secrets: all_scans || matches.get_flag("scan-secrets"),
         scan_code: all_scans || matches.get_flag("scan-code"),
         check_licenses: all_scans || matches.get_flag("check-licenses"),
-        min_severity: parse_severity(matches.get_one::<String>("severity").unwrap())?,
+        min_severity: parse_severity(
+            matches
+                .get_one::<String>("severity")
+                .ok_or("Severity is required")?,
+        )?,
         excluded_patterns,
         verbose: matches.get_flag("verbose"),
     })
@@ -1152,7 +1162,7 @@ impl LicenseChecker {
             dependency: "example-gpl-dep".to_string(),
             license: "GPL-3.0".to_string(),
             violation_type: "Copyleft license incompatible with proprietary use".to_string(),
-            recommendation: "Replace with MIT or Apache-2.0 licensed alternative".to_string(),
+            recommendation: "Replace with Apache-2.0 licensed alternative".to_string(),
         }];
 
         let unknown_licenses = vec!["some-unknown-dep".to_string()];
@@ -1366,8 +1376,10 @@ fn generate_htmlreport(_auditresult: &AuditResult) -> Result<String, Box<dyn std
 /// Determine exit code based on audit results
 #[allow(dead_code)]
 fn determine_exit_code(_auditresult: &AuditResult, matches: &ArgMatches) -> i32 {
-    let min_severity =
-        parse_severity(matches.get_one::<String>("severity").unwrap()).unwrap_or(Severity::Low);
+    let min_severity = match matches.get_one::<String>("severity") {
+        Some(s) => parse_severity(s).unwrap_or(Severity::Low),
+        None => Severity::Low,
+    };
 
     // Exit with non-zero code if issues at or above the minimum severity are found
     match min_severity {

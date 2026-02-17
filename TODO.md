@@ -1,8 +1,8 @@
-# OptiRS TODO - v0.1.0 (Stable Release)
+# OptiRS TODO - v0.2.0 (Stable Release)
 
 ## Project Status: Stable Release - Production Ready
 
-**Current Version**: v0.1.0
+**Current Version**: v0.2.0
 **Release Date**: 2025-12-30
 **Total Tests**: 1,134 tests passing (100% pass rate)
 **SLoC**: 307,820 lines of Rust code
@@ -10,7 +10,7 @@
 
 ---
 
-## Completed: v0.1.0 Release
+## Completed: v0.2.0 Release
 
 ### SciRS2 Core Integration
 - [x] **Remove ALL direct ndarray imports** - All 474 imports updated to scirs2_core::ndarray
@@ -237,7 +237,7 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests
 
 ---
 
-## Release Status (v0.1.0)
+## Release Status (v0.2.0)
 
 - [x] All core optimizers implemented (19 total)
 - [x] Full SciRS2 integration verified

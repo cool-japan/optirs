@@ -256,13 +256,13 @@ impl PluginRegistry {
         };
 
         {
-            let mut factories = self.factories.write().unwrap();
+            let mut factories = self.factories.write().expect("lock poisoned");
             factories.insert(name.clone(), registration);
         }
 
         // Notify event listeners
         {
-            let mut listeners = self.event_listeners.write().unwrap();
+            let mut listeners = self.event_listeners.write().expect("lock poisoned");
             for listener in listeners.iter_mut() {
                 listener.on_plugin_registered(&info);
             }
@@ -273,11 +273,11 @@ impl PluginRegistry {
 
     /// Unregister a plugin
     pub fn unregister_plugin(&self, name: &str) -> Result<()> {
-        let mut factories = self.factories.write().unwrap();
+        let mut factories = self.factories.write().expect("lock poisoned");
         if factories.remove(name).is_some() {
             // Notify event listeners
             drop(factories);
-            let mut listeners = self.event_listeners.write().unwrap();
+            let mut listeners = self.event_listeners.write().expect("lock poisoned");
             for listener in listeners.iter_mut() {
                 listener.on_plugin_unregistered(name);
             }
@@ -296,7 +296,7 @@ impl PluginRegistry {
     where
         A: Float + Debug + Send + Sync + 'static,
     {
-        let factories = self.factories.read().unwrap();
+        let factories = self.factories.read().expect("lock poisoned");
         let registration = factories
             .get(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -348,7 +348,7 @@ impl PluginRegistry {
 
         // Update usage statistics
         drop(factories);
-        let mut factories = self.factories.write().unwrap();
+        let mut factories = self.factories.write().expect("lock poisoned");
         if let Some(registration) = factories.get_mut(name) {
             registration.load_count += 1;
             registration.last_used = Some(std::time::SystemTime::now());
@@ -356,7 +356,7 @@ impl PluginRegistry {
 
         // Notify event listeners
         drop(factories);
-        let mut listeners = self.event_listeners.write().unwrap();
+        let mut listeners = self.event_listeners.write().expect("lock poisoned");
         for listener in listeners.iter_mut() {
             listener.on_plugin_loaded(name);
         }
@@ -366,14 +366,14 @@ impl PluginRegistry {
 
     /// List all registered plugins
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
-        let factories = self.factories.read().unwrap();
+        let factories = self.factories.read().expect("lock poisoned");
         factories.values().map(|reg| reg.info.clone()).collect()
     }
 
     /// Search for plugins matching criteria
     pub fn search_plugins(&self, query: PluginQuery) -> PluginSearchResult {
         let start_time = std::time::Instant::now();
-        let factories = self.factories.read().unwrap();
+        let factories = self.factories.read().expect("lock poisoned");
 
         let mut matching_plugins = Vec::new();
 
@@ -402,19 +402,19 @@ impl PluginRegistry {
 
     /// Get plugin information
     pub fn get_plugin_info(&self, name: &str) -> Option<PluginInfo> {
-        let factories = self.factories.read().unwrap();
+        let factories = self.factories.read().expect("lock poisoned");
         factories.get(name).map(|reg| reg.info.clone())
     }
 
     /// Get plugin status
     pub fn get_plugin_status(&self, name: &str) -> Option<PluginStatus> {
-        let factories = self.factories.read().unwrap();
+        let factories = self.factories.read().expect("lock poisoned");
         factories.get(name).map(|reg| reg.status.clone())
     }
 
     /// Enable/disable plugin
     pub fn set_plugin_status(&self, name: &str, status: PluginStatus) -> Result<()> {
-        let mut factories = self.factories.write().unwrap();
+        let mut factories = self.factories.write().expect("lock poisoned");
         let registration = factories
             .get_mut(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -425,7 +425,7 @@ impl PluginRegistry {
         // Notify event listeners if status changed
         if old_status != status {
             drop(factories);
-            let mut listeners = self.event_listeners.write().unwrap();
+            let mut listeners = self.event_listeners.write().expect("lock poisoned");
             for listener in listeners.iter_mut() {
                 listener.on_plugin_status_changed(name, &status);
             }
@@ -436,7 +436,7 @@ impl PluginRegistry {
 
     /// Add plugin search path
     pub fn add_search_path<P: AsRef<Path>>(&self, path: P) {
-        let mut search_paths = self.search_paths.write().unwrap();
+        let mut search_paths = self.search_paths.write().expect("lock poisoned");
         search_paths.push(path.as_ref().to_path_buf());
     }
 
@@ -446,7 +446,7 @@ impl PluginRegistry {
             return Ok(0);
         }
 
-        let search_paths = self.search_paths.read().unwrap();
+        let search_paths = self.search_paths.read().expect("lock poisoned");
         let mut discovered_count = 0;
 
         for path in search_paths.iter() {
@@ -460,19 +460,19 @@ impl PluginRegistry {
 
     /// Add event listener
     pub fn add_event_listener(&self, listener: Box<dyn RegistryEventListener>) {
-        let mut listeners = self.event_listeners.write().unwrap();
+        let mut listeners = self.event_listeners.write().expect("lock poisoned");
         listeners.push(listener);
     }
 
     /// Get cache statistics
     pub fn get_cache_stats(&self) -> CacheStats {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock().expect("lock poisoned");
         cache.stats.clone()
     }
 
     /// Clear plugin cache
     pub fn clear_cache(&self) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().expect("lock poisoned");
         cache.instances.clear();
         cache.stats = CacheStats::default();
     }

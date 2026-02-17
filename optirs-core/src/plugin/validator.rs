@@ -1414,7 +1414,7 @@ mod tests {
             required_features: vec![],
             parameters: HashMap::new()};
         
-        let result = validator.validate_template(&template).unwrap();
+        let result = validator.validate_template(&template).expect("unwrap failed");
         assert!(result.is_valid);
         assert!(result.template_score >= 0.0);
     }
@@ -1447,7 +1447,7 @@ mod tests {
         let validator = EnhancedPluginValidator::new(config);
         
         let mut plugin = MockValidationPlugin;
-        let result = validator.validate_plugin(&mut plugin).unwrap();
+        let result = validator.validate_plugin(&mut plugin).expect("unwrap failed");
         
         assert!(result.validation_score >= 0.0);
         assert!(result.validation_score <= 1.0);

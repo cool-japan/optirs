@@ -128,7 +128,7 @@ fn test_lbfgs_on_rosenbrock() {
     // Run optimization with more iterations
     for _ in 0..200 {
         let gradients = rosenbrock_grad(&params);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }
 
     // Should be close to (1, 1) but use relaxed criteria

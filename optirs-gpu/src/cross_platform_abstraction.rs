@@ -945,7 +945,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossPlatformOptimizer<T> {
     fn select_fastest_backend(&self) -> Option<GpuBackend> {
         self.device_capabilities
             .iter()
-            .max_by(|(_, a), (_, b)| a.peak_flops.partial_cmp(&b.peak_flops).unwrap())
+            .max_by(|(_, a), (_, b)| a.peak_flops.partial_cmp(&b.peak_flops).expect("unwrap failed"))
             .map(|(backend_)| *backend)
     }
 
@@ -961,7 +961,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossPlatformOptimizer<T> {
     fn select_low_power_backend(&self) -> Option<GpuBackend> {
         self.device_capabilities
             .iter()
-            .min_by(|(_, a), (_, b)| a.typical_power.partial_cmp(&b.typical_power).unwrap())
+            .min_by(|(_, a), (_, b)| a.typical_power.partial_cmp(&b.typical_power).expect("unwrap failed"))
             .map(|(backend_)| *backend)
     }
 

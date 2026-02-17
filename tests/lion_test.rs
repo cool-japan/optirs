@@ -54,7 +54,7 @@ fn test_lion_1d_optimization() {
     for _ in 0..10 {
         // Gradient of x^2 is 2x
         let gradients = Array1::from_vec(vec![2.0 * params[0]]);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }
 
     // Should be moving towards 0
@@ -73,7 +73,7 @@ fn test_lion_2d_optimization() {
     for _ in 0..20 {
         // Gradient of x^2 + y^2 is (2x, 2y)
         let gradients = Array1::from_vec(vec![2.0 * params[0], 2.0 * params[1]]);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }
 
     // Should be moving towards (0, 0)
@@ -92,7 +92,7 @@ fn test_lion_with_weight_decay() {
     // Run optimization with zero gradients (only weight decay effect)
     for _ in 0..10 {
         let gradients = Array1::zeros(2);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }
 
     // Weight decay should shrink parameters
@@ -108,17 +108,17 @@ fn test_lion_reset() {
     // Perform a step to initialize internal state
     let params = Array1::from_vec(vec![1.0, 2.0]);
     let gradients = Array1::from_vec(vec![0.1, 0.2]);
-    let _ = optimizer.step(&params, &gradients).unwrap();
+    let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
 
     // Reset the optimizer
     optimizer.reset();
 
     // After reset, the next step should behave like the first step
-    let new_params = optimizer.step(&params, &gradients).unwrap();
+    let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
     // This should match the behavior of a fresh optimizer
     let mut fresh_optimizer: Lion<f64> = Lion::new(0.1);
-    let fresh_params = fresh_optimizer.step(&params, &gradients).unwrap();
+    let fresh_params = fresh_optimizer.step(&params, &gradients).expect("unwrap failed");
 
     assert_abs_diff_eq!(new_params[0], fresh_params[0], epsilon = 1e-6);
     assert_abs_diff_eq!(new_params[1], fresh_params[1], epsilon = 1e-6);
@@ -130,10 +130,10 @@ fn test_lion_multiple_dimensions() {
     let mut optimizer: Lion<f64> = Lion::new(0.1);
 
     // Test with 2D array
-    let params_2d = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
-    let gradients_2d = Array2::from_shape_vec((2, 3), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).unwrap();
+    let params_2d = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).expect("unwrap failed");
+    let gradients_2d = Array2::from_shape_vec((2, 3), vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).expect("unwrap failed");
 
-    let updated_2d = optimizer.step(&params_2d, &gradients_2d).unwrap();
+    let updated_2d = optimizer.step(&params_2d, &gradients_2d).expect("unwrap failed");
 
     // Check dimensions are preserved
     assert_eq!(updated_2d.shape(), params_2d.shape());

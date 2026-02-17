@@ -41,7 +41,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = LAMB::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).unwrap();
+/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct LAMB<A: Float + ScalarOperand + Debug> {
@@ -74,9 +74,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMB<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).unwrap(),
-            beta2: A::from(0.999).unwrap(),
-            epsilon: A::from(1e-6).unwrap(),
+            beta1: A::from(0.9).expect("unwrap failed"),
+            beta2: A::from(0.999).expect("unwrap failed"),
+            epsilon: A::from(1e-6).expect("unwrap failed"),
             weight_decay: A::zero(),
             bias_correction: true,
             m: None,
@@ -195,8 +195,8 @@ where
             self.t = 0;
         }
 
-        let m = self.m.as_mut().unwrap();
-        let v = self.v.as_mut().unwrap();
+        let m = self.m.as_mut().expect("unwrap failed");
+        let v = self.v.as_mut().expect("unwrap failed");
 
         // Ensure we have state for this parameter set
         if m.is_empty() {
@@ -264,7 +264,9 @@ where
         let updated_params = &params_dyn - step;
 
         // Convert back to original dimension
-        Ok(updated_params.into_dimensionality::<D>().unwrap())
+        Ok(updated_params
+            .into_dimensionality::<D>()
+            .expect("unwrap failed"))
     }
 
     fn get_learning_rate(&self) -> A {
@@ -303,7 +305,7 @@ mod tests {
         for _ in 0..50 {
             // Gradient of x^2 + y^2 is (2x, 2y)
             let gradients = Array1::from_vec(vec![2.0 * params[0], 2.0 * params[1]]);
-            params = optimizer.step(&params, &gradients).unwrap();
+            params = optimizer.step(&params, &gradients).expect("unwrap failed");
         }
 
         // Should converge towards (0, 0)
@@ -328,7 +330,7 @@ mod tests {
         // Run optimization with small gradients
         for _ in 0..20 {
             let gradients = Array1::from_vec(vec![0.1, 0.1]);
-            params = optimizer.step(&params, &gradients).unwrap();
+            params = optimizer.step(&params, &gradients).expect("unwrap failed");
         }
 
         // With weight decay, parameters should decrease
@@ -343,7 +345,7 @@ mod tests {
         // Perform a step to initialize state
         let params = Array1::from_vec(vec![1.0]);
         let gradients = Array1::from_vec(vec![0.5]);
-        let _ = optimizer.step(&params, &gradients).unwrap();
+        let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // State should exist
         assert!(optimizer.m.is_some());
@@ -366,7 +368,7 @@ mod tests {
         let params = Array1::from_vec(vec![2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.4, 0.6]);
 
-        let new_params = optimizer.step(&params, &gradients).unwrap();
+        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Parameters should be updated
         assert_ne!(new_params[0], params[0]);

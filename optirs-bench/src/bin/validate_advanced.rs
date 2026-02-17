@@ -1,7 +1,7 @@
-// Advanced Mode Implementation Validation Binary
-//
-// This binary validates the syntax and basic functionality of our
-// Advanced mode implementations.
+//! Advanced Mode Implementation Validation Binary
+//!
+//! This binary validates the syntax and basic functionality of our
+//! Advanced mode implementations.
 
 use std::path::Path;
 

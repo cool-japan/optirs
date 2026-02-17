@@ -790,7 +790,7 @@ mod tests {
     #[test]
     fn test_template_generation() {
         let options = CompilationOptions::default();
-        let manager = KernelManager::new(GpuBackend::Cuda, options).unwrap();
+        let manager = KernelManager::new(GpuBackend::Cuda, options).expect("unwrap failed");
 
         let mut params = HashMap::new();
         params.insert("dtype".to_string(), "float".to_string());
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn test_launch_config_calculation() {
         let options = CompilationOptions::default();
-        let manager = KernelManager::new(GpuBackend::Cuda, options).unwrap();
+        let manager = KernelManager::new(GpuBackend::Cuda, options).expect("unwrap failed");
 
         let config = manager.calculate_launch_config(KernelType::SGDUpdate, 10000);
         assert!(config.grid_size.0 > 0);

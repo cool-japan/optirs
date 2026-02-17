@@ -190,7 +190,7 @@ impl KernelProfiler {
 
         #[cfg(feature = "cuda")]
         let cuda_start_event = if self.config.enable_cuda_events {
-            let mut events = self.cuda_events.lock().unwrap();
+            let mut events = self.cuda_events.lock().expect("lock poisoned");
             let event = self.profiling_stream.as_ref().record_event()?;
             events.push(event.clone());
             Some(event)
@@ -216,13 +216,13 @@ impl KernelProfiler {
 
         // Update global metrics
         {
-            let mut metrics = self.metrics.lock().unwrap();
+            let mut metrics = self.metrics.lock().expect("lock poisoned");
             self.update_metrics(&mut metrics, &timing);
         }
 
         // Update per-kernel metrics
         {
-            let mut kernel_metrics = self.kernel_metrics.lock().unwrap();
+            let mut kernel_metrics = self.kernel_metrics.lock().expect("lock poisoned");
             let metrics = kernel_metrics.entry(kernel_name.to_string())
                 .or_insert_with(PerformanceMetrics::default);
             self.update_metrics(metrics, &timing);
@@ -239,7 +239,7 @@ impl KernelProfiler {
                 clock_frequencies: self.get_clock_frequencies(),
             };
 
-            let mut samples = self.samples.lock().unwrap();
+            let mut samples = self.samples.lock().expect("lock poisoned");
             if samples.len() >= self.config.max_samples {
                 samples.pop_front();
             }
@@ -305,17 +305,17 @@ impl KernelProfiler {
 
     /// Gets current performance metrics
     pub fn get_metrics(&self) -> PerformanceMetrics {
-        self.metrics.lock().unwrap().clone()
+        self.metrics.lock().expect("lock poisoned").clone()
     }
 
     /// Gets performance metrics for a specific kernel
     pub fn get_kernel_metrics(&self, kernel_name: &str) -> Option<PerformanceMetrics> {
-        self.kernel_metrics.lock().unwrap().get(kernel_name).cloned()
+        self.kernel_metrics.lock().expect("lock poisoned").get(kernel_name).cloned()
     }
 
     /// Gets recent profiling samples
     pub fn get_recent_samples(&self, count: usize) -> Vec<ProfilingSample> {
-        let samples = self.samples.lock().unwrap();
+        let samples = self.samples.lock().expect("lock poisoned");
         samples.iter()
             .rev()
             .take(count)
@@ -326,7 +326,7 @@ impl KernelProfiler {
     /// Generates a performance report
     pub fn generate_report(&self) -> ProfilingReport {
         let global_metrics = self.get_metrics();
-        let kernel_metrics = self.kernel_metrics.lock().unwrap().clone();
+        let kernel_metrics = self.kernel_metrics.lock().expect("lock poisoned").clone();
         let recent_samples = self.get_recent_samples(100);
 
         ProfilingReport {
@@ -373,9 +373,9 @@ impl KernelProfiler {
 
     /// Resets all profiling metrics
     pub fn reset_metrics(&self) {
-        *self.metrics.lock().unwrap() = PerformanceMetrics::default();
-        self.kernel_metrics.lock().unwrap().clear();
-        self.samples.lock().unwrap().clear();
+        *self.metrics.lock().expect("lock poisoned") = PerformanceMetrics::default();
+        self.kernel_metrics.lock().expect("lock poisoned").clear();
+        self.samples.lock().expect("lock poisoned").clear();
     }
 }
 

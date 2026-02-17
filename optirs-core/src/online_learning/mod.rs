@@ -306,11 +306,15 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
         };
 
         let current_lr = match &strategy {
-            OnlineLearningStrategy::AdaptiveSGD { initial_lr, .. } => A::from(*initial_lr).unwrap(),
-            OnlineLearningStrategy::OnlineNewton { .. } => A::from(0.01).unwrap(),
-            OnlineLearningStrategy::FTRL { .. } => A::from(0.1).unwrap(),
-            OnlineLearningStrategy::MirrorDescent { .. } => A::from(0.01).unwrap(),
-            OnlineLearningStrategy::AdaptiveMultiTask { .. } => A::from(0.001).unwrap(),
+            OnlineLearningStrategy::AdaptiveSGD { initial_lr, .. } => {
+                A::from(*initial_lr).expect("unwrap failed")
+            }
+            OnlineLearningStrategy::OnlineNewton { .. } => A::from(0.01).expect("unwrap failed"),
+            OnlineLearningStrategy::FTRL { .. } => A::from(0.1).expect("unwrap failed"),
+            OnlineLearningStrategy::MirrorDescent { .. } => A::from(0.01).expect("unwrap failed"),
+            OnlineLearningStrategy::AdaptiveMultiTask { .. } => {
+                A::from(0.001).expect("unwrap failed")
+            }
         };
 
         Self {
@@ -387,13 +391,13 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 // Compute adaptive learning rate
                 let adaptive_lr = self
                     .gradient_accumulator
-                    .mapv(|acc| A::from(*epsilon).unwrap() + A::sqrt(acc));
+                    .mapv(|acc| A::from(*epsilon).expect("unwrap failed") + A::sqrt(acc));
 
                 // Update parameters
                 self.parameters = &self.parameters - &(gradient / &adaptive_lr * self.current_lr);
             }
             LearningRateAdaptation::RMSprop { decay, epsilon } => {
-                let decay_factor = A::from(*decay).unwrap();
+                let decay_factor = A::from(*decay).expect("unwrap failed");
                 let one_minus_decay = A::one() - decay_factor;
 
                 // Update moving average of squared gradients
@@ -403,7 +407,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 // Compute adaptive learning rate
                 let adaptive_lr = self
                     .gradient_accumulator
-                    .mapv(|acc| A::sqrt(acc + A::from(*epsilon).unwrap()));
+                    .mapv(|acc| A::sqrt(acc + A::from(*epsilon).expect("unwrap failed")));
 
                 // Update parameters
                 self.parameters = &self.parameters - &(gradient / &adaptive_lr * self.current_lr);
@@ -413,8 +417,8 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 beta2,
                 epsilon,
             } => {
-                let beta1_val = A::from(*beta1).unwrap();
-                let beta2_val = A::from(*beta2).unwrap();
+                let beta1_val = A::from(*beta1).expect("unwrap failed");
+                let beta2_val = A::from(*beta2).expect("unwrap failed");
                 let one_minus_beta1 = A::one() - beta1_val;
                 let one_minus_beta2 = A::one() - beta2_val;
 
@@ -428,7 +432,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                         &*second_moment * beta2_val + &gradient.mapv(|g| g * g * one_minus_beta2);
 
                     // Bias correction
-                    let step_count_float = A::from(self.step_count).unwrap();
+                    let step_count_float = A::from(self.step_count).expect("unwrap failed");
                     let bias_correction1 = A::one() - A::powf(beta1_val, step_count_float);
                     let bias_correction2 = A::one() - A::powf(beta2_val, step_count_float);
 
@@ -436,21 +440,23 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                     let corrected_second = &*second_moment / bias_correction2;
 
                     // Update parameters
-                    let adaptive_lr =
-                        corrected_second.mapv(|v| A::sqrt(v) + A::from(*epsilon).unwrap());
+                    let adaptive_lr = corrected_second
+                        .mapv(|v| A::sqrt(v) + A::from(*epsilon).expect("unwrap failed"));
                     self.parameters =
                         &self.parameters - &(corrected_first / adaptive_lr * self.current_lr);
                 }
             }
             LearningRateAdaptation::ExponentialDecay { decay_rate } => {
                 // Simple exponential decay
-                self.current_lr = self.current_lr * A::from(*decay_rate).unwrap();
+                self.current_lr = self.current_lr * A::from(*decay_rate).expect("unwrap failed");
                 self.parameters = &self.parameters - gradient * self.current_lr;
             }
             LearningRateAdaptation::InverseScaling { power } => {
                 // Inverse scaling: lr = initial_lr / (step^power)
-                let step_power =
-                    A::powf(A::from(self.step_count).unwrap(), A::from(*power).unwrap());
+                let step_power = A::powf(
+                    A::from(self.step_count).expect("unwrap failed"),
+                    A::from(*power).expect("unwrap failed"),
+                );
                 let decayed_lr = self.current_lr / step_power;
                 self.parameters = &self.parameters - gradient * decayed_lr;
             }
@@ -462,7 +468,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
     /// Online Newton's method update
     fn online_newton_update(&mut self, gradient: &Array<A, D>, damping: f64) -> Result<()> {
         // Simplified online Newton update with damping
-        let damping_val = A::from(damping).unwrap();
+        let damping_val = A::from(damping).expect("unwrap failed");
 
         // Approximate Hessian diagonal with gradient squares (simplified)
         let hessian_approx = gradient.mapv(|g| g * g + damping_val);
@@ -487,14 +493,14 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
 
         // FTRL update rule (simplified)
         let step_factor = A::powf(
-            A::from(self.step_count).unwrap(),
-            A::from(lr_power).unwrap(),
+            A::from(self.step_count).expect("unwrap failed"),
+            A::from(lr_power).expect("unwrap failed"),
         );
         let learning_rate = self.current_lr / step_factor;
 
         // Apply L1 and L2 regularization
-        let l1_weight = A::from(l1_reg).unwrap();
-        let l2_weight = A::from(l2_reg).unwrap();
+        let l1_weight = A::from(l1_reg).expect("unwrap failed");
+        let l2_weight = A::from(l2_reg).expect("unwrap failed");
 
         self.parameters = self.gradient_accumulator.mapv(|g| {
             let abs_g = A::abs(g);
@@ -523,7 +529,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             }
             MirrorFunction::Entropy => {
                 // Entropy regularized update (for probability simplex)
-                let reg_val = A::from(regularization).unwrap();
+                let reg_val = A::from(regularization).expect("unwrap failed");
                 let updated = self
                     .parameters
                     .mapv(|p| A::exp(A::ln(p) - self.current_lr * reg_val));
@@ -532,7 +538,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             }
             MirrorFunction::L1 => {
                 // L1 regularized update with soft thresholding
-                let threshold = self.current_lr * A::from(regularization).unwrap();
+                let threshold = self.current_lr * A::from(regularization).expect("unwrap failed");
                 self.parameters = (&self.parameters - gradient * self.current_lr).mapv(|p| {
                     if A::abs(p) <= threshold {
                         A::zero()
@@ -562,7 +568,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
         if let Some(&best_loss) = self
             .performance_history
             .iter()
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .min_by(|a, b| a.partial_cmp(b).expect("unwrap failed"))
         {
             let regret = loss - best_loss;
             self.regret_bound = self.regret_bound + regret.max(A::zero());
@@ -580,12 +586,12 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             A::zero()
         } else {
             self.performance_history.iter().copied().sum::<A>()
-                / A::from(self.performance_history.len()).unwrap()
+                / A::from(self.performance_history.len()).expect("unwrap failed")
         };
 
-        let lr_stability = A::from(1.0).unwrap(); // Simplified
-        let adaptation_speed = A::from(self.step_count as f64).unwrap(); // Simplified
-        let memory_efficiency = A::from(0.8).unwrap(); // Simplified
+        let lr_stability = A::from(1.0).expect("unwrap failed"); // Simplified
+        let adaptation_speed = A::from(self.step_count as f64).expect("unwrap failed"); // Simplified
+        let memory_efficiency = A::from(0.8).expect("unwrap failed"); // Simplified
 
         OnlinePerformanceMetrics {
             cumulative_regret: self.regret_bound,
@@ -741,7 +747,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                             .importance_scores
                             .iter()
                             .enumerate()
-                            .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                            .min_by(|a, b| a.1.partial_cmp(b.1).expect("unwrap failed"))
                             .map(|(idx, _)| idx)
                         {
                             self.memory_buffer.examples.remove(min_idx);
@@ -804,7 +810,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 .map(|v| v.len())
                 .sum::<usize>();
             if total_samples > 0 {
-                total_performance / A::from(total_samples).unwrap()
+                total_performance / A::from(total_samples).expect("unwrap failed")
             } else {
                 A::zero()
             }
@@ -814,8 +820,8 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             num_tasks,
             average_performance: avg_performance,
             memory_usage: self.memory_buffer.examples.len(),
-            transfer_efficiency: A::from(0.8).unwrap(), // Placeholder
-            catastrophic_forgetting: A::from(0.1).unwrap(), // Placeholder
+            transfer_efficiency: A::from(0.8).expect("unwrap failed"), // Placeholder
+            catastrophic_forgetting: A::from(0.1).expect("unwrap failed"), // Placeholder
         }
     }
 }
@@ -867,7 +873,9 @@ mod tests {
         let gradient = Array1::from_vec(vec![0.1, 0.2, 0.3]);
         let loss = 0.5;
 
-        optimizer.online_update(&gradient, loss).unwrap();
+        optimizer
+            .online_update(&gradient, loss)
+            .expect("unwrap failed");
 
         assert_eq!(optimizer.step_count, 1);
         assert_eq!(optimizer.performance_history.len(), 1);
@@ -899,7 +907,7 @@ mod tests {
 
         optimizer
             .start_task("task1".to_string(), initial_params)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(optimizer.current_task, Some("task1".to_string()));
         assert!(optimizer.task_optimizers.contains_key("task1"));
@@ -919,20 +927,26 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         optimizer
             .start_task("task1".to_string(), initial_params)
-            .unwrap();
+            .expect("unwrap failed");
 
         let gradient = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // Add first example
-        optimizer.update_current_task(&gradient, 0.5).unwrap();
+        optimizer
+            .update_current_task(&gradient, 0.5)
+            .expect("unwrap failed");
         assert_eq!(optimizer.memory_buffer.examples.len(), 1);
 
         // Add second example
-        optimizer.update_current_task(&gradient, 0.6).unwrap();
+        optimizer
+            .update_current_task(&gradient, 0.6)
+            .expect("unwrap failed");
         assert_eq!(optimizer.memory_buffer.examples.len(), 2);
 
         // Add third example (should remove first due to FIFO)
-        optimizer.update_current_task(&gradient, 0.7).unwrap();
+        optimizer
+            .update_current_task(&gradient, 0.7)
+            .expect("unwrap failed");
         assert_eq!(optimizer.memory_buffer.examples.len(), 2);
     }
 
@@ -976,21 +990,21 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         optimizer
             .start_task("task1".to_string(), initial_params.clone())
-            .unwrap();
+            .expect("unwrap failed");
         optimizer
             .start_task("task2".to_string(), initial_params)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Add some performance data
         optimizer
             .task_performance
             .get_mut("task1")
-            .unwrap()
+            .expect("unwrap failed")
             .extend(vec![0.8, 0.7]);
         optimizer
             .task_performance
             .get_mut("task2")
-            .unwrap()
+            .expect("unwrap failed")
             .extend(vec![0.9, 0.8]);
 
         let stats = optimizer.get_lifelong_stats();

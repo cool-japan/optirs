@@ -204,8 +204,8 @@ impl Future for OperationHandle {
     type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut waker = self.waker.lock().unwrap();
-        let mut result = self.result.lock().unwrap();
+        let mut waker = self.waker.lock().expect("lock poisoned");
+        let mut result = self.result.lock().expect("lock poisoned");
 
         if let Some(res) = result.take() {
             Poll::Ready(res)
@@ -363,7 +363,7 @@ impl CudaPipeline {
             PipelineStrategy::Adaptive => 6,
         };
 
-        let mut handles = self.worker_handles.lock().unwrap();
+        let mut handles = self.worker_handles.lock().expect("lock poisoned");
 
         for worker_id in 0..worker_count {
             let pipeline_clone = Arc::new(self.clone());
@@ -380,7 +380,7 @@ impl CudaPipeline {
 
     /// Worker thread main loop
     fn worker_thread(pipeline: Arc<CudaPipeline>, worker_id: usize) {
-        while !*pipeline.shutdown.lock().unwrap() {
+        while !*pipeline.shutdown.lock().expect("lock poisoned") {
             match pipeline.process_next_operation(worker_id) {
                 Ok(processed) => {
                     if !processed {
@@ -400,19 +400,19 @@ impl CudaPipeline {
     fn process_next_operation(&self, worker_id: usize) -> Result<bool> {
         // Get next ready operation from queue
         let operation = {
-            let mut queue = self.operation_queue.lock().unwrap();
+            let mut queue = self.operation_queue.lock().expect("lock poisoned");
             self.find_ready_operation(&mut queue)?
         };
 
         if let Some(mut op) = operation {
             // Mark operation as executing
             {
-                let mut executing = self.executing_operations.write().unwrap();
+                let mut executing = self.executing_operations.write().expect("lock poisoned");
                 executing.insert(op.id, OperationState::Executing);
             }
 
             // Select stream for execution
-            let stream_id = self.stream_scheduler.lock().unwrap()
+            let stream_id = self.stream_scheduler.lock().expect("lock poisoned")
                 .select_stream(&op);
 
             // Execute operation
@@ -421,7 +421,7 @@ impl CudaPipeline {
             let elapsed = start_time.elapsed();
 
             // Update stream load
-            self.stream_scheduler.lock().unwrap()
+            self.stream_scheduler.lock().expect("lock poisoned")
                 .update_stream_load(stream_id, elapsed.as_micros() as u64);
 
             // Complete operation
@@ -440,7 +440,7 @@ impl CudaPipeline {
         ops.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         // Find first operation with satisfied dependencies
-        let executing = self.executing_operations.read().unwrap();
+        let executing = self.executing_operations.read().expect("lock poisoned");
         for (i, op) in ops.iter().enumerate() {
             if self.are_dependencies_satisfied(&op.dependencies, &executing)? {
                 let ready_op = ops.remove(i);
@@ -536,7 +536,7 @@ impl CudaPipeline {
     fn complete_operation(&self, operation_id: u64, result: Result<()>, elapsed: Duration) -> Result<()> {
         // Update operation state
         {
-            let mut executing = self.executing_operations.write().unwrap();
+            let mut executing = self.executing_operations.write().expect("lock poisoned");
             let state = match result {
                 Ok(()) => OperationState::Completed,
                 Err(ref e) => OperationState::Failed(e.to_string()),
@@ -546,7 +546,7 @@ impl CudaPipeline {
 
         // Update statistics
         {
-            let mut stats = self.statistics.write().unwrap();
+            let mut stats = self.statistics.write().expect("lock poisoned");
             stats.total_operations += 1;
 
             if result.is_ok() {
@@ -565,11 +565,11 @@ impl CudaPipeline {
         }
 
         // Notify completion handle
-        if let Some(handle) = self.completion_handles.lock().unwrap().get(&operation_id) {
-            let mut result_storage = handle.result.lock().unwrap();
+        if let Some(handle) = self.completion_handles.lock().expect("lock poisoned").get(&operation_id) {
+            let mut result_storage = handle.result.lock().expect("lock poisoned");
             *result_storage = Some(result.clone());
 
-            if let Some(waker) = handle.waker.lock().unwrap().take() {
+            if let Some(waker) = handle.waker.lock().expect("lock poisoned").take() {
                 waker.wake();
             }
         }
@@ -584,7 +584,7 @@ impl CudaPipeline {
     pub fn submit_operation(&self, mut operation: PipelineOperation) -> Result<OperationHandle> {
         // Assign operation ID
         let operation_id = {
-            let mut next_id = self.next_operation_id.lock().unwrap();
+            let mut next_id = self.next_operation_id.lock().expect("lock poisoned");
             let id = *next_id;
             *next_id += 1;
             id
@@ -602,19 +602,19 @@ impl CudaPipeline {
 
         // Store handle
         {
-            let mut handles = self.completion_handles.lock().unwrap();
+            let mut handles = self.completion_handles.lock().expect("lock poisoned");
             handles.insert(operation_id, handle);
         }
 
         // Add to dependency graph
         if !operation.dependencies.is_empty() {
-            let mut graph = self.dependency_graph.write().unwrap();
+            let mut graph = self.dependency_graph.write().expect("lock poisoned");
             graph.insert(operation_id, operation.dependencies.clone());
         }
 
         // Add to queue
         {
-            let mut queue = self.operation_queue.lock().unwrap();
+            let mut queue = self.operation_queue.lock().expect("lock poisoned");
 
             // Insert in priority order
             let mut inserted = false;
@@ -631,11 +631,11 @@ impl CudaPipeline {
             }
 
             // Update statistics
-            let mut stats = self.statistics.write().unwrap();
+            let mut stats = self.statistics.write().expect("lock poisoned");
             stats.queued_operations += 1;
         }
 
-        Ok(self.completion_handles.lock().unwrap().get(&operation_id).unwrap().clone())
+        Ok(self.completion_handles.lock().expect("lock poisoned").get(&operation_id).expect("unwrap failed").clone())
     }
 
     /// Submits a batch of operations
@@ -654,12 +654,12 @@ impl CudaPipeline {
     pub fn cancel_operation(&self, operation_id: u64) -> Result<()> {
         // Remove from queue
         {
-            let mut queue = self.operation_queue.lock().unwrap();
+            let mut queue = self.operation_queue.lock().expect("lock poisoned");
             if let Some(pos) = queue.iter().position(|op| op.id == operation_id) {
                 queue.remove(pos);
 
                 // Update statistics
-                let mut stats = self.statistics.write().unwrap();
+                let mut stats = self.statistics.write().expect("lock poisoned");
                 stats.queued_operations = stats.queued_operations.saturating_sub(1);
 
                 return Ok(());
@@ -668,7 +668,7 @@ impl CudaPipeline {
 
         // Mark executing operation as cancelled
         {
-            let mut executing = self.executing_operations.write().unwrap();
+            let mut executing = self.executing_operations.write().expect("lock poisoned");
             if executing.contains_key(&operation_id) {
                 executing.insert(operation_id, OperationState::Cancelled);
                 return Ok(());
@@ -680,15 +680,15 @@ impl CudaPipeline {
 
     /// Gets current pipeline statistics
     pub fn get_statistics(&self) -> PipelineStatistics {
-        self.statistics.read().unwrap().clone()
+        self.statistics.read().expect("lock poisoned").clone()
     }
 
     /// Flushes the pipeline and waits for all operations to complete
     pub fn flush(&self) -> Result<()> {
         // Wait for queue to empty and all operations to complete
         loop {
-            let queue_size = self.operation_queue.lock().unwrap().len();
-            let executing_count = self.executing_operations.read().unwrap().len();
+            let queue_size = self.operation_queue.lock().expect("lock poisoned").len();
+            let executing_count = self.executing_operations.read().expect("lock poisoned").len();
 
             if queue_size == 0 && executing_count == 0 {
                 break;
@@ -703,10 +703,10 @@ impl CudaPipeline {
     /// Shuts down the pipeline gracefully
     pub fn shutdown(&self) -> Result<()> {
         // Set shutdown flag
-        *self.shutdown.lock().unwrap() = true;
+        *self.shutdown.lock().expect("lock poisoned") = true;
 
         // Wait for workers to finish
-        let mut handles = self.worker_handles.lock().unwrap();
+        let mut handles = self.worker_handles.lock().expect("lock poisoned");
         while let Some(handle) = handles.pop() {
             handle.join().map_err(|_| ScirsMlError::RuntimeError("Failed to join worker thread".into()))?;
         }
@@ -717,8 +717,8 @@ impl CudaPipeline {
     /// Generates pipeline performance report
     pub fn generate_report(&self) -> PipelineReport {
         let statistics = self.get_statistics();
-        let queue_size = self.operation_queue.lock().unwrap().len();
-        let executing_count = self.executing_operations.read().unwrap().len();
+        let queue_size = self.operation_queue.lock().expect("lock poisoned").len();
+        let executing_count = self.executing_operations.read().expect("lock poisoned").len();
 
         PipelineReport {
             statistics,

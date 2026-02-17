@@ -401,7 +401,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
             ));
         }
 
-        let final_loss = *loss_trajectory.last().unwrap();
+        let final_loss = *loss_trajectory.last().expect("unwrap failed");
         let initial_loss = loss_trajectory[0];
 
         // Detect convergence
@@ -412,7 +412,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
             let improvement = (initial_loss - final_loss)
                 / initial_loss
                     .max(scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero()));
-            improvement / T::from(loss_trajectory.len() as f64).unwrap()
+            improvement / T::from(loss_trajectory.len() as f64).expect("unwrap failed")
         } else {
             T::zero()
         };
@@ -548,7 +548,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
             noise_score = noise_score + (T::one() - noise_test.performance_degradation);
         }
         if !robustness_tests.noise_tests.is_empty() {
-            noise_score = noise_score / T::from(robustness_tests.noise_tests.len() as f64).unwrap();
+            noise_score = noise_score
+                / T::from(robustness_tests.noise_tests.len() as f64).expect("unwrap failed");
         }
         robustness_scores.insert("noise_robustness".to_string(), noise_score);
 
@@ -559,7 +560,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         }
         if !robustness_tests.adversarial_tests.is_empty() {
             adversarial_score = adversarial_score
-                / T::from(robustness_tests.adversarial_tests.len() as f64).unwrap();
+                / T::from(robustness_tests.adversarial_tests.len() as f64).expect("unwrap failed");
         }
         robustness_scores.insert("adversarial_robustness".to_string(), adversarial_score);
 
@@ -571,7 +572,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         }
         if !robustness_tests.sensitivity_tests.is_empty() {
             sensitivity_score = sensitivity_score
-                / T::from(robustness_tests.sensitivity_tests.len() as f64).unwrap();
+                / T::from(robustness_tests.sensitivity_tests.len() as f64).expect("unwrap failed");
         }
         robustness_scores.insert("hyperparameter_robustness".to_string(), sensitivity_score);
 
@@ -590,7 +591,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
                 .iter()
                 .map(|result| result.convergence_info.final_loss)
                 .fold(T::zero(), |a, b| a + b)
-                / T::from(self.performance_history.len() as f64).unwrap();
+                / T::from(self.performance_history.len() as f64).expect("unwrap failed");
             summary.insert("average_final_loss".to_string(), avg_final_loss);
 
             // Average convergence rate
@@ -599,7 +600,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
                 .iter()
                 .map(|result| result.convergence_info.convergence_rate)
                 .fold(T::zero(), |a, b| a + b)
-                / T::from(self.performance_history.len() as f64).unwrap();
+                / T::from(self.performance_history.len() as f64).expect("unwrap failed");
             summary.insert("average_convergence_rate".to_string(), avg_convergence_rate);
 
             // Success rate (convergence)
@@ -610,13 +611,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
                 .count();
             let success_rate = scirs2_core::numeric::NumCast::from(success_count as f64)
                 .unwrap_or_else(|| T::zero())
-                / T::from(self.performance_history.len() as f64).unwrap();
+                / T::from(self.performance_history.len() as f64).expect("unwrap failed");
             summary.insert("success_rate".to_string(), success_rate);
         }
 
         summary.insert(
             "total_evaluations".to_string(),
-            T::from(self.performance_history.len() as f64).unwrap(),
+            T::from(self.performance_history.len() as f64).expect("unwrap failed"),
         );
         summary
     }
@@ -668,7 +669,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricCalculato
                     .iter()
                     .cloned()
                     .fold(T::zero(), |a, b| a + b);
-                Ok(sum / T::from(self.historical_values.len() as f64).unwrap())
+                Ok(sum / T::from(self.historical_values.len() as f64).expect("unwrap failed"))
             }
             AggregationMethod::Max => Ok(self
                 .historical_values

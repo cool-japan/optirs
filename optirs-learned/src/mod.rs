@@ -493,7 +493,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + scirs2_core::n
             });
         }
 
-        let state = self.hessian_state.as_mut().unwrap();
+        let state = self.hessian_state.as_mut().expect("unwrap failed");
 
         let y = gradient_new - gradient_old; // Gradient difference
         let s = step; // Parameter update
@@ -968,7 +968,7 @@ impl AutodiffUtils {
             total_error = total_error + relative_error;
         }
 
-        let avg_error = total_error / T::from(point.len()).unwrap();
+        let avg_error = total_error / T::from(point.len()).expect("unwrap failed");
 
         Ok(GradientCheckResult {
             analytical_gradient: analytical_grad,
@@ -1019,7 +1019,7 @@ mod tests {
         let gradient_fn = |x: &[f64]| vec![2.0 * x[0] + 2.0 * x[1], 2.0 * x[0] + 2.0 * x[1]];
 
         let point = [3.0, 4.0];
-        let result = AutodiffUtils::check_gradients(forward_fn, gradient_fn, &point, 1e-8).unwrap();
+        let result = AutodiffUtils::check_gradients(forward_fn, gradient_fn, &point, 1e-8).expect("unwrap failed");
 
         assert!(result.is_correct);
         assert!(result.max_relative_error < 1e-4);

@@ -1283,12 +1283,14 @@ mod tests {
 
     #[test]
     fn test_template_engine() {
-        let engine = TemplateEngine::new().unwrap();
+        let engine = TemplateEngine::new().expect("unwrap failed");
         let template = "Hello {{name}}!";
         let mut variables = HashMap::new();
         variables.insert("name".to_string(), "World".to_string());
 
-        let result = engine.process_template(template, &variables).unwrap();
+        let result = engine
+            .process_template(template, &variables)
+            .expect("unwrap failed");
         assert_eq!(result, "Hello World!");
     }
 

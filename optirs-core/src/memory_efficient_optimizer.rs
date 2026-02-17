@@ -37,11 +37,11 @@ use crate::optimizers::Optimizer;
 /// // Accumulate gradients from 4 micro-batches
 /// for _ in 0..4 {
 ///     let micro_batch_grads = Array1::from_elem(1000, 0.1);
-///     accumulator.accumulate(&micro_batch_grads.view()).unwrap();
+///     accumulator.accumulate(&micro_batch_grads.view()).expect("unwrap failed");
 /// }
 ///
 /// // Get averaged gradients
-/// let avg_grads = accumulator.average().unwrap();
+/// let avg_grads = accumulator.average().expect("unwrap failed");
 /// ```
 pub struct GradientAccumulator<A: Float> {
     accumulated: Array1<A>,
@@ -96,7 +96,7 @@ impl<A: Float + ScalarOperand + Debug + Zero> GradientAccumulator<A> {
             ));
         }
 
-        let scale = A::from(self.count).unwrap();
+        let scale = A::from(self.count).expect("unwrap failed");
         let averaged = &self.accumulated / scale;
 
         // Reset accumulator
@@ -361,14 +361,18 @@ mod tests {
         let grad1 = Array1::from_elem(100, 1.0);
         let grad2 = Array1::from_elem(100, 2.0);
 
-        accumulator.accumulate(&grad1.view()).unwrap();
-        accumulator.accumulate(&grad2.view()).unwrap();
+        accumulator
+            .accumulate(&grad1.view())
+            .expect("unwrap failed");
+        accumulator
+            .accumulate(&grad2.view())
+            .expect("unwrap failed");
 
         assert_eq!(accumulator.count(), 2);
         assert!(accumulator.is_ready(2));
 
         // Get average
-        let avg = accumulator.average().unwrap();
+        let avg = accumulator.average().expect("unwrap failed");
         assert_relative_eq!(avg[0], 1.5, epsilon = 1e-6);
 
         // After average, accumulator should be reset
@@ -383,7 +387,9 @@ mod tests {
         let params = Array1::from_vec((0..25).map(|i| i as f32).collect());
         let gradients = Array1::from_elem(25, 0.1);
 
-        let updated = chunked_opt.step_chunked(&params, &gradients).unwrap();
+        let updated = chunked_opt
+            .step_chunked(&params, &gradients)
+            .expect("unwrap failed");
 
         // Verify updates
         assert_eq!(updated.len(), 25);

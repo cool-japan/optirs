@@ -693,8 +693,12 @@ where
 
         // Update compilation metrics
         self.profiler.compilation_metrics.compilation_time_ms = compilation_time.as_millis() as u64;
-        self.profiler.compilation_metrics.optimizations_applied =
-            self.xla_graph.as_ref().unwrap().optimization_passes.len();
+        self.profiler.compilation_metrics.optimizations_applied = self
+            .xla_graph
+            .as_ref()
+            .expect("unwrap failed")
+            .optimization_passes
+            .len();
 
         // Cache compiled computation
         self.computation_cache
@@ -747,7 +751,7 @@ where
     fn build_optimizer_computation(&self, inputshapes: &[XLAShape]) -> Result<XLAComputationGraph> {
         // Simplified computation graph building
         // In a real implementation, this would build the full optimizer computation
-        let mut graph = self.xla_graph.as_ref().unwrap().clone();
+        let mut graph = self.xla_graph.as_ref().expect("unwrap failed").clone();
 
         // Add input placeholders
         for (i, &shape) in inputshapes.iter().enumerate() {
@@ -784,7 +788,7 @@ where
             "tpu_comp_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_secs()
         );
 
@@ -1145,7 +1149,7 @@ mod tests {
         let allocator = TPUMemoryAllocator::<f32>::new(&config);
         assert!(allocator.is_ok());
 
-        let allocator = allocator.unwrap();
+        let allocator = allocator.expect("unwrap failed");
         assert_eq!(allocator.total_memory, 32 * 1024 * 1024 * 1024 * 8); // 32GB * 8 cores
     }
 }

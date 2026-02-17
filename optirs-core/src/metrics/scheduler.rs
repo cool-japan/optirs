@@ -43,7 +43,7 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync> M
                 metric_name,
                 maximize,
             ),
-            threshold: F::from(1e-4).unwrap(),
+            threshold: F::from(1e-4).expect("unwrap failed"),
         }
     }
 

@@ -946,12 +946,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceMonitor
     fn collect_resource_usage(&self) -> Result<ResourceUsage<T>> {
         // Simplified resource collection - in real implementation would use system APIs
         let utilization = match self.resource_type {
-            ResourceType::CPU => T::from(scirs2_core::random::random::<f32>() * 80.0).unwrap(),
-            ResourceType::Memory => T::from(scirs2_core::random::random::<f32>() * 60.0).unwrap(),
-            ResourceType::GPU => T::from(scirs2_core::random::random::<f32>() * 90.0).unwrap(),
-            ResourceType::Disk => T::from(scirs2_core::random::random::<f32>() * 40.0).unwrap(),
-            ResourceType::Network => T::from(scirs2_core::random::random::<f32>() * 30.0).unwrap(),
-            ResourceType::Power => T::from(scirs2_core::random::random::<f32>() * 70.0).unwrap(),
+            ResourceType::CPU => T::from(scirs2_core::random::random::<f32>() * 80.0).expect("unwrap failed"),
+            ResourceType::Memory => T::from(scirs2_core::random::random::<f32>() * 60.0).expect("unwrap failed"),
+            ResourceType::GPU => T::from(scirs2_core::random::random::<f32>() * 90.0).expect("unwrap failed"),
+            ResourceType::Disk => T::from(scirs2_core::random::random::<f32>() * 40.0).expect("unwrap failed"),
+            ResourceType::Network => T::from(scirs2_core::random::random::<f32>() * 30.0).expect("unwrap failed"),
+            ResourceType::Power => T::from(scirs2_core::random::random::<f32>() * 70.0).expect("unwrap failed"),
         };
 
         Ok(ResourceUsage {
@@ -974,7 +974,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceMonitor
         let utilizations: Vec<T> = self.usage_history.iter().map(|u| u.utilization).collect();
 
         let sum = utilizations.iter().fold(T::zero(), |acc, &x| acc + x);
-        let avg = sum / T::from(utilizations.len()).unwrap();
+        let avg = sum / T::from(utilizations.len()).expect("unwrap failed");
 
         let max = utilizations.iter().fold(T::zero(), |acc, &x| if x > acc { x } else { acc });
         let min = utilizations.iter().fold(scirs2_core::numeric::NumCast::from(100.0).unwrap_or_else(|| T::zero()), |acc, &x| if x < acc { x } else { acc });
@@ -982,7 +982,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceMonitor
         // Calculate standard deviation
         let variance = utilizations.iter()
             .map(|&x| (x - avg) * (x - avg))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(utilizations.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(utilizations.len()).expect("unwrap failed");
         let std_dev = variance.sqrt();
 
         // Calculate percentiles (simplified)
@@ -994,8 +994,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceMonitor
             let recent = &utilizations[utilizations.len()-5..];
             let older = &utilizations[utilizations.len()-10..utilizations.len()-5];
 
-            let recent_avg = recent.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(recent.len()).unwrap();
-            let older_avg = older.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(older.len()).unwrap();
+            let recent_avg = recent.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(recent.len()).expect("unwrap failed");
+            let older_avg = older.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(older.len()).expect("unwrap failed");
 
             if recent_avg > older_avg * scirs2_core::numeric::NumCast::from(1.05).unwrap_or_else(|| T::zero()) {
                 TrendDirection::Increasing
@@ -1076,7 +1076,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceAlertMa
         message: String,
     ) -> Result<()> {
         let alert = ResourceAlert {
-            alert_id: format!("{:?}_{:?}_{}", resource_type, alert_type, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()),
+            alert_id: format!("{:?}_{:?}_{}", resource_type, alert_type, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("unwrap failed").as_secs()),
             resource_type,
             severity,
             alert_type,
@@ -1184,7 +1184,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourcePerform
             return Ok(T::zero());
         }
 
-        let n = T::from(x.len()).unwrap();
+        let n = T::from(x.len()).expect("unwrap failed");
         let sum_x = x.iter().fold(T::zero(), |acc, &val| acc + val);
         let sum_y = y.iter().fold(T::zero(), |acc, &val| acc + val);
         let mean_x = sum_x / n;
@@ -1249,7 +1249,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceOptimiz
         for rule in &self.optimization_rules {
             if self.check_rule_triggers(rule, system_state)? {
                 let recommendation = OptimizationRecommendation {
-                    id: format!("rec_{}_{}", rule.name, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()),
+                    id: format!("rec_{}_{}", rule.name, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("unwrap failed").as_secs()),
                     timestamp: SystemTime::now(),
                     rule_name: rule.name.clone(),
                     actions: rule.actions.clone(),
@@ -1455,7 +1455,7 @@ mod tests {
         let correlator = ResourcePerformanceCorrelator::<f32>::new();
         let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let y = vec![2.0, 4.0, 6.0, 8.0, 10.0];
-        let correlation = correlator.calculate_correlation(&x, &y).unwrap();
+        let correlation = correlator.calculate_correlation(&x, &y).expect("unwrap failed");
         assert!((correlation - 1.0).abs() < 0.01); // Should be close to 1.0 for perfect correlation
     }
 
@@ -1464,7 +1464,7 @@ mod tests {
         let advisor = ResourceOptimizationAdvisor::<f32>::new();
         assert!(advisor.is_ok());
 
-        let advisor = advisor.unwrap();
+        let advisor = advisor.expect("unwrap failed");
         assert!(!advisor.optimization_rules.is_empty());
     }
 

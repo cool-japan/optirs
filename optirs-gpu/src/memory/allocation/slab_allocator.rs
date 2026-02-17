@@ -228,7 +228,10 @@ impl MemoryPool {
 
         // Try to reuse a free region first
         if let Some(region_index) = self.find_suitable_free_region(aligned_size) {
-            let region = self.free_regions.remove(region_index).unwrap();
+            let region = self
+                .free_regions
+                .remove(region_index)
+                .expect("unwrap failed");
             let ptr = unsafe { NonNull::new_unchecked(self.base_ptr.as_ptr().add(region.offset)) };
 
             // If region is larger than needed, split it
@@ -293,7 +296,7 @@ impl MemoryPool {
             let current_end = self.free_regions[i].offset + self.free_regions[i].size;
             if current_end == self.free_regions[i + 1].offset {
                 // Coalesce regions
-                let next_region = self.free_regions.remove(i + 1).unwrap();
+                let next_region = self.free_regions.remove(i + 1).expect("unwrap failed");
                 self.free_regions[i].size += next_region.size;
             } else {
                 i += 1;
@@ -682,7 +685,7 @@ impl SlabAllocator {
             SlabCache::new(aligned_size, cache_config)
         });
 
-        let cache = self.caches.get_mut(&aligned_size).unwrap();
+        let cache = self.caches.get_mut(&aligned_size).expect("unwrap failed");
         cache.allocate(&mut self.memory_pool)
     }
 
@@ -836,22 +839,22 @@ impl ThreadSafeSlabAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, SlabError> {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.allocate(size)
     }
 
     pub fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<(), SlabError> {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.deallocate(ptr, size)
     }
 
     pub fn get_stats(&self) -> SlabAllocatorStats {
-        let allocator = self.allocator.lock().unwrap();
+        let allocator = self.allocator.lock().expect("lock poisoned");
         allocator.get_stats()
     }
 
     pub fn reclaim_memory(&self) -> usize {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.reclaim_memory()
     }
 }
@@ -864,7 +867,7 @@ mod tests {
     fn test_slab_creation() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let slab = Slab::new(ptr, size, 64);
         assert_eq!(slab.object_count, size / 64);
@@ -876,7 +879,7 @@ mod tests {
     fn test_slab_allocation() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let mut slab = Slab::new(ptr, size, 64);
 
@@ -886,18 +889,21 @@ mod tests {
 
         let alloc2 = slab.allocate();
         assert!(alloc2.is_some());
-        assert_ne!(alloc1.unwrap(), alloc2.unwrap());
+        assert_ne!(
+            alloc1.expect("unwrap failed"),
+            alloc2.expect("unwrap failed")
+        );
     }
 
     #[test]
     fn test_slab_deallocation() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let mut slab = Slab::new(ptr, size, 64);
 
-        let alloc_ptr = slab.allocate().unwrap();
+        let alloc_ptr = slab.allocate().expect("unwrap failed");
         let result = slab.deallocate(alloc_ptr);
         assert!(result.is_ok());
     }
@@ -906,7 +912,7 @@ mod tests {
     fn test_memory_pool() {
         let size = 1024 * 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let mut pool = MemoryPool::new(ptr, size, 256);
 
@@ -916,14 +922,14 @@ mod tests {
         let slab2 = pool.allocate_slab(4096);
         assert!(slab2.is_some());
 
-        assert_ne!(slab1.unwrap(), slab2.unwrap());
+        assert_ne!(slab1.expect("unwrap failed"), slab2.expect("unwrap failed"));
     }
 
     #[test]
     fn test_slab_cache() {
         let size = 1024 * 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let mut pool = MemoryPool::new(ptr, size, 256);
         let config = CacheConfig::default();
@@ -940,7 +946,7 @@ mod tests {
     fn test_slab_allocator() {
         let size = 1024 * 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = SlabConfig::default();
         let mut allocator = SlabAllocator::new(ptr, size, config);
@@ -960,7 +966,7 @@ mod tests {
     fn test_thread_safe_allocator() {
         let size = 1024 * 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = SlabConfig::default();
         let allocator = ThreadSafeSlabAllocator::new(ptr, size, config);

@@ -117,7 +117,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientAccum
                 // Gradients are already summed, nothing to do
             }
             AccumulationMode::Average => {
-                let scale = A::one() / A::from(self.accumulation_count).unwrap();
+                let scale = A::one() / A::from(self.accumulation_count).expect("unwrap failed");
                 for grad in &mut result {
                     grad.mapv_inplace(|x| x * scale);
                 }
@@ -410,23 +410,26 @@ mod tests {
 
         // First micro-batch
         let grad1 = vec![Array1::from_vec(vec![1.0, 2.0, 3.0])];
-        accumulator.accumulate(&grad1).unwrap();
+        accumulator.accumulate(&grad1).expect("unwrap failed");
         assert!(!accumulator.is_ready());
 
         // Second micro-batch
         let grad2 = vec![Array1::from_vec(vec![2.0, 3.0, 4.0])];
-        accumulator.accumulate(&grad2).unwrap();
+        accumulator.accumulate(&grad2).expect("unwrap failed");
         assert!(!accumulator.is_ready());
 
         // Third micro-batch
         let grad3 = vec![Array1::from_vec(vec![1.0, 1.0, 1.0])];
-        accumulator.accumulate(&grad3).unwrap();
+        accumulator.accumulate(&grad3).expect("unwrap failed");
         assert!(accumulator.is_ready());
 
         // Get accumulated gradients
-        let result = accumulator.get_and_reset().unwrap();
+        let result = accumulator.get_and_reset().expect("unwrap failed");
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].as_slice().unwrap(), &[4.0, 6.0, 8.0]); // Sum of all gradients
+        assert_eq!(
+            result[0].as_slice().expect("unwrap failed"),
+            &[4.0, 6.0, 8.0]
+        ); // Sum of all gradients
 
         // Should be reset
         assert!(!accumulator.is_ready());
@@ -440,11 +443,11 @@ mod tests {
         let grad1 = vec![Array1::from_vec(vec![2.0, 4.0])];
         let grad2 = vec![Array1::from_vec(vec![4.0, 2.0])];
 
-        accumulator.accumulate(&grad1).unwrap();
-        accumulator.accumulate(&grad2).unwrap();
+        accumulator.accumulate(&grad1).expect("unwrap failed");
+        accumulator.accumulate(&grad2).expect("unwrap failed");
 
-        let result = accumulator.get_and_reset().unwrap();
-        assert_eq!(result[0].as_slice().unwrap(), &[3.0, 3.0]); // Average of gradients
+        let result = accumulator.get_and_reset().expect("unwrap failed");
+        assert_eq!(result[0].as_slice().expect("unwrap failed"), &[3.0, 3.0]); // Average of gradients
     }
 
     #[test]
@@ -456,18 +459,18 @@ mod tests {
 
         // First few steps should use 2 accumulations
         let grad = vec![Array1::from_vec(vec![1.0])];
-        var_accumulator.accumulate(&grad).unwrap();
-        var_accumulator.accumulate(&grad).unwrap();
+        var_accumulator.accumulate(&grad).expect("unwrap failed");
+        var_accumulator.accumulate(&grad).expect("unwrap failed");
         assert!(var_accumulator.is_ready());
 
-        let _result = var_accumulator.get_and_step().unwrap();
+        let _result = var_accumulator.get_and_step().expect("unwrap failed");
 
         // Simulate more steps to trigger adaptive rule
         for _ in 0..6 {
-            var_accumulator.accumulate(&grad).unwrap();
-            var_accumulator.accumulate(&grad).unwrap();
+            var_accumulator.accumulate(&grad).expect("unwrap failed");
+            var_accumulator.accumulate(&grad).expect("unwrap failed");
             if var_accumulator.is_ready() {
-                var_accumulator.get_and_step().unwrap();
+                var_accumulator.get_and_step().expect("unwrap failed");
             }
         }
 
@@ -482,7 +485,7 @@ mod tests {
             6, // effective batch size
             AccumulationMode::Sum,
         )
-        .unwrap();
+        .expect("unwrap failed");
 
         assert_eq!(trainer.micro_batch_size(), 2);
         assert_eq!(trainer.effective_batch_size(), 6);
@@ -490,17 +493,17 @@ mod tests {
         let grad = vec![Array1::from_vec(vec![1.0, 1.0])];
 
         // Process 3 micro-batches (to reach effective batch size of 6)
-        trainer.process_micro_batch(&grad).unwrap();
+        trainer.process_micro_batch(&grad).expect("unwrap failed");
         assert!(!trainer.ready_for_step());
 
-        trainer.process_micro_batch(&grad).unwrap();
+        trainer.process_micro_batch(&grad).expect("unwrap failed");
         assert!(!trainer.ready_for_step());
 
-        trainer.process_micro_batch(&grad).unwrap();
+        trainer.process_micro_batch(&grad).expect("unwrap failed");
         assert!(trainer.ready_for_step());
 
-        let result = trainer.get_accumulated_gradients().unwrap();
-        assert_eq!(result[0].as_slice().unwrap(), &[3.0, 3.0]); // Sum of 3 micro-batches
+        let result = trainer.get_accumulated_gradients().expect("unwrap failed");
+        assert_eq!(result[0].as_slice().expect("unwrap failed"), &[3.0, 3.0]); // Sum of 3 micro-batches
     }
 
     #[test]
@@ -527,7 +530,7 @@ mod tests {
     #[test]
     fn test_config_validation() {
         // Valid config
-        utils::validate_config(32, 128, 4).unwrap();
+        utils::validate_config(32, 128, 4).expect("unwrap failed");
 
         // Invalid: micro batch size is 0
         assert!(utils::validate_config(0, 128, 4).is_err());
@@ -544,16 +547,16 @@ mod tests {
 
         let grad = vec![Array1::from_vec(vec![1.0])];
 
-        accumulator.accumulate(&grad).unwrap();
+        accumulator.accumulate(&grad).expect("unwrap failed");
         assert_relative_eq!(accumulator.progress(), 0.25);
 
-        accumulator.accumulate(&grad).unwrap();
+        accumulator.accumulate(&grad).expect("unwrap failed");
         assert_relative_eq!(accumulator.progress(), 0.5);
 
-        accumulator.accumulate(&grad).unwrap();
+        accumulator.accumulate(&grad).expect("unwrap failed");
         assert_relative_eq!(accumulator.progress(), 0.75);
 
-        accumulator.accumulate(&grad).unwrap();
+        accumulator.accumulate(&grad).expect("unwrap failed");
         assert_relative_eq!(accumulator.progress(), 1.0);
     }
 
@@ -562,7 +565,7 @@ mod tests {
         let mut accumulator = GradientAccumulator::new(2, AccumulationMode::Sum);
 
         let grad1 = vec![Array1::from_vec(vec![1.0, 2.0])];
-        accumulator.accumulate(&grad1).unwrap();
+        accumulator.accumulate(&grad1).expect("unwrap failed");
 
         // Try to accumulate gradients with different dimensions
         let grad2 = vec![Array1::from_vec(vec![1.0, 2.0, 3.0])];
@@ -581,7 +584,7 @@ mod tests {
         let mut accumulator = GradientAccumulator::new(3, AccumulationMode::Sum);
 
         let grad = vec![Array1::from_vec(vec![1.0])];
-        accumulator.accumulate(&grad).unwrap();
+        accumulator.accumulate(&grad).expect("unwrap failed");
 
         // Try to get gradients before accumulation is complete
         assert!(accumulator.get_and_reset().is_err());

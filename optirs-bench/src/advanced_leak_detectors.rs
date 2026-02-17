@@ -513,11 +513,12 @@ impl ReferenceCountingDetector {
         };
 
         // Project future memory usage
-        let last_timestamp = snapshots.back().unwrap().timestamp;
+        let last_timestamp = snapshots.back().expect("unwrap failed").timestamp;
         let projected_usage = (1..=10)
             .map(|i| {
                 let future_timestamp = last_timestamp + (i * 60); // 1 minute intervals
-                let future_memory = memory_values.last().unwrap() + (growth_rate * i as f64);
+                let future_memory =
+                    memory_values.last().expect("unwrap failed") + (growth_rate * i as f64);
                 (future_timestamp, future_memory.max(0.0) as usize)
             })
             .collect();
@@ -658,12 +659,12 @@ impl CycleDetector {
             for &w in neighbors {
                 if !state.indices.contains_key(&w) {
                     Self::strongconnect(w, state, graph);
-                    let v_lowlink = *state.lowlinks.get(&v).unwrap();
-                    let w_lowlink = *state.lowlinks.get(&w).unwrap();
+                    let v_lowlink = *state.lowlinks.get(&v).expect("unwrap failed");
+                    let w_lowlink = *state.lowlinks.get(&w).expect("unwrap failed");
                     state.lowlinks.insert(v, v_lowlink.min(w_lowlink));
                 } else if state.on_stack.contains(&w) {
-                    let v_lowlink = *state.lowlinks.get(&v).unwrap();
-                    let w_index = *state.indices.get(&w).unwrap();
+                    let v_lowlink = *state.lowlinks.get(&v).expect("unwrap failed");
+                    let w_index = *state.indices.get(&w).expect("unwrap failed");
                     state.lowlinks.insert(v, v_lowlink.min(w_index));
                 }
             }
@@ -672,7 +673,7 @@ impl CycleDetector {
         if state.lowlinks.get(&v) == state.indices.get(&v) {
             let mut component = Vec::new();
             loop {
-                let w = state.stack.pop().unwrap();
+                let w = state.stack.pop().expect("unwrap failed");
                 state.on_stack.remove(&w);
                 component.push(w);
                 if w == v {
@@ -859,7 +860,7 @@ impl RealTimeMemoryMonitor {
             loop {
                 // Check if monitoring should continue
                 {
-                    let active = is_active_flag.lock().unwrap();
+                    let active = is_active_flag.lock().expect("lock poisoned");
                     if !*active {
                         break;
                     }
@@ -874,7 +875,7 @@ impl RealTimeMemoryMonitor {
 
                 // Update state
                 {
-                    let mut monitor_state = state.lock().unwrap();
+                    let mut monitor_state = state.lock().expect("lock poisoned");
                     monitor_state.add_sample(sample);
                     monitor_state.update_metrics(&config);
                 }
@@ -986,8 +987,8 @@ impl MonitorState {
                 self.memory_samples.iter().rev().take(window_size).collect();
 
             if recent_samples.len() >= 2 {
-                let first = recent_samples.last().unwrap();
-                let last = recent_samples.first().unwrap();
+                let first = recent_samples.last().expect("unwrap failed");
+                let last = recent_samples.first().expect("unwrap failed");
                 let time_diff = last.timestamp.duration_since(first.timestamp).as_secs_f64();
 
                 if time_diff > 0.0 {

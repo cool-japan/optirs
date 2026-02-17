@@ -1420,7 +1420,7 @@ mod tests {
 
         let doc_id = workspace
             .create_document("Test Document", DocumentType::Manuscript, &owner_id)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(workspace.documents.len(), 1);
         assert_eq!(workspace.documents[0].name, "Test Document");

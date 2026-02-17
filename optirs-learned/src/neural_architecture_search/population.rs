@@ -199,7 +199,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PopulationManager<T> {
 
         // Select remaining individuals
         while survivors.len() < self.population_size {
-            let random_value = T::from(scirs2_core::random::random::<f64>()).unwrap() * total_fitness;
+            let random_value = T::from(scirs2_core::random::random::<f64>()).expect("unwrap failed") * total_fitness;
             let mut cumulative_fitness = T::zero();
 
             for individual in &self.population {
@@ -301,7 +301,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PopulationManager<T> {
         }
 
         let total: T = self.population.iter().map(|ind| ind.fitness).fold(T::zero(), |acc, f| acc + f);
-        total / T::from(self.population.len()).unwrap()
+        total / T::from(self.population.len()).expect("unwrap failed")
     }
 
     /// Get population statistics
@@ -365,7 +365,7 @@ pub struct Individual<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> Individual<T> {
     /// Create new individual
     pub fn new(architecture: String, metrics: EvaluationMetrics) -> Result<Self> {
-        let fitness = T::from(metrics.overall_score(&[])).unwrap();
+        let fitness = T::from(metrics.overall_score(&[])).expect("unwrap failed");
         let id = format!("ind_{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
 
         Ok(Self {
@@ -379,7 +379,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Individual<T> {
 
     /// Update fitness based on new metrics
     pub fn update_fitness(&mut self, weights: &[f64]) {
-        self.fitness = T::from(self.metrics.overall_score(weights)).unwrap();
+        self.fitness = T::from(self.metrics.overall_score(weights)).expect("unwrap failed");
     }
 
     /// Increment age
@@ -472,7 +472,7 @@ impl DiversityTracker {
             return DiversityTrend::Stable;
         }
 
-        let recent = self.diversity_history.back().unwrap();
+        let recent = self.diversity_history.back().expect("unwrap failed");
         let previous = self.diversity_history[self.diversity_history.len() - 2];
 
         if recent > &(previous + 0.05) {
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_population_initialization() {
-        let mut manager = PopulationManager::<f32>::new(5, 2).unwrap();
+        let mut manager = PopulationManager::<f32>::new(5, 2).expect("unwrap failed");
 
         let architectures = vec![
             "arch1".to_string(),
@@ -556,7 +556,7 @@ mod tests {
         assert!(result.is_ok());
 
         assert_eq!(manager.population.len(), 3);
-        assert_eq!(manager.get_best_performance().unwrap(), 0.9f32);
+        assert_eq!(manager.get_best_performance().expect("unwrap failed"), 0.9f32);
     }
 
     #[test]
@@ -565,7 +565,7 @@ mod tests {
         let individual = Individual::<f32>::new("test_arch".to_string(), metrics);
         assert!(individual.is_ok());
 
-        let ind = individual.unwrap();
+        let ind = individual.expect("unwrap failed");
         assert_eq!(ind.architecture, "test_arch");
         assert!(ind.fitness > 0.0);
     }
@@ -575,9 +575,9 @@ mod tests {
         let mut tracker = DiversityTracker::new();
 
         let individuals = vec![
-            Individual::<f64>::new("arch1".to_string(), create_test_metrics(0.8)).unwrap(),
-            Individual::<f64>::new("arch2".to_string(), create_test_metrics(0.9)).unwrap(),
-            Individual::<f64>::new("arch1".to_string(), create_test_metrics(0.7)).unwrap(), // Duplicate
+            Individual::<f64>::new("arch1".to_string(), create_test_metrics(0.8)).expect("unwrap failed"),
+            Individual::<f64>::new("arch2".to_string(), create_test_metrics(0.9)).expect("unwrap failed"),
+            Individual::<f64>::new("arch1".to_string(), create_test_metrics(0.7)).expect("unwrap failed"), // Duplicate
         ];
 
         tracker.update(&individuals);

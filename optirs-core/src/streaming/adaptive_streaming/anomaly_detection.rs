@@ -844,13 +844,19 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         let recent_statistics = self.calculate_recent_statistics()?;
 
         // Get performance metrics (simplified)
-        let performance_metrics = vec![A::from(0.8).unwrap(), A::from(0.7).unwrap()];
+        let performance_metrics = vec![
+            A::from(0.8).expect("unwrap failed"),
+            A::from(0.7).expect("unwrap failed"),
+        ];
 
         // Get resource usage (simplified)
-        let resource_usage = vec![A::from(0.6).unwrap(), A::from(0.5).unwrap()];
+        let resource_usage = vec![
+            A::from(0.6).expect("unwrap failed"),
+            A::from(0.5).expect("unwrap failed"),
+        ];
 
         // Get drift indicators (simplified)
-        let drift_indicators = vec![A::from(0.1).unwrap()];
+        let drift_indicators = vec![A::from(0.1).expect("unwrap failed")];
 
         // Calculate time since last anomaly
         let time_since_last_anomaly = if let Some(last_anomaly) = self.anomaly_history.back() {
@@ -872,13 +878,34 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
     fn calculate_recent_statistics(&self) -> Result<DataStatistics<A>, String> {
         // Simplified implementation - would use actual recent data
         Ok(DataStatistics {
-            means: vec![A::from(0.5).unwrap(), A::from(0.3).unwrap()],
-            std_devs: vec![A::from(0.1).unwrap(), A::from(0.15).unwrap()],
-            min_values: vec![A::from(0.0).unwrap(), A::from(0.0).unwrap()],
-            max_values: vec![A::from(1.0).unwrap(), A::from(1.0).unwrap()],
-            medians: vec![A::from(0.5).unwrap(), A::from(0.3).unwrap()],
-            skewness: vec![A::from(0.0).unwrap(), A::from(0.1).unwrap()],
-            kurtosis: vec![A::from(0.0).unwrap(), A::from(0.0).unwrap()],
+            means: vec![
+                A::from(0.5).expect("unwrap failed"),
+                A::from(0.3).expect("unwrap failed"),
+            ],
+            std_devs: vec![
+                A::from(0.1).expect("unwrap failed"),
+                A::from(0.15).expect("unwrap failed"),
+            ],
+            min_values: vec![
+                A::from(0.0).expect("unwrap failed"),
+                A::from(0.0).expect("unwrap failed"),
+            ],
+            max_values: vec![
+                A::from(1.0).expect("unwrap failed"),
+                A::from(1.0).expect("unwrap failed"),
+            ],
+            medians: vec![
+                A::from(0.5).expect("unwrap failed"),
+                A::from(0.3).expect("unwrap failed"),
+            ],
+            skewness: vec![
+                A::from(0.0).expect("unwrap failed"),
+                A::from(0.1).expect("unwrap failed"),
+            ],
+            kurtosis: vec![
+                A::from(0.0).expect("unwrap failed"),
+                A::from(0.0).expect("unwrap failed"),
+            ],
         })
     }
 
@@ -955,7 +982,7 @@ pub struct ZScoreDetector<A: Float + Send + Sync> {
 impl<A: Float + Default + Clone + Send + Sync + Send + Sync> ZScoreDetector<A> {
     fn new(threshold: f64) -> Result<Self, String> {
         Ok(Self {
-            threshold: A::from(threshold).unwrap(),
+            threshold: A::from(threshold).expect("unwrap failed"),
             running_mean: A::zero(),
             running_variance: A::zero(),
             sample_count: 0,
@@ -997,18 +1024,18 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalAnoma
             is_anomaly,
             anomaly_score,
             confidence: if is_anomaly {
-                A::from(0.8).unwrap()
+                A::from(0.8).expect("unwrap failed")
             } else {
-                A::from(0.2).unwrap()
+                A::from(0.2).expect("unwrap failed")
             },
             anomaly_type: if is_anomaly {
                 Some(AnomalyType::StatisticalOutlier)
             } else {
                 None
             },
-            severity: if anomaly_score > A::from(3.0).unwrap() {
+            severity: if anomaly_score > A::from(3.0).expect("unwrap failed") {
                 AnomalySeverity::High
-            } else if anomaly_score > A::from(2.0).unwrap() {
+            } else if anomaly_score > A::from(2.0).expect("unwrap failed") {
                 AnomalySeverity::Medium
             } else {
                 AnomalySeverity::Low
@@ -1023,7 +1050,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalAnoma
         // Update running statistics
         self.sample_count += 1;
         let delta = feature_sum - self.running_mean;
-        self.running_mean = self.running_mean + delta / A::from(self.sample_count).unwrap();
+        self.running_mean =
+            self.running_mean + delta / A::from(self.sample_count).expect("unwrap failed");
         let delta2 = feature_sum - self.running_mean;
         self.running_variance = self.running_variance + delta * delta2;
 
@@ -1059,7 +1087,7 @@ pub struct IQRDetector<A: Float + Send + Sync> {
 impl<A: Float + Default + Clone + Send + Sync + Send + Sync> IQRDetector<A> {
     fn new(threshold: f64) -> Result<Self, String> {
         Ok(Self {
-            threshold: A::from(threshold).unwrap(),
+            threshold: A::from(threshold).expect("unwrap failed"),
             recent_values: VecDeque::with_capacity(100),
             window_size: 100,
         })
@@ -1086,7 +1114,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalAnoma
 
         // Calculate IQR
         let mut sorted_values: Vec<A> = self.recent_values.iter().cloned().collect();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let q1_idx = sorted_values.len() / 4;
         let q3_idx = 3 * sorted_values.len() / 4;
@@ -1110,18 +1138,18 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalAnoma
 
         Ok(AnomalyDetectionResult {
             is_anomaly,
-            anomaly_score: distance_from_bounds / iqr.max(A::from(1e-8).unwrap()),
+            anomaly_score: distance_from_bounds / iqr.max(A::from(1e-8).expect("unwrap failed")),
             confidence: if is_anomaly {
-                A::from(0.7).unwrap()
+                A::from(0.7).expect("unwrap failed")
             } else {
-                A::from(0.3).unwrap()
+                A::from(0.3).expect("unwrap failed")
             },
             anomaly_type: if is_anomaly {
                 Some(AnomalyType::StatisticalOutlier)
             } else {
                 None
             },
-            severity: if distance_from_bounds > iqr * A::from(2.0).unwrap() {
+            severity: if distance_from_bounds > iqr * A::from(2.0).expect("unwrap failed") {
                 AnomalySeverity::High
             } else {
                 AnomalySeverity::Medium
@@ -1168,7 +1196,7 @@ impl<A: Float + Default + Send + Sync + Send + Sync> IsolationForestDetector<A> 
     fn new() -> Result<Self, String> {
         Ok(Self {
             model_trained: false,
-            threshold: A::from(0.5).unwrap(),
+            threshold: A::from(0.5).expect("unwrap failed"),
         })
     }
 }
@@ -1181,11 +1209,11 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
         data_point: &StreamingDataPoint<A>,
     ) -> Result<AnomalyDetectionResult<A>, String> {
         // Simplified implementation
-        let anomaly_score = A::from(0.3).unwrap(); // Placeholder
+        let anomaly_score = A::from(0.3).expect("unwrap failed"); // Placeholder
         Ok(AnomalyDetectionResult {
             is_anomaly: anomaly_score > self.threshold,
             anomaly_score,
-            confidence: A::from(0.6).unwrap(),
+            confidence: A::from(0.6).expect("unwrap failed"),
             anomaly_type: Some(AnomalyType::StatisticalOutlier),
             severity: AnomalySeverity::Medium,
             metadata: HashMap::new(),
@@ -1203,12 +1231,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
 
     fn get_performance_metrics(&self) -> MLModelMetrics<A> {
         MLModelMetrics {
-            accuracy: A::from(0.85).unwrap(),
-            precision: A::from(0.8).unwrap(),
-            recall: A::from(0.75).unwrap(),
-            f1_score: A::from(0.77).unwrap(),
-            auc_roc: A::from(0.88).unwrap(),
-            false_positive_rate: A::from(0.05).unwrap(),
+            accuracy: A::from(0.85).expect("unwrap failed"),
+            precision: A::from(0.8).expect("unwrap failed"),
+            recall: A::from(0.75).expect("unwrap failed"),
+            f1_score: A::from(0.77).expect("unwrap failed"),
+            auc_roc: A::from(0.88).expect("unwrap failed"),
+            false_positive_rate: A::from(0.05).expect("unwrap failed"),
             training_time: Duration::from_secs(60),
             inference_time: Duration::from_millis(10),
         }
@@ -1228,7 +1256,7 @@ impl<A: Float + Default + Send + Sync + Send + Sync> OneClassSVMDetector<A> {
     fn new() -> Result<Self, String> {
         Ok(Self {
             model_trained: false,
-            threshold: A::from(0.0).unwrap(),
+            threshold: A::from(0.0).expect("unwrap failed"),
         })
     }
 }
@@ -1243,8 +1271,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
         // Simplified implementation
         Ok(AnomalyDetectionResult {
             is_anomaly: false,
-            anomaly_score: A::from(0.2).unwrap(),
-            confidence: A::from(0.5).unwrap(),
+            anomaly_score: A::from(0.2).expect("unwrap failed"),
+            confidence: A::from(0.5).expect("unwrap failed"),
             anomaly_type: None,
             severity: AnomalySeverity::Low,
             metadata: HashMap::new(),
@@ -1262,12 +1290,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
 
     fn get_performance_metrics(&self) -> MLModelMetrics<A> {
         MLModelMetrics {
-            accuracy: A::from(0.82).unwrap(),
-            precision: A::from(0.78).unwrap(),
-            recall: A::from(0.73).unwrap(),
-            f1_score: A::from(0.75).unwrap(),
-            auc_roc: A::from(0.85).unwrap(),
-            false_positive_rate: A::from(0.08).unwrap(),
+            accuracy: A::from(0.82).expect("unwrap failed"),
+            precision: A::from(0.78).expect("unwrap failed"),
+            recall: A::from(0.73).expect("unwrap failed"),
+            f1_score: A::from(0.75).expect("unwrap failed"),
+            auc_roc: A::from(0.85).expect("unwrap failed"),
+            false_positive_rate: A::from(0.08).expect("unwrap failed"),
             training_time: Duration::from_secs(120),
             inference_time: Duration::from_millis(5),
         }
@@ -1287,7 +1315,7 @@ impl<A: Float + Default + Send + Sync + Send + Sync> LOFDetector<A> {
     fn new() -> Result<Self, String> {
         Ok(Self {
             model_trained: false,
-            threshold: A::from(1.5).unwrap(),
+            threshold: A::from(1.5).expect("unwrap failed"),
         })
     }
 }
@@ -1302,8 +1330,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
         // Simplified implementation
         Ok(AnomalyDetectionResult {
             is_anomaly: false,
-            anomaly_score: A::from(0.1).unwrap(),
-            confidence: A::from(0.4).unwrap(),
+            anomaly_score: A::from(0.1).expect("unwrap failed"),
+            confidence: A::from(0.4).expect("unwrap failed"),
             anomaly_type: None,
             severity: AnomalySeverity::Low,
             metadata: HashMap::new(),
@@ -1321,12 +1349,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
 
     fn get_performance_metrics(&self) -> MLModelMetrics<A> {
         MLModelMetrics {
-            accuracy: A::from(0.79).unwrap(),
-            precision: A::from(0.76).unwrap(),
-            recall: A::from(0.71).unwrap(),
-            f1_score: A::from(0.73).unwrap(),
-            auc_roc: A::from(0.83).unwrap(),
-            false_positive_rate: A::from(0.12).unwrap(),
+            accuracy: A::from(0.79).expect("unwrap failed"),
+            precision: A::from(0.76).expect("unwrap failed"),
+            recall: A::from(0.71).expect("unwrap failed"),
+            f1_score: A::from(0.73).expect("unwrap failed"),
+            auc_roc: A::from(0.83).expect("unwrap failed"),
+            false_positive_rate: A::from(0.12).expect("unwrap failed"),
             training_time: Duration::from_secs(90),
             inference_time: Duration::from_millis(15),
         }
@@ -1348,7 +1376,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
             detector_performance: HashMap::new(),
             ensemble_config: EnsembleConfig {
                 min_consensus: 2,
-                ensemble_threshold: A::from(0.5).unwrap(),
+                ensemble_threshold: A::from(0.5).expect("unwrap failed"),
                 dynamic_weighting: true,
                 evaluation_window: 100,
                 context_based_selection: false,
@@ -1374,10 +1402,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
         let anomaly_count = results.values().filter(|r| r.is_anomaly).count();
         let total_count = results.len();
 
-        let avg_score =
-            results.values().map(|r| r.anomaly_score).sum::<A>() / A::from(total_count).unwrap();
-        let avg_confidence =
-            results.values().map(|r| r.confidence).sum::<A>() / A::from(total_count).unwrap();
+        let avg_score = results.values().map(|r| r.anomaly_score).sum::<A>()
+            / A::from(total_count).expect("unwrap failed");
+        let avg_confidence = results.values().map(|r| r.confidence).sum::<A>()
+            / A::from(total_count).expect("unwrap failed");
 
         let is_anomaly = match self.voting_strategy {
             EnsembleVotingStrategy::Majority => anomaly_count > total_count / 2,
@@ -1394,9 +1422,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
             } else {
                 None
             },
-            severity: if avg_score > A::from(0.8).unwrap() {
+            severity: if avg_score > A::from(0.8).expect("unwrap failed") {
                 AnomalySeverity::High
-            } else if avg_score > A::from(0.5).unwrap() {
+            } else if avg_score > A::from(0.5).expect("unwrap failed") {
                 AnomalySeverity::Medium
             } else {
                 AnomalySeverity::Low
@@ -1408,8 +1436,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
     fn adjust_sensitivity(&mut self, adjustment: A) -> Result<(), String> {
         self.ensemble_config.ensemble_threshold = (self.ensemble_config.ensemble_threshold
             + adjustment)
-            .max(A::from(0.1).unwrap())
-            .min(A::from(0.9).unwrap());
+            .max(A::from(0.1).expect("unwrap failed"))
+            .min(A::from(0.9).expect("unwrap failed"));
         Ok(())
     }
 }
@@ -1422,10 +1450,10 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> AdaptiveThresholdMa
             performance_feedback: VecDeque::with_capacity(1000),
             threshold_bounds: HashMap::new(),
             adaptation_params: ThresholdAdaptationParams {
-                learning_rate: A::from(0.01).unwrap(),
-                momentum: A::from(0.9).unwrap(),
-                min_change: A::from(0.001).unwrap(),
-                max_change: A::from(0.1).unwrap(),
+                learning_rate: A::from(0.01).expect("unwrap failed"),
+                momentum: A::from(0.9).expect("unwrap failed"),
+                min_change: A::from(0.001).expect("unwrap failed"),
+                max_change: A::from(0.1).expect("unwrap failed"),
                 adaptation_frequency: 100,
             },
         })
@@ -1439,8 +1467,8 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> FalsePositiveTracke
             fp_rate_calculator: FPRateCalculator {
                 recent_results: VecDeque::with_capacity(1000),
                 window_size: 1000,
-                current_fp_rate: A::from(0.05).unwrap(),
-                target_fp_rate: A::from(0.05).unwrap(),
+                current_fp_rate: A::from(0.05).expect("unwrap failed"),
+                target_fp_rate: A::from(0.05).expect("unwrap failed"),
             },
             fp_patterns: FalsePositivePatterns {
                 temporal_patterns: Vec::new(),

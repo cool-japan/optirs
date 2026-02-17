@@ -586,9 +586,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceAnal
             return Ok(T::zero());
         }
 
-        let first_loss = snapshots.last().unwrap().loss;
-        let last_loss = snapshots.first().unwrap().loss;
-        let steps = T::from(snapshots.len()).unwrap();
+        let first_loss = snapshots.last().expect("unwrap failed").loss;
+        let last_loss = snapshots.first().expect("unwrap failed").loss;
+        let steps = T::from(snapshots.len()).expect("unwrap failed");
 
         Ok((first_loss - last_loss) / steps)
     }
@@ -600,11 +600,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceAnal
         }
 
         let losses: Vec<T> = snapshots.iter().map(|s| s.loss).collect();
-        let mean = losses.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(losses.len()).unwrap();
+        let mean = losses.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(losses.len()).expect("unwrap failed");
 
         let variance = losses.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(losses.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(losses.len()).expect("unwrap failed");
 
         Ok(T::one() / (T::one() + variance.sqrt()))
     }
@@ -622,7 +622,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceAnal
             }
         }
 
-        Ok(scirs2_core::numeric::NumCast::from(improvement_count).unwrap_or_else(|| T::zero()) / T::from(snapshots.len() - 1).unwrap())
+        Ok(scirs2_core::numeric::NumCast::from(improvement_count).unwrap_or_else(|| T::zero()) / T::from(snapshots.len() - 1).expect("unwrap failed"))
     }
 }
 
@@ -680,7 +680,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceMode
             return Ok(predictions);
         }
 
-        let last_snapshot = self.training_history.last().unwrap();
+        let last_snapshot = self.training_history.last().expect("unwrap failed");
 
         for i in 1..=steps_ahead {
             let predicted_loss = self.predict_loss(i)?;
@@ -736,7 +736,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PerformanceMode
         }
 
         let trend = (recent_losses[0] - recent_losses[recent_losses.len() - 1]) /
-                   T::from(recent_losses.len() - 1).unwrap();
+                   T::from(recent_losses.len() - 1).expect("unwrap failed");
 
         Ok(recent_losses[0] + trend * scirs2_core::numeric::NumCast::from(steps_ahead).unwrap_or_else(|| T::zero()))
     }
@@ -937,7 +937,7 @@ mod tests {
     #[test]
     fn test_performance_snapshot_recording() {
         let config = PerformanceMonitoringConfig::default();
-        let mut analyzer = PerformanceAnalyzer::<f32>::new(config).unwrap();
+        let mut analyzer = PerformanceAnalyzer::<f32>::new(config).expect("unwrap failed");
 
         let snapshot = PerformanceSnapshot {
             timestamp: SystemTime::now(),
@@ -964,7 +964,7 @@ mod tests {
         let model = PerformanceModel::<f32>::new(ModelType::LinearRegression);
         assert!(model.is_ok());
 
-        let model = model.unwrap();
+        let model = model.expect("unwrap failed");
         let predictions = model.predict(5);
         assert!(predictions.is_ok());
     }

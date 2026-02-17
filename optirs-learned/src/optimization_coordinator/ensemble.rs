@@ -70,7 +70,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
     pub fn register_optimizer(&mut self, id: String, optimizer: Box<dyn AdvancedOptimizer<T>>) -> Result<()> {
         self.optimizers.insert(id.clone(), optimizer);
         self.performance_scores.insert(id.clone(), T::zero());
-        self.ensemble_weights.insert(id.clone(), T::from(1.0 / self.optimizers.len() as f64).unwrap());
+        self.ensemble_weights.insert(id.clone(), T::from(1.0 / self.optimizers.len() as f64).expect("unwrap failed"));
         self.performance_history.insert(id, VecDeque::new());
         Ok(())
     }
@@ -225,7 +225,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
         }
 
         // Get the dimensionality from any result
-        let first_result = results.values().next().unwrap();
+        let first_result = results.values().next().expect("unwrap failed");
         let mut ensemble_result = Array1::zeros(first_result.len());
         let mut total_weight = T::zero();
 
@@ -289,9 +289,9 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
             return Err(crate::error::OptimError::Other("No results to ensemble".to_string()));
         }
 
-        let first_result = results.values().next().unwrap();
+        let first_result = results.values().next().expect("unwrap failed");
         let mut ensemble_result = Array1::zeros(first_result.len());
-        let count = T::from(results.len()).unwrap();
+        let count = T::from(results.len()).expect("unwrap failed");
 
         for result in results.values() {
             for i in 0..ensemble_result.len() {
@@ -343,7 +343,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
         let epsilon = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
         for _ in 0..num_select {
-            if scirs2_core::random::random::<f64>() < epsilon.to_f64().unwrap() {
+            if scirs2_core::random::random::<f64>() < epsilon.to_f64().expect("unwrap failed") {
                 // Exploration: random selection
                 let available: Vec<String> = self.optimizers.keys()
                     .filter(|k| !selected.contains(k))
@@ -359,7 +359,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
                 // Exploitation: select best performing
                 let best = self.performance_scores.iter()
                     .filter(|(k, _)| !selected.contains(k))
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).expect("unwrap failed"))
                     .map(|(k, _)| k.clone());
 
                 if let Some(best_optimizer) = best {
@@ -391,7 +391,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
                 }
 
                 let selections = self.selection_stats.optimizer_selections.get(optimizer_id).cloned().unwrap_or(1) as f64;
-                let confidence = T::from(2.0 * (total_selections.ln() / selections).sqrt()).unwrap();
+                let confidence = T::from(2.0 * (total_selections.ln() / selections).sqrt()).expect("unwrap failed");
                 let ucb_value = avg_reward + confidence;
 
                 if ucb_value > best_ucb_value {
@@ -432,7 +432,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
                 let beta = self.selection_stats.failures.get(optimizer_id).cloned().unwrap_or(1) as f64;
 
                 // Simplified sampling (in practice, would use proper Beta distribution)
-                let sample = T::from(alpha / (alpha + beta) + scirs2_core::random::random::<f64>() * 0.1).unwrap();
+                let sample = T::from(alpha / (alpha + beta) + scirs2_core::random::random::<f64>() * 0.1).expect("unwrap failed");
 
                 if sample > best_sample {
                     best_sample = sample;
@@ -479,7 +479,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
 
         // Sort by suitability and select top performers
         let mut sorted_optimizers: Vec<_> = optimizer_capabilities.iter().collect();
-        sorted_optimizers.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap());
+        sorted_optimizers.sort_by(|a, b| b.1.partial_cmp(a.1).expect("unwrap failed"));
 
         for (optimizer_id, _) in sorted_optimizers.iter().take(num_select) {
             selected.push((*optimizer_id).clone());
@@ -592,7 +592,7 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + std::default::Default + 
 
     fn select_best_optimizer_for_context(&self, _context: &OptimizationContext<T>) -> Result<String> {
         self.performance_scores.iter()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).expect("unwrap failed"))
             .map(|(k, _)| k.clone())
             .ok_or_else(|| crate::error::OptimError::Other("No optimizers available".to_string()))
     }
@@ -923,14 +923,14 @@ mod tests {
 
     #[test]
     fn test_optimizer_registration() {
-        let mut ensemble = OptimizerEnsemble::<f32>::new().unwrap();
-        let optimizer = Box::new(AdamOptimizer::new().unwrap());
+        let mut ensemble = OptimizerEnsemble::<f32>::new().expect("unwrap failed");
+        let optimizer = Box::new(AdamOptimizer::new().expect("unwrap failed"));
         assert!(ensemble.register_optimizer("test".to_string(), optimizer).is_ok());
     }
 
     #[test]
     fn test_default_optimizers_registration() {
-        let mut ensemble = OptimizerEnsemble::<f32>::new().unwrap();
+        let mut ensemble = OptimizerEnsemble::<f32>::new().expect("unwrap failed");
         assert!(ensemble.register_default_optimizers().is_ok());
         assert!(ensemble.optimizers.len() > 0);
     }

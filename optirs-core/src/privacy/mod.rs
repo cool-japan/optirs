@@ -314,7 +314,7 @@ where
         let clip_threshold = self.get_clipping_threshold();
         let clipping_ratio = if pre_clip_norm > clip_threshold {
             let scale = clip_threshold / pre_clip_norm;
-            gradients.mapv_inplace(|g| g * A::from(scale).unwrap());
+            gradients.mapv_inplace(|g| g * A::from(scale).expect("unwrap failed"));
             scale
         } else {
             1.0
@@ -448,7 +448,7 @@ where
                     let u1: f64 = self.rng.gen_range(0.0..1.0);
                     let u2: f64 = self.rng.gen_range(0.0..1.0);
                     let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-                    let noise = A::from(z0 * sigma_f64).unwrap();
+                    let noise = A::from(z0 * sigma_f64).expect("unwrap failed");
                     g + noise
                 });
             }
@@ -462,7 +462,7 @@ where
                     } else {
                         -scale_f64 * (2.0 * (1.0 - u)).ln()
                     };
-                    let noise = A::from(laplace_sample).unwrap();
+                    let noise = A::from(laplace_sample).expect("unwrap failed");
                     g + noise
                 });
             }
@@ -473,7 +473,7 @@ where
                     let u1: f64 = self.rng.gen_range(0.0..1.0);
                     let u2: f64 = self.rng.gen_range(0.0..1.0);
                     let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-                    let noise = A::from(z0 * sigma_f64).unwrap();
+                    let noise = A::from(z0 * sigma_f64).expect("unwrap failed");
                     g + noise
                 });
             }
@@ -742,11 +742,11 @@ mod tests {
     fn test_moments_accountant() {
         let accountant = MomentsAccountant::new(1.1, 1e-5, 256, 50000);
 
-        let (epsilon, delta) = accountant.get_privacy_spent(100).unwrap();
+        let (epsilon, delta) = accountant.get_privacy_spent(100).expect("unwrap failed");
         assert!(epsilon > 0.0);
         assert_eq!(delta, 1e-5);
 
-        let (epsilon2, _) = accountant.get_privacy_spent(200).unwrap();
+        let (epsilon2, _) = accountant.get_privacy_spent(200).expect("unwrap failed");
         assert!(epsilon2 > epsilon); // More steps should consume more budget
     }
 
@@ -771,7 +771,7 @@ mod tests {
         };
 
         let dp_optimizer: DifferentiallyPrivateOptimizer<SGD<f64>, f64, scirs2_core::ndarray::Ix1> =
-            DifferentiallyPrivateOptimizer::new(sgd, dp_config).unwrap();
+            DifferentiallyPrivateOptimizer::new(sgd, dp_config).expect("unwrap failed");
         let budget = dp_optimizer.get_privacy_budget();
 
         assert_eq!(budget.epsilon_consumed, 0.0);

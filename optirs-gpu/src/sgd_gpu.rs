@@ -173,24 +173,24 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SGDGpu<A> {
         // Set kernel parameters
         #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
-            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
-            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
+            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().expect("unwrap failed"));
 
             if self.cpu_optimizer.momentum != A::zero() {
-                kernel.set_buffer("momentum", self.momentum_gpu.as_ref().unwrap());
+                kernel.set_buffer("momentum", self.momentum_gpu.as_ref().expect("unwrap failed"));
 
                 if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                     kernel.set_f32(
                         "lr",
-                        self.cpu_optimizer.get_learning_rate().to_f32().unwrap(),
+                        self.cpu_optimizer.get_learning_rate().to_f32().expect("unwrap failed"),
                     );
                     kernel.set_f32(
                         "momentum_factor",
-                        self.cpu_optimizer.momentum.to_f32().unwrap(),
+                        self.cpu_optimizer.momentum.to_f32().expect("unwrap failed"),
                     );
                     kernel.set_f32(
                         "weight_decay",
-                        self.cpu_optimizer.weight_decay.to_f32().unwrap(),
+                        self.cpu_optimizer.weight_decay.to_f32().expect("unwrap failed"),
                     );
                     if self.cpu_optimizer.nesterov {
                         kernel.set_i32("nesterov", 1);
@@ -200,15 +200,15 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SGDGpu<A> {
                 } else {
                     kernel.set_f64(
                         "lr",
-                        self.cpu_optimizer.get_learning_rate().to_f64().unwrap(),
+                        self.cpu_optimizer.get_learning_rate().to_f64().expect("unwrap failed"),
                     );
                     kernel.set_f64(
                         "momentum_factor",
-                        self.cpu_optimizer.momentum.to_f64().unwrap(),
+                        self.cpu_optimizer.momentum.to_f64().expect("unwrap failed"),
                     );
                     kernel.set_f64(
                         "weight_decay",
-                        self.cpu_optimizer.weight_decay.to_f64().unwrap(),
+                        self.cpu_optimizer.weight_decay.to_f64().expect("unwrap failed"),
                     );
                     if self.cpu_optimizer.nesterov {
                         kernel.set_i32("nesterov", 1);
@@ -221,20 +221,20 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> SGDGpu<A> {
                 if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                     kernel.set_f32(
                         "lr",
-                        self.cpu_optimizer.get_learning_rate().to_f32().unwrap(),
+                        self.cpu_optimizer.get_learning_rate().to_f32().expect("unwrap failed"),
                     );
                     kernel.set_f32(
                         "weight_decay",
-                        self.cpu_optimizer.weight_decay.to_f32().unwrap(),
+                        self.cpu_optimizer.weight_decay.to_f32().expect("unwrap failed"),
                     );
                 } else {
                     kernel.set_f64(
                         "lr",
-                        self.cpu_optimizer.get_learning_rate().to_f64().unwrap(),
+                        self.cpu_optimizer.get_learning_rate().to_f64().expect("unwrap failed"),
                     );
                     kernel.set_f64(
                         "weight_decay",
-                        self.cpu_optimizer.weight_decay.to_f64().unwrap(),
+                        self.cpu_optimizer.weight_decay.to_f64().expect("unwrap failed"),
                     );
                 }
             }
@@ -319,7 +319,7 @@ mod tests {
         let result = optimizer.step(&params, &grads);
         assert!(result.is_ok());
 
-        let updated = result.unwrap();
+        let updated = result.expect("unwrap failed");
         assert_eq!(updated.len(), 3);
 
         // Check that parameters moved in negative gradient direction

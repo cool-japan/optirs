@@ -73,7 +73,7 @@ where
         + 'static,
 {
     let config = StreamingConfig::default();
-    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).unwrap()); // Default learning rate
+    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).expect("unwrap failed")); // Default learning rate
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)
 }
 
@@ -97,7 +97,7 @@ where
         + Sync
         + 'static,
 {
-    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).unwrap()); // Default learning rate
+    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).expect("unwrap failed")); // Default learning rate
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)
 }
 

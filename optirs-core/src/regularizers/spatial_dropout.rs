@@ -23,7 +23,7 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::Array4;
 /// use optirs_core::regularizers::SpatialDropout;
 ///
-/// let spatial_dropout = SpatialDropout::new(0.3).unwrap(); // 30% dropout rate
+/// let spatial_dropout = SpatialDropout::new(0.3).expect("unwrap failed"); // 30% dropout rate
 ///
 /// // 4D tensor (batch, channels, height, width)
 /// let features = Array4::<f64>::ones((2, 3, 4, 4));
@@ -79,7 +79,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
         let feature_size = features.shape()[self.feature_dim.0];
 
         // Create a mask for each feature map
-        let keep_prob_f64 = keep_prob.to_f64().unwrap();
+        let keep_prob_f64 = keep_prob.to_f64().expect("unwrap failed");
         let mut rng = thread_rng();
         let feature_mask: Vec<bool> = (0..feature_size)
             .map(|_| rng.random_bool(keep_prob_f64))
@@ -114,7 +114,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 /// use scirs2_core::ndarray::Array3;
 /// use optirs_core::regularizers::FeatureDropout;
 ///
-/// let feature_dropout = FeatureDropout::new(0.5).unwrap(); // 50% dropout rate
+/// let feature_dropout = FeatureDropout::new(0.5).expect("unwrap failed"); // 50% dropout rate
 ///
 /// // 3D tensor (batch, features, sequence_length)
 /// let features = Array3::<f64>::ones((2, 10, 20));
@@ -170,7 +170,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
         let feature_size = features.shape()[self.feature_dim.0];
 
         // Create a consistent mask for each feature
-        let keep_prob_f64 = keep_prob.to_f64().unwrap();
+        let keep_prob_f64 = keep_prob.to_f64().expect("unwrap failed");
         let mut rng = thread_rng();
         let feature_mask: Vec<bool> = (0..feature_size)
             .map(|_| rng.random_bool(keep_prob_f64))
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn test_spatial_dropout_creation() {
         // Valid creation
-        let sd = SpatialDropout::<f64>::new(0.3).unwrap();
+        let sd = SpatialDropout::<f64>::new(0.3).expect("unwrap failed");
         assert_eq!(sd.dropprob, 0.3);
 
         // Invalid probabilities
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_spatial_dropout_4d() {
-        let sd = SpatialDropout::new(0.5).unwrap();
+        let sd = SpatialDropout::new(0.5).expect("unwrap failed");
 
         // Create a 4D tensor (batch, channels, height, width)
         // Use values that are always non-zero to better test dropout
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_feature_dropout_creation() {
         // Valid creation
-        let fd = FeatureDropout::<f64>::new(0.4).unwrap();
+        let fd = FeatureDropout::<f64>::new(0.4).expect("unwrap failed");
         assert_eq!(fd.dropprob, 0.4);
 
         // Invalid probabilities
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_feature_dropout_3d() {
-        let fd = FeatureDropout::new(0.5).unwrap();
+        let fd = FeatureDropout::new(0.5).expect("unwrap failed");
 
         // Create a 3D tensor (batch, features, sequence)
         let features = Array::from_shape_fn((2, 5, 10), |(_b, f, s)| f as f64 + s as f64);
@@ -349,8 +349,8 @@ mod tests {
 
     #[test]
     fn test_inference_mode() {
-        let sd = SpatialDropout::new(0.5).unwrap();
-        let fd = FeatureDropout::new(0.5).unwrap();
+        let sd = SpatialDropout::new(0.5).expect("unwrap failed");
+        let fd = FeatureDropout::new(0.5).expect("unwrap failed");
 
         let features = array![[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]];
 
@@ -364,18 +364,18 @@ mod tests {
 
     #[test]
     fn test_regularizer_trait() {
-        let sd = SpatialDropout::new(0.3).unwrap();
+        let sd = SpatialDropout::new(0.3).expect("unwrap failed");
         let params = array![[[1.0, 2.0], [3.0, 4.0]]];
         let mut gradient = array![[[0.1, 0.2], [0.3, 0.4]]];
 
         // Test Regularizer trait
-        let penalty = sd.penalty(&params).unwrap();
+        let penalty = sd.penalty(&params).expect("unwrap failed");
         assert_eq!(penalty, 0.0);
 
         let _penalty_apply = sd.apply(&params, true);
         let penalty_reg =
             <SpatialDropout<f64> as Regularizer<f64, Ix3>>::apply(&sd, &params, &mut gradient)
-                .unwrap();
+                .expect("unwrap failed");
         assert_eq!(penalty_reg, 0.0);
 
         // Gradient should be modified

@@ -1091,7 +1091,7 @@ impl<
                 * range.max(scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()));
         }
 
-        volume * T::from(self.pareto_front.solutions.len() as f64).unwrap()
+        volume * T::from(self.pareto_front.solutions.len() as f64).expect("unwrap failed")
     }
 
     fn calculate_spread(&self) -> T {
@@ -1113,7 +1113,7 @@ impl<
             total_distance = total_distance + distance.sqrt();
         }
 
-        total_distance / T::from(self.pareto_front.solutions.len() - 1).unwrap()
+        total_distance / T::from(self.pareto_front.solutions.len() - 1).expect("unwrap failed")
     }
 
     fn calculate_spacing(&self) -> T {
@@ -1146,12 +1146,13 @@ impl<
         }
 
         // Calculate mean and standard deviation of distances
-        let mean: T = distances.iter().cloned().sum::<T>() / T::from(distances.len()).unwrap();
+        let mean: T =
+            distances.iter().cloned().sum::<T>() / T::from(distances.len()).expect("unwrap failed");
         let variance: T = distances
             .iter()
             .map(|&d| (d - mean) * (d - mean))
             .sum::<T>()
-            / T::from(distances.len()).unwrap();
+            / T::from(distances.len()).expect("unwrap failed");
 
         variance.sqrt()
     }
@@ -1352,7 +1353,7 @@ impl<
         for (_key, value) in individual.architecture.parameters.iter_mut() {
             if self.rng.gen_range(0.0..1.0) < 0.1 {
                 // 10% mutation rate per parameter
-                let noise = T::from(self.rng.gen_range(-0.05..0.05)).unwrap(); // ±5% noise
+                let noise = T::from(self.rng.gen_range(-0.05..0.05)).expect("unwrap failed"); // ±5% noise
                 *value = *value + noise;
             }
         }
@@ -1433,7 +1434,7 @@ mod tests {
         let mut nsga2 = NSGA2::<f64>::new(2, 0.8, 0.1);
 
         // Create two test individuals
-        let arch = nsga2.generate_random_architecture().unwrap();
+        let arch = nsga2.generate_random_architecture().expect("unwrap failed");
 
         let ind1 = Individual {
             architecture: arch.clone(),

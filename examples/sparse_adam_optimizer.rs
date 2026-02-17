@@ -224,7 +224,7 @@ fn train_with_adam(
         }
 
         // Update _weights using Adam
-        _weights = optimizer.step(&_weights, &gradients).unwrap();
+        _weights = optimizer.step(&_weights, &gradients).expect("unwrap failed");
 
         // Calculate parameter error (L2 norm of difference)
         let param_error = (&_weights - true_weights).map(|x| x * x).sum().sqrt();
@@ -311,7 +311,7 @@ fn train_with_sparse_adam(
         let sparse_grad = SparseGradient::new(all_indices, all_values, n_features);
 
         // Update _weights using SparseAdam
-        _weights = optimizer.step_sparse(&_weights, &sparse_grad).unwrap();
+        _weights = optimizer.step_sparse(&_weights, &sparse_grad).expect("unwrap failed");
 
         // Calculate parameter error (L2 norm of difference)
         let param_error = (&_weights - true_weights).map(|x| x * x).sum().sqrt();

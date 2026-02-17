@@ -906,22 +906,22 @@ impl ThreadSafeDefragmentationEngine {
     }
 
     pub fn should_defragment(&self) -> bool {
-        let mut engine = self.engine.lock().unwrap();
+        let mut engine = self.engine.lock().expect("lock poisoned");
         engine.should_defragment()
     }
 
     pub fn defragment(&self) -> Result<CompactionResult, DefragError> {
-        let mut engine = self.engine.lock().unwrap();
+        let mut engine = self.engine.lock().expect("lock poisoned");
         engine.defragment()
     }
 
     pub fn get_stats(&self) -> DefragStats {
-        let engine = self.engine.lock().unwrap();
+        let engine = self.engine.lock().expect("lock poisoned");
         engine.get_stats().clone()
     }
 
     pub fn get_performance_history(&self) -> Vec<DefragPerformance> {
-        let engine = self.engine.lock().unwrap();
+        let engine = self.engine.lock().expect("lock poisoned");
         engine.get_performance_history().iter().cloned().collect()
     }
 }
@@ -969,7 +969,7 @@ mod tests {
         let result = strategy.execute(&mut layout);
         assert!(result.is_ok());
 
-        let compaction_result = result.unwrap();
+        let compaction_result = result.expect("unwrap failed");
         assert!(compaction_result.bytes_moved > 0);
         assert!(compaction_result.objects_relocated > 0);
     }

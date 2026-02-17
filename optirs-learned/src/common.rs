@@ -153,7 +153,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizerState<T> {
             step: 0,
             step_count: 0,
             loss: None,
-            learning_rate: scirs2_core::numeric::NumCast::from(0.001).unwrap(),
+            learning_rate: scirs2_core::numeric::NumCast::from(0.001).expect("unwrap failed"),
             metadata: StateMetadata::default(),
         }
     }

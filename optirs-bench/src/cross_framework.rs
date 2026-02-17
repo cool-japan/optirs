@@ -323,7 +323,9 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             name: "Quadratic".to_string(),
             dimension: 10,
             function: Box::new(|x: &Array1<A>| x.mapv(|val| val * val).sum()),
-            gradient: Box::new(|x: &Array1<A>| x.mapv(|val| A::from(2.0).unwrap() * val)),
+            gradient: Box::new(|x: &Array1<A>| {
+                x.mapv(|val| A::from(2.0).expect("unwrap failed") * val)
+            }),
             optimal_value: Some(A::zero()),
             optimal_point: Some(Array1::zeros(10)),
         });
@@ -334,17 +336,17 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             dimension: 2,
             function: Box::new(|x: &Array1<A>| {
                 let a = A::one();
-                let b = A::from(100.0).unwrap();
+                let b = A::from(100.0).expect("unwrap failed");
                 let term1 = (a - x[0]) * (a - x[0]);
                 let term2 = b * (x[1] - x[0] * x[0]) * (x[1] - x[0] * x[0]);
                 term1 + term2
             }),
             gradient: Box::new(|x: &Array1<A>| {
                 let a = A::one();
-                let b = A::from(100.0).unwrap();
-                let grad_x = A::from(-2.0).unwrap() * (a - x[0])
-                    - A::from(4.0).unwrap() * b * x[0] * (x[1] - x[0] * x[0]);
-                let grad_y = A::from(2.0).unwrap() * b * (x[1] - x[0] * x[0]);
+                let b = A::from(100.0).expect("unwrap failed");
+                let grad_x = A::from(-2.0).expect("unwrap failed") * (a - x[0])
+                    - A::from(4.0).expect("unwrap failed") * b * x[0] * (x[1] - x[0] * x[0]);
+                let grad_y = A::from(2.0).expect("unwrap failed") * b * (x[1] - x[0] * x[0]);
                 Array1::from_vec(vec![grad_x, grad_y])
             }),
             optimal_value: Some(A::zero()),
@@ -358,39 +360,41 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             function: Box::new(|x: &Array1<A>| {
                 let x1 = x[0];
                 let x2 = x[1];
-                let term1 =
-                    (A::from(1.5).unwrap() - x1 + x1 * x2) * (A::from(1.5).unwrap() - x1 + x1 * x2);
-                let term2 = (A::from(2.25).unwrap() - x1 + x1 * x2 * x2)
-                    * (A::from(2.25).unwrap() - x1 + x1 * x2 * x2);
-                let term3 = (A::from(2.625).unwrap() - x1 + x1 * x2 * x2 * x2)
-                    * (A::from(2.625).unwrap() - x1 + x1 * x2 * x2 * x2);
+                let term1 = (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2)
+                    * (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2);
+                let term2 = (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2)
+                    * (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2);
+                let term3 = (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2)
+                    * (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2);
                 term1 + term2 + term3
             }),
             gradient: Box::new(|x: &Array1<A>| {
                 let x1 = x[0];
                 let x2 = x[1];
-                let dx1 = A::from(2.0).unwrap()
-                    * (A::from(1.5).unwrap() - x1 + x1 * x2)
+                let dx1 = A::from(2.0).expect("unwrap failed")
+                    * (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2)
                     * (x2 - A::one())
-                    + A::from(2.0).unwrap()
-                        * (A::from(2.25).unwrap() - x1 + x1 * x2 * x2)
+                    + A::from(2.0).expect("unwrap failed")
+                        * (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2)
                         * (x2 * x2 - A::one())
-                    + A::from(2.0).unwrap()
-                        * (A::from(2.625).unwrap() - x1 + x1 * x2 * x2 * x2)
+                    + A::from(2.0).expect("unwrap failed")
+                        * (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2)
                         * (x2 * x2 * x2 - A::one());
-                let dx2 = A::from(2.0).unwrap() * (A::from(1.5).unwrap() - x1 + x1 * x2) * x1
-                    + A::from(2.0).unwrap()
-                        * (A::from(2.25).unwrap() - x1 + x1 * x2 * x2)
-                        * (A::from(2.0).unwrap() * x1 * x2)
-                    + A::from(2.0).unwrap()
-                        * (A::from(2.625).unwrap() - x1 + x1 * x2 * x2 * x2)
-                        * (A::from(3.0).unwrap() * x1 * x2 * x2);
+                let dx2 = A::from(2.0).expect("unwrap failed")
+                    * (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2)
+                    * x1
+                    + A::from(2.0).expect("unwrap failed")
+                        * (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2)
+                        * (A::from(2.0).expect("unwrap failed") * x1 * x2)
+                    + A::from(2.0).expect("unwrap failed")
+                        * (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2)
+                        * (A::from(3.0).expect("unwrap failed") * x1 * x2 * x2);
                 Array1::from_vec(vec![dx1, dx2])
             }),
             optimal_value: Some(A::zero()),
             optimal_point: Some(Array1::from_vec(vec![
-                A::from(3.0).unwrap(),
-                A::from(0.5).unwrap(),
+                A::from(3.0).expect("unwrap failed"),
+                A::from(0.5).expect("unwrap failed"),
             ])),
         });
     }
@@ -503,7 +507,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
                 (0..problem_dim)
                     .map(|_| {
                         rng_seed = rng_seed.wrapping_mul(1103515245).wrapping_add(12345);
-                        A::from((rng_seed % 1000) as f64 / 1000.0 - 0.5).unwrap()
+                        A::from((rng_seed % 1000) as f64 / 1000.0 - 0.5).expect("unwrap failed")
                     })
                     .collect(),
             );
@@ -562,7 +566,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
 
         let mean_final_value = if !final_values.is_empty() {
             final_values.iter().fold(A::zero(), |acc, &x| acc + x)
-                / A::from(final_values.len()).unwrap()
+                / A::from(final_values.len()).expect("unwrap failed")
         } else {
             A::zero()
         };
@@ -575,7 +579,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
 
         let mean_gradient_norm = if !gradient_norms.is_empty() {
             gradient_norms.iter().fold(A::zero(), |acc, &x| acc + x)
-                / A::from(gradient_norms.len()).unwrap()
+                / A::from(gradient_norms.len()).expect("unwrap failed")
         } else {
             A::zero()
         };
@@ -751,17 +755,17 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
         let std_convergence_time = Duration::from_millis(std_convergence_time_ms as u64);
 
         let mean_final_value =
-            A::from(*result_data.get("mean_final_value").unwrap_or(&0.1)).unwrap();
+            A::from(*result_data.get("mean_final_value").unwrap_or(&0.1)).expect("unwrap failed");
         let std_final_value =
-            A::from(*result_data.get("std_final_value").unwrap_or(&0.01)).unwrap();
+            A::from(*result_data.get("std_final_value").unwrap_or(&0.01)).expect("unwrap failed");
 
         let mean_iterations = *result_data.get("mean_iterations").unwrap_or(&100.0);
         let std_iterations = *result_data.get("std_iterations").unwrap_or(&10.0);
 
-        let mean_gradient_norm =
-            A::from(*result_data.get("mean_gradient_norm").unwrap_or(&0.01)).unwrap();
-        let std_gradient_norm =
-            A::from(*result_data.get("std_gradient_norm").unwrap_or(&0.001)).unwrap();
+        let mean_gradient_norm = A::from(*result_data.get("mean_gradient_norm").unwrap_or(&0.01))
+            .expect("unwrap failed");
+        let std_gradient_norm = A::from(*result_data.get("std_gradient_norm").unwrap_or(&0.001))
+            .expect("unwrap failed");
 
         // Simplified convergence curves
         let convergence_curves: Vec<Vec<A>> = vec![vec![mean_final_value; 100]; total_runs];
@@ -1026,7 +1030,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             .iter()
             .map(|&v| (v - mean) * (v - mean))
             .fold(A::zero(), |acc, x| acc + x)
-            / A::from(values.len() - 1).unwrap();
+            / A::from(values.len() - 1).expect("unwrap failed");
 
         variance.sqrt()
     }
@@ -1144,8 +1148,8 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
         let margin_of_error = critical_value * std_err;
 
         ConfidenceInterval {
-            lower: A::from(mean - margin_of_error).unwrap(),
-            upper: A::from(mean + margin_of_error).unwrap(),
+            lower: A::from(mean - margin_of_error).expect("unwrap failed"),
+            upper: A::from(mean + margin_of_error).expect("unwrap failed"),
             confidence_level,
         }
     }
@@ -1200,9 +1204,9 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
         AnovaResult {
             f_statistic,
             p_value,
-            between_ss: A::from(between_ss).unwrap(),
-            within_ss: A::from(within_ss).unwrap(),
-            total_ss: A::from(total_ss).unwrap(),
+            between_ss: A::from(between_ss).expect("unwrap failed"),
+            within_ss: A::from(within_ss).expect("unwrap failed"),
+            total_ss: A::from(total_ss).expect("unwrap failed"),
             df_between,
             df_within,
         }

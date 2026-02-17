@@ -1,7 +1,7 @@
-// Long-running test analyzer binary for CI/CD integration
-//
-// This binary analyzes results from extended stability and endurance tests,
-// providing insights into long-term system behavior and reliability.
+//! Long-running test analyzer binary for CI/CD integration
+//!
+//! This binary analyzes results from extended stability and endurance tests,
+//! providing insights into long-term system behavior and reliability.
 
 use clap::{Arg, Command};
 use optirs_core::error::{OptimError, Result};
@@ -545,26 +545,36 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    let inputpath = PathBuf::from(matches.get_one::<String>("input").unwrap());
-    let outputpath = PathBuf::from(matches.get_one::<String>("output").unwrap());
-    let format = matches.get_one::<String>("format").unwrap();
+    let inputpath = PathBuf::from(
+        matches
+            .get_one::<String>("input")
+            .expect("input argument is required"),
+    );
+    let outputpath = PathBuf::from(
+        matches
+            .get_one::<String>("output")
+            .expect("output argument is required"),
+    );
+    let format = matches
+        .get_one::<String>("format")
+        .expect("format has default value");
     let verbose = matches.get_flag("verbose");
 
     let stability_threshold: f64 = matches
         .get_one::<String>("stability-threshold")
-        .unwrap()
+        .expect("stability-threshold has default value")
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid stability threshold".to_string()))?;
 
     let degradation_threshold: f64 = matches
         .get_one::<String>("degradation-threshold")
-        .unwrap()
+        .expect("degradation-threshold has default value")
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid degradation threshold".to_string()))?;
 
     let availability_threshold: f64 = matches
         .get_one::<String>("availability-threshold")
-        .unwrap()
+        .expect("availability-threshold has default value")
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid availability threshold".to_string()))?;
 
@@ -888,7 +898,7 @@ fn analyze_longrun_test_results(
         environment_info: env_info,
         timestamp: SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("System time is before UNIX epoch")
             .as_secs(),
     })
 }
@@ -1280,10 +1290,12 @@ fn analyze_resource_trends(timeline: &[(u64, f64)]) -> ResourceTrendAnalysis {
 
     // Calculate trend (simplified linear regression)
     let trend = if timeline.len() > 1 {
-        let first = timeline.first().unwrap().1;
-        let last = timeline.last().unwrap().1;
-        let time_span_days =
-            (timeline.last().unwrap().0 - timeline.first().unwrap().0) as f64 / (24.0 * 3600.0);
+        let first = timeline.first().expect("timeline is not empty").1;
+        let last = timeline.last().expect("timeline is not empty").1;
+        let time_span_days = (timeline.last().expect("timeline is not empty").0
+            - timeline.first().expect("timeline is not empty").0)
+            as f64
+            / (24.0 * 3600.0);
         if time_span_days > 0.0 {
             (last - first) / time_span_days
         } else {

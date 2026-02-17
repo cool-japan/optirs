@@ -139,7 +139,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
             self.stats_cache = Some(self.compute_stats());
             self.cache_valid = true;
         }
-        self.stats_cache.as_ref().unwrap()
+        self.stats_cache.as_ref().expect("unwrap failed")
     }
 
     /// Compute gradient flow statistics
@@ -161,7 +161,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
 
             let mean_magnitude = if !group_magnitudes.is_empty() {
                 group_magnitudes.iter().fold(A::zero(), |acc, &x| acc + x)
-                    / A::from(group_magnitudes.len()).unwrap()
+                    / A::from(group_magnitudes.len()).expect("unwrap failed")
             } else {
                 A::zero()
             };
@@ -172,7 +172,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
                     .iter()
                     .map(|&x| (x - mean) * (x - mean))
                     .fold(A::zero(), |acc, x| acc + x);
-                sum_sq_diff / A::from(group_magnitudes.len() - 1).unwrap()
+                sum_sq_diff / A::from(group_magnitudes.len() - 1).expect("unwrap failed")
             } else {
                 A::zero()
             };
@@ -200,7 +200,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
             self.gradient_directions
                 .iter()
                 .fold(A::zero(), |acc, &x| acc + x)
-                / A::from(self.gradient_directions.len()).unwrap()
+                / A::from(self.gradient_directions.len()).expect("unwrap failed")
         } else {
             A::one()
         };
@@ -212,7 +212,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
                 .iter()
                 .map(|&x| (x - mean) * (x - mean))
                 .fold(A::zero(), |acc, x| acc + x);
-            sum_sq_diff / A::from(self.gradient_directions.len() - 1).unwrap()
+            sum_sq_diff / A::from(self.gradient_directions.len() - 1).expect("unwrap failed")
         } else {
             A::zero()
         };
@@ -310,7 +310,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
             .gradient_directions
             .iter()
             .fold(A::zero(), |acc, &x| acc + x.abs())
-            / A::from(self.gradient_directions.len()).unwrap();
+            / A::from(self.gradient_directions.len()).expect("unwrap failed");
 
         let magnitude_consistency = if !self.gradient_magnitudes.is_empty() {
             let all_magnitudes: Vec<A> = self
@@ -322,12 +322,12 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientFlowA
 
             if all_magnitudes.len() > 1 {
                 let mean = all_magnitudes.iter().fold(A::zero(), |acc, &x| acc + x)
-                    / A::from(all_magnitudes.len()).unwrap();
+                    / A::from(all_magnitudes.len()).expect("unwrap failed");
                 let variance = all_magnitudes
                     .iter()
                     .map(|&x| (x - mean) * (x - mean))
                     .fold(A::zero(), |acc, x| acc + x)
-                    / A::from(all_magnitudes.len()).unwrap();
+                    / A::from(all_magnitudes.len()).expect("unwrap failed");
                 let cv = if mean > A::zero() {
                     variance.sqrt() / mean
                 } else {
@@ -465,7 +465,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
             name: "Quadratic".to_string(),
             dimension: 10,
             function: Box::new(|x: &Array1<A>| x.mapv(|val| val * val).sum()),
-            gradient: Box::new(|x: &Array1<A>| x.mapv(|val| A::from(2.0).unwrap() * val)),
+            gradient: Box::new(|x: &Array1<A>| {
+                x.mapv(|val| A::from(2.0).expect("unwrap failed") * val)
+            }),
             optimal_value: Some(A::zero()),
             optimal_point: Some(Array1::zeros(10)),
         });
@@ -476,17 +478,17 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
             dimension: 2,
             function: Box::new(|x: &Array1<A>| {
                 let a = A::one();
-                let b = A::from(100.0).unwrap();
+                let b = A::from(100.0).expect("unwrap failed");
                 let term1 = (a - x[0]) * (a - x[0]);
                 let term2 = b * (x[1] - x[0] * x[0]) * (x[1] - x[0] * x[0]);
                 term1 + term2
             }),
             gradient: Box::new(|x: &Array1<A>| {
                 let a = A::one();
-                let b = A::from(100.0).unwrap();
-                let grad_x = A::from(-2.0).unwrap() * (a - x[0])
-                    - A::from(4.0).unwrap() * b * x[0] * (x[1] - x[0] * x[0]);
-                let grad_y = A::from(2.0).unwrap() * b * (x[1] - x[0] * x[0]);
+                let b = A::from(100.0).expect("unwrap failed");
+                let grad_x = A::from(-2.0).expect("unwrap failed") * (a - x[0])
+                    - A::from(4.0).expect("unwrap failed") * b * x[0] * (x[1] - x[0] * x[0]);
+                let grad_y = A::from(2.0).expect("unwrap failed") * b * (x[1] - x[0] * x[0]);
                 Array1::from_vec(vec![grad_x, grad_y])
             }),
             optimal_value: Some(A::zero()),
@@ -498,7 +500,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
             name: "Sphere".to_string(),
             dimension: 5,
             function: Box::new(|x: &Array1<A>| x.mapv(|val| val * val).sum()),
-            gradient: Box::new(|x: &Array1<A>| x.mapv(|val| A::from(2.0).unwrap() * val)),
+            gradient: Box::new(|x: &Array1<A>| {
+                x.mapv(|val| A::from(2.0).expect("unwrap failed") * val)
+            }),
             optimal_value: Some(A::zero()),
             optimal_point: Some(Array1::zeros(5)),
         });
@@ -520,7 +524,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
         for testfunction in &self.test_functions {
             let mut x = Array1::from_vec(
                 (0..testfunction.dimension)
-                    .map(|_| A::from(0.5).unwrap())
+                    .map(|_| A::from(0.5).expect("unwrap failed"))
                     .collect(),
             );
 
@@ -551,7 +555,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
             let elapsed = start_time.elapsed();
 
             let final_error = if let Some(optimal_value) = testfunction.optimal_value {
-                (function_values.last().copied().unwrap() - optimal_value).abs()
+                (function_values.last().copied().expect("unwrap failed") - optimal_value).abs()
             } else {
                 A::zero()
             };
@@ -561,8 +565,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
                 function_name: testfunction.name.clone(),
                 converged: convergence_step.is_some(),
                 convergence_step,
-                final_function_value: *function_values.last().unwrap(),
-                final_gradient_norm: *gradient_norms.last().unwrap(),
+                final_function_value: *function_values.last().expect("unwrap failed"),
+                final_gradient_norm: *gradient_norms.last().expect("unwrap failed"),
                 final_error,
                 iterations_taken: function_values.len(),
                 elapsed_time: elapsed,
@@ -616,8 +620,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
         for performance in optimizer_performance.values_mut() {
             if performance.total_runs > 0 {
                 performance.average_iterations /= performance.total_runs as f64;
-                performance.average_final_error =
-                    performance.average_final_error / A::from(performance.total_runs).unwrap();
+                performance.average_final_error = performance.average_final_error
+                    / A::from(performance.total_runs).expect("unwrap failed");
                 performance.average_time /= performance.total_runs as u32;
             }
         }
@@ -837,51 +841,53 @@ pub mod visualization {
 
             let loss_range = max_loss - min_loss;
 
-            writeln!(plot, "Loss Convergence (Steps: {})", self.step_count).unwrap();
+            writeln!(plot, "Loss Convergence (Steps: {})", self.step_count).expect("unwrap failed");
             writeln!(
                 plot,
                 "Max: {:.6}, Min: {:.6}",
                 max_loss.to_f64().unwrap_or(0.0),
                 min_loss.to_f64().unwrap_or(0.0)
             )
-            .unwrap();
-            writeln!(plot, "{}", "=".repeat(width + 10)).unwrap();
+            .expect("unwrap failed");
+            writeln!(plot, "{}", "=".repeat(width + 10)).expect("unwrap failed");
 
             // Create the plot
             for row in 0..height {
-                let y_value =
-                    max_loss - (A::from(row).unwrap() / A::from(height - 1).unwrap()) * loss_range;
-                write!(plot, "{:8.3} |", y_value.to_f64().unwrap_or(0.0)).unwrap();
+                let y_value = max_loss
+                    - (A::from(row).expect("unwrap failed")
+                        / A::from(height - 1).expect("unwrap failed"))
+                        * loss_range;
+                write!(plot, "{:8.3} |", y_value.to_f64().unwrap_or(0.0)).expect("unwrap failed");
 
                 for col in 0..width {
                     let step_index = (col * self.loss_history.len()) / width;
                     if step_index < self.loss_history.len() {
                         let loss_val = self.loss_history[step_index];
                         let normalized_y = ((max_loss - loss_val) / loss_range
-                            * A::from(height - 1).unwrap())
+                            * A::from(height - 1).expect("unwrap failed"))
                         .to_usize()
                         .unwrap_or(0);
 
                         if normalized_y == row {
-                            write!(plot, "*").unwrap();
+                            write!(plot, "*").expect("unwrap failed");
                         } else {
-                            write!(plot, " ").unwrap();
+                            write!(plot, " ").expect("unwrap failed");
                         }
                     } else {
-                        write!(plot, " ").unwrap();
+                        write!(plot, " ").expect("unwrap failed");
                     }
                 }
-                writeln!(plot, "|").unwrap();
+                writeln!(plot, "|").expect("unwrap failed");
             }
 
-            writeln!(plot, "         {}", "-".repeat(width)).unwrap();
+            writeln!(plot, "         {}", "-".repeat(width)).expect("unwrap failed");
             writeln!(
                 plot,
                 "         0{:width$}Steps",
                 self.step_count,
                 width = width - 10
             )
-            .unwrap();
+            .expect("unwrap failed");
 
             plot
         }
@@ -905,53 +911,56 @@ pub mod visualization {
 
             let lr_range = max_lr - min_lr;
 
-            writeln!(plot, "Learning Rate Schedule").unwrap();
+            writeln!(plot, "Learning Rate Schedule").expect("unwrap failed");
             writeln!(
                 plot,
                 "Max: {:.6}, Min: {:.6}",
                 max_lr.to_f64().unwrap_or(0.0),
                 min_lr.to_f64().unwrap_or(0.0)
             )
-            .unwrap();
-            writeln!(plot, "{}", "=".repeat(width + 10)).unwrap();
+            .expect("unwrap failed");
+            writeln!(plot, "{}", "=".repeat(width + 10)).expect("unwrap failed");
 
             for row in 0..height {
-                let y_value =
-                    max_lr - (A::from(row).unwrap() / A::from(height - 1).unwrap()) * lr_range;
-                write!(plot, "{:8.3} |", y_value.to_f64().unwrap_or(0.0)).unwrap();
+                let y_value = max_lr
+                    - (A::from(row).expect("unwrap failed")
+                        / A::from(height - 1).expect("unwrap failed"))
+                        * lr_range;
+                write!(plot, "{:8.3} |", y_value.to_f64().unwrap_or(0.0)).expect("unwrap failed");
 
                 for col in 0..width {
                     let step_index = (col * self.learning_rate_history.len()) / width;
                     if step_index < self.learning_rate_history.len() {
                         let lr_val = self.learning_rate_history[step_index];
                         let normalized_y = if lr_range > A::zero() {
-                            ((max_lr - lr_val) / lr_range * A::from(height - 1).unwrap())
-                                .to_usize()
-                                .unwrap_or(0)
+                            ((max_lr - lr_val) / lr_range
+                                * A::from(height - 1).expect("unwrap failed"))
+                            .to_usize()
+                            .unwrap_or(0)
                         } else {
                             height / 2
                         };
 
                         if normalized_y == row {
-                            write!(plot, "*").unwrap();
+                            write!(plot, "*").expect("unwrap failed");
                         } else {
-                            write!(plot, " ").unwrap();
+                            write!(plot, " ").expect("unwrap failed");
                         }
                     } else {
-                        write!(plot, " ").unwrap();
+                        write!(plot, " ").expect("unwrap failed");
                     }
                 }
-                writeln!(plot, "|").unwrap();
+                writeln!(plot, "|").expect("unwrap failed");
             }
 
-            writeln!(plot, "         {}", "-".repeat(width)).unwrap();
+            writeln!(plot, "         {}", "-".repeat(width)).expect("unwrap failed");
             writeln!(
                 plot,
                 "         0{:width$}Steps",
                 self.step_count,
                 width = width - 10
             )
-            .unwrap();
+            .expect("unwrap failed");
 
             plot
         }
@@ -963,8 +972,8 @@ pub mod visualization {
             }
 
             let mut plot = String::new();
-            writeln!(plot, "Parameter Evolution Heatmap").unwrap();
-            writeln!(plot, "{}", "=".repeat(width + 5)).unwrap();
+            writeln!(plot, "Parameter Evolution Heatmap").expect("unwrap failed");
+            writeln!(plot, "{}", "=".repeat(width + 5)).expect("unwrap failed");
 
             // Flatten all parameters for analysis
             let all_params: Vec<A> = self
@@ -996,7 +1005,7 @@ pub mod visualization {
             };
 
             for param_idx in 0..num_params {
-                write!(plot, "P{:3} |", param_idx).unwrap();
+                write!(plot, "P{:3} |", param_idx).expect("unwrap failed");
 
                 for step_idx in 0..num_steps {
                     let step_data = &self.parameter_history[step_idx];
@@ -1030,23 +1039,24 @@ pub mod visualization {
                             3 => '*',
                             _ => '#',
                         };
-                        write!(plot, "{}", char).unwrap();
+                        write!(plot, "{}", char).expect("unwrap failed");
                     } else {
-                        write!(plot, " ").unwrap();
+                        write!(plot, " ").expect("unwrap failed");
                     }
                 }
-                writeln!(plot, "|").unwrap();
+                writeln!(plot, "|").expect("unwrap failed");
             }
 
-            writeln!(plot, "     {}", "-".repeat(num_steps)).unwrap();
-            writeln!(plot, "     Legend: ' ' = Low, '.' < ':' < '*' < '#' = High").unwrap();
+            writeln!(plot, "     {}", "-".repeat(num_steps)).expect("unwrap failed");
+            writeln!(plot, "     Legend: ' ' = Low, '.' < ':' < '*' < '#' = High")
+                .expect("unwrap failed");
             writeln!(
                 plot,
                 "     Range: {:.6} to {:.6}",
                 min_param.to_f64().unwrap_or(0.0),
                 max_param.to_f64().unwrap_or(0.0)
             )
-            .unwrap();
+            .expect("unwrap failed");
 
             plot
         }
@@ -1055,10 +1065,11 @@ pub mod visualization {
         pub fn generate_state_summary(&self) -> String {
             let mut summary = String::new();
 
-            writeln!(summary, "Optimizer State Summary").unwrap();
-            writeln!(summary, "======================").unwrap();
-            writeln!(summary, "Total Steps: {}", self.step_count).unwrap();
-            writeln!(summary, "History Length: {}", self.parameter_history.len()).unwrap();
+            writeln!(summary, "Optimizer State Summary").expect("unwrap failed");
+            writeln!(summary, "======================").expect("unwrap failed");
+            writeln!(summary, "Total Steps: {}", self.step_count).expect("unwrap failed");
+            writeln!(summary, "History Length: {}", self.parameter_history.len())
+                .expect("unwrap failed");
 
             if let Some(current_loss) = self.loss_history.back() {
                 writeln!(
@@ -1066,7 +1077,7 @@ pub mod visualization {
                     "Current Loss: {:.6}",
                     current_loss.to_f64().unwrap_or(0.0)
                 )
-                .unwrap();
+                .expect("unwrap failed");
             }
 
             if let Some(current_lr) = self.learning_rate_history.back() {
@@ -1075,7 +1086,7 @@ pub mod visualization {
                     "Current Learning Rate: {:.6}",
                     current_lr.to_f64().unwrap_or(0.0)
                 )
-                .unwrap();
+                .expect("unwrap failed");
             }
 
             // Loss statistics
@@ -1089,17 +1100,20 @@ pub mod visualization {
                     .iter()
                     .fold(A::neg_infinity(), |acc, &x| acc.max(x));
                 let avg_loss = self.loss_history.iter().fold(A::zero(), |acc, &x| acc + x)
-                    / A::from(self.loss_history.len()).unwrap();
+                    / A::from(self.loss_history.len()).expect("unwrap failed");
 
-                writeln!(summary, "\nLoss Statistics:").unwrap();
-                writeln!(summary, "  Min: {:.6}", min_loss.to_f64().unwrap_or(0.0)).unwrap();
-                writeln!(summary, "  Max: {:.6}", max_loss.to_f64().unwrap_or(0.0)).unwrap();
-                writeln!(summary, "  Avg: {:.6}", avg_loss.to_f64().unwrap_or(0.0)).unwrap();
+                writeln!(summary, "\nLoss Statistics:").expect("unwrap failed");
+                writeln!(summary, "  Min: {:.6}", min_loss.to_f64().unwrap_or(0.0))
+                    .expect("unwrap failed");
+                writeln!(summary, "  Max: {:.6}", max_loss.to_f64().unwrap_or(0.0))
+                    .expect("unwrap failed");
+                writeln!(summary, "  Avg: {:.6}", avg_loss.to_f64().unwrap_or(0.0))
+                    .expect("unwrap failed");
 
                 // Improvement rate
                 if self.loss_history.len() > 1 {
                     let first_loss = self.loss_history[0];
-                    let last_loss = *self.loss_history.back().unwrap();
+                    let last_loss = *self.loss_history.back().expect("unwrap failed");
                     let improvement = first_loss - last_loss;
                     let improvement_rate = improvement / first_loss;
                     writeln!(
@@ -1108,17 +1122,18 @@ pub mod visualization {
                         improvement.to_f64().unwrap_or(0.0),
                         (improvement_rate.to_f64().unwrap_or(0.0) * 100.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
             }
 
             // Parameter statistics
             if !self.parameter_history.is_empty() {
-                let current_params = self.parameter_history.back().unwrap();
+                let current_params = self.parameter_history.back().expect("unwrap failed");
                 let total_params: usize = current_params.iter().map(|arr| arr.len()).sum();
-                writeln!(summary, "\nParameter Statistics:").unwrap();
-                writeln!(summary, "  Total Parameters: {}", total_params).unwrap();
-                writeln!(summary, "  Parameter Groups: {}", current_params.len()).unwrap();
+                writeln!(summary, "\nParameter Statistics:").expect("unwrap failed");
+                writeln!(summary, "  Total Parameters: {}", total_params).expect("unwrap failed");
+                writeln!(summary, "  Parameter Groups: {}", current_params.len())
+                    .expect("unwrap failed");
 
                 // Parameter norms
                 for (i, array) in current_params.iter().enumerate() {
@@ -1129,44 +1144,44 @@ pub mod visualization {
                         i,
                         l2_norm.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
             }
 
             // State snapshots summary
             if !self.state_history.is_empty() {
-                writeln!(summary, "\nOptimizer State:").unwrap();
+                writeln!(summary, "\nOptimizer State:").expect("unwrap failed");
                 if let Some(latest_state) = self.state_history.back() {
                     writeln!(
                         summary,
                         "  Momentum Norm: {:.6}",
                         latest_state.momentum_norm.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     writeln!(
                         summary,
                         "  Velocity Norm: {:.6}",
                         latest_state.velocity_norm.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     writeln!(
                         summary,
                         "  Step Size: {:.6}",
                         latest_state.effective_step_size.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     writeln!(
                         summary,
                         "  Beta1: {:.6}",
                         latest_state.beta1.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                     writeln!(
                         summary,
                         "  Beta2: {:.6}",
                         latest_state.beta2.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
             }
 
@@ -1314,12 +1329,12 @@ pub mod visualization {
         pub fn generate_comparison_report(&self) -> String {
             let mut report = String::new();
 
-            writeln!(report, "Optimizer Comparison Dashboard").unwrap();
-            writeln!(report, "===============================").unwrap();
+            writeln!(report, "Optimizer Comparison Dashboard").expect("unwrap failed");
+            writeln!(report, "===============================").expect("unwrap failed");
 
             for (name, visualizer) in &self.visualizers {
-                writeln!(report, "\n{}", name).unwrap();
-                writeln!(report, "{}", "-".repeat(name.len())).unwrap();
+                writeln!(report, "\n{}", name).expect("unwrap failed");
+                writeln!(report, "{}", "-".repeat(name.len())).expect("unwrap failed");
 
                 if let Some(current_loss) = visualizer.loss_history.back() {
                     writeln!(
@@ -1327,29 +1342,29 @@ pub mod visualization {
                         "Current Loss: {:.6}",
                         current_loss.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
 
-                writeln!(report, "Steps: {}", visualizer.step_count).unwrap();
+                writeln!(report, "Steps: {}", visualizer.step_count).expect("unwrap failed");
 
                 // Calculate convergence rate
                 if visualizer.loss_history.len() > 1 {
                     let first_loss = visualizer.loss_history[0];
-                    let last_loss = *visualizer.loss_history.back().unwrap();
+                    let last_loss = *visualizer.loss_history.back().expect("unwrap failed");
                     let improvement = first_loss - last_loss;
                     writeln!(
                         report,
                         "Total Improvement: {:.6}",
                         improvement.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
             }
 
             // Best performer analysis
             if !self.visualizers.is_empty() {
-                writeln!(report, "\nBest Performers:").unwrap();
-                writeln!(report, "================").unwrap();
+                writeln!(report, "\nBest Performers:").expect("unwrap failed");
+                writeln!(report, "================").expect("unwrap failed");
 
                 let best_current_loss = self
                     .visualizers
@@ -1364,7 +1379,7 @@ pub mod visualization {
                         best_name,
                         best_loss.to_f64().unwrap_or(0.0)
                     )
-                    .unwrap();
+                    .expect("unwrap failed");
                 }
             }
 
@@ -1426,8 +1441,12 @@ mod tests {
         let gradients2 = vec![Array1::from_vec(vec![0.8, 1.6])];
         let updates2 = vec![Array1::from_vec(vec![0.08, 0.16])];
 
-        analyzer.record_step(&gradients1, &updates1).unwrap();
-        analyzer.record_step(&gradients2, &updates2).unwrap();
+        analyzer
+            .record_step(&gradients1, &updates1)
+            .expect("unwrap failed");
+        analyzer
+            .record_step(&gradients2, &updates2)
+            .expect("unwrap failed");
 
         assert_eq!(analyzer.step_count(), 2);
 
@@ -1471,7 +1490,7 @@ mod tests {
                 1000,
                 1e-6,
             )
-            .unwrap();
+            .expect("unwrap failed");
 
         assert!(!results.is_empty());
 
@@ -1479,7 +1498,7 @@ mod tests {
         let quadratic_result = results
             .iter()
             .find(|r| r.function_name == "Quadratic")
-            .unwrap();
+            .expect("unwrap failed");
 
         assert!(quadratic_result.converged);
         assert!(quadratic_result.final_function_value < 1e-3);
@@ -1493,19 +1512,19 @@ mod tests {
         let arrays2 = vec![Array1::from_vec(vec![1.0, 0.0])]; // Same direction
         let similarity = analyzer
             .calculate_cosine_similarity(&arrays1, &arrays2)
-            .unwrap();
+            .expect("unwrap failed");
         assert_relative_eq!(similarity, 1.0, epsilon = 1e-6);
 
         let arrays3 = vec![Array1::from_vec(vec![-1.0, 0.0])]; // Opposite direction
         let similarity2 = analyzer
             .calculate_cosine_similarity(&arrays1, &arrays3)
-            .unwrap();
+            .expect("unwrap failed");
         assert_relative_eq!(similarity2, -1.0, epsilon = 1e-6);
 
         let arrays4 = vec![Array1::from_vec(vec![0.0, 1.0])]; // Orthogonal
         let similarity3 = analyzer
             .calculate_cosine_similarity(&arrays1, &arrays4)
-            .unwrap();
+            .expect("unwrap failed");
         assert_relative_eq!(similarity3, 0.0, epsilon = 1e-6);
     }
 
@@ -1528,17 +1547,19 @@ mod tests {
 
         benchmark
             .run_benchmark("Fast".to_string(), &mut step1, 100, 1e-3)
-            .unwrap();
+            .expect("unwrap failed");
         benchmark
             .run_benchmark("Slow".to_string(), &mut step2, 100, 1e-3)
-            .unwrap();
+            .expect("unwrap failed");
 
         let report = benchmark.generate_report();
         assert_eq!(report.total_tests, 2);
         assert!(report.optimizer_performance.contains_key("Fast"));
         assert!(report.optimizer_performance.contains_key("Slow"));
 
-        let comparison = report.compare_optimizers("Fast", "Slow").unwrap();
+        let comparison = report
+            .compare_optimizers("Fast", "Slow")
+            .expect("unwrap failed");
         assert_eq!(comparison.optimizer1, "Fast");
         assert_eq!(comparison.optimizer2, "Slow");
     }
@@ -1554,7 +1575,9 @@ mod tests {
             let scale = 1.0 / (i + 1) as f64;
             let scaled_grad = vec![Array1::from_vec(vec![scale, 2.0 * scale])];
             let scaled_update = vec![Array1::from_vec(vec![0.1 * scale, 0.2 * scale])];
-            analyzer.record_step(&scaled_grad, &scaled_update).unwrap();
+            analyzer
+                .record_step(&scaled_grad, &scaled_update)
+                .expect("unwrap failed");
         }
 
         let viz_data = analyzer.export_for_visualization();
@@ -1579,7 +1602,9 @@ mod tests {
             let scale = 1.0 / (i + 1) as f64;
             let gradients = vec![Array1::from_vec(vec![scale, scale])];
             let updates = vec![Array1::from_vec(vec![0.1 * scale, 0.1 * scale])];
-            analyzer.record_step(&gradients, &updates).unwrap();
+            analyzer
+                .record_step(&gradients, &updates)
+                .expect("unwrap failed");
         }
 
         let stats = analyzer.get_stats();
@@ -1594,14 +1619,18 @@ mod tests {
         // First step - initialize with some gradient
         let gradients = vec![Array1::from_vec(vec![1.0, 1.0])];
         let updates = vec![Array1::from_vec(vec![0.1, 0.1])];
-        analyzer.record_step(&gradients, &updates).unwrap();
+        analyzer
+            .record_step(&gradients, &updates)
+            .expect("unwrap failed");
 
         // Simulate oscillating gradients and updates
         for i in 1..8 {
             let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
             let gradients = vec![Array1::from_vec(vec![sign, sign])];
             let updates = vec![Array1::from_vec(vec![0.1 * sign, 0.1 * sign])];
-            analyzer.record_step(&gradients, &updates).unwrap();
+            analyzer
+                .record_step(&gradients, &updates)
+                .expect("unwrap failed");
         }
 
         let stats = analyzer.get_stats();
@@ -1686,10 +1715,10 @@ mod tests {
         // Record steps for both optimizers
         dashboard
             .record_optimizer_step("SGD", &params, state.clone(), 0.01, 1.0)
-            .unwrap();
+            .expect("unwrap failed");
         dashboard
             .record_optimizer_step("Adam", &params, state, 0.001, 0.8)
-            .unwrap();
+            .expect("unwrap failed");
 
         let optimizers = dashboard.list_optimizers();
         assert_eq!(optimizers.len(), 2);
@@ -1697,7 +1726,7 @@ mod tests {
         assert!(optimizers.contains(&&"Adam".to_string()));
 
         // Test getting individual visualizers
-        let sgd_viz = dashboard.get_visualizer("SGD").unwrap();
+        let sgd_viz = dashboard.get_visualizer("SGD").expect("unwrap failed");
         assert_eq!(sgd_viz.step_count(), 1);
 
         // Test comparison report

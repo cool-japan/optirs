@@ -1312,7 +1312,7 @@ impl ThreadSafeEvictionEngine {
     }
 
     pub fn should_evict(&self, region_addr: usize) -> bool {
-        let engine = self.engine.read().unwrap();
+        let engine = self.engine.read().expect("lock poisoned");
         engine.should_evict(region_addr)
     }
 
@@ -1321,17 +1321,17 @@ impl ThreadSafeEvictionEngine {
         region_addr: usize,
         target_bytes: usize,
     ) -> Result<Vec<usize>, EvictionError> {
-        let mut engine = self.engine.write().unwrap();
+        let mut engine = self.engine.write().expect("lock poisoned");
         engine.evict(region_addr, target_bytes)
     }
 
     pub fn add_object(&self, region_addr: usize, object: CacheObject) -> Result<(), EvictionError> {
-        let mut engine = self.engine.write().unwrap();
+        let mut engine = self.engine.write().expect("lock poisoned");
         engine.add_object(region_addr, object)
     }
 
     pub fn get_stats(&self) -> EvictionStats {
-        let engine = self.engine.read().unwrap();
+        let engine = self.engine.read().expect("lock poisoned");
         engine.get_stats().clone()
     }
 }

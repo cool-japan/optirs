@@ -193,7 +193,9 @@ mod tests {
         let analyzer =
             FederatedCompositionAnalyzer::new(FederatedCompositionMethod::AdvancedComposition);
 
-        let epsilon = analyzer.analyze_composition(5, 0.1, 1e-5).unwrap();
+        let epsilon = analyzer
+            .analyze_composition(5, 0.1, 1e-5)
+            .expect("unwrap failed");
         assert!(epsilon > 0.1); // Should be larger than single round epsilon
     }
 
@@ -232,7 +234,9 @@ mod tests {
     #[test]
     fn test_basic_composition() {
         let analyzer = FederatedCompositionAnalyzer::new(FederatedCompositionMethod::Basic);
-        let epsilon = analyzer.analyze_composition(3, 0.1, 1e-5).unwrap();
+        let epsilon = analyzer
+            .analyze_composition(3, 0.1, 1e-5)
+            .expect("unwrap failed");
         assert!((epsilon - 0.3).abs() < 1e-10); // Basic composition: 3 * 0.1, with floating point tolerance
     }
 
@@ -253,7 +257,7 @@ mod tests {
 
         let compositions = analyzer.get_client_compositions("client1");
         assert!(compositions.is_some());
-        assert_eq!(compositions.unwrap().len(), 1);
+        assert_eq!(compositions.expect("unwrap failed").len(), 1);
     }
 
     #[test]

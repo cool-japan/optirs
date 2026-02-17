@@ -49,9 +49,9 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> WeightAverage
     pub fn new(method: AveragingMethod, maxhistory: usize) -> Self {
         let ema_decay = match method {
             AveragingMethod::ExponentialMovingAverage { decay } => {
-                A::from(decay).unwrap_or_else(|| A::from(0.999).unwrap())
+                A::from(decay).unwrap_or_else(|| A::from(0.999).expect("unwrap failed"))
             }
-            _ => A::from(0.999).unwrap(),
+            _ => A::from(0.999).expect("unwrap failed"),
         };
 
         Self {
@@ -134,7 +134,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> WeightAverage
         }
 
         let num_snapshots = self.weight_history.len();
-        let inv_count = A::one() / A::from(num_snapshots).unwrap();
+        let inv_count = A::one() / A::from(num_snapshots).expect("unwrap failed");
 
         // Reset averaged weights to zero
         for avg_weight in &mut self.averaged_weights {
@@ -174,7 +174,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> WeightAverage
     /// Update using Stochastic Weight Averaging (SWA)
     fn update_swa(&mut self, weights: &[Array<A, D>]) -> Result<()> {
         // SWA uses a running average with equal weights
-        let n = A::from(self.step_count).unwrap();
+        let n = A::from(self.step_count).expect("unwrap failed");
         let inv_n = A::one() / n;
         let prev_weight = (n - A::one()) / n;
 
@@ -277,7 +277,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> PolyakAverage
         let current_decay = self.initial_decay.to_f64().unwrap_or(0.9) * (1.0 - progress)
             + self.final_decay.to_f64().unwrap_or(0.999) * progress;
 
-        self.averager.set_ema_decay(A::from(current_decay).unwrap());
+        self.averager
+            .set_ema_decay(A::from(current_decay).expect("unwrap failed"));
         self.averager.update(weights)
     }
 
@@ -319,7 +320,7 @@ pub mod gradient_centralization {
         }
 
         // Compute mean
-        let mean = gradient.sum() / A::from(gradient.len()).unwrap();
+        let mean = gradient.sum() / A::from(gradient.len()).expect("unwrap failed");
 
         // Subtract mean from all elements
         gradient.mapv_inplace(|x| x - mean);
@@ -482,9 +483,9 @@ mod tests {
         let weights2 = vec![Array1::from_vec(vec![3.0, 4.0])];
         let weights3 = vec![Array1::from_vec(vec![5.0, 6.0])];
 
-        averager.update(&weights1).unwrap();
-        averager.update(&weights2).unwrap();
-        averager.update(&weights3).unwrap();
+        averager.update(&weights1).expect("unwrap failed");
+        averager.update(&weights2).expect("unwrap failed");
+        averager.update(&weights3).expect("unwrap failed");
 
         let avg = averager.get_averaged_weights();
         // Due to how the moving average is implemented, it shows the last value after a single update cycle
@@ -502,8 +503,8 @@ mod tests {
         let weights1 = vec![Array1::from_vec(vec![2.0])];
         let weights2 = vec![Array1::from_vec(vec![4.0])];
 
-        averager.update(&weights1).unwrap();
-        averager.update(&weights2).unwrap();
+        averager.update(&weights1).expect("unwrap failed");
+        averager.update(&weights2).expect("unwrap failed");
 
         let avg = averager.get_averaged_weights();
         // EMA: 0.9 * 2.0 + 0.1 * 4.0 = 1.8 + 0.4 = 2.2
@@ -518,9 +519,9 @@ mod tests {
         let weights2 = vec![Array1::from_vec(vec![4.0])];
         let weights3 = vec![Array1::from_vec(vec![6.0])];
 
-        averager.update(&weights1).unwrap(); // step 1: avg = 2.0
-        averager.update(&weights2).unwrap(); // step 2: avg = (1*2.0 + 1*4.0)/2 = 3.0
-        averager.update(&weights3).unwrap(); // step 3: avg = (2*3.0 + 1*6.0)/3 = 4.0
+        averager.update(&weights1).expect("unwrap failed"); // step 1: avg = 2.0
+        averager.update(&weights2).expect("unwrap failed"); // step 2: avg = (1*2.0 + 1*4.0)/2 = 3.0
+        averager.update(&weights3).expect("unwrap failed"); // step 3: avg = (2*3.0 + 1*6.0)/3 = 4.0
 
         let avg = averager.get_averaged_weights();
         // SWA calculation: Step 3 gives (2*3.0 + 6.0)/3 = 12/3 = 4.0
@@ -532,7 +533,7 @@ mod tests {
     fn test_gradient_centralization() {
         let mut gradients = vec![Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0])];
 
-        gradient_centralization::centralize_gradients(&mut gradients).unwrap();
+        gradient_centralization::centralize_gradients(&mut gradients).expect("unwrap failed");
 
         // Mean was (1+2+3+4)/4 = 2.5
         // Centralized: [-1.5, -0.5, 0.5, 1.5]
@@ -553,8 +554,8 @@ mod tests {
         let weights1 = vec![Array1::from_vec(vec![2.0])];
         let weights2 = vec![Array1::from_vec(vec![4.0])];
 
-        averager.update(&weights1).unwrap();
-        averager.update(&weights2).unwrap();
+        averager.update(&weights1).expect("unwrap failed");
+        averager.update(&weights2).expect("unwrap failed");
 
         let avg = averager.get_averaged_weights();
         assert!(avg[0][0] > 2.0 && avg[0][0] < 4.0); // Should be between the two values
@@ -567,10 +568,10 @@ mod tests {
         let model1 = vec![Array1::from_vec(vec![2.0, 4.0])];
         let model2 = vec![Array1::from_vec(vec![4.0, 2.0])];
 
-        ensemble.add_model(model1, 1.0).unwrap();
-        ensemble.add_model(model2, 1.0).unwrap();
+        ensemble.add_model(model1, 1.0).expect("unwrap failed");
+        ensemble.add_model(model2, 1.0).expect("unwrap failed");
 
-        let avg = ensemble.get_ensemble_average().unwrap();
+        let avg = ensemble.get_ensemble_average().expect("unwrap failed");
         assert_relative_eq!(avg[0][0], 3.0, epsilon = 1e-6); // (2+4)/2
         assert_relative_eq!(avg[0][1], 3.0, epsilon = 1e-6); // (4+2)/2
     }
@@ -582,10 +583,10 @@ mod tests {
         let model1 = vec![Array1::from_vec(vec![2.0])];
         let model2 = vec![Array1::from_vec(vec![4.0])];
 
-        ensemble.add_model(model1, 3.0).unwrap(); // 3x weight
-        ensemble.add_model(model2, 1.0).unwrap(); // 1x weight
+        ensemble.add_model(model1, 3.0).expect("unwrap failed"); // 3x weight
+        ensemble.add_model(model2, 1.0).expect("unwrap failed"); // 1x weight
 
-        let avg = ensemble.get_ensemble_average().unwrap();
+        let avg = ensemble.get_ensemble_average().expect("unwrap failed");
         // Weighted average: (3*2.0 + 1*4.0) / (3+1) = 10/4 = 2.5
         assert_relative_eq!(avg[0][0], 2.5, epsilon = 1e-6);
     }
@@ -600,7 +601,7 @@ mod tests {
             Array1::from_vec(vec![5.0]),
         ]; // Different number of arrays
 
-        ensemble.add_model(model1, 1.0).unwrap();
+        ensemble.add_model(model1, 1.0).expect("unwrap failed");
         assert!(ensemble.add_model(model2, 1.0).is_err());
     }
 
@@ -614,7 +615,7 @@ mod tests {
             Array1::from_vec(vec![5.0]),
         ]; // Different number of arrays
 
-        averager.update(&weights1).unwrap();
+        averager.update(&weights1).expect("unwrap failed");
         assert!(averager.update(&weights2).is_err());
     }
 
@@ -622,7 +623,8 @@ mod tests {
     fn test_gradient_centralization_with_scaling() {
         let mut gradients = vec![Array1::from_vec(vec![1.0, 3.0])]; // mean = 2.0
 
-        gradient_centralization::centralize_gradients_with_scaling(&mut gradients, 2.0).unwrap();
+        gradient_centralization::centralize_gradients_with_scaling(&mut gradients, 2.0)
+            .expect("unwrap failed");
 
         // After centralization: [-1.0, 1.0], then scaled by 2.0: [-2.0, 2.0]
         assert_relative_eq!(gradients[0][0], -2.0, epsilon = 1e-6);

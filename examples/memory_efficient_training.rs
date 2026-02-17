@@ -31,7 +31,7 @@ impl Layer {
     ) -> (Array2<f64>, Array2<f64>, Array1<f64>) {
         let grad_input = grad_output.dot(&self.weights.t());
         let grad_weights = input.t().dot(grad_output) / input.nrows() as f64;
-        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
+        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray::Axis(0)).expect("unwrap failed");
         (grad_input, grad_weights, grad_bias)
     }
 }
@@ -62,7 +62,7 @@ fn train_memory_efficient(
 
         // Compute loss (MSE)
         let diff = &output - targets;
-        let loss = diff.mapv(|x| x * x).mean().unwrap();
+        let loss = diff.mapv(|x| x * x).mean().expect("unwrap failed");
         losses.push(loss);
 
         // Backward pass
@@ -110,7 +110,7 @@ fn train_with_custom_processing(
 
         // Compute loss
         let diff = &output - targets;
-        let loss = diff.mapv(|x| x * x).mean().unwrap();
+        let loss = diff.mapv(|x| x * x).mean().expect("unwrap failed");
         losses.push(loss);
 
         // Backward pass
@@ -168,11 +168,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("================");
     println!(
         "Standard approach - Final loss: {:.6}",
-        losses1.last().unwrap()
+        losses1.last().expect("unwrap failed")
     );
     println!(
         "Custom processing - Final loss: {:.6}",
-        losses2.last().unwrap()
+        losses2.last().expect("unwrap failed")
     );
 
     // Memory efficiency demonstration

@@ -109,10 +109,10 @@ impl<T: Float> AdamParams<T> {
     pub fn new(lr: T) -> Self {
         Self {
             lr,
-            beta1: T::from(0.9).unwrap(),
-            beta2: T::from(0.999).unwrap(),
-            eps: T::from(1e-8).unwrap(),
-            weight_decay: T::from(0.0).unwrap(),
+            beta1: T::from(0.9).expect("unwrap failed"),
+            beta2: T::from(0.999).expect("unwrap failed"),
+            eps: T::from(1e-8).expect("unwrap failed"),
+            weight_decay: T::from(0.0).expect("unwrap failed"),
             step: 0,
         }
     }
@@ -1509,7 +1509,8 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseTensorCoreMatrix<T> {
                 // Sort by magnitude and keep top 2
                 let mut indexed_values: Vec<(usize, T)> =
                     group_indices.into_iter().zip(group_values).collect();
-                indexed_values.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
+                indexed_values
+                    .sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).expect("unwrap failed"));
 
                 // Store top 2 values and their positions
                 for &(idx, val) in indexed_values.iter().take(2) {
@@ -2326,7 +2327,8 @@ mod tests {
     fn test_sparse_tensor_core_matrix() {
         use scirs2_core::ndarray::Array2;
 
-        let dense = Array2::from_shape_vec((4, 8), (0..32).map(|x| x as f32).collect()).unwrap();
+        let dense = Array2::from_shape_vec((4, 8), (0..32).map(|x| x as f32).collect())
+            .expect("unwrap failed");
         let sparse = SparseTensorCoreMatrix::from_dense(&dense);
 
         assert_eq!(sparse.denseshape(), (4, 8));
@@ -2382,7 +2384,7 @@ mod tests {
     #[ignore = "timeout"]
     fn test_performance_benchmark() {
         let config = TensorCoreConfig::default();
-        let optimizer = TensorCoreOptimizer::new(config).unwrap();
+        let optimizer = TensorCoreOptimizer::new(config).expect("unwrap failed");
 
         // This test will only work with GPU feature enabled
         #[cfg(any(

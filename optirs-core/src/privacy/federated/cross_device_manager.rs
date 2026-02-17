@@ -208,7 +208,7 @@ mod tests {
 
         let frequency = manager.get_participation_frequency("device1");
         assert!(frequency.is_some());
-        assert_eq!(frequency.unwrap(), 1.0);
+        assert_eq!(frequency.expect("unwrap failed"), 1.0);
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
 
         let cluster = manager.get_user_cluster(&user_id);
         assert!(cluster.is_some());
-        assert_eq!(cluster.unwrap().len(), 2);
+        assert_eq!(cluster.expect("unwrap failed").len(), 2);
     }
 
     #[test]
@@ -236,6 +236,6 @@ mod tests {
 
         let events = manager.get_temporal_correlations("device1");
         assert!(events.is_some());
-        assert_eq!(events.unwrap().len(), 2);
+        assert_eq!(events.expect("unwrap failed").len(), 2);
     }
 }

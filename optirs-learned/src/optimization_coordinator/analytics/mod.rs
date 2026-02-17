@@ -167,10 +167,10 @@ pub mod anomalies {
                 return Ok(None);
             }
 
-            let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(data.len()).unwrap();
+            let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(data.len()).expect("unwrap failed");
             let variance = data.iter()
                 .map(|&x| (x - mean) * (x - mean))
-                .fold(T::zero(), |acc, x| acc + x) / T::from(data.len()).unwrap();
+                .fold(T::zero(), |acc, x| acc + x) / T::from(data.len()).expect("unwrap failed");
             let std_dev = variance.sqrt();
 
             let last_value = data[data.len() - 1];
@@ -334,8 +334,8 @@ pub mod trends {
             let first_half = &data[..data.len()/2];
             let second_half = &data[data.len()/2..];
 
-            let first_avg = first_half.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(first_half.len()).unwrap();
-            let second_avg = second_half.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(second_half.len()).unwrap();
+            let first_avg = first_half.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(first_half.len()).expect("unwrap failed");
+            let second_avg = second_half.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(second_half.len()).expect("unwrap failed");
 
             let threshold = scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero());
 
@@ -359,7 +359,7 @@ pub mod trends {
                 total_change = total_change + (window[1] - window[0]).abs();
             }
 
-            Ok(total_change / T::from(data.len() - 1).unwrap())
+            Ok(total_change / T::from(data.len() - 1).expect("unwrap failed"))
         }
 
         /// Generate predictions
@@ -487,7 +487,7 @@ pub mod reporting {
         /// Generate report
         pub fn generate_report(&mut self, template_name: &str, data: &HashMap<String, T>) -> Result<GeneratedReport<T>> {
             let report = GeneratedReport {
-                id: format!("report_{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()),
+                id: format!("report_{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("unwrap failed").as_secs()),
                 timestamp: SystemTime::now(),
                 content: "Generated report content".to_string(),
                 format: ReportFormat::Html,

@@ -39,7 +39,7 @@
 //! use optirs::prelude::*;
 //! use scirs2_core::ndarray::Array1;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! // Create Adam optimizer
 //! let mut optimizer = Adam::new(0.001);
 //!
@@ -130,7 +130,7 @@
 //! use optirs::prelude::*;
 //! use scirs2_core::ndarray::Array1;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! // Large parameter array (SIMD shines with 10k+ elements)
 //! let params = Array1::from_elem(100_000, 1.0f32);
 //! let grads = Array1::from_elem(100_000, 0.001f32);
@@ -148,7 +148,7 @@
 //! use optirs::core::parallel_optimizer::parallel_step_array1;
 //! use scirs2_core::ndarray::Array1;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! let params_list = vec![
 //!     Array1::from_elem(10_000, 1.0),
 //!     Array1::from_elem(20_000, 1.0),
@@ -172,7 +172,7 @@
 //! use scirs2_core::ndarray::Array1;
 //! use std::time::Instant;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! let mut collector = MetricsCollector::new();
 //! collector.register_optimizer("adam");
 //!
@@ -237,7 +237,7 @@
 //!
 //! ## License
 //!
-//! Dual-licensed under MIT OR Apache-2.0
+//! licensed under Apache-2.0
 
 pub use optirs_core as core;
 

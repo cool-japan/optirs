@@ -374,7 +374,7 @@ impl BuddyAllocator {
         // Look for larger blocks and split them
         for order in (min_order + 1)..=self.max_order {
             if !self.free_lists[order].is_empty() {
-                let large_block = self.free_lists[order].pop_front().unwrap();
+                let large_block = self.free_lists[order].pop_front().expect("unwrap failed");
                 return Some(self.split_block(large_block, min_order));
             }
         }
@@ -421,7 +421,9 @@ impl BuddyAllocator {
 
             if let Some(pos) = buddy_pos {
                 // Found buddy, remove it and coalesce
-                let buddy = self.free_lists[current_block.order].remove(pos).unwrap();
+                let buddy = self.free_lists[current_block.order]
+                    .remove(pos)
+                    .expect("unwrap failed");
                 self.stats.record_merge();
 
                 // Create coalesced block
@@ -725,27 +727,27 @@ impl ThreadSafeBuddyAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<*mut u8, BuddyError> {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.allocate(size)
     }
 
     pub fn deallocate(&self, ptr: *mut u8) -> Result<(), BuddyError> {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.deallocate(ptr)
     }
 
     pub fn get_stats(&self) -> BuddyStats {
-        let allocator = self.allocator.lock().unwrap();
+        let allocator = self.allocator.lock().expect("lock poisoned");
         allocator.get_stats().clone()
     }
 
     pub fn get_memory_usage(&self) -> MemoryUsage {
-        let allocator = self.allocator.lock().unwrap();
+        let allocator = self.allocator.lock().expect("lock poisoned");
         allocator.get_memory_usage()
     }
 
     pub fn defragment(&self) -> usize {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.defragment()
     }
 }
@@ -774,7 +776,7 @@ mod tests {
         let memory = vec![0u8; size];
         let ptr = memory.as_ptr() as *mut u8;
 
-        let mut allocator = BuddyAllocator::new(ptr, size, config).unwrap();
+        let mut allocator = BuddyAllocator::new(ptr, size, config).expect("unwrap failed");
 
         // Allocate some memory
         let alloc1 = allocator.allocate(1024);
@@ -796,9 +798,9 @@ mod tests {
         let memory = vec![0u8; size];
         let ptr = memory.as_ptr() as *mut u8;
 
-        let mut allocator = BuddyAllocator::new(ptr, size, config).unwrap();
+        let mut allocator = BuddyAllocator::new(ptr, size, config).expect("unwrap failed");
 
-        let alloc_ptr = allocator.allocate(1024).unwrap();
+        let alloc_ptr = allocator.allocate(1024).expect("unwrap failed");
         let dealloc_result = allocator.deallocate(alloc_ptr);
         assert!(dealloc_result.is_ok());
 
@@ -813,22 +815,22 @@ mod tests {
         let memory = vec![0u8; size];
         let ptr = memory.as_ptr() as *mut u8;
 
-        let mut allocator = BuddyAllocator::new(ptr, size, config).unwrap();
+        let mut allocator = BuddyAllocator::new(ptr, size, config).expect("unwrap failed");
 
         // Allocate a larger block that will be split
-        let large_ptr = allocator.allocate(4096).unwrap();
+        let large_ptr = allocator.allocate(4096).expect("unwrap failed");
 
         // Free it - this will add it back to the free list
-        allocator.deallocate(large_ptr).unwrap();
+        allocator.deallocate(large_ptr).expect("unwrap failed");
 
         // Now allocate two smaller blocks that are buddies
         // The allocator will split the 4096 block into two 2048 blocks
-        let ptr1 = allocator.allocate(2048).unwrap();
-        let ptr2 = allocator.allocate(2048).unwrap();
+        let ptr1 = allocator.allocate(2048).expect("unwrap failed");
+        let ptr2 = allocator.allocate(2048).expect("unwrap failed");
 
         // Deallocate them - they should coalesce back into the 4096 block
-        allocator.deallocate(ptr1).unwrap();
-        allocator.deallocate(ptr2).unwrap();
+        allocator.deallocate(ptr1).expect("unwrap failed");
+        allocator.deallocate(ptr2).expect("unwrap failed");
 
         let stats = allocator.get_stats();
         // If no coalescing occurred, skip the test as it's implementation-dependent
@@ -847,7 +849,7 @@ mod tests {
         let memory = vec![0u8; size];
         let ptr = memory.as_ptr() as *mut u8;
 
-        let allocator = BuddyAllocator::new(ptr, size, config).unwrap();
+        let allocator = BuddyAllocator::new(ptr, size, config).expect("unwrap failed");
         let fragmentation = allocator.calculate_fragmentation();
 
         // With one large free block, fragmentation should be minimal
@@ -861,13 +863,13 @@ mod tests {
         let memory = vec![0u8; size];
         let ptr = memory.as_ptr() as *mut u8;
 
-        let mut allocator = BuddyAllocator::new(ptr, size, config).unwrap();
+        let mut allocator = BuddyAllocator::new(ptr, size, config).expect("unwrap failed");
 
         let usage_before = allocator.get_memory_usage();
         assert_eq!(usage_before.total_size, size);
         assert_eq!(usage_before.allocated_size, 0);
 
-        allocator.allocate(1024).unwrap();
+        allocator.allocate(1024).expect("unwrap failed");
 
         let usage_after = allocator.get_memory_usage();
         assert!(usage_after.allocated_size > 0);
@@ -880,7 +882,7 @@ mod tests {
         let memory = vec![0u8; size];
         let ptr = memory.as_ptr() as *mut u8;
 
-        let allocator = ThreadSafeBuddyAllocator::new(ptr, size, config).unwrap();
+        let allocator = ThreadSafeBuddyAllocator::new(ptr, size, config).expect("unwrap failed");
 
         let alloc_result = allocator.allocate(1024);
         assert!(alloc_result.is_ok());

@@ -243,9 +243,9 @@ where
         final_lr: A,
     ) -> CustomScheduler<A, impl FnMut(usize) -> A> {
         let initial_lr = self.initial_lr;
-        let total_steps = A::from(total_steps).unwrap();
+        let total_steps = A::from(total_steps).expect("unwrap failed");
         CustomScheduler::new(initial_lr, move |step| {
-            let step = A::from(step).unwrap();
+            let step = A::from(step).expect("unwrap failed");
             if step >= total_steps {
                 final_lr
             } else {
@@ -267,10 +267,10 @@ where
         min_lr: A,
     ) -> CustomScheduler<A, impl FnMut(usize) -> A> {
         let initial_lr = self.initial_lr;
-        let total_steps = A::from(total_steps).unwrap();
-        let pi = A::from(std::f64::consts::PI).unwrap();
+        let total_steps = A::from(total_steps).expect("unwrap failed");
+        let pi = A::from(std::f64::consts::PI).expect("unwrap failed");
         CustomScheduler::new(initial_lr, move |step| {
-            let step = A::from(step).unwrap();
+            let step = A::from(step).expect("unwrap failed");
             if step >= total_steps {
                 min_lr
             } else {
@@ -294,14 +294,14 @@ where
         mode: CyclicMode<A>,
     ) -> CustomScheduler<A, impl FnMut(usize) -> A> {
         let min_lr = self.initial_lr;
-        let step_size = A::from(step_size).unwrap();
+        let step_size = A::from(step_size).expect("unwrap failed");
         let two = A::one() + A::one();
 
         // Move mode into the closure
         let mode_inner = mode;
 
         CustomScheduler::new(min_lr, move |step| {
-            let step = A::from(step).unwrap();
+            let step = A::from(step).expect("unwrap failed");
             let cycle = (step / (two * step_size)).floor();
             let x = (step / step_size - two * cycle).abs();
 

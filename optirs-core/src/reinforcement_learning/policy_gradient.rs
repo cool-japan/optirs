@@ -316,7 +316,7 @@ impl<
                     .zip(surr2.iter())
                     .map(|(&s1, &s2)| s1.min(s2))
                     .sum::<T>()
-                    / T::from(mini_batch.observations.nrows()).unwrap();
+                    / T::from(mini_batch.observations.nrows()).expect("unwrap failed");
 
                 // Entropy loss (negative to encourage exploration)
                 let entropy_loss = -policy_eval.entropy.iter().copied().sum::<T>()
@@ -344,7 +344,7 @@ impl<
                             .zip(value_loss_2.iter())
                             .map(|(&v1, &v2)| v1.max(v2))
                             .sum::<T>()
-                            / T::from(mini_batch.observations.nrows()).unwrap()
+                            / T::from(mini_batch.observations.nrows()).expect("unwrap failed")
                     } else {
                         // Standard MSE loss
                         (&predicted_values - &mini_batch.returns)
@@ -378,7 +378,7 @@ impl<
                     })
                     .count();
                 clip_fraction =
-                    clip_fraction + T::from(n_clipped).unwrap_or_else(|| T::zero()) / T::from(ratio.len()).unwrap();
+                    clip_fraction + T::from(n_clipped).unwrap_or_else(|| T::zero()) / T::from(ratio.len()).expect("unwrap failed");
 
                 // Compute approximate KL divergence
                 approx_kl = approx_kl + log_ratio.mapv(|x| x * x).mean().unwrap_or(T::zero());
@@ -406,7 +406,7 @@ impl<
         let n_updates = T::from(
             n_epochs * ((trajectory.observations.nrows() + mini_batch_size - 1) / mini_batch_size),
         )
-        .unwrap();
+        .expect("unwrap failed");
         self.metrics.policy_loss = total_policy_loss / n_updates;
         self.metrics.value_loss = total_value_loss / n_updates;
         self.metrics.entropy_loss = total_entropy_loss / n_updates;
@@ -527,7 +527,7 @@ impl<
         let policy_params = self.policy_network.get_parameters();
         for (param_name, param_values) in policy_params {
             let grad =
-                Array1::ones(param_values.len()) * loss / T::from(param_values.len()).unwrap();
+                Array1::ones(param_values.len()) * loss / T::from(param_values.len()).expect("unwrap failed");
             gradients.insert(param_name, grad);
         }
 
@@ -542,7 +542,7 @@ impl<
             let value_params = value_net.get_parameters();
             for (param_name, param_values) in value_params {
                 let grad =
-                    Array1::ones(param_values.len()) * loss / T::from(param_values.len()).unwrap();
+                    Array1::ones(param_values.len()) * loss / T::from(param_values.len()).expect("unwrap failed");
                 gradients.insert(param_name, grad);
             }
         }
@@ -674,7 +674,7 @@ impl<
                 .slice_mut(s![offset..offset + size])
                 .assign(&trajectory.values);
 
-            combined_dones.extend_from_slice(trajectory.dones.as_slice().unwrap());
+            combined_dones.extend_from_slice(trajectory.dones.as_slice().expect("unwrap failed"));
 
             offset += size;
         }

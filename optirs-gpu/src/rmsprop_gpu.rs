@@ -165,39 +165,39 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSpropGpu<A> {
         // Set kernel parameters
         #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
         {
-            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().unwrap());
-            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().unwrap());
-            kernel.set_buffer("v", gpu_memory.v_gpu.as_ref().unwrap()); // Mean square accumulator
+            kernel.set_buffer("params", gpu_memory.params_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("grads", gpu_memory.grads_gpu.as_ref().expect("unwrap failed"));
+            kernel.set_buffer("v", gpu_memory.v_gpu.as_ref().expect("unwrap failed")); // Mean square accumulator
 
             if self.cpu_optimizer.momentum != A::zero() {
-                kernel.set_buffer("m", gpu_memory.m_gpu.as_ref().unwrap()); // Momentum buffer
+                kernel.set_buffer("m", gpu_memory.m_gpu.as_ref().expect("unwrap failed")); // Momentum buffer
             }
 
             // Convert Float values to concrete types for kernel
             if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
                 kernel.set_f32(
                     "lr",
-                    self.cpu_optimizer.get_learning_rate().to_f32().unwrap(),
+                    self.cpu_optimizer.get_learning_rate().to_f32().expect("unwrap failed"),
                 );
-                kernel.set_f32("alpha", self.cpu_optimizer.alpha.to_f32().unwrap());
-                kernel.set_f32("eps", self.cpu_optimizer.epsilon.to_f32().unwrap());
+                kernel.set_f32("alpha", self.cpu_optimizer.alpha.to_f32().expect("unwrap failed"));
+                kernel.set_f32("eps", self.cpu_optimizer.epsilon.to_f32().expect("unwrap failed"));
                 kernel.set_f32(
                     "weight_decay",
-                    self.cpu_optimizer.weight_decay.to_f32().unwrap(),
+                    self.cpu_optimizer.weight_decay.to_f32().expect("unwrap failed"),
                 );
-                kernel.set_f32("momentum", self.cpu_optimizer.momentum.to_f32().unwrap());
+                kernel.set_f32("momentum", self.cpu_optimizer.momentum.to_f32().expect("unwrap failed"));
             } else {
                 kernel.set_f64(
                     "lr",
-                    self.cpu_optimizer.get_learning_rate().to_f64().unwrap(),
+                    self.cpu_optimizer.get_learning_rate().to_f64().expect("unwrap failed"),
                 );
-                kernel.set_f64("alpha", self.cpu_optimizer.alpha.to_f64().unwrap());
-                kernel.set_f64("eps", self.cpu_optimizer.epsilon.to_f64().unwrap());
+                kernel.set_f64("alpha", self.cpu_optimizer.alpha.to_f64().expect("unwrap failed"));
+                kernel.set_f64("eps", self.cpu_optimizer.epsilon.to_f64().expect("unwrap failed"));
                 kernel.set_f64(
                     "weight_decay",
-                    self.cpu_optimizer.weight_decay.to_f64().unwrap(),
+                    self.cpu_optimizer.weight_decay.to_f64().expect("unwrap failed"),
                 );
-                kernel.set_f64("momentum", self.cpu_optimizer.momentum.to_f64().unwrap());
+                kernel.set_f64("momentum", self.cpu_optimizer.momentum.to_f64().expect("unwrap failed"));
             }
 
             kernel.set_i32("n", params.len() as i32);
@@ -273,7 +273,7 @@ mod tests {
         let result = optimizer.step(&params, &grads);
         assert!(result.is_ok());
 
-        let updated = result.unwrap();
+        let updated = result.expect("unwrap failed");
         assert_eq!(updated.len(), 3);
     }
 

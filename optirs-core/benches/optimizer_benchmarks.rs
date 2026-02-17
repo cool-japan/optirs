@@ -188,7 +188,7 @@ fn bench_convergence(c: &mut Criterion) {
             let mut optimizer = SGD::new(0.01);
 
             for _ in 0..steps {
-                params = optimizer.step(&params, &gradients).unwrap();
+                params = optimizer.step(&params, &gradients).expect("unwrap failed");
             }
             black_box(params)
         });
@@ -201,7 +201,7 @@ fn bench_convergence(c: &mut Criterion) {
             let mut optimizer = Adam::new(0.001);
 
             for _ in 0..steps {
-                params = optimizer.step(&params, &gradients).unwrap();
+                params = optimizer.step(&params, &gradients).expect("unwrap failed");
             }
             black_box(params)
         });

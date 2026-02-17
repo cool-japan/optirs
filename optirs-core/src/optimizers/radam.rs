@@ -44,7 +44,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = RAdam::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).unwrap();
+/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct RAdam<A: Float + ScalarOperand + Debug> {
@@ -75,17 +75,17 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RAdam<A> {
     ///
     /// * `learning_rate` - The learning rate for parameter updates
     pub fn new(learning_rate: A) -> Self {
-        let beta2 = A::from(0.999).unwrap();
+        let beta2 = A::from(0.999).expect("unwrap failed");
         Self {
             learning_rate,
-            beta1: A::from(0.9).unwrap(),
+            beta1: A::from(0.9).expect("unwrap failed"),
             beta2,
-            epsilon: A::from(1e-8).unwrap(),
+            epsilon: A::from(1e-8).expect("unwrap failed"),
             weight_decay: A::zero(),
             m: None,
             v: None,
             t: 0,
-            rho_inf: A::from(2.0).unwrap() / (A::one() - beta2) - A::one(),
+            rho_inf: A::from(2.0).expect("unwrap failed") / (A::one() - beta2) - A::one(),
         }
     }
 
@@ -114,7 +114,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RAdam<A> {
             m: None,
             v: None,
             t: 0,
-            rho_inf: A::from(2.0).unwrap() / (A::one() - beta2) - A::one(),
+            rho_inf: A::from(2.0).expect("unwrap failed") / (A::one() - beta2) - A::one(),
         }
     }
 
@@ -133,7 +133,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RAdam<A> {
     pub fn set_beta2(&mut self, beta2: A) -> &mut Self {
         self.beta2 = beta2;
         // Update rho_inf based on new beta2
-        self.rho_inf = A::from(2.0).unwrap() / (A::one() - beta2) - A::one();
+        self.rho_inf = A::from(2.0).expect("unwrap failed") / (A::one() - beta2) - A::one();
         self
     }
 
@@ -206,8 +206,8 @@ where
             self.t = 0;
         }
 
-        let m = self.m.as_mut().unwrap();
-        let v = self.v.as_mut().unwrap();
+        let m = self.m.as_mut().expect("unwrap failed");
+        let v = self.v.as_mut().expect("unwrap failed");
 
         // Ensure we have state for this parameter set
         if m.is_empty() {
@@ -235,20 +235,23 @@ where
         // RAdam logic for variance rectification
         let beta2_t = self.beta2.powi(self.t as i32);
         let rho_t = self.rho_inf
-            - <A as scirs2_core::numeric::NumCast>::from(2.0).unwrap()
-                * <A as scirs2_core::numeric::NumCast>::from(self.t as f64).unwrap()
+            - <A as scirs2_core::numeric::NumCast>::from(2.0).expect("unwrap failed")
+                * <A as scirs2_core::numeric::NumCast>::from(self.t as f64).expect("unwrap failed")
                 * beta2_t
                 / (A::one() - beta2_t);
 
         // Compute adaptive learning rate and update parameters
-        let updated_params = if rho_t > <A as scirs2_core::numeric::NumCast>::from(4.0).unwrap() {
+        let updated_params = if rho_t
+            > <A as scirs2_core::numeric::NumCast>::from(4.0).expect("unwrap failed")
+        {
             // Threshold for using the adaptive learning rate
             // Compute bias-corrected second moment estimate (variance)
             let v_hat = &v[0] / (A::one() - beta2_t);
 
             // Compute length of the approximated SMA (simple moving average)
-            let sma_rectifier = (rho_t - <A as scirs2_core::numeric::NumCast>::from(4.0).unwrap())
-                * (rho_t - <A as scirs2_core::numeric::NumCast>::from(2.0).unwrap())
+            let sma_rectifier = (rho_t
+                - <A as scirs2_core::numeric::NumCast>::from(4.0).expect("unwrap failed"))
+                * (rho_t - <A as scirs2_core::numeric::NumCast>::from(2.0).expect("unwrap failed"))
                 / self.rho_inf;
             let sma_rectifier = sma_rectifier * A::sqrt(A::one() - beta2_t)
                 / (A::one() - self.beta1.powi(self.t as i32));
@@ -266,7 +269,9 @@ where
         };
 
         // Convert back to original dimension
-        Ok(updated_params.into_dimensionality::<D>().unwrap())
+        Ok(updated_params
+            .into_dimensionality::<D>()
+            .expect("unwrap failed"))
     }
 
     fn get_learning_rate(&self) -> A {
@@ -293,7 +298,7 @@ mod tests {
         let mut optimizer = RAdam::new(0.01);
 
         // Run one step
-        let new_params = optimizer.step(&params, &gradients).unwrap();
+        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Check that parameters have been updated
         assert!(new_params.iter().all(|&x| x != 0.0));
@@ -316,7 +321,7 @@ mod tests {
 
         // Run multiple steps to move past the adaptive phase
         for _ in 0..100 {
-            params = optimizer.step(&params, &gradients).unwrap();
+            params = optimizer.step(&params, &gradients).expect("unwrap failed");
         }
 
         // Parameters should continue to move in the direction of the gradients
@@ -338,7 +343,7 @@ mod tests {
         );
 
         // Run one step
-        let new_params = optimizer.step(&params, &gradients).unwrap();
+        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Weight decay should reduce parameter magnitudes
         for i in 0..3 {
@@ -374,7 +379,7 @@ mod tests {
         let mut optimizer = RAdam::new(0.01);
 
         // Run one step
-        optimizer.step(&params, &gradients).unwrap();
+        optimizer.step(&params, &gradients).expect("unwrap failed");
         assert_eq!(optimizer.t, 1);
         assert!(optimizer.m.is_some());
         assert!(optimizer.v.is_some());

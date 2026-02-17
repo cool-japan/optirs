@@ -140,7 +140,7 @@ impl MemoryPressureMonitor {
             .take(5) // Look at last 5 readings
             .collect();
 
-        let first_pressure = recent_readings.last().unwrap().pressure;
+        let first_pressure = recent_readings.last().expect("unwrap failed").pressure;
         let last_pressure = recent_readings[0].pressure;
         let pressure_change = last_pressure - first_pressure;
 
@@ -216,12 +216,12 @@ impl MemoryPressureMonitor {
             return 0.0;
         }
 
-        let time_span = recent[0].timestamp.duration_since(recent.last().unwrap().timestamp).as_secs_f32();
+        let time_span = recent[0].timestamp.duration_since(recent.last().expect("unwrap failed").timestamp).as_secs_f32();
         if time_span == 0.0 {
             return 0.0;
         }
 
-        let pressure_change = recent[0].pressure - recent.last().unwrap().pressure;
+        let pressure_change = recent[0].pressure - recent.last().expect("unwrap failed").pressure;
         pressure_change / time_span
     }
 

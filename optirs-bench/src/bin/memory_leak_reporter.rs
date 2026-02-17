@@ -1,7 +1,7 @@
-// Memory leak reporter binary for CI/CD integration
-//
-// This binary analyzes memory profiling results and generates comprehensive
-// memory leak reports for continuous integration pipelines.
+//! Memory leak reporter binary for CI/CD integration.
+//!
+//! This binary analyzes memory profiling results and generates comprehensive
+//! memory leak reports for continuous integration pipelines.
 
 use clap::{Arg, Command};
 // use optirs_core::benchmarking::advanced_memory_leak_detector::MemoryLeakConfig;
@@ -144,20 +144,30 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    let input_dir = PathBuf::from(matches.get_one::<String>("input").unwrap());
-    let outputpath = PathBuf::from(matches.get_one::<String>("output").unwrap());
-    let format = matches.get_one::<String>("format").unwrap();
+    let input_dir = PathBuf::from(
+        matches
+            .get_one::<String>("input")
+            .ok_or_else(|| OptimError::InvalidConfig("Input directory is required".to_string()))?,
+    );
+    let outputpath = PathBuf::from(
+        matches
+            .get_one::<String>("output")
+            .ok_or_else(|| OptimError::InvalidConfig("Output path is required".to_string()))?,
+    );
+    let format = matches
+        .get_one::<String>("format")
+        .ok_or_else(|| OptimError::InvalidConfig("Format is required".to_string()))?;
     let verbose = matches.get_flag("verbose");
 
     let severity_threshold: f64 = matches
         .get_one::<String>("severity-threshold")
-        .unwrap()
+        .ok_or_else(|| OptimError::InvalidConfig("Severity threshold is required".to_string()))?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid severity threshold".to_string()))?;
 
     let confidence_threshold: f64 = matches
         .get_one::<String>("confidence-threshold")
-        .unwrap()
+        .ok_or_else(|| OptimError::InvalidConfig("Confidence threshold is required".to_string()))?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid confidence threshold".to_string()))?;
 
@@ -640,8 +650,14 @@ fn calculate_memory_growth_rate(timeline: &[(u64, usize)]) -> f64 {
         return 0.0;
     }
 
-    let first = timeline.first().unwrap();
-    let last = timeline.last().unwrap();
+    let first = match timeline.first() {
+        Some(f) => f,
+        None => return 0.0,
+    };
+    let last = match timeline.last() {
+        Some(l) => l,
+        None => return 0.0,
+    };
 
     let time_diff = (last.0 - first.0) as f64 / 1000.0; // Convert to seconds
     let memory_diff = last.1 as f64 - first.1 as f64;
@@ -904,7 +920,7 @@ fn create_memory_leakreport(
         environment_info: env_info,
         timestamp: SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| OptimError::InvalidConfig(format!("System time error: {}", e)))?
             .as_secs(),
     })
 }

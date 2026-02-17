@@ -22,7 +22,7 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::DropConnect;
 ///
-/// let dropconnect = DropConnect::new(0.5).unwrap(); // 50% connection dropout
+/// let dropconnect = DropConnect::new(0.5).expect("unwrap failed"); // 50% connection dropout
 /// let weights = array![[1.0, 2.0], [3.0, 4.0]];
 ///
 /// // During training
@@ -79,7 +79,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> DropConnect<A> {
 
         // Create keep probability for sampling
         let keep_prob = A::one() - self.drop_prob;
-        let keep_prob_f64 = keep_prob.to_f64().unwrap();
+        let keep_prob_f64 = keep_prob.to_f64().expect("unwrap failed");
 
         // Sample mask
         let mut rng = thread_rng();
@@ -115,7 +115,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> DropConnect<A> {
 
         // Use the same mask for gradients
         let keep_prob = A::one() - self.drop_prob;
-        let keep_prob_f64 = keep_prob.to_f64().unwrap();
+        let keep_prob_f64 = keep_prob.to_f64().expect("unwrap failed");
 
         // Create mask with same shape as weights
         let mut rng = thread_rng();
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn test_dropconnect_creation() {
         // Valid creation
-        let dc = DropConnect::<f64>::new(0.5).unwrap();
+        let dc = DropConnect::<f64>::new(0.5).expect("unwrap failed");
         assert_eq!(dc.drop_prob, 0.5);
 
         // Invalid probabilities
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_dropconnect_training_mode() {
-        let dc = DropConnect::new(0.5).unwrap();
+        let dc = DropConnect::new(0.5).expect("unwrap failed");
         let weights = array![[1.0, 2.0], [3.0, 4.0]];
 
         // During training, some connections should be dropped
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_dropconnect_inference_mode() {
-        let dc = DropConnect::new(0.5).unwrap();
+        let dc = DropConnect::new(0.5).expect("unwrap failed");
         let weights = array![[1.0, 2.0], [3.0, 4.0]];
 
         // During inference, weights should remain unchanged
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_dropconnect_zero_probability() {
-        let dc = DropConnect::new(0.0).unwrap();
+        let dc = DropConnect::new(0.0).expect("unwrap failed");
         let weights = array![[1.0, 2.0], [3.0, 4.0]];
 
         // With 0% dropout, weights should remain unchanged
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_dropconnect_gradients() {
-        let dc = DropConnect::new(0.5).unwrap();
+        let dc = DropConnect::new(0.5).expect("unwrap failed");
         let gradients = array![[1.0, 1.0], [1.0, 1.0]];
         let weightsshape = gradients.raw_dim();
 
@@ -232,16 +232,16 @@ mod tests {
 
     #[test]
     fn test_regularizer_trait() {
-        let dc = DropConnect::new(0.3).unwrap();
+        let dc = DropConnect::new(0.3).expect("unwrap failed");
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
 
         // Test Regularizer trait methods
-        let penalty = dc.penalty(&params).unwrap();
+        let penalty = dc.penalty(&params).expect("unwrap failed");
         assert_eq!(penalty, 0.0); // DropConnect has no penalty term
 
         // Test gradient computation
-        let penalty_from_apply = dc.apply(&params, &mut gradient).unwrap();
+        let penalty_from_apply = dc.apply(&params, &mut gradient).expect("unwrap failed");
         assert_eq!(penalty_from_apply, 0.0);
 
         // Gradient should be modified with dropout

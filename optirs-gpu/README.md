@@ -48,7 +48,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-gpu = "0.1.0"
+optirs-gpu = "0.2.0"
 scirs2-core = "0.1.1"  # Required foundation
 ```
 
@@ -58,7 +58,7 @@ Enable specific GPU backends:
 
 ```toml
 [dependencies]
-optirs-gpu = { version = "0.1.0", features = ["cuda", "metal"] }
+optirs-gpu = { version = "0.2.0", features = ["cuda", "metal"] }
 ```
 
 Available features:
@@ -226,8 +226,4 @@ OptiRS follows the Cool Japan organization's development standards. See the main
 
 ## License
 
-This project is licensed under either of:
-- Apache License, Version 2.0
-- MIT License
-
-at your option.
+This project is licensed under the Apache License, Version 2.0.

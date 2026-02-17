@@ -401,7 +401,8 @@ where
 
         for (i, value) in data_point.features.iter_mut().enumerate() {
             let diff = (*value - median[i]).abs();
-            let threshold = median[i] * A::from(self.config.anomaly_config.threshold).unwrap();
+            let threshold =
+                median[i] * A::from(self.config.anomaly_config.threshold).expect("unwrap failed");
 
             if diff > threshold {
                 // Clip the value to be within the threshold
@@ -415,7 +416,7 @@ where
         }
 
         // Reduce quality score for adapted anomalous data
-        data_point.quality_score = data_point.quality_score * A::from(0.5).unwrap();
+        data_point.quality_score = data_point.quality_score * A::from(0.5).expect("unwrap failed");
 
         Ok(data_point)
     }
@@ -437,7 +438,7 @@ where
 
         // Check quality threshold
         let quality_ready = buffer_quality.average_quality
-            >= A::from(self.config.buffer_config.quality_threshold).unwrap();
+            >= A::from(self.config.buffer_config.quality_threshold).expect("unwrap failed");
 
         // Check timeout
         let timeout_ready = self.buffer.time_since_last_processing()
@@ -599,7 +600,7 @@ where
         }
 
         // Normalize by batch size
-        let batch_size = A::from(batch.len()).unwrap();
+        let batch_size = A::from(batch.len()).expect("unwrap failed");
         gradients /= batch_size;
 
         Ok(gradients)
@@ -627,8 +628,8 @@ where
             loss,
             accuracy: Some(accuracy),
             convergence_rate: Some(convergence_rate),
-            gradient_norm: Some(A::from(1.0).unwrap()), // Simplified
-            parameter_update_magnitude: Some(A::from(0.1).unwrap()), // Simplified
+            gradient_norm: Some(A::from(1.0).expect("unwrap failed")), // Simplified
+            parameter_update_magnitude: Some(A::from(0.1).expect("unwrap failed")), // Simplified
             data_statistics: data_stats,
             resource_usage,
             custom_metrics: HashMap::new(),
@@ -658,7 +659,7 @@ where
         }
 
         if count > 0 {
-            Ok(total_loss / A::from(count).unwrap())
+            Ok(total_loss / A::from(count).expect("unwrap failed"))
         } else {
             Ok(A::zero())
         }
@@ -677,7 +678,7 @@ where
         for data_point in batch {
             if data_point.target.is_some() {
                 // Simplified: assume accuracy based on quality score
-                if data_point.quality_score > A::from(0.5).unwrap() {
+                if data_point.quality_score > A::from(0.5).expect("unwrap failed") {
                     correct += 1;
                 }
                 total += 1;
@@ -685,7 +686,7 @@ where
         }
 
         if total > 0 {
-            Ok(A::from(correct).unwrap() / A::from(total).unwrap())
+            Ok(A::from(correct).expect("unwrap failed") / A::from(total).expect("unwrap failed"))
         } else {
             Ok(A::one())
         }
@@ -722,18 +723,18 @@ where
             feature_means = feature_means + &data_point.features;
             quality_scores.push(data_point.quality_score);
         }
-        feature_means /= A::from(batch.len()).unwrap();
+        feature_means /= A::from(batch.len()).expect("unwrap failed");
 
         // Compute standard deviations
         for data_point in batch {
             let diff = &data_point.features - &feature_means;
             feature_stds = feature_stds + &diff.mapv(|x| x * x);
         }
-        feature_stds /= A::from(batch.len()).unwrap();
+        feature_stds /= A::from(batch.len()).expect("unwrap failed");
         feature_stds = feature_stds.mapv(|x| x.sqrt());
 
-        let avg_quality =
-            quality_scores.iter().copied().sum::<A>() / A::from(quality_scores.len()).unwrap();
+        let avg_quality = quality_scores.iter().copied().sum::<A>()
+            / A::from(quality_scores.len()).expect("unwrap failed");
 
         Ok(DataStatistics {
             sample_count: batch.len(),
@@ -783,15 +784,15 @@ where
                 performance.convergence_rate.unwrap_or(A::zero()),
             ],
             resource_state: vec![
-                A::from(performance.resource_usage.memory_usage_mb as f64).unwrap(),
-                A::from(performance.resource_usage.cpu_usage_percent).unwrap(),
+                A::from(performance.resource_usage.memory_usage_mb as f64).expect("unwrap failed"),
+                A::from(performance.resource_usage.cpu_usage_percent).expect("unwrap failed"),
             ],
             drift_indicators: vec![A::from(if self.drift_detector.is_drift_detected() {
                 1.0
             } else {
                 0.0
             })
-            .unwrap()],
+            .expect("unwrap failed")],
             adaptation_history: self.adaptation_history.len(),
             timestamp: Instant::now(),
         };

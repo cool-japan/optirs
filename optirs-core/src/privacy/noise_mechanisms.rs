@@ -801,7 +801,7 @@ where
     {
         // Estimate scale of data for adaptive noise calibration
         let sum_squares = data.iter().map(|&x| x * x).sum::<T>();
-        let n = T::from(data.len()).unwrap();
+        let n = T::from(data.len()).expect("unwrap failed");
         (sum_squares / n).sqrt()
     }
 }
@@ -922,11 +922,11 @@ mod tests {
     fn test_noise_scale_computation() {
         let gaussian_scale = GaussianMechanism::<f64>::compute_noise_scale(1.0, 1.0, 1e-5);
         assert!(gaussian_scale.is_ok());
-        assert!(gaussian_scale.unwrap() > 0.0);
+        assert!(gaussian_scale.expect("unwrap failed") > 0.0);
 
         let laplace_scale = LaplaceMechanism::<f64>::compute_noise_scale(1.0, 1.0);
         assert!(laplace_scale.is_ok());
-        assert_eq!(laplace_scale.unwrap(), 1.0);
+        assert_eq!(laplace_scale.expect("unwrap failed"), 1.0);
     }
 
     #[test]
@@ -949,7 +949,7 @@ mod tests {
         let result = mechanism.select_output(&candidates, 1.0, 1.0);
 
         assert!(result.is_ok());
-        assert!(candidates.contains(&result.unwrap()));
+        assert!(candidates.contains(&result.expect("unwrap failed")));
     }
 
     #[test]
@@ -973,7 +973,7 @@ mod tests {
         // Query above threshold
         let result1 = svm.answer_query(10.0, 1.0, 1.0, None);
         assert!(result1.is_ok());
-        assert!(result1.unwrap().is_some());
+        assert!(result1.expect("unwrap failed").is_some());
 
         // Query below threshold
         let result2 = svm.answer_query(1.0, 1.0, 1.0, None);

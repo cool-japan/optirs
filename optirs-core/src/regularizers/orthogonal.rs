@@ -26,7 +26,7 @@ use crate::regularizers::Regularizer;
 /// let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
 ///
 /// // Apply orthogonal regularization  
-/// let penalty = ortho_reg.apply(&weights, &mut gradient).unwrap();
+/// let penalty = ortho_reg.apply(&weights, &mut gradient).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct OrthogonalRegularization<A: Float> {
@@ -89,7 +89,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> OrthogonalR
             diff[[i, i]] = diff[[i, i]] - A::one();
         }
 
-        weights.dot(&diff) * (A::from_f64(2.0).unwrap() * self.lambda)
+        weights.dot(&diff) * (A::from_f64(2.0).expect("unwrap failed") * self.lambda)
     }
 }
 
@@ -207,7 +207,7 @@ mod tests {
         let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradient = gradient.clone();
 
-        let penalty = ortho.apply(&params, &mut gradient).unwrap();
+        let penalty = ortho.apply(&params, &mut gradient).expect("unwrap failed");
 
         // Penalty should be positive
         assert!(penalty > 0.0);
@@ -216,7 +216,7 @@ mod tests {
         assert_ne!(gradient, original_gradient);
 
         // Penalty from apply should match penalty method
-        let penalty2 = ortho.penalty(&params).unwrap();
+        let penalty2 = ortho.penalty(&params).expect("unwrap failed");
         assert_relative_eq!(penalty, penalty2, epsilon = 1e-10);
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let params = Array3::<f64>::zeros((2, 2, 2));
         let mut gradient = Array3::<f64>::zeros((2, 2, 2));
 
-        let penalty = ortho.apply(&params, &mut gradient).unwrap();
+        let penalty = ortho.apply(&params, &mut gradient).expect("unwrap failed");
         assert_eq!(penalty, 0.0);
 
         // Gradient should be unchanged

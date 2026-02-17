@@ -556,13 +556,13 @@ impl ResourceManager {
                 if let Ok(usage) = Self::collect_resource_usage() {
                     // Update current usage
                     {
-                        let mut current = current_usage.lock().unwrap();
+                        let mut current = current_usage.lock().expect("lock poisoned");
                         *current = usage.clone();
                     }
 
                     // Add to history
                     {
-                        let mut history = usage_history.lock().unwrap();
+                        let mut history = usage_history.lock().expect("lock poisoned");
                         if history.len() >= 1000 {
                             history.pop_front();
                         }
@@ -637,7 +637,7 @@ impl ResourceManager {
             },
         };
 
-        let mut allocations = self.allocations.lock().unwrap();
+        let mut allocations = self.allocations.lock().expect("lock poisoned");
         allocations.insert(component_name.to_string(), allocation);
 
         Ok(())
@@ -645,7 +645,7 @@ impl ResourceManager {
 
     /// Checks budget constraints for resource allocation
     fn check_budget_constraints(&self, memory_mb: usize, cpu_percent: f64) -> Result<(), String> {
-        let allocations = self.allocations.lock().unwrap();
+        let allocations = self.allocations.lock().expect("lock poisoned");
 
         // Calculate total allocated resources
         let total_memory: usize = allocations
@@ -680,7 +680,7 @@ impl ResourceManager {
 
     /// Updates resource utilization tracking
     pub fn update_utilization(&mut self) -> Result<(), String> {
-        let current_usage = self.current_usage.lock().unwrap().clone();
+        let current_usage = self.current_usage.lock().expect("lock poisoned").clone();
 
         // Check for alerts
         let alerts = self.alert_system.check_thresholds(&current_usage)?;
@@ -702,7 +702,7 @@ impl ResourceManager {
 
     /// Checks if sufficient resources are available for processing
     pub fn has_sufficient_resources_for_processing(&self) -> Result<bool, String> {
-        let current_usage = self.current_usage.lock().unwrap();
+        let current_usage = self.current_usage.lock().expect("lock poisoned");
 
         // Check memory availability
         let memory_available = current_usage.memory_usage_mb
@@ -717,7 +717,7 @@ impl ResourceManager {
 
     /// Computes resource allocation adaptation
     pub fn compute_allocation_adaptation(&mut self) -> Result<Option<Adaptation<f32>>, String> {
-        let current_usage = self.current_usage.lock().unwrap();
+        let current_usage = self.current_usage.lock().expect("lock poisoned");
 
         // Check if we need to adapt resource allocation
         if current_usage.memory_usage_mb > self.budget.memory_budget.soft_limit_mb {
@@ -761,7 +761,7 @@ impl ResourceManager {
                 "memory_manager" => {
                     // Adjust memory allocations
                     let factor = 1.0 + adaptation.magnitude;
-                    let mut allocations = self.allocations.lock().unwrap();
+                    let mut allocations = self.allocations.lock().expect("lock poisoned");
 
                     for allocation in allocations.values_mut() {
                         if allocation.priority >= ResourcePriority::Normal {
@@ -773,7 +773,7 @@ impl ResourceManager {
                 "cpu_manager" => {
                     // Adjust CPU allocations
                     let factor = 1.0 + adaptation.magnitude;
-                    let mut allocations = self.allocations.lock().unwrap();
+                    let mut allocations = self.allocations.lock().expect("lock poisoned");
 
                     for allocation in allocations.values_mut() {
                         if allocation.priority >= ResourcePriority::Normal {
@@ -792,19 +792,19 @@ impl ResourceManager {
 
     /// Gets current resource usage
     pub fn current_usage(&self) -> Result<ResourceUsage, String> {
-        Ok(self.current_usage.lock().unwrap().clone())
+        Ok(self.current_usage.lock().expect("lock poisoned").clone())
     }
 
     /// Gets resource usage history
     pub fn get_usage_history(&self, count: usize) -> Vec<ResourceUsage> {
-        let history = self.usage_history.lock().unwrap();
+        let history = self.usage_history.lock().expect("lock poisoned");
         history.iter().rev().take(count).cloned().collect()
     }
 
     /// Gets diagnostic information
     pub fn get_diagnostics(&self) -> ResourceDiagnostics {
-        let current_usage = self.current_usage.lock().unwrap();
-        let allocations = self.allocations.lock().unwrap();
+        let current_usage = self.current_usage.lock().expect("lock poisoned");
+        let allocations = self.allocations.lock().expect("lock poisoned");
 
         ResourceDiagnostics {
             current_usage: current_usage.clone(),

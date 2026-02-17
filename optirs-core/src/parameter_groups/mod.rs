@@ -1341,10 +1341,10 @@ mod tests {
         assert_eq!(manager.total_params(), 3);
 
         // Test group access
-        let group1 = manager.get_group(id1).unwrap();
+        let group1 = manager.get_group(id1).expect("unwrap failed");
         assert_eq!(group1.learning_rate(0.0), 0.01);
 
-        let group2 = manager.get_group(id2).unwrap();
+        let group2 = manager.get_group(id2).expect("unwrap failed");
         assert_eq!(group2.learning_rate(0.0), 0.001);
     }
 
@@ -1355,26 +1355,30 @@ mod tests {
         // Test value clipping
         let mut params = Array1::from_vec(vec![-2.0, 0.5, 3.0]);
         let clip_constraint = ParameterConstraint::ValueClip { min: 0.0, max: 1.0 };
-        clip_constraint.apply(&mut params).unwrap();
-        assert_eq!(params.as_slice().unwrap(), &[0.0, 0.5, 1.0]);
+        clip_constraint.apply(&mut params).expect("unwrap failed");
+        assert_eq!(params.as_slice().expect("unwrap failed"), &[0.0, 0.5, 1.0]);
 
         // Test L2 norm constraint
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // norm = 5
         let l2_constraint = ParameterConstraint::L2NormConstraint { maxnorm: 2.0 };
-        l2_constraint.apply(&mut params).unwrap();
+        l2_constraint.apply(&mut params).expect("unwrap failed");
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 2.0, epsilon = 1e-6);
 
         // Test non-negativity constraint
         let mut params = Array1::from_vec(vec![-1.0, 2.0, -3.0]);
         let non_neg_constraint = ParameterConstraint::NonNegative;
-        non_neg_constraint.apply(&mut params).unwrap();
-        assert_eq!(params.as_slice().unwrap(), &[0.0, 2.0, 0.0]);
+        non_neg_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
+        assert_eq!(params.as_slice().expect("unwrap failed"), &[0.0, 2.0, 0.0]);
 
         // Test unit sphere constraint
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // norm = 5
         let unit_sphere_constraint = ParameterConstraint::UnitSphere;
-        unit_sphere_constraint.apply(&mut params).unwrap();
+        unit_sphere_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 1.0, epsilon = 1e-6);
     }
@@ -1389,10 +1393,13 @@ mod tests {
         let mut group = ParameterGroup::new(0, params, config);
 
         // Apply constraints
-        group.apply_constraints().unwrap();
+        group.apply_constraints().expect("unwrap failed");
 
         // Check that constraints were applied
-        assert_eq!(group.params[0].as_slice().unwrap(), &[0.0, 1.0]);
+        assert_eq!(
+            group.params[0].as_slice().expect("unwrap failed"),
+            &[0.0, 1.0]
+        );
     }
 
     #[test]
@@ -1415,7 +1422,9 @@ mod tests {
         // Test simplex constraint with positive values
         let mut params = Array1::from_vec(vec![2.0, 3.0, 5.0]);
         let simplex_constraint = ParameterConstraint::Simplex;
-        simplex_constraint.apply(&mut params).unwrap();
+        simplex_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
 
         // Check that values sum to 1 and are non-negative
         let sum: f64 = params.sum();
@@ -1435,7 +1444,9 @@ mod tests {
         // Test simplex constraint with negative values
         let mut params = Array1::from_vec(vec![-1.0, 2.0, 3.0]);
         let simplex_constraint = ParameterConstraint::Simplex;
-        simplex_constraint.apply(&mut params).unwrap();
+        simplex_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
 
         // Check that values sum to 1 and are non-negative
         let sum: f64 = params.sum();
@@ -1455,7 +1466,9 @@ mod tests {
         // Test simplex constraint with all zeros
         let mut params = Array1::from_vec(vec![0.0, 0.0, 0.0]);
         let simplex_constraint = ParameterConstraint::Simplex;
-        simplex_constraint.apply(&mut params).unwrap();
+        simplex_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
 
         // Should result in uniform distribution
         let sum: f64 = params.sum();
@@ -1472,7 +1485,9 @@ mod tests {
         // Test spectral norm constraint (approximated with Frobenius norm)
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // Frobenius norm = 5
         let spectral_constraint = ParameterConstraint::SpectralNorm { maxnorm: 2.0 };
-        spectral_constraint.apply(&mut params).unwrap();
+        spectral_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
 
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 2.0, epsilon = 1e-6);
@@ -1485,7 +1500,9 @@ mod tests {
         // Test nuclear norm constraint (approximated with L1 norm)
         let mut params = Array1::from_vec(vec![3.0, -4.0, 2.0]); // L1 norm = 9
         let nuclear_constraint = ParameterConstraint::NuclearNorm { maxnorm: 3.0 };
-        nuclear_constraint.apply(&mut params).unwrap();
+        nuclear_constraint
+            .apply(&mut params)
+            .expect("unwrap failed");
 
         let new_l1_norm = params.mapv(|x| x.abs()).sum();
         assert_relative_eq!(new_l1_norm, 3.0, epsilon = 1e-6);
@@ -1555,7 +1572,7 @@ mod tests {
         let mut group = ParameterGroup::new(0, params, config);
 
         // Apply constraints
-        group.apply_constraints().unwrap();
+        group.apply_constraints().expect("unwrap failed");
 
         // Check that both non-negative and simplex constraints were applied
         let result = &group.params[0];

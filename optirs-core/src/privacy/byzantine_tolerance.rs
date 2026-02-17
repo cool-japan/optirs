@@ -420,8 +420,8 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         let mut byzantine_participants = Vec::new();
 
         for participant_id in anomaly_results.keys() {
-            let anomaly_score = anomaly_results.get(participant_id).unwrap();
-            let outlier_score = outlier_results.get(participant_id).unwrap();
+            let anomaly_score = anomaly_results.get(participant_id).expect("unwrap failed");
+            let outlier_score = outlier_results.get(participant_id).expect("unwrap failed");
             let verification_score = verification_results.get(participant_id);
 
             // Combine scores to determine if participant is Byzantine
@@ -516,7 +516,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
                     .iter()
                     .copied()
                     .fold(T::zero(), |acc, x| acc + x);
-                result[i] = sum / T::from(trimmed_values.len()).unwrap();
+                result[i] = sum / T::from(trimmed_values.len()).expect("unwrap failed");
             }
         }
 
@@ -617,14 +617,14 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         let selected_gradients = self.select_top_k_krum(gradients, k)?;
 
         // Average the selected gradients
-        let first_gradient = selected_gradients.values().next().unwrap();
+        let first_gradient = selected_gradients.values().next().expect("unwrap failed");
         let mut result = Array1::zeros(first_gradient.len());
 
         for gradient in selected_gradients.values() {
             result = result + gradient;
         }
 
-        result = result / T::from(selected_gradients.len()).unwrap();
+        result = result / T::from(selected_gradients.len()).expect("unwrap failed");
         Ok(result)
     }
 
@@ -648,7 +648,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         let learning_rates = self.compute_fools_gold_weights(gradients)?;
 
         // Weighted aggregation
-        let first_gradient = gradients.values().next().unwrap();
+        let first_gradient = gradients.values().next().expect("unwrap failed");
         let mut result = Array1::zeros(first_gradient.len());
         let mut total_weight = T::zero();
 
@@ -742,14 +742,14 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             ));
         }
 
-        let first_gradient = gradients.values().next().unwrap();
+        let first_gradient = gradients.values().next().expect("unwrap failed");
         let mut result = Array1::zeros(first_gradient.len());
 
         for gradient in gradients.values() {
             result = result + gradient;
         }
 
-        result = result / T::from(gradients.len()).unwrap();
+        result = result / T::from(gradients.len()).expect("unwrap failed");
         Ok(result)
     }
 
@@ -928,7 +928,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             let mut current_cluster = HashMap::new();
 
             // Start new cluster with first unassigned gradient
-            let (first_id, first_gradient) = unassigned.iter().next().unwrap();
+            let (first_id, first_gradient) = unassigned.iter().next().expect("unwrap failed");
             let first_id = first_id.clone();
             let first_gradient = first_gradient.clone();
 
@@ -1193,7 +1193,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             .norm_history
             .iter()
             .fold(T::zero(), |acc, &x| acc + x)
-            / T::from(self.gradient_stats.norm_history.len()).unwrap();
+            / T::from(self.gradient_stats.norm_history.len()).expect("unwrap failed");
 
         let variance = self
             .gradient_stats
@@ -1204,7 +1204,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
                 diff * diff
             })
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(self.gradient_stats.norm_history.len()).unwrap();
+            / T::from(self.gradient_stats.norm_history.len()).expect("unwrap failed");
 
         let std_norm = variance.sqrt();
 
@@ -1369,7 +1369,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticalAnalysis<T> {
 
             // Mean
             let sum: T = values.iter().copied().fold(T::zero(), |acc, x| acc + x);
-            mean[i] = sum / T::from(values.len()).unwrap();
+            mean[i] = sum / T::from(values.len()).expect("unwrap failed");
 
             // Sort for median and IQR
             values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
@@ -1390,7 +1390,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StatisticalAnalysis<T> {
                     diff * diff
                 })
                 .fold(T::zero(), |acc, x| acc + x)
-                / T::from(gradients.len()).unwrap();
+                / T::from(gradients.len()).expect("unwrap failed");
             std_dev[i] = variance.sqrt();
 
             // Interquartile range
@@ -1560,7 +1560,9 @@ mod tests {
         gradients.insert("client4".to_string(), Array1::from(vec![1.0, 2.0, 3.0]));
         gradients.insert("client5".to_string(), Array1::from(vec![10.0, 20.0, 30.0])); // Outlier
 
-        let result = aggregator.trimmed_mean_aggregation(&gradients).unwrap();
+        let result = aggregator
+            .trimmed_mean_aggregation(&gradients)
+            .expect("unwrap failed");
 
         // Should be close to [1.0, 2.0, 3.0] after trimming outliers
         assert!((result[0] - 1.0).abs() < 0.2);
@@ -1590,7 +1592,7 @@ mod tests {
 
         let result = aggregator
             .coordinate_median_aggregation(&gradients)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Median should be [2.0, 3.0, 4.0]
         assert_eq!(result[0], 2.0);
@@ -1616,7 +1618,9 @@ mod tests {
         let a = Array1::from(vec![1.0, 2.0, 3.0]);
         let b = Array1::from(vec![4.0, 5.0, 6.0]);
 
-        let distance = aggregator.compute_euclidean_distance(&a, &b).unwrap();
+        let distance = aggregator
+            .compute_euclidean_distance(&a, &b)
+            .expect("unwrap failed");
         let expected = (3.0_f64.powi(2) + 3.0_f64.powi(2) + 3.0_f64.powi(2)).sqrt();
 
         assert!((distance - expected).abs() < 1e-10);

@@ -807,7 +807,7 @@ impl GrowingArena {
         let new_ptr = self
             .external_allocator
             .as_mut()
-            .unwrap()
+            .expect("unwrap failed")
             .allocate(actual_new_size)?;
 
         // Move current arena to previous arenas
@@ -916,32 +916,32 @@ impl ThreadSafeArena {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, ArenaError> {
-        let mut arena = self.arena.lock().unwrap();
+        let mut arena = self.arena.lock().expect("lock poisoned");
         arena.allocate(size)
     }
 
     pub fn reset(&self) {
-        let mut arena = self.arena.lock().unwrap();
+        let mut arena = self.arena.lock().expect("lock poisoned");
         arena.reset();
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointHandle, ArenaError> {
-        let mut arena = self.arena.lock().unwrap();
+        let mut arena = self.arena.lock().expect("lock poisoned");
         arena.checkpoint()
     }
 
     pub fn rollback(&self, handle: CheckpointHandle) -> Result<(), ArenaError> {
-        let mut arena = self.arena.lock().unwrap();
+        let mut arena = self.arena.lock().expect("lock poisoned");
         arena.rollback(handle)
     }
 
     pub fn get_usage(&self) -> ArenaUsage {
-        let arena = self.arena.lock().unwrap();
+        let arena = self.arena.lock().expect("lock poisoned");
         arena.get_usage()
     }
 
     pub fn get_stats(&self) -> ArenaStats {
-        let arena = self.arena.lock().unwrap();
+        let arena = self.arena.lock().expect("lock poisoned");
         arena.get_stats().clone()
     }
 }
@@ -954,7 +954,7 @@ mod tests {
     fn test_arena_creation() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig::default();
         let arena = ArenaAllocator::new(ptr, size, config);
@@ -965,10 +965,10 @@ mod tests {
     fn test_basic_allocation() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig::default();
-        let mut arena = ArenaAllocator::new(ptr, size, config).unwrap();
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
 
         let alloc1 = arena.allocate(100);
         assert!(alloc1.is_ok());
@@ -985,15 +985,15 @@ mod tests {
     fn test_alignment() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig {
             alignment: 16,
             ..ArenaConfig::default()
         };
-        let mut arena = ArenaAllocator::new(ptr, size, config).unwrap();
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
 
-        let alloc_ptr = arena.allocate(10).unwrap();
+        let alloc_ptr = arena.allocate(10).expect("unwrap failed");
         assert_eq!(alloc_ptr.as_ptr() as usize % 16, 0);
     }
 
@@ -1001,21 +1001,21 @@ mod tests {
     fn test_checkpoints() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig {
             enable_checkpoints: true,
             enable_tracking: true,
             ..ArenaConfig::default()
         };
-        let mut arena = ArenaAllocator::new(ptr, size, config).unwrap();
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
 
-        arena.allocate(100).unwrap();
-        let checkpoint = arena.checkpoint().unwrap();
-        arena.allocate(200).unwrap();
+        arena.allocate(100).expect("unwrap failed");
+        let checkpoint = arena.checkpoint().expect("unwrap failed");
+        arena.allocate(200).expect("unwrap failed");
 
         let usage_before = arena.get_usage();
-        arena.rollback(checkpoint).unwrap();
+        arena.rollback(checkpoint).expect("unwrap failed");
         let usage_after = arena.get_usage();
 
         assert!(usage_after.used_size < usage_before.used_size);
@@ -1025,13 +1025,13 @@ mod tests {
     fn test_reset() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig::default();
-        let mut arena = ArenaAllocator::new(ptr, size, config).unwrap();
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
 
-        arena.allocate(100).unwrap();
-        arena.allocate(200).unwrap();
+        arena.allocate(100).expect("unwrap failed");
+        arena.allocate(200).expect("unwrap failed");
 
         let usage_before = arena.get_usage();
         assert!(usage_before.used_size > 0);
@@ -1045,15 +1045,15 @@ mod tests {
     fn test_ring_arena() {
         let size = 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = RingConfig::default();
-        let mut ring = RingArena::new(ptr, size, config).unwrap();
+        let mut ring = RingArena::new(ptr, size, config).expect("unwrap failed");
 
         let alloc1 = ring.allocate(100);
         assert!(alloc1.is_ok());
 
-        ring.consume(100).unwrap();
+        ring.consume(100).expect("unwrap failed");
 
         let alloc2 = ring.allocate(100);
         assert!(alloc2.is_ok());
@@ -1063,10 +1063,10 @@ mod tests {
     fn test_thread_safe_arena() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig::default();
-        let arena = ThreadSafeArena::new(ptr, size, config).unwrap();
+        let arena = ThreadSafeArena::new(ptr, size, config).expect("unwrap failed");
 
         let alloc_result = arena.allocate(100);
         assert!(alloc_result.is_ok());
@@ -1079,16 +1079,16 @@ mod tests {
     fn test_arena_validation() {
         let size = 4096;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = ArenaConfig {
             enable_tracking: true,
             ..ArenaConfig::default()
         };
-        let mut arena = ArenaAllocator::new(ptr, size, config).unwrap();
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
 
-        arena.allocate(100).unwrap();
-        arena.allocate(200).unwrap();
+        arena.allocate(100).expect("unwrap failed");
+        arena.allocate(200).expect("unwrap failed");
 
         let validation_result = arena.validate();
         assert!(validation_result.is_ok());

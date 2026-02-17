@@ -1,7 +1,7 @@
-// Performance Baseline Manager Binary
-//
-// This binary provides a command-line interface for managing performance baselines,
-// including creating, updating, and validating baseline performance data.
+//! Performance Baseline Manager Binary
+//!
+//! This binary provides a command-line interface for managing performance baselines,
+//! including creating, updating, and validating baseline performance data.
 
 use chrono::{DateTime, Utc};
 use clap::{Arg, ArgMatches, Command};
@@ -251,11 +251,21 @@ fn main() {
 
 #[allow(dead_code)]
 fn handle_create_baseline(matches: &ArgMatches, verbose: bool) -> Result<()> {
-    let results_file = matches.get_one::<String>("results-file").unwrap();
-    let baseline_dir = matches.get_one::<String>("baseline-dir").unwrap();
-    let features = matches.get_one::<String>("features").unwrap();
-    let commit_hash = matches.get_one::<String>("commit-hash").unwrap();
-    let branch = matches.get_one::<String>("branch").unwrap();
+    let results_file = matches
+        .get_one::<String>("results-file")
+        .ok_or_else(|| OptimError::InvalidConfig("Results file is required".to_string()))?;
+    let baseline_dir = matches
+        .get_one::<String>("baseline-dir")
+        .ok_or_else(|| OptimError::InvalidConfig("Baseline directory is required".to_string()))?;
+    let features = matches
+        .get_one::<String>("features")
+        .ok_or_else(|| OptimError::InvalidConfig("Features are required".to_string()))?;
+    let commit_hash = matches
+        .get_one::<String>("commit-hash")
+        .ok_or_else(|| OptimError::InvalidConfig("Commit hash is required".to_string()))?;
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or_else(|| OptimError::InvalidConfig("Branch is required".to_string()))?;
 
     if verbose {
         println!("🏗️  Creating new performance baseline:");
@@ -303,12 +313,24 @@ fn handle_create_baseline(matches: &ArgMatches, verbose: bool) -> Result<()> {
 
 #[allow(dead_code)]
 fn handle_update_baseline(matches: &ArgMatches, verbose: bool) -> Result<()> {
-    let results_file = matches.get_one::<String>("results-file").unwrap();
-    let baseline_dir = matches.get_one::<String>("baseline-dir").unwrap();
-    let features = matches.get_one::<String>("features").unwrap();
-    let commit_hash = matches.get_one::<String>("commit-hash").unwrap();
-    let branch = matches.get_one::<String>("branch").unwrap();
-    let merge_strategy = matches.get_one::<String>("merge-strategy").unwrap();
+    let results_file = matches
+        .get_one::<String>("results-file")
+        .ok_or_else(|| OptimError::InvalidConfig("Results file is required".to_string()))?;
+    let baseline_dir = matches
+        .get_one::<String>("baseline-dir")
+        .ok_or_else(|| OptimError::InvalidConfig("Baseline directory is required".to_string()))?;
+    let features = matches
+        .get_one::<String>("features")
+        .ok_or_else(|| OptimError::InvalidConfig("Features are required".to_string()))?;
+    let commit_hash = matches
+        .get_one::<String>("commit-hash")
+        .ok_or_else(|| OptimError::InvalidConfig("Commit hash is required".to_string()))?;
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or_else(|| OptimError::InvalidConfig("Branch is required".to_string()))?;
+    let merge_strategy = matches
+        .get_one::<String>("merge-strategy")
+        .ok_or_else(|| OptimError::InvalidConfig("Merge strategy is required".to_string()))?;
 
     if verbose {
         println!("🔄 Updating performance baseline:");
@@ -374,8 +396,12 @@ fn handle_update_baseline(matches: &ArgMatches, verbose: bool) -> Result<()> {
 
 #[allow(dead_code)]
 fn handle_validate_baseline(matches: &ArgMatches, verbose: bool) -> Result<()> {
-    let baseline_dir = matches.get_one::<String>("baseline-dir").unwrap();
-    let features = matches.get_one::<String>("features").unwrap();
+    let baseline_dir = matches
+        .get_one::<String>("baseline-dir")
+        .ok_or_else(|| OptimError::InvalidConfig("Baseline directory is required".to_string()))?;
+    let features = matches
+        .get_one::<String>("features")
+        .ok_or_else(|| OptimError::InvalidConfig("Features are required".to_string()))?;
 
     let baselinepath = PathBuf::from(baseline_dir).join(format!("baseline_{}.json", features));
 
@@ -440,7 +466,9 @@ fn handle_validate_baseline(matches: &ArgMatches, verbose: bool) -> Result<()> {
 
 #[allow(dead_code)]
 fn handle_list_baselines(matches: &ArgMatches, verbose: bool) -> Result<()> {
-    let baseline_dir = matches.get_one::<String>("baseline-dir").unwrap();
+    let baseline_dir = matches
+        .get_one::<String>("baseline-dir")
+        .ok_or_else(|| OptimError::InvalidConfig("Baseline directory is required".to_string()))?;
 
     if verbose {
         println!("📋 Listing baselines in: {}", baseline_dir);
@@ -491,8 +519,12 @@ fn handle_list_baselines(matches: &ArgMatches, verbose: bool) -> Result<()> {
 
 #[allow(dead_code)]
 fn handle_show_baseline_info(matches: &ArgMatches, verbose: bool) -> Result<()> {
-    let baseline_dir = matches.get_one::<String>("baseline-dir").unwrap();
-    let features = matches.get_one::<String>("features").unwrap();
+    let baseline_dir = matches
+        .get_one::<String>("baseline-dir")
+        .ok_or_else(|| OptimError::InvalidConfig("Baseline directory is required".to_string()))?;
+    let features = matches
+        .get_one::<String>("features")
+        .ok_or_else(|| OptimError::InvalidConfig("Features are required".to_string()))?;
 
     let baselinepath = PathBuf::from(baseline_dir).join(format!("baseline_{}.json", features));
 

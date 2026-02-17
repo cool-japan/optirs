@@ -1178,17 +1178,17 @@ impl ThreadSafeGCEngine {
     }
 
     pub fn should_collect(&self) -> bool {
-        let mut engine = self.engine.write().unwrap();
+        let mut engine = self.engine.write().expect("lock poisoned");
         engine.should_collect()
     }
 
     pub fn collect(&self) -> Result<Vec<GCResult>, GCError> {
-        let mut engine = self.engine.write().unwrap();
+        let mut engine = self.engine.write().expect("lock poisoned");
         engine.collect()
     }
 
     pub fn get_stats(&self) -> GCStats {
-        let engine = self.engine.read().unwrap();
+        let engine = self.engine.read().expect("lock poisoned");
         engine.get_stats().clone()
     }
 
@@ -1199,7 +1199,7 @@ impl ThreadSafeGCEngine {
         size: usize,
         type_id: u32,
     ) -> Result<(), GCError> {
-        let mut engine = self.engine.write().unwrap();
+        let mut engine = self.engine.write().expect("lock poisoned");
         engine.track_object(region_addr, obj_addr, size, type_id)
     }
 }

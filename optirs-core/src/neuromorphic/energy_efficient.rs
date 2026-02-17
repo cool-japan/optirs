@@ -325,42 +325,43 @@ impl<T: Float + Debug + Send + Sync + 'static> DVFSController<T> {
     fn new() -> Self {
         Self {
             voltage_levels: vec![
-                T::from(0.7).unwrap(),
-                T::from(0.9).unwrap(),
-                T::from(1.0).unwrap(),
-                T::from(1.2).unwrap(),
+                T::from(0.7).expect("unwrap failed"),
+                T::from(0.9).expect("unwrap failed"),
+                T::from(1.0).expect("unwrap failed"),
+                T::from(1.2).expect("unwrap failed"),
             ],
             frequency_levels: vec![
-                T::from(500.0).unwrap(),
-                T::from(1000.0).unwrap(),
-                T::from(1500.0).unwrap(),
-                T::from(2000.0).unwrap(),
+                T::from(500.0).expect("unwrap failed"),
+                T::from(1000.0).expect("unwrap failed"),
+                T::from(1500.0).expect("unwrap failed"),
+                T::from(2000.0).expect("unwrap failed"),
             ],
             current_voltage_idx: 2,
             current_frequency_idx: 2,
             performance_requirements: PerformanceRequirements {
-                min_frequency: T::from(500.0).unwrap(),
-                max_frequency: T::from(2000.0).unwrap(),
-                min_voltage: T::from(0.7).unwrap(),
-                max_voltage: T::from(1.2).unwrap(),
-                performance_headroom: T::from(0.2).unwrap(),
+                min_frequency: T::from(500.0).expect("unwrap failed"),
+                max_frequency: T::from(2000.0).expect("unwrap failed"),
+                min_voltage: T::from(0.7).expect("unwrap failed"),
+                max_voltage: T::from(1.2).expect("unwrap failed"),
+                performance_headroom: T::from(0.2).expect("unwrap failed"),
                 qos_requirements: QoSRequirements {
-                    max_latency: T::from(10.0).unwrap(),
-                    max_jitter: T::from(1.0).unwrap(),
-                    min_throughput: T::from(1000.0).unwrap(),
-                    max_error_rate: T::from(0.001).unwrap(),
+                    max_latency: T::from(10.0).expect("unwrap failed"),
+                    max_jitter: T::from(1.0).expect("unwrap failed"),
+                    min_throughput: T::from(1000.0).expect("unwrap failed"),
+                    max_error_rate: T::from(0.001).expect("unwrap failed"),
                 },
             },
             voltage_scaling_factor: T::one(),
             frequency_scaling_factor: T::one(),
-            adaptation_rate: T::from(0.1).unwrap(),
+            adaptation_rate: T::from(0.1).expect("unwrap failed"),
         }
     }
 
     fn compute_optimal_levels(&mut self, workload: &WorkloadSample<T>) -> Result<(T, T)> {
         // Compute optimal voltage and frequency based on workload
-        let utilization = T::from(workload.active_neurons).unwrap() / T::from(1000).unwrap();
-        let idx = (utilization * T::from(self.voltage_levels.len() - 1).unwrap())
+        let utilization = T::from(workload.active_neurons).expect("unwrap failed")
+            / T::from(1000).expect("unwrap failed");
+        let idx = (utilization * T::from(self.voltage_levels.len() - 1).expect("unwrap failed"))
             .to_usize()
             .unwrap_or(2);
 
@@ -451,7 +452,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PowerGatingController<T> {
 
     fn gate_region(&mut self, region_id: usize) -> Result<T> {
         // Simple implementation - actual power saved would depend on region size
-        Ok(T::from(0.1).unwrap())
+        Ok(T::from(0.1).expect("unwrap failed"))
     }
 
     fn identify_gatable_regions(&self, workload: &WorkloadSample<T>) -> Result<Vec<usize>> {
@@ -524,7 +525,7 @@ struct SparseComputationOptimizer<T: Float + Debug + Send + Sync + 'static> {
 impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
     fn new() -> Self {
         Self {
-            sparsity_threshold: T::from(0.01).unwrap(),
+            sparsity_threshold: T::from(0.01).expect("unwrap failed"),
             sparse_matrices: HashMap::new(),
             sparsity_patterns: vec![SparsityPattern::MagnitudeBased],
             compression_algorithms: vec![CompressionAlgorithm::Csr],
@@ -535,12 +536,14 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
     fn analyze_sparsity(&mut self, workload: &WorkloadSample<T>) -> Result<SparsityAnalysis<T>> {
         // Analyze sparsity in the workload
         let sparsity_ratio = T::one()
-            - (T::from(workload.active_neurons).unwrap() / T::from(1000).unwrap()).min(T::one());
+            - (T::from(workload.active_neurons).expect("unwrap failed")
+                / T::from(1000).expect("unwrap failed"))
+            .min(T::one());
 
         Ok(SparsityAnalysis {
             sparsity_ratio,
             pattern: SparsityPattern::MagnitudeBased,
-            potential_savings: sparsity_ratio * T::from(0.8).unwrap(),
+            potential_savings: sparsity_ratio * T::from(0.8).expect("unwrap failed"),
         })
     }
 
@@ -732,13 +735,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ThermalManager<T> {
     fn new(config: ThermalManagementConfig<T>) -> Self {
         Self {
             config,
-            current_temperature: T::from(25.0).unwrap(),
+            current_temperature: T::from(25.0).expect("unwrap failed"),
             temperature_history: VecDeque::new(),
             thermal_model: ThermalModel {
-                time_constant: T::from(10.0).unwrap(),
-                thermal_resistance: T::from(0.5).unwrap(),
-                thermal_capacitance: T::from(1000.0).unwrap(),
-                ambient_temperature: T::from(25.0).unwrap(),
+                time_constant: T::from(10.0).expect("unwrap failed"),
+                thermal_resistance: T::from(0.5).expect("unwrap failed"),
+                thermal_capacitance: T::from(1000.0).expect("unwrap failed"),
+                ambient_temperature: T::from(25.0).expect("unwrap failed"),
             },
             cooling_strategies: vec![CoolingStrategy::Passive],
             active_throttling: None,
@@ -869,7 +872,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictiveEnergyManager<T> {
             prediction_models: HashMap::new(),
             workload_history: VecDeque::new(),
             energy_predictions: VecDeque::new(),
-            prediction_accuracy: T::from(0.9).unwrap(),
+            prediction_accuracy: T::from(0.9).expect("unwrap failed"),
             model_update_frequency: Duration::from_secs(60),
         }
     }
@@ -877,7 +880,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictiveEnergyManager<T> {
     fn predict_energy(&self, horizon: Duration) -> Result<T> {
         // Simple prediction - return average of recent predictions
         if self.energy_predictions.is_empty() {
-            return Ok(T::from(1.0).unwrap());
+            return Ok(T::from(1.0).expect("unwrap failed"));
         }
         let sum: T = self
             .energy_predictions
@@ -885,7 +888,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictiveEnergyManager<T> {
             .take(10)
             .map(|p| p.predicted_energy)
             .fold(T::zero(), |acc, x| acc + x);
-        Ok(sum / T::from(self.energy_predictions.len().min(10)).unwrap())
+        Ok(sum / T::from(self.energy_predictions.len().min(10)).expect("unwrap failed"))
     }
 }
 
@@ -1018,7 +1021,7 @@ impl<
             self.predictive_manager
                 .predict_energy(Duration::from_secs(60))? // Predict for next minute
         } else {
-            T::from(1.0).unwrap()
+            T::from(1.0).expect("unwrap failed")
         };
 
         // Apply current optimization strategy
@@ -1244,7 +1247,7 @@ impl<
     ) -> Result<EnergyOptimizationResult<T>> {
         // Clock gating - stop clock to inactive regions
         let initial_power = self.system_state.current_power;
-        let reduction_factor = T::from(0.3).unwrap(); // 30% power reduction from clock gating
+        let reduction_factor = T::from(0.3).expect("unwrap failed"); // 30% power reduction from clock gating
         let new_power = initial_power * (T::one() - reduction_factor);
 
         self.system_state.current_power = new_power;
@@ -1254,8 +1257,8 @@ impl<
             energy_saved: initial_power * reduction_factor,
             power_reduction: initial_power - new_power,
             performance_impact: T::zero(), // No performance impact
-            thermal_impact: (initial_power - new_power) * T::from(0.8).unwrap(),
-            optimization_overhead: T::from(0.05).unwrap(),
+            thermal_impact: (initial_power - new_power) * T::from(0.8).expect("unwrap failed"),
+            optimization_overhead: T::from(0.05).expect("unwrap failed"),
         })
     }
 
@@ -1268,7 +1271,7 @@ impl<
         let initial_power = self.system_state.current_power;
         self.system_state.sleep_status = SleepStatus::LightSleep;
 
-        let reduction_factor = T::from(0.5).unwrap(); // 50% power reduction in sleep
+        let reduction_factor = T::from(0.5).expect("unwrap failed"); // 50% power reduction in sleep
         let new_power = initial_power * (T::one() - reduction_factor);
 
         self.system_state.current_power = new_power;
@@ -1277,9 +1280,9 @@ impl<
             strategy_used: EnergyOptimizationStrategy::SleepModeOptimization,
             energy_saved: initial_power * reduction_factor,
             power_reduction: initial_power - new_power,
-            performance_impact: T::from(0.1).unwrap(), // Small wake-up latency
-            thermal_impact: (initial_power - new_power) * T::from(0.95).unwrap(),
-            optimization_overhead: T::from(0.1).unwrap(),
+            performance_impact: T::from(0.1).expect("unwrap failed"), // Small wake-up latency
+            thermal_impact: (initial_power - new_power) * T::from(0.95).expect("unwrap failed"),
+            optimization_overhead: T::from(0.1).expect("unwrap failed"),
         })
     }
 
@@ -1290,25 +1293,26 @@ impl<
     ) -> Result<EnergyOptimizationResult<T>> {
         // Thermal-aware optimization - reduce power if temperature is too high
         let initial_power = self.system_state.current_power;
-        let temp_threshold = T::from(80.0).unwrap(); // 80°C threshold
+        let temp_threshold = T::from(80.0).expect("unwrap failed"); // 80°C threshold
 
         let reduction_factor = if self.system_state.temperature > temp_threshold {
-            T::from(0.4).unwrap() // Aggressive reduction if hot
+            T::from(0.4).expect("unwrap failed") // Aggressive reduction if hot
         } else {
-            T::from(0.2).unwrap() // Moderate reduction otherwise
+            T::from(0.2).expect("unwrap failed") // Moderate reduction otherwise
         };
 
         let new_power = initial_power * (T::one() - reduction_factor);
         self.system_state.current_power = new_power;
-        self.system_state.temperature = self.system_state.temperature * T::from(0.95).unwrap();
+        self.system_state.temperature =
+            self.system_state.temperature * T::from(0.95).expect("unwrap failed");
 
         Ok(EnergyOptimizationResult {
             strategy_used: EnergyOptimizationStrategy::ThermalAwareOptimization,
             energy_saved: initial_power * reduction_factor,
             power_reduction: initial_power - new_power,
-            performance_impact: reduction_factor * T::from(0.5).unwrap(),
+            performance_impact: reduction_factor * T::from(0.5).expect("unwrap failed"),
             thermal_impact: (initial_power - new_power),
-            optimization_overhead: T::from(0.15).unwrap(),
+            optimization_overhead: T::from(0.15).expect("unwrap failed"),
         })
     }
 
@@ -1499,7 +1503,7 @@ impl<
         // Update average power
         if !self.power_history.is_empty() {
             let sum: T = self.power_history.iter().map(|(_, power)| *power).sum();
-            self.average_power = sum / T::from(self.power_history.len()).unwrap();
+            self.average_power = sum / T::from(self.power_history.len()).expect("unwrap failed");
         }
 
         self.last_update = now;

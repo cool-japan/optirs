@@ -869,7 +869,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
                 .fold(T::zero(), |acc, w| acc + w);
             
             let mut cumulative_weight = T::zero();
-            let random_weight = T::from(rng.random::<f64>()).unwrap() * total_weight;
+            let random_weight = T::from(rng.random::<f64>()).expect("unwrap failed") * total_weight;
             
             for &op_type in &applicable_ops {
                 let weight = self.config.operator_weights.get(&op_type).unwrap_or(&T::one());
@@ -998,7 +998,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureMut
         
         // Update moving average
         let sum: T = self.performance_feedback.recent_changes.iter().cloned().sum();
-        let count = T::from(self.performance_feedback.recent_changes.len() as f64).unwrap();
+        let count = T::from(self.performance_feedback.recent_changes.len() as f64).expect("unwrap failed");
         self.performance_feedback.moving_average = sum / count;
         
         // Update best performance
@@ -1195,11 +1195,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MutationOperato
         if let Some(current_value) = operation.parameters.get(param_key) {
             let new_value = match &self.distribution {
                 ParameterDistribution::Gaussian { std } => {
-                    let noise = T::from(rng.random::<f64>() - 0.5).unwrap() * *std * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
+                    let noise = T::from(rng.random::<f64>() - 0.5).expect("unwrap failed") * *std * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
                     *current_value + noise
                 }
                 ParameterDistribution::Uniform { range } => {
-                    let noise = T::from(rng.random::<f64>() - 0.5).unwrap() * *range * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
+                    let noise = T::from(rng.random::<f64>() - 0.5).expect("unwrap failed") * *range * scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
                     *current_value + noise
                 }
                 _ => *current_value, // Fallback

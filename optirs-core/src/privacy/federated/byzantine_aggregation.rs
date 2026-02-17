@@ -208,7 +208,7 @@ impl<
                 // Default to simple averaging for other methods
                 if let Some(first_update) = clientupdates.values().next() {
                     let mut result = Array1::zeros(first_update.len());
-                    let count = T::from(clientupdates.len()).unwrap();
+                    let count = T::from(clientupdates.len()).expect("unwrap failed");
 
                     for update in clientupdates.values() {
                         result = result + update;
@@ -249,7 +249,7 @@ impl<
             ));
         }
 
-        let first_update = clientupdates.values().next().unwrap();
+        let first_update = clientupdates.values().next().expect("unwrap failed");
         let dim = first_update.len();
         let mut result = Array1::zeros(dim);
 
@@ -361,12 +361,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         if !distances.is_empty() {
             let distances_vec: Vec<T> = distances.values().cloned().collect();
             let mean_distance = distances_vec.iter().fold(T::zero(), |acc, &x| acc + x)
-                / T::from(distances_vec.len()).unwrap();
+                / T::from(distances_vec.len()).expect("unwrap failed");
 
             let variance = distances_vec.iter().fold(T::zero(), |acc, &x| {
                 let diff = x - mean_distance;
                 acc + diff * diff
-            }) / T::from(distances_vec.len()).unwrap();
+            }) / T::from(distances_vec.len()).expect("unwrap failed");
 
             let std_dev = variance.sqrt();
             let threshold = mean_distance + T::from(1.0).unwrap_or_else(|| T::zero()) * std_dev; // 1-sigma threshold (more sensitive)
@@ -411,7 +411,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             ));
         }
 
-        let first_update = clientupdates.values().next().unwrap();
+        let first_update = clientupdates.values().next().expect("unwrap failed");
         let dim = first_update.len();
 
         // Verify all _updates have same dimension
@@ -441,7 +441,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
             if !trimmed_values.is_empty() {
                 let sum = trimmed_values.iter().fold(T::zero(), |acc, &x| acc + x);
-                result[coord_idx] = sum / T::from(trimmed_values.len()).unwrap();
+                result[coord_idx] = sum / T::from(trimmed_values.len()).expect("unwrap failed");
             } else {
                 result[coord_idx] = T::zero();
             }
@@ -520,7 +520,7 @@ mod tests {
         let result = estimators.trimmed_mean(&client_updates, 0.25);
         assert!(result.is_ok());
 
-        let trimmed = result.unwrap();
+        let trimmed = result.expect("unwrap failed");
         // Should exclude the outlier client3
         assert!(trimmed[0] < 5.0); // Should be around 1.0, not influenced by 10.0
     }
@@ -540,7 +540,7 @@ mod tests {
         let results = analyzer.detect_outliers(&client_updates, 1);
         assert!(results.is_ok());
 
-        let detections = results.unwrap();
+        let detections = results.expect("unwrap failed");
         assert!(!detections.is_empty());
 
         // Check if the outlier was detected
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_coordinate_wise_median() {
-        let aggregator = ByzantineRobustAggregator::<f64>::new().unwrap();
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("unwrap failed");
 
         let mut client_updates = HashMap::new();
         client_updates.insert("client1".to_string(), Array1::from(vec![1.0, 4.0, 7.0]));
@@ -562,7 +562,7 @@ mod tests {
         let result = aggregator.coordinate_wise_median(&client_updates);
         assert!(result.is_ok());
 
-        let median = result.unwrap();
+        let median = result.expect("unwrap failed");
         assert_eq!(median[0], 2.0); // Median of [1, 2, 3]
         assert_eq!(median[1], 5.0); // Median of [4, 5, 6]
         assert_eq!(median[2], 8.0); // Median of [7, 8, 9]
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_reputation_system() {
-        let mut aggregator = ByzantineRobustAggregator::<f64>::new().unwrap();
+        let mut aggregator = ByzantineRobustAggregator::<f64>::new().expect("unwrap failed");
 
         // Test initial reputation
         let reputations = aggregator.get_client_reputations(&["client1".to_string()]);
@@ -579,7 +579,7 @@ mod tests {
         // Test reputation penalty for outlier
         aggregator.update_client_reputation("client1".to_string(), true);
         let updated_reputations = aggregator.get_client_reputations(&["client1".to_string()]);
-        assert!(updated_reputations.get("client1").unwrap() < &1.0);
+        assert!(updated_reputations.get("client1").expect("unwrap failed") < &1.0);
 
         // Test reputation bonus for good behavior
         aggregator.update_client_reputation("client2".to_string(), false);

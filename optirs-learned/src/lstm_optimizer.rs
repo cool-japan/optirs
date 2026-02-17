@@ -1039,7 +1039,7 @@ impl<
         let mut features = Vec::new();
 
         // Current gradient features
-        features.extend_from_slice(gradients.as_slice().unwrap());
+        features.extend_from_slice(gradients.as_slice().expect("unwrap failed"));
 
         // Historical gradient features
         if let Some(prev_gradients) = self.history_buffer.get_recent_gradients(5) {
@@ -1056,13 +1056,13 @@ impl<
 
         // Statistical features
         let grad_norm = gradients.iter().map(|&g| g * g).sum::<T>().sqrt();
-        let grad_mean = gradients.iter().cloned().sum::<T>() / T::from(gradients.len()).unwrap();
+        let grad_mean = gradients.iter().cloned().sum::<T>() / T::from(gradients.len()).expect("unwrap failed");
         let grad_std = {
             let variance = gradients
                 .iter()
                 .map(|&g| (g - grad_mean) * (g - grad_mean))
                 .sum::<T>()
-                / T::from(gradients.len()).unwrap();
+                / T::from(gradients.len()).expect("unwrap failed");
             variance.sqrt()
         };
 
@@ -1356,7 +1356,7 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
     fn apply_dropout(&self, input: &Array1<T>) -> Result<Array1<T>> {
         // Simplified dropout implementation
         Ok(input.mapv(|x| {
-            if T::from(scirs2_core::random::thread_rng().gen_range(0.0..1.0)).unwrap()
+            if T::from(scirs2_core::random::thread_rng().gen_range(0.0..1.0)).expect("unwrap failed")
                 < scirs2_core::numeric::NumCast::from(self.dropout_rate).unwrap_or_else(|| T::zero())
             {
                 T::zero()
@@ -1491,7 +1491,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> HistoryBuffer<T
             return None;
         }
 
-        let current_loss = *self.losses.back().unwrap();
+        let current_loss = *self.losses.back().expect("unwrap failed");
         let prev_loss = self.losses[self.losses.len() - 2];
 
         let loss_change = current_loss - prev_loss;
@@ -1758,7 +1758,7 @@ mod tests {
         let layer = LSTMLayer::<f64>::new(10, 20);
         assert!(layer.is_ok());
 
-        let layer = layer.unwrap();
+        let layer = layer.expect("unwrap failed");
         assert_eq!(layer.hiddensize, 20);
         assert_eq!(layer.weight_ih.shape(), &[80, 10]); // 4 * hiddensize, input_size
         assert_eq!(layer.weight_hh.shape(), &[80, 20]); // 4 * hiddensize, hiddensize
@@ -1793,7 +1793,7 @@ mod tests {
         let network = LSTMNetwork::<f64>::new(&config);
         assert!(network.is_ok());
 
-        let network = network.unwrap();
+        let network = network.expect("unwrap failed");
         assert_eq!(network.layers.len(), config.num_layers);
         assert!(network.attention.is_some()); // attention enabled by default
     }

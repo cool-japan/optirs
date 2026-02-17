@@ -783,12 +783,15 @@ mod tests {
 
         let mut manager =
             FaultToleranceManager::new(detection_config, redundancy_config, checkpoint_config)
-                .unwrap();
+                .expect("unwrap failed");
 
         let checkpoint_info = manager
             .create_checkpoint("test_checkpoint".to_string())
             .await;
         assert!(checkpoint_info.is_ok());
-        assert_eq!(checkpoint_info.unwrap().checkpoint_id, "test_checkpoint");
+        assert_eq!(
+            checkpoint_info.expect("unwrap failed").checkpoint_id,
+            "test_checkpoint"
+        );
     }
 }

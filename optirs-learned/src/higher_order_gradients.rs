@@ -809,7 +809,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> HigherOrderGrad
         }
         
         // Use forward-over-reverse mode for HVP
-        let jvp = self.engine.compute_jvp(output_id, vector.as_slice().unwrap())?;
+        let jvp = self.engine.compute_jvp(output_id, vector.as_slice().expect("unwrap failed"))?;
         Ok(Array1::from_vec(jvp))
     }
     
@@ -994,7 +994,7 @@ mod tests {
         let cond_num = utils::condition_number(&eigenvalues);
         assert_eq!(cond_num, Some(3.0));
         
-        let matrix = Array2::from_shape_vec((2, 2), vec![1.0, 0.0, 0.0, 1.0]).unwrap();
+        let matrix = Array2::from_shape_vec((2, 2), vec![1.0, 0.0, 0.0, 1.0]).expect("unwrap failed");
         let sparsity = utils::sparsity_ratio(&matrix, 1e-10);
         assert_eq!(sparsity, 0.5); // 2 zeros out of 4 elements
         

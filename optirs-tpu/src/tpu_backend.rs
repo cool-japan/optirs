@@ -887,7 +887,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> TPUBacke
     ) -> Result<Arc<CompiledProgram>> {
         // Check cache first
         {
-            let cache = self.compilation_cache.read().unwrap();
+            let cache = self.compilation_cache.read().expect("lock poisoned");
             if let Some(program) = cache.get(&computation_id) {
                 return Ok(Arc::new(program.clone()));
             }
@@ -898,7 +898,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> TPUBacke
 
         // Cache the result
         {
-            let mut cache = self.compilation_cache.write().unwrap();
+            let mut cache = self.compilation_cache.write().expect("lock poisoned");
             cache.insert(computation_id, program.clone());
         }
 

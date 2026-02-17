@@ -149,8 +149,8 @@ impl<
             return Ok(gradients * self.config.learning_rate);
         }
 
-        let a_inv = state.a_cov_inv.as_ref().unwrap();
-        let g_inv = state.g_cov_inv.as_ref().unwrap();
+        let a_inv = state.a_cov_inv.as_ref().expect("unwrap failed");
+        let g_inv = state.g_cov_inv.as_ref().expect("unwrap failed");
 
         // Apply K-FAC natural gradient update: G^{-1} * grad * A^{-1}
         let natural_gradients = g_inv.dot(gradients).dot(a_inv);
@@ -381,11 +381,13 @@ mod tests {
             has_bias: false,
         };
 
-        kfac.register_layer(layer_info).unwrap();
+        kfac.register_layer(layer_info).expect("unwrap failed");
 
         let activations =
-            Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]).unwrap();
-        let gradients = Array2::from_shape_vec((2, 2), vec![0.1, 0.2, 0.3, 0.4]).unwrap();
+            Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+                .expect("unwrap failed");
+        let gradients =
+            Array2::from_shape_vec((2, 2), vec![0.1, 0.2, 0.3, 0.4]).expect("unwrap failed");
 
         // Call step to increment step_count
         let mut layer_gradients = HashMap::new();
@@ -409,7 +411,7 @@ mod tests {
             has_bias: true,
         };
 
-        kfac.register_layer(layer_info).unwrap();
+        kfac.register_layer(layer_info).expect("unwrap failed");
         let memory_usage = kfac.estimate_memory_usage();
 
         assert!(memory_usage > 0);

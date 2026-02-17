@@ -393,7 +393,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         
         // Initial parameter estimates
         let y_start = data[0];
-        let y_end = *data.last().unwrap();
+        let y_end = *data.last().expect("unwrap failed");
         let y_range = y_end - y_start;
         
         params[0] = y_range; // a
@@ -431,7 +431,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         // Simple power law fitting
         let n = data.len();
         let y_start = data[0];
-        let y_end = *data.last().unwrap();
+        let y_end = *data.last().expect("unwrap failed");
         
         params[0] = y_start; // a
         params[1] = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()); // b (power)
@@ -452,8 +452,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         
         // Simple logarithmic fitting
         let y_start = data[0];
-        let y_end = *data.last().unwrap();
-        let n = T::from(data.len() as f64).unwrap();
+        let y_end = *data.last().expect("unwrap failed");
+        let n = T::from(data.len() as f64).expect("unwrap failed");
         
         params[0] = (y_end - y_start) / n.ln(); // a
         params[1] = y_start; // b
@@ -474,12 +474,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         // Simple quadratic fitting
         let n = data.len();
         let y_start = data[0];
-        let y_end = *data.last().unwrap();
+        let y_end = *data.last().expect("unwrap failed");
         let y_mid = if n > 1 { data[n/2] } else { y_start };
         
         // Estimate parameters
         params[2] = y_start; // c
-        params[1] = (y_mid - y_start) / T::from((n/2) as f64).unwrap(); // b
+        params[1] = (y_mid - y_start) / T::from((n/2) as f64).expect("unwrap failed"); // b
         params[0] = (y_end - y_start - params[1] * scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero())) / 
                    (scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero()) * scirs2_core::numeric::NumCast::from(n as f64).unwrap_or_else(|| T::zero())); // a
         
@@ -498,7 +498,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         let mut params = Array1::zeros(2);
         
         let y_start = data[0];
-        let y_end = *data.last().unwrap();
+        let y_end = *data.last().expect("unwrap failed");
         
         params[0] = y_end; // y_max
         params[1] = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()); // k (learning rate)
@@ -521,7 +521,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         
         // Initialize with simple weights
         for i in 0..params.len() {
-            params[i] = T::from(scirs2_core::random::random::<f64>() * 0.1).unwrap();
+            params[i] = T::from(scirs2_core::random::random::<f64>() * 0.1).expect("unwrap failed");
         }
         
         Ok(CurveFittingModel {
@@ -555,7 +555,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
             }
             CurveFittingMethod::NeuralPredictor => {
                 // Simplified neural network prediction
-                Ok(model.parameters.sum() / T::from(model.parameters.len() as f64).unwrap())
+                Ok(model.parameters.sum() / T::from(model.parameters.len() as f64).expect("unwrap failed"))
             }
         }
     }
@@ -568,11 +568,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         
         let recent_data = &data[data.len().saturating_sub(self.config.patience)..];
         let mean = recent_data.iter().cloned().fold(T::zero(), |acc, x| acc + x) / 
-                  T::from(recent_data.len() as f64).unwrap();
+                  T::from(recent_data.len() as f64).expect("unwrap failed");
         
         let variance = recent_data.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(recent_data.len() as f64).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(recent_data.len() as f64).expect("unwrap failed");
         
         let std_dev = variance.sqrt();
         
@@ -590,9 +590,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         let earlier_data = &data[data.len().saturating_sub(window_size * 2)..data.len().saturating_sub(window_size)];
         
         let recent_mean = recent_data.iter().cloned().fold(T::zero(), |acc, x| acc + x) / 
-                         T::from(recent_data.len() as f64).unwrap();
+                         T::from(recent_data.len() as f64).expect("unwrap failed");
         let earlier_mean = earlier_data.iter().cloned().fold(T::zero(), |acc, x| acc + x) / 
-                          T::from(earlier_data.len() as f64).unwrap();
+                          T::from(earlier_data.len() as f64).expect("unwrap failed");
         
         let improvement = recent_mean - earlier_mean;
         
@@ -618,7 +618,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceEsti
         }
         
         let avg_epoch_time = history.epoch_times.iter().cloned().fold(T::zero(), |acc, t| acc + t) /
-                            T::from(history.epoch_times.len() as f64).unwrap();
+                            T::from(history.epoch_times.len() as f64).expect("unwrap failed");
         
         let remaining_epochs = self.config.max_prediction_epochs.saturating_sub(history.epochs.len());
         

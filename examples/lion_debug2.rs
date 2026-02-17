@@ -16,7 +16,7 @@ fn main() {
     for i in 0..100 {
         // Gradient of x^2 is 2x
         let gradients = Array1::from_vec(vec![2.0 * params[0]]);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         if i % 10 == 0 || i < 10 {
             println!(

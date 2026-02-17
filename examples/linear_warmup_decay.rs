@@ -14,13 +14,13 @@ fn generate_data<A: Float>(n_samples: usize, nfeatures: usize) -> (Array2<A>, Ar
 
     // Generate random weights
     let true_weights: Vec<A> = (0..nfeatures)
-        .map(|_| A::from(rng.gen_range(-1.0..1.0)).unwrap())
+        .map(|_| A::from(rng.gen_range(-1.0..1.0)).expect("unwrap failed"))
         .collect();
 
     // Generate random _features and compute targets
     for i in 0..n_samples {
         for j in 0..nfeatures {
-            let x_val = A::from(rng.gen_range(-5.0..5.0)).unwrap();
+            let x_val = A::from(rng.gen_range(-5.0..5.0)).expect("unwrap failed");
             x[[i, j]] = x_val;
         }
 
@@ -30,7 +30,7 @@ fn generate_data<A: Float>(n_samples: usize, nfeatures: usize) -> (Array2<A>, Ar
             target = target + x[[i, j]] * true_weights[j];
         }
         // Add some noise
-        target = target + A::from(rng.gen_range(-0.1..0.1)).unwrap();
+        target = target + A::from(rng.gen_range(-0.1..0.1)).expect("unwrap failed");
         y[i] = target;
     }
 
@@ -43,7 +43,7 @@ fn mean_squared_error<A: Float>(y_true: &Array1<A>, ypred: &Array1<A>) -> A {
     let diff = ypred - y_true;
     let squared = diff.mapv(|x| x * x);
     let sum = squared.sum();
-    sum / A::from(y_true.len()).unwrap()
+    sum / A::from(y_true.len()).expect("unwrap failed")
 }
 
 /// Predict values using linear model
@@ -211,15 +211,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nScheduler Performance Comparison:");
     println!(
         "Final loss (Constant LR): {:.6}",
-        losses_constant.last().unwrap()
+        losses_constant.last().expect("unwrap failed")
     );
     println!(
         "Final loss (Linear Warmup+Linear Decay): {:.6}",
-        losses_linear_decay.last().unwrap()
+        losses_linear_decay.last().expect("unwrap failed")
     );
     println!(
         "Final loss (Linear Warmup+Cosine Decay): {:.6}",
-        losses_cosine_decay.last().unwrap()
+        losses_cosine_decay.last().expect("unwrap failed")
     );
 
     println!("\nLearning Rates at Key Points:");
@@ -251,8 +251,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "End: Linear Warmup+Linear Decay={:.4}, Linear Warmup+Cosine Decay={:.4}",
-        linear_warmup_linear_decay_lrs.last().unwrap(),
-        linear_warmup_cosine_decay_lrs.last().unwrap()
+        linear_warmup_linear_decay_lrs.last().expect("unwrap failed"),
+        linear_warmup_cosine_decay_lrs.last().expect("unwrap failed")
     );
 
     println!("\nTraining complete!");

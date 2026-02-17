@@ -72,7 +72,7 @@ impl AdvancedTrainer {
         grad_output: &Array2<f64>,
     ) -> (Array2<f64>, Array1<f64>) {
         let grad_weights = input.t().dot(grad_output) / input.nrows() as f64;
-        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray::Axis(0)).unwrap();
+        let grad_bias = grad_output.mean_axis(scirs2_core::ndarray::Axis(0)).expect("unwrap failed");
         (grad_weights, grad_bias)
     }
 
@@ -88,7 +88,7 @@ impl AdvancedTrainer {
 
         // Compute loss (MSE)
         let diff = &output - targets;
-        let loss = diff.mapv(|x| x * x).mean().unwrap();
+        let loss = diff.mapv(|x| x * x).mean().expect("unwrap failed");
 
         // Scale loss for mixed precision
         let _scaled_loss = self.loss_scaler.scale_loss(loss as f32) as f64;
@@ -319,7 +319,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("\nTraining Summary:");
     println!("================");
     println!("Initial loss: {:.6}", losses[0]);
-    println!("Final loss: {:.6}", losses.last().unwrap());
+    println!("Final loss: {:.6}", losses.last().expect("unwrap failed"));
     println!("Final batch size: {}", trainer.get_current_batch_size());
     println!("Final loss scale: {:.0}", trainer.loss_scaler.get_scale());
 
@@ -335,7 +335,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!(
         "Original gradients: {:?}",
-        test_gradients.as_slice().unwrap()
+        test_gradients.as_slice().expect("unwrap failed")
     );
 
     let has_inf = scaler.check_gradients(&test_gradients);
@@ -349,7 +349,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     scaler.unscale_gradients(&mut test_gradients);
     println!(
         "Unscaled gradients: {:?}",
-        test_gradients.as_slice().unwrap()
+        test_gradients.as_slice().expect("unwrap failed")
     );
 
     // Demonstrate memory-aware batch sizing

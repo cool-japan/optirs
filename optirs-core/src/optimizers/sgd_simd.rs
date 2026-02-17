@@ -44,7 +44,7 @@ use crate::simd_optimizer::SimdOptimizer;
 /// optimizer.set_momentum(0.9);
 ///
 /// // Update parameters with SIMD acceleration
-/// let new_params = optimizer.step(&params, &gradients).unwrap();
+/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct SimdSGD<A: Float> {
@@ -161,7 +161,7 @@ impl Optimizer<f32, scirs2_core::ndarray::Ix1> for SimdSGD<f32> {
             self.velocity = Some(Array1::zeros(params.len()));
         }
 
-        let velocity = self.velocity.as_mut().unwrap();
+        let velocity = self.velocity.as_mut().expect("unwrap failed");
 
         // Ensure velocity has correct dimensions
         if velocity.len() != params.len() {
@@ -224,7 +224,7 @@ impl Optimizer<f64, scirs2_core::ndarray::Ix1> for SimdSGD<f64> {
             self.velocity = Some(Array1::zeros(params.len()));
         }
 
-        let velocity = self.velocity.as_mut().unwrap();
+        let velocity = self.velocity.as_mut().expect("unwrap failed");
 
         // Ensure velocity has correct dimensions
         if velocity.len() != params.len() {
@@ -271,7 +271,7 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3, 0.4]);
 
         let mut optimizer = SimdSGD::new(0.1);
-        let result = optimizer.step(&params, &gradients).unwrap();
+        let result = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         assert_relative_eq!(result[0], 0.99, epsilon = 1e-6);
         assert_relative_eq!(result[1], 1.98, epsilon = 1e-6);
@@ -287,10 +287,10 @@ mod tests {
         let mut optimizer = SimdSGD::new_with_config(0.1, 0.9, 0.0);
 
         // First step
-        let result1 = optimizer.step(&params, &gradients).unwrap();
+        let result1 = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Second step - should show momentum effect
-        let result2 = optimizer.step(&result1, &gradients).unwrap();
+        let result2 = optimizer.step(&result1, &gradients).expect("unwrap failed");
 
         // With momentum, the second step should move further
         assert!(result2[0] < result1[0]);
@@ -302,7 +302,7 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3, 0.4]);
 
         let mut optimizer = SimdSGD::new_with_config(0.1, 0.0, 0.01);
-        let result = optimizer.step(&params, &gradients).unwrap();
+        let result = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Weight decay should reduce parameters more than vanilla SGD
         let expected_grad = 0.1 + 0.01 * 1.0;
@@ -317,7 +317,7 @@ mod tests {
         let gradients: Array1<f32> = Array1::from_elem(size, 0.1);
 
         let mut optimizer = SimdSGD::new(0.01);
-        let result = optimizer.step(&params, &gradients).unwrap();
+        let result = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         for i in 0..size {
             assert_relative_eq!(result[i], (i as f32) - 0.01 * 0.1, epsilon = 1e-6);
@@ -330,7 +330,7 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3, 0.4]);
 
         let mut optimizer = SimdSGD::new(0.1);
-        let result = optimizer.step(&params, &gradients).unwrap();
+        let result = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         assert_relative_eq!(result[0], 0.99, epsilon = 1e-10);
         assert_relative_eq!(result[1], 1.98, epsilon = 1e-10);
@@ -346,7 +346,7 @@ mod tests {
         let mut optimizer = SimdSGD::new_with_config(0.1, 0.9, 0.0);
 
         // Take a step to initialize velocity
-        let _ = optimizer.step(&params, &gradients).unwrap();
+        let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
         assert!(optimizer.velocity.is_some());
 
         // Reset should clear velocity

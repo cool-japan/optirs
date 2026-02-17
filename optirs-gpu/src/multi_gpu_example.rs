@@ -108,7 +108,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
 
     /// Register parameters for distributed training
     pub fn register_parameters(&mut self, params: &HashMap<String, Array1<T>>) -> Result<()> {
-        let mut communicator = self.communicator.lock().unwrap();
+        let mut communicator = self.communicator.lock().expect("lock poisoned");
 
         for (name, param) in params {
             let param_info = ParameterInfo {
@@ -220,7 +220,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
         let param_names: Vec<&str> = params.keys().map(|s| s.as_str()).collect();
 
         {
-            let mut communicator = self.communicator.lock().unwrap();
+            let mut communicator = self.communicator.lock().expect("lock poisoned");
             communicator.broadcast_parameters(&param_names, master_rank)?;
         }
 
@@ -232,7 +232,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
 
     /// Get communication performance metrics
     pub fn get_communication_metrics(&self) -> Result<String> {
-        let communicator = self.communicator.lock().unwrap();
+        let communicator = self.communicator.lock().expect("lock poisoned");
         let metrics = communicator.get_performance_metrics();
 
         Ok(format!(
@@ -255,7 +255,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
 
     /// Enable gradient compression for bandwidth optimization
     pub fn enable_gradient_compression(&mut self) -> Result<()> {
-        let mut communicator = self.communicator.lock().unwrap();
+        let mut communicator = self.communicator.lock().expect("lock poisoned");
         communicator.enable_gradient_compression(
             crate::gpu::multi_gpu_sync::CompressionAlgorithm::Quantization,
             6, // Compression level
@@ -290,7 +290,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
         let gradient_names: Vec<&str> = self.gradient_buffers.keys().map(|s| s.as_str()).collect();
 
         {
-            let mut communicator = self.communicator.lock().unwrap();
+            let mut communicator = self.communicator.lock().expect("lock poisoned");
 
             // Apply gradient clipping if configured
             if let Some(threshold) = self.config.gradient_clip_threshold {
@@ -308,7 +308,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
         let gradient_names: Vec<&str> = self.gradient_buffers.keys().map(|s| s.as_str()).collect();
 
         {
-            let mut communicator = self.communicator.lock().unwrap();
+            let mut communicator = self.communicator.lock().expect("lock poisoned");
 
             // Apply gradient clipping if configured
             if let Some(threshold) = self.config.gradient_clip_threshold {
@@ -323,7 +323,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
     }
 
     fn wait_for_gradient_sync(&mut self) -> Result<()> {
-        let mut communicator = self.communicator.lock().unwrap();
+        let mut communicator = self.communicator.lock().expect("lock poisoned");
         communicator.synchronize_all_operations()?;
         Ok(())
     }
@@ -346,7 +346,7 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedOptimizer<T> {
         let param_names: Vec<&str> = params.keys().map(|s| s.as_str()).collect();
 
         {
-            let mut communicator = self.communicator.lock().unwrap();
+            let mut communicator = self.communicator.lock().expect("lock poisoned");
 
             // Broadcast parameters from rank 0 to ensure consistency
             communicator.broadcast_parameters(&param_names, 0)?;
@@ -551,7 +551,7 @@ mod tests {
             0, // local_rank
             dist_config,
         )
-        .unwrap();
+        .expect("unwrap failed");
 
         let mut params = HashMap::new();
         params.insert("test_param".to_string(), Array1::zeros(100));
@@ -578,7 +578,7 @@ mod tests {
             ..DistributedConfig::default()
         };
         let distributed_optimizer =
-            DistributedOptimizer::new(local_optimizer.clone(), 2, 0, dist_config).unwrap();
+            DistributedOptimizer::new(local_optimizer.clone(), 2, 0, dist_config).expect("unwrap failed");
         assert!(distributed_optimizer.should_synchronize());
 
         // Test EveryNSteps
@@ -587,7 +587,7 @@ mod tests {
             ..DistributedConfig::default()
         };
         let mut distributed_optimizer =
-            DistributedOptimizer::new(local_optimizer.clone(), 2, 0, dist_config).unwrap();
+            DistributedOptimizer::new(local_optimizer.clone(), 2, 0, dist_config).expect("unwrap failed");
         assert!(distributed_optimizer.should_synchronize()); // step 0
         distributed_optimizer.sync_step = 5;
         assert!(distributed_optimizer.should_synchronize()); // step 5

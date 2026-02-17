@@ -856,7 +856,7 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
                     "Enable SIMD optimizations".to_string(),
                     "Consider GPU acceleration".to_string(),
                 ],
-                estimated_impact: A::from(0.3).unwrap(),
+                estimated_impact: A::from(0.3).expect("unwrap failed"),
             });
         }
 
@@ -1348,7 +1348,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         step_profiler.end_parameter_update();
 
-        profiler.complete_step(step_profiler).unwrap();
+        profiler
+            .complete_step(step_profiler)
+            .expect("unwrap failed");
         assert_eq!(profiler.current_step, 1);
     }
 

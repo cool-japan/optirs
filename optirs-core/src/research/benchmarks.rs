@@ -1011,7 +1011,7 @@ impl BenchmarkRunner {
             );
 
             let mut sorted_objectives = final_objectives.clone();
-            sorted_objectives.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted_objectives.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
             metrics.insert(
                 "median_final_objective".to_string(),
                 sorted_objectives[sorted_objectives.len() / 2],
@@ -1067,7 +1067,7 @@ impl BenchmarkRunner {
         let std_objective = variance.sqrt();
 
         let mut sorted_objectives = objectives.clone();
-        sorted_objectives.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_objectives.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let best_objective = sorted_objectives[0];
         let worst_objective = sorted_objectives[sorted_objectives.len() - 1];
@@ -1178,7 +1178,7 @@ impl BenchmarkRunner {
             })
             .collect();
 
-        optimizer_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        optimizer_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
         for (rank, (optimizer_name, score)) in optimizer_scores.iter().enumerate() {
             if let Some(results) = all_results.get_mut(optimizer_name) {

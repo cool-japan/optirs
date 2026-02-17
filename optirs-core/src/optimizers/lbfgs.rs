@@ -30,7 +30,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = LBFGS::new(1.0);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).unwrap();
+/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct LBFGS<A: Float + ScalarOperand + Debug> {
@@ -74,11 +74,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LBFGS<A> {
     pub fn new(learning_rate: A) -> Self {
         Self::new_with_config(
             learning_rate,
-            100,                    // history_size
-            A::from(1e-7).unwrap(), // tolerance_grad
-            A::from(1e-4).unwrap(), // c1
-            A::from(0.9).unwrap(),  // c2
-            25,                     // max_ls
+            100,                                   // history_size
+            A::from(1e-7).expect("unwrap failed"), // tolerance_grad
+            A::from(1e-4).expect("unwrap failed"), // c1
+            A::from(0.9).expect("unwrap failed"),  // c2
+            25,                                    // max_ls
         )
     }
 
@@ -172,7 +172,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LBFGS<A> {
         let ys = y.dot(&s);
 
         // Only update if y·s is positive (ensures positive definiteness)
-        if ys > A::from(1e-10).unwrap() {
+        if ys > A::from(1e-10).expect("unwrap failed") {
             // Remove oldest entries if at capacity
             if self.old_dirs.len() >= self.history_size {
                 self.old_dirs.pop_front();
@@ -204,11 +204,11 @@ where
         let params_flat = params
             .to_owned()
             .into_shape_with_order(params.len())
-            .unwrap();
+            .expect("unwrap failed");
         let gradients_flat = gradients
             .to_owned()
             .into_shape_with_order(gradients.len())
-            .unwrap();
+            .expect("unwrap failed");
 
         // Check convergence
         let grad_norm = gradients_flat.dot(&gradients_flat).sqrt();
@@ -255,7 +255,7 @@ where
         // Reshape back to original dimensions
         let new_params = new_params_flat
             .into_shape_with_order(params.raw_dim())
-            .unwrap();
+            .expect("unwrap failed");
 
         Ok(new_params)
     }
@@ -292,7 +292,7 @@ mod tests {
 
         for _ in 0..50 {
             let gradients = Array1::from_vec(vec![2.0 * params[0]]);
-            params = optimizer.step(&params, &gradients).unwrap();
+            params = optimizer.step(&params, &gradients).expect("unwrap failed");
         }
 
         // Should converge close to 0
@@ -308,7 +308,7 @@ mod tests {
 
         for _ in 0..50 {
             let gradients = Array1::from_vec(vec![2.0 * params[0], 2.0 * params[1]]);
-            params = optimizer.step(&params, &gradients).unwrap();
+            params = optimizer.step(&params, &gradients).expect("unwrap failed");
         }
 
         // Should converge close to (0, 0)
@@ -323,15 +323,15 @@ mod tests {
         // Perform some steps
         let mut params = Array1::from_vec(vec![1.0]);
         let gradients = Array1::from_vec(vec![2.0]);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Need one more step to actually update history
         let gradients2 = Array1::from_vec(vec![1.5]);
-        params = optimizer.step(&params, &gradients2).unwrap();
+        params = optimizer.step(&params, &gradients2).expect("unwrap failed");
 
         // Third step to populate history
         let gradients3 = Array1::from_vec(vec![1.0]);
-        let _ = optimizer.step(&params, &gradients3).unwrap();
+        let _ = optimizer.step(&params, &gradients3).expect("unwrap failed");
 
         // Verify state exists
         assert!(!optimizer.old_dirs.is_empty());

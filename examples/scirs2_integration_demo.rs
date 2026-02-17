@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     // Demonstrate SciRS2 random number generation
     println!("\n2. SciRS2 Random Number Generation:");
     let mut rng = Random::default();
-    let normal = Normal::new(0.0, 0.1).unwrap();
+    let normal = Normal::new(0.0, 0.1).expect("unwrap failed");
     let random_values: Vec<f64> = (0..5).map(|_| normal.sample(&mut rng)).collect();
     println!("   Random noise: {:?}", random_values);
 

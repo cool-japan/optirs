@@ -134,7 +134,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
     pub fn new(input_dim: usize, output_dim: usize) -> Result<Self> {
         // Xavier/Glorot initialization
         let scale = T::from(2.0 / (input_dim + output_dim) as f64)
-            .unwrap()
+            .expect("unwrap failed")
             .sqrt();
         let mut weight = Array2::zeros((input_dim, output_dim));
         let bias = Array1::zeros(output_dim);
@@ -144,7 +144,8 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
             for j in 0..output_dim {
                 let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
+                let random_val =
+                    <T as scirs2_core::numeric::NumCast>::from(scaled_f64).expect("unwrap failed");
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -169,7 +170,8 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
             for j in 0..output_dim {
                 let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
+                let random_val =
+                    <T as scirs2_core::numeric::NumCast>::from(scaled_f64).expect("unwrap failed");
                 weight[[i, j]] = random_val * scale;
             }
         }
@@ -219,14 +221,15 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
     pub fn reset(&mut self) -> Result<()> {
         // Re-initialize with Xavier
         let scale = T::from(2.0 / (self.input_dim + self.output_dim) as f64)
-            .unwrap()
+            .expect("unwrap failed")
             .sqrt();
 
         for i in 0..self.input_dim {
             for j in 0..self.output_dim {
                 let random_f64 = scirs2_core::random::random::<f64>();
                 let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val = <T as scirs2_core::numeric::NumCast>::from(scaled_f64).unwrap();
+                let random_val =
+                    <T as scirs2_core::numeric::NumCast>::from(scaled_f64).expect("unwrap failed");
                 self.weight[[i, j]] = random_val * scale;
             }
         }
@@ -451,7 +454,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MixtureOfExperts<T> {
                 .map(|(idx, &prob)| (idx, prob))
                 .collect();
 
-            prob_indices.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            prob_indices.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
             let top_k_indices: Vec<usize> = prob_indices
                 .iter()
@@ -555,12 +558,12 @@ mod tests {
         );
         assert!(ffn.is_ok());
 
-        let mut network = ffn.unwrap();
+        let mut network = ffn.expect("unwrap failed");
         let input = Array2::<f32>::ones((4, 128));
         let result = network.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[4, 128]);
     }
 
@@ -569,12 +572,12 @@ mod tests {
         let linear = LinearLayer::<f32>::new(64, 128);
         assert!(linear.is_ok());
 
-        let layer = linear.unwrap();
+        let layer = linear.expect("unwrap failed");
         let input = Array2::<f32>::zeros((2, 64));
         let result = layer.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[2, 128]);
         assert_eq!(layer.parameter_count(), 64 * 128 + 128);
     }
@@ -584,12 +587,12 @@ mod tests {
         let glu = GatedLinearUnit::<f32>::new(128, 256);
         assert!(glu.is_ok());
 
-        let unit = glu.unwrap();
+        let unit = glu.expect("unwrap failed");
         let input = Array2::<f32>::ones((2, 128));
         let result = unit.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[2, 256]);
     }
 
@@ -598,12 +601,12 @@ mod tests {
         let swiglu = SwiGLU::<f32>::new(128, 256);
         assert!(swiglu.is_ok());
 
-        let unit = swiglu.unwrap();
+        let unit = swiglu.expect("unwrap failed");
         let input = Array2::<f32>::ones((2, 128));
         let result = unit.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[2, 256]);
     }
 
@@ -612,19 +615,19 @@ mod tests {
         let moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
         assert!(moe.is_ok());
 
-        let mut mixture = moe.unwrap();
+        let mut mixture = moe.expect("unwrap failed");
         let input = Array2::<f32>::ones((3, 128));
         let result = mixture.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[3, 128]);
     }
 
     #[test]
     fn test_linear_layer_initialization() {
-        let xavier_layer = LinearLayer::<f32>::new(64, 128).unwrap();
-        let he_layer = LinearLayer::<f32>::new_he_init(64, 128).unwrap();
+        let xavier_layer = LinearLayer::<f32>::new(64, 128).expect("unwrap failed");
+        let he_layer = LinearLayer::<f32>::new_he_init(64, 128).expect("unwrap failed");
 
         assert_eq!(xavier_layer.parameter_count(), he_layer.parameter_count());
         assert_eq!(

@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Final result
-        let final_value = values.last().unwrap();
+        let final_value = values.last().expect("unwrap failed");
         println!(
             "Final point: [{:.6}, {:.6}, {:.6}]",
             params[0], params[1], params[2]
@@ -179,7 +179,7 @@ fn test_lamb_on_rastrigin() {
     // Optimize for multiple iterations
     for _ in 0..100 {
         let gradients = grad_fn(&params);
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }
 
     // With this simpler function, we can expect better convergence

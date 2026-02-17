@@ -69,7 +69,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
                         let angle = scirs2_core::numeric::NumCast::from(pos)
                             .unwrap_or_else(|| T::zero())
                             / T::from(10000.0_f64.powf(2.0 * (i as f64) / modeldim as f64))
-                                .unwrap();
+                                .expect("unwrap failed");
 
                         if i % 2 == 0 {
                             encodings[[pos, i]] = angle.sin();
@@ -88,7 +88,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
                 // Xavier initialization
                 let bound = (6.0 / (max_seqlen + modeldim) as f64).sqrt();
                 for elem in embeddings.iter_mut() {
-                    *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+                    *elem =
+                        T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
                 }
                 position_embeddings = Some(embeddings);
             }
@@ -98,8 +99,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
                 let mut slopes = Array1::zeros(numheads);
 
                 for h in 0..numheads {
-                    let slope =
-                        T::from(2.0_f64.powf(-8.0 * (h + 1) as f64 / numheads as f64)).unwrap();
+                    let slope = T::from(2.0_f64.powf(-8.0 * (h + 1) as f64 / numheads as f64))
+                        .expect("unwrap failed");
                     slopes[h] = slope;
                 }
                 alibi_slopes = Some(slopes);
@@ -113,7 +114,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
                         let angle = scirs2_core::numeric::NumCast::from(pos)
                             .unwrap_or_else(|| T::zero())
                             / T::from(10000.0_f64.powf(2.0 * (i as f64) / modeldim as f64))
-                                .unwrap();
+                                .expect("unwrap failed");
 
                         if i % 2 == 0 {
                             encodings[[pos, i]] = angle.sin();
@@ -238,7 +239,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
         let mut encoding = Array1::zeros(self.modeldim);
         for i in 0..self.modeldim {
             let angle = scirs2_core::numeric::NumCast::from(position).unwrap_or_else(|| T::zero())
-                / T::from(10000.0_f64.powf(2.0 * (i as f64) / self.modeldim as f64)).unwrap();
+                / T::from(10000.0_f64.powf(2.0 * (i as f64) / self.modeldim as f64))
+                    .expect("unwrap failed");
 
             if i % 2 == 0 {
                 encoding[i] = angle.sin();
@@ -272,7 +274,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PositionalEncod
 
             for i in 0..seq_len {
                 for j in 0..seq_len {
-                    let distance = T::from((i as i32 - j as i32).abs()).unwrap();
+                    let distance = T::from((i as i32 - j as i32).abs()).expect("unwrap failed");
                     attention_scores[[i, j]] = attention_scores[[i, j]] - slope * distance;
                 }
             }

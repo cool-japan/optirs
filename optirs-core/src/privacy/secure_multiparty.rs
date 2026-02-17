@@ -208,7 +208,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ShamirSecretSharing<T> {
         self.coefficients.push(secret); // a0 = secret
 
         for _ in 1..self.threshold {
-            let coeff = T::from(rng.gen_range(0.0..1.0)).unwrap();
+            let coeff = T::from(rng.gen_range(0.0..1.0)).expect("unwrap failed");
             self.coefficients.push(coeff);
         }
 
@@ -480,7 +480,7 @@ impl<T: Float + Debug + Send + Sync + 'static> CommitmentScheme<T> {
 
         // Convert array to bytes
         for &v in value.iter() {
-            let v_bytes = v.to_f64().unwrap().to_le_bytes();
+            let v_bytes = v.to_f64().expect("unwrap failed").to_le_bytes();
             hasher.update(v_bytes);
         }
 
@@ -523,7 +523,7 @@ impl<T: Float + Debug + Send + Sync + 'static> VerificationParameters<T> {
         hasher.update(&self.verification_key);
 
         for &v in aggregate.iter() {
-            let v_bytes = v.to_f64().unwrap().to_le_bytes();
+            let v_bytes = v.to_f64().expect("unwrap failed").to_le_bytes();
             hasher.update(v_bytes);
         }
 
@@ -551,7 +551,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ProofParameters<T> {
     pub fn new() -> Self {
         let mut rng = scirs2_core::random::Random::seed(42);
         let generators: Vec<T> = (0..16)
-            .map(|_| T::from(rng.gen_range(0.0..1.0)).unwrap())
+            .map(|_| T::from(rng.gen_range(0.0..1.0)).expect("unwrap failed"))
             .collect();
         let system_params: Vec<u8> = (0..128).map(|_| rng.gen_range(0..255)).collect();
 
@@ -653,7 +653,7 @@ impl<T: Float + Debug + Send + Sync + 'static> HomomorphicEngine<T> {
 
         let mut hasher = Sha256::new();
         hasher.update(&self.public_key);
-        hasher.update(value.to_f64().unwrap().to_le_bytes());
+        hasher.update(value.to_f64().expect("unwrap failed").to_le_bytes());
 
         Ok(hasher.finalize().to_vec())
     }
@@ -705,7 +705,7 @@ impl<T: Float + Debug + Send + Sync + 'static> HomomorphicParameters<T> {
     pub fn new() -> Self {
         let mut rng = scirs2_core::random::Random::seed(42);
         let noise_params: Vec<T> = (0..8)
-            .map(|_| T::from(rng.gen_range(0.0..1.0)).unwrap())
+            .map(|_| T::from(rng.gen_range(0.0..1.0)).expect("unwrap failed"))
             .collect();
 
         Self {
@@ -785,11 +785,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ZKProofSystem<T> {
         let mut hasher = Sha256::new();
 
         for &v in input.iter() {
-            hasher.update(v.to_f64().unwrap().to_le_bytes());
+            hasher.update(v.to_f64().expect("unwrap failed").to_le_bytes());
         }
 
         for &v in output.iter() {
-            hasher.update(v.to_f64().unwrap().to_le_bytes());
+            hasher.update(v.to_f64().expect("unwrap failed").to_le_bytes());
         }
 
         Ok(hasher.finalize().to_vec())
@@ -833,7 +833,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ZKProofParameters<T> {
     pub fn new() -> Self {
         let mut rng = scirs2_core::random::Random::seed(42);
         let circuit_params: Vec<T> = (0..16)
-            .map(|_| T::from(rng.gen_range(0.0..1.0)).unwrap())
+            .map(|_| T::from(rng.gen_range(0.0..1.0)).expect("unwrap failed"))
             .collect();
 
         Self {
@@ -1070,7 +1070,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         shared_inputs: &HashMap<String, Vec<(usize, T)>>,
     ) -> Result<Vec<(usize, T)>> {
         let sum_shares = self.secure_sum(shared_inputs)?;
-        let num_participants = T::from(shared_inputs.len()).unwrap();
+        let num_participants = T::from(shared_inputs.len()).expect("unwrap failed");
 
         // Divide by number of participants
         let avg_shares: Vec<(usize, T)> = sum_shares
@@ -1225,10 +1225,12 @@ mod tests {
         let mut secret_sharing = ShamirSecretSharing::<f64>::new(3, 5);
         let secret = 42.0;
 
-        let shares = secret_sharing.share_secret(secret).unwrap();
+        let shares = secret_sharing.share_secret(secret).expect("unwrap failed");
         assert_eq!(shares.len(), 5);
 
-        let reconstructed = secret_sharing.reconstruct_secret(&shares[0..3]).unwrap();
+        let reconstructed = secret_sharing
+            .reconstruct_secret(&shares[0..3])
+            .expect("unwrap failed");
         assert!((reconstructed - secret).abs() < 1e-10);
     }
 
@@ -1260,14 +1262,16 @@ mod tests {
         let commitment_scheme = CommitmentScheme::<f64>::new();
         let data = Array1::from(vec![1.0, 2.0, 3.0]);
 
-        let commitment1 = commitment_scheme.commit(&data).unwrap();
-        let commitment2 = commitment_scheme.commit(&data).unwrap();
+        let commitment1 = commitment_scheme.commit(&data).expect("unwrap failed");
+        let commitment2 = commitment_scheme.commit(&data).expect("unwrap failed");
 
         // Same data should produce same commitment
         assert_eq!(commitment1, commitment2);
 
         let different_data = Array1::from(vec![1.0, 2.0, 4.0]);
-        let commitment3 = commitment_scheme.commit(&different_data).unwrap();
+        let commitment3 = commitment_scheme
+            .commit(&different_data)
+            .expect("unwrap failed");
 
         // Different data should produce different commitment
         assert_ne!(commitment1, commitment3);
@@ -1279,11 +1283,13 @@ mod tests {
         let data1 = Array1::from(vec![1.0, 2.0, 3.0]);
         let data2 = Array1::from(vec![4.0, 5.0, 6.0]);
 
-        let encrypted1 = he.encrypt(&data1).unwrap();
-        let encrypted2 = he.encrypt(&data2).unwrap();
+        let encrypted1 = he.encrypt(&data1).expect("unwrap failed");
+        let encrypted2 = he.encrypt(&data2).expect("unwrap failed");
 
-        let encrypted_sum = he.add_encrypted(&encrypted1, &encrypted2).unwrap();
-        let decrypted_sum = he.decrypt(&encrypted_sum).unwrap();
+        let encrypted_sum = he
+            .add_encrypted(&encrypted1, &encrypted2)
+            .expect("unwrap failed");
+        let decrypted_sum = he.decrypt(&encrypted_sum).expect("unwrap failed");
 
         // Note: This is a simplified test - real homomorphic encryption would preserve the sum
         assert_eq!(decrypted_sum.len(), 3);

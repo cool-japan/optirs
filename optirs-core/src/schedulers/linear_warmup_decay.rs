@@ -210,7 +210,8 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
         if !self.warmup_complete && self.step <= self.warmup_steps {
             // Warmup phase: linear increase from min_lr to initial_lr
             let progress = if self.warmup_steps > 0 {
-                A::from(self.step).unwrap() / A::from(self.warmup_steps).unwrap()
+                A::from(self.step).expect("unwrap failed")
+                    / A::from(self.warmup_steps).expect("unwrap failed")
             } else {
                 A::one()
             };
@@ -319,7 +320,7 @@ mod tests {
         }
 
         // Verify the final learning rate is significantly lower than initial
-        let final_lr = *lrs.last().unwrap();
+        let final_lr = *lrs.last().expect("unwrap failed");
         assert!(
             final_lr < 0.05,
             "Final learning rate {:.6} should be significantly less than initial 0.1",

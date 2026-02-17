@@ -558,7 +558,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ByzantineRobustAggregator<T> {
             ));
         }
 
-        let mut result = updates.values().next().unwrap().clone();
+        let mut result = updates.values().next().expect("unwrap failed").clone();
         let mut count = 1;
 
         for update in updates.values().skip(1) {
@@ -718,7 +718,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SecureAggregator<T> {
             ));
         }
 
-        let mut result = updates.values().next().unwrap().clone();
+        let mut result = updates.values().next().expect("unwrap failed").clone();
         let mut count = 1;
 
         for update in updates.values().skip(1) {

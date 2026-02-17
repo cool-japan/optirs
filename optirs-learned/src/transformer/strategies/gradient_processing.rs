@@ -369,7 +369,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> GradientStatist
                 x.abs() < scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero())
             })
             .count();
-        let current_sparsity = T::from(zero_count as f64 / gradients.len() as f64).unwrap();
+        let current_sparsity =
+            T::from(zero_count as f64 / gradients.len() as f64).expect("unwrap failed");
         let alpha = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
         self.sparsity = self.sparsity * (T::one() - alpha) + current_sparsity * alpha;
     }
@@ -382,7 +383,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> GradientStatist
     /// Get variance of magnitude
     pub fn variance_magnitude(&self) -> T {
         if self.update_count > 1 {
-            self.var_magnitude / T::from((self.update_count - 1) as f64).unwrap()
+            self.var_magnitude / T::from((self.update_count - 1) as f64).expect("unwrap failed")
         } else {
             T::zero()
         }

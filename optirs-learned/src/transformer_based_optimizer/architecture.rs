@@ -360,7 +360,7 @@ mod tests {
         let architecture = TransformerArchitecture::<f32>::new(config);
         assert!(architecture.is_ok());
 
-        let arch = architecture.unwrap();
+        let arch = architecture.expect("unwrap failed");
         assert_eq!(arch.layers.len(), 2);
         assert_eq!(arch.config.model_dimension, 128);
     }
@@ -370,7 +370,7 @@ mod tests {
         let layer = TransformerLayer::<f32>::new(128, 4, 256, 0.1, true, 0);
         assert!(layer.is_ok());
 
-        let l = layer.unwrap();
+        let l = layer.expect("unwrap failed");
         assert_eq!(l.layer_index, 0);
         assert!(l.use_pre_norm);
     }
@@ -378,20 +378,20 @@ mod tests {
     #[test]
     fn test_forward_pass() {
         let config = create_test_config();
-        let mut architecture = TransformerArchitecture::<f32>::new(config).unwrap();
+        let mut architecture = TransformerArchitecture::<f32>::new(config).expect("unwrap failed");
 
         let input = Array2::<f32>::zeros((4, 128)); // (batch_size * seq_length, model_dimension) = (4, 128)
         let result = architecture.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.unwrap();
+        let output = result.expect("unwrap failed");
         assert_eq!(output.shape(), &[4, 128]);
     }
 
     #[test]
     fn test_parameter_count() {
         let config = create_test_config();
-        let architecture = TransformerArchitecture::<f32>::new(config).unwrap();
+        let architecture = TransformerArchitecture::<f32>::new(config).expect("unwrap failed");
 
         let param_count = architecture.parameter_count();
         assert!(param_count > 0);

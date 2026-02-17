@@ -1370,7 +1370,12 @@ impl RetentionManager {
             let artifacts_to_process: Vec<String> = registry
                 .artifacts
                 .keys()
-                .filter(|key| self.should_apply_rule(registry.artifacts.get(*key).unwrap(), rule))
+                .filter(|key| {
+                    self.should_apply_rule(
+                        registry.artifacts.get(*key).expect("unwrap failed"),
+                        rule,
+                    )
+                })
                 .cloned()
                 .collect();
 
@@ -1500,7 +1505,7 @@ mod tests {
 
     #[test]
     fn test_local_storage_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("unwrap failed");
         let storage = LocalArtifactStorage::new(temp_dir.path().to_path_buf());
         assert!(storage.validate_connection().is_ok());
     }
@@ -1532,7 +1537,7 @@ mod tests {
             status: ArtifactStatus::Uploaded,
         };
 
-        registry.add_artifact(artifact).unwrap();
+        registry.add_artifact(artifact).expect("unwrap failed");
         assert_eq!(registry.artifacts.len(), 1);
         assert!(registry.get_artifact("test-key").is_some());
     }

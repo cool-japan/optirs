@@ -665,7 +665,7 @@ impl PodCoordinator {
     /// Start the pod coordination
     pub fn start(&mut self) -> Result<(), CoordinationError> {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().expect("lock poisoned");
             state.status = PodStatus::Ready;
             state.last_coordination = Instant::now();
         }
@@ -691,7 +691,7 @@ impl PodCoordinator {
 
     /// Synchronize all devices at a barrier
     pub fn synchronize_devices(&mut self, barrier_id: String) -> Result<(), CoordinationError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("lock poisoned");
 
         let barrier = BarrierInfo {
             id: barrier_id,
@@ -715,7 +715,7 @@ impl PodCoordinator {
 
     /// Get current pod status
     pub fn get_status(&self) -> PodState {
-        self.state.lock().unwrap().clone()
+        self.state.lock().expect("lock poisoned").clone()
     }
 
     /// Get device metrics
@@ -729,7 +729,7 @@ impl PodCoordinator {
     /// Shutdown the pod
     pub fn shutdown(&mut self) -> Result<(), CoordinationError> {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().expect("lock poisoned");
             state.status = PodStatus::Shutdown;
         }
 
@@ -765,7 +765,7 @@ impl LoadBalancer {
                         a.metrics
                             .utilization
                             .partial_cmp(&b.metrics.utilization)
-                            .unwrap()
+                            .expect("unwrap failed")
                     });
 
                 device
@@ -891,7 +891,7 @@ mod tests {
             ..Default::default()
         };
 
-        let devices = PodCoordinator::initialize_devices(&config).unwrap();
+        let devices = PodCoordinator::initialize_devices(&config).expect("unwrap failed");
         assert_eq!(devices.len(), 4);
 
         for (i, device) in devices.iter().enumerate() {
@@ -941,6 +941,6 @@ mod tests {
 
         let selected = load_balancer.select_device(&devices, &workload);
         assert!(selected.is_ok());
-        assert_eq!(selected.unwrap(), TpuDeviceId(0));
+        assert_eq!(selected.expect("unwrap failed"), TpuDeviceId(0));
     }
 }

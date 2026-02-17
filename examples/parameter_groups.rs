@@ -24,10 +24,10 @@ struct SimpleNetwork {
 impl SimpleNetwork {
     fn new() -> Self {
         Self {
-            feature_layer1: Array2::from_shape_vec((10, 5), vec![0.1; 50]).unwrap(),
-            feature_layer2: Array2::from_shape_vec((8, 10), vec![0.1; 80]).unwrap(),
-            classifier_layer1: Array2::from_shape_vec((6, 8), vec![0.1; 48]).unwrap(),
-            classifier_layer2: Array2::from_shape_vec((4, 6), vec![0.1; 24]).unwrap(),
+            feature_layer1: Array2::from_shape_vec((10, 5), vec![0.1; 50]).expect("unwrap failed"),
+            feature_layer2: Array2::from_shape_vec((8, 10), vec![0.1; 80]).expect("unwrap failed"),
+            classifier_layer1: Array2::from_shape_vec((6, 8), vec![0.1; 48]).expect("unwrap failed"),
+            classifier_layer2: Array2::from_shape_vec((4, 6), vec![0.1; 24]).expect("unwrap failed"),
             output_layer: Array1::from_vec(vec![0.1; 4]),
         }
     }
@@ -54,7 +54,7 @@ impl SimpleNetwork {
 fn compute_gradients_2d(params: &[Array2<f64>]) -> Vec<Array2<f64>> {
     params
         .iter()
-        .map(|p| Array2::from_shape_vec(p.dim(), vec![0.01; p.len()]).unwrap())
+        .map(|p| Array2::from_shape_vec(p.dim(), vec![0.01; p.len()]).expect("unwrap failed"))
         .collect()
 }
 
@@ -86,7 +86,7 @@ fn main() {
     let feature_params = network.get_feature_params();
     let feature_group = optimizer_2d
         .add_group(feature_params.clone(), feature_config)
-        .unwrap();
+        .expect("unwrap failed");
 
     // Classifier group (new layers - normal learning)
     let classifier_config = ParameterGroupConfig::new()
@@ -96,7 +96,7 @@ fn main() {
     let classifier_params = network.get_classifier_params();
     let classifier_group = optimizer_2d
         .add_group(classifier_params.clone(), classifier_config)
-        .unwrap();
+        .expect("unwrap failed");
 
     // Output layer group (new layer - fast learning)
     let output_config = ParameterGroupConfig::new()
@@ -106,7 +106,7 @@ fn main() {
     let output_params = network.get_output_params();
     let output_group = optimizer_1d
         .add_group(output_params.clone(), output_config)
-        .unwrap();
+        .expect("unwrap failed");
 
     println!("Created parameter groups:");
     println!(
@@ -135,7 +135,7 @@ fn main() {
         // Update feature extractor (slow)
         let updated_features = optimizer_2d
             .step_group(feature_group, &feature_grads)
-            .unwrap();
+            .expect("unwrap failed");
         let feature_change: f64 = updated_features
             .iter()
             .zip(feature_params.iter())
@@ -145,7 +145,7 @@ fn main() {
         // Update classifier (normal)
         let updated_classifier = optimizer_2d
             .step_group(classifier_group, &classifier_grads)
-            .unwrap();
+            .expect("unwrap failed");
         let classifier_change: f64 = updated_classifier
             .iter()
             .zip(classifier_params.iter())
@@ -155,7 +155,7 @@ fn main() {
         // Update output layer (fast)
         let updated_output = optimizer_1d
             .step_group(output_group, &output_grads)
-            .unwrap();
+            .expect("unwrap failed");
         let output_change: f64 = updated_output
             .iter()
             .zip(output_params.iter())
@@ -185,7 +185,7 @@ fn main() {
     // Reduce learning rate for classifier after a few epochs
     optimizer_2d
         .set_group_learning_rate(classifier_group, 0.0001)
-        .unwrap();
+        .expect("unwrap failed");
     println!("Reduced classifier learning rate to 0.0001");
 
     // One more epoch with adjusted rates
@@ -194,10 +194,10 @@ fn main() {
 
     let updated_features = optimizer_2d
         .step_group(feature_group, &feature_grads)
-        .unwrap();
+        .expect("unwrap failed");
     let updated_classifier = optimizer_2d
         .step_group(classifier_group, &classifier_grads)
-        .unwrap();
+        .expect("unwrap failed");
 
     let feature_change: f64 = updated_features
         .iter()

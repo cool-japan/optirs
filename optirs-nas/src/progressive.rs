@@ -217,7 +217,7 @@ impl<T: Float + Debug + Send + Sync + std::iter::Sum> ProgressiveNAS<T> {
             [self.architecture_progression.performance_trends.len() - 10..];
 
         // Calculate trend (simplified linear regression slope)
-        let n = T::from(recent_trends.len()).unwrap();
+        let n = T::from(recent_trends.len()).expect("unwrap failed");
         let sum_x = n * (n - T::one())
             / scirs2_core::numeric::NumCast::from(2).unwrap_or_else(|| T::zero());
         let sum_y = recent_trends.iter().cloned().sum::<T>();
@@ -436,13 +436,13 @@ mod tests {
         let progressive_nas = ProgressiveNAS::new(&config);
         assert!(progressive_nas.is_ok());
 
-        let nas: ProgressiveNAS<f64> = progressive_nas.unwrap();
+        let nas: ProgressiveNAS<f64> = progressive_nas.expect("unwrap failed");
         assert_eq!(nas.current_phase, SearchPhase::Initial);
     }
 
     #[test]
     fn test_complexity_scheduler() {
-        let mut scheduler = ComplexityScheduler::<f64>::new().unwrap();
+        let mut scheduler = ComplexityScheduler::<f64>::new().expect("unwrap failed");
 
         let initial_complexity = scheduler.update_complexity(SearchPhase::Initial);
         let intermediate_complexity = scheduler.update_complexity(SearchPhase::Intermediate);

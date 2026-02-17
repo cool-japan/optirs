@@ -430,7 +430,8 @@ impl<
                     .unwrap_or(T::zero());
 
                 let sum: T = performances.iter().cloned().sum();
-                self.statistics.average_performance = sum / T::from(performances.len()).unwrap();
+                self.statistics.average_performance =
+                    sum / T::from(performances.len()).expect("unwrap failed");
             }
         }
         Ok(())
@@ -688,7 +689,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
                     .unwrap_or(T::zero());
 
                 let sum: T = performances.iter().cloned().sum();
-                self.statistics.average_performance = sum / T::from(performances.len()).unwrap();
+                self.statistics.average_performance =
+                    sum / T::from(performances.len()).expect("unwrap failed");
 
                 // Adaptive rate adjustment
                 if self.adaptive_rates && self.generation_count > 10 {
@@ -837,7 +839,8 @@ impl<
                     .unwrap_or(T::zero());
 
                 let sum: T = performances.iter().cloned().sum();
-                self.statistics.average_performance = sum / T::from(performances.len()).unwrap();
+                self.statistics.average_performance =
+                    sum / T::from(performances.len()).expect("unwrap failed");
             }
         }
 
@@ -1094,7 +1097,7 @@ impl<
 
         let gumbel_noise: Array1<T> = Array1::from_shape_fn(logits.len(), |_| {
             let u = scirs2_core::random::Random::default().random::<f64>();
-            T::from(-(-u.ln()).ln()).unwrap()
+            T::from(-(-u.ln()).ln()).expect("unwrap failed")
         });
 
         let gumbel_logits = logits + &gumbel_noise;
@@ -1248,7 +1251,7 @@ impl<
         self.architecture_weights =
             Array3::from_shape_fn(self.architecture_weights.raw_dim(), |_| {
                 T::from(scirs2_core::random::Random::default().random::<f64>() * 0.1 - 0.05)
-                    .unwrap()
+                    .expect("unwrap failed")
             });
         Ok(())
     }
@@ -1305,7 +1308,8 @@ impl<
                 .unwrap_or(T::zero());
 
             let sum: T = performances.iter().cloned().sum();
-            self.statistics.average_performance = sum / T::from(performances.len()).unwrap();
+            self.statistics.average_performance =
+                sum / T::from(performances.len()).expect("unwrap failed");
 
             // Compute gradient estimate (simplified REINFORCE-style)
             let baseline = self.statistics.average_performance;
@@ -1486,7 +1490,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         if !self.observed_performances.is_empty() {
             let sum: T = self.observed_performances.iter().cloned().sum();
             self.statistics.average_performance =
-                sum / T::from(self.observed_performances.len()).unwrap();
+                sum / T::from(self.observed_performances.len()).expect("unwrap failed");
         }
 
         Ok(())
@@ -1583,7 +1587,8 @@ impl<T: Float + Debug + Default + Send + Sync> AcquisitionFunction<T> {
             AcquisitionType::Thompson => {
                 // Thompson sampling - sample from posterior
                 mean + variance.sqrt()
-                    * T::from(scirs2_core::random::Random::default().random::<f64>()).unwrap()
+                    * T::from(scirs2_core::random::Random::default().random::<f64>())
+                        .expect("unwrap failed")
             }
             AcquisitionType::InfoGain => {
                 // Information gain - simplified as entropy
@@ -1782,7 +1787,8 @@ impl<
                 .unwrap_or(T::zero());
 
             let sum: T = performances.iter().cloned().sum();
-            self.statistics.average_performance = sum / T::from(performances.len()).unwrap();
+            self.statistics.average_performance =
+                sum / T::from(performances.len()).expect("unwrap failed");
 
             // Train predictor with new data
             self.train_predictor(&architectures, &performances)?;
@@ -1896,7 +1902,7 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> PredictorLayer<
 
         self.weights = Array2::from_shape_fn(self.weights.raw_dim(), |_| {
             T::from(scirs2_core::random::Random::default().random::<f64>() * scale * 2.0 - scale)
-                .unwrap()
+                .expect("unwrap failed")
         });
 
         Ok(())

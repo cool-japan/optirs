@@ -1406,7 +1406,7 @@ impl PerformanceCounterManager {
     /// Reset counter manager
     pub fn reset(&mut self) {
         self.active_sessions.clear();
-        let mut data = self.counter_data.write().unwrap();
+        let mut data = self.counter_data.write().expect("lock poisoned");
         data.clear();
     }
 }
@@ -1449,7 +1449,7 @@ impl TraceCollector {
     /// Reset trace collector
     pub fn reset(&mut self) {
         self.trace_sessions.clear();
-        let mut buffer = self.trace_buffer.lock().unwrap();
+        let mut buffer = self.trace_buffer.lock().expect("lock poisoned");
         buffer.events.clear();
         buffer.current_size = 0;
         buffer.stats = BufferStats::default();

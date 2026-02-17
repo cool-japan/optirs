@@ -260,7 +260,7 @@ mod tests {
         let factor = analyzer.compute_amplification_factor(0.1, 1);
         assert!(factor.is_ok());
 
-        let amp_factor = factor.unwrap();
+        let amp_factor = factor.expect("unwrap failed");
         assert!(amp_factor >= 1.0); // Amplification should be >= 1
         assert_eq!(analyzer.rounds_analyzed(), 1);
     }
@@ -276,7 +276,7 @@ mod tests {
 
         let factor = analyzer.compute_amplification_factor(0.1, 1);
         assert!(factor.is_ok());
-        assert_eq!(factor.unwrap(), 1.0); // Should return 1.0 when disabled
+        assert_eq!(factor.expect("unwrap failed"), 1.0); // Should return 1.0 when disabled
     }
 
     #[test]
@@ -285,9 +285,15 @@ mod tests {
         let mut analyzer = PrivacyAmplificationAnalyzer::new(config);
 
         // Add some amplification events
-        analyzer.compute_amplification_factor(0.1, 1).unwrap();
-        analyzer.compute_amplification_factor(0.2, 2).unwrap();
-        analyzer.compute_amplification_factor(0.15, 3).unwrap();
+        analyzer
+            .compute_amplification_factor(0.1, 1)
+            .expect("unwrap failed");
+        analyzer
+            .compute_amplification_factor(0.2, 2)
+            .expect("unwrap failed");
+        analyzer
+            .compute_amplification_factor(0.15, 3)
+            .expect("unwrap failed");
 
         let stats = analyzer.get_amplification_stats();
         assert_eq!(stats.rounds_analyzed, 3);
@@ -360,7 +366,7 @@ mod tests {
         );
 
         assert!(combined.is_ok());
-        let factor = combined.unwrap();
+        let factor = combined.expect("unwrap failed");
         assert!(factor > 1.0); // Combined should provide significant amplification
     }
 
@@ -370,7 +376,9 @@ mod tests {
         let mut analyzer = PrivacyAmplificationAnalyzer::new(config);
 
         // Add some data
-        analyzer.compute_amplification_factor(0.1, 1).unwrap();
+        analyzer
+            .compute_amplification_factor(0.1, 1)
+            .expect("unwrap failed");
         analyzer.add_client_amplification("client1".to_string(), 1.5);
 
         assert_eq!(analyzer.rounds_analyzed(), 1);

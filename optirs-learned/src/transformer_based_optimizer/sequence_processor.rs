@@ -180,7 +180,7 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
         }
 
         // Return the highest level that fits
-        Ok(levels.last().unwrap().clone())
+        Ok(levels.last().expect("unwrap failed").clone())
     }
 
     /// Process using attention-based selection
@@ -445,7 +445,7 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
             .map(|(i, &score)| (i, score))
             .collect();
 
-        indexed_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        indexed_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
 
         let mut selected_indices: Vec<usize> = indexed_scores
             .into_iter()
@@ -464,8 +464,14 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
         let threshold = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
         for i in window_size..losses.len() - window_size {
-            let before_mean = losses.slice(s![i - window_size..i]).mean().unwrap();
-            let after_mean = losses.slice(s![i..i + window_size]).mean().unwrap();
+            let before_mean = losses
+                .slice(s![i - window_size..i])
+                .mean()
+                .expect("unwrap failed");
+            let after_mean = losses
+                .slice(s![i..i + window_size])
+                .mean()
+                .expect("unwrap failed");
 
             if (before_mean - after_mean).abs() > threshold {
                 change_points.push(i);
@@ -651,7 +657,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
         self.parameter_stats.update_from_array2(parameters);
         self.loss_stats.update_from_array1(losses);
         self.length_stats
-            .update(T::from(gradients.shape()[0]).unwrap());
+            .update(T::from(gradients.shape()[0]).expect("unwrap failed"));
 
         Ok(())
     }
@@ -907,7 +913,7 @@ mod tests {
         let buffer = SequenceBuffer::<f32>::new(10, 64);
         assert!(buffer.is_ok());
 
-        let mut buf = buffer.unwrap();
+        let mut buf = buffer.expect("unwrap failed");
         let gradients = Array2::<f32>::ones((5, 64));
         let parameters = Array2::<f32>::ones((5, 64));
         let losses = Array1::<f32>::ones(5);
@@ -946,13 +952,13 @@ mod tests {
         let chunking = ChunkingStrategy::<f32>::new(10, 2);
         assert!(chunking.is_ok());
 
-        let mut strategy = chunking.unwrap();
+        let mut strategy = chunking.expect("unwrap failed");
         let sequence = Array2::<f32>::ones((25, 5));
 
         let chunks = strategy.create_chunks(&sequence);
         assert!(chunks.is_ok());
 
-        let chunk_vec = chunks.unwrap();
+        let chunk_vec = chunks.expect("unwrap failed");
         assert!(chunk_vec.len() > 1);
     }
 }

@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn test_gpu_optimizer_step() {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3]);
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn test_gpu_availability() {
         let optimizer = SGD::new(0.01);
-        let gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
         // Should initialize GPU context
         assert!(gpu_opt.is_gpu_available());
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn test_gpu_backend() {
         let optimizer = SGD::new(0.01);
-        let gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
         let backend = gpu_opt.gpu_backend();
         assert!(backend.is_some());
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_gpu_config_mutations() {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
         gpu_opt.set_use_tensor_cores(false);
         assert!(!gpu_opt.config().use_tensor_cores);

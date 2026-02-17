@@ -655,7 +655,7 @@ impl AllocationStrategyManager {
             score_buddy,
             score_segregated,
         ];
-        scores.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        scores.sort_by(|a, b| b.partial_cmp(a).expect("unwrap failed"));
         if scores.len() >= 2 {
             confidence = (scores[0] - scores[1]).clamp(0.0, 1.0);
         }

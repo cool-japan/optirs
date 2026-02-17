@@ -35,7 +35,7 @@ fn demonstrate_sgd() {
 
     for step in 0..20 {
         let gradient = Array1::from_vec(vec![quadratic_gradient(params[0])]);
-        params = optimizer.step(&params, &gradient).unwrap();
+        params = optimizer.step(&params, &gradient).expect("unwrap failed");
 
         if step % 5 == 4 {
             println!(
@@ -70,7 +70,7 @@ fn demonstrate_adam() {
 
     for step in 0..20 {
         let gradient = Array1::from_vec(vec![quadratic_gradient(params[0])]);
-        params = optimizer.step(&params, &gradient).unwrap();
+        params = optimizer.step(&params, &gradient).expect("unwrap failed");
 
         if step % 5 == 4 {
             println!(
@@ -105,7 +105,7 @@ fn demonstrate_adamw() {
 
     for step in 0..20 {
         let gradient = Array1::from_vec(vec![quadratic_gradient(params[0])]);
-        params = optimizer.step(&params, &gradient).unwrap();
+        params = optimizer.step(&params, &gradient).expect("unwrap failed");
 
         if step % 5 == 4 {
             println!(
@@ -144,7 +144,7 @@ fn demonstrate_multidimensional() {
         let gradients = Array1::from_vec(vec![grad_x, grad_y]);
 
         // Update parameters
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         if step % 10 == 9 {
             let loss = (params[0] - 3.0).powi(2) + (params[1] + 2.0).powi(2);
@@ -188,7 +188,7 @@ fn demonstrate_scirs2_random() {
         let grad_y = 2.0 * (params[1] + 2.0);
         let gradients = Array1::from_vec(vec![grad_x, grad_y]);
 
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         if step == 49 {
             let loss = (params[0] - 3.0).powi(2) + (params[1] + 2.0).powi(2);

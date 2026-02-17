@@ -71,7 +71,7 @@ impl CloudProvider for AwsProvider {
             "i-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_nanos() as u64
         );
         let instance = CloudInstance {
@@ -130,7 +130,7 @@ impl CloudProvider for AzureProvider {
             "vm-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_nanos() as u64
         );
         let instance = CloudInstance {
@@ -187,7 +187,7 @@ impl CloudProvider for GcpProvider {
             "gcp-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_nanos() as u64
         );
         let instance = CloudInstance {
@@ -244,7 +244,7 @@ impl CloudProvider for GitHubActionsProvider {
             "gh-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_nanos() as u64
         );
         let instance = CloudInstance {
@@ -293,7 +293,7 @@ impl CloudProvider for CustomProvider {
             "custom-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_nanos() as u64
         );
         let instance = CloudInstance {
@@ -402,11 +402,11 @@ mod tests {
             max_spot_price: None,
         };
 
-        let provider = AwsProvider::new(config).unwrap();
+        let provider = AwsProvider::new(config).expect("unwrap failed");
         let instance = provider
             .provision_instance(&PlatformTarget::LinuxX86_64)
             .await
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(instance.provider, "aws");
         assert_eq!(instance.platform, PlatformTarget::LinuxX86_64);
@@ -423,11 +423,11 @@ mod tests {
             matrix_strategy: "matrix".to_string(),
         };
 
-        let provider = GitHubActionsProvider::new(config).unwrap();
+        let provider = GitHubActionsProvider::new(config).expect("unwrap failed");
         let instance = provider
             .provision_instance(&PlatformTarget::LinuxX86_64)
             .await
-            .unwrap();
+            .expect("unwrap failed");
 
         assert_eq!(instance.provider, "github");
         assert_eq!(instance.cost_per_hour, 0.0);

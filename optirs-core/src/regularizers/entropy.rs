@@ -58,7 +58,7 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> EntropyRegularization<A> {
     ///
     /// An entropy regularization with default epsilon
     pub fn new(lambda: A, regtype: EntropyRegularizerType) -> Self {
-        let epsilon = A::from_f64(1e-8).unwrap();
+        let epsilon = A::from_f64(1e-8).expect("unwrap failed");
         Self {
             lambda,
             epsilon,
@@ -269,11 +269,11 @@ mod tests {
 
         // Uniform distribution (high entropy)
         let uniform = Array1::from_vec(vec![0.25f64, 0.25, 0.25, 0.25]);
-        let penalty = er.penalty(&uniform).unwrap();
+        let penalty = er.penalty(&uniform).expect("unwrap failed");
 
         // Peaked distribution (low entropy)
         let peaked = Array1::from_vec(vec![0.01f64, 0.01, 0.97, 0.01]);
-        let peaked_penalty = er.penalty(&peaked).unwrap();
+        let peaked_penalty = er.penalty(&peaked).expect("unwrap failed");
 
         // The penalty for peaked should be greater than for uniform
         // because we're trying to maximize entropy
@@ -287,11 +287,11 @@ mod tests {
 
         // Uniform distribution (high entropy)
         let uniform = Array1::from_vec(vec![0.25f64, 0.25, 0.25, 0.25]);
-        let penalty = er.penalty(&uniform).unwrap();
+        let penalty = er.penalty(&uniform).expect("unwrap failed");
 
         // Peaked distribution (low entropy)
         let peaked = Array1::from_vec(vec![0.01f64, 0.01, 0.97, 0.01]);
-        let peaked_penalty = er.penalty(&peaked).unwrap();
+        let peaked_penalty = er.penalty(&peaked).expect("unwrap failed");
 
         // The penalty for uniform should be greater than for peaked
         // because we're trying to minimize entropy
@@ -306,7 +306,7 @@ mod tests {
         let probs = Array1::from_vec(vec![0.25f64, 0.25, 0.25, 0.25]);
         let mut gradients = Array1::zeros(4);
 
-        let penalty = er.apply(&probs, &mut gradients).unwrap();
+        let penalty = er.apply(&probs, &mut gradients).expect("unwrap failed");
 
         // Check that gradients have been modified
         assert!(gradients.iter().all(|&g| g != 0.0));
@@ -334,8 +334,8 @@ mod tests {
         let mut gradients = Array1::zeros(4);
 
         // Both methods should return the same penalty for the same input
-        let penalty1 = er.apply(&probs, &mut gradients).unwrap();
-        let penalty2 = er.penalty(&probs).unwrap();
+        let penalty1 = er.apply(&probs, &mut gradients).expect("unwrap failed");
+        let penalty2 = er.penalty(&probs).expect("unwrap failed");
 
         assert_abs_diff_eq!(penalty1, penalty2, epsilon = 1e-10);
     }

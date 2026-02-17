@@ -1689,7 +1689,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
 
         // Compute overall robustness score (inverse of max sensitivity)
         sensitivity_results.robustness_score = if max_sensitivity > 0.0 {
-            T::from(1.0 / (1.0 + max_sensitivity)).unwrap()
+            T::from(1.0 / (1.0 + max_sensitivity)).expect("unwrap failed")
         } else {
             T::one()
         };
@@ -1933,7 +1933,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 for i in 0..range.num_samples {
                     let fraction = i as f64 / (range.num_samples - 1).max(1) as f64;
                     let log_value = log_min + fraction * (log_max - log_min);
-                    values.push(T::from(log_value.exp()).unwrap());
+                    values.push(T::from(log_value.exp()).expect("unwrap failed"));
                 }
             }
             SamplingStrategy::Random => {

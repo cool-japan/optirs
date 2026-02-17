@@ -1,3 +1,7 @@
+//! Performance regression detector binary for OptiRS benchmarking suite.
+//!
+//! Analyzes benchmark results to detect performance regressions across runs.
+
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};

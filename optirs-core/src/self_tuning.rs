@@ -464,7 +464,10 @@ impl<
         let current_performance = self.extract_performance_metric(&stats);
         if let Some(performance) = current_performance {
             if self.best_performance.is_none()
-                || self.is_better_performance(performance, self.best_performance.unwrap())
+                || self.is_better_performance(
+                    performance,
+                    self.best_performance.expect("unwrap failed"),
+                )
             {
                 self.best_performance = Some(performance);
             }
@@ -619,7 +622,9 @@ impl<
     fn select_epsilon_greedy(&self) -> usize {
         let mut rng = thread_rng();
 
-        if A::from(rng.random::<f64>()).unwrap() < A::from(self.config.exploration_rate).unwrap() {
+        if A::from(rng.random::<f64>()).expect("unwrap failed")
+            < A::from(self.config.exploration_rate).expect("unwrap failed")
+        {
             // Explore: random selection
             rng.gen_range(0..self.optimizer_candidates.len())
         } else {
@@ -628,7 +633,7 @@ impl<
                 .reward_estimates
                 .iter()
                 .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .max_by(|a, b| a.1.partial_cmp(b.1).expect("unwrap failed"))
                 .map(|(idx, _)| idx)
                 .unwrap_or(0)
         }
@@ -670,7 +675,7 @@ impl<
             .max_by(|a, b| {
                 a.1.average_performance
                     .partial_cmp(&b.1.average_performance)
-                    .unwrap()
+                    .expect("unwrap failed")
             })
             .map(|(idx, _)| idx)
             .unwrap_or(0)
@@ -689,7 +694,11 @@ impl<
         }
 
         // Simple adaptive learning rate based on gradient norm
-        let current_lr = self.current_optimizer.learning_rate().to_f64().unwrap();
+        let current_lr = self
+            .current_optimizer
+            .learning_rate()
+            .to_f64()
+            .expect("unwrap failed");
         let gradient_norm = stats.gradient_norm;
 
         let new_lr = if gradient_norm > 10.0 {
@@ -708,7 +717,7 @@ impl<
 
         if (clamped_lr - current_lr).abs() > current_lr * 0.01 {
             self.current_optimizer
-                .set_learning_rate(A::from(clamped_lr).unwrap());
+                .set_learning_rate(A::from(clamped_lr).expect("unwrap failed"));
             self.search_state.learning_rate = clamped_lr;
         }
 
@@ -751,7 +760,11 @@ impl<
     pub fn get_optimizer_info(&self) -> OptimizerInfo {
         OptimizerInfo {
             name: self.current_optimizer.name().to_string(),
-            learning_rate: self.current_optimizer.learning_rate().to_f64().unwrap(),
+            learning_rate: self
+                .current_optimizer
+                .learning_rate()
+                .to_f64()
+                .expect("unwrap failed"),
             step_count: self.step_count,
             switches_this_epoch: self.switches_this_epoch,
             performance_window_size: self.performance_history.len(),
@@ -821,11 +834,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     fn new(_lr: f64, beta1: f64, beta2: f64, eps: f64, weightdecay: f64) -> Self {
         Self {
             inner: crate::optimizers::Adam::new_with_config(
-                A::from(_lr).unwrap(),
-                A::from(beta1).unwrap(),
-                A::from(beta2).unwrap(),
-                A::from(eps).unwrap(),
-                A::from(weightdecay).unwrap(),
+                A::from(_lr).expect("unwrap failed"),
+                A::from(beta1).expect("unwrap failed"),
+                A::from(beta2).expect("unwrap failed"),
+                A::from(eps).expect("unwrap failed"),
+                A::from(weightdecay).expect("unwrap failed"),
             ),
             _phantom: std::marker::PhantomData,
         }
@@ -891,9 +904,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     fn new(_lr: f64, momentum: f64, weightdecay: f64, nesterov: bool) -> Self {
         Self {
             inner: crate::optimizers::SGD::new_with_config(
-                A::from(_lr).unwrap(),
-                A::from(momentum).unwrap(),
-                A::from(weightdecay).unwrap(),
+                A::from(_lr).expect("unwrap failed"),
+                A::from(momentum).expect("unwrap failed"),
+                A::from(weightdecay).expect("unwrap failed"),
             ),
             _phantom: std::marker::PhantomData,
         }
@@ -959,11 +972,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     fn new(_lr: f64, beta1: f64, beta2: f64, eps: f64, weightdecay: f64) -> Self {
         Self {
             inner: crate::optimizers::AdamW::new_with_config(
-                A::from(_lr).unwrap(),
-                A::from(beta1).unwrap(),
-                A::from(beta2).unwrap(),
-                A::from(eps).unwrap(),
-                A::from(weightdecay).unwrap(),
+                A::from(_lr).expect("unwrap failed"),
+                A::from(beta1).expect("unwrap failed"),
+                A::from(beta2).expect("unwrap failed"),
+                A::from(eps).expect("unwrap failed"),
+                A::from(weightdecay).expect("unwrap failed"),
             ),
             _phantom: std::marker::PhantomData,
         }
@@ -1062,7 +1075,7 @@ mod tests {
     fn test_optimizer_step() {
         let config = SelfTuningConfig::default();
         let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).unwrap();
+            SelfTuningOptimizer::new(config).expect("unwrap failed");
 
         let mut params = vec![Array1::zeros(10)];
         let grads = vec![Array1::ones(10)];
@@ -1091,7 +1104,7 @@ mod tests {
     fn test_bandit_selection() {
         let config = SelfTuningConfig::default();
         let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).unwrap();
+            SelfTuningOptimizer::new(config).expect("unwrap failed");
 
         let selection = optimizer.select_ucb1();
         assert!(selection < optimizer.optimizer_candidates.len());
@@ -1104,7 +1117,7 @@ mod tests {
             ..Default::default()
         };
         let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).unwrap();
+            SelfTuningOptimizer::new(config).expect("unwrap failed");
 
         let stats = PerformanceStats {
             loss: 0.8,
@@ -1126,7 +1139,7 @@ mod tests {
     fn test_statistics() {
         let config = SelfTuningConfig::default();
         let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).unwrap();
+            SelfTuningOptimizer::new(config).expect("unwrap failed");
 
         let stats = optimizer.get_statistics();
         assert_eq!(stats.total_steps, 0);

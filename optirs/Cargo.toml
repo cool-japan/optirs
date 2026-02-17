@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2021"
 authors.workspace = true
 description = "OptiRS - Advanced ML optimization and hardware acceleration library (main integration crate)"
+readme = "README.md"
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true
@@ -37,7 +38,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
-tempfile = { workspace = true }
 
 [features]
 default = ["core"]

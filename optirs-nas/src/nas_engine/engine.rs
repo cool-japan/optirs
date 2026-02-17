@@ -375,7 +375,7 @@ impl<
             let evaluation_results = if self.should_use_predictor(&architecture) {
                 self.performance_predictor
                     .as_mut()
-                    .unwrap()
+                    .expect("unwrap failed")
                     .predict(&architecture)?
             } else {
                 self.evaluator.evaluate(&architecture)?
@@ -854,8 +854,8 @@ impl<
             iteration: self.current_generation,
             best_score: best_scores_over_time.last().copied().unwrap_or(T::zero()),
             convergence_rate: if best_scores_over_time.len() > 1 {
-                let delta = *best_scores_over_time.last().unwrap()
-                    - *best_scores_over_time.first().unwrap();
+                let delta = *best_scores_over_time.last().expect("unwrap failed")
+                    - *best_scores_over_time.first().expect("unwrap failed");
                 delta
                     / scirs2_core::numeric::NumCast::from(best_scores_over_time.len())
                         .unwrap_or_else(|| T::one())

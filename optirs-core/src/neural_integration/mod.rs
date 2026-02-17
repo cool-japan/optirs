@@ -379,7 +379,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 impl<A: Float + Send + Sync> Default for OptimizationConfig<A> {
     fn default() -> Self {
         Self {
-            base_learning_rate: A::from(0.001).unwrap(),
+            base_learning_rate: A::from(0.001).expect("unwrap failed"),
             weight_decay: A::zero(),
             gradient_clip: None,
             mixed_precision: false,
@@ -615,7 +615,7 @@ pub mod forward_backward {
                         "sigmoid" => input.mapv(|x| A::one() / (A::one() + (-x).exp())),
                         "tanh" => input.mapv(|x| x.tanh()),
                         "leaky_relu" => {
-                            let alpha = A::from(0.01).unwrap();
+                            let alpha = A::from(0.01).expect("unwrap failed");
                             input.mapv(|x| if x > A::zero() { x } else { alpha * x })
                         }
                         _ => input.clone(), // Unknown activation, pass through
@@ -643,7 +643,7 @@ pub mod forward_backward {
                         .mean()
                         .unwrap_or(A::one());
                     let std_dev = variance.sqrt();
-                    let epsilon = A::from(1e-5).unwrap();
+                    let epsilon = A::from(1e-5).expect("unwrap failed");
 
                     input.mapv(|x| (x - mean) / (std_dev + epsilon))
                 })
@@ -663,10 +663,10 @@ pub mod forward_backward {
                 .config
                 .get("dropout_rate")
                 .and_then(|v| match v {
-                    LayerConfig::Float(f) => Some(A::from(*f).unwrap()),
+                    LayerConfig::Float(f) => Some(A::from(*f).expect("unwrap failed")),
                     _ => None,
                 })
-                .unwrap_or(A::from(0.5).unwrap());
+                .unwrap_or(A::from(0.5).expect("unwrap failed"));
 
             // During training, we would apply dropout mask
             // For now, scale by (1 - dropout_rate) to maintain expected value
@@ -786,7 +786,7 @@ pub mod forward_backward {
             }
 
             // Simple gradient transformation: scale by learning rate decay
-            let lr_decay = A::from(0.9).unwrap();
+            let lr_decay = A::from(0.9).expect("unwrap failed");
             let grad_inputs: Vec<Array<A, D>> = grad_outputs
                 .iter()
                 .map(|grad| grad.mapv(|x| x * lr_decay))
@@ -835,17 +835,17 @@ pub mod forward_backward {
                         "sigmoid" => {
                             // Sigmoid gradient: sigmoid(x) * (1 - sigmoid(x))
                             // Approximation without original input
-                            let factor = A::from(0.25).unwrap(); // Max gradient of sigmoid
+                            let factor = A::from(0.25).expect("unwrap failed"); // Max gradient of sigmoid
                             grad.mapv(|g| g * factor)
                         }
                         "tanh" => {
                             // Tanh gradient: 1 - tanh(x)^2
                             // Approximation without original input
-                            let factor = A::from(0.5).unwrap();
+                            let factor = A::from(0.5).expect("unwrap failed");
                             grad.mapv(|g| g * factor)
                         }
                         "leaky_relu" => {
-                            let alpha = A::from(0.01).unwrap();
+                            let alpha = A::from(0.01).expect("unwrap failed");
                             grad.mapv(|g| if g > A::zero() { g } else { alpha * g })
                         }
                         _ => grad.clone(), // Unknown activation, pass through
@@ -864,7 +864,7 @@ pub mod forward_backward {
         ) -> Result<Vec<Array<A, D>>> {
             // Simplified normalization backward
             // Real implementation would compute gradients considering mean and variance
-            let scale_factor = A::from(0.9).unwrap();
+            let scale_factor = A::from(0.9).expect("unwrap failed");
             let grad_inputs: Vec<Array<A, D>> = grad_outputs
                 .iter()
                 .map(|grad| grad.mapv(|g| g * scale_factor))
@@ -884,10 +884,10 @@ pub mod forward_backward {
                 .config
                 .get("dropout_rate")
                 .and_then(|v| match v {
-                    LayerConfig::Float(f) => Some(A::from(*f).unwrap()),
+                    LayerConfig::Float(f) => Some(A::from(*f).expect("unwrap failed")),
                     _ => None,
                 })
-                .unwrap_or(A::from(0.5).unwrap());
+                .unwrap_or(A::from(0.5).expect("unwrap failed"));
 
             // Scale gradients by (1 - dropout_rate) to match forward pass
             let scale = A::one() - dropout_rate;
@@ -1139,7 +1139,7 @@ pub mod architecture_aware {
         ) -> Result<()> {
             if let Some(clipvalue) = rnn_gradient_clip {
                 // Apply RNN-specific gradient clipping
-                self.apply_rnn_gradient_clipping(A::from(clipvalue).unwrap())?;
+                self.apply_rnn_gradient_clipping(A::from(clipvalue).expect("unwrap failed"))?;
             }
 
             if weight_type_lr {
@@ -1179,11 +1179,14 @@ pub mod architecture_aware {
 
                     // Determine learning rate multiplier based on parameter tags
                     if metadata.tags.contains(&"attention".to_string()) {
-                        rule.lr_multiplier = A::from(1.2).unwrap(); // Higher LR for attention
+                        rule.lr_multiplier = A::from(1.2).expect("unwrap failed");
+                    // Higher LR for attention
                     } else if metadata.tags.contains(&"ffn".to_string()) {
-                        rule.lr_multiplier = A::from(1.0).unwrap(); // Standard LR for FFN
+                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                    // Standard LR for FFN
                     } else if metadata.tags.contains(&"normalization".to_string()) {
-                        rule.lr_multiplier = A::from(0.8).unwrap(); // Lower LR for normalization
+                        rule.lr_multiplier = A::from(0.8).expect("unwrap failed");
+                        // Lower LR for normalization
                     }
 
                     (metadata.layername.clone(), rule)
@@ -1202,7 +1205,8 @@ pub mod architecture_aware {
             // Extract layer numbers from layer names and apply decay
             for (layerid, _) in self.param_manager.layer_architectures.clone() {
                 if let Some(layer_num) = self.extract_layer_number(&layerid) {
-                    let decay_factor = A::from(0.95_f64.powi(layer_num as i32)).unwrap();
+                    let decay_factor =
+                        A::from(0.95_f64.powi(layer_num as i32)).expect("unwrap failed");
                     let mut rule = self
                         .param_manager
                         .layer_rules
@@ -1218,7 +1222,8 @@ pub mod architecture_aware {
 
         /// Apply attention parameter warmup
         fn apply_attention_warmup(&mut self, warmupsteps: usize) -> Result<()> {
-            let warmup_factor = A::from(self.step_count as f64 / warmupsteps as f64).unwrap();
+            let warmup_factor =
+                A::from(self.step_count as f64 / warmupsteps as f64).expect("unwrap failed");
 
             // Collect attention layers first
             let attention_layers: Vec<LayerId> = self
@@ -1255,13 +1260,16 @@ pub mod architecture_aware {
 
                 match architecture.layer_type.as_str() {
                     "conv" | "conv2d" | "conv3d" => {
-                        rule.lr_multiplier = A::from(1.0).unwrap(); // Standard LR for conv
+                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        // Standard LR for conv
                     }
                     "linear" | "dense" | "fc" => {
-                        rule.lr_multiplier = A::from(0.8).unwrap(); // Lower LR for FC
+                        rule.lr_multiplier = A::from(0.8).expect("unwrap failed");
+                        // Lower LR for FC
                     }
                     _ => {
-                        rule.lr_multiplier = A::from(1.0).unwrap(); // Default
+                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        // Default
                     }
                 }
 
@@ -1282,7 +1290,8 @@ pub mod architecture_aware {
                 .iter()
                 .enumerate()
             {
-                let depth_factor = A::from(1.0 - 0.1 * (i as f64 / total_layers as f64)).unwrap();
+                let depth_factor =
+                    A::from(1.0 - 0.1 * (i as f64 / total_layers as f64)).expect("unwrap failed");
                 let mut rule = self
                     .param_manager
                     .layer_rules
@@ -1320,7 +1329,7 @@ pub mod architecture_aware {
                     .cloned()
                     .unwrap_or_default();
                 // Higher learning rate and no weight decay for BN parameters
-                rule.lr_multiplier = A::from(2.0).unwrap();
+                rule.lr_multiplier = A::from(2.0).expect("unwrap failed");
                 rule.weight_decay_multiplier = A::zero();
                 self.param_manager.set_layer_rule(layername, rule);
             }
@@ -1346,9 +1355,11 @@ pub mod architecture_aware {
                     let mut rule = LayerOptimizationRule::default();
 
                     if metadata.tags.contains(&"recurrent".to_string()) {
-                        rule.lr_multiplier = A::from(0.5).unwrap(); // Lower LR for recurrent weights
+                        rule.lr_multiplier = A::from(0.5).expect("unwrap failed");
+                    // Lower LR for recurrent weights
                     } else if metadata.tags.contains(&"linear".to_string()) {
-                        rule.lr_multiplier = A::from(1.0).unwrap(); // Standard LR for linear weights
+                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        // Standard LR for linear weights
                     }
 
                     (metadata.layername.clone(), rule)
@@ -1414,7 +1425,7 @@ mod tests {
 
         manager
             .register_parameter("param1".to_string(), metadata)
-            .unwrap();
+            .expect("unwrap failed");
 
         assert!(manager
             .get_parameter_metadata(&"param1".to_string())
@@ -1442,13 +1453,13 @@ mod tests {
 
         manager
             .register_parameter("param1".to_string(), metadata)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Parameter should not be registered yet
         assert_eq!(manager.get_all_parameters().len(), 0);
 
         // Disable lazy mode to process pending registrations
-        manager.disable_lazy_mode().unwrap();
+        manager.disable_lazy_mode().expect("unwrap failed");
 
         // Now parameter should be registered
         assert_eq!(manager.get_all_parameters().len(), 1);
@@ -1486,7 +1497,7 @@ mod tests {
 
         manager
             .register_parameter("param1".to_string(), metadata)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Test effective learning rate
         let effective_lr = manager.get_effective_learning_rate(&"param1".to_string());
@@ -1524,12 +1535,14 @@ mod tests {
 
         manager
             .register_parameter("param1".to_string(), metadata1)
-            .unwrap();
+            .expect("unwrap failed");
         manager
             .register_parameter("param2".to_string(), metadata2)
-            .unwrap();
+            .expect("unwrap failed");
 
-        let sharing_group = manager.get_sharing_group("shared_weights").unwrap();
+        let sharing_group = manager
+            .get_sharing_group("shared_weights")
+            .expect("unwrap failed");
         assert_eq!(sharing_group.len(), 2);
         assert!(sharing_group.contains(&"param1".to_string()));
         assert!(sharing_group.contains(&"param2".to_string()));
@@ -1562,10 +1575,10 @@ mod tests {
 
         manager
             .register_parameter("weight".to_string(), weight_metadata)
-            .unwrap();
+            .expect("unwrap failed");
         manager
             .register_parameter("bias".to_string(), bias_metadata)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Test filtering by type
         let weights = manager.get_parameters_by_type(ParameterType::Weight);
@@ -1626,10 +1639,12 @@ mod tests {
         optimizer
             .parameter_manager_mut()
             .register_parameter("attn_param".to_string(), attention_metadata)
-            .unwrap();
+            .expect("unwrap failed");
 
         // Apply optimizations
-        optimizer.apply_architecture_optimizations().unwrap();
+        optimizer
+            .apply_architecture_optimizations()
+            .expect("unwrap failed");
 
         // Verify that attention parameters get special treatment
         assert!(optimizer

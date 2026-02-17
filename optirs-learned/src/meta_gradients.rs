@@ -528,7 +528,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             inner_gradients.push(task_meta_gradients);
         }
 
-        let meta_loss = total_meta_loss / T::from(tasks.len()).unwrap();
+        let meta_loss = total_meta_loss / T::from(tasks.len()).expect("unwrap failed");
         let computation_time = start_time.elapsed().as_micros() as u64;
 
         Ok(MetaGradientResult {
@@ -586,7 +586,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             meta_gradients = meta_gradients + gradient * task.weight;
         }
 
-        let meta_loss = total_meta_loss / T::from(tasks.len()).unwrap();
+        let meta_loss = total_meta_loss / T::from(tasks.len()).expect("unwrap failed");
 
         Ok(MetaGradientResult {
             meta_gradients,
@@ -634,7 +634,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             total_meta_loss = total_meta_loss + query_loss * task.weight;
         }
 
-        let meta_loss = total_meta_loss / T::from(tasks.len()).unwrap();
+        let meta_loss = total_meta_loss / T::from(tasks.len()).expect("unwrap failed");
 
         Ok(MetaGradientResult {
             meta_gradients,
@@ -721,7 +721,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
             total_meta_loss = total_meta_loss + query_loss * task.weight;
         }
 
-        let meta_loss = total_meta_loss / T::from(tasks.len()).unwrap();
+        let meta_loss = total_meta_loss / T::from(tasks.len()).expect("unwrap failed");
 
         Ok(MetaGradientResult {
             meta_gradients,
@@ -1328,7 +1328,7 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         }
 
         let avg_similarity =
-            similarities.iter().copied().sum::<T>() / T::from(similarities.len()).unwrap();
+            similarities.iter().copied().sum::<T>() / T::from(similarities.len()).expect("unwrap failed");
         Ok(avg_similarity)
     }
 
@@ -1389,13 +1389,13 @@ impl<T: Float + Debug + Default + Clone + 'static + std::iter::Sum + scirs2_core
         let base_lr = scirs2_core::numeric::NumCast::from(self.inner_loop_config.learning_rate).unwrap_or_else(|| T::zero());
 
         // Compute gradient statistics
-        let grad_mean = gradient.iter().copied().sum::<T>() / T::from(gradient.len()).unwrap();
+        let grad_mean = gradient.iter().copied().sum::<T>() / T::from(gradient.len()).expect("unwrap failed");
         let grad_std = {
             let variance = gradient
                 .iter()
                 .map(|&g| (g - grad_mean) * (g - grad_mean))
                 .sum::<T>()
-                / T::from(gradient.len()).unwrap();
+                / T::from(gradient.len()).expect("unwrap failed");
             variance.sqrt()
         };
 

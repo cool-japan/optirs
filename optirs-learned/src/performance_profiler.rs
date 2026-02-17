@@ -1146,7 +1146,7 @@ mod tests {
     #[test]
     fn test_metrics_collection() {
         let config = PerformanceMonitorConfig::<f64>::default();
-        let mut collector = RealTimeMetricsCollector::new(&config).unwrap();
+        let mut collector = RealTimeMetricsCollector::new(&config).expect("unwrap failed");
         
         let metrics = AdvancedMetrics::default();
         assert!(collector.add_metrics(&metrics).is_ok());

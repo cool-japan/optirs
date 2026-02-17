@@ -722,7 +722,7 @@ impl ThreadSafeUnifiedAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, AllocationError> {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.allocate(
             size,
             AllocatorType::Strategy(strategies::AllocationStrategy::FirstFit),
@@ -731,17 +731,17 @@ impl ThreadSafeUnifiedAllocator {
     }
 
     pub fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<(), AllocationError> {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.deallocate(ptr, size)
     }
 
     pub fn get_stats(&self) -> UnifiedStats {
-        let allocator = self.allocator.lock().unwrap();
+        let allocator = self.allocator.lock().expect("lock poisoned");
         allocator.get_stats().clone()
     }
 
     pub fn garbage_collect(&self) -> GarbageCollectionResult {
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut allocator = self.allocator.lock().expect("lock poisoned");
         allocator.garbage_collect()
     }
 }
@@ -754,7 +754,7 @@ mod tests {
     fn test_unified_allocator_creation() {
         let size = 1024 * 1024; // 1MB
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = UnifiedConfig::default();
         let allocator = UnifiedAllocator::new(ptr, size, config);
@@ -765,10 +765,10 @@ mod tests {
     fn test_unified_allocation() {
         let size = 1024 * 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = UnifiedConfig::default();
-        let mut allocator = UnifiedAllocator::new(ptr, size, config).unwrap();
+        let mut allocator = UnifiedAllocator::new(ptr, size, config).expect("unwrap failed");
 
         // Test different sizes to trigger different allocators
         let small_alloc = allocator.allocate(100, AllocatorType::Slab, None); // Should use slab
@@ -810,10 +810,10 @@ mod tests {
     fn test_thread_safe_unified_allocator() {
         let size = 1024 * 1024;
         let memory = vec![0u8; size];
-        let ptr = NonNull::new(memory.as_ptr() as *mut u8).unwrap();
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
 
         let config = UnifiedConfig::default();
-        let allocator = ThreadSafeUnifiedAllocator::new(ptr, size, config).unwrap();
+        let allocator = ThreadSafeUnifiedAllocator::new(ptr, size, config).expect("unwrap failed");
 
         let alloc_result = allocator.allocate(1024);
         assert!(

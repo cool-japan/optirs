@@ -75,7 +75,7 @@ fn sequential_optimizer_example(x_train: &Array2<f64>, y_train: &Array1<f64>, nf
             compute_gradients(x_train, y_train, &predictions, &weights, bias);
 
         // Update weights using the sequential optimizer
-        weights = sequential_optimizer.step(&weights, &weight_grad).unwrap();
+        weights = sequential_optimizer.step(&weights, &weight_grad).expect("unwrap failed");
 
         // Update bias using simple SGD
         bias -= 0.01 * bias_grad;
@@ -130,7 +130,7 @@ fn parallel_optimizer_example(x_train: &Array2<f64>, y_train: &Array1<f64>, nfea
 
     for i in 0..n_iterations {
         // Get current weights from the optimizer
-        let current_weights = parallel_optimizer.get_all_parameters().unwrap();
+        let current_weights = parallel_optimizer.get_all_parameters().expect("unwrap failed");
 
         // Combine the weights for predictions
         let mut combined_weights = Array1::<f64>::zeros(nfeatures);
@@ -155,7 +155,7 @@ fn parallel_optimizer_example(x_train: &Array2<f64>, y_train: &Array1<f64>, nfea
         // Update weights using the parallel optimizer
         parallel_optimizer
             .update_all_parameters(&[weight_grad_group1, weight_grad_group2])
-            .unwrap();
+            .expect("unwrap failed");
 
         // Update bias using simple SGD
         bias -= 0.01 * bias_grad;
@@ -169,7 +169,7 @@ fn parallel_optimizer_example(x_train: &Array2<f64>, y_train: &Array1<f64>, nfea
     let elapsed = start_time.elapsed();
 
     // Get final weights
-    let final_weights = parallel_optimizer.get_all_parameters().unwrap();
+    let final_weights = parallel_optimizer.get_all_parameters().expect("unwrap failed");
 
     // Combine the weights for final predictions
     let mut combined_weights = Array1::<f64>::zeros(nfeatures);
@@ -229,7 +229,7 @@ fn chained_optimizer_example(x_train: &Array2<f64>, y_train: &Array1<f64>, nfeat
             compute_gradients(x_train, y_train, &predictions, &weights, bias);
 
         // Update weights using the chained optimizer
-        weights = chained_optimizer.step(&weights, &weight_grad).unwrap();
+        weights = chained_optimizer.step(&weights, &weight_grad).expect("unwrap failed");
 
         // Update bias using simple SGD
         bias -= 0.01 * bias_grad;
@@ -260,15 +260,15 @@ fn generate_data(
     nfeatures: usize,
 ) -> (Array2<f64>, Array1<f64>, Array1<f64>, f64) {
     // Create random true weights and bias
-    let true_weights = Array1::random(nfeatures, Normal::new(0.0, 1.0).unwrap());
+    let true_weights = Array1::random(nfeatures, Normal::new(0.0, 1.0).expect("unwrap failed"));
     let true_bias = 1.0;
 
     // Generate random _features
-    let x = Array2::random((n_samples, nfeatures), Normal::new(0.0, 1.0).unwrap());
+    let x = Array2::random((n_samples, nfeatures), Normal::new(0.0, 1.0).expect("unwrap failed"));
 
     // Generate target values with noise
     let y_without_noise = x.dot(&true_weights) + true_bias;
-    let noise = Array1::random(n_samples, Normal::new(0.0, 0.1).unwrap());
+    let noise = Array1::random(n_samples, Normal::new(0.0, 0.1).expect("unwrap failed"));
     let y = &y_without_noise + &noise;
 
     (x, y, true_weights, true_bias)

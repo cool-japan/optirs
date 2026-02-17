@@ -399,7 +399,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
 
     /// Get cached computation
     fn get_cached_computation(&self, hash: &str) -> Result<Option<CachedComputation>> {
-        let cache = self.compilation_cache.read().unwrap();
+        let cache = self.compilation_cache.read().expect("lock poisoned");
         Ok(cache.cache.get(hash).cloned())
     }
 
@@ -410,7 +410,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
         binary: Vec<u8>,
         metadata: CompilationMetadata,
     ) -> Result<()> {
-        let mut cache = self.compilation_cache.write().unwrap();
+        let mut cache = self.compilation_cache.write().expect("lock poisoned");
 
         let binary_size = binary.len();
         let cached_comp = CachedComputation {

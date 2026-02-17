@@ -118,16 +118,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
         let mut wo = Array2::zeros((modeldim, modeldim));
 
         for elem in wq.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
         for elem in wk.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
         for elem in wv.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
         for elem in wo.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
 
         let relative_bias = if config.relative_position_bias {
@@ -250,7 +250,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MultiHeadAttent
         v: &Array3<T>,
     ) -> Result<Array3<T>> {
         let (_numheads, seq_len, head_dim) = q.dim();
-        let scale = T::from(1.0 / (head_dim as f64).sqrt()).unwrap();
+        let scale = T::from(1.0 / (head_dim as f64).sqrt()).expect("unwrap failed");
 
         let mut attention_output = Array3::zeros((self.numheads, seq_len, self.head_dim));
         let mut attention_scores = Array3::zeros((self.numheads, seq_len, seq_len));
@@ -348,7 +348,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RelativePositio
         let bound = 0.02;
 
         for elem in bias_table.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
         }
 
         Ok(Self {
@@ -390,10 +390,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> RoPEEmbeddings<
         for pos in 0..max_seqlen {
             for i in (0..dim).step_by(2) {
                 let theta = pos as f64 / base.powf((i as f64) / (dim as f64));
-                cos_cached[[pos, i]] = T::from(theta.cos()).unwrap();
-                cos_cached[[pos, i + 1]] = T::from(theta.cos()).unwrap();
-                sin_cached[[pos, i]] = T::from(theta.sin()).unwrap();
-                sin_cached[[pos, i + 1]] = T::from(theta.sin()).unwrap();
+                cos_cached[[pos, i]] = T::from(theta.cos()).expect("unwrap failed");
+                cos_cached[[pos, i + 1]] = T::from(theta.cos()).expect("unwrap failed");
+                sin_cached[[pos, i]] = T::from(theta.sin()).expect("unwrap failed");
+                sin_cached[[pos, i + 1]] = T::from(theta.sin()).expect("unwrap failed");
             }
         }
 

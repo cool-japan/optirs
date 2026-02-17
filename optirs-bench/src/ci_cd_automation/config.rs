@@ -1738,8 +1738,8 @@ mod tests {
     #[test]
     fn test_platform_enum_serialization() {
         let platform = CiCdPlatform::GitHubActions;
-        let serialized = serde_json::to_string(&platform).unwrap();
-        let deserialized: CiCdPlatform = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&platform).expect("unwrap failed");
+        let deserialized: CiCdPlatform = serde_json::from_str(&serialized).expect("unwrap failed");
         assert_eq!(platform, deserialized);
     }
 

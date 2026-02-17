@@ -1,4 +1,4 @@
-# OptiRS Integration Crate TODO (v0.1.0)
+# OptiRS Integration Crate TODO (v0.2.0)
 
 ## Module Status: Production Ready
 
@@ -146,5 +146,5 @@
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.1.0
+**Version**: v0.2.0
 **Release Date**: 2025-12-30

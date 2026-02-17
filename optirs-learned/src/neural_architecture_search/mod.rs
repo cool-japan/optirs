@@ -291,7 +291,7 @@ mod tests {
         config.max_iterations = 2;
         config.population_size = 4;
 
-        let mut nas = NeuralArchitectureSearch::<f32>::new(config).unwrap();
+        let mut nas = NeuralArchitectureSearch::<f32>::new(config).expect("unwrap failed");
 
         // This might fail due to complexity of full NAS implementation
         // but the structure should be testable

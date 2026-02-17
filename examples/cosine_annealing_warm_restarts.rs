@@ -142,7 +142,7 @@ fn train_linear_regression<S: LearningRateScheduler<f64>>(
         let bias_grad = error.sum() / (y_train.len() as f64);
 
         // Update parameters
-        _weights = optimizer.step(&_weights, &weight_grad).unwrap();
+        _weights = optimizer.step(&_weights, &weight_grad).expect("unwrap failed");
         bias -= lr * bias_grad;
 
         // Print progress at intervals or warm restart points
@@ -177,15 +177,15 @@ fn generate_data(
     n_features: usize,
 ) -> (Array2<f64>, Array1<f64>, Array1<f64>, f64) {
     // Create random true weights and bias
-    let true_weights = Array1::random(n_features, Normal::new(0.0, 1.0).unwrap());
+    let true_weights = Array1::random(n_features, Normal::new(0.0, 1.0).expect("unwrap failed"));
     let true_bias = 1.0;
 
     // Generate random _features
-    let x = Array2::random((n_samples, n_features), Normal::new(0.0, 1.0).unwrap());
+    let x = Array2::random((n_samples, n_features), Normal::new(0.0, 1.0).expect("unwrap failed"));
 
     // Generate target values with noise
     let y_without_noise = x.dot(&true_weights) + true_bias;
-    let noise = Array1::random(n_samples, Normal::new(0.0, 0.1).unwrap());
+    let noise = Array1::random(n_samples, Normal::new(0.0, 0.1).expect("unwrap failed"));
     let y = &y_without_noise + &noise;
 
     (x, y, true_weights, true_bias)

@@ -962,7 +962,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
         let time_efficiency = if self.total_search_time.as_secs() > 0 {
             scirs2_core::numeric::NumCast::from(self.successful_evaluations)
                 .unwrap_or_else(|| T::zero())
-                / T::from(self.total_search_time.as_secs()).unwrap()
+                / T::from(self.total_search_time.as_secs()).expect("unwrap failed")
         } else {
             T::zero()
         };
@@ -1130,7 +1130,7 @@ mod tests {
 
         let trend = stats.get_improvement_trend(2);
         assert!(trend.is_some());
-        assert!(trend.unwrap() > 0.0); // Positive trend
+        assert!(trend.expect("unwrap failed") > 0.0); // Positive trend
     }
 
     #[test]

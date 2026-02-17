@@ -1551,7 +1551,7 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> FewShotPerforman
                 .collect();
 
             let sum: T = performances.iter().cloned().sum();
-            let count = T::from(performances.len()).unwrap();
+            let count = T::from(performances.len()).expect("unwrap failed");
             self.overall_metrics.avg_performance = sum / count;
         }
     }

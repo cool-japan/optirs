@@ -33,7 +33,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = SGD::new_with_config(0.01, 0.9, 0.0);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).unwrap();
+/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct SGD<A: Float + ScalarOperand + Debug> {
@@ -149,7 +149,7 @@ where
             self.velocity = Some(vec![Array::zeros(params_dyn.raw_dim())]);
         }
 
-        let velocity = self.velocity.as_mut().unwrap();
+        let velocity = self.velocity.as_mut().expect("unwrap failed");
 
         // Ensure we have velocity for this parameter set
         if velocity.is_empty() {
@@ -178,7 +178,9 @@ where
         let updated_params = &params_dyn - &velocity[0];
 
         // Convert back to original dimension
-        Ok(updated_params.into_dimensionality::<D>().unwrap())
+        Ok(updated_params
+            .into_dimensionality::<D>()
+            .expect("unwrap failed"))
     }
 
     fn get_learning_rate(&self) -> A {

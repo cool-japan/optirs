@@ -31,9 +31,9 @@ fn bench_gradient_accumulation(c: &mut Criterion) {
                 b.iter(|| {
                     let mut accumulator = MemoryEfficientGradientAccumulator::<f32>::new(size);
                     for grad in &gradients {
-                        accumulator.accumulate(&grad.view()).unwrap();
+                        accumulator.accumulate(&grad.view()).expect("unwrap failed");
                     }
-                    let avg = accumulator.average().unwrap();
+                    let avg = accumulator.average().expect("unwrap failed");
                     black_box(avg)
                 });
             },
@@ -59,7 +59,7 @@ fn bench_chunked_vs_full(c: &mut Criterion) {
             b.iter(|| {
                 let result = optimizer
                     .step(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -71,7 +71,7 @@ fn bench_chunked_vs_full(c: &mut Criterion) {
             b.iter(|| {
                 let result = chunked_opt
                     .step_chunked(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -83,7 +83,7 @@ fn bench_chunked_vs_full(c: &mut Criterion) {
             b.iter(|| {
                 let result = chunked_opt
                     .step_chunked(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -112,10 +112,10 @@ fn bench_accumulation_scaling(c: &mut Criterion) {
                 b.iter(|| {
                     let mut accumulator = MemoryEfficientGradientAccumulator::<f32>::new(size);
                     for grad in &gradients {
-                        accumulator.accumulate(&grad.view()).unwrap();
+                        accumulator.accumulate(&grad.view()).expect("unwrap failed");
                     }
                     accumulator.is_ready(*num_steps);
-                    let avg = accumulator.average().unwrap();
+                    let avg = accumulator.average().expect("unwrap failed");
                     black_box(avg)
                 });
             },
@@ -138,9 +138,9 @@ fn bench_gradient_sizes(c: &mut Criterion) {
             b.iter(|| {
                 let mut accumulator = MemoryEfficientGradientAccumulator::<f32>::new(*size);
                 for grad in &gradients {
-                    accumulator.accumulate(&grad.view()).unwrap();
+                    accumulator.accumulate(&grad.view()).expect("unwrap failed");
                 }
-                let avg = accumulator.average().unwrap();
+                let avg = accumulator.average().expect("unwrap failed");
                 black_box(avg)
             });
         });
@@ -169,7 +169,7 @@ fn bench_chunk_size_impact(c: &mut Criterion) {
                 b.iter(|| {
                     let result = chunked_opt
                         .step_chunked(black_box(&params), black_box(&gradients))
-                        .unwrap();
+                        .expect("unwrap failed");
                     black_box(result)
                 });
             },
@@ -246,13 +246,13 @@ fn bench_accumulator_reset(c: &mut Criterion) {
 
             b.iter(|| {
                 // Accumulate
-                accumulator.accumulate(&grad.view()).unwrap();
-                accumulator.accumulate(&grad.view()).unwrap();
-                accumulator.accumulate(&grad.view()).unwrap();
-                accumulator.accumulate(&grad.view()).unwrap();
+                accumulator.accumulate(&grad.view()).expect("unwrap failed");
+                accumulator.accumulate(&grad.view()).expect("unwrap failed");
+                accumulator.accumulate(&grad.view()).expect("unwrap failed");
+                accumulator.accumulate(&grad.view()).expect("unwrap failed");
 
                 // Average (includes reset)
-                let avg = accumulator.average().unwrap();
+                let avg = accumulator.average().expect("unwrap failed");
                 black_box(avg)
             });
         });
@@ -279,7 +279,7 @@ fn bench_optimizer_types_chunked(c: &mut Criterion) {
         b.iter(|| {
             let result = chunked_opt
                 .step_chunked(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -291,7 +291,7 @@ fn bench_optimizer_types_chunked(c: &mut Criterion) {
         b.iter(|| {
             let result = chunked_opt
                 .step_chunked(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });

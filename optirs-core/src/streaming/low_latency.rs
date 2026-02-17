@@ -377,7 +377,7 @@ where
         // This is a simplified version - in practice would get current parameters
         let current_params = Array1::zeros(gradient.len());
 
-        let mut optimizer = self.base_optimizer.lock().unwrap();
+        let mut optimizer = self.base_optimizer.lock().expect("lock poisoned");
         optimizer.step(&current_params, gradient)
     }
 
@@ -388,7 +388,7 @@ where
         approximation_level: A,
     ) -> Result<Array1<A>> {
         // Simplified approximation: reduce precision or use fewer operations
-        let simplified_gradient = if approximation_level > A::from(0.5).unwrap() {
+        let simplified_gradient = if approximation_level > A::from(0.5).expect("unwrap failed") {
             self.simplify_gradient(gradient, approximation_level)?
         } else {
             gradient.clone()
@@ -572,7 +572,7 @@ impl FastMemoryPool {
     }
 
     fn get_efficiency(&self) -> f64 {
-        let available = self.available_blocks.lock().unwrap().len();
+        let available = self.available_blocks.lock().expect("lock poisoned").len();
         1.0 - (available as f64 / self.total_blocks as f64)
     }
 }
@@ -608,7 +608,7 @@ impl<A: Float + Send + Sync + Send + Sync> GradientQuantizer<A> {
             .iter()
             .cloned()
             .fold(A::zero(), |acc, x| acc.max(x.abs()));
-        let levels = A::from(2_u32.pow(self.bits as u32) - 1).unwrap();
+        let levels = A::from(2_u32.pow(self.bits as u32) - 1).expect("unwrap failed");
         self.scale = max_val / levels;
 
         let quantized = gradient.mapv(|x| (x / self.scale).round() * self.scale);
@@ -669,7 +669,7 @@ impl<A: Float + Send + Sync + Send + Sync> ApproximationController<A> {
         Self {
             approximation_level: A::zero(),
             performance_history: VecDeque::with_capacity(100),
-            adaptation_rate: A::from(0.1).unwrap(),
+            adaptation_rate: A::from(0.1).expect("unwrap failed"),
             targetlatency,
         }
     }
@@ -709,8 +709,9 @@ impl<A: Float + Send + Sync + Send + Sync> ApproximationController<A> {
     }
 
     fn increase_approximation(&mut self) {
-        self.approximation_level =
-            (self.approximation_level + self.adaptation_rate * A::from(2.0).unwrap()).min(A::one());
+        self.approximation_level = (self.approximation_level
+            + self.adaptation_rate * A::from(2.0).expect("unwrap failed"))
+        .min(A::one());
     }
 }
 
@@ -720,7 +721,7 @@ impl<A: Float + Send + Sync + Send + Sync> GradientPredictor<A> {
             gradient_history: VecDeque::with_capacity(windowsize),
             trend_weights: None,
             windowsize,
-            confidence: A::from(0.5).unwrap(),
+            confidence: A::from(0.5).expect("unwrap failed"),
         }
     }
 }
@@ -787,7 +788,7 @@ mod tests {
         let result = quantizer.quantize(&gradient);
         assert!(result.is_ok());
 
-        let quantized = result.unwrap();
+        let quantized = result.expect("unwrap failed");
         assert_eq!(quantized.len(), gradient.len());
     }
 

@@ -23,7 +23,7 @@ mod tests {
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // Step with optimizer
-        let updated_params = optimizer.step(&params, &grads).unwrap();
+        let updated_params = optimizer.step(&params, &grads).expect("unwrap failed");
 
         // Check that parameters were updated correctly
         assert_ne!(updated_params[0], params[0]);
@@ -31,7 +31,7 @@ mod tests {
         assert_ne!(updated_params[2], params[2]);
 
         // Update optimizer with a metric value
-        optimizer.update_metric(0.75).unwrap();
+        optimizer.update_metric(0.75).expect("unwrap failed");
 
         // Check metric adapter
         assert_eq!(optimizer.metric_adapter().metric_name(), "accuracy");
@@ -41,7 +41,7 @@ mod tests {
         let mut metrics = HashMap::new();
         metrics.insert("accuracy".to_string(), 0.8);
         metrics.insert("loss".to_string(), 0.3);
-        optimizer.update_metrics(metrics).unwrap();
+        optimizer.update_metrics(metrics).expect("unwrap failed");
 
         // Check that metrics were updated
         assert_eq!(optimizer.metric_adapter().history().len(), 2);

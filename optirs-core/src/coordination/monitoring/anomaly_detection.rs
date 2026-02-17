@@ -369,7 +369,11 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
         // Select the most significant anomaly type
         let anomaly_type = results
             .iter()
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+            .max_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .expect("unwrap failed")
+            })
             .map(|r| r.anomaly_type.clone())
             .unwrap_or(AnomalyType::StatisticalOutlier);
 
@@ -424,15 +428,15 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
             return T::zero();
         }
 
-        let n = T::from(values.len()).unwrap();
-        let sum_x = (0..values.len()).fold(T::zero(), |acc, i| acc + T::from(i).unwrap());
+        let n = T::from(values.len()).expect("unwrap failed");
+        let sum_x =
+            (0..values.len()).fold(T::zero(), |acc, i| acc + T::from(i).expect("unwrap failed"));
         let sum_y = values.iter().fold(T::zero(), |acc, &y| acc + y);
-        let sum_xy = values
-            .iter()
-            .enumerate()
-            .fold(T::zero(), |acc, (i, &y)| acc + T::from(i).unwrap() * y);
+        let sum_xy = values.iter().enumerate().fold(T::zero(), |acc, (i, &y)| {
+            acc + T::from(i).expect("unwrap failed") * y
+        });
         let sum_x2 = (0..values.len()).fold(T::zero(), |acc, i| {
-            let i_t = T::from(i).unwrap();
+            let i_t = T::from(i).expect("unwrap failed");
             acc + i_t * i_t
         });
 
@@ -549,14 +553,14 @@ impl<T: Float + Debug + Send + Sync + 'static> BaselineStats<T> {
             return;
         }
 
-        self.mean =
-            values.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(values.len()).unwrap();
+        self.mean = values.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(values.len()).expect("unwrap failed");
 
         let variance = values
             .iter()
             .map(|&x| (x - self.mean) * (x - self.mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(values.len()).unwrap();
+            / T::from(values.len()).expect("unwrap failed");
 
         self.std_dev = variance.sqrt();
 
@@ -564,7 +568,7 @@ impl<T: Float + Debug + Send + Sync + 'static> BaselineStats<T> {
         self.max = values.iter().fold(T::neg_infinity(), |acc, &x| acc.max(x));
 
         let mut sorted_values = values.to_vec();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
         let mid = sorted_values.len() / 2;
         self.median = if sorted_values.len().is_multiple_of(2) {
             (sorted_values[mid - 1] + sorted_values[mid])
@@ -827,13 +831,13 @@ impl<T: Float + Debug + Send + Sync + 'static> TimeSeriesAnalyzer<T> {
             return T::zero();
         }
 
-        let mean =
-            residuals.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(residuals.len()).unwrap();
+        let mean = residuals.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(residuals.len()).expect("unwrap failed");
         let variance = residuals
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(residuals.len()).unwrap();
+            / T::from(residuals.len()).expect("unwrap failed");
 
         variance.sqrt() * self.config.statistical_threshold
     }
@@ -1173,13 +1177,13 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
     }
 
     fn zscore_detection(&self, value: T, values: &[T]) -> (bool, T, T) {
-        let mean =
-            values.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(values.len()).unwrap();
+        let mean = values.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(values.len()).expect("unwrap failed");
         let variance = values
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(values.len()).unwrap();
+            / T::from(values.len()).expect("unwrap failed");
         let std_dev = variance.sqrt();
 
         if std_dev < T::epsilon() {
@@ -1200,7 +1204,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
     fn modified_zscore_detection(&self, value: T, values: &[T]) -> (bool, T, T) {
         // Using median absolute deviation (MAD)
         let mut sorted_values = values.to_vec();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let median = if sorted_values.len().is_multiple_of(2) {
             let mid = sorted_values.len() / 2;
@@ -1213,7 +1217,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         let mad = {
             let deviations: Vec<T> = values.iter().map(|&x| (x - median).abs()).collect();
             let mut sorted_deviations = deviations;
-            sorted_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted_deviations.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
             if sorted_deviations.len().is_multiple_of(2) {
                 let mid = sorted_deviations.len() / 2;
@@ -1242,7 +1246,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
 
     fn iqr_detection(&self, value: T, values: &[T]) -> (bool, T, T) {
         let mut sorted_values = values.to_vec();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let n = sorted_values.len();
         let q1_idx = n / 4;
@@ -1283,7 +1287,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         let recent_values = &values[values.len().saturating_sub(window_size)..];
 
         let mut sorted_values = recent_values.to_vec();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let median = if sorted_values.len().is_multiple_of(2) {
             let mid = sorted_values.len() / 2;
@@ -1296,7 +1300,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         let mad = {
             let deviations: Vec<T> = recent_values.iter().map(|&x| (x - median).abs()).collect();
             let mut sorted_deviations = deviations;
-            sorted_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted_deviations.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
             if sorted_deviations.len().is_multiple_of(2) {
                 let mid = sorted_deviations.len() / 2;
@@ -1335,7 +1339,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         }
 
         let avg_score = random_scores.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(random_scores.len()).unwrap();
+            / T::from(random_scores.len()).expect("unwrap failed");
         let threshold = T::from(0.6).unwrap_or_else(|| T::zero());
         let is_outlier = avg_score > threshold;
         let confidence = if is_outlier { avg_score } else { T::zero() };
@@ -1394,7 +1398,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         }
 
         let mut distances: Vec<T> = values.iter().map(|&x| (x - value).abs()).collect();
-        distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        distances.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let k_distance = distances[k.min(distances.len() - 1)];
         let neighbors: Vec<T> = values
@@ -1408,14 +1412,15 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
         }
 
         // Simplified density estimation
-        let local_density = T::from(neighbors.len()).unwrap() / (k_distance + T::epsilon());
+        let local_density =
+            T::from(neighbors.len()).expect("unwrap failed") / (k_distance + T::epsilon());
         let neighbor_densities: Vec<T> = neighbors
             .iter()
             .map(|&neighbor| {
                 let neighbor_distances: Vec<T> =
                     values.iter().map(|&x| (x - neighbor).abs()).collect();
                 let mut sorted_neighbor_distances = neighbor_distances;
-                sorted_neighbor_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                sorted_neighbor_distances.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
                 let neighbor_k_distance =
                     sorted_neighbor_distances[k.min(sorted_neighbor_distances.len() - 1)];
                 T::from(k).unwrap_or_else(|| T::zero()) / (neighbor_k_distance + T::epsilon())
@@ -1423,7 +1428,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
             .collect();
 
         let avg_neighbor_density = neighbor_densities.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(neighbor_densities.len()).unwrap();
+            / T::from(neighbor_densities.len()).expect("unwrap failed");
 
         let lof_score = if local_density > T::epsilon() {
             avg_neighbor_density / local_density
@@ -1444,11 +1449,11 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
 
     fn svm_detection(&self, value: T, values: &[T]) -> (bool, T, T) {
         // Simplified One-Class SVM approximation using distance to centroid
-        let mean =
-            values.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(values.len()).unwrap();
+        let mean = values.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(values.len()).expect("unwrap failed");
         let distances: Vec<T> = values.iter().map(|&x| (x - mean).abs()).collect();
-        let avg_distance =
-            distances.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(distances.len()).unwrap();
+        let avg_distance = distances.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(distances.len()).expect("unwrap failed");
 
         let current_distance = (value - mean).abs();
         let score = current_distance / (avg_distance + T::epsilon());
@@ -1476,7 +1481,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
 
         let is_outlier = neighbors.len() < min_points;
         let score = T::from(min_points).unwrap_or_else(|| T::zero())
-            / (T::from(neighbors.len()).unwrap() + T::one());
+            / (T::from(neighbors.len()).expect("unwrap failed") + T::one());
         let confidence = if is_outlier {
             score.min(T::one())
         } else {
@@ -1498,7 +1503,7 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
             }
         }
 
-        distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        distances.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
         let percentile_90 = distances[(distances.len() * 9 / 10).min(distances.len() - 1)];
 
         percentile_90 / T::from(2.0).unwrap_or_else(|| T::zero())
@@ -1539,12 +1544,13 @@ impl<T: Float + Debug + Send + Sync + 'static> OutlierDetector<T> {
             .map(|(_, _, score)| *score)
             .fold(T::zero(), |acc, x| acc + x);
 
-        let avg_confidence = total_confidence / T::from(results.len()).unwrap();
-        let avg_score = total_score / T::from(results.len()).unwrap();
+        let avg_confidence = total_confidence / T::from(results.len()).expect("unwrap failed");
+        let avg_score = total_score / T::from(results.len()).expect("unwrap failed");
 
         // Use majority voting
         let is_anomaly = T::from(outlier_count).unwrap_or_else(|| T::zero())
-            > T::from(results.len()).unwrap() / T::from(2.0).unwrap_or_else(|| T::zero());
+            > T::from(results.len()).expect("unwrap failed")
+                / T::from(2.0).unwrap_or_else(|| T::zero());
 
         let severity = if avg_score > T::from(3.0).unwrap_or_else(|| T::zero()) {
             AnomalySeverity::Critical

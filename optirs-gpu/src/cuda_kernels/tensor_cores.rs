@@ -346,7 +346,7 @@ impl TensorCoreManager {
 
         // Check if descriptor already exists
         {
-            let descriptors = self.descriptors.lock().unwrap();
+            let descriptors = self.descriptors.lock().expect("lock poisoned");
             if descriptors.contains_key(&descriptor_key) {
                 return Ok(descriptor_key);
             }
@@ -357,7 +357,7 @@ impl TensorCoreManager {
 
         // Cache the descriptor
         {
-            let mut descriptors = self.descriptors.lock().unwrap();
+            let mut descriptors = self.descriptors.lock().expect("lock poisoned");
             descriptors.insert(descriptor_key.clone(), descriptor);
         }
 
@@ -589,7 +589,7 @@ extern "C" __global__ void fused_tensor_core_kernel(
     /// Executes a prepared Tensor Core operation
     pub fn execute_operation(&self, descriptor_key: &str, a_ptr: *const f32, b_ptr: *const f32, c_ptr: *mut f32) -> Result<()> {
         let descriptor = {
-            let descriptors = self.descriptors.lock().unwrap();
+            let descriptors = self.descriptors.lock().expect("lock poisoned");
             descriptors.get(descriptor_key)
                 .ok_or_else(|| ScirsMlError::InvalidArgument("Operation descriptor not found".into()))?
                 .clone()
@@ -654,7 +654,7 @@ extern "C" __global__ void fused_tensor_core_kernel(
 
     /// Records performance metrics for an operation
     fn record_operation_metrics(&self, operation: &TensorCoreOperation, execution_time_ms: f64) {
-        let mut metrics = self.metrics.lock().unwrap();
+        let mut metrics = self.metrics.lock().expect("lock poisoned");
 
         metrics.total_operations += 1;
         metrics.total_time_ms += execution_time_ms;
@@ -674,7 +674,7 @@ extern "C" __global__ void fused_tensor_core_kernel(
 
     /// Gets current performance metrics
     pub fn get_metrics(&self) -> TensorCoreMetrics {
-        self.metrics.lock().unwrap().clone()
+        self.metrics.lock().expect("lock poisoned").clone()
     }
 
     /// Gets Tensor Core capabilities
@@ -728,7 +728,7 @@ extern "C" __global__ void fused_tensor_core_kernel(
 
     /// Analyzes Tensor Core utilization patterns
     fn analyze_utilization(&self) -> String {
-        let metrics = self.metrics.lock().unwrap();
+        let metrics = self.metrics.lock().expect("lock poisoned");
 
         if metrics.total_operations == 0 {
             return "No operations executed".to_string();
@@ -748,7 +748,7 @@ extern "C" __global__ void fused_tensor_core_kernel(
     /// Generates optimization recommendations
     fn generate_recommendations(&self) -> Vec<String> {
         let mut recommendations = Vec::new();
-        let metrics = self.metrics.lock().unwrap();
+        let metrics = self.metrics.lock().expect("lock poisoned");
 
         if metrics.total_operations == 0 {
             recommendations.push("No Tensor Core operations detected - consider using matrix operations that benefit from Tensor Cores".to_string());

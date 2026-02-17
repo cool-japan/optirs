@@ -1021,8 +1021,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
 
         for (op_id, dependencies) in &computation.dependencies {
             for &dep_id in dependencies {
-                adj_list.get_mut(&dep_id).unwrap().push(*op_id);
-                *in_degree.get_mut(op_id).unwrap() += 1;
+                adj_list
+                    .get_mut(&dep_id)
+                    .expect("unwrap failed")
+                    .push(*op_id);
+                *in_degree.get_mut(op_id).expect("unwrap failed") += 1;
             }
         }
 
@@ -1041,7 +1044,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
 
             if let Some(neighbors) = adj_list.get(&op_id) {
                 for &neighbor in neighbors {
-                    let degree = in_degree.get_mut(&neighbor).unwrap();
+                    let degree = in_degree.get_mut(&neighbor).expect("unwrap failed");
                     *degree -= 1;
                     if *degree == 0 {
                         queue.push_back(neighbor);

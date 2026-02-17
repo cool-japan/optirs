@@ -499,19 +499,29 @@ impl ConferenceManager {
                 abstract_deadline: Some(
                     chrono::Utc
                         .with_ymd_and_hms(2024, 5, 15, 23, 59, 59)
-                        .unwrap(),
+                        .single()
+                        .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 5, 22, 23, 59, 59)
-                    .unwrap(),
-                notification_date: chrono::Utc.with_ymd_and_hms(2024, 9, 25, 12, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                notification_date: chrono::Utc
+                    .with_ymd_and_hms(2024, 9, 25, 12, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 10, 30, 23, 59, 59)
-                    .unwrap(),
-                conference_start: chrono::Utc.with_ymd_and_hms(2024, 12, 10, 9, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                conference_start: chrono::Utc
+                    .with_ymd_and_hms(2024, 12, 10, 9, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
                 conference_end: chrono::Utc
                     .with_ymd_and_hms(2024, 12, 16, 18, 0, 0)
-                    .unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
             },
             requirements: SubmissionRequirements {
                 page_limit: 9,
@@ -577,13 +587,24 @@ impl ConferenceManager {
                 abstract_deadline: None,
                 paper_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 2, 1, 23, 59, 59)
-                    .unwrap(),
-                notification_date: chrono::Utc.with_ymd_and_hms(2024, 5, 1, 12, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                notification_date: chrono::Utc
+                    .with_ymd_and_hms(2024, 5, 1, 12, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 6, 1, 23, 59, 59)
-                    .unwrap(),
-                conference_start: chrono::Utc.with_ymd_and_hms(2024, 7, 21, 9, 0, 0).unwrap(),
-                conference_end: chrono::Utc.with_ymd_and_hms(2024, 7, 27, 18, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                conference_start: chrono::Utc
+                    .with_ymd_and_hms(2024, 7, 21, 9, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
+                conference_end: chrono::Utc
+                    .with_ymd_and_hms(2024, 7, 27, 18, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
             },
             requirements: SubmissionRequirements {
                 page_limit: 8,
@@ -648,17 +669,29 @@ impl ConferenceManager {
                 abstract_deadline: Some(
                     chrono::Utc
                         .with_ymd_and_hms(2023, 9, 28, 23, 59, 59)
-                        .unwrap(),
+                        .single()
+                        .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
                     .with_ymd_and_hms(2023, 10, 2, 23, 59, 59)
-                    .unwrap(),
-                notification_date: chrono::Utc.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                notification_date: chrono::Utc
+                    .with_ymd_and_hms(2024, 1, 15, 12, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 2, 29, 23, 59, 59)
-                    .unwrap(),
-                conference_start: chrono::Utc.with_ymd_and_hms(2024, 5, 7, 9, 0, 0).unwrap(),
-                conference_end: chrono::Utc.with_ymd_and_hms(2024, 5, 11, 18, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                conference_start: chrono::Utc
+                    .with_ymd_and_hms(2024, 5, 7, 9, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
+                conference_end: chrono::Utc
+                    .with_ymd_and_hms(2024, 5, 11, 18, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
             },
             requirements: SubmissionRequirements {
                 page_limit: 9,
@@ -724,17 +757,29 @@ impl ConferenceManager {
                 abstract_deadline: Some(
                     chrono::Utc
                         .with_ymd_and_hms(2023, 8, 15, 23, 59, 59)
-                        .unwrap(),
+                        .single()
+                        .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
                     .with_ymd_and_hms(2023, 8, 19, 23, 59, 59)
-                    .unwrap(),
-                notification_date: chrono::Utc.with_ymd_and_hms(2023, 12, 9, 12, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                notification_date: chrono::Utc
+                    .with_ymd_and_hms(2023, 12, 9, 12, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 1, 15, 23, 59, 59)
-                    .unwrap(),
-                conference_start: chrono::Utc.with_ymd_and_hms(2024, 2, 20, 9, 0, 0).unwrap(),
-                conference_end: chrono::Utc.with_ymd_and_hms(2024, 2, 27, 18, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                conference_start: chrono::Utc
+                    .with_ymd_and_hms(2024, 2, 20, 9, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
+                conference_end: chrono::Utc
+                    .with_ymd_and_hms(2024, 2, 27, 18, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
             },
             requirements: SubmissionRequirements {
                 page_limit: 7,
@@ -800,17 +845,29 @@ impl ConferenceManager {
                 abstract_deadline: Some(
                     chrono::Utc
                         .with_ymd_and_hms(2024, 1, 17, 23, 59, 59)
-                        .unwrap(),
+                        .single()
+                        .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 1, 24, 23, 59, 59)
-                    .unwrap(),
-                notification_date: chrono::Utc.with_ymd_and_hms(2024, 4, 16, 12, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                notification_date: chrono::Utc
+                    .with_ymd_and_hms(2024, 4, 16, 12, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
                     .with_ymd_and_hms(2024, 5, 15, 23, 59, 59)
-                    .unwrap(),
-                conference_start: chrono::Utc.with_ymd_and_hms(2024, 8, 3, 9, 0, 0).unwrap(),
-                conference_end: chrono::Utc.with_ymd_and_hms(2024, 8, 9, 18, 0, 0).unwrap(),
+                    .single()
+                    .expect("invalid datetime"),
+                conference_start: chrono::Utc
+                    .with_ymd_and_hms(2024, 8, 3, 9, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
+                conference_end: chrono::Utc
+                    .with_ymd_and_hms(2024, 8, 9, 18, 0, 0)
+                    .single()
+                    .expect("invalid datetime"),
             },
             requirements: SubmissionRequirements {
                 page_limit: 7,

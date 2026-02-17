@@ -19,7 +19,7 @@ fn main() {
 
         println!("Iteration {}: gradient = {:?}", i, gradients);
 
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         println!("  new params = {:?}", params);
 

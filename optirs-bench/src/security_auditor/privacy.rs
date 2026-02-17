@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn test_statistics_update() {
         let mut analyzer = PrivacyGuaranteesAnalyzer::with_builtin_tests();
-        let _ = analyzer.run_all_tests().unwrap();
+        let _ = analyzer.run_all_tests().expect("unwrap failed");
 
         let stats = analyzer.get_statistics();
         assert!(stats.total_tests > 0);

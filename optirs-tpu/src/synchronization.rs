@@ -349,11 +349,11 @@ impl SynchronizationManager {
             state: BarrierState::Active,
         };
 
-        let mut barriers = self.active_barriers.lock().unwrap();
+        let mut barriers = self.active_barriers.lock().expect("lock poisoned");
         barriers.insert(barrier_id, barrier);
 
         // Update statistics
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().expect("lock poisoned");
         stats.barriers_created += 1;
 
         Ok(())
@@ -365,7 +365,7 @@ impl SynchronizationManager {
 
         // Signal arrival at barrier
         {
-            let mut barriers = self.active_barriers.lock().unwrap();
+            let mut barriers = self.active_barriers.lock().expect("lock poisoned");
             if let Some(barrier) = barriers.get_mut(barrier_id) {
                 if !barrier.arrived_devices.contains(&self.device_id) {
                     barrier.arrived_devices.push(self.device_id);
@@ -378,7 +378,7 @@ impl SynchronizationManager {
                     condvar.notify_all();
 
                     // Update statistics
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self.stats.lock().expect("lock poisoned");
                     stats.barriers_completed += 1;
 
                     return Ok(());
@@ -392,12 +392,16 @@ impl SynchronizationManager {
 
         // Wait for barrier completion or timeout
         let barrier_condition = {
-            let barriers = self.active_barriers.lock().unwrap();
-            barriers.get(barrier_id).unwrap().condition.clone()
+            let barriers = self.active_barriers.lock().expect("lock poisoned");
+            barriers
+                .get(barrier_id)
+                .expect("unwrap failed")
+                .condition
+                .clone()
         };
 
         let (lock, condvar) = &*barrier_condition;
-        let completed = lock.lock().unwrap();
+        let completed = lock.lock().expect("lock poisoned");
 
         let timeout_result = condvar
             .wait_timeout_while(
@@ -405,16 +409,16 @@ impl SynchronizationManager {
                 Duration::from_secs(30), // Default timeout
                 |&mut completed| !completed,
             )
-            .unwrap();
+            .expect("unwrap failed");
 
         if timeout_result.1.timed_out() {
             // Mark barrier as timed out
-            let mut barriers = self.active_barriers.lock().unwrap();
+            let mut barriers = self.active_barriers.lock().expect("lock poisoned");
             if let Some(barrier) = barriers.get_mut(barrier_id) {
                 barrier.state = BarrierState::TimedOut;
             }
 
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().expect("lock poisoned");
             stats.barriers_timed_out += 1;
 
             return Err(SynchronizationError::BarrierTimeout {
@@ -424,7 +428,7 @@ impl SynchronizationManager {
 
         // Update statistics
         let wait_time = start_time.elapsed().as_secs_f64();
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().expect("lock poisoned");
         stats.total_sync_time_seconds += wait_time;
         stats.avg_barrier_wait_time =
             stats.total_sync_time_seconds / stats.barriers_completed as f64;
@@ -441,7 +445,7 @@ impl SynchronizationManager {
 
         // Update statistics
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().expect("lock poisoned");
             stats.collective_ops_total += 1;
         }
 
@@ -457,7 +461,7 @@ impl SynchronizationManager {
         let result = handler.execute(&request, &self.topology);
 
         // Update statistics based on result
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self.stats.lock().expect("lock poisoned");
         match &result {
             Ok(op_result) => {
                 stats.collective_ops_success += 1;
@@ -479,13 +483,13 @@ impl SynchronizationManager {
 
     /// Get current synchronization statistics
     pub fn get_statistics(&self) -> SynchronizationStats {
-        let stats = self.stats.lock().unwrap();
+        let stats = self.stats.lock().expect("lock poisoned");
         (*stats).clone()
     }
 
     /// Cancel all active barriers
     pub fn cancel_all_barriers(&self) {
-        let mut barriers = self.active_barriers.lock().unwrap();
+        let mut barriers = self.active_barriers.lock().expect("lock poisoned");
         for (_, barrier) in barriers.iter_mut() {
             barrier.state = BarrierState::Cancelled;
             let (_, condvar) = &*barrier.condition;
@@ -841,7 +845,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let barriers = sync_manager.active_barriers.lock().unwrap();
+        let barriers = sync_manager.active_barriers.lock().expect("lock poisoned");
         assert!(barriers.contains_key("test_barrier"));
     }
 
@@ -870,7 +874,7 @@ mod tests {
         let result = sync_manager.execute_collective_op(request);
         assert!(result.is_ok());
 
-        let op_result = result.unwrap();
+        let op_result = result.expect("unwrap failed");
         assert_eq!(op_result.status, OperationStatus::Success);
     }
 

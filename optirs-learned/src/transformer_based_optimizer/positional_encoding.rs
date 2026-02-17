@@ -439,7 +439,7 @@ mod tests {
         let encoding = PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Sinusoidal);
         assert!(encoding.is_ok());
 
-        let pe = encoding.unwrap();
+        let pe = encoding.expect("unwrap failed");
         assert_eq!(pe.parameter_count(), 0);
 
         let input = Array2::<f32>::zeros((2, 50));
@@ -452,7 +452,7 @@ mod tests {
         let encoding = PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Learned);
         assert!(encoding.is_ok());
 
-        let pe = encoding.unwrap();
+        let pe = encoding.expect("unwrap failed");
         assert_eq!(pe.parameter_count(), 100 * 64);
     }
 
@@ -461,7 +461,7 @@ mod tests {
         let encoding = PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Rotary);
         assert!(encoding.is_ok());
 
-        let pe = encoding.unwrap();
+        let pe = encoding.expect("unwrap failed");
         let input = Array2::<f32>::ones((2, 50));
         let result = pe.encode(&input);
         assert!(result.is_ok());
@@ -469,13 +469,13 @@ mod tests {
 
     #[test]
     fn test_position_encoding_retrieval() {
-        let pe =
-            PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Sinusoidal).unwrap();
+        let pe = PositionalEncoding::<f32>::new(100, 64, PositionalEncodingType::Sinusoidal)
+            .expect("unwrap failed");
 
         let pos_encoding = pe.get_position_encoding(10);
         assert!(pos_encoding.is_ok());
 
-        let encoding = pos_encoding.unwrap();
+        let encoding = pos_encoding.expect("unwrap failed");
         assert_eq!(encoding.len(), 64);
     }
 
@@ -484,7 +484,7 @@ mod tests {
         let rel_pe = RelativePositionalEncoding::<f32>::new(10, 64);
         assert!(rel_pe.is_ok());
 
-        let mut rpe = rel_pe.unwrap();
+        let mut rpe = rel_pe.expect("unwrap failed");
         assert!(rpe.initialize_sinusoidal().is_ok());
 
         let encoding = rpe.get_relative_encoding(5, 8);

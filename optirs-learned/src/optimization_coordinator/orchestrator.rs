@@ -485,8 +485,8 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
             .map(|episode| episode.performance_achieved)
             .collect();
 
-        let first = recent_performances.last().unwrap();
-        let last = recent_performances.first().unwrap();
+        let first = recent_performances.last().expect("unwrap failed");
+        let last = recent_performances.first().expect("unwrap failed");
 
         Ok(*last - *first)
     }
@@ -556,10 +556,10 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
             return Ok(T::zero());
         }
 
-        let mean = performances.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(performances.len()).unwrap();
+        let mean = performances.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(performances.len()).expect("unwrap failed");
         let variance = performances.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(performances.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(performances.len()).expect("unwrap failed");
 
         Ok(variance)
     }
@@ -581,10 +581,10 @@ impl<T: Float + Debug + std::fmt::Debug + Send + Sync + 'static> MetaLearningOrc
             return Ok(scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()));
         }
 
-        let mean = history.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(history.len()).unwrap();
+        let mean = history.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(history.len()).expect("unwrap failed");
         let variance = history.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(history.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(history.len()).expect("unwrap failed");
 
         // High confidence with high mean and low variance
         Ok(mean * (T::one() / (T::one() + variance)))
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_strategy_initialization() {
-        let mut orchestrator = MetaLearningOrchestrator::<f32>::new().unwrap();
+        let mut orchestrator = MetaLearningOrchestrator::<f32>::new().expect("unwrap failed");
         assert!(orchestrator.initialize_strategies().is_ok());
         assert!(orchestrator.strategies.len() > 0);
     }

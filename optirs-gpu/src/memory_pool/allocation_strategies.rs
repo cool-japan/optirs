@@ -38,7 +38,7 @@ impl AllocationImplementations {
         // Find first block that fits
         for (&block_size, blocks) in free_blocks.iter_mut() {
             if block_size >= size && !blocks.is_empty() {
-                let mut block = blocks.pop_front().unwrap();
+                let mut block = blocks.pop_front().expect("unwrap failed");
                 block.mark_used();
                 return Some(block);
             }
@@ -197,7 +197,7 @@ impl BuddyAllocator {
         // Find available block of this order or larger
         for current_order in order..=self.max_order {
             if !self.free_lists[current_order].is_empty() {
-                let offset = self.free_lists[current_order].pop().unwrap();
+                let offset = self.free_lists[current_order].pop().expect("unwrap failed");
 
                 // Split larger blocks if necessary
                 for split_order in (order..current_order).rev() {
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_buddy_allocator() {
-        let mut buddy = BuddyAllocator::new(0x10000000, 1024, 64).unwrap();
+        let mut buddy = BuddyAllocator::new(0x10000000, 1024, 64).expect("unwrap failed");
 
         // Allocate some blocks
         let ptr1 = buddy.allocate(64);
@@ -491,8 +491,8 @@ mod tests {
         assert!(ptr2.is_some());
 
         // Deallocate
-        assert!(buddy.deallocate(ptr1.unwrap(), 64));
-        assert!(buddy.deallocate(ptr2.unwrap(), 128));
+        assert!(buddy.deallocate(ptr1.expect("unwrap failed"), 64));
+        assert!(buddy.deallocate(ptr2.expect("unwrap failed"), 128));
     }
 
     #[test]
@@ -505,8 +505,8 @@ mod tests {
         let ptr2 = segregated.allocate(200);
         assert!(ptr2.is_some());
 
-        assert!(segregated.deallocate(ptr1.unwrap(), 100));
-        assert!(segregated.deallocate(ptr2.unwrap(), 200));
+        assert!(segregated.deallocate(ptr1.expect("unwrap failed"), 100));
+        assert!(segregated.deallocate(ptr2.expect("unwrap failed"), 200));
     }
 
     #[test]

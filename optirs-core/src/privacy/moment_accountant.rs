@@ -831,7 +831,7 @@ mod tests {
         let result = accountant.analyze_privacy(100);
         assert!(result.is_ok());
 
-        let analysis = result.unwrap();
+        let analysis = result.expect("unwrap failed");
         assert!(analysis.epsilon > 0.0);
         assert_eq!(analysis.delta, 1e-5);
         assert_eq!(analysis.steps, 100);
@@ -842,19 +842,19 @@ mod tests {
         let accountant = MomentsAccountant::new(1.0, 1e-5, 100, 1000);
         let log_moment = accountant.compute_log_moment(2, 1);
         assert!(log_moment.is_ok());
-        assert!(log_moment.unwrap() > 0.0);
+        assert!(log_moment.expect("unwrap failed") > 0.0);
     }
 
     #[test]
     fn test_privacy_spent_computation() {
         let accountant = MomentsAccountant::new(1.1, 1e-5, 256, 50000);
-        let (epsilon, delta) = accountant.get_privacy_spent(50).unwrap();
+        let (epsilon, delta) = accountant.get_privacy_spent(50).expect("unwrap failed");
 
         assert!(epsilon > 0.0);
         assert_eq!(delta, 1e-5);
 
         // More steps should consume more privacy
-        let (epsilon2, _) = accountant.get_privacy_spent(100).unwrap();
+        let (epsilon2, _) = accountant.get_privacy_spent(100).expect("unwrap failed");
         assert!(epsilon2 > epsilon);
     }
 
@@ -919,7 +919,7 @@ mod tests {
         let result = accountant.analyze_heterogeneous_composition(&mechanisms, 1e-5);
         assert!(result.is_ok());
 
-        let analysis = result.unwrap();
+        let analysis = result.expect("unwrap failed");
         assert!(analysis.is_heterogeneous);
         assert_eq!(analysis.num_compositions, 100);
     }

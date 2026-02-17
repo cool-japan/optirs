@@ -803,7 +803,7 @@ impl<
                         .get(&super::EvaluationMetric::FinalPerformance)
                 })
                 .sum::<T>()
-                / T::from(results.len()).unwrap()
+                / T::from(results.len()).expect("unwrap failed")
         } else {
             T::zero()
         };
@@ -1015,31 +1015,31 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> Architec
             ComponentType::Adam => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.random::<f64>() * 0.01).unwrap(),
+                    T::from(rng.random::<f64>() * 0.01).expect("unwrap failed"),
                 );
                 hyperparameters.insert(
                     "beta1".to_string(),
-                    T::from(0.8 + rng.random::<f64>() * 0.19).unwrap(),
+                    T::from(0.8 + rng.random::<f64>() * 0.19).expect("unwrap failed"),
                 );
                 hyperparameters.insert(
                     "beta2".to_string(),
-                    T::from(0.9 + rng.random::<f64>() * 0.099).unwrap(),
+                    T::from(0.9 + rng.random::<f64>() * 0.099).expect("unwrap failed"),
                 );
             }
             ComponentType::SGD => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.random::<f64>() * 0.1).unwrap(),
+                    T::from(rng.random::<f64>() * 0.1).expect("unwrap failed"),
                 );
                 hyperparameters.insert(
                     "momentum".to_string(),
-                    T::from(rng.random::<f64>() * 0.99).unwrap(),
+                    T::from(rng.random::<f64>() * 0.99).expect("unwrap failed"),
                 );
             }
             _ => {
                 hyperparameters.insert(
                     "learning_rate".to_string(),
-                    T::from(rng.random::<f64>() * 0.01).unwrap(),
+                    T::from(rng.random::<f64>() * 0.01).expect("unwrap failed"),
                 );
             }
         }
@@ -1308,8 +1308,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PositionalEncod
         for pos in 0..max_length {
             for i in 0.._model_dim / 2 {
                 let angle = pos as f64 / 10000_f64.powf(2.0 * i as f64 / _model_dim as f64);
-                encoding[[pos, 2 * i]] = T::from(angle.sin()).unwrap();
-                encoding[[pos, 2 * i + 1]] = T::from(angle.cos()).unwrap();
+                encoding[[pos, 2 * i]] = T::from(angle.sin()).expect("unwrap failed");
+                encoding[[pos, 2 * i + 1]] = T::from(angle.cos()).expect("unwrap failed");
             }
         }
 
@@ -1357,7 +1357,7 @@ mod tests {
         let controller = RNNController::<f64>::new(256, 2, 100);
         assert!(controller.is_ok());
 
-        let controller = controller.unwrap();
+        let controller = controller.expect("unwrap failed");
         assert_eq!(controller.name(), "RNNController");
     }
 
@@ -1366,7 +1366,7 @@ mod tests {
         let controller = TransformerController::<f64>::new(512, 8, 4);
         assert!(controller.is_ok());
 
-        let controller = controller.unwrap();
+        let controller = controller.expect("unwrap failed");
         assert_eq!(controller.name(), "TransformerController");
     }
 
@@ -1375,7 +1375,7 @@ mod tests {
         let controller = RandomController::<f64>::new(100);
         assert!(controller.is_ok());
 
-        let controller = controller.unwrap();
+        let controller = controller.expect("unwrap failed");
         assert_eq!(controller.name(), "RandomController");
     }
 }

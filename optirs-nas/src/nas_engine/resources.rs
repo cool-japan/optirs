@@ -843,7 +843,7 @@ where
 
         // Update current usage
         {
-            let mut current = self.current_usage.lock().unwrap();
+            let mut current = self.current_usage.lock().expect("lock poisoned");
             *current = total_usage.clone();
         }
 
@@ -862,7 +862,7 @@ where
             };
 
             {
-                let mut history = self.usage_history.lock().unwrap();
+                let mut history = self.usage_history.lock().expect("lock poisoned");
                 history.push(snapshot);
 
                 // Clean old history
@@ -900,7 +900,7 @@ where
         }
 
         let current_usage = {
-            let usage = self.current_usage.lock().unwrap();
+            let usage = self.current_usage.lock().expect("lock poisoned");
             usage.clone()
         };
 
@@ -921,13 +921,13 @@ where
 
     /// Get current resource usage
     pub fn get_current_usage(&self) -> ResourceUsage<T> {
-        let usage = self.current_usage.lock().unwrap();
+        let usage = self.current_usage.lock().expect("lock poisoned");
         usage.clone()
     }
 
     /// Get usage history
     pub fn get_usage_history(&self) -> Vec<ResourceSnapshot<T>> {
-        let history = self.usage_history.lock().unwrap();
+        let history = self.usage_history.lock().expect("lock poisoned");
         history.clone()
     }
 
@@ -959,9 +959,9 @@ where
             monitoring_duration: if !history.is_empty() {
                 history
                     .last()
-                    .unwrap()
+                    .expect("unwrap failed")
                     .timestamp
-                    .duration_since(history.first().unwrap().timestamp)
+                    .duration_since(history.first().expect("unwrap failed").timestamp)
             } else {
                 Duration::from_secs(0)
             },

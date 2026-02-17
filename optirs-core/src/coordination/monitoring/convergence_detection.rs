@@ -221,12 +221,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
             return T::zero();
         }
 
-        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(data.len()).unwrap();
+        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(data.len()).expect("unwrap failed");
         let variance = data
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(data.len() - 1).unwrap();
+            / T::from(data.len() - 1).expect("unwrap failed");
 
         variance
     }
@@ -257,7 +258,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
         let avg_improvement = recent_improvements
             .iter()
             .fold(T::zero(), |acc, &x| acc + x)
-            / T::from(recent_improvements.len()).unwrap();
+            / T::from(recent_improvements.len()).expect("unwrap failed");
 
         Some(avg_improvement)
     }
@@ -376,7 +377,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             };
         }
 
-        let current_value = state.history.back().unwrap();
+        let current_value = state.history.back().expect("unwrap failed");
         let previous_value = state.history[state.history.len() - 2];
 
         // Adaptive tolerance check
@@ -486,7 +487,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
 
         // Normalize and convert to confidence
-        let variance = T::from(n * (n - 1) * (2 * n + 5)).unwrap()
+        let variance = T::from(n * (n - 1) * (2 * n + 5)).expect("unwrap failed")
             / T::from(18.0).unwrap_or_else(|| T::zero());
         let z = s.abs() / variance.sqrt();
 
@@ -505,13 +506,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
 
         let gradients: Vec<T> = state.gradients.iter().cloned().collect();
-        let mean =
-            gradients.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(gradients.len()).unwrap();
+        let mean = gradients.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(gradients.len()).expect("unwrap failed");
         let variance = gradients
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(gradients.len()).unwrap();
+            / T::from(gradients.len()).expect("unwrap failed");
 
         if variance < T::epsilon() {
             return T::from(0.95).unwrap_or_else(|| T::zero()); // Perfect normality (no variation)
@@ -534,7 +535,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             return T::zero();
         }
 
-        let n = T::from(data.len()).unwrap();
+        let n = T::from(data.len()).expect("unwrap failed");
         let skew = data
             .iter()
             .map(|&x| {
@@ -552,7 +553,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             return T::from(3.0).unwrap_or_else(|| T::zero()); // Normal kurtosis
         }
 
-        let n = T::from(data.len()).unwrap();
+        let n = T::from(data.len()).expect("unwrap failed");
         let kurt = data
             .iter()
             .map(|&x| {
@@ -569,14 +570,14 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         // Simplified CDF comparison
         let mut first_sorted = first.to_vec();
         let mut second_sorted = second.to_vec();
-        first_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        second_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        first_sorted.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
+        second_sorted.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         let min_val = first_sorted[0].min(second_sorted[0]);
         let max_val = first_sorted
             .last()
-            .unwrap()
-            .max(*second_sorted.last().unwrap());
+            .expect("unwrap failed")
+            .max(*second_sorted.last().expect("unwrap failed"));
 
         let steps = 20;
         let step_size = (max_val - min_val) / T::from(steps).unwrap_or_else(|| T::zero());
@@ -595,7 +596,8 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
 
     fn empirical_cdf(&self, sorted_data: &[T], x: T) -> T {
         let count = sorted_data.iter().filter(|&&val| val <= x).count();
-        T::from(count).unwrap_or_else(|| T::zero()) / T::from(sorted_data.len()).unwrap()
+        T::from(count).unwrap_or_else(|| T::zero())
+            / T::from(sorted_data.len()).expect("unwrap failed")
     }
 
     fn combine_statistical_tests(&self, ks: T, mk: T, ad: T) -> T {
@@ -666,14 +668,15 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             return (T::zero(), T::zero());
         }
 
-        let n = T::from(data.len()).unwrap();
-        let sum_x = (0..data.len()).fold(T::zero(), |acc, i| acc + T::from(i).unwrap());
+        let n = T::from(data.len()).expect("unwrap failed");
+        let sum_x =
+            (0..data.len()).fold(T::zero(), |acc, i| acc + T::from(i).expect("unwrap failed"));
         let sum_y = data.iter().fold(T::zero(), |acc, &y| acc + y);
         let sum_xy = data.iter().enumerate().fold(T::zero(), |acc, (i, &y)| {
             acc + T::from(i).unwrap_or_else(|| T::zero()) * y
         });
         let sum_x2 = (0..data.len()).fold(T::zero(), |acc, i| {
-            let i_f = T::from(i).unwrap();
+            let i_f = T::from(i).expect("unwrap failed");
             acc + i_f * i_f
         });
 
@@ -719,7 +722,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         accelerations
             .iter()
             .fold(T::zero(), |acc, &a| acc + a.abs())
-            / T::from(accelerations.len()).unwrap()
+            / T::from(accelerations.len()).expect("unwrap failed")
     }
 
     fn compute_volatility(&self, data: &VecDeque<T>) -> T {
@@ -727,12 +730,13 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             return T::zero();
         }
 
-        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(data.len()).unwrap();
+        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(data.len()).expect("unwrap failed");
         let variance = data
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(data.len()).unwrap();
+            / T::from(data.len()).expect("unwrap failed");
 
         variance.sqrt()
     }
@@ -965,12 +969,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
             .collect();
 
         let mean = recent_values.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(recent_values.len()).unwrap();
+            / T::from(recent_values.len()).expect("unwrap failed");
         let variance = recent_values
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(recent_values.len()).unwrap();
+            / T::from(recent_values.len()).expect("unwrap failed");
 
         (-variance.sqrt()).exp()
     }
@@ -981,7 +985,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
         }
 
         let initial_value = state.history[0];
-        let current_value = *state.history.back().unwrap();
+        let current_value = *state.history.back().expect("unwrap failed");
         let best_value = state.best_value;
 
         if (initial_value - best_value).abs() < T::epsilon() {

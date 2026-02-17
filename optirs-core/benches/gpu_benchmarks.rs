@@ -25,7 +25,7 @@ fn bench_gpu_vs_cpu(c: &mut Criterion) {
             b.iter(|| {
                 let result = optimizer
                     .step(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -33,11 +33,11 @@ fn bench_gpu_vs_cpu(c: &mut Criterion) {
         // GPU accelerated
         group.bench_with_input(BenchmarkId::new("GPU", size), size, |b, &_size| {
             let optimizer = SGD::new(0.01);
-            let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+            let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
             b.iter(|| {
                 let result = gpu_opt
                     .step(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -89,11 +89,11 @@ fn bench_gpu_optimizer_types(c: &mut Criterion) {
     // GPU SGD
     group.bench_function("GPU_SGD", |b| {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -101,11 +101,11 @@ fn bench_gpu_optimizer_types(c: &mut Criterion) {
     // GPU SGD with momentum
     group.bench_function("GPU_SGD_Momentum", |b| {
         let optimizer = SGD::new_with_config(0.01, 0.9, 0.0);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -113,11 +113,11 @@ fn bench_gpu_optimizer_types(c: &mut Criterion) {
     // GPU Adam
     group.bench_function("GPU_Adam", |b| {
         let optimizer = Adam::new(0.001);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -138,11 +138,11 @@ fn bench_gpu_configurations(c: &mut Criterion) {
     // Default configuration
     group.bench_function("Default", |b| {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -154,11 +154,11 @@ fn bench_gpu_configurations(c: &mut Criterion) {
             use_tensor_cores: true,
             ..Default::default()
         };
-        let mut gpu_opt = GpuOptimizer::new(optimizer, config).unwrap();
+        let mut gpu_opt = GpuOptimizer::new(optimizer, config).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -170,11 +170,11 @@ fn bench_gpu_configurations(c: &mut Criterion) {
             use_mixed_precision: true,
             ..Default::default()
         };
-        let mut gpu_opt = GpuOptimizer::new(optimizer, config).unwrap();
+        let mut gpu_opt = GpuOptimizer::new(optimizer, config).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -187,11 +187,11 @@ fn bench_gpu_configurations(c: &mut Criterion) {
             use_mixed_precision: true,
             ..Default::default()
         };
-        let mut gpu_opt = GpuOptimizer::new(optimizer, config).unwrap();
+        let mut gpu_opt = GpuOptimizer::new(optimizer, config).expect("unwrap failed");
         b.iter(|| {
             let result = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
             black_box(result)
         });
     });
@@ -227,11 +227,11 @@ fn bench_gpu_parameter_scaling(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &_size| {
             let optimizer = SGD::new(0.01);
-            let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+            let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
             b.iter(|| {
                 let result = gpu_opt
                     .step(black_box(&params), black_box(&gradients))
-                    .unwrap();
+                    .expect("unwrap failed");
                 black_box(result)
             });
         });
@@ -257,12 +257,13 @@ fn bench_gpu_batch_processing(c: &mut Criterion) {
             batch_count,
             |b, &count| {
                 let optimizer = SGD::new(0.01);
-                let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+                let mut gpu_opt =
+                    GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
                 b.iter(|| {
                     for _ in 0..count {
                         let result = gpu_opt
                             .step(black_box(&params), black_box(&gradients))
-                            .unwrap();
+                            .expect("unwrap failed");
                         black_box(result);
                     }
                 });
@@ -283,18 +284,18 @@ fn bench_gpu_config_switching(c: &mut Criterion) {
 
     group.bench_function("Toggle_Tensor_Cores", |b| {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
         b.iter(|| {
             gpu_opt.set_use_tensor_cores(true);
             let result1 = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
 
             gpu_opt.set_use_tensor_cores(false);
             let result2 = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
 
             black_box((result1, result2))
         });
@@ -302,18 +303,18 @@ fn bench_gpu_config_switching(c: &mut Criterion) {
 
     group.bench_function("Toggle_Mixed_Precision", |b| {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).unwrap();
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
         b.iter(|| {
             gpu_opt.set_use_mixed_precision(true);
             let result1 = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
 
             gpu_opt.set_use_mixed_precision(false);
             let result2 = gpu_opt
                 .step(black_box(&params), black_box(&gradients))
-                .unwrap();
+                .expect("unwrap failed");
 
             black_box((result1, result2))
         });

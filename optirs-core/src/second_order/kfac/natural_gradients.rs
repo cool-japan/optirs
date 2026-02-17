@@ -90,7 +90,7 @@ impl NaturalGradientCompute {
         }
 
         if n == 0 {
-            return Ok(Array2::from_shape_vec((0, 0), Vec::new()).unwrap());
+            return Ok(Array2::from_shape_vec((0, 0), Vec::new()).expect("unwrap failed"));
         }
 
         // For small matrices, use direct inversion
@@ -334,8 +334,10 @@ mod tests {
 
     #[test]
     fn test_2x2_matrix_inverse() {
-        let matrix: Array2<f64> = Array2::from_shape_vec((2, 2), vec![4.0, 2.0, 1.0, 3.0]).unwrap();
-        let inverse = NaturalGradientCompute::safe_matrix_inverse_static(&matrix).unwrap();
+        let matrix: Array2<f64> =
+            Array2::from_shape_vec((2, 2), vec![4.0, 2.0, 1.0, 3.0]).expect("unwrap failed");
+        let inverse =
+            NaturalGradientCompute::safe_matrix_inverse_static(&matrix).expect("unwrap failed");
 
         // Check that A * A^{-1} ≈ I
         let product = matrix.dot(&inverse);
@@ -353,9 +355,10 @@ mod tests {
     fn test_3x3_matrix_inverse() {
         let matrix: Array2<f64> =
             Array2::from_shape_vec((3, 3), vec![2.0, 1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 1.0, 4.0])
-                .unwrap();
+                .expect("unwrap failed");
 
-        let inverse = NaturalGradientCompute::safe_matrix_inverse_static(&matrix).unwrap();
+        let inverse =
+            NaturalGradientCompute::safe_matrix_inverse_static(&matrix).expect("unwrap failed");
 
         // Check that A * A^{-1} ≈ I
         let product = matrix.dot(&inverse);
@@ -379,11 +382,13 @@ mod tests {
     #[test]
     fn test_positive_definite_check() {
         // Positive definite matrix
-        let pd_matrix = Array2::from_shape_vec((2, 2), vec![2.0, 1.0, 1.0, 2.0]).unwrap();
+        let pd_matrix =
+            Array2::from_shape_vec((2, 2), vec![2.0, 1.0, 1.0, 2.0]).expect("unwrap failed");
         assert!(NaturalGradientCompute::is_positive_definite(&pd_matrix));
 
         // Not positive definite matrix
-        let npd_matrix = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 2.0, 1.0]).unwrap();
+        let npd_matrix =
+            Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 2.0, 1.0]).expect("unwrap failed");
         assert!(!NaturalGradientCompute::is_positive_definite(&npd_matrix));
     }
 

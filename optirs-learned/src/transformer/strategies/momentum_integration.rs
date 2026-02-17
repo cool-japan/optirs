@@ -503,13 +503,13 @@ impl<
                 .fold(T::zero(), |a, b| a + b)
                 .sqrt();
             let variance = if self.momentum_history.len() > 1 {
-                let mean =
-                    momentum.iter().cloned().sum::<T>() / T::from(momentum.len() as f64).unwrap();
+                let mean = momentum.iter().cloned().sum::<T>()
+                    / T::from(momentum.len() as f64).expect("unwrap failed");
                 momentum
                     .iter()
                     .map(|&x| (x - mean) * (x - mean))
                     .fold(T::zero(), |a, b| a + b)
-                    / T::from((momentum.len() - 1) as f64).unwrap()
+                    / T::from((momentum.len() - 1) as f64).expect("unwrap failed")
             } else {
                 T::zero()
             };

@@ -214,7 +214,7 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
             let abs_z_score = z_score.abs();
 
             if abs_z_score > self.z_threshold {
-                outliers.push(A::from(z_score).unwrap());
+                outliers.push(A::from(z_score).expect("unwrap failed"));
                 outlier_indices.push(i);
 
                 if abs_z_score > 3.0 {
@@ -230,7 +230,7 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
 
         // Calculate interquartile range (IQR) for additional context
         let mut sorted_times = times.clone();
-        sorted_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_times.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
         let q1_idx = sorted_times.len() / 4;
         let q3_idx = 3 * sorted_times.len() / 4;
         let q1 = sorted_times[q1_idx];
@@ -334,11 +334,11 @@ pub mod stats_utils {
         }
 
         let mut sorted_data = data.to_vec();
-        sorted_data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_data.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
         let median_val = median(&sorted_data);
 
         let mut deviations: Vec<f64> = data.iter().map(|&x| (x - median_val).abs()).collect();
-        deviations.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        deviations.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
 
         median(&deviations)
     }
@@ -356,7 +356,7 @@ mod tests {
         PerformanceRecord {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("unwrap failed")
                 .as_secs(),
             commit_hash: None,
             branch: None,
@@ -390,7 +390,7 @@ mod tests {
             data.push_back(create_test_record(1000 + i * 100));
         }
 
-        let result = analyzer.analyze(&data).unwrap();
+        let result = analyzer.analyze(&data).expect("unwrap failed");
 
         assert!(result.summary.contains("increasing"));
         assert!(result.patterns.iter().any(|p| p.contains("increasing")));
@@ -406,7 +406,7 @@ mod tests {
             data.push_back(create_test_record(2000 - i * 100));
         }
 
-        let result = analyzer.analyze(&data).unwrap();
+        let result = analyzer.analyze(&data).expect("unwrap failed");
 
         assert!(result.summary.contains("decreasing"));
         assert!(result.patterns.iter().any(|p| p.contains("decreasing")));
@@ -422,7 +422,7 @@ mod tests {
             data.push_back(create_test_record(1000 + i * 10));
         }
 
-        let result = analyzer.analyze(&data).unwrap();
+        let result = analyzer.analyze(&data).expect("unwrap failed");
 
         assert!(result.summary.contains("Insufficient data"));
         assert!(result.patterns.iter().any(|p| p.contains("Insufficient")));
@@ -442,7 +442,7 @@ mod tests {
         data.push_back(create_test_record(2000)); // High outlier
         data.push_back(create_test_record(500)); // Low outlier
 
-        let result = analyzer.analyze(&data).unwrap();
+        let result = analyzer.analyze(&data).expect("unwrap failed");
 
         assert!(!result.anomalies.is_empty());
         assert!(result.summary.contains("outliers detected"));
@@ -458,7 +458,7 @@ mod tests {
             data.push_back(create_test_record(1000));
         }
 
-        let result = analyzer.analyze(&data).unwrap();
+        let result = analyzer.analyze(&data).expect("unwrap failed");
 
         assert_eq!(result.anomalies.len(), 0);
         assert!(result
@@ -472,7 +472,8 @@ mod tests {
         let analyzer = OutlierAnalyzer::new();
         let data = VecDeque::new();
 
-        let result: StatisticalAnalysisResult<f64> = analyzer.analyze(&data).unwrap();
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("unwrap failed");
 
         assert!(result.summary.contains("No data"));
         assert!(result.patterns.iter().any(|p| p.contains("No data")));

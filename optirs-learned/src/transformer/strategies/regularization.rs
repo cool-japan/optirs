@@ -454,7 +454,7 @@ impl<
             }
         }
 
-        Ok(total_entropy / T::from((num_heads * seq_len) as f64).unwrap())
+        Ok(total_entropy / T::from((num_heads * seq_len) as f64).expect("unwrap failed"))
     }
 
     /// Compute entropy gradient (simplified)
@@ -710,7 +710,7 @@ impl<
         );
         stats.insert(
             "attention_history_length".to_string(),
-            T::from(self.attention_history.len() as f64).unwrap(),
+            T::from(self.attention_history.len() as f64).expect("unwrap failed"),
         );
 
         if let Some(ref spectral_state) = self.spectral_state {

@@ -740,6 +740,6 @@ mod tests {
 
         let result = step.execute(partition).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 1);
+        assert_eq!(result.expect("unwrap failed").len(), 1);
     }
 }

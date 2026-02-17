@@ -465,7 +465,7 @@ impl<
             gradient_accumulator: None,
             optimizer_state: HashMap::new(),
             step_count: 0,
-            lr_schedule_state: A::from(0.001).unwrap(),
+            lr_schedule_state: A::from(0.001).expect("unwrap failed"),
         };
 
         Self {
@@ -540,29 +540,34 @@ impl<
         // SIMD-specific optimizations
         match simd_support {
             SIMDSupport::AVX512 => {
-                self.config
-                    .optimizer_params
-                    .insert("vectorized_ops".to_string(), A::from(512.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "vectorized_ops".to_string(),
+                    A::from(512.0).expect("unwrap failed"),
+                );
             }
             SIMDSupport::AVX => {
-                self.config
-                    .optimizer_params
-                    .insert("vectorized_ops".to_string(), A::from(256.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "vectorized_ops".to_string(),
+                    A::from(256.0).expect("unwrap failed"),
+                );
             }
             SIMDSupport::SSE => {
-                self.config
-                    .optimizer_params
-                    .insert("vectorized_ops".to_string(), A::from(128.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "vectorized_ops".to_string(),
+                    A::from(128.0).expect("unwrap failed"),
+                );
             }
             SIMDSupport::NEON => {
-                self.config
-                    .optimizer_params
-                    .insert("vectorized_ops".to_string(), A::from(128.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "vectorized_ops".to_string(),
+                    A::from(128.0).expect("unwrap failed"),
+                );
             }
             SIMDSupport::None => {
-                self.config
-                    .optimizer_params
-                    .insert("vectorized_ops".to_string(), A::from(32.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "vectorized_ops".to_string(),
+                    A::from(32.0).expect("unwrap failed"),
+                );
             }
         }
 
@@ -607,15 +612,17 @@ impl<
                     backward_precision: "fp32".to_string(),
                     loss_scaling: true,
                 };
-                self.config
-                    .optimizer_params
-                    .insert("tensor_cores".to_string(), A::from(1.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "tensor_cores".to_string(),
+                    A::from(1.0).expect("unwrap failed"),
+                );
             }
             GPUArchitecture::Volta | GPUArchitecture::Turing => {
                 self.config.precision = PrecisionStrategy::FP16;
-                self.config
-                    .optimizer_params
-                    .insert("tensor_cores".to_string(), A::from(1.0).unwrap());
+                self.config.optimizer_params.insert(
+                    "tensor_cores".to_string(),
+                    A::from(1.0).expect("unwrap failed"),
+                );
             }
             _ => {
                 self.config.precision = PrecisionStrategy::FP32;
@@ -656,7 +663,7 @@ impl<
         // Configure for matrix operations
         self.config.optimizer_params.insert(
             "matrix_units".to_string(),
-            A::from(matrix_units as f64).unwrap(),
+            A::from(matrix_units as f64).expect("unwrap failed"),
         );
 
         // Use all available matrix _units
@@ -718,9 +725,10 @@ impl<
         // Power-aware optimizations
         if power_budget < 5.0 {
             // Very low power
-            self.config
-                .optimizer_params
-                .insert("update_frequency".to_string(), A::from(10.0).unwrap());
+            self.config.optimizer_params.insert(
+                "update_frequency".to_string(),
+                A::from(10.0).expect("unwrap failed"),
+            );
             self.config.memory_strategy = MemoryStrategy::CPUOffloading { offload_ratio: 0.8 };
         }
 
@@ -803,7 +811,8 @@ impl<
         self.profiler.energy_consumption.push(energy);
 
         // Calculate throughput (simplified)
-        let throughput = A::from(self.config.batch_size as f64).unwrap() / computation_time;
+        let throughput =
+            A::from(self.config.batch_size as f64).expect("unwrap failed") / computation_time;
         self.profiler.throughput.push(throughput);
 
         // Keep history bounded
@@ -888,7 +897,8 @@ impl<
         } else {
             let recent_throughput =
                 &self.profiler.throughput[self.profiler.throughput.len().saturating_sub(10)..];
-            recent_throughput.iter().copied().sum::<A>() / A::from(recent_throughput.len()).unwrap()
+            recent_throughput.iter().copied().sum::<A>()
+                / A::from(recent_throughput.len()).expect("unwrap failed")
         }
     }
 
@@ -903,21 +913,21 @@ impl<
             A::zero()
         } else {
             self.profiler.computation_times.iter().sum::<A>()
-                / A::from(self.profiler.computation_times.len()).unwrap()
+                / A::from(self.profiler.computation_times.len()).expect("unwrap failed")
         };
 
         let avg_throughput = if self.profiler.throughput.is_empty() {
             A::zero()
         } else {
             self.profiler.throughput.iter().sum::<A>()
-                / A::from(self.profiler.throughput.len()).unwrap()
+                / A::from(self.profiler.throughput.len()).expect("unwrap failed")
         };
 
         let avg_energy = if self.profiler.energy_consumption.is_empty() {
             A::zero()
         } else {
             self.profiler.energy_consumption.iter().copied().sum::<A>()
-                / A::from(self.profiler.energy_consumption.len()).unwrap()
+                / A::from(self.profiler.energy_consumption.len()).expect("unwrap failed")
         };
 
         HardwarePerformanceStats {
@@ -926,7 +936,7 @@ impl<
             peak_memory_usage: self.resource_monitor.peak_memory,
             average_energy_consumption: avg_energy,
             hardware_utilization: self.resource_monitor.cpu_utilization,
-            efficiency_score: avg_throughput / (avg_energy + A::from(1e-8).unwrap()), // Avoid division by zero
+            efficiency_score: avg_throughput / (avg_energy + A::from(1e-8).expect("unwrap failed")), // Avoid division by zero
         }
     }
 
@@ -1040,7 +1050,7 @@ impl<A: Float + Send + Sync> AdaptiveTuner<A> {
         Self {
             tuning_history: Vec::new(),
             current_params: HashMap::new(),
-            performance_target: A::from(100.0).unwrap(),
+            performance_target: A::from(100.0).expect("unwrap failed"),
             strategy: TuningStrategy::BayesianOptimization { num_samples: 50 },
         }
     }
@@ -1079,7 +1089,7 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let mut optimizer = HardwareAwareOptimizer::new(platform, initial_params);
 
-        optimizer.optimize_for_hardware().unwrap();
+        optimizer.optimize_for_hardware().expect("unwrap failed");
 
         // Check CPU-specific optimizations
         assert!(optimizer.config.batch_size <= 512);
@@ -1109,7 +1119,7 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let mut optimizer = HardwareAwareOptimizer::new(platform, initial_params);
 
-        optimizer.optimize_for_hardware().unwrap();
+        optimizer.optimize_for_hardware().expect("unwrap failed");
 
         // Check GPU-specific optimizations
         assert_eq!(optimizer.config.batch_size, 128);
@@ -1134,7 +1144,7 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let mut optimizer = HardwareAwareOptimizer::new(platform, initial_params);
 
-        optimizer.optimize_for_hardware().unwrap();
+        optimizer.optimize_for_hardware().expect("unwrap failed");
 
         // Check TPU-specific optimizations
         assert_eq!(optimizer.config.batch_size, 512);
@@ -1159,7 +1169,7 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let mut optimizer = HardwareAwareOptimizer::new(platform, initial_params);
 
-        optimizer.optimize_for_hardware().unwrap();
+        optimizer.optimize_for_hardware().expect("unwrap failed");
 
         // Check edge-specific optimizations
         assert!(optimizer.config.batch_size <= 32);
@@ -1191,7 +1201,7 @@ mod tests {
         let initial_params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let mut optimizer = HardwareAwareOptimizer::new(platform, initial_params);
 
-        optimizer.optimize_for_hardware().unwrap();
+        optimizer.optimize_for_hardware().expect("unwrap failed");
 
         // Check distributed-specific optimizations
         assert_eq!(optimizer.config.batch_size, 128 * 16); // Scaled by number of nodes
@@ -1243,7 +1253,7 @@ mod tests {
         optimizer.resource_monitor.peak_memory = 4_000_000_000; // 4GB
 
         let initial_batch_size = optimizer.config.batch_size;
-        optimizer.adaptive_tune(100.0).unwrap(); // Target 100 samples/sec
+        optimizer.adaptive_tune(100.0).expect("unwrap failed"); // Target 100 samples/sec
 
         // Should have tuned for better performance
         assert!(optimizer.config.batch_size >= initial_batch_size);

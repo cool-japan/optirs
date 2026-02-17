@@ -692,22 +692,22 @@ impl ThreadSafeGpuMemorySystem {
         size: usize,
         alignment: Option<usize>,
     ) -> Result<*mut c_void, GpuMemorySystemError> {
-        let mut system = self.system.lock().unwrap();
+        let mut system = self.system.lock().expect("lock poisoned");
         system.allocate(size, alignment)
     }
 
     pub fn free(&self, ptr: *mut c_void) -> Result<(), GpuMemorySystemError> {
-        let mut system = self.system.lock().unwrap();
+        let mut system = self.system.lock().expect("lock poisoned");
         system.free(ptr)
     }
 
     pub fn get_stats(&self) -> SystemStats {
-        let mut system = self.system.lock().unwrap();
+        let mut system = self.system.lock().expect("lock poisoned");
         system.get_stats()
     }
 
     pub fn optimize(&self) -> Result<(), GpuMemorySystemError> {
-        let mut system = self.system.lock().unwrap();
+        let mut system = self.system.lock().expect("lock poisoned");
         system.optimize()
     }
 }

@@ -89,11 +89,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ScheduledTask<T> {
             task_type: TaskType::ParameterUpdate,
             priority: TaskPriority {
                 base_priority: 5,
-                urgency: T::from(0.5).unwrap(),
-                importance: T::from(0.5).unwrap(),
+                urgency: T::from(0.5).expect("unwrap failed"),
+                importance: T::from(0.5).expect("unwrap failed"),
                 efficiency: T::one(),
                 dynamic_adjustment: T::one(),
-                composite_score: T::from(5.0).unwrap(), // Initial composite score
+                composite_score: T::from(5.0).expect("unwrap failed"), // Initial composite score
             },
             resource_requirements: TaskResourceRequirements {
                 cpu_cores: 1,
@@ -836,7 +836,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityCalcula
         if let Some(deadline) = task.deadline {
             let now = SystemTime::now();
             let time_to_deadline = deadline.duration_since(now).unwrap_or_default();
-            let urgency = T::one() - T::from(time_to_deadline.as_secs_f64() / 3600.0).unwrap();
+            let urgency =
+                T::one() - T::from(time_to_deadline.as_secs_f64() / 3600.0).expect("unwrap failed");
             Ok(urgency.max(T::zero()).min(T::one()))
         } else {
             Ok(T::from(0.5).unwrap_or_else(|| T::zero()))

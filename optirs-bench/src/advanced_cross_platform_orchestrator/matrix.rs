@@ -171,8 +171,8 @@ mod tests {
     #[test]
     fn test_matrix_generation() {
         let config = TestMatrixConfig::default();
-        let generator = TestMatrixGenerator::new(config).unwrap();
-        let matrix = generator.generate_matrix().unwrap();
+        let generator = TestMatrixGenerator::new(config).expect("unwrap failed");
+        let matrix = generator.generate_matrix().expect("unwrap failed");
 
         assert!(!matrix.is_empty());
 
@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn test_matrix_filtering() {
         let config = TestMatrixConfig::default();
-        let generator = TestMatrixGenerator::new(config).unwrap();
-        let matrix = generator.generate_matrix().unwrap();
+        let generator = TestMatrixGenerator::new(config).expect("unwrap failed");
+        let matrix = generator.generate_matrix().expect("unwrap failed");
 
         let filter = MatrixFilter {
             platforms: Some(vec![PlatformTarget::LinuxX86_64]),

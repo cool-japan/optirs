@@ -28,7 +28,7 @@ use crate::regularizers::Regularizer;
 /// let mut gradients = Array1::from_vec(vec![0.1, 0.2, -0.3, 0.0]);
 ///
 /// // Apply regularization
-/// let penalty = regularizer.apply(&params, &mut gradients).unwrap();
+/// let penalty = regularizer.apply(&params, &mut gradients).expect("unwrap failed");
 ///
 /// // Gradients will be modified to include the L2 penalty gradient
 /// // Penalty will be: 0.5 * 0.01 * (0.5^2 + (-0.3)^2 + 0.0^2 + 0.2^2) = 0.005 * 0.38 = 0.0019
@@ -77,7 +77,7 @@ where
 
     fn penalty(&self, params: &Array<A, D>) -> Result<A> {
         // L2 penalty: 0.5 * alpha * sum(params^2)
-        let half = A::from(0.5).unwrap();
+        let half = A::from(0.5).expect("unwrap failed");
         let sum_squared = params.iter().fold(A::zero(), |acc, &x| acc + x * x);
         Ok(half * self.alpha * sum_squared)
     }

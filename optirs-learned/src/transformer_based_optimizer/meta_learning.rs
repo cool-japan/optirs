@@ -140,7 +140,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         }
 
         // Meta-update
-        let meta_loss = total_loss / T::from(tasks.len()).unwrap();
+        let meta_loss = total_loss / T::from(tasks.len()).expect("unwrap failed");
         let meta_gradients = self.compute_meta_gradients(&task_adaptations)?;
         self.meta_optimizer
             .update(&mut self.meta_state, &meta_gradients)?;
@@ -224,7 +224,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             }
         }
 
-        let num_tasks = T::from(tasks.len()).unwrap();
+        let num_tasks = T::from(tasks.len()).expect("unwrap failed");
         for update in meta_update.iter_mut() {
             *update = *update / num_tasks;
         }
@@ -277,7 +277,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         }
 
         let result = MetaLearningResult {
-            meta_loss: (total_loss / T::from(tasks.len()).unwrap())
+            meta_loss: (total_loss / T::from(tasks.len()).expect("unwrap failed"))
                 .to_f64()
                 .unwrap_or(0.0),
             task_adaptations: Vec::new(),
@@ -324,7 +324,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         }
 
         let result = MetaLearningResult {
-            meta_loss: (total_loss / T::from(tasks.len()).unwrap())
+            meta_loss: (total_loss / T::from(tasks.len()).expect("unwrap failed"))
                 .to_f64()
                 .unwrap_or(0.0),
             task_adaptations: Vec::new(),
@@ -388,14 +388,14 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             .iter()
             .map(|&x| x * x)
             .fold(T::zero(), |acc, x| acc + x);
-        Ok(mean_squared_error / T::from(data.len()).unwrap())
+        Ok(mean_squared_error / T::from(data.len()).expect("unwrap failed"))
     }
 
     fn compute_gradients(&self, params: &[T], loss: T) -> Result<Vec<T>> {
         // Simplified gradient computation
         let gradients = params
             .iter()
-            .map(|_| loss / T::from(params.len()).unwrap())
+            .map(|_| loss / T::from(params.len()).expect("unwrap failed"))
             .collect();
         Ok(gradients)
     }
@@ -410,7 +410,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             }
         }
 
-        let num_tasks = T::from(adaptations.len()).unwrap();
+        let num_tasks = T::from(adaptations.len()).expect("unwrap failed");
         for grad in meta_gradients.iter_mut() {
             *grad = *grad / num_tasks;
         }
@@ -425,7 +425,8 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
         }
 
         let recent_losses: Vec<_> = loss_history.iter().rev().take(5).cloned().collect();
-        let improvement = recent_losses.last().unwrap() - recent_losses.first().unwrap();
+        let improvement = recent_losses.last().expect("unwrap failed")
+            - recent_losses.first().expect("unwrap failed");
         Ok(improvement.clamp(0.0, 1.0))
     }
 
@@ -450,7 +451,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
             }
         }
 
-        let num_experiences = T::from(experiences.len()).unwrap();
+        let num_experiences = T::from(experiences.len()).expect("unwrap failed");
         for param in averaged_params.iter_mut() {
             *param = *param / num_experiences;
         }
@@ -636,7 +637,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryBank<T> {
             })
             .collect();
 
-        scored_experiences.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        scored_experiences.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("unwrap failed"));
 
         Ok(scored_experiences
             .into_iter()
@@ -800,7 +801,7 @@ mod tests {
         let memory = MemoryBank::<f32>::new(100, 64);
         assert!(memory.is_ok());
 
-        let mut bank = memory.unwrap();
+        let mut bank = memory.expect("unwrap failed");
         let task = TaskBatch {
             id: "test".to_string(),
             difficulty: 0.5,
@@ -818,7 +819,7 @@ mod tests {
         let network = AdaptationNetwork::<f32>::new(128, 256);
         assert!(network.is_ok());
 
-        let mut net = network.unwrap();
+        let mut net = network.expect("unwrap failed");
         let task = TaskBatch {
             id: "test".to_string(),
             difficulty: 0.5,

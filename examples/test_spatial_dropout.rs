@@ -3,7 +3,7 @@ use optirs_core::regularizers::SpatialDropout;
 
 #[allow(dead_code)]
 fn main() {
-    let sd = SpatialDropout::new(0.0).unwrap(); // No dropout to test
+    let sd = SpatialDropout::new(0.0).expect("unwrap failed"); // No dropout to test
 
     // Create a simple 4D tensor (batch, channels, height, width)
     let features = Array::from_shape_fn((1, 2, 2, 2), |(b, c, h, w)| {
@@ -20,7 +20,7 @@ fn main() {
     println!("Result:\n{:?}", result);
 
     // Test with dropout = 0.5
-    let sd_drop = SpatialDropout::new(0.5).unwrap();
+    let sd_drop = SpatialDropout::new(0.5).expect("unwrap failed");
     let result_drop = sd_drop.apply(&features, true);
     println!("Result with dropout:\n{:?}", result_drop);
 

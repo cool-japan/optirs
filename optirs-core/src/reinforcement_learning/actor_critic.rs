@@ -551,7 +551,7 @@ impl<
 
                 // Add target policy smoothing noise (TD3 feature)
                 for action in target_actions.iter_mut() {
-                    let noise = T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).unwrap()
+                    let noise = T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).expect("unwrap failed")
                         * T::from(2.0).unwrap_or_else(|| T::zero())
                         * self.config.td3_config.policy_noise;
                     let clipped_noise = noise
@@ -735,7 +735,7 @@ impl<
             // OU noise update: dx = theta * (0 - x) * dt + sigma * dW
             for noise in ou_state.iter_mut() {
                 let dx = -theta * *noise
-                    + sigma * T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).unwrap();
+                    + sigma * T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).expect("unwrap failed");
                 *noise = *noise + dx;
             }
         }
@@ -947,7 +947,7 @@ impl<
             .config
             .sac_config
             .target_entropy
-            .unwrap_or(-T::from(sampled_actions.ncols()).unwrap());
+            .unwrap_or(-T::from(sampled_actions.ncols()).expect("unwrap failed"));
 
         // Temperature loss: α * (target_entropy - current_entropy)
         let temperature_loss = self.temperature * (target_entropy - current_entropy);
@@ -973,7 +973,7 @@ impl<
 
                     // Add Gaussian noise: action = mean + std * noise
                     for ((action, &m), &s) in actions.iter_mut().zip(mean.iter()).zip(std.iter()) {
-                        let noise = T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).unwrap()
+                        let noise = T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).expect("unwrap failed")
                             * T::from(2.0).unwrap_or_else(|| T::zero()); // Simplified noise
                         *action = m + s * noise;
                     }

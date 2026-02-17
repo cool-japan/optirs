@@ -341,7 +341,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RLArchitectureA
                 steps = step + 1;
                 
                 // Select action using epsilon-greedy policy
-                let action = self.select_action(self.current_state.as_ref().unwrap())?;
+                let action = self.select_action(self.current_state.as_ref().expect("unwrap failed"))?;
                 
                 // Execute action in environment
                 let (next_state, reward, done) = env.step(&action)?;
@@ -349,7 +349,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RLArchitectureA
                 
                 // Store experience in replay buffer
                 let experience = Experience {
-                    state: self.current_state.as_ref().unwrap().clone(),
+                    state: self.current_state.as_ref().expect("unwrap failed").clone(),
                     action,
                     reward,
                     next_state: if done { None } else { Some(next_state.clone()) },
@@ -388,7 +388,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RLArchitectureA
                     .rev()
                     .take(100)
                     .cloned()
-                    .fold(T::zero(), |acc, r| acc + r) / T::from(100.0.min(episode as f64 + 1.0)).unwrap();
+                    .fold(T::zero(), |acc, r| acc + r) / T::from(100.0.min(episode as f64 + 1.0)).expect("unwrap failed");
                 println!("Episode {}: Average reward = {:.4}", episode, avg_reward.to_f64().unwrap_or(0.0));
             }
         }
@@ -550,7 +550,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RLArchitectureA
             ];
             
             let average_reward = recent_rewards.iter().cloned().fold(T::zero(), |acc, r| acc + r) /
-                T::from(recent_rewards.len() as f64).unwrap();
+                T::from(recent_rewards.len() as f64).expect("unwrap failed");
             
             self.training_stats.average_rewards.push(average_reward);
         }

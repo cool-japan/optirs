@@ -35,7 +35,7 @@ pub struct OptimizerConfig<A: Float> {
 impl<A: Float + Send + Sync> Default for OptimizerConfig<A> {
     fn default() -> Self {
         Self {
-            lr: A::from(0.001).unwrap(),
+            lr: A::from(0.001).expect("unwrap failed"),
             weight_decay: A::zero(),
             grad_clip: None,
             params: HashMap::new(),
@@ -239,7 +239,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> UnifiedOptimizer<A> for Uni
         }
 
         // Get gradient safely
-        let grad = param.grad.as_ref().unwrap();
+        let grad = param.grad.as_ref().expect("unwrap failed");
 
         // Get momentum factor
         let momentum = self
@@ -317,13 +317,13 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> UnifiedAdam<A> {
         let mut params = config.params.clone();
         params
             .entry("beta1".to_string())
-            .or_insert_with(|| A::from(0.9).unwrap());
+            .or_insert_with(|| A::from(0.9).expect("unwrap failed"));
         params
             .entry("beta2".to_string())
-            .or_insert_with(|| A::from(0.999).unwrap());
+            .or_insert_with(|| A::from(0.999).expect("unwrap failed"));
         params
             .entry("eps".to_string())
-            .or_insert_with(|| A::from(1e-8).unwrap());
+            .or_insert_with(|| A::from(1e-8).expect("unwrap failed"));
 
         Self {
             config: OptimizerConfig { params, ..config },
@@ -370,7 +370,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> UnifiedOptimizer<A> for Uni
         let eps = self.config.params["eps"];
 
         // Get gradient safely
-        let grad = param.grad.as_ref().unwrap();
+        let grad = param.grad.as_ref().expect("unwrap failed");
 
         // Initialize or get existing moment estimates
         let exp_avg = self
@@ -538,7 +538,7 @@ mod tests {
         let mut param = Parameter::new(Array1::from_vec(vec![1.0, 2.0, 3.0]), "test_param");
         param.set_grad(Array1::from_vec(vec![0.1, 0.2, 0.3]));
 
-        optimizer.step_param(&mut param).unwrap();
+        optimizer.step_param(&mut param).expect("unwrap failed");
 
         // Check that parameters were updated correctly
         assert!((param.data[0] - 0.99).abs() < 1e-10);
@@ -554,7 +554,7 @@ mod tests {
         let mut param = Parameter::new(Array1::from_vec(vec![1.0, 2.0, 3.0]), "test_param");
         param.set_grad(Array1::from_vec(vec![0.1, 0.2, 0.3]));
 
-        optimizer.step_param(&mut param).unwrap();
+        optimizer.step_param(&mut param).expect("unwrap failed");
 
         // Parameters should have been updated (exact values depend on Adam's internal state)
         assert!(param.data[0] < 1.0);
@@ -578,8 +578,8 @@ mod tests {
         assert!(param.grad().is_some());
 
         // Test gradient clipping
-        param.clip_grad(0.1).unwrap();
-        let grad = param.grad().unwrap();
+        param.clip_grad(0.1).expect("unwrap failed");
+        let grad = param.grad().expect("unwrap failed");
         let norm: f64 = grad.iter().map(|x| x * x).sum::<f64>().sqrt();
         assert!((norm - 0.1).abs() < 1e-10);
 

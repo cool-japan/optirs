@@ -1284,7 +1284,7 @@ mod tests {
     fn test_memory_allocator() {
         let mut allocator = MemoryAllocator::new(AllocationStrategy::BestFit, 1024);
 
-        let allocation = allocator.allocate(256, 32).unwrap();
+        let allocation = allocator.allocate(256, 32).expect("unwrap failed");
         assert_eq!(allocation.size, 256);
         assert_eq!(allocation.alignment, 32);
         assert!(allocator.current_usage >= 256);

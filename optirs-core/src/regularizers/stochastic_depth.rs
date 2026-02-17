@@ -77,8 +77,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> StochasticD
     /// following a linear decay schedule.
     fn survival_probability(&self) -> A {
         // Linear decay of survival probability with depth
-        let layer_ratio =
-            A::from_usize(self.layer_idx).unwrap() / A::from_usize(self.num_layers).unwrap();
+        let layer_ratio = A::from_usize(self.layer_idx).expect("unwrap failed")
+            / A::from_usize(self.num_layers).expect("unwrap failed");
         A::one() - (self.drop_prob * layer_ratio)
     }
 
@@ -90,7 +90,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> StochasticD
             .wrapping_mul(0x7fffffff)
             .wrapping_add(self.layer_idx as u64))
             % 10000;
-        let random_val = A::from_f64(hash as f64 / 10000.0).unwrap();
+        let random_val = A::from_f64(hash as f64 / 10000.0).expect("unwrap failed");
 
         random_val > self.survival_probability()
     }
@@ -233,7 +233,7 @@ mod tests {
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradients = gradients.clone();
 
-        let penalty = sd.apply(&params, &mut gradients).unwrap();
+        let penalty = sd.apply(&params, &mut gradients).expect("unwrap failed");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);

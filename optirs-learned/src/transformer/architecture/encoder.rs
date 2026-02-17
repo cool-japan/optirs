@@ -220,10 +220,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> FeedForwardNetw
         let mut linear2 = Array2::zeros((ff_dim, modeldim));
 
         for elem in linear1.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound1).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound1).expect("unwrap failed");
         }
         for elem in linear2.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound2).unwrap();
+            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound2).expect("unwrap failed");
         }
 
         let bias1 = Array1::zeros(ff_dim);

@@ -339,7 +339,7 @@ use {}::Optimizer;
 
 fn benchmark_{}(c: &mut Criterion) {{
     c.bench_function("{}", |b| {{
-        let optimizer = Optimizer::new().unwrap();
+        let optimizer = Optimizer::new().expect("unwrap failed");
         b.iter(|| {{
             // Benchmark code here
             black_box(&optimizer);

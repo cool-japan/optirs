@@ -667,7 +667,7 @@ mod tests {
         let config = ReproducibilityConfig::default();
         let mut manager = ReproducibilityManager::new(config);
 
-        let snapshot_id = manager.capture_environment().unwrap();
+        let snapshot_id = manager.capture_environment().expect("unwrap failed");
 
         assert!(manager.environments.contains_key(&snapshot_id));
         let snapshot = &manager.environments[&snapshot_id];
@@ -679,8 +679,10 @@ mod tests {
         let config = ReproducibilityConfig::default();
         let mut manager = ReproducibilityManager::new(config);
 
-        let env_id = manager.capture_environment().unwrap();
-        let report_id = manager.generate_report("test_experiment", &env_id).unwrap();
+        let env_id = manager.capture_environment().expect("unwrap failed");
+        let report_id = manager
+            .generate_report("test_experiment", &env_id)
+            .expect("unwrap failed");
 
         assert!(!manager.reports.is_empty());
         let report = &manager.reports[0];

@@ -247,7 +247,7 @@
 //!
 //! ## License
 //!
-//! Dual-licensed under MIT OR Apache-2.0
+//! licensed under Apache-2.0
 
 #![allow(deprecated)]
 #![allow(unreachable_code)]

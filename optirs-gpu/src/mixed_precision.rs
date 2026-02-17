@@ -214,7 +214,7 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
 
     /// Scale gradients before backward pass
     pub fn scale_loss(&self, loss: A) -> A {
-        loss * A::from(self.scaler.get_scale()).unwrap()
+        loss * A::from(self.scaler.get_scale()).expect("unwrap failed")
     }
 
     /// Unscale gradients and check for overflow
@@ -231,8 +231,8 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
                 let kernel = context.get_kernel("scale_gradients_check_overflow_f16")?;
 
                 // Set kernel parameters
-                kernel.set_buffer("gradients", self.gradients_half.as_ref().unwrap());
-                kernel.set_buffer("has_overflow", self.overflow_flag.as_ref().unwrap());
+                kernel.set_buffer("gradients", self.gradients_half.as_ref().expect("unwrap failed"));
+                kernel.set_buffer("has_overflow", self.overflow_flag.as_ref().expect("unwrap failed"));
                 kernel.set_f32("scale_factor", 1.0 / self.scaler.get_scale());
                 kernel.set_i32("n", gradients.len() as i32);
 
@@ -245,7 +245,7 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
                 let mut overflow_flag = vec![0i32; 1];
                 self.overflow_flag
                     .as_ref()
-                    .unwrap()
+                    .expect("unwrap failed")
                     .copy_to_host(&mut overflow_flag);
 
                 let has_overflow = overflow_flag[0] != 0;
@@ -256,7 +256,7 @@ impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
         }
 
         // CPU fallback
-        let scale = A::from(self.scaler.get_scale()).unwrap();
+        let scale = A::from(self.scaler.get_scale()).expect("unwrap failed");
         let mut has_overflow = false;
 
         gradients.mapv_inplace(|g| {

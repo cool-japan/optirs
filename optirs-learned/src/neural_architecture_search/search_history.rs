@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_search_history() {
-        let mut history = SearchHistory::<f32>::new(100).unwrap();
+        let mut history = SearchHistory::<f32>::new(100).expect("unwrap failed");
 
         let metrics = create_test_metrics();
         let result = history.record_evaluation("test_arch".to_string(), metrics);

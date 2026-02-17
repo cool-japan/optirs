@@ -626,7 +626,7 @@ impl AutomatedTestRunner {
 
             // Update execution status
             {
-                let mut queue = execution_queue.lock().unwrap();
+                let mut queue = execution_queue.lock().expect("lock poisoned");
                 if let Some(exec) = queue.iter_mut().find(|e| e.id == execution.id) {
                     exec.end_time = Some(Instant::now());
                     exec.resource_usage = execution.resource_usage.clone();

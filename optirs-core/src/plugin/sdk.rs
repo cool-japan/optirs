@@ -627,7 +627,7 @@ pub struct {}Factory;
 
 impl<A: Float + std::fmt::Debug + Send + Sync + 'static> OptimizerPluginFactory<A> for {}Factory {{
     fn create_optimizer(&self, config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<A>>> {{
-        let learning_rate = A::from(config.learning_rate).unwrap();
+        let learning_rate = A::from(config.learning_rate).expect("unwrap failed");
         Ok(Box::new({}Optimizer::new(learning_rate)))
     }}
     
@@ -709,7 +709,7 @@ fn test_{}_basic_functionality() {{
     let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
     let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
     
-    let result = optimizer.step(&params, &gradients).unwrap();
+    let result = optimizer.step(&params, &gradients).expect("unwrap failed");
     
     // Verify the result
     assert!((result[0] - 0.999).abs() < 1e-6);
@@ -726,7 +726,7 @@ fn test_{}_convergence() {{
     // Optimize towards zero
     for _ in 0..100 {{
         let gradients = &params * 2.0; // Gradient of x^2
-        params = optimizer.step(&params, &gradients).unwrap();
+        params = optimizer.step(&params, &gradients).expect("unwrap failed");
     }}
     
     // Should converge close to zero

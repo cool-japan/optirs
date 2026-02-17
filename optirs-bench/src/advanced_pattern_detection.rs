@@ -761,7 +761,7 @@ impl AdvancedPatternDetector {
                     .partial_cmp(&b.confidence)
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
-            .unwrap();
+            .expect("unwrap failed");
 
         let mut fused_pattern = (*base_pattern).clone();
 
@@ -817,7 +817,7 @@ impl AdvancedPatternDetector {
                         (freq_stats.avg_confidence + pattern.confidence) / 2.0;
                     freq_stats.last_seen = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .expect("unwrap failed")
                         .as_secs();
                 }
             } else {
@@ -832,7 +832,7 @@ impl AdvancedPatternDetector {
                         avg_confidence: pattern.confidence,
                         last_seen: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .expect("unwrap failed")
                             .as_secs(),
                         contexts: Vec::new(),
                     },

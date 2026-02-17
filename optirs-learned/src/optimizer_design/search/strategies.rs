@@ -372,7 +372,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SelectionMethod<T> for RouletteWh
         }
 
         for _ in 0..num_selected {
-            let mut roulette_value = T::from(scirs2_core::random::random::<f64>()).unwrap() * fitness_sum;
+            let mut roulette_value = T::from(scirs2_core::random::random::<f64>()).expect("unwrap failed") * fitness_sum;
             let mut cumulative_fitness = T::zero();
 
             for (idx, &fitness) in fitnesses.iter().enumerate() {
@@ -621,7 +621,7 @@ mod tests {
         let result = crossover.crossover(&arch1, &arch2);
 
         assert!(result.is_ok());
-        let (child1, child2) = result.unwrap();
+        let (child1, child2) = result.expect("unwrap failed");
         assert_eq!(child1.layers.len(), 1);
         assert_eq!(child2.layers.len(), 1);
     }

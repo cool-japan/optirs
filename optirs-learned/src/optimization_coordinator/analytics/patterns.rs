@@ -563,7 +563,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternDetector
         }
 
         // Use most recent pattern for prediction
-        let recent_pattern = self.pattern_history.back().unwrap();
+        let recent_pattern = self.pattern_history.back().expect("unwrap failed");
         let mut predictions = Vec::new();
 
         // Simple pattern-based prediction
@@ -738,7 +738,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
             }
         }
 
-        let oscillation_ratio = scirs2_core::numeric::NumCast::from(direction_changes).unwrap_or_else(|| T::zero()) / T::from(data.len().saturating_sub(2)).unwrap();
+        let oscillation_ratio = scirs2_core::numeric::NumCast::from(direction_changes).unwrap_or_else(|| T::zero()) / T::from(data.len().saturating_sub(2)).expect("unwrap failed");
 
         if oscillation_ratio > self.detection_threshold {
             let characteristics = self.calculate_characteristics(data)?;
@@ -768,10 +768,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
         }
 
         // Calculate variance - low variance indicates plateau
-        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(data.len()).unwrap();
+        let mean = data.iter().fold(T::zero(), |acc, &x| acc + x) / T::from(data.len()).expect("unwrap failed");
         let variance = data.iter()
             .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x) / T::from(data.len()).unwrap();
+            .fold(T::zero(), |acc, x| acc + x) / T::from(data.len()).expect("unwrap failed");
 
         let stability = T::one() / (T::one() + variance.sqrt());
 
@@ -803,7 +803,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternAnalyzer
         }
 
         // Simple linear regression slope
-        let n = T::from(data.len()).unwrap();
+        let n = T::from(data.len()).expect("unwrap failed");
         let sum_x = (0..data.len()).map(|i| scirs2_core::numeric::NumCast::from(i).unwrap_or_else(|| T::zero())).fold(T::zero(), |acc, x| acc + x);
         let sum_y = data.iter().fold(T::zero(), |acc, &y| acc + y);
         let sum_xy = data.iter().enumerate()
@@ -976,7 +976,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternLibrary<
             sum_squared_diff = sum_squared_diff + diff * diff;
         }
 
-        let rmse = (sum_squared_diff / T::from(pattern1.len()).unwrap()).sqrt();
+        let rmse = (sum_squared_diff / T::from(pattern1.len()).expect("unwrap failed")).sqrt();
         Ok(rmse < scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero())) // Threshold for similarity
     }
 }
@@ -1036,7 +1036,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SequenceAnalyze
         // Simple pattern detection
         if sequence.len() >= 3 {
             let pattern = SequencePattern {
-                name: format!("sequence_pattern_{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()),
+                name: format!("sequence_pattern_{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("unwrap failed").as_secs()),
                 elements: sequence.to_vec(),
                 duration: Duration::from_secs(sequence.len() as u64),
                 repetition_count: 1,
@@ -1128,10 +1128,10 @@ mod tests {
             0.5,
             5,
             20
-        ).unwrap();
+        ).expect("unwrap failed");
 
         let data = vec![5.0, 4.0, 3.0, 2.0, 1.0]; // Decreasing trend
-        let trend = analyzer.calculate_trend(&data).unwrap();
+        let trend = analyzer.calculate_trend(&data).expect("unwrap failed");
         assert!(trend < 0.0); // Should be negative for decreasing trend
     }
 
@@ -1142,10 +1142,10 @@ mod tests {
             0.5,
             5,
             20
-        ).unwrap();
+        ).expect("unwrap failed");
 
         let data = vec![1.0, 2.0, 3.0, 2.0, 1.0];
-        let characteristics = analyzer.calculate_characteristics(&data).unwrap();
+        let characteristics = analyzer.calculate_characteristics(&data).expect("unwrap failed");
 
         assert_eq!(characteristics.length, 5);
         assert!(characteristics.amplitude > 0.0);
@@ -1159,16 +1159,16 @@ mod tests {
             0.5,
             5,
             20
-        ).unwrap();
+        ).expect("unwrap failed");
 
         let data = vec![1.0, 2.0, 1.0, 2.0, 1.0]; // Periodic pattern
-        let autocorr = analyzer.calculate_autocorrelation(&data, 3).unwrap();
+        let autocorr = analyzer.calculate_autocorrelation(&data, 3).expect("unwrap failed");
         assert!(!autocorr.is_empty());
     }
 
     #[test]
     fn test_pattern_library() {
-        let mut library = PatternLibrary::<f32>::new().unwrap();
+        let mut library = PatternLibrary::<f32>::new().expect("unwrap failed");
 
         let template = PatternTemplate {
             name: "test_template".to_string(),
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn test_sequence_analyzer() {
-        let mut analyzer = SequenceAnalyzer::<f32>::new().unwrap();
+        let mut analyzer = SequenceAnalyzer::<f32>::new().expect("unwrap failed");
 
         let sequence = vec![
             SequenceElement {
@@ -1226,7 +1226,7 @@ mod tests {
             },
         ];
 
-        let patterns = analyzer.analyze_sequence(&sequence).unwrap();
+        let patterns = analyzer.analyze_sequence(&sequence).expect("unwrap failed");
         assert!(!patterns.is_empty());
     }
 }

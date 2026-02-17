@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_architecture_generator() {
         let constraints = SearchConstraints::default();
-        let space = ArchitectureSearchSpace::new(&constraints).unwrap();
+        let space = ArchitectureSearchSpace::new(&constraints).expect("unwrap failed");
         let generator = ArchitectureGenerator::new(&space);
         assert!(generator.is_ok());
     }

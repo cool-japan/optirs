@@ -27,18 +27,18 @@ use std::fmt::Debug;
 /// // Add parameter groups with different learning rates
 /// let params_fast = vec![Array1::zeros(5)];
 /// let config_fast = ParameterGroupConfig::new().with_learning_rate(0.01);
-/// let group_fast = optimizer.add_group(params_fast, config_fast).unwrap();
+/// let group_fast = optimizer.add_group(params_fast, config_fast).expect("unwrap failed");
 ///
 /// let params_slow = vec![Array1::zeros(3)];
 /// let config_slow = ParameterGroupConfig::new().with_learning_rate(0.0001);
-/// let group_slow = optimizer.add_group(params_slow, config_slow).unwrap();
+/// let group_slow = optimizer.add_group(params_slow, config_slow).expect("unwrap failed");
 ///
 /// // Optimize each group separately
 /// let grads_fast = vec![Array1::ones(5)];
-/// let updated_fast = optimizer.step_group(group_fast, &grads_fast).unwrap();
+/// let updated_fast = optimizer.step_group(group_fast, &grads_fast).expect("unwrap failed");
 ///
 /// let grads_slow = vec![Array1::ones(3)];
-/// let updated_slow = optimizer.step_group(group_slow, &grads_slow).unwrap();
+/// let updated_slow = optimizer.step_group(group_slow, &grads_slow).expect("unwrap failed");
 /// ```
 #[derive(Debug)]
 pub struct GroupedAdam<A: Float + Send + Sync, D: Dimension> {
@@ -65,10 +65,10 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     pub fn new(defaultlr: A) -> Self {
         Self {
             defaultlr,
-            default_beta1: A::from(0.9).unwrap(),
-            default_beta2: A::from(0.999).unwrap(),
+            default_beta1: A::from(0.9).expect("unwrap failed"),
+            default_beta2: A::from(0.999).expect("unwrap failed"),
             default_weight_decay: A::zero(),
-            epsilon: A::from(1e-8).unwrap(),
+            epsilon: A::from(1e-8).expect("unwrap failed"),
             amsgrad: false,
             group_manager: GroupManager::new(),
             step: 0,
@@ -132,7 +132,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         groupid: usize,
         gradients: &[Array<A, D>],
     ) -> Result<Vec<Array<A, D>>> {
-        let t = A::from(self.step + 1).unwrap();
+        let t = A::from(self.step + 1).expect("unwrap failed");
 
         // Initialize state if needed
         self.init_group_state(groupid)?;
@@ -170,18 +170,18 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             // Update states and compute new parameters
             let updated = {
                 // Update first moment
-                let m_t = group.state.get_mut("m_t").unwrap();
+                let m_t = group.state.get_mut("m_t").expect("unwrap failed");
                 m_t[i] = &m_t[i] * beta1 + &grad_with_decay * (A::one() - beta1);
-                let m_hat = &m_t[i] / (A::one() - beta1.powi(t.to_i32().unwrap()));
+                let m_hat = &m_t[i] / (A::one() - beta1.powi(t.to_i32().expect("unwrap failed")));
 
                 // Update second moment
-                let v_t = group.state.get_mut("v_t").unwrap();
+                let v_t = group.state.get_mut("v_t").expect("unwrap failed");
                 v_t[i] = &v_t[i] * beta2 + &grad_with_decay * &grad_with_decay * (A::one() - beta2);
-                let v_hat = &v_t[i] / (A::one() - beta2.powi(t.to_i32().unwrap()));
+                let v_hat = &v_t[i] / (A::one() - beta2.powi(t.to_i32().expect("unwrap failed")));
 
                 // Update parameters
                 if self.amsgrad {
-                    let v_hat_max = group.state.get_mut("v_hat_max").unwrap();
+                    let v_hat_max = group.state.get_mut("v_hat_max").expect("unwrap failed");
                     v_hat_max[i].zip_mut_with(&v_hat, |a, &b| *a = a.max(b));
                     param - &(&m_hat * lr / (&v_hat_max[i].mapv(|x| x.sqrt()) + self.epsilon))
                 } else {
@@ -261,7 +261,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         let groupid = self.add_group(params_vec, config)?;
         let result = self.step_group(groupid, &gradients_vec)?;
 
-        Ok(result.into_iter().next().unwrap())
+        Ok(result.into_iter().next().expect("unwrap failed"))
     }
 
     fn get_learning_rate(&self) -> A {
@@ -293,20 +293,28 @@ mod tests {
         // Add first group with high learning rate
         let params1 = vec![Array1::from_vec(vec![1.0, 2.0])];
         let config1 = ParameterGroupConfig::new().with_learning_rate(0.01);
-        let group1 = optimizer.add_group(params1, config1).unwrap();
+        let group1 = optimizer
+            .add_group(params1, config1)
+            .expect("unwrap failed");
 
         // Add second group with low learning rate
         let params2 = vec![Array1::from_vec(vec![3.0, 4.0, 5.0])];
         let config2 = ParameterGroupConfig::new().with_learning_rate(0.0001);
-        let group2 = optimizer.add_group(params2, config2).unwrap();
+        let group2 = optimizer
+            .add_group(params2, config2)
+            .expect("unwrap failed");
 
         // Update first group
         let grads1 = vec![Array1::from_vec(vec![0.1, 0.2])];
-        let updated1 = optimizer.step_group(group1, &grads1).unwrap();
+        let updated1 = optimizer
+            .step_group(group1, &grads1)
+            .expect("unwrap failed");
 
         // Update second group
         let grads2 = vec![Array1::from_vec(vec![0.3, 0.4, 0.5])];
-        let updated2 = optimizer.step_group(group2, &grads2).unwrap();
+        let updated2 = optimizer
+            .step_group(group2, &grads2)
+            .expect("unwrap failed");
 
         // Verify different updates due to different learning rates
         assert!(updated1[0][0] < 1.0); // Should decrease more
@@ -322,10 +330,10 @@ mod tests {
         let config = ParameterGroupConfig::new()
             .with_custom_param("beta1".to_string(), 0.8)
             .with_custom_param("beta2".to_string(), 0.99);
-        let group = optimizer.add_group(params, config).unwrap();
+        let group = optimizer.add_group(params, config).expect("unwrap failed");
 
         // Verify custom parameters are used
-        let group_ref = optimizer.get_group(group).unwrap();
+        let group_ref = optimizer.get_group(group).expect("unwrap failed");
         assert_eq!(group_ref.get_custom_param("beta1", 0.0), 0.8);
         assert_eq!(group_ref.get_custom_param("beta2", 0.0), 0.99);
     }
@@ -337,7 +345,9 @@ mod tests {
         // Add groups
         let params1 = vec![Array1::zeros(2)];
         let config1 = ParameterGroupConfig::new();
-        optimizer.add_group(params1, config1).unwrap();
+        optimizer
+            .add_group(params1, config1)
+            .expect("unwrap failed");
 
         assert_eq!(optimizer.groups().len(), 1);
 

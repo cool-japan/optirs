@@ -1,7 +1,7 @@
-// Stress test analyzer binary for CI/CD integration
-//
-// This binary analyzes stress test results and generates comprehensive
-// reports for memory and performance stress testing validation.
+//! Stress test analyzer binary for CI/CD integration
+//!
+//! This binary analyzes stress test results and generates comprehensive
+//! reports for memory and performance stress testing validation.
 
 use clap::{Arg, Command};
 use optirs_core::error::{OptimError, Result};
@@ -446,26 +446,36 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    let inputpath = PathBuf::from(matches.get_one::<String>("input").unwrap());
-    let outputpath = PathBuf::from(matches.get_one::<String>("output").unwrap());
-    let format = matches.get_one::<String>("format").unwrap();
+    let inputpath = PathBuf::from(
+        matches
+            .get_one::<String>("input")
+            .ok_or_else(|| OptimError::InvalidConfig("Input path is required".to_string()))?,
+    );
+    let outputpath = PathBuf::from(
+        matches
+            .get_one::<String>("output")
+            .ok_or_else(|| OptimError::InvalidConfig("Output path is required".to_string()))?,
+    );
+    let format = matches
+        .get_one::<String>("format")
+        .ok_or_else(|| OptimError::InvalidConfig("Format is required".to_string()))?;
     let verbose = matches.get_flag("verbose");
 
     let performance_threshold: f64 = matches
         .get_one::<String>("performance-threshold")
-        .unwrap()
+        .ok_or_else(|| OptimError::InvalidConfig("Performance threshold is required".to_string()))?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid performance threshold".to_string()))?;
 
     let memory_threshold: f64 = matches
         .get_one::<String>("memory-threshold")
-        .unwrap()
+        .ok_or_else(|| OptimError::InvalidConfig("Memory threshold is required".to_string()))?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid memory threshold".to_string()))?;
 
     let stability_threshold: f64 = matches
         .get_one::<String>("stability-threshold")
-        .unwrap()
+        .ok_or_else(|| OptimError::InvalidConfig("Stability threshold is required".to_string()))?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid stability threshold".to_string()))?;
 
@@ -745,7 +755,7 @@ fn analyze_stress_test_results(
         environment_info: env_info,
         timestamp: SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| OptimError::InvalidConfig(format!("System time error: {}", e)))?
             .as_secs(),
     })
 }

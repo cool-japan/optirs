@@ -28,7 +28,7 @@ use crate::regularizers::Regularizer;
 /// let mut gradients = Array1::from_vec(vec![0.1, 0.2, -0.3, 0.0]);
 ///
 /// // Apply regularization
-/// let penalty = regularizer.apply(&params, &mut gradients).unwrap();
+/// let penalty = regularizer.apply(&params, &mut gradients).expect("unwrap failed");
 ///
 /// // Gradients will be modified to include the L1 penalty gradient
 /// // Penalty will be: 0.01 * (|0.5| + |-0.3| + |0.0| + |0.2|) = 0.01 * 1.0 = 0.01

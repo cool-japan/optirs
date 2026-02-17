@@ -35,7 +35,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = Lion::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).unwrap();
+/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lion<A: Float + ScalarOperand + Debug> {
@@ -60,8 +60,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Lion<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).unwrap(),
-            beta2: A::from(0.99).unwrap(),
+            beta1: A::from(0.9).expect("unwrap failed"),
+            beta2: A::from(0.99).expect("unwrap failed"),
             weight_decay: A::zero(),
             m: None,
         }
@@ -149,7 +149,7 @@ where
             self.m = Some(vec![Array::zeros(params_dyn.raw_dim())]);
         }
 
-        let m = self.m.as_mut().unwrap();
+        let m = self.m.as_mut().expect("unwrap failed");
 
         // Ensure we have state for this parameter set
         if m.is_empty() {
@@ -188,7 +188,9 @@ where
         m[0] = &m[0] * self.beta2 + &gradients_dyn * (A::one() - self.beta2);
 
         // Convert back to original dimension
-        Ok(updated_params.into_dimensionality::<D>().unwrap())
+        Ok(updated_params
+            .into_dimensionality::<D>()
+            .expect("unwrap failed"))
     }
 
     fn get_learning_rate(&self) -> A {
@@ -227,7 +229,7 @@ mod tests {
             // Fewer iterations with higher learning rate
             // Gradient of x^2 is 2x
             let gradients = Array1::from_vec(vec![2.0 * params[0]]);
-            params = optimizer.step(&params, &gradients).unwrap();
+            params = optimizer.step(&params, &gradients).expect("unwrap failed");
         }
 
         // With learning rate 0.1 and 40 iterations, should reach close to 1.0
@@ -241,17 +243,19 @@ mod tests {
         // Perform a step to initialize state
         let params = Array1::from_vec(vec![1.0]);
         let gradients = Array1::from_vec(vec![0.1]);
-        let _ = optimizer.step(&params, &gradients).unwrap();
+        let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Reset optimizer
         optimizer.reset();
 
         // Next step should behave like the first
-        let next_step = optimizer.step(&params, &gradients).unwrap();
+        let next_step = optimizer.step(&params, &gradients).expect("unwrap failed");
 
         // Create fresh optimizer for comparison
         let mut fresh_optimizer: Lion<f64> = Lion::new(0.1);
-        let fresh_step = fresh_optimizer.step(&params, &gradients).unwrap();
+        let fresh_step = fresh_optimizer
+            .step(&params, &gradients)
+            .expect("unwrap failed");
 
         assert_abs_diff_eq!(next_step[0], fresh_step[0], epsilon = 1e-10);
     }

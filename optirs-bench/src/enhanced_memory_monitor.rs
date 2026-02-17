@@ -1568,8 +1568,8 @@ mod tests {
 
     #[test]
     fn test_pressure_detector() {
-        let detector = MemoryPressureDetector::new().unwrap();
-        let analysis = detector.generate_analysis().unwrap();
+        let detector = MemoryPressureDetector::new().expect("unwrap failed");
+        let analysis = detector.generate_analysis().expect("unwrap failed");
         assert_eq!(analysis.current_level, PressureLevel::Normal);
     }
 
