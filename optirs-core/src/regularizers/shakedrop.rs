@@ -1,10 +1,14 @@
 use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::random::Rng;
+use std::cell::RefCell;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
 use crate::regularizers::Regularizer;
+
+/// Result type for ShakeDrop forward pass: transformed activations and gate parameters (b, alpha, beta).
+type ShakeDropResult<A, D> = (Array<A, D>, (A, A, A));
 
 /// ShakeDrop regularization
 ///
@@ -24,7 +28,7 @@ use crate::regularizers::Regularizer;
 /// * Yamada, Y., Iwamura, M., & Kise, K. (2018). ShakeDrop regularization.
 ///   arXiv preprint arXiv:1802.02375.
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ShakeDrop<A: Float + FromPrimitive + Debug> {
     /// Probability of applying ShakeDrop
     pub p: A,
@@ -32,8 +36,8 @@ pub struct ShakeDrop<A: Float + FromPrimitive + Debug> {
     pub alpha_range: (A, A),
     /// Range for the beta parameter
     pub beta_range: (A, A),
-    /// Random number generator
-    rng: scirs2_core::random::Random<scirs2_core::random::rngs::StdRng>,
+    /// Random number generator (wrapped in RefCell for interior mutability)
+    rng: RefCell<scirs2_core::random::Random<scirs2_core::random::rngs::StdRng>>,
 }
 
 impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
@@ -57,7 +61,7 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
             p,
             alpha_range: (neg_one, one),
             beta_range: (zero, one),
-            rng: scirs2_core::random::Random::seed(42),
+            rng: RefCell::new(scirs2_core::random::Random::seed(42)),
         }
     }
 
@@ -77,23 +81,29 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
             p,
             alpha_range: alpharange,
             beta_range,
-            rng: scirs2_core::random::Random::seed(42),
+            rng: RefCell::new(scirs2_core::random::Random::seed(42)),
         }
     }
 
     /// Get a random value between the given range
-    fn random_in_range(&mut self, range: (A, A)) -> A {
+    fn random_in_range(&self, range: (A, A)) -> Result<A> {
         let (min, max) = range;
-        let min_f = min.to_f64().expect("unwrap failed");
-        let max_f = max.to_f64().expect("unwrap failed");
+        let min_f = min
+            .to_f64()
+            .ok_or_else(|| OptimError::InvalidConfig("Failed to convert min to f64".to_string()))?;
+        let max_f = max
+            .to_f64()
+            .ok_or_else(|| OptimError::InvalidConfig("Failed to convert max to f64".to_string()))?;
 
         // Handle equal min and max to avoid "empty range" error
         if (max_f - min_f).abs() < 1e-10 {
-            return min;
+            return Ok(min);
         }
 
-        let random_val = self.rng.gen_range(min_f..max_f);
-        A::from_f64(random_val).expect("unwrap failed")
+        let random_val = self.rng.borrow_mut().gen_range(min_f..max_f);
+        A::from_f64(random_val).ok_or_else(|| {
+            OptimError::InvalidConfig("Failed to convert random value from f64".to_string())
+        })
     }
 
     /// Get a forward pass gate for the ShakeDrop
@@ -104,29 +114,29 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
     /// - b: Binary gate (1 or 0) based on the probability p
     /// - alpha: Random value within alpha_range if b is 1, otherwise 0
     /// - beta: Random value within beta_range
-    fn get_gate(&mut self) -> (A, A, A) {
+    fn get_gate(&self) -> Result<(A, A, A)> {
         let zero = A::zero();
         let one = A::one();
 
         // Determine if the gate is active
-        let u: f64 = self.rng.gen_range(0.0..1.0);
-        let b = if u < self.p.to_f64().expect("unwrap failed") {
-            one
-        } else {
-            zero
-        };
+        let u: f64 = self.rng.borrow_mut().gen_range(0.0..1.0);
+        let p_f64 = self
+            .p
+            .to_f64()
+            .ok_or_else(|| OptimError::InvalidConfig("Failed to convert p to f64".to_string()))?;
+        let b = if u < p_f64 { one } else { zero };
 
         // Get random alpha if gate is active..otherwise 0
         let alpha = if b > zero {
-            self.random_in_range(self.alpha_range)
+            self.random_in_range(self.alpha_range)?
         } else {
             zero
         };
 
         // Get random beta regardless of gate
-        let beta = self.random_in_range(self.beta_range);
+        let beta = self.random_in_range(self.beta_range)?;
 
-        (b, alpha, beta)
+        Ok((b, alpha, beta))
     }
 
     /// Apply ShakeDrop to input activations
@@ -138,20 +148,20 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
     /// # Returns
     ///
     /// The transformed activations and gate parameters for use in backward pass
-    pub fn forward<S, D>(&mut self, x: &ArrayBase<S, D>) -> (Array<A, D>, (A, A, A))
+    pub fn forward<S, D>(&self, x: &ArrayBase<S, D>) -> Result<ShakeDropResult<A, D>>
     where
         S: Data<Elem = A>,
         D: Dimension,
     {
         // Get the gate values
-        let (b, alpha, beta) = self.get_gate();
+        let (b, alpha, beta) = self.get_gate()?;
 
         // Apply ShakeDrop transformation
         // During forward pass: x' = x * (b + alpha - b*alpha)
         let factor = b + alpha - b * alpha;
         let result = x.mapv(|v| v * factor);
 
-        (result, (b, alpha, beta))
+        Ok((result, (b, alpha, beta)))
     }
 
     /// Backward pass for ShakeDrop
@@ -231,10 +241,10 @@ mod tests {
 
         // Initialize ShakeDrop with p=1.0 to ensure gate is always active
         // Use slightly different values for min and max to avoid empty range error
-        let mut sd = ShakeDrop::new_with_ranges(1.0f64, (0.5, 0.500001), (0.5, 0.500001));
+        let sd = ShakeDrop::new_with_ranges(1.0f64, (0.5, 0.500001), (0.5, 0.500001));
 
         // Forward pass
-        let (output, gate_params) = sd.forward(&x);
+        let (output, gate_params) = sd.forward(&x).expect("forward failed");
 
         // Verify the gate parameters
         assert_eq!(gate_params.0, 1.0); // b should be 1 since p=1.0
@@ -263,10 +273,10 @@ mod tests {
 
         // Initialize ShakeDrop with p=0.0 to ensure gate is always inactive
         // Use slightly different values for min and max to avoid empty range error
-        let mut sd = ShakeDrop::new_with_ranges(0.0f64, (-0.5, -0.499999), (0.5, 0.500001));
+        let sd = ShakeDrop::new_with_ranges(0.0f64, (-0.5, -0.499999), (0.5, 0.500001));
 
         // Forward pass - gate should be inactive
-        let (output, gate_params) = sd.forward(&x);
+        let (output, gate_params) = sd.forward(&x).expect("forward failed");
 
         // Verify the gate parameters
         assert_eq!(gate_params.0, 0.0); // b should be 0 since p=0.0
@@ -281,34 +291,38 @@ mod tests {
 
     #[test]
     fn test_shakedrop_gen_range() {
-        let mut sd = ShakeDrop::new(0.5f64);
+        let sd = ShakeDrop::new(0.5f64);
 
         // Test random value generation within range
         for _ in 0..100 {
-            let value = sd.random_in_range((-0.5, 0.5));
+            let value = sd
+                .random_in_range((-0.5, 0.5))
+                .expect("random_in_range failed");
             assert!((-0.5..=0.5).contains(&value));
         }
 
         // Test with very small range (should not panic)
-        let value = sd.random_in_range((0.5, 0.5));
+        let value = sd
+            .random_in_range((0.5, 0.5))
+            .expect("random_in_range failed");
         assert_eq!(value, 0.5);
     }
 
     #[test]
     fn test_shakedrop_get_gate() {
         // Test with p=1.0 - gate should always be active
-        let mut sd = ShakeDrop::new(1.0f64);
+        let sd = ShakeDrop::new(1.0f64);
         for _ in 0..10 {
-            let (b, alpha, beta) = sd.get_gate();
+            let (b, alpha, beta) = sd.get_gate().expect("get_gate failed");
             assert_eq!(b, 1.0);
             assert!((-1.0..=1.0).contains(&alpha));
             assert!((0.0..=1.0).contains(&beta));
         }
 
         // Test with p=0.0 - gate should always be inactive
-        let mut sd = ShakeDrop::new(0.0f64);
+        let sd = ShakeDrop::new(0.0f64);
         for _ in 0..10 {
-            let (b, alpha, beta) = sd.get_gate();
+            let (b, alpha, beta) = sd.get_gate().expect("get_gate failed");
             assert_eq!(b, 0.0);
             assert_eq!(alpha, 0.0);
             assert!((0.0..=1.0).contains(&beta));
@@ -325,7 +339,7 @@ mod tests {
         assert!(sd.apply(&params, &mut grads).is_err());
 
         // penalty() should return zero
-        let penalty = sd.penalty(&params).expect("unwrap failed");
+        let penalty = sd.penalty(&params).expect("penalty failed");
         assert_eq!(penalty, 0.0);
     }
 }

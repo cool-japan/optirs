@@ -1,0 +1,13 @@
+# Configuration for wasm32 builds
+# Use with: cargo build --target wasm32-unknown-unknown
+
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "link-arg=-z",
+    "-C", "link-arg=stack-size=1048576",
+]
+
+[alias]
+wasm-build = "build --target wasm32-unknown-unknown --features wasm"
+wasm-build-release = "build --target wasm32-unknown-unknown --features wasm --release"
+wasm-test = "test --target wasm32-unknown-unknown --features wasm"

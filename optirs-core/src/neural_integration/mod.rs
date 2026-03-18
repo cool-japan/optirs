@@ -1229,8 +1229,8 @@ pub mod architecture_aware {
             let attention_layers: Vec<LayerId> = self
                 .param_manager
                 .get_all_parameters()
-                .iter()
-                .filter_map(|(_param_id, metadata)| {
+                .values()
+                .filter_map(|metadata| {
                     if metadata.tags.contains(&"attention".to_string()) {
                         Some(metadata.layername.clone())
                     } else {
@@ -1310,8 +1310,8 @@ pub mod architecture_aware {
             let norm_layers: Vec<LayerId> = self
                 .param_manager
                 .get_all_parameters()
-                .iter()
-                .filter_map(|(_param_id, metadata)| {
+                .values()
+                .filter_map(|metadata| {
                     if metadata.paramtype == ParameterType::Normalization {
                         Some(metadata.layername.clone())
                     } else {

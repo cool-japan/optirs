@@ -123,3 +123,5 @@ regression_test_data/
 # CI/CD artifacts
 .github/workflows/cache/
 ci_cache/
+# Rustc ICE dumps
+rustc-ice-*.txt

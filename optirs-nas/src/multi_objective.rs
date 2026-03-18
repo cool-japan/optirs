@@ -8,6 +8,7 @@ use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
 use scirs2_core::random::Rng;
+use scirs2_core::RngExt;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;

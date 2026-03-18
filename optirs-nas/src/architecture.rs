@@ -5,6 +5,7 @@
 //! and mutation/crossover operations for evolutionary algorithms.
 
 use scirs2_core::numeric::Float;
+use scirs2_core::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;

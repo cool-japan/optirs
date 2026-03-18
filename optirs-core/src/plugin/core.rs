@@ -601,43 +601,35 @@ pub fn validate_config_against_schema(
 fn validate_field_value(value: &ConfigValue, schema: &FieldSchema) -> Result<()> {
     for constraint in &schema.constraints {
         match (value, constraint) {
-            (ConfigValue::Float(v), ValidationConstraint::Min(min)) => {
-                if v < min {
-                    return Err(OptimError::InvalidConfig(format!(
-                        "Value {} is below minimum {}",
-                        v, min
-                    )));
-                }
+            (ConfigValue::Float(v), ValidationConstraint::Min(min)) if v < min => {
+                return Err(OptimError::InvalidConfig(format!(
+                    "Value {} is below minimum {}",
+                    v, min
+                )));
             }
-            (ConfigValue::Float(v), ValidationConstraint::Max(max)) => {
-                if v > max {
-                    return Err(OptimError::InvalidConfig(format!(
-                        "Value {} is above maximum {}",
-                        v, max
-                    )));
-                }
+            (ConfigValue::Float(v), ValidationConstraint::Max(max)) if v > max => {
+                return Err(OptimError::InvalidConfig(format!(
+                    "Value {} is above maximum {}",
+                    v, max
+                )));
             }
-            (ConfigValue::Float(v), ValidationConstraint::Positive) => {
-                if *v <= 0.0 {
-                    return Err(OptimError::InvalidConfig(
-                        "Value must be positive".to_string(),
-                    ));
-                }
+            (ConfigValue::Float(v), ValidationConstraint::Positive) if *v <= 0.0 => {
+                return Err(OptimError::InvalidConfig(
+                    "Value must be positive".to_string(),
+                ));
             }
-            (ConfigValue::Float(v), ValidationConstraint::NonNegative) => {
-                if *v < 0.0 {
-                    return Err(OptimError::InvalidConfig(
-                        "Value must be non-negative".to_string(),
-                    ));
-                }
+            (ConfigValue::Float(v), ValidationConstraint::NonNegative) if *v < 0.0 => {
+                return Err(OptimError::InvalidConfig(
+                    "Value must be non-negative".to_string(),
+                ));
             }
-            (ConfigValue::Float(v), ValidationConstraint::Range(min, max)) => {
-                if v < min || v > max {
-                    return Err(OptimError::InvalidConfig(format!(
-                        "Value {} is outside range [{}, {}]",
-                        v, min, max
-                    )));
-                }
+            (ConfigValue::Float(v), ValidationConstraint::Range(min, max))
+                if (v < min || v > max) =>
+            {
+                return Err(OptimError::InvalidConfig(format!(
+                    "Value {} is outside range [{}, {}]",
+                    v, min, max
+                )));
             }
             _ => {} // Other constraint types can be added as needed
         }

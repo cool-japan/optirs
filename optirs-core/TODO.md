@@ -1,10 +1,10 @@
-# OptiRS Core TODO (v0.2.0)
+# OptiRS Core TODO (v0.3.0)
 
 ## Module Status: Production Ready
 
-**Release Date**: 2025-12-30
-**Tests**: 581 unit tests + doc tests passing (3 ignored)
-**Optimizers**: 19 fully implemented
+**Release Date**: 2026-03-17
+**Tests**: 647 unit tests + doc tests passing (3 ignored)
+**Optimizers**: 21 fully implemented
 **SciRS2 Compliance**: 100%
 
 ---
@@ -177,33 +177,33 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ---
 
-## Future Work (v0.2.0+)
+## Future Work (v0.3.0+)
 
 ### Meta-Learning Optimizers
 - [ ] MAML (Model-Agnostic Meta-Learning) support
-- [ ] Reptile optimizer
-- [ ] Meta-SGD with learnable learning rates
+- [x] Reptile optimizer
+- [x] Meta-SGD with learnable learning rates
 - [ ] Neural optimizer implementations
 
 ### Additional Regularization
-- [ ] Spectral normalization
-- [ ] Weight standardization
-- [ ] Group Lasso and structured sparsity
+- [x] Spectral normalization
+- [x] Weight standardization
+- [x] Group Lasso and structured sparsity
 
 ### Distributed & Federated Learning
-- [ ] FedAvg implementation
-- [ ] FedProx with proximal term
+- [x] FedAvg implementation (FedProx with mu=0 degenerates to FedAvg)
+- [x] FedProx with proximal term (distributed/fedprox.rs)
 - [ ] Differential privacy integration
 - [ ] Secure aggregation protocols
 
 ### Developer Experience
-- [ ] Gradient flow visualization
-- [ ] Loss landscape visualization
+- [x] Gradient flow visualization (GradientFlowAnalyzer with SVG output, vanishing/exploding detection)
+- [x] Loss landscape visualization (LossLandscapeAnalyzer: 2D perturbation, sharpness, saddle point detection)
 - [ ] Hyperparameter sensitivity analysis
 
 ### Domain-Specific Optimizers
-- [ ] Vision-specific (ViT layer decay)
-- [ ] NLP-specific (attention-aware scheduling)
+- [x] Vision-specific (ViTLayerDecay scheduler: per-layer exponential LR decay for Vision Transformers)
+- [x] NLP-specific (AttentionAwareScheduler: component-specific LR scaling for Transformer models)
 - [ ] RL-specific (PPO, TRPO variants)
 
 ---
@@ -219,7 +219,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ### Test Count
 ```
-581 unit tests passing
+647 unit tests passing
 3 intentionally ignored (hardware-specific)
 Doc tests: All passing
 ```
@@ -247,5 +247,5 @@ Doc tests: All passing
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.2.0
-**Release Date**: 2025-12-30
+**Version**: v0.3.0
+**Release Date**: 2026-03-17

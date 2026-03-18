@@ -8,6 +8,7 @@
 use scirs2_core::ndarray::{s, Array1, Array2};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
+use scirs2_core::RngExt;
 use scirs2_core::random::Rng as SCRRng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;

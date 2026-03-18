@@ -29,6 +29,7 @@ pub trait LearningRateScheduler<A: Float + Debug + ScalarOperand> {
     fn reset(&mut self);
 }
 
+mod attention_aware;
 mod constant;
 mod cosine_annealing;
 mod cosine_annealing_warm_restarts;
@@ -42,8 +43,10 @@ mod noise_injection;
 mod one_cycle;
 mod reduce_on_plateau;
 mod step_decay;
+mod vit_layer_decay;
 
 // Re-export schedulers
+pub use attention_aware::{AttentionAwareScheduler, TransformerComponentType};
 pub use constant::ConstantScheduler;
 pub use cosine_annealing::CosineAnnealing;
 pub use cosine_annealing_warm_restarts::CosineAnnealingWarmRestarts;
@@ -57,3 +60,4 @@ pub use noise_injection::{NoiseDistribution, NoiseInjectionScheduler};
 pub use one_cycle::{AnnealStrategy, OneCycle};
 pub use reduce_on_plateau::ReduceOnPlateau;
 pub use step_decay::StepDecay;
+pub use vit_layer_decay::ViTLayerDecay;

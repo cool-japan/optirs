@@ -65,6 +65,8 @@ scirs2-datasets = { workspace = true, optional = true }    # OPTIONAL: cross_pla
 # TODO: Remove scirs2-autograd usage from src/optimizers/adam.rs
 
 # System utilities (allowed - not scientific computing)
+# These are excluded on wasm32 targets
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uuid = { workspace = true }               # For generating unique identifiers
 futures = { workspace = true }            # For async operations
 sysinfo = { workspace = true }            # For system information

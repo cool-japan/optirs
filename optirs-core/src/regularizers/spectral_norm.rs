@@ -8,6 +8,7 @@ use scirs2_core::ndarray::{Array, Array2, Array4, Dimension, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
 use scirs2_core::random::Rng;
 use scirs2_core::Random;
+use std::cell::RefCell;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -24,24 +25,24 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::SpectralNorm;
 ///
-/// let mut spec_norm = SpectralNorm::new(1);
+/// let spec_norm = SpectralNorm::new(1);
 /// let weights = array![[1.0, 2.0], [3.0, 4.0]];
 ///
 /// // Normalize weights by spectral norm
-/// let normalized_weights = spec_norm.normalize(&weights).expect("unwrap failed");
+/// let normalized_weights = spec_norm.normalize(&weights).expect("normalize failed");
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SpectralNorm<A: Float> {
     /// Number of power iterations for SVD approximation
     n_power_iterations: usize,
     /// Epsilon for numerical stability
     eps: A,
     /// Cached left singular vector
-    u: Option<Array<A, scirs2_core::ndarray::Ix1>>,
-    /// Cached right singular vector  
-    v: Option<Array<A, scirs2_core::ndarray::Ix1>>,
+    u: RefCell<Option<Array<A, scirs2_core::ndarray::Ix1>>>,
+    /// Cached right singular vector
+    v: RefCell<Option<Array<A, scirs2_core::ndarray::Ix1>>>,
     /// Random number generator
-    rng: Random<scirs2_core::random::rngs::StdRng>,
+    rng: RefCell<Random<scirs2_core::random::rngs::StdRng>>,
 }
 
 impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNorm<A> {
@@ -53,34 +54,62 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNor
     pub fn new(n_poweriterations: usize) -> Self {
         Self {
             n_power_iterations: n_poweriterations,
-            eps: A::from_f64(1e-12).expect("unwrap failed"),
-            u: None,
-            v: None,
-            rng: Random::seed(42),
+            eps: A::from_f64(1e-12).unwrap_or_else(|| A::epsilon()),
+            u: RefCell::new(None),
+            v: RefCell::new(None),
+            rng: RefCell::new(Random::seed(42)),
         }
     }
 
     /// Compute the spectral norm (largest singular value) using power iteration
-    fn compute_spectral_norm(&mut self, weights: &Array2<A>) -> Result<A> {
+    fn compute_spectral_norm(&self, weights: &Array2<A>) -> Result<A> {
         let (m, n) = (weights.nrows(), weights.ncols());
 
         // Initialize u and v if not already done
-        if self.u.is_none() || self.u.as_ref().expect("unwrap failed").len() != m {
-            self.u = Some(Array::from_shape_fn((m,), |_| {
-                let val: f64 = self.rng.gen_range(0.0..1.0);
-                A::from_f64(val).expect("unwrap failed")
-            }));
+        {
+            let u_ref = self.u.borrow();
+            let needs_init = u_ref.is_none() || u_ref.as_ref().is_none_or(|arr| arr.len() != m);
+            drop(u_ref);
+            if needs_init {
+                let mut rng = self.rng.borrow_mut();
+                let new_u = Array::from_shape_fn((m,), |_| {
+                    let val: f64 = rng.gen_range(0.0..1.0);
+                    A::from_f64(val).unwrap_or_else(|| A::one())
+                });
+                *self.u.borrow_mut() = Some(new_u);
+            }
         }
 
-        if self.v.is_none() || self.v.as_ref().expect("unwrap failed").len() != n {
-            self.v = Some(Array::from_shape_fn((n,), |_| {
-                let val: f64 = self.rng.gen_range(0.0..1.0);
-                A::from_f64(val).expect("unwrap failed")
-            }));
+        {
+            let v_ref = self.v.borrow();
+            let needs_init = v_ref.is_none() || v_ref.as_ref().is_none_or(|arr| arr.len() != n);
+            drop(v_ref);
+            if needs_init {
+                let mut rng = self.rng.borrow_mut();
+                let new_v = Array::from_shape_fn((n,), |_| {
+                    let val: f64 = rng.gen_range(0.0..1.0);
+                    A::from_f64(val).unwrap_or_else(|| A::one())
+                });
+                *self.v.borrow_mut() = Some(new_v);
+            }
         }
 
-        let mut u = self.u.as_ref().expect("unwrap failed").clone();
-        let mut v = self.v.as_ref().expect("unwrap failed").clone();
+        let mut u = self
+            .u
+            .borrow()
+            .as_ref()
+            .ok_or_else(|| {
+                OptimError::InvalidParameter("Left singular vector not initialized".to_string())
+            })?
+            .clone();
+        let mut v = self
+            .v
+            .borrow()
+            .as_ref()
+            .ok_or_else(|| {
+                OptimError::InvalidParameter("Right singular vector not initialized".to_string())
+            })?
+            .clone();
 
         // Power iteration
         for _ in 0..self.n_power_iterations {
@@ -96,8 +125,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNor
         }
 
         // Update cached vectors
-        self.u = Some(u.clone());
-        self.v = Some(v.clone());
+        *self.u.borrow_mut() = Some(u.clone());
+        *self.v.borrow_mut() = Some(v.clone());
 
         // Compute spectral norm as u^T W v
         let w_v = weights.dot(&v);
@@ -107,7 +136,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNor
     }
 
     /// Normalize weights by spectral norm
-    pub fn normalize(&mut self, weights: &Array2<A>) -> Result<Array2<A>> {
+    pub fn normalize(&self, weights: &Array2<A>) -> Result<Array2<A>> {
         let spectral_norm = self.compute_spectral_norm(weights)?;
 
         if spectral_norm > self.eps {
@@ -118,7 +147,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNor
     }
 
     /// Apply spectral normalization to 4D convolutional weights
-    pub fn normalize_conv4d(&mut self, weights: &Array4<A>) -> Result<Array4<A>> {
+    pub fn normalize_conv4d(&self, weights: &Array4<A>) -> Result<Array4<A>> {
         // Reshape to 2D for spectral norm computation
         let shape = weights.shape();
         let out_channels = shape[0];
@@ -172,13 +201,15 @@ mod tests {
 
     #[test]
     fn test_spectral_norm_2d() {
-        let mut sn = SpectralNorm::new(10);
+        let sn = SpectralNorm::new(10);
 
         // Create a simple matrix with known singular values
         // For a 2x2 matrix [[1, 0], [0, 2]], the singular values are 1 and 2
         let weights = array![[1.0, 0.0], [0.0, 2.0]];
 
-        let spectral_norm = sn.compute_spectral_norm(&weights).expect("unwrap failed");
+        let spectral_norm = sn
+            .compute_spectral_norm(&weights)
+            .expect("test: compute_spectral_norm failed");
 
         // The spectral norm should be close to 2.0 (largest singular value)
         assert_relative_eq!(spectral_norm, 2.0, epsilon = 0.1);
@@ -186,28 +217,30 @@ mod tests {
 
     #[test]
     fn test_normalize_2d() {
-        let mut sn = SpectralNorm::new(10);
+        let sn = SpectralNorm::new(10);
 
         let weights = array![[1.0, 2.0], [3.0, 4.0]];
-        let normalized = sn.normalize(&weights).expect("unwrap failed");
+        let normalized = sn.normalize(&weights).expect("test: normalize failed");
 
         // After normalization, the spectral norm should be close to 1
         let spec_norm = sn
             .compute_spectral_norm(&normalized)
-            .expect("unwrap failed");
+            .expect("test: compute_spectral_norm failed");
         assert_relative_eq!(spec_norm, 1.0, epsilon = 0.1);
     }
 
     #[test]
     fn test_conv4d_normalization() {
-        let mut sn = SpectralNorm::new(5);
+        let sn = SpectralNorm::new(5);
 
         // Create a 4D tensor (out_channels, in_channels, height, width)
         let weights = Array::from_shape_fn((2, 3, 3, 3), |(o, i, h, w)| {
             (o * 27 + i * 9 + h * 3 + w) as f64
         });
 
-        let normalized = sn.normalize_conv4d(&weights).expect("unwrap failed");
+        let normalized = sn
+            .normalize_conv4d(&weights)
+            .expect("test: normalize_conv4d failed");
 
         // Check that the shape is preserved
         assert_eq!(normalized.shape(), weights.shape());
@@ -215,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_invalid_conv4d() {
-        let mut sn = SpectralNorm::<f64>::new(5);
+        let sn = SpectralNorm::<f64>::new(5);
 
         // Create a 4D tensor (which is valid)
         let weights = Array::zeros((2, 3, 4, 4));
@@ -231,10 +264,12 @@ mod tests {
         let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
 
         // Spectral norm doesn't modify gradients or add penalties
-        let penalty = sn.penalty(&params).expect("unwrap failed");
+        let penalty = sn.penalty(&params).expect("test: penalty failed");
         assert_eq!(penalty, 0.0);
 
-        let apply_result = sn.apply(&params, &mut gradient).expect("unwrap failed");
+        let apply_result = sn
+            .apply(&params, &mut gradient)
+            .expect("test: apply failed");
         assert_eq!(apply_result, 0.0);
 
         // Gradients should be unchanged

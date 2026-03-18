@@ -740,10 +740,8 @@ impl GitHubClient {
                     self.create_pr_comment(notification)?;
                 }
             }
-            NotificationType::PerformanceRegression => {
-                if self.config.create_regression_issues {
-                    self.create_issue(notification)?;
-                }
+            NotificationType::PerformanceRegression if self.config.create_regression_issues => {
+                self.create_issue(notification)?;
             }
             _ => {}
         }

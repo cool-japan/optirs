@@ -950,10 +950,8 @@ impl GarbageCollectionEngine {
                         return true; // First GC
                     }
                 }
-                GCTrigger::MemoryPressure => {
-                    if self.scheduler.timing_state.memory_pressure > 0.8 {
-                        return true;
-                    }
+                GCTrigger::MemoryPressure if self.scheduler.timing_state.memory_pressure > 0.8 => {
+                    return true;
                 }
                 _ => {}
             }

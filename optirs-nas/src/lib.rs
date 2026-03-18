@@ -111,6 +111,8 @@
 //! Research contributions welcome! Follow SciRS2 integration guidelines.
 
 pub mod architecture;
+pub mod architecture_embedding;
+pub mod domain_specific_nas;
 pub mod error;
 pub mod evaluation;
 pub mod hyperparameter;
@@ -120,6 +122,10 @@ pub mod progressive;
 pub mod search_strategies;
 
 pub use architecture::ArchitectureSpace;
+pub use architecture_embedding::{AggregationMethod, ArchitectureEmbedder};
+pub use domain_specific_nas::{
+    DomainNASEngine, DomainSearchSpace, DomainType as NASDomainType, NASConstraint,
+};
 pub use error::{OptimError, Result};
 pub use search_strategies::SearchStrategy;
 

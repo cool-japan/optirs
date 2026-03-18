@@ -4,6 +4,7 @@ use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Rng;
 use scirs2_core::Random;
+use std::cell::RefCell;
 use std::fmt::Debug;
 
 use crate::error::Result;
@@ -38,16 +39,16 @@ use crate::regularizers::Regularizer;
 /// dropout.eval();
 /// assert!(!dropout.is_training());
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Dropout<A: Float + Debug> {
     /// Dropout rate (fraction of units that are dropped)
     rate: A,
     /// Random number generator
-    rng: Random<scirs2_core::random::rngs::StdRng>,
+    rng: RefCell<Random<scirs2_core::random::rngs::StdRng>>,
     /// Boolean indicating whether in training mode
     training: bool,
     /// Cached dropout mask
-    mask: Option<Array<A, scirs2_core::ndarray::IxDyn>>,
+    mask: RefCell<Option<Array<A, scirs2_core::ndarray::IxDyn>>>,
 }
 
 impl<A: Float + Debug + Send + Sync> Dropout<A> {
@@ -69,9 +70,9 @@ impl<A: Float + Debug + Send + Sync> Dropout<A> {
 
         Self {
             rate,
-            rng,
+            rng: RefCell::new(rng),
             training: true,
-            mask: None,
+            mask: RefCell::new(None),
         }
     }
 
@@ -89,7 +90,7 @@ impl<A: Float + Debug + Send + Sync> Dropout<A> {
         // Ensure rate is between 0 and 1
         self.rate = rate.max(A::zero()).min(A::one());
         // Clear the mask cache
-        self.mask = None;
+        *self.mask.borrow_mut() = None;
         self
     }
 
@@ -114,7 +115,7 @@ impl<A: Float + Debug + Send + Sync> Dropout<A> {
     ///
     /// During training, randomly sets units to 0 with probability `rate`,
     /// and scales the remaining by 1/(1-rate) to maintain the same expected output.
-    fn create_mask<D: Dimension>(&mut self, shape: D) -> Array<A, D> {
+    fn create_mask<D: Dimension>(&self, shape: D) -> Array<A, D> {
         if !self.training || self.rate <= A::zero() {
             // In eval mode or with 0 dropout rate, no masking is applied
             return Array::ones(shape);
@@ -127,9 +128,11 @@ impl<A: Float + Debug + Send + Sync> Dropout<A> {
 
         // Create a mask where units are kept with probability (1-rate)
         // and scaled by 1/(1-rate)
+        let mut rng = self.rng.borrow_mut();
         let mut mask = Array::zeros(shape);
         for elem in mask.iter_mut() {
-            let rand_val = A::from(self.rng.gen_range(0.0..1.0)).expect("unwrap failed");
+            let rand_val =
+                A::from(rng.gen_range(0.0..1.0)).expect("failed to convert random value");
             if rand_val > self.rate {
                 *elem = scale;
             }
@@ -151,16 +154,21 @@ where
         }
 
         // Create or get the dropout mask
-        let mask = match &self.mask {
-            Some(m) if m.shape() == gradients.shape() => {
-                // Use cached mask if shapes match
-                m.clone().into_dimensionality::<D>().expect("unwrap failed")
-            }
-            _ => {
-                // Create a new mask
-                let mut dropout = self.clone();
-                // We would cache the mask here in a mutable context
-                dropout.create_mask(gradients.dim())
+        let mask = {
+            let mask_ref = self.mask.borrow();
+            match &*mask_ref {
+                Some(m) if m.shape() == gradients.shape() => {
+                    // Use cached mask if shapes match
+                    m.clone()
+                        .into_dimensionality::<D>()
+                        .expect("mask dimensionality conversion failed")
+                }
+                _ => {
+                    // Drop the borrow before calling create_mask which also borrows
+                    drop(mask_ref);
+                    // Create a new mask
+                    self.create_mask(gradients.dim())
+                }
             }
         };
 

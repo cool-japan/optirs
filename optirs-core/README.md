@@ -15,6 +15,12 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 - **Performance Monitoring**: Built-in metrics and benchmarking via scirs2-metrics
 - **Serialization**: Complete Serde support for checkpointing and model persistence
 - **Memory Efficient**: Gradient accumulation, chunked processing for billion-parameter models
+- **Federated Optimization**: FedProxOptimizer with proximal term (mu=0 degenerates to FedAvg)
+- **Vision Transformer Support**: ViTLayerDecay scheduler for per-layer exponential LR decay
+- **Attention-Aware Scheduling**: Component-specific LR scaling for Transformer models
+- **Gradient Flow Analysis**: GradientFlowAnalyzer with vanishing/exploding detection and SVG visualization
+- **Loss Landscape Analysis**: 2D perturbation analysis, sharpness computation, saddle point detection
+- **647 Tests Passing**: Comprehensive test coverage across all modules
 
 ## Optimization Algorithms
 
@@ -36,9 +42,9 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 ## Dependencies
 
 ### Required Dependencies (SciRS2 Ecosystem)
-- `scirs2-core` 0.1.1: Foundation scientific primitives (REQUIRED)
+- `scirs2-core` 0.3.0: Foundation scientific primitives (REQUIRED)
   - Provides: arrays, random, numeric traits, SIMD, parallel ops, GPU abstractions
-- `scirs2-optimize` 0.1.1: Base optimization interfaces (REQUIRED)
+- `scirs2-optimize` 0.3.0: Base optimization interfaces (REQUIRED)
 
 ### Additional SciRS2 Dependencies
 - `scirs2-neural`: Neural network optimization support
@@ -62,8 +68,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.2.0"
-scirs2-core = "0.1.1"  # Required foundation
+optirs-core = "0.3.0"
+scirs2-core = "0.3.0"  # Required foundation
 ```
 
 ### Basic Example
@@ -119,7 +125,7 @@ Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.2.0", features = ["cross-platform-testing"] }
+optirs-core = { version = "0.3.0", features = ["cross-platform-testing"] }
 ```
 
 **Note**: SIMD and parallel processing are built-in via scirs2-core and automatically enabled when beneficial.

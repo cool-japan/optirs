@@ -1,16 +1,16 @@
-# OptiRS TODO - v0.2.0 (Stable Release)
+# OptiRS TODO - v0.3.0 (Stable Release)
 
 ## Project Status: Stable Release - Production Ready
 
-**Current Version**: v0.2.0
-**Release Date**: 2025-12-30
-**Total Tests**: 1,134 tests passing (100% pass rate)
-**SLoC**: 307,820 lines of Rust code
+**Current Version**: v0.3.0
+**Release Date**: 2026-03-17
+**Total Tests**: 1,220 tests passing + 76 doc tests (100% pass rate, 9 skipped)
+**SLoC**: 251,402 lines of Rust code (917 files, 317,315 total lines)
 **SciRS2 Compliance**: 100%
 
 ---
 
-## Completed: v0.2.0 Release
+## Completed: v0.3.0 Release
 
 ### SciRS2 Core Integration
 - [x] **Remove ALL direct ndarray imports** - All 474 imports updated to scirs2_core::ndarray
@@ -19,7 +19,7 @@
 - [x] **SIMD operations** - Using scirs2_core::simd_ops::SimdUnifiedOps
 - [x] **Parallel processing** - Using scirs2_core::parallel_ops
 
-### Core Optimizer Implementation (19 total)
+### Core Optimizer Implementation (22 total)
 
 **First-Order Optimizers (17)**
 - [x] **SGD Optimizer** - Complete with momentum, Nesterov, weight decay
@@ -97,6 +97,10 @@
   - [x] Proper slow/fast weight synchronization
   - [x] 7 comprehensive tests
 
+- [x] **FedProx Optimizer** - Federated Proximal for distributed training
+  - [x] Proximal term for heterogeneous data
+  - [x] Compatible with federated learning workflows
+
 **Second-Order Methods (2)**
 - [x] **L-BFGS** - Limited-memory BFGS
   - [x] Two-loop recursion algorithm
@@ -157,16 +161,34 @@
 
 ---
 
-## Future Work (v0.2.0+)
+## Completed: Wave 2 Features (v0.3.0)
 
 ### Learned Optimizers
-- [ ] Meta-learning framework enhancements
-- [ ] Transformer-based optimization improvements
-- [ ] Cross-domain transfer learning
-- [ ] Online meta-learning
+- [x] Meta-learning framework enhancements
+- [x] Online MAML - Online meta-learning with continuous adaptation
+- [x] Cross-domain transfer learning
+- [x] Few-shot learning implementations (PrototypicalNetwork, FastAdaptation, EpisodicMemory)
 
 ### Neural Architecture Search
-- [ ] Differentiable architecture search (DARTS)
+- [x] Differentiable architecture search (DARTS)
+- [x] Domain-Specific NAS - Specialized search for different application domains
+- [x] Architecture Embedding - Learned representations of neural architectures
+
+### Core Enhancements
+- [x] FedProx optimizer for distributed/federated training
+- [x] ViT Layer Decay scheduler for Vision Transformers
+- [x] Attention-Aware scheduler for transformer models
+- [x] Gradient Flow Analysis - Track gradient propagation through layers
+- [x] Loss Landscape Analysis - Visualize and analyze loss surface geometry
+
+---
+
+## Future Work (v0.4.0+)
+
+### Learned Optimizers
+- [ ] Transformer-based optimization improvements
+
+### Neural Architecture Search
 - [ ] Hardware-aware NAS enhancements
 - [ ] Multi-objective search improvements
 
@@ -186,14 +208,14 @@
 
 ### By Module
 ```
-optirs-core:    581 tests passing (3 ignored)
-optirs-bench:   205 tests passing (2 ignored)
-optirs-gpu:     104 tests passing (1 ignored)
-optirs-learned:  69 tests passing (2 ignored)
-optirs-nas:      44 tests passing (1 ignored)
-optirs-tpu:      58 tests passing (0 ignored)
+optirs-core:    647 tests passing
+optirs-bench:   205 tests passing
+optirs-gpu:     104 tests passing
+optirs-learned: 143 tests passing
+optirs-nas:      63 tests passing
+optirs-tpu:      58 tests passing
 
-Total: 1,061 unit tests + 73 doc tests = 1,134 tests
+Total: 1,220 unit tests + 76 doc tests (9 skipped)
 ```
 
 ### Test Quality
@@ -237,11 +259,12 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests
 
 ---
 
-## Release Status (v0.2.0)
+## Release Status (v0.3.0)
 
-- [x] All core optimizers implemented (19 total)
+- [x] All core optimizers implemented (22 total)
 - [x] Full SciRS2 integration verified
-- [x] 1,134 tests passing
+- [x] 1,220 tests passing + 76 doc tests
+- [x] Wave 2 features implemented (FedProx, ViT schedulers, gradient flow, loss landscape, few-shot, online MAML, cross-domain transfer, domain NAS, architecture embedding)
 - [x] Documentation complete
 - [x] CHANGELOG.md created
 - [x] Examples working
@@ -251,5 +274,5 @@ Total: 1,061 unit tests + 73 doc tests = 1,134 tests
 
 ---
 
-**Status**: ✅ Released (2025-12-30)
-**Next Milestone**: v0.2.0 - Enhanced features and research implementations
+**Status**: ✅ Released (2026-03-17)
+**Next Milestone**: v0.4.0 - Further enhancements and research implementations

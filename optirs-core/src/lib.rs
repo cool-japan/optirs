@@ -260,34 +260,47 @@
 
 pub mod adaptive_selection;
 pub mod benchmarking;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod coordination;
 pub mod curriculum_optimization;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod distributed;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod domain_specific;
 pub mod error;
 pub mod gpu_optimizer;
 pub mod gradient_accumulation;
+pub mod gradient_flow;
 pub mod gradient_processing;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod hardware_aware;
+pub mod loss_landscape;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod memory_efficient;
 pub mod memory_efficient_optimizer;
 pub mod metrics;
 pub mod neural_integration;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod neuromorphic;
 pub mod online_learning;
 pub mod optimizer_composition;
 pub mod optimizer_metrics;
 pub mod optimizers;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod parallel_optimizer;
 pub mod parameter_groups;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod plugin;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod privacy;
 pub mod regularizers;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod research;
 pub mod schedulers;
 pub mod second_order;
 pub mod self_tuning;
 pub mod simd_optimizer;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod streaming;
 pub mod training_stabilization;
 pub mod unified_api;
@@ -311,10 +324,12 @@ pub use curriculum_optimization::{
     AdaptiveCurriculum, AdversarialAttack, AdversarialConfig, CurriculumManager, CurriculumState,
     CurriculumStrategy, ImportanceWeightingStrategy,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use distributed::{
     AveragingStrategy, CommunicationResult, CompressedGradient, CompressionStrategy,
     DistributedCoordinator, GradientCompressor, ParameterAverager, ParameterServer,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use domain_specific::{
     CrossDomainKnowledge, DomainOptimizationConfig, DomainPerformanceMetrics, DomainRecommendation,
     DomainSpecificSelector, DomainStrategy, LearningRateScheduleType, OptimizationContext,
@@ -347,17 +362,22 @@ pub use optimizer_metrics::{
     ConvergenceMetrics, GradientStatistics, MetricsCollector, MetricsReporter, OptimizerMetrics,
     ParameterStatistics,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use parallel_optimizer::{
     parallel_step, parallel_step_array1, ParallelBatchProcessor, ParallelOptimizer,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use plugin::core::{
     create_basic_capabilities, create_plugin_info, OptimizerPluginFactory, PluginCategory,
     PluginInfo,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use plugin::sdk::{BaseOptimizerPlugin, PluginTester};
+#[cfg(not(target_arch = "wasm32"))]
 pub use plugin::{
     OptimizerPlugin, PluginCapabilities, PluginLoader, PluginRegistry, PluginValidationFramework,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use privacy::{
     AccountingMethod, ClippingStats, DifferentialPrivacyConfig, DifferentiallyPrivateOptimizer,
     MomentsAccountant, NoiseMechanism, PrivacyBudget, PrivacyValidation,
@@ -370,6 +390,7 @@ pub use self_tuning::{
     SelfTuningStatistics, TargetMetric,
 };
 pub use simd_optimizer::{should_use_simd, SimdOptimizer};
+#[cfg(not(target_arch = "wasm32"))]
 pub use streaming::{
     LearningRateAdaptation as StreamingLearningRateAdaptation, StreamingConfig, StreamingDataPoint,
     StreamingHealthStatus, StreamingMetrics, StreamingOptimizer,

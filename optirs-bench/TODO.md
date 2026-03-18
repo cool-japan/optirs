@@ -1,4 +1,4 @@
-# OptiRS Bench TODO (v0.2.0)
+# OptiRS Bench TODO (v0.3.0)
 
 ## Module Status: Production Ready
 
@@ -115,7 +115,7 @@
 
 ---
 
-## Future Work (v0.2.0+)
+## Future Work (v0.4.0+)
 
 ### Advanced Analytics
 - [ ] Performance prediction models
@@ -169,5 +169,5 @@
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.2.0
+**Version**: v0.3.0
 **Release Date**: 2025-12-30

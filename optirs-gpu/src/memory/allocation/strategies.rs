@@ -720,15 +720,12 @@ impl AllocationStrategyManager {
                     0.4
                 }
             }
-            AllocationStrategy::SegregatedList => {
+            AllocationStrategy::SegregatedList
                 // Segregated lists are good for diverse sizes with patterns
 
-                if features.cache_hit_rate > 0.6 {
+                if features.cache_hit_rate > 0.6 => {
                     0.7
-                } else {
-                    0.5
                 }
-            }
             _ => 0.5, // Default score
         }
     }

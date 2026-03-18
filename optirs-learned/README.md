@@ -39,8 +39,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-learned = "0.2.0"
-scirs2-core = "0.1.1"  # Required foundation
+optirs-learned = "0.3.0"
+scirs2-core = "0.3.0"  # Required foundation
 ```
 
 ### Feature Selection
@@ -49,7 +49,7 @@ Enable specific learned optimizer types:
 
 ```toml
 [dependencies]
-optirs-learned = { version = "0.2.0", features = ["transformer", "lstm", "meta_learning"] }
+optirs-learned = { version = "0.3.0", features = ["transformer", "lstm", "meta_learning"] }
 ```
 
 Available features:
@@ -289,6 +289,23 @@ let tracker = LearningCurveTracker::new()
 analytics.track_optimization_step(&step_result).await?;
 tracker.update(&current_loss, &learning_metrics).await?;
 ```
+
+## Wave 2 Features (v0.3.0)
+
+### Few-Shot Learning
+- **PrototypicalNetwork**: Encode inputs, compute prototypes, classify samples, and find nearest prototypes for rapid task identification
+- **FastAdaptationEngine**: Adapt optimizer parameters quickly, select algorithms dynamically, and evaluate adaptation quality
+- **TaskSimilarityCalculator**: Compute similarity between optimization tasks and find most similar historical tasks for transfer
+
+### Episodic Memory Systems
+- **EpisodicMemoryBank**: Store, retrieve, and evict optimization episodes with statistics tracking and capacity management
+- **SupportSetManager**: Select support sets for few-shot adaptation, augment support sets with synthetic data, and evaluate set quality
+
+### Online Meta-Learning
+- **OnlineMAML**: Continuous task stream meta-learning with staleness decay, buffer management, and adaptation efficiency tracking
+
+### Cross-Domain Transfer
+- **CrossDomainTransfer**: Register domain knowledge, compute inter-domain similarity, transfer knowledge across domains, update shared representations, and compute full transferability matrices
 
 ## Research and Experimental Features
 

@@ -874,12 +874,11 @@ impl<
     /// Default event handling
     fn default_event_handling(&mut self, event: &NeuromorphicEvent<T>) -> Result<()> {
         match event.event_type {
-            EventType::ExternalStimulus => {
+            EventType::ExternalStimulus
                 // Apply external stimulus to neuron
-                if event.source_neuron < self.system_state.membrane_potentials.len() {
+                if event.source_neuron < self.system_state.membrane_potentials.len() => {
                     self.system_state.membrane_potentials[event.source_neuron] += event.value;
                 }
-            }
             EventType::TimerEvent => {
                 // Update system time
                 self.system_state.current_time = event.timestamp;

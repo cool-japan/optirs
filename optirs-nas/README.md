@@ -16,6 +16,8 @@ OptiRS-NAS provides comprehensive Neural Architecture Search (NAS) capabilities 
 - **Multi-Objective Optimization**: Balancing accuracy, efficiency, and resource usage
 - **Hardware-Aware NAS**: Architecture optimization for specific hardware
 - **Transfer Learning**: Knowledge transfer across architecture searches
+- **Domain-Specific NAS**: Pre-configured search spaces for CV, NLP, TimeSeries, Reinforcement, and Scientific domains
+- **Architecture Embedding**: Vector-space representation and similarity search for architectures
 
 ## Search Strategies
 
@@ -46,8 +48,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-nas = "0.2.0"
-scirs2-core = "0.1.1"  # Required foundation
+optirs-nas = "0.3.0"
+scirs2-core = "0.3.0"  # Required foundation
 ```
 
 ### Feature Selection
@@ -56,7 +58,7 @@ Enable specific NAS approaches:
 
 ```toml
 [dependencies]
-optirs-nas = { version = "0.2.0", features = ["bayesian", "evolutionary", "reinforcement"] }
+optirs-nas = { version = "0.3.0", features = ["bayesian", "evolutionary", "reinforcement"] }
 ```
 
 Available features:
@@ -242,6 +244,63 @@ let adapted_architectures = transferable_nas
     .adapt_to_new_domain(&target_dataset)
     .await?;
 ```
+
+## Domain-Specific NAS (Wave 2)
+
+### DomainNASEngine
+
+Domain-aware NAS with pre-configured search spaces for common ML domains:
+
+```rust
+use optirs_nas::domain_specific_nas::{DomainNASEngine, DomainSearchSpace, NASConstraint};
+
+// Create a domain-specific NAS engine for computer vision
+let engine = DomainNASEngine::new(DomainSearchSpace::ComputerVision);
+
+// Apply constraints to the search
+let constraints = vec![
+    NASConstraint::MaxLatencyMs(50.0),
+    NASConstraint::MaxMemoryMb(512.0),
+    NASConstraint::MinAccuracy(0.90),
+    NASConstraint::MaxDepth(20),
+    NASConstraint::MaxWidth(256),
+];
+
+// Validate constraints before search
+engine.validate_constraints(&constraints)?;
+```
+
+Supported domains:
+- **ComputerVision**: Convolutional architectures, pooling, skip connections
+- **NLP**: Attention layers, embedding dimensions, transformer blocks
+- **TimeSeries**: Recurrent layers, temporal convolutions, sequence modeling
+- **Reinforcement**: Policy networks, value heads, exploration modules
+- **Scientific**: Physics-informed layers, conservation constraints
+
+### Architecture Embedding
+
+Embed architectures into a continuous vector space for similarity analysis:
+
+```rust
+use optirs_nas::architecture_embedding::{ArchitectureEmbedder, AggregationMethod};
+
+// Create an embedder with weighted sum aggregation
+let mut embedder = ArchitectureEmbedder::new(128, AggregationMethod::WeightedSum);
+
+// Update embeddings for a set of architectures
+embedder.update_embeddings(&architectures)?;
+
+// Find top-k most similar architectures to a query
+let similar = embedder.find_similar(&query_architecture, 5)?;
+
+// Compute cosine similarity between two architecture embeddings
+let similarity = embedder.cosine_similarity(&arch_a, &arch_b)?;
+```
+
+Aggregation methods:
+- **Mean**: Simple average of layer embeddings
+- **WeightedSum**: Weighted combination with learned importance
+- **AttentionPooling**: Attention-based aggregation over layer representations
 
 ## Architecture Components
 

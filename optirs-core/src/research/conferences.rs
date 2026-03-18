@@ -439,7 +439,7 @@ impl ConferenceManager {
         }
 
         // Sort by deadline date
-        deadlines.sort_by(|a, b| a.2.cmp(&b.2));
+        deadlines.sort_by_key(|a| a.2);
         deadlines
     }
 

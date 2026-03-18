@@ -60,7 +60,7 @@ impl TestMatrixGenerator {
         }
 
         // Sort by priority (higher priority first)
-        matrix.sort_by(|a, b| b.priority.cmp(&a.priority));
+        matrix.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
         Ok(matrix)
     }

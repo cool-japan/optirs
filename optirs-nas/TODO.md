@@ -1,10 +1,10 @@
-# OptiRS NAS TODO (v0.2.0)
+# OptiRS NAS TODO (v0.3.0)
 
 ## Module Status: Production Ready
 
-**Release Date**: 2025-12-30
-**Tests**: 44 tests passing (1 ignored)
-**Features**: Bayesian optimization, Evolutionary algorithms, RL-based NAS
+**Release Date**: 2026-03-17
+**Tests**: 63 tests passing
+**Features**: Bayesian optimization, Evolutionary algorithms, RL-based NAS, Domain-Specific NAS, Architecture Embedding
 **SciRS2 Compliance**: 100%
 
 ---
@@ -93,23 +93,29 @@
 ## Future Work (v0.2.0+)
 
 ### Advanced Search Strategies
-- [ ] Differentiable Architecture Search (DARTS)
-- [ ] Progressive architecture pruning
-- [ ] Memory-efficient DARTS
-- [ ] Robust DARTS with regularization
+- [x] Differentiable Architecture Search (DARTS)
+- [x] Progressive architecture search (ProgressiveNAS)
+- [x] Memory-efficient DARTS (MemoryEfficientDARTS)
+- [x] Robust DARTS with regularization (RobustDARTS)
 
-### Specialized NAS Applications
-- [ ] Computer vision architecture search
-- [ ] NLP model architecture optimization
+### Specialized NAS Applications (Wave 2 - Domain-Specific NAS)
+- [x] Computer vision architecture search (DomainSearchSpace::ComputerVision)
+- [x] NLP model architecture optimization (DomainSearchSpace::NLP)
 - [ ] Speech recognition NAS
-- [ ] Time series forecasting NAS
+- [x] Time series forecasting NAS (DomainSearchSpace::TimeSeries)
 - [ ] Multimodal architecture optimization
+- [x] Reinforcement learning NAS (DomainSearchSpace::Reinforcement)
+- [x] Scientific computing NAS (DomainSearchSpace::Scientific)
+- [x] DomainNASEngine with constraint validation
+- [x] NASConstraint system (MaxLatencyMs, MaxMemoryMb, MinAccuracy, RequiresComponent, MaxDepth, MaxWidth)
 
-### Transfer Learning for NAS
-- [ ] Architecture embedding and similarity
+### Transfer Learning for NAS (Wave 2 - Architecture Embedding)
+- [x] Architecture embedding and similarity (ArchitectureEmbedder, cosine_similarity, find_similar)
 - [ ] Cross-domain transfer
 - [ ] Few-shot architecture optimization
 - [ ] Architecture knowledge graph
+- [x] AggregationMethod (Mean, WeightedSum, AttentionPooling)
+- [x] update_embeddings for batch embedding computation
 
 ### AutoML Integration
 - [ ] End-to-end automated data preprocessing
@@ -130,8 +136,7 @@
 
 ### Test Count
 ```
-44 tests passing
-1 intentionally ignored (hardware-specific)
+63 tests passing
 ```
 
 ---
@@ -146,5 +151,5 @@
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.2.0
-**Release Date**: 2025-12-30
+**Version**: v0.3.0
+**Release Date**: 2026-03-17

@@ -1,6 +1,6 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.2.0
+**Version:** 0.3.0
 **Status:** 🚀 Production Ready - Stable Release
 
 OptiRS is a comprehensive optimization library for machine learning that **extends and leverages the full power of SciRS2-Core**. It provides specialized optimization algorithms and hardware acceleration while making **FULL USE** of SciRS2's scientific computing capabilities.
@@ -19,8 +19,8 @@ OptiRS is a comprehensive optimization library for machine learning that **exten
 ### SciRS2 Dependencies:
 
 **Required (Always):**
-- **scirs2-core** 0.1.1: Core scientific computing primitives (arrays, random, GPU, SIMD, parallel)
-- **scirs2-optimize** 0.1.1: Base optimization algorithms and interfaces
+- **scirs2-core** 0.3.0: Core scientific computing primitives (arrays, random, GPU, SIMD, parallel)
+- **scirs2-optimize** 0.3.0: Base optimization algorithms and interfaces
 
 **Evidence-Based (Used by OptiRS):**
 - **scirs2-neural**: Neural network components
@@ -46,10 +46,10 @@ OptiRS extends SciRS2's scientific computing capabilities with specialized ML op
 
 ### Core Optimizers (`optirs-core`) ✅ Production Ready
 
-#### 19 Production-Ready Optimizers
+#### 22 Production-Ready Optimizers
 All optimizers built exclusively on SciRS2-Core:
 
-**First-Order Optimizers (17)**
+**First-Order Optimizers (20)**
 - **SGD** - Stochastic Gradient Descent with optional momentum
 - **SimdSGD** - SIMD-accelerated SGD (2-4x faster for large arrays)
 - **Adam** - Adaptive Moment Estimation
@@ -67,6 +67,9 @@ All optimizers built exclusively on SciRS2-Core:
 - **SAM** - Sharpness-Aware Minimization
 - **SparseAdam** - Adam variant for sparse gradients
 - **GroupedAdam** - Adam with parameter groups
+- **FedProx** - Federated Proximal optimizer for distributed training
+- **ReptileOptimizer** - Meta-learning optimizer with inner loop SGD
+- **MetaSGD** - Per-parameter learnable learning rates
 
 **Second-Order Optimizers (2)**
 - **L-BFGS** - Limited-memory Broyden-Fletcher-Goldfarb-Shanno
@@ -79,6 +82,12 @@ All optimizers built exclusively on SciRS2-Core:
 - **CosineAnnealing** - Cosine annealing schedule
 - **LinearWarmup** - Linear warmup with decay
 - **OneCycleLR** - One cycle learning rate policy
+- **ViT Layer Decay** - Layer-wise learning rate decay for Vision Transformers
+- **Attention-Aware** - Attention-aware scheduling for transformer models
+
+#### Gradient and Loss Analysis
+- **Gradient Flow Analysis** - Track gradient propagation through network layers
+- **Loss Landscape Analysis** - Visualize and analyze loss surface geometry
 
 #### Advanced Performance Features
 
@@ -130,35 +139,53 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ### Test Coverage
 
-- **549 unit tests** - Core optimizer functionality
-- **54 doc tests** - Documentation examples
-- **603 total tests** - All passing
+- **1,220 unit tests + 76 doc tests** - All passing across 7 crates
 - **Zero clippy warnings** - Production-ready code quality
+- **251K+ lines of Rust code** across 917 files
 
-### GPU Acceleration (`optirs-gpu`) - Coming Soon
+| Crate | Tests | Status |
+|-------|-------|--------|
+| optirs-core | 647 | Stable |
+| optirs-gpu | 104 | Alpha |
+| optirs-tpu | 58 | Alpha |
+| optirs-learned | 143 | Alpha |
+| optirs-nas | 63 | Alpha |
+| optirs-bench | 205 | Stable |
+
+### GPU Acceleration (`optirs-gpu`) - Alpha
 - **Multi-GPU Support**: Distributed optimization across multiple GPUs
-- **Backend Support**: CUDA, Metal, OpenCL, WebGPU
-- **Memory Management**: Advanced memory pools and optimization
-- **Tensor Cores**: Optimized for modern GPU architectures
-- **Performance**: Highly optimized kernels for maximum throughput
+- **Backend Support**: CUDA, Metal, OpenCL, WebGPU, ROCm
+- **Memory Management**: Advanced memory pools and vendor-specific backends
+- **Tensor Cores**: Mixed-precision training support
+- **104 tests passing**
 
-### TPU Coordination (`optirs-tpu`) - Coming Soon
+### TPU Coordination (`optirs-tpu`) - Alpha
 - **Pod Management**: TPU pod coordination and synchronization
 - **XLA Integration**: Compiler optimizations for TPU workloads
 - **Fault Tolerance**: Robust handling of hardware failures
 - **Distributed Training**: Large-scale distributed optimization
+- **58 tests passing**
 
-### Learned Optimizers (`optirs-learned`) - Research Phase
+### Learned Optimizers (`optirs-learned`) - Alpha
 - **Transformer-based Optimizers**: Self-attention mechanisms for optimization
 - **LSTM Optimizers**: Recurrent neural network optimizers
 - **Meta-Learning**: Learning to optimize across different tasks
-- **Few-Shot Optimization**: Rapid adaptation to new optimization problems
+- **Online MAML**: Online meta-learning with continuous adaptation
+- **Cross-Domain Transfer**: Transfer learning across optimization domains
+- **Few-Shot Learning**: PrototypicalNetwork, FastAdaptation, EpisodicMemory implementations
+- **Continual Learning**: EWC and Progressive Networks
+- **Domain-Specific Optimizers**: CV, NLP, and Attention optimizers
+- **143 tests passing**
 
-### Neural Architecture Search (`optirs-nas`) - Research Phase
-- **Search Strategies**: Bayesian, evolutionary, reinforcement learning
+### Neural Architecture Search (`optirs-nas`) - Alpha
+- **Search Strategies**: Evolutionary, reinforcement learning, random search
 - **Multi-Objective**: Balancing accuracy, efficiency, and resource usage
 - **Progressive Search**: Gradually increasing architecture complexity
 - **Hardware-Aware**: Optimization for specific hardware targets
+- **DARTS**: Differentiable architecture search with Memory-Efficient and Robust variants
+- **Domain-Specific NAS**: Specialized search for different application domains
+- **Architecture Embedding**: Learned representations of neural architectures
+- **63 tests passing**
 
 ### Benchmarking (`optirs-bench`) ✅ Available
 - **Performance Analysis**: Comprehensive benchmarking tools
@@ -172,11 +199,11 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ```toml
 [dependencies]
-optirs-core = "0.2.0"
-scirs2-core = "0.1.1"  # Required foundation
+optirs-core = "0.3.0"
+scirs2-core = "0.3.3"  # Required foundation
 
-# Optional: GPU acceleration (experimental)
-optirs-gpu = { version = "0.2.0", optional = true }
+# Optional: GPU acceleration
+optirs-gpu = { version = "0.3.0", optional = true }
 ```
 
 ### Basic Usage
@@ -548,6 +575,21 @@ grep -r "use rand::" --include="*.rs" .     # Should return nothing
 # Verify SciRS2 usage
 grep -r "use scirs2_core::" --include="*.rs" . # Should show many results
 ```
+
+## Sponsorship
+
+OptiRS is developed and maintained by **COOLJAPAN OU (Team Kitasan)**.
+
+If you find OptiRS useful, please consider sponsoring the project to support continued development of the Pure Rust ecosystem.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red?logo=github)](https://github.com/sponsors/cool-japan)
+
+**[https://github.com/sponsors/cool-japan](https://github.com/sponsors/cool-japan)**
+
+Your sponsorship helps us:
+- Maintain and improve the COOLJAPAN ecosystem
+- Keep the entire ecosystem (OxiBLAS, OxiFFT, SciRS2, etc.) 100% Pure Rust
+- Provide long-term support and security updates
 
 ## License
 

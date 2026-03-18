@@ -5,42 +5,125 @@ All notable changes to OptiRS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-17
+
+### Added
+
+#### New Optimizers (optirs-core)
+- **ReptileOptimizer** - Meta-learning optimizer with inner loop SGD and parameter interpolation
+- **MetaSGD** - Per-parameter learnable learning rates with meta-gradient updates
+
+#### New Regularizers (optirs-core)
+- **GroupLasso** - Group-wise L2 norm penalty for structured sparsity
+- **StructuredSparsity** - Column, row, and block sparsity patterns
+
+#### Optimizer Composition (optirs-core)
+- **WeightedOptimizer** - Weighted average of multiple optimizer outputs
+
+#### Continual Learning (optirs-learned)
+- **ElasticWeightConsolidation** - Diagonal Fisher information with parameter anchoring (standard + online EWC)
+- **ProgressiveNetworks** - Column networks per task with lateral connections
+
+#### Domain-Specific Optimizers (optirs-learned)
+- **CVOptimizer** - Spatial-aware LR, channel normalization, progressive resolution
+- **NLPOptimizer** - Layer-wise LR decay, warmup/cosine schedule, gradient accumulation
+- **AttentionOptimizer** - Head-wise gradient scaling, attention entropy regularization
+
+#### Meta-Learning (optirs-learned)
+- **ReptileLearner** - First-order meta-learning with task averaging
+- **MetaSGDLearner** - Meta-learning with per-parameter learnable learning rates
+- Fixed MAML `compute_gradients` - Now uses finite-difference approximation instead of returning zeros
+
+#### Neural Architecture Search (optirs-nas)
+- **MemoryEfficientDARTS** - Partial channel connections and edge normalization (PC-DARTS)
+- **RobustDARTS** - Perturbation regularization, collapse detection, early stopping
+- **DARTSConfig** - Builder pattern for DARTS variants with temperature scheduling
+- **ProgressiveNAS** - Phase-based architecture search with increasing complexity budgets
+- **DomainNASEngine** - Domain-specific NAS with pre-configured search spaces for CV, NLP, TimeSeries
+- **ArchitectureEmbedder** - Architecture embedding into vector space with cosine similarity search
+
+#### Distributed Training (optirs-core) — Wave 2
+- **FedProxOptimizer** - Federated proximal optimizer with configurable mu coefficient (mu=0 degenerates to FedAvg)
+
+#### Learning Rate Schedulers (optirs-core) — Wave 2
+- **ViTLayerDecay** - Vision Transformer layer-wise exponential LR decay with warmup + cosine schedule
+- **AttentionAwareScheduler** - Transformer component-specific LR scaling (Attention, FeedForward, Embedding, LayerNorm, Output)
+
+#### Gradient & Loss Analysis (optirs-core) — Wave 2
+- **GradientFlowAnalyzer** - Gradient flow recording, vanishing/exploding detection, health reports, SVG visualization
+- **LossLandscapeAnalyzer** - 2D loss landscape perturbation analysis, sharpness computation, saddle point detection, SVG contour plots
+
+#### Few-Shot Learning (optirs-learned) — Wave 2
+- **PrototypicalNetwork** - Encoding, prototype computation, nearest-prototype classification
+- **FastAdaptationEngine** - Multi-step gradient adaptation with strategy selection
+- **TaskSimilarityCalculator** - Cosine similarity for task representations
+- **EpisodicMemoryBank** - Episode storage/retrieval with eviction policies (Performance, LRU, LFU, Age)
+- **SupportSetManager** - Diverse support set selection, noise augmentation, quality evaluation
+
+#### Online Meta-Learning (optirs-learned) — Wave 2
+- **OnlineMAML** - Continuous task stream meta-learning with staleness decay and buffer management
+- **CrossDomainTransfer** - Cross-domain knowledge transfer with shared representations and transferability matrix
+
+### Refactored
+
+- **search_strategies.rs** (2052 lines) split into modular directory structure:
+  - `search_strategies/mod.rs` - Trait definitions and re-exports
+  - `search_strategies/random.rs` - RandomSearch
+  - `search_strategies/evolutionary.rs` - EvolutionarySearch
+  - `search_strategies/rl_search.rs` - ReinforcementLearningSearch
+  - `search_strategies/differentiable.rs` - DifferentiableSearch (DARTS) + variants
+  - `search_strategies/bayesian.rs` - BayesianOptimization
+  - `search_strategies/neural_predictor.rs` - NeuralPredictorSearch
+  - `search_strategies/progressive.rs` - ProgressiveNAS
+
+### Changed
+
+#### Workspace & Dependencies
+- **Bumped workspace version to 0.3.0** - All crates now at version 0.3.0
+- Updated all internal crate dependency versions to 0.3.0
+- Updated publish script to version 0.3.0
+
+#### Documentation
+- Updated TODO.md version references to 0.3.0
+- Updated CHANGELOG with 0.3.0 release notes
+
+---
+
 ## [0.2.0] - 2026-02-16
 
 ### Changed
 
 #### Licensing
-- **License changed from dual MIT/Apache-2.0 to Apache-2.0 only** - OptiRS now uses Apache-2.0 as its sole license, aligning with the broader SciRS2 ecosystem
-- Removed `LICENSE-MIT` and `LICENSE-APACHE` files in favor of single `LICENSE` file
+- **License changed to Apache-2.0 only** - OptiRS now uses Apache-2.0 as its sole license, aligning with the broader SciRS2 ecosystem
+- Consolidated license files into single `LICENSE` file
 - Updated all crate manifests and documentation to reflect Apache-2.0 license
 
 #### SciRS2 Integration
-- **Updated to SciRS2 v0.2.0** - Upgraded all SciRS2 dependencies from v0.1.1 to v0.2.0
-  - `scirs2-core` 0.2.0 - Core scientific computing primitives
-  - `scirs2-optimize` 0.2.0 - Base optimization interfaces
-  - `scirs2-neural` 0.2.0 - Neural network support
-  - `scirs2-metrics` 0.2.0 - Performance monitoring
-  - `scirs2-stats` 0.2.0 - Statistical analysis
-  - `scirs2-series` 0.2.0 - Time series support
-  - `scirs2-datasets` 0.2.0 - Dataset utilities
-  - `scirs2-linalg` 0.2.0 - Linear algebra operations
-  - `scirs2-signal` 0.2.0 - Signal processing
+- **Updated to SciRS2 v0.3.0** - Upgraded all SciRS2 dependencies from v0.2.0 to v0.3.0
+  - `scirs2-core` 0.3.0 - Core scientific computing primitives
+  - `scirs2-optimize` 0.3.0 - Base optimization interfaces
+  - `scirs2-neural` 0.3.0 - Neural network support
+  - `scirs2-metrics` 0.3.0 - Performance monitoring
+  - `scirs2-stats` 0.3.0 - Statistical analysis
+  - `scirs2-series` 0.3.0 - Time series support
+  - `scirs2-datasets` 0.3.0 - Dataset utilities
+  - `scirs2-linalg` 0.3.0 - Linear algebra operations
+  - `scirs2-signal` 0.3.0 - Signal processing
 
 #### Documentation
 - Moved `CLAUDE.md` from repository to temporary directory (per project policy)
-- Updated version references across all documentation to v0.2.0
+- Updated version references across all documentation to v0.3.0
 - Updated `MIGRATION_FROM_SCIRS2.md` to reflect new version
 - Updated all subcrate documentation headers
 
 #### Build System
 - Updated workspace version to 0.2.0 across all crates
-- Refined workspace dependency management for SciRS2 v0.2.0
+- Refined workspace dependency management for SciRS2 v0.3.0
 - Updated `optirs-gpu` dependency configuration
 
 ### Removed
-- **MIT License** - Now Apache-2.0 only
-- `LICENSE-MIT` file
-- `LICENSE-APACHE` file (replaced by single `LICENSE`)
+- Old dual-license files (replaced by single `LICENSE`)
+- `LICENSE-APACHE` file (consolidated into `LICENSE`)
 - `CLAUDE.md` from repository (moved to temporary directory per policy)
 
 ### Maintenance
@@ -50,23 +133,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration Notes
 For users upgrading from 0.1.0 to 0.2.0:
-- **License Change**: OptiRS is now Apache-2.0 only. If your project required MIT license compatibility, please review your legal requirements
-- **SciRS2 Dependencies**: Update all SciRS2 dependencies to v0.2.0
+- **License Change**: OptiRS is now Apache-2.0 only. Please review your legal requirements if needed
+- **SciRS2 Dependencies**: Update all SciRS2 dependencies to v0.3.0
 - **No API Changes**: The public API remains fully compatible with v0.1.0
 - **No Breaking Changes**: This release is backward compatible at the API level
 
 ### Dependencies
-All SciRS2 dependencies updated to v0.2.0:
+All SciRS2 dependencies updated to v0.3.0:
 ```toml
-scirs2-core = "0.2.0"
-scirs2-optimize = "0.2.0"
-scirs2-neural = "0.2.0"
-scirs2-metrics = "0.2.0"
-scirs2-stats = "0.2.0"
-scirs2-series = "0.2.0"
-scirs2-datasets = "0.2.0"
-scirs2-linalg = "0.2.0"
-scirs2-signal = "0.2.0"
+scirs2-core = "0.3.0"
+scirs2-optimize = "0.3.0"
+scirs2-neural = "0.3.0"
+scirs2-metrics = "0.3.0"
+scirs2-stats = "0.3.0"
+scirs2-series = "0.3.0"
+scirs2-datasets = "0.3.0"
+scirs2-linalg = "0.3.0"
+scirs2-signal = "0.3.0"
 ```
 
 ---
@@ -155,7 +238,7 @@ OptiRS v0.1.0 is the first release of a comprehensive ML optimization library fo
 ### Features
 
 #### SciRS2 Ecosystem Integration
-Complete integration with SciRS2 v0.1.1:
+Complete integration with SciRS2 v0.3.0:
 - ✅ Arrays: `scirs2_core::ndarray` exclusively (NO direct ndarray)
 - ✅ Random: `scirs2_core::random` exclusively (NO direct rand)
 - ✅ Numerical: `scirs2_core::numeric` for all numerical traits
@@ -198,7 +281,7 @@ Complete integration with SciRS2 v0.1.1:
 
 ### Dependencies
 
-#### SciRS2 Ecosystem (v0.1.1)
+#### SciRS2 Ecosystem (v0.3.0)
 - `scirs2-core` - Core scientific primitives (REQUIRED)
 - `scirs2-optimize` - Base optimization interfaces (REQUIRED)
 - `scirs2-neural` - Neural network support

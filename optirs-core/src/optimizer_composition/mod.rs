@@ -579,6 +579,167 @@ where
     }
 }
 
+/// A weighted composition of optimizers
+///
+/// Runs all optimizers on the same parameters/gradients and returns the
+/// weighted average of their outputs. This allows blending the behavior
+/// of multiple optimization strategies.
+///
+/// # Example
+///
+/// ```
+/// use scirs2_core::ndarray::Array1;
+/// use optirs_core::optimizer_composition::WeightedOptimizer;
+/// use optirs_core::optimizers::{SGD, Adam, Optimizer};
+///
+/// // Create a weighted combination of SGD and Adam
+/// let mut weighted = WeightedOptimizer::new()
+///     .add_optimizer(Box::new(SGD::new(0.1)), 0.7)
+///     .add_optimizer(Box::new(Adam::new(0.01)), 0.3);
+///
+/// let params = Array1::zeros(3);
+/// let gradients = Array1::ones(3);
+/// let updated = weighted.step(&params, &gradients).expect("step failed");
+/// ```
+pub struct WeightedOptimizer<A, D>
+where
+    A: Float + ScalarOperand + Debug,
+    D: Dimension,
+{
+    /// The optimizers and their associated weights
+    optimizers: Vec<Box<dyn Optimizer<A, D>>>,
+    /// The weight for each optimizer
+    weights: Vec<A>,
+}
+
+impl<A, D> Default for WeightedOptimizer<A, D>
+where
+    A: Float + ScalarOperand + Debug,
+    D: Dimension,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A, D> WeightedOptimizer<A, D>
+where
+    A: Float + ScalarOperand + Debug,
+    D: Dimension,
+{
+    /// Create a new empty weighted optimizer
+    pub fn new() -> Self {
+        Self {
+            optimizers: Vec::new(),
+            weights: Vec::new(),
+        }
+    }
+
+    /// Add an optimizer with a given weight (builder pattern)
+    ///
+    /// # Arguments
+    ///
+    /// * `opt` - The optimizer to add
+    /// * `weight` - The weight for this optimizer
+    pub fn add_optimizer(mut self, opt: Box<dyn Optimizer<A, D>>, weight: A) -> Self {
+        self.optimizers.push(opt);
+        self.weights.push(weight);
+        self
+    }
+
+    /// Add multiple optimizers at once (builder pattern)
+    ///
+    /// # Arguments
+    ///
+    /// * `opts` - A vector of (optimizer, weight) pairs
+    pub fn with_optimizers(mut self, opts: Vec<(Box<dyn Optimizer<A, D>>, A)>) -> Self {
+        for (opt, weight) in opts {
+            self.optimizers.push(opt);
+            self.weights.push(weight);
+        }
+        self
+    }
+
+    /// Normalize weights so they sum to 1
+    pub fn normalize_weights(&mut self) {
+        let sum: A = self.weights.iter().copied().fold(A::zero(), |a, b| a + b);
+        if sum > A::zero() {
+            for w in &mut self.weights {
+                *w = *w / sum;
+            }
+        }
+    }
+
+    /// Get the number of optimizers
+    pub fn num_optimizers(&self) -> usize {
+        self.optimizers.len()
+    }
+
+    /// Get the current weights
+    pub fn weights(&self) -> &[A] {
+        &self.weights
+    }
+}
+
+impl<A, D> Optimizer<A, D> for WeightedOptimizer<A, D>
+where
+    A: Float + ScalarOperand + Debug,
+    D: Dimension,
+{
+    fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
+        if self.optimizers.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "WeightedOptimizer has no optimizers".to_string(),
+            ));
+        }
+
+        // Compute the weight sum for normalization
+        let weight_sum: A = self.weights.iter().copied().fold(A::zero(), |a, b| a + b);
+        if weight_sum <= A::zero() {
+            return Err(OptimError::InvalidConfig(
+                "WeightedOptimizer weight sum must be positive".to_string(),
+            ));
+        }
+
+        // Run each optimizer and accumulate the weighted result
+        let mut result: Option<Array<A, D>> = None;
+
+        for (optimizer, &weight) in self.optimizers.iter_mut().zip(self.weights.iter()) {
+            let updated = optimizer.step(params, gradients)?;
+            let normalized_weight = weight / weight_sum;
+
+            match result {
+                None => {
+                    result = Some(updated * normalized_weight);
+                }
+                Some(ref mut acc) => {
+                    acc.zip_mut_with(&updated, |a, &b| {
+                        *a = *a + b * normalized_weight;
+                    });
+                }
+            }
+        }
+
+        result.ok_or_else(|| {
+            OptimError::InvalidConfig("WeightedOptimizer produced no result".to_string())
+        })
+    }
+
+    fn get_learning_rate(&self) -> A {
+        if let Some(optimizer) = self.optimizers.first() {
+            optimizer.get_learning_rate()
+        } else {
+            A::from(0.01).expect("failed to convert default learning rate")
+        }
+    }
+
+    fn set_learning_rate(&mut self, learning_rate: A) {
+        for optimizer in &mut self.optimizers {
+            optimizer.set_learning_rate(learning_rate);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,5 +927,105 @@ mod tests {
         assert_abs_diff_eq!(chained_optimizer.get_learning_rate(), 0.05);
         assert_abs_diff_eq!(chained_optimizer.inner().get_learning_rate(), 0.05);
         assert_abs_diff_eq!(chained_optimizer.outer().get_learning_rate(), 0.05);
+    }
+
+    #[test]
+    fn test_weighted_optimizer_basic() {
+        // Create two SGD optimizers with different learning rates
+        let sgd1 = SGD::new(0.1);
+        let sgd2 = SGD::new(0.2);
+
+        let mut weighted: WeightedOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            WeightedOptimizer::new()
+                .add_optimizer(Box::new(sgd1), 0.5)
+                .add_optimizer(Box::new(sgd2), 0.5);
+
+        let params = Array1::zeros(3);
+        let gradients = Array1::ones(3);
+
+        let updated = weighted.step(&params, &gradients).expect("step failed");
+
+        // SGD1: params - 0.1 * grads = [-0.1, -0.1, -0.1]
+        // SGD2: params - 0.2 * grads = [-0.2, -0.2, -0.2]
+        // Weighted avg (0.5 each): 0.5*(-0.1) + 0.5*(-0.2) = -0.15
+        assert_abs_diff_eq!(updated[0], -0.15, epsilon = 1e-10);
+        assert_abs_diff_eq!(updated[1], -0.15, epsilon = 1e-10);
+        assert_abs_diff_eq!(updated[2], -0.15, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_weighted_optimizer_unequal_weights() {
+        let sgd1 = SGD::new(0.1);
+        let sgd2 = SGD::new(0.2);
+
+        let mut weighted: WeightedOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            WeightedOptimizer::new()
+                .add_optimizer(Box::new(sgd1), 3.0)
+                .add_optimizer(Box::new(sgd2), 1.0);
+
+        let params = Array1::zeros(2);
+        let gradients = Array1::ones(2);
+
+        let updated = weighted.step(&params, &gradients).expect("step failed");
+
+        // SGD1: [-0.1, -0.1], SGD2: [-0.2, -0.2]
+        // Weights normalized: 3/4=0.75, 1/4=0.25
+        // Result: 0.75*(-0.1) + 0.25*(-0.2) = -0.075 - 0.05 = -0.125
+        assert_abs_diff_eq!(updated[0], -0.125, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_weighted_optimizer_empty() {
+        let mut weighted: WeightedOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            WeightedOptimizer::new();
+
+        let params = Array1::zeros(3);
+        let gradients = Array1::ones(3);
+
+        let result = weighted.step(&params, &gradients);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_weighted_optimizer_normalize_weights() {
+        let mut weighted: WeightedOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            WeightedOptimizer::new()
+                .add_optimizer(Box::new(SGD::new(0.1)), 2.0)
+                .add_optimizer(Box::new(SGD::new(0.2)), 8.0);
+
+        weighted.normalize_weights();
+
+        assert_abs_diff_eq!(weighted.weights()[0], 0.2, epsilon = 1e-10);
+        assert_abs_diff_eq!(weighted.weights()[1], 0.8, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_weighted_optimizer_learning_rate() {
+        let mut weighted: WeightedOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            WeightedOptimizer::new()
+                .add_optimizer(Box::new(SGD::new(0.1)), 1.0)
+                .add_optimizer(Box::new(Adam::new(0.01)), 1.0);
+
+        // Learning rate comes from the first optimizer
+        assert_abs_diff_eq!(weighted.get_learning_rate(), 0.1);
+
+        // Setting learning rate applies to all
+        weighted.set_learning_rate(0.05);
+        assert_abs_diff_eq!(weighted.get_learning_rate(), 0.05);
+    }
+
+    #[test]
+    fn test_weighted_optimizer_with_optimizers() {
+        let opts: Vec<(Box<dyn Optimizer<f64, scirs2_core::ndarray::Ix1>>, f64)> = vec![
+            (Box::new(SGD::new(0.1)), 1.0),
+            (Box::new(SGD::new(0.2)), 1.0),
+        ];
+
+        let weighted: WeightedOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            WeightedOptimizer::new().with_optimizers(opts);
+
+        assert_eq!(weighted.num_optimizers(), 2);
+        assert_abs_diff_eq!(weighted.weights()[0], 1.0);
+        assert_abs_diff_eq!(weighted.weights()[1], 1.0);
     }
 }

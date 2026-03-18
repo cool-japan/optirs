@@ -3,6 +3,9 @@
 // This module provides support for distributed training including parameter averaging,
 // gradient compression, and communication optimization for multi-node/multi-GPU training.
 
+pub mod fedprox;
+pub use fedprox::*;
+
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;

@@ -105,10 +105,16 @@
 
 pub mod adaptive;
 pub mod common;
+pub mod continual_learning;
+pub mod cross_domain_transfer;
+pub mod domain_optimizers;
+pub mod episodic_memory_impl;
 pub mod error;
 pub mod few_shot;
+pub mod few_shot_impl;
 pub mod lstm;
 pub mod meta_learning;
+pub mod online_maml;
 pub mod transformer;
 pub mod transformer_based_optimizer;
 
@@ -116,6 +122,7 @@ pub use common::{
     LearnedOptimizerConfig, MetaOptimizationStrategy, NeuralOptimizerMetrics, NeuralOptimizerType,
     OptimizerState, StateMetadata, TaskContext, TaskPerformance,
 };
+pub use continual_learning::{ElasticWeightConsolidation, NetworkColumn, ProgressiveNetworks};
 pub use error::{OptimError, Result};
 pub use lstm::LSTMOptimizer;
 pub use transformer::TransformerOptimizer;

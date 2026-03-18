@@ -1383,38 +1383,21 @@ fn determine_exit_code(_auditresult: &AuditResult, matches: &ArgMatches) -> i32 
 
     // Exit with non-zero code if issues at or above the minimum severity are found
     match min_severity {
-        Severity::Critical => {
-            if _auditresult.summary.critical_issues > 0 {
-                1
-            } else {
-                0
-            }
+        Severity::Critical if _auditresult.summary.critical_issues > 0 => 1,
+        Severity::High
+            if _auditresult.summary.critical_issues + _auditresult.summary.high_issues > 0 =>
+        {
+            1
         }
-        Severity::High => {
-            if _auditresult.summary.critical_issues + _auditresult.summary.high_issues > 0 {
-                1
-            } else {
-                0
-            }
-        }
-        Severity::Medium => {
+        Severity::Medium
             if _auditresult.summary.critical_issues
                 + _auditresult.summary.high_issues
                 + _auditresult.summary.medium_issues
-                > 0
-            {
-                1
-            } else {
-                0
-            }
+                > 0 =>
+        {
+            1
         }
-        Severity::Low => {
-            if _auditresult.summary.total_issues > 0 {
-                1
-            } else {
-                0
-            }
-        }
+        Severity::Low if _auditresult.summary.total_issues > 0 => 1,
         _ => 0,
     }
 }

@@ -1,9 +1,9 @@
-# OptiRS Learned TODO (v0.2.0)
+# OptiRS Learned TODO (v0.3.0)
 
 ## Module Status: Production Ready
 
-**Release Date**: 2025-12-30
-**Tests**: 69 tests passing (2 ignored)
+**Release Date**: 2026-03-17
+**Tests**: 143 tests passing (2 ignored)
 **Features**: LSTM optimizers, Transformer optimizers, Meta-learning
 **SciRS2 Compliance**: 100%
 
@@ -83,25 +83,25 @@
 ## Future Work (v0.2.0+)
 
 ### Domain-Specific Optimization
-- [ ] Computer vision specific optimizers
-- [ ] NLP-specific token-aware updates
-- [ ] Attention pattern optimization
+- [x] Computer vision specific optimizers (CVOptimizer)
+- [x] NLP-specific token-aware updates (NLPOptimizer)
+- [x] Attention pattern optimization (AttentionOptimizer)
 
 ### Online Learning and Adaptation
-- [ ] Continual learning (EWC, Progressive Networks)
-- [ ] Online MAML for continuous task streams
+- [x] Continual learning (EWC, Progressive Networks)
+- [x] Online MAML for continuous task streams (staleness decay, buffer management, adaptation efficiency)
 - [ ] Real-time adaptation mechanisms
 
 ### Advanced Architectures
 - [ ] Graph Neural Network optimizers
 - [ ] Memory-augmented optimizers (NTM)
-- [ ] Episodic memory systems
+- [x] Episodic memory systems (EpisodicMemoryBank, SupportSetManager)
 
 ### Multi-Task and Transfer
-- [ ] Cross-domain knowledge transfer
-- [ ] Shared representation learning
+- [x] Cross-domain knowledge transfer (domain registration, similarity, transferability matrix)
+- [x] Shared representation learning (shared representation updates)
 - [ ] Zero-shot optimization
-- [ ] Few-shot adaptation strategies
+- [x] Few-shot adaptation strategies (PrototypicalNetwork, FastAdaptationEngine, TaskSimilarityCalculator)
 
 ### Research Features
 - [ ] NAS for optimizer architectures (DARTS)
@@ -121,7 +121,7 @@
 
 ### Test Count
 ```
-69 tests passing
+143 tests passing
 2 intentionally ignored (hardware-specific)
 ```
 
@@ -133,9 +133,10 @@
 - Meta-learning pipeline complete
 - Transformer and LSTM optimizers working
 - Production-ready evaluation metrics
+- Wave 2: Few-shot learning, episodic memory, online MAML, cross-domain transfer
 
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.2.0
-**Release Date**: 2025-12-30
+**Version**: v0.3.0
+**Release Date**: 2026-03-17

@@ -3,7 +3,7 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 #[allow(unused_imports)]
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use optirs_core::optimizers::Optimizer;
 #[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2, Dimension};
@@ -164,9 +164,43 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone + std::iter::Sum
         parameters: &HashMap<String, Array1<T>>,
         _loss: T,
     ) -> Result<HashMap<String, Array1<T>>> {
+        let epsilon = T::from(1e-5)
+            .ok_or_else(|| OptimError::ComputationError("Failed to convert epsilon".to_string()))?;
+        let two = T::from(2.0)
+            .ok_or_else(|| OptimError::ComputationError("Failed to convert 2.0".to_string()))?;
         let mut gradients = HashMap::new();
+
         for (name, param) in parameters {
-            let grad = Array1::zeros(param.len());
+            let mut grad = Array1::zeros(param.len());
+            for i in 0..param.len() {
+                // Forward perturbation
+                let mut params_plus = parameters.clone();
+                let p_plus = params_plus.get_mut(name).ok_or_else(|| {
+                    OptimError::ComputationError(format!("Parameter {} not found", name))
+                })?;
+                p_plus[i] = p_plus[i] + epsilon;
+
+                // Backward perturbation
+                let mut params_minus = parameters.clone();
+                let p_minus = params_minus.get_mut(name).ok_or_else(|| {
+                    OptimError::ComputationError(format!("Parameter {} not found", name))
+                })?;
+                p_minus[i] = p_minus[i] - epsilon;
+
+                // Compute simple loss for both (sum of squared params as proxy)
+                let loss_plus: T = params_plus
+                    .values()
+                    .flat_map(|a| a.iter().copied())
+                    .map(|v| v * v)
+                    .fold(T::zero(), |a, b| a + b);
+                let loss_minus: T = params_minus
+                    .values()
+                    .flat_map(|a| a.iter().copied())
+                    .map(|v| v * v)
+                    .fold(T::zero(), |a, b| a + b);
+
+                grad[i] = (loss_plus - loss_minus) / (two * epsilon);
+            }
             gradients.insert(name.clone(), grad);
         }
         Ok(gradients)

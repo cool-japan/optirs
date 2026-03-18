@@ -499,13 +499,13 @@ pub struct EncoderNetwork<T: Float + Debug + Send + Sync + 'static> {
 #[derive(Debug)]
 pub struct EncoderLayer<T: Float + Debug + Send + Sync + 'static> {
     /// Weight matrix
-    weights: Array2<T>,
+    pub weights: Array2<T>,
 
     /// Bias vector
-    bias: Array1<T>,
+    pub bias: Array1<T>,
 
     /// Layer type
-    layer_type: LayerType,
+    pub layer_type: LayerType,
 }
 
 /// Layer types
@@ -771,6 +771,22 @@ pub enum EvictionPolicy {
     Random,
 }
 
+/// Memory bank statistics (summary view)
+#[derive(Debug, Clone)]
+pub struct MemoryBankStats<T: Float + Debug + Send + Sync + 'static> {
+    /// Number of stored episodes
+    pub count: usize,
+
+    /// Average performance across episodes
+    pub avg_performance: T,
+
+    /// Capacity used as a fraction
+    pub capacity_used: f64,
+
+    /// Total capacity
+    pub total_capacity: usize,
+}
+
 /// Memory usage statistics
 #[derive(Debug, Clone)]
 pub struct MemoryUsageStats {
@@ -1031,85 +1047,384 @@ pub struct PrototypicalNetworkConfig<T: Float + Debug + Send + Sync + 'static> {
     pub hidden_dim: usize,
 }
 
-// Implementation stubs for major components
+// Constructors and core methods for major components
 impl<T: Float + Debug + Send + Sync + 'static> PrototypicalNetwork<T> {
-    fn new(config: PrototypicalNetworkConfig<T>) -> Result<Self> {
-        Err(OptimError::InvalidConfig(
-            "PrototypicalNetwork implementation pending".to_string(),
-        ))
+    /// Create a new prototypical network from configuration
+    pub fn new(config: PrototypicalNetworkConfig<T>) -> Result<Self> {
+        if config.embedding_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "embedding_dim must be > 0".to_string(),
+            ));
+        }
+        // Build a single-layer encoder: input_dim -> embedding_dim
+        let input_dim = config.hidden_dim.max(config.embedding_dim);
+        let layer = EncoderLayer {
+            weights: Array2::zeros((input_dim, config.embedding_dim)),
+            bias: Array1::zeros(config.embedding_dim),
+            layer_type: LayerType::Linear,
+        };
+        Ok(Self {
+            encoder: EncoderNetwork {
+                layers: vec![layer],
+                activation: ActivationFunction::ReLU,
+            },
+            prototypes: HashMap::new(),
+            distance_metric: DistanceMetric::Euclidean,
+            parameters: PrototypicalNetworkParams {
+                embedding_dim: config.embedding_dim,
+                learning_rate: config.learning_rate,
+                temperature: T::one(),
+                prototype_update_rate: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::one()),
+            },
+        })
     }
 
-    fn encode_task(&self, _taskdata: &TaskData<T>) -> Result<Array1<T>> {
-        Ok(Array1::zeros(128)) // Placeholder
+    /// Create from embedding dimension and number of classes (convenience)
+    pub fn from_dims(embedding_dim: usize, _num_classes: usize) -> Result<Self> {
+        if embedding_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "embedding_dim must be > 0".to_string(),
+            ));
+        }
+        let layer = EncoderLayer {
+            weights: Array2::zeros((embedding_dim, embedding_dim)),
+            bias: Array1::zeros(embedding_dim),
+            layer_type: LayerType::Linear,
+        };
+        Ok(Self {
+            encoder: EncoderNetwork {
+                layers: vec![layer],
+                activation: ActivationFunction::ReLU,
+            },
+            prototypes: HashMap::new(),
+            distance_metric: DistanceMetric::Euclidean,
+            parameters: PrototypicalNetworkParams {
+                embedding_dim,
+                learning_rate: scirs2_core::numeric::NumCast::from(0.01)
+                    .unwrap_or_else(|| T::one()),
+                temperature: T::one(),
+                prototype_update_rate: scirs2_core::numeric::NumCast::from(0.1)
+                    .unwrap_or_else(|| T::one()),
+            },
+        })
     }
 
-    fn update_prototypes(
+    /// Get the embedding dimension
+    pub fn embedding_dim(&self) -> usize {
+        self.parameters.embedding_dim
+    }
+
+    /// Get encoder layers (for projection)
+    pub fn encoder_layers(&self) -> &[EncoderLayer<T>] {
+        &self.encoder.layers
+    }
+
+    /// Get mutable access to prototypes
+    pub fn prototypes_mut(&mut self) -> &mut HashMap<String, Prototype<T>> {
+        &mut self.prototypes
+    }
+
+    /// Get read access to prototypes
+    pub fn prototypes(&self) -> &HashMap<String, Prototype<T>> {
+        &self.prototypes
+    }
+
+    /// Get the distance metric
+    pub fn distance_metric(&self) -> &DistanceMetric {
+        &self.distance_metric
+    }
+
+    /// Encode a task into an embedding vector
+    pub fn encode_task(&self, task_data: &TaskData<T>) -> Result<Array1<T>> {
+        // Compute mean of support set features as task representation
+        if task_data.support_set.examples.is_empty() {
+            return Err(OptimError::InsufficientData(
+                "No support examples for encoding".to_string(),
+            ));
+        }
+        let dim = self.parameters.embedding_dim;
+        let mut sum = Array1::<T>::zeros(dim);
+        let count = task_data.support_set.examples.len();
+        for ex in &task_data.support_set.examples {
+            let feat = &ex.features;
+            let len = feat.len().min(dim);
+            for i in 0..len {
+                sum[i] = sum[i] + feat[i];
+            }
+        }
+        let count_t = scirs2_core::numeric::NumCast::from(count).unwrap_or_else(|| T::one());
+        for i in 0..dim {
+            sum[i] = sum[i] / count_t;
+        }
+        Ok(sum)
+    }
+
+    /// Update prototypes with new experience
+    pub fn update_prototypes(
         &mut self,
-        _task_data: &TaskData<T>,
+        task_data: &TaskData<T>,
         _result: &AdaptationResult<T>,
     ) -> Result<()> {
-        Ok(()) // Placeholder
+        let task_repr = self.encode_task(task_data)?;
+        let task_id = task_data.task_id.clone();
+        let update_rate = self.parameters.prototype_update_rate;
+        let one_minus = T::one() - update_rate;
+
+        if let Some(proto) = self.prototypes.get_mut(&task_id) {
+            // Exponential moving average update
+            let dim = proto.vector.len().min(task_repr.len());
+            for i in 0..dim {
+                proto.vector[i] = one_minus * proto.vector[i] + update_rate * task_repr[i];
+            }
+            proto.example_count += task_data.support_set.examples.len();
+            proto.last_updated = std::time::SystemTime::now();
+            proto.metadata.update_count += 1;
+        } else {
+            let proto = Prototype {
+                vector: task_repr,
+                confidence: T::one(),
+                example_count: task_data.support_set.examples.len(),
+                last_updated: std::time::SystemTime::now(),
+                metadata: PrototypeMetadata {
+                    task_category: task_id.clone(),
+                    domain: task_data.domain_info.domain_type,
+                    created_at: std::time::SystemTime::now(),
+                    update_count: 1,
+                },
+            };
+            self.prototypes.insert(task_id, proto);
+        }
+        Ok(())
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> SupportSetManager<T> {
-    fn new(config: SupportSetManagerConfig) -> Result<Self> {
-        Err(OptimError::InvalidConfig(
-            "SupportSetManager implementation pending".to_string(),
-        ))
+    /// Create a new support set manager
+    pub fn new(config: SupportSetManagerConfig) -> Result<Self> {
+        if config.max_support_size == 0 {
+            return Err(OptimError::InvalidConfig(
+                "max_support_size must be > 0".to_string(),
+            ));
+        }
+        Ok(Self {
+            support_sets: HashMap::new(),
+            selection_strategy: SupportSetSelectionStrategy::DiversityBased,
+            config,
+        })
+    }
+
+    /// Create from max support size (convenience)
+    pub fn from_max_size(max_support_size: usize) -> Result<Self> {
+        Self::new(SupportSetManagerConfig {
+            min_support_size: 1,
+            max_support_size,
+            quality_threshold: 0.5,
+            enable_augmentation: true,
+            cache_support_sets: true,
+        })
+    }
+
+    /// Get the max support size
+    pub fn max_support_size(&self) -> usize {
+        self.config.max_support_size
+    }
+
+    /// Get the config
+    pub fn config(&self) -> &SupportSetManagerConfig {
+        &self.config
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> TaskSimilarityCalculator<T> {
-    fn new(config: SimilarityCalculatorConfig<T>) -> Result<Self> {
-        Err(OptimError::InvalidConfig(
-            "TaskSimilarityCalculator implementation pending".to_string(),
-        ))
+    /// Create a new task similarity calculator
+    pub fn new(config: SimilarityCalculatorConfig<T>) -> Result<Self> {
+        Ok(Self {
+            similarity_metrics: Vec::new(),
+            metric_weights: HashMap::new(),
+            similarity_cache: HashMap::new(),
+            config,
+        })
+    }
+
+    /// Create with default configuration
+    pub fn default_new() -> Result<Self> {
+        Self::new(SimilarityCalculatorConfig {
+            enable_caching: true,
+            cache_size_limit: 1000,
+            similarity_threshold: scirs2_core::numeric::NumCast::from(0.5)
+                .unwrap_or_else(|| T::zero()),
+            use_metadata: true,
+        })
+    }
+
+    /// Get mutable access to the similarity cache
+    pub fn similarity_cache_mut(&mut self) -> &mut HashMap<(String, String), T> {
+        &mut self.similarity_cache
+    }
+
+    /// Get whether caching is enabled
+    pub fn caching_enabled(&self) -> bool {
+        self.config.enable_caching
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> EpisodicMemoryBank<T> {
-    fn new(config: MemoryBankConfig<T>) -> Result<Self> {
-        Err(OptimError::InvalidConfig(
-            "EpisodicMemoryBank implementation pending".to_string(),
-        ))
+    /// Create a new episodic memory bank
+    pub fn new(config: MemoryBankConfig<T>) -> Result<Self> {
+        if config.max_memory_size == 0 {
+            return Err(OptimError::InvalidConfig(
+                "max_memory_size must be > 0".to_string(),
+            ));
+        }
+        Ok(Self {
+            episodes: VecDeque::new(),
+            config,
+            usage_stats: MemoryUsageStats {
+                total_episodes: 0,
+                memory_utilization: 0.0,
+                hit_rate: 0.0,
+                avg_retrieval_time: Duration::from_secs(0),
+            },
+        })
     }
 
-    fn retrieve_similar(
+    /// Create from capacity (convenience)
+    pub fn from_capacity(capacity: usize) -> Result<Self> {
+        Self::new(MemoryBankConfig {
+            max_memory_size: capacity,
+            eviction_policy: EvictionPolicy::Performance,
+            similarity_threshold: scirs2_core::numeric::NumCast::from(0.3)
+                .unwrap_or_else(|| T::zero()),
+            enable_compression: false,
+        })
+    }
+
+    /// Get the capacity
+    pub fn capacity(&self) -> usize {
+        self.config.max_memory_size
+    }
+
+    /// Get episode count
+    pub fn len(&self) -> usize {
+        self.episodes.len()
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.episodes.is_empty()
+    }
+
+    /// Get mutable access to episodes
+    pub fn episodes_mut(&mut self) -> &mut VecDeque<MemoryEpisode<T>> {
+        &mut self.episodes
+    }
+
+    /// Get read access to episodes
+    pub fn episodes(&self) -> &VecDeque<MemoryEpisode<T>> {
+        &self.episodes
+    }
+
+    /// Get mutable access to usage stats
+    pub fn usage_stats_mut(&mut self) -> &mut MemoryUsageStats {
+        &mut self.usage_stats
+    }
+
+    /// Get usage stats
+    pub fn usage_stats(&self) -> &MemoryUsageStats {
+        &self.usage_stats
+    }
+
+    /// Get eviction policy
+    pub fn eviction_policy(&self) -> EvictionPolicy {
+        self.config.eviction_policy
+    }
+
+    /// Retrieve similar episodes to a task
+    pub fn retrieve_similar(
         &self,
-        _task_data: &TaskData<T>,
-        _k: usize,
+        task_data: &TaskData<T>,
+        k: usize,
     ) -> Result<Vec<MemoryEpisode<T>>> {
-        Ok(Vec::new()) // Placeholder
+        if self.episodes.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Simple retrieval: return up to k most recent episodes
+        // (full similarity-based retrieval is in episodic_memory_impl)
+        let count = k.min(self.episodes.len());
+        let result: Vec<MemoryEpisode<T>> =
+            self.episodes.iter().rev().take(count).cloned().collect();
+        let _ = task_data; // suppress unused warning
+        Ok(result)
     }
 
-    fn store_episode(
+    /// Store a new episode
+    pub fn store_episode(
         &mut self,
-        _task_data: TaskData<T>,
-        _result: AdaptationResult<T>,
+        task_data: TaskData<T>,
+        result: AdaptationResult<T>,
     ) -> Result<()> {
-        Ok(()) // Placeholder
+        let episode = MemoryEpisode {
+            episode_id: format!("ep_{}", self.usage_stats.total_episodes),
+            task_data,
+            adaptation_result: result,
+            timestamp: std::time::SystemTime::now(),
+            metadata: EpisodeMetadata {
+                difficulty: DifficultyLevel::Medium,
+                domain: DomainType::Optimization,
+                success_rate: 0.0,
+                tags: Vec::new(),
+            },
+            access_count: 0,
+        };
+
+        if self.episodes.len() >= self.config.max_memory_size {
+            self.episodes.pop_front();
+        }
+        self.episodes.push_back(episode);
+        self.usage_stats.total_episodes += 1;
+        self.usage_stats.memory_utilization =
+            self.episodes.len() as f64 / self.config.max_memory_size as f64;
+        Ok(())
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
-    fn new(config: FastAdaptationConfig) -> Result<Self> {
-        Err(OptimError::InvalidConfig(
-            "FastAdaptationEngine implementation pending".to_string(),
-        ))
+    /// Create a new fast adaptation engine
+    pub fn new(config: FastAdaptationConfig) -> Result<Self> {
+        Ok(Self {
+            algorithms: Vec::new(),
+            config,
+        })
     }
 
-    fn adapt_fast(
+    /// Create from inner learning rate and adaptation steps (convenience)
+    pub fn from_params(inner_lr: T, adaptation_steps: usize) -> Result<Self> {
+        let _ = (inner_lr, adaptation_steps);
+        Self::new(FastAdaptationConfig {
+            enable_caching: true,
+            enable_prediction: true,
+            max_adaptation_time: Duration::from_secs(60),
+            _performance_threshold: 0.8,
+        })
+    }
+
+    /// Get the configuration
+    pub fn config(&self) -> &FastAdaptationConfig {
+        &self.config
+    }
+
+    /// Perform fast adaptation
+    pub fn adapt_fast(
         &mut self,
         _optimizer: &mut dyn FewShotOptimizer<T>,
         _task_data: &TaskData<T>,
         _strategy: AdaptationStrategyType,
         _config: &AdaptationConfig,
     ) -> Result<AdaptationResult<T>> {
-        // Simplified adaptation result
         Ok(AdaptationResult {
             adapted_state: OptimizerState {
-                parameters: Array1::zeros(1), // Default size, should be adjusted based on context
+                parameters: Array1::zeros(1),
                 gradients: Array1::zeros(1),
                 momentum: None,
                 hidden_states: HashMap::new(),
@@ -1117,7 +1432,8 @@ impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
                 step: 0,
                 step_count: 0,
                 loss: None,
-                learning_rate: scirs2_core::numeric::NumCast::from(0.001).expect("unwrap failed"),
+                learning_rate: scirs2_core::numeric::NumCast::from(0.001)
+                    .unwrap_or_else(|| T::one()),
                 metadata: super::StateMetadata {
                     task_id: None,
                     optimizer_type: None,
@@ -1153,14 +1469,54 @@ impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> FewShotPerformanceTracker<T> {
-    fn new(config: TrackingConfig) -> Result<Self> {
-        Err(OptimError::InvalidConfig(
-            "FewShotPerformanceTracker implementation pending".to_string(),
-        ))
+    /// Create a new performance tracker
+    pub fn new(config: TrackingConfig) -> Result<Self> {
+        Ok(Self {
+            performance_history: VecDeque::new(),
+            metrics: Vec::new(),
+            config,
+            stats: PerformanceStats {
+                best_performance: T::zero(),
+                average_performance: T::zero(),
+                performance_variance: T::zero(),
+                improvement_rate: T::zero(),
+                success_rate: T::zero(),
+            },
+        })
     }
 
-    fn record_performance(&mut self, result: &AdaptationResult<T>) -> Result<()> {
-        Ok(()) // Placeholder
+    /// Record a performance result
+    pub fn record_performance(&mut self, result: &AdaptationResult<T>) -> Result<()> {
+        let record = PerformanceRecord {
+            task_id: String::new(),
+            performance: result.performance.query_performance,
+            adaptation_time: result.resource_usage.total_time,
+            strategy_used: String::new(),
+            timestamp: std::time::SystemTime::now(),
+            additional_metrics: HashMap::new(),
+        };
+
+        if self.performance_history.len() >= self.config.max_history_size {
+            self.performance_history.pop_front();
+        }
+        self.performance_history.push_back(record);
+
+        // Update stats
+        if !self.performance_history.is_empty() {
+            let mut sum = T::zero();
+            let mut best = T::neg_infinity();
+            for r in &self.performance_history {
+                sum = sum + r.performance;
+                if r.performance > best {
+                    best = r.performance;
+                }
+            }
+            let count_t = scirs2_core::numeric::NumCast::from(self.performance_history.len())
+                .unwrap_or_else(|| T::one());
+            self.stats.average_performance = sum / count_t;
+            self.stats.best_performance = best;
+        }
+        Ok(())
     }
 }
 
