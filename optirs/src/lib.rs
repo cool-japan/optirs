@@ -1,7 +1,7 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.1.0
-//! **Release Date:** 2025-12-30 (Stable Release)
+//! **Version:** 0.3.1
+//! **Release Date:** 2026-03-27 (Stable Release)
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -30,7 +30,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-core = "0.1.0"
+//! optirs-core = "0.3.1"
 //! ```
 //!
 //! Basic usage:

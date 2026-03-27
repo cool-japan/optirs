@@ -1,16 +1,16 @@
-# OptiRS TODO - v0.3.0 (Stable Release)
+# OptiRS TODO - v0.3.1 (Stable Release)
 
 ## Project Status: Stable Release - Production Ready
 
-**Current Version**: v0.3.0
-**Release Date**: 2026-03-17
-**Total Tests**: 1,220 tests passing + 76 doc tests (100% pass rate, 9 skipped)
-**SLoC**: 251,402 lines of Rust code (917 files, 317,315 total lines)
+**Current Version**: v0.3.1
+**Release Date**: 2026-03-27
+**Total Tests**: 1,249 tests passing + 82 doc tests (100% pass rate, 9 skipped, 4 doc tests ignored)
+**SLoC**: 254,494 lines of Rust code (985 files, 325,228 total lines)
 **SciRS2 Compliance**: 100%
 
 ---
 
-## Completed: v0.3.0 Release
+## Completed: v0.3.1 Release
 
 ### SciRS2 Core Integration
 - [x] **Remove ALL direct ndarray imports** - All 474 imports updated to scirs2_core::ndarray
@@ -161,7 +161,7 @@
 
 ---
 
-## Completed: Wave 2 Features (v0.3.0)
+## Completed: Wave 2 Features (v0.3.1)
 
 ### Learned Optimizers
 - [x] Meta-learning framework enhancements
@@ -214,8 +214,9 @@ optirs-gpu:     104 tests passing
 optirs-learned: 143 tests passing
 optirs-nas:      63 tests passing
 optirs-tpu:      58 tests passing
+optirs-wasm:     29 tests passing
 
-Total: 1,220 unit tests + 76 doc tests (9 skipped)
+Total: 1,249 unit tests + 82 doc tests (9 skipped, 4 doc tests ignored)
 ```
 
 ### Test Quality
@@ -259,11 +260,11 @@ Total: 1,220 unit tests + 76 doc tests (9 skipped)
 
 ---
 
-## Release Status (v0.3.0)
+## Release Status (v0.3.1)
 
 - [x] All core optimizers implemented (22 total)
 - [x] Full SciRS2 integration verified
-- [x] 1,220 tests passing + 76 doc tests
+- [x] 1,249 tests passing + 82 doc tests
 - [x] Wave 2 features implemented (FedProx, ViT schedulers, gradient flow, loss landscape, few-shot, online MAML, cross-domain transfer, domain NAS, architecture embedding)
 - [x] Documentation complete
 - [x] CHANGELOG.md created
@@ -274,5 +275,5 @@ Total: 1,220 unit tests + 76 doc tests (9 skipped)
 
 ---
 
-**Status**: ✅ Released (2026-03-17)
+**Status**: ✅ Released (2026-03-27)
 **Next Milestone**: v0.4.0 - Further enhancements and research implementations

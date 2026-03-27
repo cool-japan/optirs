@@ -48,8 +48,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-nas = "0.3.0"
-scirs2-core = "0.3.0"  # Required foundation
+optirs-nas = "0.3.1"
+scirs2-core = "0.4.0"  # Required foundation
 ```
 
 ### Feature Selection
@@ -58,7 +58,7 @@ Enable specific NAS approaches:
 
 ```toml
 [dependencies]
-optirs-nas = { version = "0.3.0", features = ["bayesian", "evolutionary", "reinforcement"] }
+optirs-nas = { version = "0.3.1", features = ["bayesian", "evolutionary", "reinforcement"] }
 ```
 
 Available features:

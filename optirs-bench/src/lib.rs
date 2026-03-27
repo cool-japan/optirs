@@ -1,6 +1,6 @@
 //! # OptiRS Bench - Benchmarking and Performance Analysis
 //!
-//! **Version:** 0.1.0
+//! **Version:** 0.3.1
 //! **Status:** Available
 //!
 //! This crate provides comprehensive benchmarking, profiling, performance analysis, and regression

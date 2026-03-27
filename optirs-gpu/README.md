@@ -48,8 +48,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-gpu = "0.3.0"
-scirs2-core = "0.3.0"  # Required foundation
+optirs-gpu = "0.3.1"
+scirs2-core = "0.4.0"  # Required foundation
 ```
 
 ### Feature Selection
@@ -58,7 +58,7 @@ Enable specific GPU backends:
 
 ```toml
 [dependencies]
-optirs-gpu = { version = "0.3.0", features = ["cuda", "metal"] }
+optirs-gpu = { version = "0.3.1", features = ["cuda", "metal"] }
 ```
 
 Available features:

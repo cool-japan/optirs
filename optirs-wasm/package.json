@@ -1,6 +1,6 @@
 {
   "name": "@cooljapan/optirs",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "High-performance deep learning optimizers and schedulers for WebAssembly",
   "main": "pkg/nodejs/optirs.js",
   "module": "pkg/web/optirs.js",

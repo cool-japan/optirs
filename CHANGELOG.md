@@ -5,6 +5,23 @@ All notable changes to OptiRS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-27
+
+### Changed
+
+- **Version Synchronization** - All lib.rs doc comments now reflect accurate version 0.3.1
+- **Documentation** - Updated version references throughout codebase
+
+### Added
+
+- **optirs-wasm README** - Added comprehensive README.md for WebAssembly bindings crate
+
+### Fixed
+
+- **Doc Comment Versions** - Fixed stale 0.1.0 version strings in all crate documentation
+
+---
+
 ## [0.3.0] - 2026-03-17
 
 ### Added
@@ -336,5 +353,7 @@ Legend: ✅ Production Ready | 🚧 In Development | 🔬 Research Phase | ❌ N
 
 ---
 
+[0.3.1]: https://github.com/cool-japan/optirs/releases/tag/v0.3.1
+[0.3.0]: https://github.com/cool-japan/optirs/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cool-japan/optirs/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0
