@@ -1,8 +1,8 @@
-# OptiRS GPU TODO (v0.3.0)
+# OptiRS GPU TODO (v0.3.1)
 
 ## Module Status: Production Ready
 
-**Release Date**: 2025-12-30
+**Release Date**: 2026-03-27
 **Tests**: 104 tests passing (1 ignored)
 **Backends**: CUDA, Metal, OpenCL, WebGPU
 **SciRS2 Compliance**: 100%
@@ -161,5 +161,5 @@
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.0
-**Release Date**: 2025-12-30
+**Version**: v0.3.1
+**Release Date**: 2026-03-27

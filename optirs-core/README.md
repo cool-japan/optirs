@@ -42,9 +42,9 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 ## Dependencies
 
 ### Required Dependencies (SciRS2 Ecosystem)
-- `scirs2-core` 0.3.0: Foundation scientific primitives (REQUIRED)
+- `scirs2-core` 0.4.0: Foundation scientific primitives (REQUIRED)
   - Provides: arrays, random, numeric traits, SIMD, parallel ops, GPU abstractions
-- `scirs2-optimize` 0.3.0: Base optimization interfaces (REQUIRED)
+- `scirs2-optimize` 0.4.0: Base optimization interfaces (REQUIRED)
 
 ### Additional SciRS2 Dependencies
 - `scirs2-neural`: Neural network optimization support
@@ -68,8 +68,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.3.0"
-scirs2-core = "0.3.0"  # Required foundation
+optirs-core = "0.3.1"
+scirs2-core = "0.4.0"  # Required foundation
 ```
 
 ### Basic Example
@@ -125,7 +125,7 @@ Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.3.0", features = ["cross-platform-testing"] }
+optirs-core = { version = "0.3.1", features = ["cross-platform-testing"] }
 ```
 
 **Note**: SIMD and parallel processing are built-in via scirs2-core and automatically enabled when beneficial.

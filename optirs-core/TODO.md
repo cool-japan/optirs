@@ -1,8 +1,8 @@
-# OptiRS Core TODO (v0.3.0)
+# OptiRS Core TODO (v0.3.1)
 
 ## Module Status: Production Ready
 
-**Release Date**: 2026-03-17
+**Release Date**: 2026-03-27
 **Tests**: 647 unit tests + doc tests passing (3 ignored)
 **Optimizers**: 21 fully implemented
 **SciRS2 Compliance**: 100%
@@ -177,7 +177,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ---
 
-## Future Work (v0.3.0+)
+## Future Work (v0.3.1+)
 
 ### Meta-Learning Optimizers
 - [ ] MAML (Model-Agnostic Meta-Learning) support
@@ -247,5 +247,5 @@ Doc tests: All passing
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.0
-**Release Date**: 2026-03-17
+**Version**: v0.3.1
+**Release Date**: 2026-03-27

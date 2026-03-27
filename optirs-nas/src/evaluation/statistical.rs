@@ -141,7 +141,7 @@ impl<T: Float + Debug + Default + std::iter::Sum + Send + Sync> StatisticalAnaly
 
         let min = sorted.first().copied().unwrap_or(T::zero());
         let max = sorted.last().copied().unwrap_or(T::zero());
-        let median = if count % 2 == 0 {
+        let median = if count.is_multiple_of(2) {
             (sorted[count / 2 - 1] + sorted[count / 2])
                 / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::one())
         } else {

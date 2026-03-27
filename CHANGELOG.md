@@ -353,5 +353,7 @@ Legend: ✅ Production Ready | 🚧 In Development | 🔬 Research Phase | ❌ N
 
 ---
 
+[0.3.1]: https://github.com/cool-japan/optirs/releases/tag/v0.3.1
+[0.3.0]: https://github.com/cool-japan/optirs/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cool-japan/optirs/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cool-japan/optirs/releases/tag/v0.1.0

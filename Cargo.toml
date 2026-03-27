@@ -73,7 +73,7 @@ pollster = { version = "0.4" }
 tokenizers = "0.22.2"
 autograd = "1.1.1"
 smallvec = "1.15.1"
-uuid = { version = "1.22.0", features = ["v4"] }
+uuid = { version = "1.23.0", features = ["v4"] }
 rustc-hash = "2.1.1"
 matrixmultiply = "0.3.10"
 

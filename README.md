@@ -1,6 +1,6 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.3.0
+**Version:** 0.3.1
 **Status:** 🚀 Production Ready - Stable Release
 
 OptiRS is a comprehensive optimization library for machine learning that **extends and leverages the full power of SciRS2-Core**. It provides specialized optimization algorithms and hardware acceleration while making **FULL USE** of SciRS2's scientific computing capabilities.
@@ -19,8 +19,8 @@ OptiRS is a comprehensive optimization library for machine learning that **exten
 ### SciRS2 Dependencies:
 
 **Required (Always):**
-- **scirs2-core** 0.3.0: Core scientific computing primitives (arrays, random, GPU, SIMD, parallel)
-- **scirs2-optimize** 0.3.0: Base optimization algorithms and interfaces
+- **scirs2-core** 0.4.0: Core scientific computing primitives (arrays, random, GPU, SIMD, parallel)
+- **scirs2-optimize** 0.4.0: Base optimization algorithms and interfaces
 
 **Evidence-Based (Used by OptiRS):**
 - **scirs2-neural**: Neural network components
@@ -139,18 +139,19 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ### Test Coverage
 
-- **1,220 unit tests + 76 doc tests** - All passing across 7 crates
+- **1,249 unit tests + 82 doc tests** - All passing across 7 crates (9 skipped, 4 doc tests ignored)
 - **Zero clippy warnings** - Production-ready code quality
-- **251K+ lines of Rust code** across 917 files
+- **254K+ lines of Rust code** across 985 files
 
 | Crate | Tests | Status |
 |-------|-------|--------|
 | optirs-core | 647 | Stable |
-| optirs-gpu | 104 | Alpha |
-| optirs-tpu | 58 | Alpha |
-| optirs-learned | 143 | Alpha |
-| optirs-nas | 63 | Alpha |
 | optirs-bench | 205 | Stable |
+| optirs-learned | 143 | Alpha |
+| optirs-gpu | 104 | Alpha |
+| optirs-nas | 63 | Alpha |
+| optirs-tpu | 58 | Alpha |
+| optirs-wasm | 29 | Alpha |
 
 ### GPU Acceleration (`optirs-gpu`) - Alpha
 - **Multi-GPU Support**: Distributed optimization across multiple GPUs
@@ -199,11 +200,11 @@ All benchmarks use Criterion.rs with statistical analysis:
 
 ```toml
 [dependencies]
-optirs-core = "0.3.0"
-scirs2-core = "0.3.3"  # Required foundation
+optirs-core = "0.3.1"
+scirs2-core = "0.4.0"  # Required foundation
 
 # Optional: GPU acceleration
-optirs-gpu = { version = "0.3.0", optional = true }
+optirs-gpu = { version = "0.3.1", optional = true }
 ```
 
 ### Basic Usage

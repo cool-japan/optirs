@@ -1,8 +1,8 @@
-# OptiRS Learned TODO (v0.3.0)
+# OptiRS Learned TODO (v0.3.1)
 
 ## Module Status: Production Ready
 
-**Release Date**: 2026-03-17
+**Release Date**: 2026-03-27
 **Tests**: 143 tests passing (2 ignored)
 **Features**: LSTM optimizers, Transformer optimizers, Meta-learning
 **SciRS2 Compliance**: 100%
@@ -138,5 +138,5 @@
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.0
-**Release Date**: 2026-03-17
+**Version**: v0.3.1
+**Release Date**: 2026-03-27

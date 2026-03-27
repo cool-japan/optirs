@@ -39,8 +39,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-learned = "0.3.0"
-scirs2-core = "0.3.0"  # Required foundation
+optirs-learned = "0.3.1"
+scirs2-core = "0.4.0"  # Required foundation
 ```
 
 ### Feature Selection
@@ -49,7 +49,7 @@ Enable specific learned optimizer types:
 
 ```toml
 [dependencies]
-optirs-learned = { version = "0.3.0", features = ["transformer", "lstm", "meta_learning"] }
+optirs-learned = { version = "0.3.1", features = ["transformer", "lstm", "meta_learning"] }
 ```
 
 Available features:
@@ -290,7 +290,7 @@ analytics.track_optimization_step(&step_result).await?;
 tracker.update(&current_loss, &learning_metrics).await?;
 ```
 
-## Wave 2 Features (v0.3.0)
+## Wave 2 Features (v0.3.1)
 
 ### Few-Shot Learning
 - **PrototypicalNetwork**: Encode inputs, compute prototypes, classify samples, and find nearest prototypes for rapid task identification
