@@ -1,6 +1,6 @@
 //! # OptiRS TPU - TPU Coordination and Pod Management
 //!
-//! **Version:** 0.1.0
+//! **Version:** 0.3.1
 //! **Status:** Coming Soon (Framework Only)
 //!
 //! ⚠️ **Warning:** This crate is under active development. No functional implementation yet.

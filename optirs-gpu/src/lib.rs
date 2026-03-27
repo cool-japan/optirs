@@ -1,6 +1,6 @@
 //! # OptiRS GPU - GPU Acceleration for ML Optimization
 //!
-//! **Version:** 0.1.0
+//! **Version:** 0.3.1
 //! **Status:** Framework Ready (GPU Kernels Coming Soon)
 //!
 //! `optirs-gpu` provides GPU acceleration for OptiRS optimizers, built on

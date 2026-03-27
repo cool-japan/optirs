@@ -1,6 +1,6 @@
 //! # OptiRS NAS - Neural Architecture Search
 //!
-//! **Version:** 0.1.0
+//! **Version:** 0.3.1
 //! **Status:** Research Phase (Early Development)
 //!
 //! ⚠️ **Warning:** This crate is in early research phase. APIs are unstable and may change
