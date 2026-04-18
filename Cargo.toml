@@ -126,19 +126,19 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # Start minimal - add dependencies only when compilation errors prove necessity.
 #
 # ✅ ESSENTIAL (Always Required):
-scirs2-core = "0.4.0"# FOUNDATION - Core scientific primitives
-scirs2-optimize = "0.4.0"# ESSENTIAL - Base optimization interfaces
+scirs2-core = "0.4.1"# FOUNDATION - Core scientific primitives
+scirs2-optimize = "0.4.1"# ESSENTIAL - Base optimization interfaces
 
 # ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
-scirs2-neural = "0.4.0"# EVIDENCE: neuromorphic/spike_based.rs requires this
-scirs2-metrics = "0.4.0"# EVIDENCE: benchmarking and monitoring require this
-scirs2-stats = "0.4.0"# EVIDENCE: multiple modules use distributions
-scirs2-series = "0.4.0"# EVIDENCE: performance_tracking.rs requires this
-scirs2-datasets = "0.4.0"# EVIDENCE: cross_platform_tester.rs requires this
+scirs2-neural = "0.4.1"# EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = "0.4.1"# EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = "0.4.1"# EVIDENCE: multiple modules use distributions
+scirs2-series = "0.4.1"# EVIDENCE: performance_tracking.rs requires this
+scirs2-datasets = "0.4.1"# EVIDENCE: cross_platform_tester.rs requires this
 
 # ⚠️ CONDITIONAL (Uncomment only if compilation fails):
-scirs2-linalg = "0.4.0"
-scirs2-signal = "0.4.0"
+scirs2-linalg = "0.4.1"
+scirs2-signal = "0.4.1"
 
 # ❌ NOT REQUIRED for OptiRS:
 # scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
