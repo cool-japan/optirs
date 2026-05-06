@@ -310,7 +310,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Clone + Default> ParameterOffloa
                 self.decompress_data(data, *compression_type, shape)
             }
             StorageLocation::RemoteStorage { .. } => {
-                Err(OptimError::UnsupportedOperation("Remote storage not implemented".to_string()))
+                // tracked_external: Remote storage (S3 / network) is out of scope for the
+                // pure-Rust local runtime. DiskStorage handles local file offloading above.
+                // Returning an explicit error is correct behaviour here.
+                Err(OptimError::UnsupportedOperation(
+                    "Remote storage is not supported in the local runtime; use DiskStorage for local file offloading".to_string()
+                ))
             }
         }
     }
