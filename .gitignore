@@ -125,3 +125,5 @@ regression_test_data/
 ci_cache/
 # Rustc ICE dumps
 rustc-ice-*.txt
+
+target
