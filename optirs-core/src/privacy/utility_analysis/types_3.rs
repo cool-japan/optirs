@@ -7,8 +7,11 @@ use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use super::types::{AdaptationTrigger, AdjustmentConstraints, AdjustmentFrequency, ComputationalResources, MultipleComparisonCorrection, PerturbationAnalysis, PowerAnalysis, ReproducibilityInfo, RiskCategory, RiskEvolution, UtilityMetric};
-
+use super::types::{
+    AdaptationTrigger, AdjustmentConstraints, AdjustmentFrequency, ComputationalResources,
+    MultipleComparisonCorrection, PerturbationAnalysis, PowerAnalysis, ReproducibilityInfo,
+    RiskCategory, RiskEvolution, UtilityMetric,
+};
 
 /// Budget optimization methods
 #[derive(Debug, Clone)]

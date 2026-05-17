@@ -387,14 +387,20 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
                     ref_sorted[ref_i] <= cur_sorted[cur_i]
                 };
 
-                if take_ref { ref_i += 1; } else { cur_i += 1; }
+                if take_ref {
+                    ref_i += 1;
+                } else {
+                    cur_i += 1;
+                }
 
-                let ecdf_ref = A::from(ref_i).unwrap_or_else(A::zero)
-                    / A::from(n_ref).unwrap_or_else(A::one);
-                let ecdf_cur = A::from(cur_i).unwrap_or_else(A::zero)
-                    / A::from(n_cur).unwrap_or_else(A::one);
+                let ecdf_ref =
+                    A::from(ref_i).unwrap_or_else(A::zero) / A::from(n_ref).unwrap_or_else(A::one);
+                let ecdf_cur =
+                    A::from(cur_i).unwrap_or_else(A::zero) / A::from(n_cur).unwrap_or_else(A::one);
                 let diff = (ecdf_ref - ecdf_cur).abs();
-                if diff > ks_stat { ks_stat = diff; }
+                if diff > ks_stat {
+                    ks_stat = diff;
+                }
             }
 
             // Approximate p-value using the KS distribution:
@@ -456,11 +462,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             let n_bins = 10usize;
 
             // Compute global min/max over both samples
-            let all_min = reference.iter().chain(current.iter())
+            let all_min = reference
+                .iter()
+                .chain(current.iter())
                 .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .copied()
                 .unwrap_or_else(A::zero);
-            let all_max = reference.iter().chain(current.iter())
+            let all_max = reference
+                .iter()
+                .chain(current.iter())
                 .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .copied()
                 .unwrap_or_else(A::one);
@@ -477,13 +487,15 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             let mut cur_hist = vec![0usize; n_bins];
 
             for &v in reference {
-                let idx = ((v - all_min) / bin_width).to_usize()
+                let idx = ((v - all_min) / bin_width)
+                    .to_usize()
                     .unwrap_or(0)
                     .min(n_bins - 1);
                 ref_hist[idx] += 1;
             }
             for &v in current {
-                let idx = ((v - all_min) / bin_width).to_usize()
+                let idx = ((v - all_min) / bin_width)
+                    .to_usize()
                     .unwrap_or(0)
                     .min(n_bins - 1);
                 cur_hist[idx] += 1;
@@ -504,8 +516,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             let js_div = js_div.clamp(0.0, std::f64::consts::LN_2);
             let normalised = js_div / std::f64::consts::LN_2; // [0, 1]
 
-            let threshold: f64 = scirs2_core::numeric::NumCast::from(self.sensitivity_factor)
-                .unwrap_or(0.5);
+            let threshold: f64 =
+                scirs2_core::numeric::NumCast::from(self.sensitivity_factor).unwrap_or(0.5);
             let drift_detected = normalised > threshold * 0.5;
 
             let js_a = A::from(js_div).unwrap_or_else(A::zero);
@@ -550,7 +562,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             // Extract scalar "performance proxy" from each data point:
             // use the mean of the features as a proxy for model confidence/accuracy.
             let batch_mean: A = {
-                let sum: A = batch.iter()
+                let sum: A = batch
+                    .iter()
                     .flat_map(|dp| dp.features.iter().copied())
                     .fold(A::zero(), |acc, v| acc + v);
                 let count = batch.iter().map(|dp| dp.features.len()).sum::<usize>();
@@ -562,7 +575,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             };
 
             // Compare against reference window mean (first half)
-            let ref_half: Vec<_> = self.reference_window
+            let ref_half: Vec<_> = self
+                .reference_window
                 .iter()
                 .take(self.reference_window.len() / 2 + 1)
                 .collect();
@@ -570,7 +584,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             let ref_mean: A = if ref_half.is_empty() {
                 batch_mean
             } else {
-                let sum: A = ref_half.iter()
+                let sum: A = ref_half
+                    .iter()
                     .flat_map(|dp| dp.features.iter().copied())
                     .fold(A::zero(), |acc, v| acc + v);
                 let count = ref_half.iter().map(|dp| dp.features.len()).sum::<usize>();
@@ -589,8 +604,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             let drift_detected = degradation > threshold;
 
             let confidence = if drift_detected {
-                (degradation * A::from(5.0).unwrap_or_else(A::one))
-                    .min(A::one())
+                (degradation * A::from(5.0).unwrap_or_else(A::one)).min(A::one())
                     * self.sensitivity_factor
             } else {
                 A::from(0.2).unwrap_or_else(A::zero) * self.sensitivity_factor

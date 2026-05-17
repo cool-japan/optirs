@@ -10,7 +10,10 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use super::types::UtilityMetric;
-use super::types_3::{AnalysisConfig, AnalysisGranularity, BudgetOptimizationMethod, ParameterRange, PrivacyParameterSpace, SamplingStrategy};
+use super::types_3::{
+    AnalysisConfig, AnalysisGranularity, BudgetOptimizationMethod, ParameterRange,
+    PrivacyParameterSpace, SamplingStrategy,
+};
 
 impl Default for AnalysisConfig {
     fn default() -> Self {
@@ -83,4 +86,3 @@ impl Default for PrivacyParameterSpace {
         }
     }
 }
-

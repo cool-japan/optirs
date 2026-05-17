@@ -70,18 +70,18 @@ wgpu = { version = "29.0" }
 pollster = { version = "0.4" }
 
 # ML specific
-tokenizers = "0.22.2"
+tokenizers = "0.23.1"
 autograd = "1.1.1"
 smallvec = "1.15.1"
-uuid = { version = "1.23.0", features = ["v4"] }
-rustc-hash = "2.1.1"
+uuid = { version = "1.23.1", features = ["v4"] }
+rustc-hash = "2.1.2"
 matrixmultiply = "0.3.10"
 
 # System information
-sysinfo = "0.38.4"
+sysinfo = "0.39.2"
 
 # Async dependencies
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
 futures = "0.3.32"
 futures-util = "0.3.32"
 async-trait = "0.1.89"
@@ -108,9 +108,9 @@ optirs-nas = { version = "0.3.1", path = "./optirs-nas" }
 optirs-bench = { version = "0.3.1", path = "./optirs-bench" }
 
 # WASM dependencies
-wasm-bindgen = "0.2.114"
+wasm-bindgen = "0.2.121"
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3.91"
+js-sys = "0.3.98"
 web-sys = "0.3"
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = "0.1.7"

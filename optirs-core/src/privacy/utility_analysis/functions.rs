@@ -51,23 +51,29 @@ mod tests {
     fn test_optimize_budget_allocation_zero_iterations() {
         let a = make_analyzer();
         let budget = make_budget(1.0);
-        assert!(a.optimize_budget_allocation(& budget, 0, 0.0).is_err());
+        assert!(a.optimize_budget_allocation(&budget, 0, 0.0).is_err());
     }
     #[test]
     fn test_optimize_budget_allocation_best_utility() {
         let a = make_analyzer();
         let budget = make_budget(2.0);
         let result = a.optimize_budget_allocation(&budget, 5, 0.0).unwrap();
-        assert!(result.expected_utility > 0.0, "expected_utility should be positive");
+        assert!(
+            result.expected_utility > 0.0,
+            "expected_utility should be positive"
+        );
     }
     #[test]
     fn test_evaluate_robustness_constant_model() {
         let a = make_analyzer();
         let data = Array1::<f64>::from_vec(vec![1.0, 2.0, 3.0]);
         let cfg = make_config(1.0);
-        let result = a.evaluate_robustness(&data, |_, c| Ok(c.epsilon), &cfg).unwrap();
+        let result = a
+            .evaluate_robustness(&data, |_, c| Ok(c.epsilon), &cfg)
+            .unwrap();
         assert!(
-            result.robustness_score > 0.5, "constant model should be robust, score={}",
+            result.robustness_score > 0.5,
+            "constant model should be robust, score={}",
             result.robustness_score
         );
     }
@@ -81,14 +87,19 @@ mod tests {
                 &data,
                 |_, c| {
                     let eps = c.epsilon;
-                    if eps > 1.0 { Ok(0.2) } else { Ok(1.0) }
+                    if eps > 1.0 {
+                        Ok(0.2)
+                    } else {
+                        Ok(1.0)
+                    }
                 },
                 &cfg,
             )
             .unwrap();
         assert!(
             result.robustness_score < 0.5,
-            "brittle model should have low robustness, score={}", result.robustness_score
+            "brittle model should have low robustness, score={}",
+            result.robustness_score
         );
     }
     #[test]
@@ -96,27 +107,29 @@ mod tests {
         let a = make_analyzer();
         let data = Array1::<f64>::from_vec(vec![1.0, 2.0, 3.0]);
         let cfg = make_config(1.0);
-        let result = a
-            .evaluate_robustness(
-                &data,
-                |_, _| Err(
-                    crate::error::OptimError::ComputationError("test error".to_string()),
-                ),
-                &cfg,
-            );
+        let result = a.evaluate_robustness(
+            &data,
+            |_, _| {
+                Err(crate::error::OptimError::ComputationError(
+                    "test error".to_string(),
+                ))
+            },
+            &cfg,
+        );
         assert!(result.is_err());
     }
     #[test]
     fn test_predict_degradation_linear() {
         let a = make_analyzer();
-        let historical: Vec<(f64, f64)> = (1..=4)
-            .map(|i| (i as f64, 2.0 * i as f64))
-            .collect();
+        let historical: Vec<(f64, f64)> = (1..=4).map(|i| (i as f64, 2.0 * i as f64)).collect();
         let params = vec![5.0_f64];
         let preds = a.predict_utility_degradation(&params, &historical).unwrap();
         assert_eq!(preds.len(), 1);
         let pred = preds[0].predicted_utility_loss;
-        assert!((pred - 1.0_f64).abs() < 0.2, "predicted loss for x=5 in [0,1]: {pred}");
+        assert!(
+            (pred - 1.0_f64).abs() < 0.2,
+            "predicted loss for x=5 in [0,1]: {pred}"
+        );
     }
     #[test]
     fn test_predict_degradation_quadratic() {
@@ -150,7 +163,10 @@ mod tests {
         let cfg = make_config(0.1);
         let result = a.assess_privacy_risk(&data, &cfg).unwrap();
         let score = result.overall_risk_score;
-        assert!(score < 0.5, "low epsilon should yield low risk, got {score}");
+        assert!(
+            score < 0.5,
+            "low epsilon should yield low risk, got {score}"
+        );
     }
     #[test]
     fn test_assess_risk_high_epsilon() {
@@ -159,14 +175,17 @@ mod tests {
         let cfg = make_config(10.0);
         let result = a.assess_privacy_risk(&data, &cfg).unwrap();
         let score = result.overall_risk_score;
-        assert!(score > 0.5, "high epsilon should yield high risk, got {score}");
+        assert!(
+            score > 0.5,
+            "high epsilon should yield high risk, got {score}"
+        );
     }
     #[test]
     fn test_assess_risk_invalid_epsilon() {
         let a = make_analyzer();
         let data = Array1::<f64>::from_vec(vec![1.0, 2.0, 3.0]);
         let cfg = make_config(0.0);
-        assert!(a.assess_privacy_risk(& data, & cfg).is_err());
+        assert!(a.assess_privacy_risk(&data, &cfg).is_err());
     }
     #[test]
     fn test_assess_risk_all_categories_present() {
@@ -174,14 +193,24 @@ mod tests {
         let data = Array1::<f64>::from_vec(vec![1.0, 2.0, 3.0]);
         let cfg = make_config(1.0);
         let result = a.assess_privacy_risk(&data, &cfg).unwrap();
-        assert!(
-            result.risk_categories.contains_key(& RiskCategory::MembershipInference)
-        );
-        assert!(result.risk_categories.contains_key(& RiskCategory::AttributeInference));
-        assert!(result.risk_categories.contains_key(& RiskCategory::ModelInversion));
-        assert!(result.risk_categories.contains_key(& RiskCategory::PropertyInference));
-        assert!(result.risk_categories.contains_key(& RiskCategory::Reconstruction));
-        assert!(result.risk_categories.contains_key(& RiskCategory::ReIdentification));
+        assert!(result
+            .risk_categories
+            .contains_key(&RiskCategory::MembershipInference));
+        assert!(result
+            .risk_categories
+            .contains_key(&RiskCategory::AttributeInference));
+        assert!(result
+            .risk_categories
+            .contains_key(&RiskCategory::ModelInversion));
+        assert!(result
+            .risk_categories
+            .contains_key(&RiskCategory::PropertyInference));
+        assert!(result
+            .risk_categories
+            .contains_key(&RiskCategory::Reconstruction));
+        assert!(result
+            .risk_categories
+            .contains_key(&RiskCategory::ReIdentification));
     }
     #[test]
     fn test_stat_tests_significant_difference() {
@@ -202,15 +231,18 @@ mod tests {
         let data: Vec<(f64, f64)> = (0..10).map(|i| (i as f64 * 0.1, 0.5)).collect();
         let st = a.perform_statistical_tests(&data, &data).unwrap();
         let p = st.hypothesis_tests[0].p_value;
-        assert!(p > 0.5, "p-value should be large for identical data, got {p}");
+        assert!(
+            p > 0.5,
+            "p-value should be large for identical data, got {p}"
+        );
     }
     #[test]
     fn test_stat_tests_too_few_points() {
         let a = make_analyzer();
         let one_point = vec![(1.0_f64, 0.5_f64)];
         let good = vec![(1.0_f64, 0.5_f64), (2.0, 0.6)];
-        assert!(a.perform_statistical_tests(& one_point, & good).is_err());
-        assert!(a.perform_statistical_tests(& good, & one_point).is_err());
+        assert!(a.perform_statistical_tests(&one_point, &good).is_err());
+        assert!(a.perform_statistical_tests(&good, &one_point).is_err());
     }
     #[test]
     fn test_stat_tests_bonferroni_present() {
@@ -245,7 +277,10 @@ mod tests {
     fn test_polyfit_quadratic() {
         let a = make_analyzer();
         let xs = vec![0.0_f64, 1.0, 2.0, 3.0];
-        let ys = xs.iter().map(|&x| 1.0 + 2.0 * x + 3.0 * x * x).collect::<Vec<_>>();
+        let ys = xs
+            .iter()
+            .map(|&x| 1.0 + 2.0 * x + 3.0 * x * x)
+            .collect::<Vec<_>>();
         let coeffs = a.polyfit_f64(&xs, &ys, 2).unwrap();
         assert_eq!(coeffs.len(), 3);
         assert!((coeffs[0] - 1.0).abs() < 1e-6, "c0={}", coeffs[0]);

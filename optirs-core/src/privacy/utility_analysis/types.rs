@@ -10,8 +10,15 @@ use scirs2_core::random::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use super::types_3::{AllocationStrategy, AnalysisConfig, AnalysisMetadata, AsymptoticBehavior, BudgetAllocation, BudgetEfficiencyMetrics, BudgetRecommendations, ComplianceStatus, ConvergenceProperties, CorrectionMethod, DegradationPrediction, EmpiricalPrivacyEstimator, FailureMode, FailureType, GpuUsage, HypothesisTestResult, LocalSensitivity, MultiObjectiveOptimizer, OptimizationObjective, ParameterRange, ParetoPoint, PredictionModel, PrivacyConfiguration, PrivacyRiskAssessment, RiskTrend, RobustnessEvaluator, RobustnessResults, SamplingStrategy, SensitivityAnalyzer, StabilityAnalysis, StatisticalTestResults, UtilityDegradationPredictor};
-
+use super::types_3::{
+    AllocationStrategy, AnalysisConfig, AnalysisMetadata, AsymptoticBehavior, BudgetAllocation,
+    BudgetEfficiencyMetrics, BudgetRecommendations, ComplianceStatus, ConvergenceProperties,
+    CorrectionMethod, DegradationPrediction, EmpiricalPrivacyEstimator, FailureMode, FailureType,
+    GpuUsage, HypothesisTestResult, LocalSensitivity, MultiObjectiveOptimizer,
+    OptimizationObjective, ParameterRange, ParetoPoint, PredictionModel, PrivacyConfiguration,
+    PrivacyRiskAssessment, RiskTrend, RobustnessEvaluator, RobustnessResults, SamplingStrategy,
+    SensitivityAnalyzer, StabilityAnalysis, StatisticalTestResults, UtilityDegradationPredictor,
+};
 
 /// Optimal configuration recommendation
 #[derive(Debug, Clone)]
@@ -161,175 +168,161 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     pub fn analyze<D: Data<Elem = T> + Sync, Dim: Dimension>(
         &mut self,
         data: &ArrayBase<D, Dim>,
-        model_fn: impl Fn(
-            &ArrayBase<D, Dim>,
-            &PrivacyConfiguration<T>,
-        ) -> Result<T> + Sync,
+        model_fn: impl Fn(&ArrayBase<D, Dim>, &PrivacyConfiguration<T>) -> Result<T> + Sync,
     ) -> Result<PrivacyUtilityResults<T>> {
         let start_time = std::time::Instant::now();
         let pareto_frontier = self.generate_pareto_frontier(data, &model_fn)?;
         let mut optimal_configurations = Vec::new();
-        if let Some(max_utility_point) = pareto_frontier
-            .iter()
-            .max_by(|a, b| {
-                a.utility_value
-                    .partial_cmp(&b.utility_value)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        {
-            optimal_configurations
-                .push(OptimalConfiguration {
-                    privacy_config: DifferentialPrivacyConfig {
-                        target_epsilon: max_utility_point
-                            .configuration
-                            .epsilon
-                            .to_f64()
-                            .unwrap_or(1.0),
-                        target_delta: max_utility_point
-                            .configuration
-                            .delta
-                            .to_f64()
-                            .unwrap_or(1e-5),
-                        noise_multiplier: 1.1,
-                        l2_norm_clip: max_utility_point
-                            .configuration
-                            .clipping_threshold
-                            .to_f64()
-                            .unwrap_or(1.0),
-                        batch_size: 256,
-                        dataset_size: 50000,
-                        max_steps: 1000,
-                        noise_mechanism: max_utility_point.configuration.noise_mechanism,
-                        secure_aggregation: false,
-                        adaptive_clipping: false,
-                        adaptive_clip_init: 1.0,
-                        adaptive_clip_lr: 0.2,
-                    },
-                    expected_utility: max_utility_point.utility_value,
-                    privacy_guarantee: max_utility_point.privacy_guarantee,
-                    objective: OptimizationObjective::MaximizeUtility,
-                    confidence_score: T::from(0.95).unwrap_or_else(|| T::zero()),
-                    tradeoff_ratio: max_utility_point.utility_value
-                        / max_utility_point.privacy_guarantee,
-                });
-        }
-        if let Some(max_privacy_point) = pareto_frontier
-            .iter()
-            .min_by(|a, b| {
-                a.privacy_guarantee
-                    .partial_cmp(&b.privacy_guarantee)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        {
-            optimal_configurations
-                .push(OptimalConfiguration {
-                    privacy_config: DifferentialPrivacyConfig {
-                        target_epsilon: max_privacy_point
-                            .configuration
-                            .epsilon
-                            .to_f64()
-                            .unwrap_or(0.1),
-                        target_delta: max_privacy_point
-                            .configuration
-                            .delta
-                            .to_f64()
-                            .unwrap_or(1e-6),
-                        noise_multiplier: 1.1,
-                        l2_norm_clip: max_privacy_point
-                            .configuration
-                            .clipping_threshold
-                            .to_f64()
-                            .unwrap_or(1.0),
-                        batch_size: max_privacy_point.configuration.batch_size,
-                        dataset_size: 50000,
-                        max_steps: 1000,
-                        noise_mechanism: max_privacy_point.configuration.noise_mechanism,
-                        secure_aggregation: false,
-                        adaptive_clipping: false,
-                        adaptive_clip_init: 1.0,
-                        adaptive_clip_lr: 0.2,
-                    },
-                    expected_utility: max_privacy_point.utility_value,
-                    privacy_guarantee: max_privacy_point.privacy_guarantee,
-                    objective: OptimizationObjective::MinimizePrivacyLoss,
-                    confidence_score: T::from(0.90).unwrap_or_else(|| T::zero()),
-                    tradeoff_ratio: max_privacy_point.utility_value
-                        / max_privacy_point.privacy_guarantee,
-                });
-        }
-        let sensitivity_results = if self.config.enable_sensitivity_analysis
-            && !pareto_frontier.is_empty()
-        {
-            let base_config = &pareto_frontier[pareto_frontier.len() / 2].configuration;
-            self.perform_sensitivity_analysis(data, &model_fn, base_config)?
-        } else {
-            SensitivityResults {
-                base_utility: T::zero(),
-                parameter_sensitivities: HashMap::new(),
-                gradient_magnitudes: HashMap::new(),
-                interaction_effects: HashMap::new(),
-                local_sensitivities: Vec::new(),
-                global_sensitivity_bounds: (T::zero(), T::one()),
-                sensitivity_rankings: Vec::new(),
-                robustness_score: T::zero(),
-                most_sensitive_parameter: "unknown".to_string(),
-                least_sensitive_parameter: "unknown".to_string(),
-                confidence_intervals: HashMap::new(),
-            }
-        };
-        let robustness_results = if self.config.enable_robustness_evaluation
-            && !pareto_frontier.is_empty()
-        {
-            let _config = &pareto_frontier[0].configuration;
-            RobustnessResults {
-                robustness_score: T::from(0.8).unwrap_or_else(|| T::zero()),
-                worst_case_degradation: T::from(0.1).unwrap_or_else(|| T::zero()),
-                adversarial_robustness: T::from(0.75).unwrap_or_else(|| T::zero()),
-                distributional_robustness: T::from(0.85).unwrap_or_else(|| T::zero()),
-                stability_analysis: StabilityAnalysis {
-                    lyapunov_exponent: T::from(-0.1).unwrap_or_else(|| T::zero()),
-                    stability_margin: T::from(0.2).unwrap_or_else(|| T::zero()),
-                    convergence_properties: ConvergenceProperties {
-                        convergence_rate: T::from(0.95).unwrap_or_else(|| T::zero()),
-                        convergence_radius: T::from(1.0).unwrap_or_else(|| T::zero()),
-                        asymptotic_behavior: AsymptoticBehavior::Linear,
-                        stability_guarantees: true,
-                    },
-                    perturbation_analysis: PerturbationAnalysis {
-                        perturbation_sensitivity: T::from(0.1)
-                            .unwrap_or_else(|| T::zero()),
-                        critical_threshold: T::from(0.5).unwrap_or_else(|| T::zero()),
-                        recovery_time: T::from(10.0).unwrap_or_else(|| T::zero()),
-                        perturbation_effects: Vec::new(),
-                    },
+        if let Some(max_utility_point) = pareto_frontier.iter().max_by(|a, b| {
+            a.utility_value
+                .partial_cmp(&b.utility_value)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            optimal_configurations.push(OptimalConfiguration {
+                privacy_config: DifferentialPrivacyConfig {
+                    target_epsilon: max_utility_point
+                        .configuration
+                        .epsilon
+                        .to_f64()
+                        .unwrap_or(1.0),
+                    target_delta: max_utility_point
+                        .configuration
+                        .delta
+                        .to_f64()
+                        .unwrap_or(1e-5),
+                    noise_multiplier: 1.1,
+                    l2_norm_clip: max_utility_point
+                        .configuration
+                        .clipping_threshold
+                        .to_f64()
+                        .unwrap_or(1.0),
+                    batch_size: 256,
+                    dataset_size: 50000,
+                    max_steps: 1000,
+                    noise_mechanism: max_utility_point.configuration.noise_mechanism,
+                    secure_aggregation: false,
+                    adaptive_clipping: false,
+                    adaptive_clip_init: 1.0,
+                    adaptive_clip_lr: 0.2,
                 },
-                failure_modes: Vec::new(),
-            }
-        } else {
-            RobustnessResults {
-                robustness_score: T::zero(),
-                worst_case_degradation: T::zero(),
-                adversarial_robustness: T::zero(),
-                distributional_robustness: T::zero(),
-                stability_analysis: StabilityAnalysis {
-                    lyapunov_exponent: T::zero(),
-                    stability_margin: T::zero(),
-                    convergence_properties: ConvergenceProperties {
-                        convergence_rate: T::zero(),
-                        convergence_radius: T::zero(),
-                        asymptotic_behavior: AsymptoticBehavior::Linear,
-                        stability_guarantees: false,
-                    },
-                    perturbation_analysis: PerturbationAnalysis {
-                        perturbation_sensitivity: T::zero(),
-                        critical_threshold: T::zero(),
-                        recovery_time: T::zero(),
-                        perturbation_effects: Vec::new(),
-                    },
+                expected_utility: max_utility_point.utility_value,
+                privacy_guarantee: max_utility_point.privacy_guarantee,
+                objective: OptimizationObjective::MaximizeUtility,
+                confidence_score: T::from(0.95).unwrap_or_else(|| T::zero()),
+                tradeoff_ratio: max_utility_point.utility_value
+                    / max_utility_point.privacy_guarantee,
+            });
+        }
+        if let Some(max_privacy_point) = pareto_frontier.iter().min_by(|a, b| {
+            a.privacy_guarantee
+                .partial_cmp(&b.privacy_guarantee)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            optimal_configurations.push(OptimalConfiguration {
+                privacy_config: DifferentialPrivacyConfig {
+                    target_epsilon: max_privacy_point
+                        .configuration
+                        .epsilon
+                        .to_f64()
+                        .unwrap_or(0.1),
+                    target_delta: max_privacy_point
+                        .configuration
+                        .delta
+                        .to_f64()
+                        .unwrap_or(1e-6),
+                    noise_multiplier: 1.1,
+                    l2_norm_clip: max_privacy_point
+                        .configuration
+                        .clipping_threshold
+                        .to_f64()
+                        .unwrap_or(1.0),
+                    batch_size: max_privacy_point.configuration.batch_size,
+                    dataset_size: 50000,
+                    max_steps: 1000,
+                    noise_mechanism: max_privacy_point.configuration.noise_mechanism,
+                    secure_aggregation: false,
+                    adaptive_clipping: false,
+                    adaptive_clip_init: 1.0,
+                    adaptive_clip_lr: 0.2,
                 },
-                failure_modes: Vec::new(),
-            }
-        };
+                expected_utility: max_privacy_point.utility_value,
+                privacy_guarantee: max_privacy_point.privacy_guarantee,
+                objective: OptimizationObjective::MinimizePrivacyLoss,
+                confidence_score: T::from(0.90).unwrap_or_else(|| T::zero()),
+                tradeoff_ratio: max_privacy_point.utility_value
+                    / max_privacy_point.privacy_guarantee,
+            });
+        }
+        let sensitivity_results =
+            if self.config.enable_sensitivity_analysis && !pareto_frontier.is_empty() {
+                let base_config = &pareto_frontier[pareto_frontier.len() / 2].configuration;
+                self.perform_sensitivity_analysis(data, &model_fn, base_config)?
+            } else {
+                SensitivityResults {
+                    base_utility: T::zero(),
+                    parameter_sensitivities: HashMap::new(),
+                    gradient_magnitudes: HashMap::new(),
+                    interaction_effects: HashMap::new(),
+                    local_sensitivities: Vec::new(),
+                    global_sensitivity_bounds: (T::zero(), T::one()),
+                    sensitivity_rankings: Vec::new(),
+                    robustness_score: T::zero(),
+                    most_sensitive_parameter: "unknown".to_string(),
+                    least_sensitive_parameter: "unknown".to_string(),
+                    confidence_intervals: HashMap::new(),
+                }
+            };
+        let robustness_results =
+            if self.config.enable_robustness_evaluation && !pareto_frontier.is_empty() {
+                let _config = &pareto_frontier[0].configuration;
+                RobustnessResults {
+                    robustness_score: T::from(0.8).unwrap_or_else(|| T::zero()),
+                    worst_case_degradation: T::from(0.1).unwrap_or_else(|| T::zero()),
+                    adversarial_robustness: T::from(0.75).unwrap_or_else(|| T::zero()),
+                    distributional_robustness: T::from(0.85).unwrap_or_else(|| T::zero()),
+                    stability_analysis: StabilityAnalysis {
+                        lyapunov_exponent: T::from(-0.1).unwrap_or_else(|| T::zero()),
+                        stability_margin: T::from(0.2).unwrap_or_else(|| T::zero()),
+                        convergence_properties: ConvergenceProperties {
+                            convergence_rate: T::from(0.95).unwrap_or_else(|| T::zero()),
+                            convergence_radius: T::from(1.0).unwrap_or_else(|| T::zero()),
+                            asymptotic_behavior: AsymptoticBehavior::Linear,
+                            stability_guarantees: true,
+                        },
+                        perturbation_analysis: PerturbationAnalysis {
+                            perturbation_sensitivity: T::from(0.1).unwrap_or_else(|| T::zero()),
+                            critical_threshold: T::from(0.5).unwrap_or_else(|| T::zero()),
+                            recovery_time: T::from(10.0).unwrap_or_else(|| T::zero()),
+                            perturbation_effects: Vec::new(),
+                        },
+                    },
+                    failure_modes: Vec::new(),
+                }
+            } else {
+                RobustnessResults {
+                    robustness_score: T::zero(),
+                    worst_case_degradation: T::zero(),
+                    adversarial_robustness: T::zero(),
+                    distributional_robustness: T::zero(),
+                    stability_analysis: StabilityAnalysis {
+                        lyapunov_exponent: T::zero(),
+                        stability_margin: T::zero(),
+                        convergence_properties: ConvergenceProperties {
+                            convergence_rate: T::zero(),
+                            convergence_radius: T::zero(),
+                            asymptotic_behavior: AsymptoticBehavior::Linear,
+                            stability_guarantees: false,
+                        },
+                        perturbation_analysis: PerturbationAnalysis {
+                            perturbation_sensitivity: T::zero(),
+                            critical_threshold: T::zero(),
+                            recovery_time: T::zero(),
+                            perturbation_effects: Vec::new(),
+                        },
+                    },
+                    failure_modes: Vec::new(),
+                }
+            };
         let budget_recommendations = BudgetRecommendations {
             optimal_allocation: BudgetAllocation {
                 total_budget: PrivacyBudget {
@@ -341,9 +334,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                     accounting_method: crate::privacy::AccountingMethod::MomentsAccountant,
                     estimated_steps_remaining: 1000,
                 },
-                per_iteration_allocation: vec![
-                    T::from(0.1).unwrap_or_else(|| T::zero()); 10
-                ],
+                per_iteration_allocation: vec![T::from(0.1).unwrap_or_else(|| T::zero()); 10],
                 allocation_strategy: AllocationStrategy::Adaptive,
                 expected_utility: T::from(0.85).unwrap_or_else(|| T::zero()),
                 risk_assessment: T::from(0.2).unwrap_or_else(|| T::zero()),
@@ -359,34 +350,40 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             adaptive_strategies: Vec::new(),
         };
         let degradation_predictions = vec![
-            DegradationPrediction { privacy_parameter : T::from(0.1).unwrap_or_else(||
-            T::zero()), predicted_utility_loss : T::from(0.05).unwrap_or_else(||
-            T::zero()), confidence_interval : (T::from(0.03).unwrap_or_else(||
-            T::zero()), T::from(0.07).unwrap_or_else(|| T::zero()),), prediction_model :
-            PredictionModel::LinearRegression, model_accuracy : T::from(0.92)
-            .unwrap_or_else(|| T::zero()), }, DegradationPrediction { privacy_parameter :
-            T::from(1.0).unwrap_or_else(|| T::zero()), predicted_utility_loss :
-            T::from(0.15).unwrap_or_else(|| T::zero()), confidence_interval :
-            (T::from(0.12).unwrap_or_else(|| T::zero()), T::from(0.18).unwrap_or_else(||
-            T::zero()),), prediction_model : PredictionModel::LinearRegression,
-            model_accuracy : T::from(0.88).unwrap_or_else(|| T::zero()), },
+            DegradationPrediction {
+                privacy_parameter: T::from(0.1).unwrap_or_else(|| T::zero()),
+                predicted_utility_loss: T::from(0.05).unwrap_or_else(|| T::zero()),
+                confidence_interval: (
+                    T::from(0.03).unwrap_or_else(|| T::zero()),
+                    T::from(0.07).unwrap_or_else(|| T::zero()),
+                ),
+                prediction_model: PredictionModel::LinearRegression,
+                model_accuracy: T::from(0.92).unwrap_or_else(|| T::zero()),
+            },
+            DegradationPrediction {
+                privacy_parameter: T::from(1.0).unwrap_or_else(|| T::zero()),
+                predicted_utility_loss: T::from(0.15).unwrap_or_else(|| T::zero()),
+                confidence_interval: (
+                    T::from(0.12).unwrap_or_else(|| T::zero()),
+                    T::from(0.18).unwrap_or_else(|| T::zero()),
+                ),
+                prediction_model: PredictionModel::LinearRegression,
+                model_accuracy: T::from(0.88).unwrap_or_else(|| T::zero()),
+            },
         ];
         let mut risk_categories = HashMap::new();
-        risk_categories
-            .insert(
-                RiskCategory::MembershipInference,
-                T::from(0.3).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::AttributeInference,
-                T::from(0.2).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::ModelInversion,
-                T::from(0.1).unwrap_or_else(|| T::zero()),
-            );
+        risk_categories.insert(
+            RiskCategory::MembershipInference,
+            T::from(0.3).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::AttributeInference,
+            T::from(0.2).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::ModelInversion,
+            T::from(0.1).unwrap_or_else(|| T::zero()),
+        );
         let privacy_risk_assessment = PrivacyRiskAssessment {
             overall_risk_score: T::from(0.25).unwrap_or_else(|| T::zero()),
             risk_categories,
@@ -399,17 +396,17 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             risk_evolution: Vec::new(),
         };
         let statistical_tests = StatisticalTestResults {
-            hypothesis_tests: vec![
-                HypothesisTestResult { test_name : "Privacy-Utility Correlation Test"
-                .to_string(), test_statistic : T::from(- 0.75).unwrap_or_else(||
-                T::zero()), p_value : T::from(0.01).unwrap_or_else(|| T::zero()),
-                significance_level : T::from(0.05).unwrap_or_else(|| T::zero()),
-                reject_null : true, effect_size : T::from(0.6).unwrap_or_else(||
-                T::zero()), }
-            ],
+            hypothesis_tests: vec![HypothesisTestResult {
+                test_name: "Privacy-Utility Correlation Test".to_string(),
+                test_statistic: T::from(-0.75).unwrap_or_else(|| T::zero()),
+                p_value: T::from(0.01).unwrap_or_else(|| T::zero()),
+                significance_level: T::from(0.05).unwrap_or_else(|| T::zero()),
+                reject_null: true,
+                effect_size: T::from(0.6).unwrap_or_else(|| T::zero()),
+            }],
             significance_levels: vec![
-                T::from(0.05).unwrap_or_else(|| T::zero()), T::from(0.01)
-                .unwrap_or_else(|| T::zero()),
+                T::from(0.05).unwrap_or_else(|| T::zero()),
+                T::from(0.01).unwrap_or_else(|| T::zero()),
             ],
             effect_sizes: vec![T::from(0.6).unwrap_or_else(|| T::zero())],
             power_analysis: PowerAnalysis {
@@ -459,10 +456,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     pub fn generate_pareto_frontier<D: Data<Elem = T> + Sync, Dim: Dimension>(
         &self,
         data: &ArrayBase<D, Dim>,
-        model_fn: impl Fn(
-            &ArrayBase<D, Dim>,
-            &PrivacyConfiguration<T>,
-        ) -> Result<T> + Sync,
+        model_fn: impl Fn(&ArrayBase<D, Dim>, &PrivacyConfiguration<T>) -> Result<T> + Sync,
     ) -> Result<Vec<ParetoPoint<T>>> {
         let mut pareto_points = Vec::new();
         let privacy_configs = self.generate_privacy_configurations()?;
@@ -470,33 +464,31 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         for config in privacy_configs {
             let utility = model_fn(data, &config)?;
             let privacy_cost = self.compute_privacy_cost(&config)?;
-            evaluated_points
-                .push(ParetoPoint {
-                    privacy_guarantee: config.epsilon,
-                    utility_value: utility,
-                    configuration: config,
-                    confidence_interval: (
-                        utility - T::from(0.1).unwrap_or_else(|| T::zero()),
-                        utility + T::from(0.1).unwrap_or_else(|| T::zero()),
-                    ),
-                    statistical_significance: T::from(0.95).unwrap_or_else(|| T::zero()),
-                    privacy_cost,
-                    dominated: false,
-                    distance_to_ideal: T::zero(),
-                });
+            evaluated_points.push(ParetoPoint {
+                privacy_guarantee: config.epsilon,
+                utility_value: utility,
+                configuration: config,
+                confidence_interval: (
+                    utility - T::from(0.1).unwrap_or_else(|| T::zero()),
+                    utility + T::from(0.1).unwrap_or_else(|| T::zero()),
+                ),
+                statistical_significance: T::from(0.95).unwrap_or_else(|| T::zero()),
+                privacy_cost,
+                dominated: false,
+                distance_to_ideal: T::zero(),
+            });
         }
         for i in 0..evaluated_points.len() {
             let mut is_dominated = false;
             for j in 0..evaluated_points.len() {
                 if i != j {
-                    let j_better_privacy = evaluated_points[j].privacy_cost
-                        <= evaluated_points[i].privacy_cost;
-                    let j_better_utility = evaluated_points[j].utility_value
-                        >= evaluated_points[i].utility_value;
+                    let j_better_privacy =
+                        evaluated_points[j].privacy_cost <= evaluated_points[i].privacy_cost;
+                    let j_better_utility =
+                        evaluated_points[j].utility_value >= evaluated_points[i].utility_value;
                     let j_strictly_better = evaluated_points[j].privacy_cost
                         < evaluated_points[i].privacy_cost
-                        || evaluated_points[j].utility_value
-                            > evaluated_points[i].utility_value;
+                        || evaluated_points[j].utility_value > evaluated_points[i].utility_value;
                     if j_better_privacy && j_better_utility && j_strictly_better {
                         is_dominated = true;
                         break;
@@ -508,12 +500,11 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 pareto_points.push(evaluated_points[i].clone());
             }
         }
-        pareto_points
-            .sort_by(|a, b| {
-                a.privacy_cost
-                    .partial_cmp(&b.privacy_cost)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+        pareto_points.sort_by(|a, b| {
+            a.privacy_cost
+                .partial_cmp(&b.privacy_cost)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         if !pareto_points.is_empty() {
             let min_privacy = pareto_points
                 .iter()
@@ -526,9 +517,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             for point in &mut pareto_points {
                 let privacy_dist = point.privacy_cost - min_privacy;
                 let utility_dist = max_utility - point.utility_value;
-                point.distance_to_ideal = (privacy_dist * privacy_dist
-                    + utility_dist * utility_dist)
-                    .sqrt();
+                point.distance_to_ideal =
+                    (privacy_dist * privacy_dist + utility_dist * utility_dist).sqrt();
             }
         }
         Ok(pareto_points)
@@ -543,16 +533,14 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     ) -> Result<BudgetAllocation<T>> {
         use crate::error::OptimError;
         if iterations == 0 {
-            return Err(
-                OptimError::InvalidParameter("iterations must be > 0".to_string()),
-            );
+            return Err(OptimError::InvalidParameter(
+                "iterations must be > 0".to_string(),
+            ));
         }
         if total_budget.epsilon_remaining <= 0.0 {
-            return Err(
-                OptimError::InvalidParameter(
-                    "total_budget.epsilon_remaining must be > 0".to_string(),
-                ),
-            );
+            return Err(OptimError::InvalidParameter(
+                "total_budget.epsilon_remaining must be > 0".to_string(),
+            ));
         }
         let total = total_budget.epsilon_remaining;
         let n = iterations;
@@ -577,35 +565,36 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                     if n == 1 {
                         vec![1.0_f64]
                     } else {
-                        (0..n).map(|i| 2.0 * (1.0 - i as f64 / (n - 1) as f64)).collect()
+                        (0..n)
+                            .map(|i| 2.0 * (1.0 - i as f64 / (n - 1) as f64))
+                            .collect()
                     }
                 }
                 AllocationStrategy::Increasing => {
                     if n == 1 {
                         vec![1.0_f64]
                     } else {
-                        let ws: Vec<f64> = (0..n)
-                            .map(|i| 2.0 * (i as f64 / (n - 1) as f64))
-                            .collect();
+                        let ws: Vec<f64> =
+                            (0..n).map(|i| 2.0 * (i as f64 / (n - 1) as f64)).collect();
                         let sum: f64 = ws.iter().sum();
-                        if sum < 1e-12 { vec![1.0_f64; n] } else { ws }
+                        if sum < 1e-12 {
+                            vec![1.0_f64; n]
+                        } else {
+                            ws
+                        }
                     }
                 }
                 AllocationStrategy::Adaptive => {
                     let r = 0.5_f64.powf(1.0 / n as f64);
                     (0..n).map(|i| (1.0 - r) * r.powi(i as i32)).collect()
                 }
-                AllocationStrategy::ImportanceBased => {
-                    (0..n)
-                        .map(|i| {
-                            let v = (n - i) as f64;
-                            v * v
-                        })
-                        .collect()
-                }
-                AllocationStrategy::RiskBased => {
-                    (0..n).map(|i| (1.0 + i as f64).ln()).collect()
-                }
+                AllocationStrategy::ImportanceBased => (0..n)
+                    .map(|i| {
+                        let v = (n - i) as f64;
+                        v * v
+                    })
+                    .collect(),
+                AllocationStrategy::RiskBased => (0..n).map(|i| (1.0 + i as f64).ln()).collect(),
             };
             let weight_sum: f64 = raw_weights.iter().sum();
             let alloc_f64: Vec<f64> = if weight_sum > 1e-12 {
@@ -622,7 +611,11 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             };
             let mean_eps = total / n as f64;
             let max_eps = alloc_f64.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let risk = if mean_eps > 1e-12 { max_eps / mean_eps - 1.0 } else { 0.0 };
+            let risk = if mean_eps > 1e-12 {
+                max_eps / mean_eps - 1.0
+            } else {
+                0.0
+            };
             let beats_threshold = expected_utility > threshold_f64;
             let is_better = if beats_threshold {
                 if !found_above_threshold {
@@ -656,18 +649,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             total_budget: total_budget.clone(),
             per_iteration_allocation: best_alloc,
             allocation_strategy: best_strategy,
-            expected_utility: T::from(best_utility)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "expected_utility conversion failed".to_string(),
-                    )
-                })?,
-            risk_assessment: T::from(best_risk)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "risk_assessment conversion failed".to_string(),
-                    )
-                })?,
+            expected_utility: T::from(best_utility).ok_or_else(|| {
+                OptimError::ComputationError("expected_utility conversion failed".to_string())
+            })?,
+            risk_assessment: T::from(best_risk).ok_or_else(|| {
+                OptimError::ComputationError("risk_assessment conversion failed".to_string())
+            })?,
         })
     }
     /// Perform sensitivity analysis
@@ -675,10 +662,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     pub fn perform_sensitivity_analysis<D: Data<Elem = T> + Sync, Dim: Dimension>(
         &self,
         data: &ArrayBase<D, Dim>,
-        model_fn: impl Fn(
-            &ArrayBase<D, Dim>,
-            &PrivacyConfiguration<T>,
-        ) -> Result<T> + Sync,
+        model_fn: impl Fn(&ArrayBase<D, Dim>, &PrivacyConfiguration<T>) -> Result<T> + Sync,
         base_config: &PrivacyConfiguration<T>,
     ) -> Result<SensitivityResults<T>> {
         let mut sensitivity_results = SensitivityResults {
@@ -700,67 +684,57 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let mut epsilon_config = base_config.clone();
         epsilon_config.epsilon = base_config.epsilon * (T::one() + perturbation_factor);
         let epsilon_utility = model_fn(data, &epsilon_config)?;
-        let epsilon_sensitivity = (epsilon_utility - base_utility)
-            / (base_config.epsilon * perturbation_factor);
-        sensitivity_results
-            .parameter_sensitivities
-            .insert("epsilon".to_string(), epsilon_sensitivity.to_f64().unwrap_or(0.0));
-        sensitivity_results
-            .gradient_magnitudes
-            .insert(
-                "epsilon".to_string(),
-                epsilon_sensitivity.abs().to_f64().unwrap_or(0.0),
-            );
+        let epsilon_sensitivity =
+            (epsilon_utility - base_utility) / (base_config.epsilon * perturbation_factor);
+        sensitivity_results.parameter_sensitivities.insert(
+            "epsilon".to_string(),
+            epsilon_sensitivity.to_f64().unwrap_or(0.0),
+        );
+        sensitivity_results.gradient_magnitudes.insert(
+            "epsilon".to_string(),
+            epsilon_sensitivity.abs().to_f64().unwrap_or(0.0),
+        );
         let mut noise_config = base_config.clone();
-        noise_config.noise_multiplier = base_config.noise_multiplier
-            * (T::one() + perturbation_factor);
+        noise_config.noise_multiplier =
+            base_config.noise_multiplier * (T::one() + perturbation_factor);
         let noise_utility = model_fn(data, &noise_config)?;
-        let noise_sensitivity = (noise_utility - base_utility)
-            / (base_config.noise_multiplier * perturbation_factor);
-        sensitivity_results
-            .parameter_sensitivities
-            .insert(
-                "noise_multiplier".to_string(),
-                noise_sensitivity.to_f64().unwrap_or(0.0),
-            );
-        sensitivity_results
-            .gradient_magnitudes
-            .insert(
-                "noise_multiplier".to_string(),
-                noise_sensitivity.abs().to_f64().unwrap_or(0.0),
-            );
+        let noise_sensitivity =
+            (noise_utility - base_utility) / (base_config.noise_multiplier * perturbation_factor);
+        sensitivity_results.parameter_sensitivities.insert(
+            "noise_multiplier".to_string(),
+            noise_sensitivity.to_f64().unwrap_or(0.0),
+        );
+        sensitivity_results.gradient_magnitudes.insert(
+            "noise_multiplier".to_string(),
+            noise_sensitivity.abs().to_f64().unwrap_or(0.0),
+        );
         let mut clip_config = base_config.clone();
-        clip_config.clipping_threshold = base_config.clipping_threshold
-            * (T::one() + perturbation_factor);
+        clip_config.clipping_threshold =
+            base_config.clipping_threshold * (T::one() + perturbation_factor);
         let clip_utility = model_fn(data, &clip_config)?;
-        let clip_sensitivity = (clip_utility - base_utility)
-            / (base_config.clipping_threshold * perturbation_factor);
-        sensitivity_results
-            .parameter_sensitivities
-            .insert(
-                "clipping_threshold".to_string(),
-                clip_sensitivity.to_f64().unwrap_or(0.0),
-            );
-        sensitivity_results
-            .gradient_magnitudes
-            .insert(
-                "clipping_threshold".to_string(),
-                clip_sensitivity.abs().to_f64().unwrap_or(0.0),
-            );
+        let clip_sensitivity =
+            (clip_utility - base_utility) / (base_config.clipping_threshold * perturbation_factor);
+        sensitivity_results.parameter_sensitivities.insert(
+            "clipping_threshold".to_string(),
+            clip_sensitivity.to_f64().unwrap_or(0.0),
+        );
+        sensitivity_results.gradient_magnitudes.insert(
+            "clipping_threshold".to_string(),
+            clip_sensitivity.abs().to_f64().unwrap_or(0.0),
+        );
         let mut delta_config = base_config.clone();
         let delta_perturbation = base_config.delta * perturbation_factor;
         delta_config.delta = base_config.delta + delta_perturbation;
         let delta_utility = model_fn(data, &delta_config)?;
         let delta_sensitivity = (delta_utility - base_utility) / delta_perturbation;
-        sensitivity_results
-            .parameter_sensitivities
-            .insert("delta".to_string(), delta_sensitivity.to_f64().unwrap_or(0.0));
-        sensitivity_results
-            .gradient_magnitudes
-            .insert(
-                "delta".to_string(),
-                delta_sensitivity.abs().to_f64().unwrap_or(0.0),
-            );
+        sensitivity_results.parameter_sensitivities.insert(
+            "delta".to_string(),
+            delta_sensitivity.to_f64().unwrap_or(0.0),
+        );
+        sensitivity_results.gradient_magnitudes.insert(
+            "delta".to_string(),
+            delta_sensitivity.abs().to_f64().unwrap_or(0.0),
+        );
         let mut max_sensitivity = 0.0;
         let mut min_sensitivity = f64::INFINITY;
         let mut most_sensitive = "epsilon".to_string();
@@ -790,20 +764,17 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 .insert(param.clone(), (base_sens - margin, base_sens + margin));
         }
         let mut interaction_config = base_config.clone();
-        interaction_config.epsilon = base_config.epsilon
-            * (T::one() + perturbation_factor);
-        interaction_config.noise_multiplier = base_config.noise_multiplier
-            * (T::one() + perturbation_factor);
+        interaction_config.epsilon = base_config.epsilon * (T::one() + perturbation_factor);
+        interaction_config.noise_multiplier =
+            base_config.noise_multiplier * (T::one() + perturbation_factor);
         let interaction_utility = model_fn(data, &interaction_config)?;
-        let expected_additive = base_utility + (epsilon_utility - base_utility)
-            + (noise_utility - base_utility);
+        let expected_additive =
+            base_utility + (epsilon_utility - base_utility) + (noise_utility - base_utility);
         let interaction_effect = interaction_utility - expected_additive;
-        sensitivity_results
-            .interaction_effects
-            .insert(
-                "epsilon_noise_multiplier".to_string(),
-                interaction_effect.to_f64().unwrap_or(0.0),
-            );
+        sensitivity_results.interaction_effects.insert(
+            "epsilon_noise_multiplier".to_string(),
+            interaction_effect.to_f64().unwrap_or(0.0),
+        );
         Ok(sensitivity_results)
     }
     /// Evaluate robustness
@@ -811,10 +782,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     pub fn evaluate_robustness<D: Data<Elem = T> + Sync, Dim: Dimension>(
         &self,
         data: &ArrayBase<D, Dim>,
-        model_fn: impl Fn(
-            &ArrayBase<D, Dim>,
-            &PrivacyConfiguration<T>,
-        ) -> Result<T> + Sync,
+        model_fn: impl Fn(&ArrayBase<D, Dim>, &PrivacyConfiguration<T>) -> Result<T> + Sync,
         config: &PrivacyConfiguration<T>,
     ) -> Result<RobustnessResults<T>> {
         use crate::error::OptimError;
@@ -829,28 +797,25 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let mut env_utils = vec![base_utility; n_levels];
         for (l, &factor) in perturbation_levels.iter().enumerate() {
             let mut p_cfg = config.clone();
-            p_cfg.epsilon = T::from(config.epsilon.to_f64().unwrap_or(1.0) + factor)
-                .unwrap_or(config.epsilon);
+            p_cfg.epsilon =
+                T::from(config.epsilon.to_f64().unwrap_or(1.0) + factor).unwrap_or(config.epsilon);
             param_utils[l] = model_fn(data, &p_cfg)?.to_f64().unwrap_or(0.0);
             let mut d_cfg = config.clone();
-            d_cfg.noise_multiplier = T::from(
-                    config.noise_multiplier.to_f64().unwrap_or(1.0) + factor,
-                )
-                .unwrap_or(config.noise_multiplier);
+            d_cfg.noise_multiplier =
+                T::from(config.noise_multiplier.to_f64().unwrap_or(1.0) + factor)
+                    .unwrap_or(config.noise_multiplier);
             data_utils[l] = model_fn(data, &d_cfg)?.to_f64().unwrap_or(0.0);
             let mut n_cfg = config.clone();
-            n_cfg.noise_multiplier = T::from(
-                    config.noise_multiplier.to_f64().unwrap_or(1.0) + factor,
-                )
-                .unwrap_or(config.noise_multiplier);
+            n_cfg.noise_multiplier =
+                T::from(config.noise_multiplier.to_f64().unwrap_or(1.0) + factor)
+                    .unwrap_or(config.noise_multiplier);
             noise_utils[l] = model_fn(data, &n_cfg)?.to_f64().unwrap_or(0.0);
             let mut e_cfg = config.clone();
-            e_cfg.clipping_threshold = T::from(
-                    config.clipping_threshold.to_f64().unwrap_or(1.0) + factor,
-                )
-                .unwrap_or(config.clipping_threshold);
-            let new_lr = (config.learning_rate.to_f64().unwrap_or(0.01) * (1.0 - factor))
-                .max(1e-8_f64);
+            e_cfg.clipping_threshold =
+                T::from(config.clipping_threshold.to_f64().unwrap_or(1.0) + factor)
+                    .unwrap_or(config.clipping_threshold);
+            let new_lr =
+                (config.learning_rate.to_f64().unwrap_or(0.01) * (1.0 - factor)).max(1e-8_f64);
             e_cfg.learning_rate = T::from(new_lr).unwrap_or(config.learning_rate);
             env_utils[l] = model_fn(data, &e_cfg)?.to_f64().unwrap_or(0.0);
         }
@@ -881,19 +846,25 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let u_adv_med = adv_utils[1];
         let lyap = if base_utility > 1e-12 {
             let val = (u_adv_med.ln() - base_utility.ln()) / pert_medium;
-            if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+            if val.is_nan() || val.is_infinite() {
+                0.0
+            } else {
+                val
+            }
         } else {
             0.0
         };
         let epsilon_machine = 1e-10_f64;
-        let stability_margin = (0.5 * base_utility - worst_case_degradation)
-            / base_utility.max(epsilon_machine);
+        let stability_margin =
+            (0.5 * base_utility - worst_case_degradation) / base_utility.max(epsilon_machine);
         let mean_utils = all_utils.iter().sum::<f64>() / all_utils.len() as f64;
-        let var_utils = all_utils.iter().map(|u| (u - mean_utils).powi(2)).sum::<f64>()
+        let var_utils = all_utils
+            .iter()
+            .map(|u| (u - mean_utils).powi(2))
+            .sum::<f64>()
             / all_utils.len() as f64;
         let std_utils = var_utils.sqrt();
-        let convergence_rate = (1.0 - std_utils / mean_utils.abs().max(1e-10))
-            .clamp(0.0, 1.0);
+        let convergence_rate = (1.0 - std_utils / mean_utils.abs().max(1e-10)).clamp(0.0, 1.0);
         let convergence_radius = worst_case_degradation;
         let asymptotic_behavior = if lyap < -0.5 {
             AsymptoticBehavior::Exponential
@@ -925,10 +896,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 PerturbationEffect {
                     perturbation_type: pt.clone(),
                     effect_magnitude: T::from(deg).unwrap_or_else(|| T::zero()),
-                    recovery_probability: T::from(1.0 - deg_frac)
-                        .unwrap_or_else(|| T::zero()),
-                    long_term_impact: T::from(deg_frac.powi(2))
-                        .unwrap_or_else(|| T::zero()),
+                    recovery_probability: T::from(1.0 - deg_frac).unwrap_or_else(|| T::zero()),
+                    long_term_impact: T::from(deg_frac.powi(2)).unwrap_or_else(|| T::zero()),
                 }
             })
             .collect();
@@ -937,113 +906,93 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let conf_level = self.config.confidence_level;
         let adv_med_util = adv_utils[1];
         if adv_med_util < base_utility * (1.0 - conf_level) {
-            let deg_frac = ((base_utility - adv_med_util) / base_utility.max(1e-12))
-                .clamp(0.0, 1.0);
-            failure_modes
-                .push(FailureMode {
-                    failure_type: FailureType::PrivacyBreach,
-                    failure_probability: T::from(deg_frac).unwrap_or_else(|| T::zero()),
-                    impact_severity: T::from(0.8).unwrap_or_else(|| T::zero()),
-                    detection_probability: T::from(0.9).unwrap_or_else(|| T::zero()),
-                    mitigation_strategies: vec![
-                        "Increase noise multiplier".to_string(), "Reduce epsilon"
-                        .to_string(),
-                    ],
-                });
+            let deg_frac =
+                ((base_utility - adv_med_util) / base_utility.max(1e-12)).clamp(0.0, 1.0);
+            failure_modes.push(FailureMode {
+                failure_type: FailureType::PrivacyBreach,
+                failure_probability: T::from(deg_frac).unwrap_or_else(|| T::zero()),
+                impact_severity: T::from(0.8).unwrap_or_else(|| T::zero()),
+                detection_probability: T::from(0.9).unwrap_or_else(|| T::zero()),
+                mitigation_strategies: vec![
+                    "Increase noise multiplier".to_string(),
+                    "Reduce epsilon".to_string(),
+                ],
+            });
         }
         if worst_case_degradation > base_utility * 0.5 {
-            failure_modes
-                .push(FailureMode {
-                    failure_type: FailureType::UtilityCollapse,
-                    failure_probability: T::from(
-                            (worst_case_degradation / base_utility.max(1e-12)).min(1.0),
-                        )
-                        .unwrap_or_else(|| T::zero()),
-                    impact_severity: T::from(0.9).unwrap_or_else(|| T::zero()),
-                    detection_probability: T::from(0.95).unwrap_or_else(|| T::zero()),
-                    mitigation_strategies: vec![
-                        "Tune privacy budget allocation".to_string(),
-                        "Increase training data".to_string(),
-                    ],
-                });
+            failure_modes.push(FailureMode {
+                failure_type: FailureType::UtilityCollapse,
+                failure_probability: T::from(
+                    (worst_case_degradation / base_utility.max(1e-12)).min(1.0),
+                )
+                .unwrap_or_else(|| T::zero()),
+                impact_severity: T::from(0.9).unwrap_or_else(|| T::zero()),
+                detection_probability: T::from(0.95).unwrap_or_else(|| T::zero()),
+                mitigation_strategies: vec![
+                    "Tune privacy budget allocation".to_string(),
+                    "Increase training data".to_string(),
+                ],
+            });
         }
         if lyap > 0.0 {
-            failure_modes
-                .push(FailureMode {
-                    failure_type: FailureType::SystemInstability,
-                    failure_probability: T::from((lyap / (1.0 + lyap)).min(1.0))
-                        .unwrap_or_else(|| T::zero()),
-                    impact_severity: T::from(0.7).unwrap_or_else(|| T::zero()),
-                    detection_probability: T::from(0.85).unwrap_or_else(|| T::zero()),
-                    mitigation_strategies: vec![
-                        "Reduce learning rate".to_string(), "Apply gradient clipping"
-                        .to_string(),
-                    ],
-                });
+            failure_modes.push(FailureMode {
+                failure_type: FailureType::SystemInstability,
+                failure_probability: T::from((lyap / (1.0 + lyap)).min(1.0))
+                    .unwrap_or_else(|| T::zero()),
+                impact_severity: T::from(0.7).unwrap_or_else(|| T::zero()),
+                detection_probability: T::from(0.85).unwrap_or_else(|| T::zero()),
+                mitigation_strategies: vec![
+                    "Reduce learning rate".to_string(),
+                    "Apply gradient clipping".to_string(),
+                ],
+            });
         }
         if convergence_rate < 0.5 {
-            failure_modes
-                .push(FailureMode {
-                    failure_type: FailureType::ConvergenceFailure,
-                    failure_probability: T::from(1.0 - convergence_rate)
-                        .unwrap_or_else(|| T::zero()),
-                    impact_severity: T::from(0.6).unwrap_or_else(|| T::zero()),
-                    detection_probability: T::from(0.9).unwrap_or_else(|| T::zero()),
-                    mitigation_strategies: vec![
-                        "Adjust learning rate schedule".to_string(),
-                        "Increase batch size".to_string(),
-                    ],
-                });
+            failure_modes.push(FailureMode {
+                failure_type: FailureType::ConvergenceFailure,
+                failure_probability: T::from(1.0 - convergence_rate).unwrap_or_else(|| T::zero()),
+                impact_severity: T::from(0.6).unwrap_or_else(|| T::zero()),
+                detection_probability: T::from(0.9).unwrap_or_else(|| T::zero()),
+                mitigation_strategies: vec![
+                    "Adjust learning rate schedule".to_string(),
+                    "Increase batch size".to_string(),
+                ],
+            });
         }
         if dist_worst > base_utility * 0.30 {
-            failure_modes
-                .push(FailureMode {
-                    failure_type: FailureType::RobustnessFailure,
-                    failure_probability: T::from(
-                            (dist_worst / base_utility.max(1e-12)).min(1.0),
-                        )
-                        .unwrap_or_else(|| T::zero()),
-                    impact_severity: T::from(0.75).unwrap_or_else(|| T::zero()),
-                    detection_probability: T::from(0.88).unwrap_or_else(|| T::zero()),
-                    mitigation_strategies: vec![
-                        "Increase noise multiplier".to_string(), "Use data augmentation"
-                        .to_string(),
-                    ],
-                });
+            failure_modes.push(FailureMode {
+                failure_type: FailureType::RobustnessFailure,
+                failure_probability: T::from((dist_worst / base_utility.max(1e-12)).min(1.0))
+                    .unwrap_or_else(|| T::zero()),
+                impact_severity: T::from(0.75).unwrap_or_else(|| T::zero()),
+                detection_probability: T::from(0.88).unwrap_or_else(|| T::zero()),
+                mitigation_strategies: vec![
+                    "Increase noise multiplier".to_string(),
+                    "Use data augmentation".to_string(),
+                ],
+            });
         }
         Ok(RobustnessResults {
-            robustness_score: T::from(robustness_score)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "robustness_score conversion failed".to_string(),
-                    )
-                })?,
-            worst_case_degradation: T::from(worst_case_degradation)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "worst_case_degradation conversion failed".to_string(),
-                    )
-                })?,
-            adversarial_robustness: T::from(adversarial_robustness)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "adversarial_robustness conversion failed".to_string(),
-                    )
-                })?,
-            distributional_robustness: T::from(distributional_robustness)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "distributional_robustness conversion failed".to_string(),
-                    )
-                })?,
+            robustness_score: T::from(robustness_score).ok_or_else(|| {
+                OptimError::ComputationError("robustness_score conversion failed".to_string())
+            })?,
+            worst_case_degradation: T::from(worst_case_degradation).ok_or_else(|| {
+                OptimError::ComputationError("worst_case_degradation conversion failed".to_string())
+            })?,
+            adversarial_robustness: T::from(adversarial_robustness).ok_or_else(|| {
+                OptimError::ComputationError("adversarial_robustness conversion failed".to_string())
+            })?,
+            distributional_robustness: T::from(distributional_robustness).ok_or_else(|| {
+                OptimError::ComputationError(
+                    "distributional_robustness conversion failed".to_string(),
+                )
+            })?,
             stability_analysis: StabilityAnalysis {
                 lyapunov_exponent: T::from(lyap).unwrap_or_else(|| T::zero()),
                 stability_margin: T::from(stability_margin).unwrap_or_else(|| T::zero()),
                 convergence_properties: ConvergenceProperties {
-                    convergence_rate: T::from(convergence_rate)
-                        .unwrap_or_else(|| T::zero()),
-                    convergence_radius: T::from(convergence_radius)
-                        .unwrap_or_else(|| T::zero()),
+                    convergence_rate: T::from(convergence_rate).unwrap_or_else(|| T::zero()),
+                    convergence_radius: T::from(convergence_radius).unwrap_or_else(|| T::zero()),
                     asymptotic_behavior,
                     stability_guarantees: lyap < 0.0,
                 },
@@ -1067,17 +1016,21 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     ) -> Result<Vec<DegradationPrediction<T>>> {
         use crate::error::OptimError;
         if historical_data.is_empty() {
-            return Err(
-                OptimError::InvalidParameter(
-                    "historical_data must not be empty".to_string(),
-                ),
-            );
+            return Err(OptimError::InvalidParameter(
+                "historical_data must not be empty".to_string(),
+            ));
         }
         if privacy_parameters.is_empty() {
             return Ok(Vec::new());
         }
         let n = historical_data.len();
-        let degree = if n < 5 { 1 } else if n < 15 { 2 } else { 3 };
+        let degree = if n < 5 {
+            1
+        } else if n < 15 {
+            2
+        } else {
+            3
+        };
         let xs: Vec<f64> = historical_data
             .iter()
             .map(|(e, _)| e.to_f64().unwrap_or(0.0))
@@ -1087,10 +1040,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             .map(|(_, u)| u.to_f64().unwrap_or(0.0))
             .collect();
         let coeffs = self.polyfit_f64(&xs, &ys, degree)?;
-        let fitted: Vec<f64> = xs
-            .iter()
-            .map(|&x| self.polyeval_f64(&coeffs, x))
-            .collect();
+        let fitted: Vec<f64> = xs.iter().map(|&x| self.polyeval_f64(&coeffs, x)).collect();
         let mean_y = ys.iter().sum::<f64>() / n as f64;
         let ss_res: f64 = ys
             .iter()
@@ -1113,29 +1063,24 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             let margin = 1.96 * sigma * (1.0 + 1.0 / n as f64).sqrt();
             let ci_lo = (predicted - margin).clamp(0.0, 1.0);
             let ci_hi = (predicted + margin).clamp(0.0, 1.0);
-            let model_accuracy = T::from(r_squared)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "model_accuracy conversion failed".to_string(),
-                    )
-                })?;
+            let model_accuracy = T::from(r_squared).ok_or_else(|| {
+                OptimError::ComputationError("model_accuracy conversion failed".to_string())
+            })?;
             let prediction_model = if degree <= 1 {
                 PredictionModel::LinearRegression
             } else {
                 PredictionModel::PolynomialRegression
             };
-            predictions
-                .push(DegradationPrediction {
-                    privacy_parameter: *param,
-                    predicted_utility_loss: T::from(predicted)
-                        .unwrap_or_else(|| T::zero()),
-                    confidence_interval: (
-                        T::from(ci_lo).unwrap_or_else(|| T::zero()),
-                        T::from(ci_hi).unwrap_or_else(|| T::zero()),
-                    ),
-                    prediction_model,
-                    model_accuracy,
-                });
+            predictions.push(DegradationPrediction {
+                privacy_parameter: *param,
+                predicted_utility_loss: T::from(predicted).unwrap_or_else(|| T::zero()),
+                confidence_interval: (
+                    T::from(ci_lo).unwrap_or_else(|| T::zero()),
+                    T::from(ci_hi).unwrap_or_else(|| T::zero()),
+                ),
+                prediction_model,
+                model_accuracy,
+            });
         }
         Ok(predictions)
     }
@@ -1148,14 +1093,14 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     ) -> Result<PrivacyRiskAssessment<T>> {
         use crate::error::OptimError;
         if config.epsilon <= T::zero() {
-            return Err(
-                OptimError::InvalidParameter("config.epsilon must be > 0".to_string()),
-            );
+            return Err(OptimError::InvalidParameter(
+                "config.epsilon must be > 0".to_string(),
+            ));
         }
         if config.delta < T::zero() {
-            return Err(
-                OptimError::InvalidParameter("config.delta must be >= 0".to_string()),
-            );
+            return Err(OptimError::InvalidParameter(
+                "config.delta must be >= 0".to_string(),
+            ));
         }
         let eps = config.epsilon.to_f64().unwrap_or(0.0);
         let delta = config.delta.to_f64().unwrap_or(0.0);
@@ -1169,48 +1114,34 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let delta_clamped = delta.clamp(0.0, 1.0);
         let reid_risk = (1.0 - (1.0 - delta_clamped).powi(iterations as i32)).max(0.0);
         let scores_f64 = [
-            mem_risk,
-            attr_risk,
-            inv_risk,
-            prop_risk,
-            recon_risk,
-            reid_risk,
+            mem_risk, attr_risk, inv_risk, prop_risk, recon_risk, reid_risk,
         ];
-        let overall_risk_score = scores_f64
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
+        let overall_risk_score = scores_f64.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mut risk_categories: HashMap<RiskCategory, T> = HashMap::new();
-        risk_categories
-            .insert(
-                RiskCategory::MembershipInference,
-                T::from(mem_risk).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::AttributeInference,
-                T::from(attr_risk).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::ModelInversion,
-                T::from(inv_risk).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::PropertyInference,
-                T::from(prop_risk).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::Reconstruction,
-                T::from(recon_risk).unwrap_or_else(|| T::zero()),
-            );
-        risk_categories
-            .insert(
-                RiskCategory::ReIdentification,
-                T::from(reid_risk).unwrap_or_else(|| T::zero()),
-            );
+        risk_categories.insert(
+            RiskCategory::MembershipInference,
+            T::from(mem_risk).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::AttributeInference,
+            T::from(attr_risk).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::ModelInversion,
+            T::from(inv_risk).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::PropertyInference,
+            T::from(prop_risk).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::Reconstruction,
+            T::from(recon_risk).unwrap_or_else(|| T::zero()),
+        );
+        risk_categories.insert(
+            RiskCategory::ReIdentification,
+            T::from(reid_risk).unwrap_or_else(|| T::zero()),
+        );
         let mut mitigation: Vec<String> = Vec::new();
         if mem_risk > 0.5 {
             mitigation
@@ -1229,25 +1160,22 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 );
         }
         if reid_risk > 0.3 {
-            mitigation
-                .push(
-                    "Switch to Rényi-DP accountant to tighten cumulative re-identification bounds"
-                        .to_string(),
-                );
+            mitigation.push(
+                "Switch to Rényi-DP accountant to tighten cumulative re-identification bounds"
+                    .to_string(),
+            );
         }
         if inv_risk > 0.5 {
-            mitigation
-                .push(
-                    "Reduce ε or increase batch size to limit gradient-leakage model-inversion risk"
-                        .to_string(),
-                );
+            mitigation.push(
+                "Reduce ε or increase batch size to limit gradient-leakage model-inversion risk"
+                    .to_string(),
+            );
         }
         if mitigation.is_empty() {
-            mitigation
-                .push(
-                    "Privacy parameters are within acceptable risk bounds for this workload"
-                        .to_string(),
-                );
+            mitigation.push(
+                "Privacy parameters are within acceptable risk bounds for this workload"
+                    .to_string(),
+            );
         }
         let compliance_status = if overall_risk_score < 0.3 && delta < 1e-5 {
             ComplianceStatus::Compliant
@@ -1261,9 +1189,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             .map(|k| {
                 let time_point = 200 * k;
                 let future_iterations = iterations + 200 * k;
-                let future_reid = (1.0
-                    - (1.0 - delta_clamped).powi(future_iterations as i32))
-                    .max(0.0);
+                let future_reid =
+                    (1.0 - (1.0 - delta_clamped).powi(future_iterations as i32)).max(0.0);
                 let risk_trend = if future_reid > first_reid * 1.1 {
                     RiskTrend::Increasing
                 } else {
@@ -1272,20 +1199,15 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 RiskEvolution {
                     time_point,
                     risk_score: T::from(future_reid).unwrap_or_else(|| T::zero()),
-                    contributing_factors: vec![
-                        "cumulative_reidentification".to_string()
-                    ],
+                    contributing_factors: vec!["cumulative_reidentification".to_string()],
                     risk_trend,
                 }
             })
             .collect();
         Ok(PrivacyRiskAssessment {
-            overall_risk_score: T::from(overall_risk_score)
-                .ok_or_else(|| {
-                    OptimError::ComputationError(
-                        "overall_risk_score conversion failed".to_string(),
-                    )
-                })?,
+            overall_risk_score: T::from(overall_risk_score).ok_or_else(|| {
+                OptimError::ComputationError("overall_risk_score conversion failed".to_string())
+            })?,
             risk_categories,
             mitigation_recommendations: mitigation,
             compliance_status,
@@ -1301,18 +1223,14 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     ) -> Result<StatisticalTestResults<T>> {
         use crate::error::OptimError;
         if results.len() < 2 {
-            return Err(
-                OptimError::InvalidParameter(
-                    "results must have at least 2 elements".to_string(),
-                ),
-            );
+            return Err(OptimError::InvalidParameter(
+                "results must have at least 2 elements".to_string(),
+            ));
         }
         if baseline.len() < 2 {
-            return Err(
-                OptimError::InvalidParameter(
-                    "baseline must have at least 2 elements".to_string(),
-                ),
-            );
+            return Err(OptimError::InvalidParameter(
+                "baseline must have at least 2 elements".to_string(),
+            ));
         }
         let results_u: Vec<f64> = results
             .iter()
@@ -1337,26 +1255,25 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let se = (v1 / n1 + v2 / n2).sqrt();
         let t_stat = if se > 1e-12 { (m1 - m2) / se } else { 0.0 };
         let df_num = (v1 / n1 + v2 / n2).powi(2);
-        let df_den = (v1 / n1).powi(2) / (n1 - 1.0).max(1.0)
-            + (v2 / n2).powi(2) / (n2 - 1.0).max(1.0);
+        let df_den =
+            (v1 / n1).powi(2) / (n1 - 1.0).max(1.0) + (v2 / n2).powi(2) / (n2 - 1.0).max(1.0);
         let df = if df_den > 1e-12 { df_num / df_den } else { 1.0 };
-        let p_welch = 2.0 * (1.0 - self.normal_cdf_f64(t_stat.abs()))
-            * (1.0 + 1.0 / (4.0 * df.max(1.0)));
+        let p_welch =
+            2.0 * (1.0 - self.normal_cdf_f64(t_stat.abs())) * (1.0 + 1.0 / (4.0 * df.max(1.0)));
         let p_welch = p_welch.clamp(0.0, 1.0);
         let pooled_std = ((v1 * (n1 - 1.0) + v2 * (n2 - 1.0)) / (n1 + n2 - 2.0).max(1.0))
             .sqrt()
             .max(1e-12);
         let cohen_d = (m1 - m2) / pooled_std;
         let mut hypothesis_tests: Vec<HypothesisTestResult<T>> = Vec::new();
-        hypothesis_tests
-            .push(HypothesisTestResult {
-                test_name: "Welch t-test (utility)".to_string(),
-                test_statistic: T::from(t_stat).unwrap_or_else(|| T::zero()),
-                p_value: T::from(p_welch).unwrap_or_else(|| T::zero()),
-                significance_level: T::from(0.05).unwrap_or_else(|| T::zero()),
-                reject_null: p_welch < 0.05,
-                effect_size: T::from(cohen_d).unwrap_or_else(|| T::zero()),
-            });
+        hypothesis_tests.push(HypothesisTestResult {
+            test_name: "Welch t-test (utility)".to_string(),
+            test_statistic: T::from(t_stat).unwrap_or_else(|| T::zero()),
+            p_value: T::from(p_welch).unwrap_or_else(|| T::zero()),
+            significance_level: T::from(0.05).unwrap_or_else(|| T::zero()),
+            reject_null: p_welch < 0.05,
+            effect_size: T::from(cohen_d).unwrap_or_else(|| T::zero()),
+        });
         let r1 = self.pearson_correlation_f64(&results_p, &results_u);
         let r2 = self.pearson_correlation_f64(&baseline_p, &baseline_u);
         let r1_c = r1.clamp(-0.9999, 0.9999);
@@ -1365,19 +1282,18 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let z2 = r2_c.atanh();
         let se_z = (1.0 / (results.len() as f64 - 3.0).max(1.0)
             + 1.0 / (baseline.len() as f64 - 3.0).max(1.0))
-            .sqrt();
+        .sqrt();
         let z_stat = (z1 - z2) / se_z.max(1e-12);
         let p_corr = (2.0 * (1.0 - self.normal_cdf_f64(z_stat.abs()))).clamp(0.0, 1.0);
         let corr_effect = (r1 - r2).abs();
-        hypothesis_tests
-            .push(HypothesisTestResult {
-                test_name: "Fisher z-test (privacy-utility correlation)".to_string(),
-                test_statistic: T::from(z_stat).unwrap_or_else(|| T::zero()),
-                p_value: T::from(p_corr).unwrap_or_else(|| T::zero()),
-                significance_level: T::from(0.05).unwrap_or_else(|| T::zero()),
-                reject_null: p_corr < 0.05,
-                effect_size: T::from(corr_effect).unwrap_or_else(|| T::zero()),
-            });
+        hypothesis_tests.push(HypothesisTestResult {
+            test_name: "Fisher z-test (privacy-utility correlation)".to_string(),
+            test_statistic: T::from(z_stat).unwrap_or_else(|| T::zero()),
+            p_value: T::from(p_corr).unwrap_or_else(|| T::zero()),
+            significance_level: T::from(0.05).unwrap_or_else(|| T::zero()),
+            reject_null: p_corr < 0.05,
+            effect_size: T::from(corr_effect).unwrap_or_else(|| T::zero()),
+        });
         let n_total = (n1 + n2) / 2.0;
         let stat_power = self
             .normal_cdf_f64(cohen_d.abs() * (n_total / 2.0).sqrt() - 1.96)
@@ -1407,8 +1323,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let power_analysis = PowerAnalysis {
             statistical_power: T::from(stat_power).unwrap_or_else(|| T::zero()),
             required_sample_size: required_n,
-            minimum_detectable_effect: T::from(min_det_effect)
-                .unwrap_or_else(|| T::zero()),
+            minimum_detectable_effect: T::from(min_det_effect).unwrap_or_else(|| T::zero()),
             power_curve,
         };
         let raw_p = [p_welch, p_corr];
@@ -1419,13 +1334,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             .collect();
         let bonf_rejected = bonf_adj
             .iter()
-            .filter(|&&p| { p < T::from(0.05).unwrap_or_else(|| T::zero()) })
+            .filter(|&&p| p < T::from(0.05).unwrap_or_else(|| T::zero()))
             .count();
         let family_wise = 1.0 - 0.95_f64.powi(k as i32);
         let bonf_fdr = bonf_rejected as f64 / k as f64;
         let mut sorted: Vec<(usize, f64)> = raw_p.iter().cloned().enumerate().collect();
-        sorted
-            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         let mut holm_adj_by_rank: Vec<f64> = sorted
             .iter()
             .enumerate()
@@ -1450,24 +1364,28 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             .count();
         let holm_fdr = holm_rejected as f64 / k as f64;
         let multiple_comparison_corrections = vec![
-            MultipleComparisonCorrection { correction_method :
-            CorrectionMethod::Bonferroni, adjusted_p_values : bonf_adj,
-            family_wise_error_rate : T::from(family_wise).unwrap_or_else(|| T::zero()),
-            false_discovery_rate : T::from(bonf_fdr).unwrap_or_else(|| T::zero()), },
-            MultipleComparisonCorrection { correction_method :
-            CorrectionMethod::HolmBonferroni, adjusted_p_values : holm_adj,
-            family_wise_error_rate : T::from(family_wise).unwrap_or_else(|| T::zero()),
-            false_discovery_rate : T::from(holm_fdr).unwrap_or_else(|| T::zero()), },
+            MultipleComparisonCorrection {
+                correction_method: CorrectionMethod::Bonferroni,
+                adjusted_p_values: bonf_adj,
+                family_wise_error_rate: T::from(family_wise).unwrap_or_else(|| T::zero()),
+                false_discovery_rate: T::from(bonf_fdr).unwrap_or_else(|| T::zero()),
+            },
+            MultipleComparisonCorrection {
+                correction_method: CorrectionMethod::HolmBonferroni,
+                adjusted_p_values: holm_adj,
+                family_wise_error_rate: T::from(family_wise).unwrap_or_else(|| T::zero()),
+                false_discovery_rate: T::from(holm_fdr).unwrap_or_else(|| T::zero()),
+            },
         ];
         Ok(StatisticalTestResults {
             hypothesis_tests,
             significance_levels: vec![
-                T::from(0.05).unwrap_or_else(|| T::zero()), T::from(0.01)
-                .unwrap_or_else(|| T::zero()),
+                T::from(0.05).unwrap_or_else(|| T::zero()),
+                T::from(0.01).unwrap_or_else(|| T::zero()),
             ],
             effect_sizes: vec![
-                T::from(cohen_d).unwrap_or_else(|| T::zero()), T::from(corr_effect)
-                .unwrap_or_else(|| T::zero()),
+                T::from(cohen_d).unwrap_or_else(|| T::zero()),
+                T::from(corr_effect).unwrap_or_else(|| T::zero()),
             ],
             power_analysis,
             multiple_comparison_corrections,
@@ -1518,11 +1436,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                 })
                 .unwrap_or(col);
             if a[pivot_row][col].abs() < 1e-12 {
-                return Err(
-                    OptimError::ComputationError(
-                        "Singular matrix in polyfit".to_string(),
-                    ),
-                );
+                return Err(OptimError::ComputationError(
+                    "Singular matrix in polyfit".to_string(),
+                ));
             }
             a.swap(col, pivot_row);
             b.swap(col, pivot_row);
@@ -1565,13 +1481,14 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let phi = (-0.5 * z_abs * z_abs).exp() / (2.0 * std::f64::consts::PI).sqrt();
         let poly = t
             * (0.319_381_53
-                + t
-                    * (-0.356_563_782
-                        + t
-                            * (1.781_477_937
-                                + t * (-1.821_255_978 + t * 1.330_274_429))));
+                + t * (-0.356_563_782
+                    + t * (1.781_477_937 + t * (-1.821_255_978 + t * 1.330_274_429))));
         let y = 1.0 - phi * poly;
-        if sign > 0.0 { y } else { 1.0 - y }
+        if sign > 0.0 {
+            y
+        } else {
+            1.0 - y
+        }
     }
     /// Pearson correlation coefficient (f64 internal).
     /// Returns 0.0 if lengths differ or either std_dev is ~0.
@@ -1582,7 +1499,11 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let n = xs.len() as f64;
         let mx = xs.iter().sum::<f64>() / n;
         let my = ys.iter().sum::<f64>() / n;
-        let cov: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| (x - mx) * (y - my)).sum();
+        let cov: f64 = xs
+            .iter()
+            .zip(ys.iter())
+            .map(|(x, y)| (x - mx) * (y - my))
+            .sum();
         let sx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum::<f64>().sqrt();
         let sy: f64 = ys.iter().map(|y| (y - my).powi(2)).sum::<f64>().sqrt();
         if sx < 1e-12 || sy < 1e-12 {
@@ -1613,8 +1534,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let clip_values = self.sample_parameter_range(&params.clipping_threshold_range)?;
         let batch_values = self.sample_parameter_range(&params.batch_size_range)?;
         let max_combinations = self.config.pareto_resolution;
-        let combinations_per_dimension = (max_combinations as f64).powf(1.0 / 5.0).ceil()
-            as usize;
+        let combinations_per_dimension = (max_combinations as f64).powf(1.0 / 5.0).ceil() as usize;
         for (_i, &epsilon) in epsilon_values
             .iter()
             .enumerate()
@@ -1641,23 +1561,22 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
                             .take(combinations_per_dimension)
                         {
                             if delta >= T::from(1.0).unwrap_or_else(|| T::zero())
-                                || epsilon <= T::zero() || noise_mult <= T::zero()
+                                || epsilon <= T::zero()
+                                || noise_mult <= T::zero()
                             {
                                 continue;
                             }
-                            configurations
-                                .push(PrivacyConfiguration {
-                                    epsilon,
-                                    delta,
-                                    noise_multiplier: noise_mult,
-                                    clipping_threshold: clip_thresh,
-                                    batch_size: batch_size.to_usize().unwrap_or(256),
-                                    sampling_probability: T::from(0.1)
-                                        .unwrap_or_else(|| T::zero()),
-                                    iterations: 1000,
-                                    learning_rate: T::from(0.01).unwrap_or_else(|| T::zero()),
-                                    noise_mechanism: NoiseMechanism::Gaussian,
-                                });
+                            configurations.push(PrivacyConfiguration {
+                                epsilon,
+                                delta,
+                                noise_multiplier: noise_mult,
+                                clipping_threshold: clip_thresh,
+                                batch_size: batch_size.to_usize().unwrap_or(256),
+                                sampling_probability: T::from(0.1).unwrap_or_else(|| T::zero()),
+                                iterations: 1000,
+                                learning_rate: T::from(0.01).unwrap_or_else(|| T::zero()),
+                                noise_mechanism: NoiseMechanism::Gaussian,
+                            });
                             if configurations.len() >= max_combinations {
                                 return Ok(configurations);
                             }
@@ -1711,8 +1630,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         let normalized_epsilon = config.epsilon / max_epsilon;
         let max_delta = T::from(1e-3).unwrap_or_else(|| T::zero());
         let normalized_delta = config.delta / max_delta;
-        let privacy_cost = normalized_epsilon
-            + normalized_delta * T::from(0.1).unwrap_or_else(|| T::zero());
+        let privacy_cost =
+            normalized_epsilon + normalized_delta * T::from(0.1).unwrap_or_else(|| T::zero());
         Ok(privacy_cost)
     }
 }
