@@ -101,7 +101,7 @@
 ### Specialized NAS Applications (Wave 2 - Domain-Specific NAS)
 - [x] Computer vision architecture search (DomainSearchSpace::ComputerVision)
 - [x] NLP model architecture optimization (DomainSearchSpace::NLP)
-- [ ] Speech recognition NAS
+- [x] Speech recognition NAS (`src/speech_nas.rs` — SpeechNasEngine with MelFilterBank/Conv1D/LSTM/BiLSTM/Attention/LinearProjection/LayerNorm/Dropout/CTCDecoder layers, positional constraints (StartOnly/EndOnly/Any), depth-bounded propose, hyperparameter-aware mutate, repair-pass crossover, Pareto front over (WER, latency_ms, memory_mb); 22 tests)
 - [x] Time series forecasting NAS (DomainSearchSpace::TimeSeries)
 - [ ] Multimodal architecture optimization
 - [x] Reinforcement learning NAS (DomainSearchSpace::Reinforcement)
@@ -111,17 +111,17 @@
 
 ### Transfer Learning for NAS (Wave 2 - Architecture Embedding)
 - [x] Architecture embedding and similarity (ArchitectureEmbedder, cosine_similarity, find_similar)
-- [ ] Cross-domain transfer
-- [ ] Few-shot architecture optimization
-- [ ] Architecture knowledge graph
+- [x] Cross-domain transfer (`src/cross_domain_transfer.rs` — CrossDomainTransferEngine with MeanCosine/MaxCosine/Wasserstein/CentroidDistance metrics, transferability scoring, warm-start embeddings, transfer subgraph builder; 24 tests)
+- [x] Few-shot architecture optimization (`src/few_shot_architecture.rs` — FewShotArchitectureOptimizer with Prototypical / Matching / MAML adapter / Distance-weighted KNN algorithms, Euclidean / Cosine / Manhattan distance metrics, fit_from_examples / fit_from_graph / predict / predict_batch / recommend_top_k; 26 tests)
+- [x] Architecture knowledge graph (`src/architecture_knowledge_graph.rs` — random-walk-with-restart propagation, JSON persistence, similarity edges; 16 tests)
 - [x] AggregationMethod (Mean, WeightedSum, AttentionPooling)
 - [x] update_embeddings for batch embedding computation
 
 ### AutoML Integration
-- [ ] End-to-end automated data preprocessing
-- [ ] Feature engineering automation
-- [ ] Model selection and ensemble
-- [ ] Pipeline optimization
+- [x] End-to-end automated data preprocessing (`src/automl_pipeline/` — `AutomlPipelineCoordinator` with StandardScaler / MinMaxScaler / RobustScaler / ImputeMean / ImputeMedian / Identity; per-stage timings)
+- [x] Feature engineering automation (`src/automl_pipeline/` — PolynomialDegree2 / LogTransform / SqrtAbsTransform / PairwiseProducts{top_k} / Reciprocal / Identity)
+- [x] Model selection and ensemble (`src/automl_pipeline/` — CandidateModel pool {LinearRegression, Ridge, Lasso, DecisionTree, RandomForest, GradientBoosting, SVM, NeuralNet}; EnsembleStrategy {Average, Weighted, Median, BestOnly, Stacking})
+- [x] Pipeline optimization (`src/automl_pipeline/` — propose_pipeline / evaluate_pipeline with user-supplied model_evaluator callback / record_pipeline / top_k / best_pipeline; 24 tests)
 
 ---
 

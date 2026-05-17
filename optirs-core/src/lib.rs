@@ -293,12 +293,14 @@ pub mod parameter_groups;
 pub mod plugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod privacy;
+pub mod quantum_inspired;
 pub mod regularizers;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod research;
 pub mod schedulers;
 pub mod second_order;
 pub mod self_tuning;
+pub mod sensitivity_analysis;
 pub mod simd_optimizer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod streaming;
@@ -382,12 +384,20 @@ pub use privacy::{
     AccountingMethod, ClippingStats, DifferentialPrivacyConfig, DifferentiallyPrivateOptimizer,
     MomentsAccountant, NoiseMechanism, PrivacyBudget, PrivacyValidation,
 };
+pub use quantum_inspired::{
+    HybridQuantumClassical, OptimizationPhase, QuantumAnnealing, QuantumOptimizerConfig,
+    VariationalQuantumOptimizer,
+};
 pub use second_order::{
     HessianInfo, Newton, NewtonCG, SecondOrderOptimizer, LBFGS as SecondOrderLBFGS,
 };
 pub use self_tuning::{
     OptimizerInfo, OptimizerTrait, PerformanceStats, SelfTuningConfig, SelfTuningOptimizer,
     SelfTuningStatistics, TargetMetric,
+};
+pub use sensitivity_analysis::{
+    MorrisAnalyzer, MorrisIndices, OatAnalyzer, OatResult, SensitivityAnalyzer, SensitivityIndices,
+    SobolAnalyzer,
 };
 pub use simd_optimizer::{should_use_simd, SimdOptimizer};
 #[cfg(not(target_arch = "wasm32"))]

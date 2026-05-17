@@ -197,10 +197,42 @@
 - [ ] Pipeline parallelism
 - [ ] Elastic training with dynamic workers
 
-### Quantum-Inspired Methods
-- [ ] Quantum annealing simulation
-- [ ] Variational quantum optimizer
-- [ ] Hybrid quantum-classical optimization
+### Quantum-Inspired Methods (v0.3.2 progress — landed on branch 0.3.2)
+- [x] Quantum annealing simulation (`optirs-core/src/quantum_inspired/annealing.rs`)
+- [x] Variational quantum optimizer with SPSA (`optirs-core/src/quantum_inspired/vqe.rs`)
+- [x] Hybrid quantum-classical optimization (`optirs-core/src/quantum_inspired/hybrid.rs`)
+
+### Sensitivity Analysis (v0.3.2 progress)
+- [x] Sobol global indices via Saltelli sampling (`optirs-core/src/sensitivity_analysis/sobol.rs`)
+- [x] Morris elementary effects screening (`optirs-core/src/sensitivity_analysis/morris.rs`)
+- [x] One-At-A-Time local sensitivity (`optirs-core/src/sensitivity_analysis/oat.rs`)
+
+### Transfer Learning for NAS (v0.3.2 progress)
+- [x] Architecture knowledge graph with random-walk-with-restart propagation (`optirs-nas/src/architecture_knowledge_graph.rs`)
+- [x] Cross-domain transfer engine (`optirs-nas/src/cross_domain_transfer.rs` — transferability scoring, warm-start embeddings, transfer subgraphs)
+
+### Meta-Learning (v0.3.2 progress)
+- [x] MAML optimizer with SecondOrder/FirstOrder/Reptile variants (`optirs-core/src/optimizers/maml.rs`)
+
+### Benchmarking Analytics (v0.3.2 progress)
+- [x] Performance prediction models (`optirs-bench/src/performance_prediction.rs` — Linear, Ridge, KNN predictors)
+- [x] Anomaly detection with ML (`optirs-bench/src/anomaly_detection.rs` — Z-score, IQR, MAD, IsolationForest)
+- [x] Performance forecast modeling (`optirs-bench/src/performance_forecast.rs` — Moving Avg, Exp Smoothing, Holt, Holt-Winters)
+- [x] Performance pattern recognition (`optirs-bench/src/performance_pattern_recognition.rs` — matrix-profile motifs, CUSUM / Page-Hinkley changepoints, regime segmentation, trend classification)
+- [x] Few-shot architecture optimization (`optirs-nas/src/few_shot_architecture.rs` — Prototypical, Matching, MAML, Distance-weighted KNN)
+
+### Domain-Specific NAS (v0.3.2 progress)
+- [x] Speech recognition NAS (`optirs-nas/src/speech_nas.rs` — speech-specific search space, layer constraints, propose/mutate/crossover, Pareto front)
+
+### Differential Privacy (v0.3.2 progress)
+- [x] Rényi DP accountant (`optirs-core/src/privacy/renyi_accountant.rs` — subsampled Gaussian RDP composition, (ε, δ) conversion)
+- [x] Secure aggregation (Bonawitz-style pairwise additive masking) (`optirs-core/src/privacy/secure_aggregation.rs`)
+
+### Memory-Augmented Optimizers (v0.3.2 progress)
+- [x] NTM-style memory-augmented optimizer (`optirs-core/src/optimizers/ntm_optimizer.rs` — content/location/hybrid attention, erase+add writes)
+
+### AutoML (v0.3.2 progress)
+- [x] AutoML pipeline coordinator (`optirs-nas/src/automl_pipeline/` — preprocessing, feature engineering, model selection, ensembling)
 
 ---
 

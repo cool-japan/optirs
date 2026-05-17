@@ -118,10 +118,10 @@
 ## Future Work (v0.4.0+)
 
 ### Advanced Analytics
-- [ ] Performance prediction models
-- [ ] Anomaly detection with ML
-- [ ] Performance pattern recognition
-- [ ] Performance forecast modeling
+- [x] Performance prediction models (`src/performance_prediction.rs` — LinearRegressionPredictor / RidgeRegressionPredictor / KNearestPredictor with shared `PerformancePredictor` trait, Gauss-Jordan inversion, feature normalization, train_test_split, R²/MAE/RMSE metrics; 20 tests)
+- [x] Anomaly detection with ML (`src/anomaly_detection.rs` — ZScoreDetector / IqrDetector / ModifiedZScoreDetector / IsolationForestDetector with severity classification and `AnomalyDetector` trait; 28 tests)
+- [x] Performance pattern recognition (`src/performance_pattern_recognition.rs` — matrix-profile motif discovery, CUSUM and Page-Hinkley changepoint detection, binary-segmentation regime detection, trend classification; 28 tests)
+- [x] Performance forecast modeling (`src/performance_forecast.rs` — MovingAverage / ExponentialSmoothing / HoltLinear / HoltWinters forecasters with confidence intervals, autocorrelation-based seasonality detection; 27 tests)
 
 ### Visualization
 - [ ] Interactive web dashboards

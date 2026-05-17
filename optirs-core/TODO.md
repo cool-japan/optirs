@@ -180,10 +180,10 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 ## Future Work (v0.3.1+)
 
 ### Meta-Learning Optimizers
-- [ ] MAML (Model-Agnostic Meta-Learning) support
+- [x] MAML (Model-Agnostic Meta-Learning) support — SecondOrder/FirstOrder/Reptile variants (`optirs-core/src/optimizers/maml.rs`, 14 tests)
 - [x] Reptile optimizer
 - [x] Meta-SGD with learnable learning rates
-- [ ] Neural optimizer implementations
+- [x] Neural optimizer implementations — NTM-style memory-augmented optimizer with external memory, content/location/hybrid attention addressing, erase+add writes (`optirs-core/src/optimizers/ntm_optimizer.rs`; 23 tests)
 
 ### Additional Regularization
 - [x] Spectral normalization
@@ -193,13 +193,18 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 ### Distributed & Federated Learning
 - [x] FedAvg implementation (FedProx with mu=0 degenerates to FedAvg)
 - [x] FedProx with proximal term (distributed/fedprox.rs)
-- [ ] Differential privacy integration
-- [ ] Secure aggregation protocols
+- [x] Differential privacy integration — Rényi DP accountant with tight subsampled-Gaussian composition (`optirs-core/src/privacy/renyi_accountant.rs`; 20 tests)
+- [x] Secure aggregation protocols — Bonawitz-style pairwise additive masking with quantization, modular arithmetic, dropout reconstruction (`optirs-core/src/privacy/secure_aggregation.rs`; 32 tests)
 
 ### Developer Experience
 - [x] Gradient flow visualization (GradientFlowAnalyzer with SVG output, vanishing/exploding detection)
 - [x] Loss landscape visualization (LossLandscapeAnalyzer: 2D perturbation, sharpness, saddle point detection)
-- [ ] Hyperparameter sensitivity analysis
+- [x] Hyperparameter sensitivity analysis (Sobol, Morris, OAT — `optirs-core/src/sensitivity_analysis/`)
+
+### Quantum-Inspired Optimizers (v0.3.2)
+- [x] Quantum annealing with tunneling kernel (`optirs-core/src/quantum_inspired/annealing.rs`)
+- [x] Variational quantum optimizer with SPSA gradients (`optirs-core/src/quantum_inspired/vqe.rs`)
+- [x] Hybrid quantum-classical two-phase optimizer (`optirs-core/src/quantum_inspired/hybrid.rs`)
 
 ### Domain-Specific Optimizers
 - [x] Vision-specific (ViTLayerDecay scheduler: per-layer exponential LR decay for Vision Transformers)

@@ -112,22 +112,48 @@
 
 pub mod architecture;
 pub mod architecture_embedding;
+pub mod architecture_knowledge_graph;
+pub mod automl_pipeline;
+pub mod cross_domain_transfer;
 pub mod domain_specific_nas;
 pub mod error;
 pub mod evaluation;
+pub mod few_shot_architecture;
 pub mod hyperparameter;
 pub mod multi_objective;
 pub mod nas_engine;
 pub mod progressive;
 pub mod search_strategies;
+pub mod speech_nas;
 
 pub use architecture::ArchitectureSpace;
 pub use architecture_embedding::{AggregationMethod, ArchitectureEmbedder};
+pub use architecture_knowledge_graph::{
+    ArchKnowledgeEdge, ArchKnowledgeNode, ArchitectureKnowledgeGraph, NodeId, PerformanceRecord,
+    RelationType,
+};
+pub use automl_pipeline::{
+    AutomlPipelineConfig, AutomlPipelineCoordinator, CandidateModel, EnsembleStrategy,
+    FeatureEngineeringStep, PipelineEvaluation, PreprocessingStep, ScoredPipeline, SvmKernel,
+    TrainValSplit,
+};
+pub use cross_domain_transfer::{
+    CrossDomainTransferEngine, DomainProfile, DomainSimilarityMetric, DomainSimilarityReport,
+    TransferRecommendation, TransferabilityWeights,
+};
 pub use domain_specific_nas::{
     DomainNASEngine, DomainSearchSpace, DomainType as NASDomainType, NASConstraint,
 };
 pub use error::{OptimError, Result};
+pub use few_shot_architecture::{
+    ArchitectureExample, DistanceMetric, FewShotAlgorithm, FewShotArchitectureOptimizer,
+    FewShotConfig, FewShotPrediction,
+};
 pub use search_strategies::SearchStrategy;
+pub use speech_nas::{
+    layer_position_constraint, LayerPositionConstraint, SpeechLayerType, SpeechModelConfig,
+    SpeechModelEvaluation, SpeechNasEngine, SpeechSearchSpace,
+};
 
 // Re-export key types
 use serde::{Deserialize, Serialize};

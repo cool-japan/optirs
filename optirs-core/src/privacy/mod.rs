@@ -21,6 +21,8 @@ pub mod federated_privacy;
 pub mod moment_accountant;
 pub mod noise_mechanisms;
 pub mod private_hyperparameter_optimization;
+pub mod renyi_accountant;
+pub mod secure_aggregation;
 pub mod secure_multiparty;
 pub mod utility_analysis;
 
@@ -48,6 +50,9 @@ pub use federated::{
 pub use differential_privacy::{
     AmplificationConfig, AmplificationStats, PrivacyAmplificationAnalyzer, SubsamplingEvent,
 };
+
+// Re-export Renyi differential privacy accountant types
+pub use renyi_accountant::{DpConversion, RdpSpend, RenyiAccountant};
 
 /// Differential privacy configuration
 #[derive(Debug, Clone)]
