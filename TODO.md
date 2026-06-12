@@ -309,3 +309,8 @@ Total: 1,249 unit tests + 82 doc tests (9 skipped, 4 doc tests ignored)
 
 **Status**: ✅ Released (2026-03-27)
 **Next Milestone**: v0.4.0 - Further enhancements and research implementations
+
+## Stubs to implement (added 2026-06-12 by /cooljapan-stub-check)
+
+- [ ] `optirs-bench`: `optirs-bench/src/performance_forecast.rs:285` — replace placeholder `corrs.push(0.0)` at lag=0/1 with real autocorrelation values
+  - Priority: P2 | Scope: trivial | Hint: none
