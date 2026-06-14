@@ -77,135 +77,18 @@ impl NaturalGradientCompute {
         }
     }
 
-    /// Simplified static matrix inverse using basic inverse
+    /// Robust static matrix inverse.
+    ///
+    /// Routes through the shared Gauss-Jordan-with-partial-pivoting routine in
+    /// [`super::utils::general_matrix_inverse`], which applies K-FAC-style Tikhonov
+    /// damping if the input is (near-)singular and returns an explicit error if the
+    /// damped system is still singular. This replaces the old behavior that
+    /// returned a regularized identity for `n > 3` (silently discarding the matrix).
     pub fn safe_matrix_inverse_static<T>(matrix: &Array2<T>) -> Result<Array2<T>>
     where
         T: Float + Default,
     {
-        let n = matrix.nrows();
-        if n != matrix.ncols() {
-            return Err(crate::error::OptimError::InvalidParameter(
-                "Matrix must be square for inversion".to_string(),
-            ));
-        }
-
-        if n == 0 {
-            return Ok(Array2::from_shape_vec((0, 0), Vec::new()).expect("unwrap failed"));
-        }
-
-        // For small matrices, use direct inversion
-        if n <= 3 {
-            return Self::direct_inverse_small(matrix);
-        }
-
-        // For larger matrices, use regularized identity as placeholder
-        // In practice, you would use a proper numerical library
-        let mut result = Array2::eye(n);
-        let regularization = T::from(1e-8).unwrap_or_else(|| T::zero());
-
-        for i in 0..n {
-            result[[i, i]] = T::one() / (matrix[[i, i]] + regularization);
-        }
-
-        Ok(result)
-    }
-
-    /// Direct matrix inversion for small matrices (2x2 and 3x3)
-    fn direct_inverse_small<T>(matrix: &Array2<T>) -> Result<Array2<T>>
-    where
-        T: Float,
-    {
-        let n = matrix.nrows();
-
-        match n {
-            1 => {
-                let det = matrix[[0, 0]];
-                if det.abs() < T::from(1e-12).unwrap_or_else(|| T::zero()) {
-                    return Err(crate::error::OptimError::ComputationError(
-                        "Matrix is singular".to_string(),
-                    ));
-                }
-                let mut result = Array2::zeros((1, 1));
-                result[[0, 0]] = T::one() / det;
-                Ok(result)
-            }
-            2 => Self::inverse_2x2(matrix),
-            3 => Self::inverse_3x3(matrix),
-            _ => {
-                // Fallback to regularized diagonal
-                let mut result = Array2::eye(n);
-                let reg = T::from(1e-6).unwrap_or_else(|| T::zero());
-                for i in 0..n {
-                    result[[i, i]] = T::one() / (matrix[[i, i]] + reg);
-                }
-                Ok(result)
-            }
-        }
-    }
-
-    /// Compute 2x2 matrix inverse
-    fn inverse_2x2<T>(matrix: &Array2<T>) -> Result<Array2<T>>
-    where
-        T: Float,
-    {
-        let a = matrix[[0, 0]];
-        let b = matrix[[0, 1]];
-        let c = matrix[[1, 0]];
-        let d = matrix[[1, 1]];
-
-        let det = a * d - b * c;
-        if det.abs() < T::from(1e-12).unwrap_or_else(|| T::zero()) {
-            return Err(crate::error::OptimError::ComputationError(
-                "2x2 matrix is singular".to_string(),
-            ));
-        }
-
-        let inv_det = T::one() / det;
-        let mut result = Array2::zeros((2, 2));
-
-        result[[0, 0]] = d * inv_det;
-        result[[0, 1]] = -b * inv_det;
-        result[[1, 0]] = -c * inv_det;
-        result[[1, 1]] = a * inv_det;
-
-        Ok(result)
-    }
-
-    /// Compute 3x3 matrix inverse
-    fn inverse_3x3<T>(matrix: &Array2<T>) -> Result<Array2<T>>
-    where
-        T: Float,
-    {
-        let m = matrix;
-
-        // Compute determinant
-        let det = m[[0, 0]] * (m[[1, 1]] * m[[2, 2]] - m[[1, 2]] * m[[2, 1]])
-            - m[[0, 1]] * (m[[1, 0]] * m[[2, 2]] - m[[1, 2]] * m[[2, 0]])
-            + m[[0, 2]] * (m[[1, 0]] * m[[2, 1]] - m[[1, 1]] * m[[2, 0]]);
-
-        if det.abs() < T::from(1e-12).unwrap_or_else(|| T::zero()) {
-            return Err(crate::error::OptimError::ComputationError(
-                "3x3 matrix is singular".to_string(),
-            ));
-        }
-
-        let inv_det = T::one() / det;
-        let mut result = Array2::zeros((3, 3));
-
-        // Compute adjugate matrix
-        result[[0, 0]] = (m[[1, 1]] * m[[2, 2]] - m[[1, 2]] * m[[2, 1]]) * inv_det;
-        result[[0, 1]] = -(m[[0, 1]] * m[[2, 2]] - m[[0, 2]] * m[[2, 1]]) * inv_det;
-        result[[0, 2]] = (m[[0, 1]] * m[[1, 2]] - m[[0, 2]] * m[[1, 1]]) * inv_det;
-
-        result[[1, 0]] = -(m[[1, 0]] * m[[2, 2]] - m[[1, 2]] * m[[2, 0]]) * inv_det;
-        result[[1, 1]] = (m[[0, 0]] * m[[2, 2]] - m[[0, 2]] * m[[2, 0]]) * inv_det;
-        result[[1, 2]] = -(m[[0, 0]] * m[[1, 2]] - m[[0, 2]] * m[[1, 0]]) * inv_det;
-
-        result[[2, 0]] = (m[[1, 0]] * m[[2, 1]] - m[[1, 1]] * m[[2, 0]]) * inv_det;
-        result[[2, 1]] = -(m[[0, 0]] * m[[2, 1]] - m[[0, 1]] * m[[2, 0]]) * inv_det;
-        result[[2, 2]] = (m[[0, 0]] * m[[1, 1]] - m[[0, 1]] * m[[1, 0]]) * inv_det;
-
-        Ok(result)
+        super::utils::general_matrix_inverse(matrix)
     }
 
     /// Conjugate gradient method for solving Ax = b

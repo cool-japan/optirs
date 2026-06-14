@@ -6,7 +6,7 @@
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, Ix2, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -122,36 +122,55 @@ impl<A: Float + Send + Sync> ParameterConstraint<A> {
                     params.fill(uniform_val);
                 }
             }
-            ParameterConstraint::Orthogonal { tolerance: _ } => {
-                // For now, implement a simple orthogonal projection for matrices
-                // This is a simplified implementation - full orthogonal constraints
-                // would require SVD decomposition
+            ParameterConstraint::Orthogonal { tolerance } => {
+                // Orthonormalize the columns of a 2D matrix via modified Gram-Schmidt.
                 if params.ndim() == 2 {
-                    // Apply Gram-Schmidt process for small matrices
-                    // For large matrices, this would need SVD-based orthogonalization
-                    return Err(OptimError::InvalidConfig(
-                        "Orthogonal constraint requires specialized linear algebra operations"
-                            .to_string(),
-                    ));
+                    let matrix = to_matrix_2d(params)?;
+                    let (rows, cols) = matrix.dim();
+
+                    // Skip work if the columns are already orthonormal within tolerance.
+                    if rows > 0 && cols > 0 && is_orthonormal(&matrix, *tolerance) {
+                        return Ok(());
+                    }
+
+                    let orthonormal = modified_gram_schmidt(&matrix);
+                    write_matrix_2d(params, &orthonormal)?;
                 } else {
                     return Err(OptimError::InvalidConfig(
                         "Orthogonal constraint only applies to 2D arrays (matrices)".to_string(),
                     ));
                 }
             }
-            ParameterConstraint::PositiveDefinite { mineigenvalue: _ } => {
-                // Positive definite constraint requires eigenvalue computation
-                return Err(OptimError::InvalidConfig(
-                    "Positive definite constraint requires specialized eigenvalue operations"
-                        .to_string(),
-                ));
+            ParameterConstraint::PositiveDefinite { mineigenvalue } => {
+                // Symmetrize, eigendecompose (cyclic Jacobi), clamp eigenvalues, reconstruct.
+                if params.ndim() != 2 {
+                    return Err(OptimError::InvalidConfig(
+                        "Positive definite constraint only applies to 2D arrays (matrices)"
+                            .to_string(),
+                    ));
+                }
+                let matrix = to_matrix_2d(params)?;
+                let (rows, cols) = matrix.dim();
+                if rows != cols {
+                    return Err(OptimError::InvalidConfig(
+                        "Positive definite constraint requires a square matrix".to_string(),
+                    ));
+                }
+
+                let projected = project_positive_definite(&matrix, *mineigenvalue);
+                write_matrix_2d(params, &projected)?;
             }
             ParameterConstraint::SpectralNorm { maxnorm } => {
-                // Spectral norm constraint requires SVD computation
-                // For now, approximate with Frobenius norm
-                let frobenius_norm = params.mapv(|x| x * x).sum().sqrt();
-                if frobenius_norm > *maxnorm {
-                    let scale = *maxnorm / frobenius_norm;
+                // Bound the largest singular value via power iteration on MᵀM.
+                if params.ndim() != 2 {
+                    return Err(OptimError::InvalidConfig(
+                        "Spectral norm constraint only applies to 2D arrays (matrices)".to_string(),
+                    ));
+                }
+                let matrix = to_matrix_2d(params)?;
+                let sigma_max = power_iteration_spectral_norm(&matrix);
+                if sigma_max > *maxnorm && sigma_max > A::zero() {
+                    let scale = *maxnorm / sigma_max;
                     params.mapv_inplace(|x| x * scale);
                 }
             }
@@ -172,6 +191,397 @@ impl<A: Float + Send + Sync> ParameterConstraint<A> {
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Self-contained linear-algebra helpers for the matrix constraints.
+//
+// These avoid any external linear-algebra dependency (scirs2-linalg is not
+// available here). They operate on small dense 2D matrices using only
+// `scirs2_core::ndarray`, and keep the generic `A: Float` bound. `Float` is not
+// `Ord`, so all comparisons go through `partial_cmp` / explicit `<`/`>`.
+// ---------------------------------------------------------------------------
+
+/// Obtain an owned 2D matrix from a generic n-dimensional array known to be 2D.
+///
+/// The caller must have already checked `params.ndim() == 2`; the conversion is
+/// done on a clone so the original array is untouched until we write back.
+fn to_matrix_2d<A, D>(params: &Array<A, D>) -> Result<Array2<A>>
+where
+    A: Float,
+    D: Dimension,
+{
+    params
+        .to_owned()
+        .into_dimensionality::<Ix2>()
+        .map_err(|e| OptimError::InvalidConfig(format!("Failed to view array as 2D matrix: {e}")))
+}
+
+/// Write a 2D matrix back into the generic n-dimensional array in place.
+///
+/// The matrix must have exactly the same shape as `params`; the values are
+/// copied element-by-element in logical (row-major) order so the result is
+/// independent of the concrete dimension type `D`.
+fn write_matrix_2d<A, D>(params: &mut Array<A, D>, matrix: &Array2<A>) -> Result<()>
+where
+    A: Float,
+    D: Dimension,
+{
+    if params.len() != matrix.len() {
+        return Err(OptimError::InvalidConfig(
+            "Internal error: matrix/parameter element count mismatch".to_string(),
+        ));
+    }
+    for (dst, &src) in params.iter_mut().zip(matrix.iter()) {
+        *dst = src;
+    }
+    Ok(())
+}
+
+/// Check whether the columns of `matrix` are already orthonormal, i.e.
+/// `‖MᵀM − I‖_F ≤ tolerance` (Frobenius norm of the residual).
+fn is_orthonormal<A>(matrix: &Array2<A>, tolerance: A) -> bool
+where
+    A: Float,
+{
+    let (rows, cols) = matrix.dim();
+    let mut residual_sq = A::zero();
+    for i in 0..cols {
+        for j in 0..cols {
+            // (MᵀM)_{ij} = Σ_k M_{ki} M_{kj}
+            let mut dot = A::zero();
+            for k in 0..rows {
+                dot = dot + matrix[[k, i]] * matrix[[k, j]];
+            }
+            let target = if i == j { A::one() } else { A::zero() };
+            let diff = dot - target;
+            residual_sq = residual_sq + diff * diff;
+        }
+    }
+    residual_sq.sqrt() <= tolerance
+}
+
+/// Orthonormalize the columns of `matrix` using **modified Gram-Schmidt**.
+///
+/// Numerically stabler than classical Gram-Schmidt because each new column is
+/// orthogonalized against the already-finalized basis vectors as it is built.
+/// Handles non-square matrices: for an `r × c` matrix only the first
+/// `min(r, c)` columns can be linearly independent, so any remaining columns
+/// (or columns whose norm underflows) are replaced deterministically by a unit
+/// basis vector that is orthogonal to the accumulated basis (falling back to a
+/// canonical axis when none is available).
+fn modified_gram_schmidt<A>(matrix: &Array2<A>) -> Array2<A>
+where
+    A: Float,
+{
+    let (rows, cols) = matrix.dim();
+    let mut q: Array2<A> = Array2::zeros((rows, cols));
+    if rows == 0 || cols == 0 {
+        return q;
+    }
+
+    // Threshold below which a column norm is treated as numerical zero.
+    let eps = A::epsilon();
+    let norm_floor = eps.sqrt();
+
+    // Working copy of the columns; modified in place as we project out
+    // previously finalized directions (the "modified" part of MGS).
+    let mut work = matrix.clone();
+
+    for j in 0..cols {
+        // Re-orthogonalize column j against all finalized columns 0..j.
+        for i in 0..j {
+            // r_ij = q_i · work_j
+            let mut dot = A::zero();
+            for k in 0..rows {
+                dot = dot + q[[k, i]] * work[[k, j]];
+            }
+            for k in 0..rows {
+                work[[k, j]] = work[[k, j]] - dot * q[[k, i]];
+            }
+        }
+
+        // Norm of the residual column.
+        let mut norm_sq = A::zero();
+        for k in 0..rows {
+            norm_sq = norm_sq + work[[k, j]] * work[[k, j]];
+        }
+        let norm = norm_sq.sqrt();
+
+        if norm > norm_floor {
+            let inv = A::one() / norm;
+            for k in 0..rows {
+                q[[k, j]] = work[[k, j]] * inv;
+            }
+        } else {
+            // Degenerate/underflowing column: deterministically substitute a
+            // unit vector orthogonal to the existing basis. Try each canonical
+            // axis e_a in order, project out the finalized basis, and accept the
+            // first with sufficient norm.
+            let mut filled = false;
+            for axis in 0..rows {
+                let mut candidate: Array1<A> = Array1::zeros(rows);
+                candidate[axis] = A::one();
+                for i in 0..j {
+                    let mut dot = A::zero();
+                    for k in 0..rows {
+                        dot = dot + q[[k, i]] * candidate[k];
+                    }
+                    for k in 0..rows {
+                        candidate[k] = candidate[k] - dot * q[[k, i]];
+                    }
+                }
+                let mut cand_norm_sq = A::zero();
+                for k in 0..rows {
+                    cand_norm_sq = cand_norm_sq + candidate[k] * candidate[k];
+                }
+                let cand_norm = cand_norm_sq.sqrt();
+                if cand_norm > norm_floor {
+                    let inv = A::one() / cand_norm;
+                    for k in 0..rows {
+                        q[[k, j]] = candidate[k] * inv;
+                    }
+                    filled = true;
+                    break;
+                }
+            }
+            if !filled {
+                // No orthogonal axis available (more columns than rows): leave
+                // this column as a zero vector, which is the deterministic
+                // result of orthonormalizing a rank-deficient set.
+                for k in 0..rows {
+                    q[[k, j]] = A::zero();
+                }
+            }
+        }
+    }
+
+    q
+}
+
+/// Estimate σ_max(M) = sqrt(λ_max(MᵀM)) via **power iteration**.
+///
+/// Uses a fixed, deterministic all-ones start vector (normalized) — no RNG — so
+/// results are reproducible. Each iteration applies the symmetric PSD operator
+/// `A = MᵀM` to the current vector, then renormalizes. The Rayleigh quotient
+/// `vᵀ A v` converges to the dominant eigenvalue λ_max; σ_max is its square root.
+fn power_iteration_spectral_norm<A>(matrix: &Array2<A>) -> A
+where
+    A: Float,
+{
+    let (rows, cols) = matrix.dim();
+    if rows == 0 || cols == 0 {
+        return A::zero();
+    }
+
+    let eps = A::epsilon();
+    let norm_floor = eps.sqrt();
+
+    // Deterministic start: all ones, normalized.
+    let mut v: Array1<A> = Array1::from_elem(cols, A::one());
+    let start_norm = (A::from(cols).unwrap_or_else(A::one)).sqrt();
+    if start_norm > norm_floor {
+        let inv = A::one() / start_norm;
+        v.mapv_inplace(|x| x * inv);
+    }
+
+    let max_iters = 64usize;
+    let mut lambda = A::zero();
+
+    for _ in 0..max_iters {
+        // w = M v   (length rows)
+        let mut w: Array1<A> = Array1::zeros(rows);
+        for r in 0..rows {
+            let mut acc = A::zero();
+            for c in 0..cols {
+                acc = acc + matrix[[r, c]] * v[c];
+            }
+            w[r] = acc;
+        }
+        // a = Mᵀ w = (MᵀM) v   (length cols)
+        let mut a: Array1<A> = Array1::zeros(cols);
+        for c in 0..cols {
+            let mut acc = A::zero();
+            for r in 0..rows {
+                acc = acc + matrix[[r, c]] * w[r];
+            }
+            a[c] = acc;
+        }
+
+        // Rayleigh quotient vᵀ(MᵀM)v with v normalized ⇒ estimate of λ_max.
+        let mut rayleigh = A::zero();
+        for c in 0..cols {
+            rayleigh = rayleigh + v[c] * a[c];
+        }
+        lambda = rayleigh;
+
+        // Renormalize a → next v.
+        let mut norm_sq = A::zero();
+        for c in 0..cols {
+            norm_sq = norm_sq + a[c] * a[c];
+        }
+        let norm = norm_sq.sqrt();
+        if norm <= norm_floor {
+            // MᵀM v ≈ 0 ⇒ matrix is (numerically) zero on this direction.
+            break;
+        }
+        let inv = A::one() / norm;
+        for c in 0..cols {
+            v[c] = a[c] * inv;
+        }
+    }
+
+    if lambda < A::zero() {
+        // MᵀM is PSD; guard against tiny negative round-off.
+        A::zero()
+    } else {
+        lambda.sqrt()
+    }
+}
+
+/// Symmetric eigendecomposition via the **cyclic Jacobi** algorithm.
+///
+/// Returns `(eigenvalues, eigenvectors)` where column `k` of the eigenvector
+/// matrix is the eigenvector for `eigenvalues[k]`, so that
+/// `A ≈ Q · diag(eigenvalues) · Qᵀ`. The input is assumed symmetric; callers
+/// should symmetrize first. Reliable and self-contained for the small dense
+/// symmetric matrices that arise from parameter constraints.
+fn jacobi_eigen_symmetric<A>(input: &Array2<A>) -> (Array1<A>, Array2<A>)
+where
+    A: Float,
+{
+    let n = input.nrows();
+    let mut a = input.clone();
+    let mut v: Array2<A> = Array2::zeros((n, n));
+    for i in 0..n {
+        v[[i, i]] = A::one();
+    }
+
+    if n == 0 {
+        return (Array1::zeros(0), v);
+    }
+    if n == 1 {
+        return (Array1::from_elem(1, a[[0, 0]]), v);
+    }
+
+    let eps = A::epsilon();
+    let two = A::one() + A::one();
+    let max_sweeps = 100usize;
+
+    for _ in 0..max_sweeps {
+        // Off-diagonal Frobenius magnitude; stop once negligible.
+        let mut off = A::zero();
+        for p in 0..n {
+            for q in (p + 1)..n {
+                off = off + a[[p, q]] * a[[p, q]];
+            }
+        }
+        if off.sqrt() <= eps {
+            break;
+        }
+
+        for p in 0..n {
+            for q in (p + 1)..n {
+                let apq = a[[p, q]];
+                if apq.abs() <= eps {
+                    continue;
+                }
+                let app = a[[p, p]];
+                let aqq = a[[q, q]];
+
+                // Compute the Jacobi rotation (c, s) zeroing a[p,q].
+                let theta = (aqq - app) / (two * apq);
+                let sign = if theta < A::zero() {
+                    -A::one()
+                } else {
+                    A::one()
+                };
+                let denom = theta.abs() + (theta * theta + A::one()).sqrt();
+                let t = sign / denom;
+                let c = A::one() / (t * t + A::one()).sqrt();
+                let s = t * c;
+
+                // Apply rotation to rows/cols p and q of A.
+                for k in 0..n {
+                    if k != p && k != q {
+                        let akp = a[[k, p]];
+                        let akq = a[[k, q]];
+                        let new_kp = c * akp - s * akq;
+                        let new_kq = s * akp + c * akq;
+                        a[[k, p]] = new_kp;
+                        a[[p, k]] = new_kp;
+                        a[[k, q]] = new_kq;
+                        a[[q, k]] = new_kq;
+                    }
+                }
+
+                let new_app = c * c * app - two * s * c * apq + s * s * aqq;
+                let new_aqq = s * s * app + two * s * c * apq + c * c * aqq;
+                a[[p, p]] = new_app;
+                a[[q, q]] = new_aqq;
+                a[[p, q]] = A::zero();
+                a[[q, p]] = A::zero();
+
+                // Accumulate the rotation into the eigenvector matrix.
+                for k in 0..n {
+                    let vkp = v[[k, p]];
+                    let vkq = v[[k, q]];
+                    v[[k, p]] = c * vkp - s * vkq;
+                    v[[k, q]] = s * vkp + c * vkq;
+                }
+            }
+        }
+    }
+
+    let mut eigenvalues: Array1<A> = Array1::zeros(n);
+    for i in 0..n {
+        eigenvalues[i] = a[[i, i]];
+    }
+    (eigenvalues, v)
+}
+
+/// Project a square matrix onto the cone of matrices with eigenvalues
+/// `≥ min_eigenvalue`.
+///
+/// Symmetrizes the input (`(M + Mᵀ)/2`), eigendecomposes it via cyclic Jacobi,
+/// clamps each eigenvalue up to `min_eigenvalue`, then reconstructs
+/// `Q · diag(λ_clamped) · Qᵀ`.
+fn project_positive_definite<A>(matrix: &Array2<A>, min_eigenvalue: A) -> Array2<A>
+where
+    A: Float,
+{
+    let n = matrix.nrows();
+    let two = A::one() + A::one();
+
+    // Symmetrize: S = (M + Mᵀ) / 2.
+    let mut sym: Array2<A> = Array2::zeros((n, n));
+    for i in 0..n {
+        for j in 0..n {
+            sym[[i, j]] = (matrix[[i, j]] + matrix[[j, i]]) / two;
+        }
+    }
+
+    let (mut eigenvalues, eigenvectors) = jacobi_eigen_symmetric(&sym);
+
+    // Clamp eigenvalues to the floor.
+    for k in 0..n {
+        if eigenvalues[k] < min_eigenvalue {
+            eigenvalues[k] = min_eigenvalue;
+        }
+    }
+
+    // Reconstruct Q Λ Qᵀ.
+    let mut result: Array2<A> = Array2::zeros((n, n));
+    for i in 0..n {
+        for j in 0..n {
+            let mut acc = A::zero();
+            for k in 0..n {
+                acc = acc + eigenvectors[[i, k]] * eigenvalues[k] * eigenvectors[[j, k]];
+            }
+            result[[i, j]] = acc;
+        }
+    }
+    result
 }
 
 /// Configuration for a parameter group
@@ -1481,16 +1891,18 @@ mod tests {
     #[test]
     fn test_spectral_norm_constraint() {
         use approx::assert_relative_eq;
+        use scirs2_core::ndarray::arr2;
 
-        // Test spectral norm constraint (approximated with Frobenius norm)
-        let mut params = Array1::from_vec(vec![3.0, 4.0]); // Frobenius norm = 5
+        // A 1x2 matrix has a single nonzero singular value σ_max = ‖row‖ = 5.
+        let mut params = arr2(&[[3.0, 4.0]]);
         let spectral_constraint = ParameterConstraint::SpectralNorm { maxnorm: 2.0 };
         spectral_constraint
             .apply(&mut params)
             .expect("unwrap failed");
 
-        let new_norm = params.mapv(|x| x * x).sum().sqrt();
-        assert_relative_eq!(new_norm, 2.0, epsilon = 1e-6);
+        // After scaling by 2/5 the spectral norm equals the cap.
+        let sigma = power_iteration_spectral_norm(&params);
+        assert_relative_eq!(sigma, 2.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -1521,7 +1933,7 @@ mod tests {
 
     #[test]
     fn test_positive_definite_constraint_error() {
-        // Test that positive definite constraint returns appropriate error
+        // A 1D array is not a matrix, so the positive-definite constraint errors.
         let mut params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let pd_constraint = ParameterConstraint::PositiveDefinite {
             mineigenvalue: 0.01,
@@ -1529,7 +1941,7 @@ mod tests {
         let result = pd_constraint.apply(&mut params);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("eigenvalue"));
+        assert!(result.unwrap_err().to_string().contains("2D arrays"));
     }
 
     #[test]
@@ -1584,5 +1996,228 @@ mod tests {
         assert_relative_eq!(result[0], 0.0, epsilon = 1e-6);
         assert_relative_eq!(result[1], 0.4, epsilon = 1e-6);
         assert_relative_eq!(result[2], 0.6, epsilon = 1e-6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Matrix constraints: Orthogonal, SpectralNorm, PositiveDefinite.
+    // -----------------------------------------------------------------------
+
+    /// Compute MᵀM for a 2D array (used to verify orthonormal columns).
+    fn gram_matrix(m: &Array2<f64>) -> Array2<f64> {
+        let (rows, cols) = m.dim();
+        let mut g = Array2::<f64>::zeros((cols, cols));
+        for i in 0..cols {
+            for j in 0..cols {
+                let mut dot = 0.0;
+                for k in 0..rows {
+                    dot += m[[k, i]] * m[[k, j]];
+                }
+                g[[i, j]] = dot;
+            }
+        }
+        g
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_square() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Non-orthonormal 3x3 matrix.
+        let mut params = arr2(&[[1.0, 2.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0]]);
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-10 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // Columns must be orthonormal: MᵀM ≈ I.
+        let g = gram_matrix(&params);
+        for i in 0..3 {
+            for j in 0..3 {
+                let target = if i == j { 1.0 } else { 0.0 };
+                assert_abs_diff_eq!(g[[i, j]], target, epsilon = 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_tall() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Non-square 4x2 matrix: orthonormalize the 2 columns.
+        let mut params = arr2(&[[1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]);
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-10 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // MᵀM (2x2) must be the identity.
+        let g = gram_matrix(&params);
+        for i in 0..2 {
+            for j in 0..2 {
+                let target = if i == j { 1.0 } else { 0.0 };
+                assert_abs_diff_eq!(g[[i, j]], target, epsilon = 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_already_orthonormal_unchanged() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Identity is already orthonormal; must be left untouched (early return).
+        let mut params = arr2(&[[1.0, 0.0], [0.0, 1.0]]);
+        let original = params.clone();
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-8 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        for (a, b) in params.iter().zip(original.iter()) {
+            assert_abs_diff_eq!(*a, *b, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_1d_errors() {
+        use scirs2_core::ndarray::Array1;
+        let mut params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-6 };
+        let result = constraint.apply(&mut params);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("2D arrays"));
+    }
+
+    #[test]
+    fn test_spectral_norm_constraint_matrix() {
+        use scirs2_core::ndarray::arr2;
+
+        // Diagonal matrix with singular values {5, 1}; cap below the larger one.
+        let mut params = arr2(&[[5.0, 0.0], [0.0, 1.0]]);
+        let maxnorm = 2.0;
+        let constraint = ParameterConstraint::SpectralNorm { maxnorm };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // Recompute the spectral norm (largest singular value) and verify ≤ cap.
+        let sigma = power_iteration_spectral_norm(&params);
+        assert!(
+            sigma <= maxnorm + 1e-6,
+            "spectral norm {sigma} exceeds cap {maxnorm}"
+        );
+        // It should be scaled to (approximately) the cap, not collapsed.
+        assert!(
+            sigma > maxnorm - 1e-3,
+            "spectral norm {sigma} undershot cap"
+        );
+    }
+
+    #[test]
+    fn test_spectral_norm_constraint_nondiagonal() {
+        use scirs2_core::ndarray::arr2;
+
+        // A non-diagonal matrix whose true σ_max is well above the cap.
+        let mut params = arr2(&[[3.0, 1.0], [1.0, 3.0], [2.0, -2.0]]);
+        let maxnorm = 1.5;
+        let constraint = ParameterConstraint::SpectralNorm { maxnorm };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        let sigma = power_iteration_spectral_norm(&params);
+        assert!(
+            sigma <= maxnorm + 1e-5,
+            "spectral norm {sigma} exceeds cap {maxnorm}"
+        );
+    }
+
+    #[test]
+    fn test_spectral_norm_constraint_under_cap_unchanged() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // σ_max here is 1.0 (identity-like); cap of 10 leaves it untouched.
+        let mut params = arr2(&[[1.0, 0.0], [0.0, 1.0]]);
+        let original = params.clone();
+        let constraint = ParameterConstraint::SpectralNorm { maxnorm: 10.0 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        for (a, b) in params.iter().zip(original.iter()) {
+            assert_abs_diff_eq!(*a, *b, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_indefinite() {
+        use scirs2_core::ndarray::arr2;
+
+        // Symmetric indefinite matrix: eigenvalues are {3, -1}.
+        let mut params = arr2(&[[1.0, 2.0], [2.0, 1.0]]);
+        let min_eig = 0.0;
+        let constraint = ParameterConstraint::PositiveDefinite {
+            mineigenvalue: min_eig,
+        };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // Verify all eigenvalues of the result are ≥ min_eig via Jacobi.
+        let (eigvals, _) = jacobi_eigen_symmetric(&params);
+        for &lambda in eigvals.iter() {
+            assert!(
+                lambda >= min_eig - 1e-8,
+                "eigenvalue {lambda} below floor {min_eig}"
+            );
+        }
+
+        // And xᵀMx ≥ 0 for several probe vectors (PSD check).
+        let probes = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, -1.0], [2.0, -3.0]];
+        for p in probes.iter() {
+            let mut quad = 0.0;
+            for i in 0..2 {
+                for j in 0..2 {
+                    quad += p[i] * params[[i, j]] * p[j];
+                }
+            }
+            assert!(quad >= -1e-8, "xᵀMx = {quad} is negative");
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_positive_floor() {
+        use scirs2_core::ndarray::arr2;
+
+        // Same indefinite matrix, but require a strictly positive floor.
+        let mut params = arr2(&[[0.0, 1.0], [1.0, 0.0]]); // eigenvalues {1, -1}
+        let min_eig = 0.5;
+        let constraint = ParameterConstraint::PositiveDefinite {
+            mineigenvalue: min_eig,
+        };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        let (eigvals, _) = jacobi_eigen_symmetric(&params);
+        for &lambda in eigvals.iter() {
+            assert!(
+                lambda >= min_eig - 1e-8,
+                "eigenvalue {lambda} below floor {min_eig}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_already_pd_unchanged() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Already PD (eigenvalues {3, 1}); a floor of 0 must leave it ~unchanged.
+        let mut params = arr2(&[[2.0, 1.0], [1.0, 2.0]]);
+        let original = params.clone();
+        let constraint = ParameterConstraint::PositiveDefinite { mineigenvalue: 0.0 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        for (a, b) in params.iter().zip(original.iter()) {
+            assert_abs_diff_eq!(*a, *b, epsilon = 1e-8);
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_non_square_errors() {
+        use scirs2_core::ndarray::arr2;
+        let mut params = arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+        let constraint = ParameterConstraint::PositiveDefinite { mineigenvalue: 0.0 };
+        let result = constraint.apply(&mut params);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("square"));
     }
 }

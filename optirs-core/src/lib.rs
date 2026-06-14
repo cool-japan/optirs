@@ -295,6 +295,7 @@ pub mod plugin;
 pub mod privacy;
 pub mod quantum_inspired;
 pub mod regularizers;
+pub mod reinforcement_learning;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod research;
 pub mod schedulers;

@@ -209,7 +209,11 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 ### Domain-Specific Optimizers
 - [x] Vision-specific (ViTLayerDecay scheduler: per-layer exponential LR decay for Vision Transformers)
 - [x] NLP-specific (AttentionAwareScheduler: component-specific LR scaling for Transformer models)
-- [ ] RL-specific (PPO, TRPO variants)
+- [x] RL-specific (PPO, TRPO variants) — `reinforcement_learning` module now registered in lib.rs and live: PPO (clip + adaptive-KL), TRPO with real empirical Fisher-vector product + conjugate gradient + line search, A2C/A3C actor-critic, natural policy gradients. (2026-06-14)
+
+### v0.3.2 correctness fixes (2026-06-14)
+- [x] **KFAC matrix inversion** (`second_order/kfac/`): `compute_matrix_inverse` previously returned `Array2::eye(n)` (identity, ignoring the input matrix) and the natural-gradient path used a diagonal-only approximation for n>3 — both silently reduced the natural gradient to a plain gradient. Replaced with a real self-contained Gauss-Jordan inversion with partial pivoting + Tikhonov damping for singular factors, shared via `kfac/utils::general_matrix_inverse`. Returns `Err` on truly singular input rather than a silent identity. 12+ new tests (A·inv(A)≈I, known inverses, pivoting, damping, not-identity regression).
+- [x] **RL natural-gradient parameter update** (`reinforcement_learning/natural_gradients.rs`): `update_policy_parameters` was a no-op; now maps the flat natural-gradient update onto the policy's named parameters (sorted-key split, dimension validation) and applies it via the policy network. 2 new tests.
 
 ---
 

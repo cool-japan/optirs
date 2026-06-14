@@ -11,7 +11,17 @@ use std::collections::HashMap;
 use crate::error::{OptimError, Result};
 
 /// Reverse-mode AD engine (gradient tape)
-pub struct ReverseModeEngine<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
+pub struct ReverseModeEngine<
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + 'static
+        + std::iter::Sum
+        + scirs2_core::ndarray::ScalarOperand,
+> {
     /// Computation tape for reverse pass
     tape: Vec<ReverseOperation<T>>,
 
@@ -226,7 +236,33 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for Gra
     }
 }
 
-impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray::ScalarOperand + Send + Sync> ReverseModeEngine<T> {
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync,
+    > Default for ReverseModeEngine<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + std::iter::Sum
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync,
+    > ReverseModeEngine<T>
+{
     /// Create a new reverse-mode AD engine
     pub fn new() -> Self {
         Self {
@@ -650,10 +686,8 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray:
 
     /// Zero all gradients
     pub fn zero_gradients(&mut self) {
-        for gradient in &mut self.gradients {
-            if let Some(ref mut grad) = gradient {
-                grad.fill(T::zero());
-            }
+        for grad in self.gradients.iter_mut().flatten() {
+            grad.fill(T::zero());
         }
         self.cache.clear();
     }
@@ -849,7 +883,8 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray:
                             input_val.mapv(|x| if x > T::zero() { T::one() } else { T::zero() })
                         }
                         ActivationFunction::LeakyReLU { alpha } => {
-                            let alpha_t = scirs2_core::numeric::NumCast::from(*alpha).unwrap_or_else(|| T::zero());
+                            let alpha_t = scirs2_core::numeric::NumCast::from(*alpha)
+                                .unwrap_or_else(|| T::zero());
                             input_val.mapv(|x| if x > T::zero() { T::one() } else { alpha_t })
                         }
                     };
@@ -875,7 +910,8 @@ impl<T: Float + Debug + Default + Clone + std::iter::Sum + scirs2_core::ndarray:
                     }
                     ReductionType::Mean => {
                         // Mean: gradient divided by input size then broadcast
-                        let n = scirs2_core::numeric::NumCast::from(inputshape[0]).unwrap_or_else(|| T::zero());
+                        let n = scirs2_core::numeric::NumCast::from(inputshape[0])
+                            .unwrap_or_else(|| T::zero());
                         let _grad = Array1::from_elem(inputshape[0], output_grad[0] / n);
                         Ok(vec![_grad])
                     }
@@ -961,7 +997,17 @@ pub struct GradientAccumulator<T: Float + Debug + Send + Sync + 'static> {
     count: usize,
 }
 
-impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray::ScalarOperand + Send + Sync> GradientAccumulator<T> {
+impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray::ScalarOperand + Send + Sync> Default
+    for GradientAccumulator<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Float + Debug + Default + Clone + scirs2_core::ndarray::ScalarOperand + Send + Sync>
+    GradientAccumulator<T>
+{
     pub fn new() -> Self {
         Self {
             gradients: HashMap::new(),
@@ -1036,7 +1082,9 @@ mod tests {
         let sum_id = engine.add(x_id, y_id).expect("unwrap failed");
 
         let output_grad = Array1::from_vec(vec![1.0]);
-        engine.backward(sum_id, Some(output_grad)).expect("unwrap failed");
+        engine
+            .backward(sum_id, Some(output_grad))
+            .expect("unwrap failed");
 
         let x_grad = engine.get_gradient(x_id).expect("unwrap failed");
         let y_grad = engine.get_gradient(y_id).expect("unwrap failed");
@@ -1077,5 +1125,31 @@ mod tests {
         let stats = engine.get_tape_stats();
         assert_eq!(stats.tape_length, 2);
         assert_eq!(stats.num_variables, 1);
+    }
+
+    /// Smoke test: reverse-mode AD computes the correct gradient.
+    ///
+    /// For f(x, y) = x * y, the gradient is (df/dx, df/dy) = (y, x).
+    /// At x = 5, y = 7 the tape/backward pass must yield (7, 5).
+    #[test]
+    fn test_reverse_mode_gradient_of_product() {
+        let mut engine = ReverseModeEngine::<f64>::new();
+
+        let x_id = engine.create_variable("x", Array1::from_vec(vec![5.0]), true);
+        let y_id = engine.create_variable("y", Array1::from_vec(vec![7.0]), true);
+
+        let prod_id = engine.multiply(x_id, y_id).expect("multiply op");
+
+        // Seed the output gradient with 1 and back-propagate.
+        engine
+            .backward(prod_id, Some(Array1::from_vec(vec![1.0])))
+            .expect("backward");
+
+        let x_grad = engine.get_gradient(x_id).expect("x gradient");
+        let y_grad = engine.get_gradient(y_id).expect("y gradient");
+
+        // df/dx = y = 7, df/dy = x = 5.
+        approx::assert_abs_diff_eq!(x_grad[0], 7.0, epsilon = 1e-10);
+        approx::assert_abs_diff_eq!(y_grad[0], 5.0, epsilon = 1e-10);
     }
 }

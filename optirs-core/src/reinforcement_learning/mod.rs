@@ -130,7 +130,9 @@ pub struct TrajectoryBatch<T: Float + Debug + Send + Sync + 'static> {
     pub returns: Array1<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive> TrajectoryBatch<T> {
+impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive>
+    TrajectoryBatch<T>
+{
     /// Create a new trajectory batch
     pub fn new(
         observations: Array2<T>,
@@ -189,9 +191,11 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
                 self.values[t + 1]
             };
 
-            let delta = self.rewards[t] + gamma * next_val * T::from(!is_terminal as u8).unwrap_or_else(|| T::zero())
+            let delta = self.rewards[t]
+                + gamma * next_val * T::from(!is_terminal as u8).unwrap_or_else(|| T::zero())
                 - self.values[t];
-            gae = delta + gamma * lambda * T::from(!is_terminal as u8).unwrap_or_else(|| T::zero()) * gae;
+            gae = delta
+                + gamma * lambda * T::from(!is_terminal as u8).unwrap_or_else(|| T::zero()) * gae;
 
             self.advantages[t] = gae;
             self.returns[t] = gae + self.values[t];
@@ -216,7 +220,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
     /// Get mini-batches for optimization
     pub fn get_mini_batches(&self, mini_batchsize: usize) -> Vec<TrajectoryBatch<T>> {
         let batch_size = self.observations.nrows();
-        let n_mini_batches = (batch_size + mini_batchsize - 1) / mini_batchsize;
+        let n_mini_batches = batch_size.div_ceil(mini_batchsize);
 
         let mut mini_batches = Vec::new();
 
@@ -405,7 +409,8 @@ impl<T: Float + Debug + Send + Sync + 'static> RLScheduler<T> {
                     .get("decay_steps")
                     .copied()
                     .unwrap_or(T::from(10000).unwrap_or_else(|| T::zero()));
-                let progress = T::from(self.update_count).unwrap_or_else(|| T::zero()) / decay_steps;
+                let progress =
+                    T::from(self.update_count).unwrap_or_else(|| T::zero()) / decay_steps;
                 self.current_lr = self.initiallr * (T::one() - progress).max(T::zero());
             }
             ScheduleType::Exponential => {
@@ -417,7 +422,8 @@ impl<T: Float + Debug + Send + Sync + 'static> RLScheduler<T> {
                     .get("step_size")
                     .copied()
                     .unwrap_or(T::from(1000).unwrap_or_else(|| T::zero()));
-                if T::from(self.update_count).unwrap_or_else(|| T::zero()) % step_size == T::zero() {
+                if T::from(self.update_count).unwrap_or_else(|| T::zero()) % step_size == T::zero()
+                {
                     self.current_lr = self.current_lr * self.decay_factor;
                 }
             }
@@ -429,8 +435,8 @@ impl<T: Float + Debug + Send + Sync + 'static> RLScheduler<T> {
                     .unwrap_or(T::from(10000).unwrap_or_else(|| T::zero()));
                 let progress = T::from(self.update_count).unwrap_or_else(|| T::zero()) / max_steps;
                 let pi = T::from(std::f64::consts::PI).unwrap_or_else(|| T::zero());
-                self.current_lr =
-                    self.initiallr * (T::one() + (pi * progress).cos()) / T::from(2).unwrap_or_else(|| T::zero());
+                self.current_lr = self.initiallr * (T::one() + (pi * progress).cos())
+                    / T::from(2).unwrap_or_else(|| T::zero());
             }
             ScheduleType::Adaptive => {
                 // Adaptive scheduling based on performance metrics

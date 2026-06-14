@@ -282,7 +282,10 @@ pub fn detect_seasonality_period(values: &[f64], max_lag: usize) -> Option<usize
     // Pre-compute autocorrelations for the scan range plus one neighbour on
     // each side so that we can test for a local maximum.
     let mut corrs: Vec<f64> = Vec::with_capacity(upper + 1);
-    corrs.push(0.0); // placeholder for lag = 0 / 1, unused
+    // Index `lag` holds the true autocorrelation at that lag. At lag 0 a series
+    // is perfectly correlated with itself, so the value is unity by definition
+    // (the `auto_correlation` helper rejects lag 0, hence the closed form here).
+    corrs.push(1.0);
     corrs.push(auto_correlation(values, 1).unwrap_or(1.0));
     for lag in 2..=upper {
         let c = auto_correlation(values, lag).unwrap_or(0.0);

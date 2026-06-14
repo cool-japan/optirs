@@ -3,8 +3,6 @@
 // This module implements various actor-critic algorithms including A2C, A3C,
 // SAC (Soft Actor-Critic), and other modern actor-critic methods.
 
-#[allow(dead_code)]
-
 use super::{
     ActionDistribution, DistributionType, PolicyNetwork, RLOptimizationMetrics, RLOptimizerConfig,
     RLScheduler, TrajectoryBatch, ValueNetwork,
@@ -12,9 +10,9 @@ use super::{
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
 use scirs2_core::numeric::Float;
-use std::fmt::Debug;
 use scirs2_core::random::Rng;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 /// Actor-Critic optimization methods
 #[derive(Debug, Clone, Copy)]
@@ -183,7 +181,10 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for TD3Config<T> {
             noise_clip: T::from(0.5).unwrap_or_else(|| T::zero()),
             policy_delay: 2,
             exploration_noise: T::from(0.1).unwrap_or_else(|| T::zero()),
-            action_bounds: Some((T::from(-1.0).unwrap_or_else(|| T::zero()), T::from(1.0).unwrap_or_else(|| T::zero()))),
+            action_bounds: Some((
+                T::from(-1.0).unwrap_or_else(|| T::zero()),
+                T::from(1.0).unwrap_or_else(|| T::zero()),
+            )),
         }
     }
 }
@@ -194,13 +195,20 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for DDPGConfig<T> {
             exploration_noise: T::from(0.1).unwrap_or_else(|| T::zero()),
             ou_noise_theta: T::from(0.15).unwrap_or_else(|| T::zero()),
             ou_noise_sigma: T::from(0.2).unwrap_or_else(|| T::zero()),
-            action_bounds: Some((T::from(-1.0).unwrap_or_else(|| T::zero()), T::from(1.0).unwrap_or_else(|| T::zero()))),
+            action_bounds: Some((
+                T::from(-1.0).unwrap_or_else(|| T::zero()),
+                T::from(1.0).unwrap_or_else(|| T::zero()),
+            )),
         }
     }
 }
 
 /// Actor-Critic optimizer
-pub struct ActorCriticOptimizer<T: Float + Debug, P: PolicyNetwork<T>, V: ValueNetwork<T>> {
+pub struct ActorCriticOptimizer<
+    T: Float + Debug + Send + Sync + 'static,
+    P: PolicyNetwork<T>,
+    V: ValueNetwork<T>,
+> {
     /// Configuration
     config: ActorCriticConfig<T>,
 
@@ -400,7 +408,14 @@ impl<T: Float + Debug + Send + Sync + 'static> ExperienceReplayBuffer<T> {
 }
 
 impl<
-        T: Float + scirs2_core::numeric::FromPrimitive + std::iter::Sum + Send + Sync + ScalarOperand,
+        T: Float
+            + Debug
+            + scirs2_core::numeric::FromPrimitive
+            + std::iter::Sum
+            + Send
+            + Sync
+            + ScalarOperand
+            + 'static,
         P: PolicyNetwork<T>,
         V: ValueNetwork<T>,
     > ActorCriticOptimizer<T, P, V>
@@ -491,7 +506,7 @@ impl<
 
         // Update critics
         let mut critic_losses = Vec::new();
-        for (_i, critic) in self.critics.iter().enumerate() {
+        for critic in self.critics.iter() {
             let q_values = self.compute_q_values(critic, &states, &actions)?;
             let targetq = self.compute_target_q_sac(&next_states, &rewards, &dones)?;
 
@@ -551,7 +566,8 @@ impl<
 
                 // Add target policy smoothing noise (TD3 feature)
                 for action in target_actions.iter_mut() {
-                    let noise = T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).expect("unwrap failed")
+                    let noise = T::from(scirs2_core::random::thread_rng().random::<f64>() - 0.5)
+                        .expect("unwrap failed")
                         * T::from(2.0).unwrap_or_else(|| T::zero())
                         * self.config.td3_config.policy_noise;
                     let clipped_noise = noise
@@ -603,7 +619,9 @@ impl<
             let mut td_targets = Array1::zeros(rewards.len());
             for i in 0..rewards.len() {
                 td_targets[i] = rewards[i]
-                    + gamma * min_target_q[i] * T::from(if dones[i] { 0.0 } else { 1.0 }).unwrap_or_else(|| T::zero());
+                    + gamma
+                        * min_target_q[i]
+                        * T::from(if dones[i] { 0.0 } else { 1.0 }).unwrap_or_else(|| T::zero());
             }
 
             // Update both critics
@@ -615,7 +633,10 @@ impl<
         }
 
         // Update actor with delayed policy updates (TD3 feature)
-        let actor_loss = if self.update_count % self.config.td3_config.policy_delay == 0 {
+        let actor_loss = if self
+            .update_count
+            .is_multiple_of(self.config.td3_config.policy_delay)
+        {
             self.compute_actor_loss_td3(&states)?
         } else {
             T::zero()
@@ -668,7 +689,9 @@ impl<
         let mut td_targets = Array1::zeros(rewards.len());
         for i in 0..rewards.len() {
             td_targets[i] = rewards[i]
-                + gamma * targetq[i] * T::from(if dones[i] { 0.0 } else { 1.0 }).unwrap_or_else(|| T::zero());
+                + gamma
+                    * targetq[i]
+                    * T::from(if dones[i] { 0.0 } else { 1.0 }).unwrap_or_else(|| T::zero());
         }
 
         let q_values = self.compute_q_values(&self.critics[0], &states, &actions)?;
@@ -735,7 +758,9 @@ impl<
             // OU noise update: dx = theta * (0 - x) * dt + sigma * dW
             for noise in ou_state.iter_mut() {
                 let dx = -theta * *noise
-                    + sigma * T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).expect("unwrap failed");
+                    + sigma
+                        * T::from(scirs2_core::random::thread_rng().random::<f64>() - 0.5)
+                            .expect("unwrap failed");
                 *noise = *noise + dx;
             }
         }
@@ -880,12 +905,35 @@ impl<
 
     fn compute_target_q_sac(
         &self,
-        _next_states: &Array2<T>,
+        next_states: &Array2<T>,
         rewards: &Array1<T>,
-        _dones: &Array1<bool>,
+        dones: &Array1<bool>,
     ) -> Result<Array1<T>> {
-        // Simplified target Q computation for SAC
-        Ok(rewards.clone())
+        // Soft TD target: r + γ (1 − done) V(s'). With state-value critics, V(s')
+        // serves as the soft state value, and the twin-critic minimum gives the
+        // standard SAC/TD3 over-estimation control. (A true Q(s,a) target would
+        // require the ValueNetwork trait to accept actions, which it does not.)
+        if self.critics.is_empty() {
+            return Ok(rewards.clone());
+        }
+        let gamma = self.config.base_config.discount_factor;
+        let v_next = if self.critics.len() >= 2 {
+            let v1 = self.critics[0].evaluate_value(next_states)?;
+            let v2 = self.critics[1].evaluate_value(next_states)?;
+            let mut min_v = Array1::zeros(v1.len());
+            for i in 0..v1.len() {
+                min_v[i] = v1[i].min(v2[i]);
+            }
+            min_v
+        } else {
+            self.critics[0].evaluate_value(next_states)?
+        };
+        let mut target = rewards.clone();
+        for i in 0..target.len() {
+            let not_done = if dones[i] { T::zero() } else { T::one() };
+            target[i] = target[i] + gamma * not_done * v_next[i];
+        }
+        Ok(target)
     }
 
     fn compute_critic_loss(&self, q_values: &Array1<T>, targetq: &Array1<T>) -> Result<T> {
@@ -955,8 +1003,8 @@ impl<
         // Update temperature (simplified gradient step)
         let temp_lr = self.config.sac_config.temperature_lr;
         let temp_gradient = target_entropy - current_entropy;
-        self.temperature =
-            (self.temperature - temp_lr * temp_gradient).max(T::from(0.001).unwrap_or_else(|| T::zero()));
+        self.temperature = (self.temperature - temp_lr * temp_gradient)
+            .max(T::from(0.001).unwrap_or_else(|| T::zero()));
 
         Ok(temperature_loss)
     }
@@ -971,10 +1019,15 @@ impl<
                 if let (Some(ref mean), Some(ref std)) = (&action_dist.mean, &action_dist.std) {
                     let mut actions = mean.clone();
 
-                    // Add Gaussian noise: action = mean + std * noise
+                    // Reparameterization trick: action = mean + std · z, z ~ N(0,1).
+                    // Standard normal sampled via the Box–Muller transform from two
+                    // uniforms (the previous code used uniform[-1,1], not Gaussian).
+                    let mut rng = scirs2_core::random::thread_rng();
                     for ((action, &m), &s) in actions.iter_mut().zip(mean.iter()).zip(std.iter()) {
-                        let noise = T::from(scirs2_core::random::thread_rng().random_f64() - 0.5).expect("unwrap failed")
-                            * T::from(2.0).unwrap_or_else(|| T::zero()); // Simplified noise
+                        let u1 = rng.random::<f64>().max(1e-12);
+                        let u2 = rng.random::<f64>();
+                        let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+                        let noise = T::from(z).unwrap_or_else(|| T::zero());
                         *action = m + s * noise;
                     }
 
@@ -998,18 +1051,23 @@ impl<
                             row.iter().map(|&x| (x - max_logit).exp()).collect();
                         let sum_exp: T = exp_logits.iter().cloned().sum();
 
-                        // Sample action (simplified - take argmax for now)
-                        let mut max_idx = 0;
-                        let mut max_prob = T::zero();
+                        // Sample from the categorical distribution via inverse-CDF
+                        // (walk the cumulative probabilities until they exceed a
+                        // uniform draw) so the policy is genuinely stochastic rather
+                        // than a deterministic argmax.
+                        let u = T::from(scirs2_core::random::thread_rng().random::<f64>())
+                            .unwrap_or_else(|| T::zero());
+                        let mut cumulative = T::zero();
+                        let mut sampled_idx = exp_logits.len().saturating_sub(1);
                         for (j, &prob) in exp_logits.iter().enumerate() {
-                            let normalized_prob = prob / sum_exp;
-                            if normalized_prob > max_prob {
-                                max_prob = normalized_prob;
-                                max_idx = j;
+                            cumulative = cumulative + prob / sum_exp;
+                            if u <= cumulative {
+                                sampled_idx = j;
+                                break;
                             }
                         }
 
-                        actions[[i, max_idx]] = T::one();
+                        actions[[i, sampled_idx]] = T::one();
                     }
 
                     Ok(actions)
@@ -1046,10 +1104,13 @@ impl<
 
                             // Log probability of Gaussian: -0.5 * ((x - μ) / σ)² - log(σ) - 0.5 * log(2π)
                             let normalized_diff = (action - mu) / sigma;
-                            let log_prob_term =
-                                -T::from(0.5).unwrap_or_else(|| T::zero()) * normalized_diff * normalized_diff
-                                    - sigma.ln()
-                                    - T::from(0.5 * 2.0 * std::f64::consts::PI).unwrap_or_else(|| T::zero()).ln();
+                            let log_prob_term = -T::from(0.5).unwrap_or_else(|| T::zero())
+                                * normalized_diff
+                                * normalized_diff
+                                - sigma.ln()
+                                - T::from(0.5 * 2.0 * std::f64::consts::PI)
+                                    .unwrap_or_else(|| T::zero())
+                                    .ln();
                             log_prob = log_prob + log_prob_term;
                         }
 
@@ -1160,3 +1221,267 @@ impl<
 // Import slice syntax
 use scirs2_core::ndarray::s;
 // use statrs::statistics::Statistics; // statrs not available
+
+#[cfg(test)]
+mod tests {
+    use super::{ActorCriticConfig, ActorCriticOptimizer};
+    use crate::error::Result;
+    use crate::reinforcement_learning::{
+        ActionDistribution, DistributionType, PolicyEvaluation, PolicyNetwork, ValueNetwork,
+    };
+    use scirs2_core::ndarray::{Array1, Array2};
+    use std::collections::HashMap;
+
+    // ── Minimal mock networks ─────────────────────────────────────────────
+
+    struct MockValue {
+        v: f64,
+    }
+
+    impl ValueNetwork<f64> for MockValue {
+        fn evaluate_value(&self, obs: &Array2<f64>) -> Result<Array1<f64>> {
+            Ok(Array1::from_elem(obs.nrows(), self.v))
+        }
+        fn update_parameters(&mut self, _: &HashMap<String, Array1<f64>>) -> Result<()> {
+            Ok(())
+        }
+        fn get_parameters(&self) -> HashMap<String, Array1<f64>> {
+            HashMap::new()
+        }
+    }
+
+    struct MockPolicy;
+
+    impl PolicyNetwork<f64> for MockPolicy {
+        fn evaluate_actions(
+            &self,
+            obs: &Array2<f64>,
+            _: &Array2<f64>,
+        ) -> Result<PolicyEvaluation<f64>> {
+            Ok(PolicyEvaluation {
+                log_probs: Array1::zeros(obs.nrows()),
+                entropy: Array1::zeros(obs.nrows()),
+                metrics: HashMap::new(),
+            })
+        }
+        fn get_action_distribution(&self, obs: &Array2<f64>) -> Result<ActionDistribution<f64>> {
+            let n = obs.nrows();
+            Ok(ActionDistribution {
+                mean: Some(Array2::zeros((n, 2))),
+                std: Some(Array2::from_elem((n, 2), 1.0_f64)),
+                logits: None,
+                distribution_type: DistributionType::Gaussian,
+            })
+        }
+        fn update_parameters(&mut self, _: &HashMap<String, Array1<f64>>) -> Result<()> {
+            Ok(())
+        }
+        fn get_parameters(&self) -> HashMap<String, Array1<f64>> {
+            HashMap::new()
+        }
+    }
+
+    fn opt_with(critics: Vec<MockValue>) -> ActorCriticOptimizer<f64, MockPolicy, MockValue> {
+        let n = critics.len();
+        let cfg = ActorCriticConfig::<f64> {
+            n_critics: n,
+            ..ActorCriticConfig::default()
+        };
+        ActorCriticOptimizer::new(cfg, MockPolicy, critics).expect("construction")
+    }
+
+    // ── compute_target_q_sac — TD bootstrap r + γ(1−done)V(s') ──────────
+
+    #[test]
+    fn test_target_q_sac_twin_critics_take_minimum() {
+        // critics return 3 and 5 → twin-critic min is 3, not 5
+        let opt = opt_with(vec![MockValue { v: 3.0 }, MockValue { v: 5.0 }]);
+        let states = Array2::zeros((3_usize, 4));
+        let rewards = Array1::from_vec(vec![1.0_f64, 2.0, 3.0]);
+        let dones = Array1::from_vec(vec![false, true, false]);
+
+        let targets = opt
+            .compute_target_q_sac(&states, &rewards, &dones)
+            .expect("compute_target_q_sac");
+
+        let gamma = 0.99_f64; // default discount factor
+        let v_min = 3.0_f64;
+        assert!(
+            (targets[0] - (1.0 + gamma * v_min)).abs() < 1e-9,
+            "not-done target[0]={} expected={}",
+            targets[0],
+            1.0 + gamma * v_min
+        );
+        assert!(
+            (targets[1] - 2.0).abs() < 1e-9,
+            "done target[1]={} should equal reward=2.0",
+            targets[1]
+        );
+        assert!(
+            (targets[2] - (3.0 + gamma * v_min)).abs() < 1e-9,
+            "not-done target[2]={} expected={}",
+            targets[2],
+            3.0 + gamma * v_min
+        );
+    }
+
+    #[test]
+    fn test_target_q_sac_single_critic_bootstrap() {
+        let opt = opt_with(vec![MockValue { v: 4.0 }]);
+        let states = Array2::zeros((2_usize, 4));
+        let rewards = Array1::from_vec(vec![2.0_f64, 3.0]);
+        let dones = Array1::from_vec(vec![false, false]);
+
+        let targets = opt
+            .compute_target_q_sac(&states, &rewards, &dones)
+            .expect("compute_target_q_sac");
+
+        let gamma = 0.99_f64;
+        assert!(
+            (targets[0] - (2.0 + gamma * 4.0)).abs() < 1e-9,
+            "target[0]={}",
+            targets[0]
+        );
+        assert!(
+            (targets[1] - (3.0 + gamma * 4.0)).abs() < 1e-9,
+            "target[1]={}",
+            targets[1]
+        );
+    }
+
+    #[test]
+    fn test_target_q_sac_all_done_no_bootstrap() {
+        // All episodes terminated → target = reward exactly (no V(s') term)
+        let opt = opt_with(vec![MockValue { v: 99.0 }, MockValue { v: 99.0 }]);
+        let states = Array2::zeros((3_usize, 2));
+        let rewards = Array1::from_vec(vec![5.0_f64, 6.0, 7.0]);
+        let dones = Array1::from_vec(vec![true, true, true]);
+
+        let targets = opt
+            .compute_target_q_sac(&states, &rewards, &dones)
+            .expect("compute_target_q_sac");
+
+        for i in 0..3 {
+            assert!(
+                (targets[i] - rewards[i]).abs() < 1e-12,
+                "done target[{i}]={} should equal reward={}",
+                targets[i],
+                rewards[i]
+            );
+        }
+    }
+
+    // ── Gaussian Box–Muller sampling: moments converge ───────────────────
+
+    #[test]
+    fn test_gaussian_sampling_standard_normal_moments() {
+        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let n = 2000_usize;
+        let dist = ActionDistribution {
+            mean: Some(Array2::zeros((n, 1))),
+            std: Some(Array2::from_elem((n, 1), 1.0_f64)),
+            logits: None,
+            distribution_type: DistributionType::Gaussian,
+        };
+
+        let samples = opt
+            .sample_actions_from_distribution(&dist)
+            .expect("sample_actions");
+
+        let vals: Vec<f64> = samples.iter().copied().collect();
+        let mean = vals.iter().sum::<f64>() / n as f64;
+        let var = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+        let std = var.sqrt();
+
+        assert!(mean.abs() < 0.12, "N(0,1) mean={mean} (expected ≈0)");
+        assert!((std - 1.0).abs() < 0.12, "N(0,1) std={std} (expected ≈1)");
+    }
+
+    #[test]
+    fn test_gaussian_sampling_shifted_moments() {
+        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let n = 2000_usize;
+        let dist = ActionDistribution {
+            mean: Some(Array2::from_elem((n, 1), 5.0_f64)),
+            std: Some(Array2::from_elem((n, 1), 2.0_f64)),
+            logits: None,
+            distribution_type: DistributionType::Gaussian,
+        };
+
+        let samples = opt
+            .sample_actions_from_distribution(&dist)
+            .expect("sample_actions");
+
+        let vals: Vec<f64> = samples.iter().copied().collect();
+        let mean = vals.iter().sum::<f64>() / n as f64;
+        let var = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+
+        assert!((mean - 5.0).abs() < 0.3, "N(5,2) mean={mean} (expected ≈5)");
+        assert!(
+            (var.sqrt() - 2.0).abs() < 0.3,
+            "N(5,2) std={} (expected ≈2)",
+            var.sqrt()
+        );
+    }
+
+    // ── Categorical inverse-CDF sampling: stochastic and proportional ────
+
+    #[test]
+    fn test_categorical_biased_sampling() {
+        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let n = 200_usize;
+        // logit[0]=10 >> logit[1,2]=0 → p(class 0) ≈ 0.9999
+        let mut logits = Array2::zeros((n, 3_usize));
+        for i in 0..n {
+            logits[[i, 0]] = 10.0_f64;
+        }
+        let dist = ActionDistribution {
+            mean: None,
+            std: None,
+            logits: Some(logits),
+            distribution_type: DistributionType::Categorical,
+        };
+
+        let samples = opt
+            .sample_actions_from_distribution(&dist)
+            .expect("sample_actions");
+
+        let class0_count = (0..n).filter(|&i| samples[[i, 0]] > 0.5).count();
+        assert!(
+            class0_count >= 185,
+            "biased categorical: class-0 selected {class0_count}/200 (expected ≥185)"
+        );
+    }
+
+    #[test]
+    fn test_categorical_uniform_covers_all_classes() {
+        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let n = 600_usize;
+        // Uniform logits [0,0,0] → each class ~33%
+        let dist = ActionDistribution {
+            mean: None,
+            std: None,
+            logits: Some(Array2::zeros((n, 3_usize))),
+            distribution_type: DistributionType::Categorical,
+        };
+
+        let samples = opt
+            .sample_actions_from_distribution(&dist)
+            .expect("sample_actions");
+
+        let mut counts = [0_usize; 3];
+        for i in 0..n {
+            for j in 0..3 {
+                if samples[[i, j]] > 0.5 {
+                    counts[j] += 1;
+                }
+            }
+        }
+        for (c, &cnt) in counts.iter().enumerate() {
+            assert!(
+                cnt >= 100,
+                "uniform categorical class {c} appeared {cnt}/600 (expected ≥100)"
+            );
+        }
+    }
+}

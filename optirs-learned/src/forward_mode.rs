@@ -31,7 +31,9 @@ pub struct VectorDual<T: Float + Debug + Send + Sync + 'static> {
 }
 
 /// Forward-mode AD engine
-pub struct ForwardModeEngine<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static> {
+pub struct ForwardModeEngine<
+    T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static,
+> {
     /// Computation graph
     tape: Vec<ForwardOperation<T>>,
 
@@ -149,7 +151,17 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> VectorDual<T> {
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static> ForwardModeEngine<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static> Default
+    for ForwardModeEngine<T>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static>
+    ForwardModeEngine<T>
+{
     /// Create a new forward-mode AD engine
     pub fn new() -> Self {
         Self {
@@ -622,7 +634,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
             ForwardOpType::Mean => {
                 let input = &values[op.inputs[0]];
                 // Mean derivative is mean of input derivatives
-                let n = T::from(input.value.len()).expect("unwrap failed");
+                let n =
+                    scirs2_core::numeric::NumCast::from(input.value.len()).unwrap_or_else(T::one);
                 let value = Array1::from_elem(1, input.value.sum() / n);
                 let tangent = Array1::from_elem(1, input.tangent.sum() / n);
                 Ok(VectorDual::new(value, tangent))
@@ -763,7 +776,9 @@ mod tests {
         inputs.insert("y".to_string(), y_val);
 
         let direction = Array1::from_vec(vec![1.0, 0.0]);
-        let results = engine.forward_pass(&inputs, &direction).expect("unwrap failed");
+        let results = engine
+            .forward_pass(&inputs, &direction)
+            .expect("unwrap failed");
 
         assert!(results.len() > sum_id);
         assert_eq!(results[sum_id].value[0], 5.0);
@@ -778,5 +793,34 @@ mod tests {
         assert_eq!(dual1.value.len(), 3);
         assert_eq!(dual1.tangent.len(), 3);
         assert_eq!(dual1.tangent[0], 1.0);
+    }
+
+    /// Smoke test: forward-mode AD computes the correct derivative.
+    ///
+    /// For f(x) = x^2, f'(x) = 2x. Propagating a unit tangent through the
+    /// `power` operation at x = 3 must yield the tangent 2 * 3 = 6.
+    #[test]
+    fn test_forward_mode_derivative_of_square() {
+        // Direct DualNumber check: f(x) = x * x at x = 3 -> tangent 6.
+        let x = DualNumber::variable(3.0_f64);
+        let y = x.clone() * x;
+        approx::assert_abs_diff_eq!(y.value, 9.0, epsilon = 1e-10);
+        approx::assert_abs_diff_eq!(y.tangent, 6.0, epsilon = 1e-10);
+
+        // Engine-level JVP check via the `power` op builder.
+        let mut engine = ForwardModeEngine::<f64>::new();
+        let x_val = Array1::from_vec(vec![3.0]);
+        let x_id = engine.create_variable("x", x_val.clone());
+        let sq_id = engine.power(x_id, 2.0).expect("power op");
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".to_string(), x_val);
+
+        // Seed direction selects variable 0 (x) with unit tangent.
+        let direction = Array1::from_vec(vec![1.0]);
+        let jvp = engine
+            .jacobian_vector_product(&inputs, sq_id, &direction)
+            .expect("jvp");
+        approx::assert_abs_diff_eq!(jvp[0], 6.0, epsilon = 1e-10);
     }
 }

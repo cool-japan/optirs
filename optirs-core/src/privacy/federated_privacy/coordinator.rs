@@ -538,43 +538,269 @@ impl<T: Float + Debug + Send + Sync + 'static> ByzantineRobustAggregator<T> {
         HashMap::new() // Placeholder
     }
 
+    /// Detect Byzantine (outlier) clients using a robust distance-based rule.
+    ///
+    /// Algorithm (median / MAD outlier test, robust to a minority of adversaries):
+    /// 1. Compute the coordinate-wise median vector across all client updates.
+    ///    The coordinate-wise median is itself a robust location estimate that a
+    ///    minority of Byzantine clients cannot move arbitrarily.
+    /// 2. For every client, compute the L2 distance from its update to that median.
+    /// 3. Compute the median of those distances and the median absolute deviation
+    ///    (MAD) of the distances around their median.
+    /// 4. Flag any client whose distance exceeds `median_distance + K * MAD`.
+    ///
+    /// The cutoff multiplier `K` is set to `3.0`. Combined with the MAD scale
+    /// factor `1.4826` (which makes the MAD a consistent estimator of the standard
+    /// deviation under normality), this corresponds to roughly a 3-sigma rule,
+    /// i.e. it flags points that would occur with probability well below 1% for a
+    /// Gaussian inlier population while remaining insensitive to the outliers that
+    /// inflate a non-robust mean/standard-deviation estimate.
+    ///
+    /// Trivial cases (0, 1 or 2 clients) cannot support a meaningful outlier test
+    /// and therefore yield no detections.
     pub fn detect_byzantine_clients(
         &self,
-        _updates: &HashMap<String, Array1<T>>,
-        _round: usize,
+        updates: &HashMap<String, Array1<T>>,
+        round: usize,
     ) -> Result<Vec<OutlierDetectionResult>> {
-        Ok(Vec::new()) // Placeholder
+        // With fewer than 3 clients there is no robust majority to compare against,
+        // so no Byzantine decision can be made.
+        if updates.len() < 3 {
+            return Ok(Vec::new());
+        }
+
+        // Validate that all client vectors share the same dimensionality.
+        let dimension = Self::validate_uniform_dimensions(updates)?;
+        if dimension == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Step 1: coordinate-wise median vector (robust central reference).
+        let median_vector = Self::coordinate_wise_median(updates, dimension);
+
+        // Step 2: L2 distance of each client update to the median vector.
+        // Keep a stable ordering of client ids for deterministic processing.
+        let mut client_ids: Vec<&String> = updates.keys().collect();
+        client_ids.sort();
+
+        let mut distances: Vec<(String, T)> = Vec::with_capacity(client_ids.len());
+        for clientid in &client_ids {
+            let update = &updates[*clientid];
+            let mut sum_sq = T::zero();
+            for (idx, &value) in update.iter().enumerate() {
+                let diff = value - median_vector[idx];
+                sum_sq = sum_sq + diff * diff;
+            }
+            distances.push(((*clientid).clone(), sum_sq.sqrt()));
+        }
+
+        // Step 3: median distance and MAD of the distances.
+        let distance_values: Vec<T> = distances.iter().map(|(_, d)| *d).collect();
+        let median_distance = Self::median_of(&distance_values);
+
+        let abs_deviations: Vec<T> = distance_values
+            .iter()
+            .map(|&d| (d - median_distance).abs())
+            .collect();
+        let mad = Self::median_of(&abs_deviations);
+
+        // Consistent-estimator scale factor for the MAD under normality.
+        let mad_scale = T::from(1.4826).unwrap_or_else(T::one);
+        let cutoff_multiplier = T::from(3.0).unwrap_or_else(T::one);
+
+        // When the MAD is (numerically) zero every inlier sits at the same distance;
+        // fall back to a small fraction of the median distance to avoid flagging the
+        // whole population while still catching clients that are strictly farther out.
+        let scaled_mad = mad * mad_scale;
+        let effective_spread = if scaled_mad > T::epsilon() {
+            scaled_mad
+        } else {
+            // 1% of the median distance as a numerical guard band.
+            median_distance * T::from(0.01).unwrap_or_else(T::zero)
+        };
+
+        let threshold = median_distance + cutoff_multiplier * effective_spread;
+        let threshold_f64 = threshold.to_f64().unwrap_or(f64::INFINITY);
+
+        // Step 4: flag clients whose distance exceeds the threshold.
+        let mut results = Vec::new();
+        for (clientid, distance) in distances {
+            let is_outlier = distance > threshold;
+            if is_outlier {
+                results.push(OutlierDetectionResult {
+                    clientid,
+                    round,
+                    is_outlier: true,
+                    outlier_score: distance.to_f64().unwrap_or(0.0) - threshold_f64,
+                    detection_method: "median_mad_l2_distance".to_string(),
+                });
+            }
+        }
+
+        Ok(results)
     }
 
+    /// Byzantine-robust aggregation via the coordinate-wise trimmed mean.
+    ///
+    /// For each coordinate the client values are sorted, the lowest and highest
+    /// `trim_count` values are discarded, and the remaining values are averaged.
+    /// Because at most `trim_count` adversarial values can survive on either tail,
+    /// the estimator cannot be dragged to infinity by a minority of malicious
+    /// clients (unlike a plain coordinate-wise mean, where a single client can move
+    /// the result arbitrarily). When the number of clients is too small for any
+    /// trimming to leave values behind, the method falls back to the coordinate-wise
+    /// median, which is itself a robust location estimate.
+    ///
+    /// Trim fraction: the `ByzantineRobustConfig` stored inside the aggregator is not
+    /// reachable from this module (its fields are private to the components module),
+    /// so a documented default of 10% per tail (`trim_ratio = 0.1`) is used. This
+    /// tolerates up to ~10% Byzantine clients on each side while retaining most of
+    /// the honest mass for a low-variance estimate.
     pub fn robust_aggregate(
         &self,
         updates: &HashMap<String, Array1<T>>,
         _allocations: &HashMap<String, AdaptivePrivacyAllocation>,
     ) -> Result<Array1<T>> {
-        // Simple average as placeholder
         if updates.is_empty() {
             return Err(OptimError::InvalidParameter(
                 "No updates to aggregate".to_string(),
             ));
         }
 
-        let mut result = updates.values().next().expect("unwrap failed").clone();
-        let mut count = 1;
+        // All client vectors must share the same length.
+        let dimension = Self::validate_uniform_dimensions(updates)?;
 
-        for update in updates.values().skip(1) {
-            for (i, &value) in update.iter().enumerate() {
-                if i < result.len() {
-                    result[i] = result[i] + value;
-                }
+        let num_clients = updates.len();
+
+        // Default trim fraction: drop 10% of clients from each tail.
+        let trim_fraction = 0.1_f64;
+        let trim_count = ((num_clients as f64) * trim_fraction).floor() as usize;
+
+        // Materialize the per-client vectors in a stable order.
+        let mut client_ids: Vec<&String> = updates.keys().collect();
+        client_ids.sort();
+        let vectors: Vec<&Array1<T>> = client_ids.iter().map(|id| &updates[*id]).collect();
+
+        let mut result = Array1::from_elem(dimension, T::zero());
+
+        // Scratch buffer reused across coordinates.
+        let mut column: Vec<T> = Vec::with_capacity(num_clients);
+
+        for coord in 0..dimension {
+            column.clear();
+            for vec in &vectors {
+                column.push(vec[coord]);
             }
-            count += 1;
-        }
 
-        for value in result.iter_mut() {
-            *value = *value / T::from(count).unwrap_or_else(|| T::zero());
+            // Trimming would remove every value (2 * trim_count >= n): use the median.
+            let aggregated = if num_clients <= 2 * trim_count + 1 || trim_count == 0 {
+                if trim_count == 0 {
+                    // No trimming requested/possible: plain mean over all clients is
+                    // unavailable as a *robust* estimator, so use the (robust) mean of
+                    // the values that remain after a zero-width trim, which is the full
+                    // set; for robustness with very few clients fall back to the median.
+                    if num_clients <= 2 {
+                        Self::median_of(&column)
+                    } else {
+                        Self::mean_of(&column)
+                    }
+                } else {
+                    Self::median_of(&column)
+                }
+            } else {
+                Self::sort_values(&mut column);
+                let trimmed = &column[trim_count..num_clients - trim_count];
+                Self::mean_of(trimmed)
+            };
+
+            result[coord] = aggregated;
         }
 
         Ok(result)
+    }
+
+    /// Validate that every client update has the same dimensionality and return it.
+    fn validate_uniform_dimensions(updates: &HashMap<String, Array1<T>>) -> Result<usize> {
+        let mut iter = updates.values();
+        let first = match iter.next() {
+            Some(v) => v,
+            None => {
+                return Err(OptimError::InvalidParameter(
+                    "No updates to aggregate".to_string(),
+                ))
+            }
+        };
+        let expected = first.len();
+        for update in iter {
+            if update.len() != expected {
+                return Err(OptimError::DimensionMismatch(format!(
+                    "Client update dimensions differ: expected {}, found {}",
+                    expected,
+                    update.len()
+                )));
+            }
+        }
+        Ok(expected)
+    }
+
+    /// Coordinate-wise median across all client update vectors.
+    fn coordinate_wise_median(updates: &HashMap<String, Array1<T>>, dimension: usize) -> Vec<T> {
+        let vectors: Vec<&Array1<T>> = updates.values().collect();
+        let mut median = vec![T::zero(); dimension];
+        let mut column: Vec<T> = Vec::with_capacity(vectors.len());
+        for (coord, slot) in median.iter_mut().enumerate() {
+            column.clear();
+            for vec in &vectors {
+                column.push(vec[coord]);
+            }
+            *slot = Self::median_of(&column);
+        }
+        median
+    }
+
+    /// Sort a slice of floating-point values, treating NaN as the largest value so
+    /// that ordering is total and deterministic.
+    fn sort_values(values: &mut [T]) {
+        values.sort_by(|a, b| match a.partial_cmp(b) {
+            Some(ordering) => ordering,
+            None => {
+                // Push NaNs to the end consistently.
+                if a.is_nan() && b.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else if a.is_nan() {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            }
+        });
+    }
+
+    /// Median of an unsorted slice (does not mutate the input).
+    fn median_of(values: &[T]) -> T {
+        if values.is_empty() {
+            return T::zero();
+        }
+        let mut sorted = values.to_vec();
+        Self::sort_values(&mut sorted);
+        let n = sorted.len();
+        if n % 2 == 1 {
+            sorted[n / 2]
+        } else {
+            let lo = sorted[n / 2 - 1];
+            let hi = sorted[n / 2];
+            (lo + hi) / T::from(2.0).unwrap_or_else(|| T::one() + T::one())
+        }
+    }
+
+    /// Arithmetic mean of a slice.
+    fn mean_of(values: &[T]) -> T {
+        if values.is_empty() {
+            return T::zero();
+        }
+        let sum = values.iter().fold(T::zero(), |acc, &x| acc + x);
+        let count = T::from(values.len()).unwrap_or_else(T::one);
+        sum / count
     }
 }
 
@@ -735,5 +961,179 @@ impl<T: Float + Debug + Send + Sync + 'static> SecureAggregator<T> {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use scirs2_core::ndarray::Array1;
+    use std::collections::HashMap;
+
+    fn make_updates(vectors: &[(&str, Vec<f64>)]) -> HashMap<String, Array1<f64>> {
+        let mut map = HashMap::new();
+        for (id, values) in vectors {
+            map.insert((*id).to_string(), Array1::from_vec(values.clone()));
+        }
+        map
+    }
+
+    /// Plain coordinate-wise mean reference (the *non-robust* estimator) used to
+    /// demonstrate that the robust estimator behaves differently under attack.
+    fn plain_mean(updates: &HashMap<String, Array1<f64>>) -> Array1<f64> {
+        let dim = updates.values().next().expect("at least one update").len();
+        let mut acc = Array1::from_elem(dim, 0.0_f64);
+        for v in updates.values() {
+            for i in 0..dim {
+                acc[i] += v[i];
+            }
+        }
+        let n = updates.len() as f64;
+        acc.mapv(|x| x / n)
+    }
+
+    #[test]
+    fn test_robust_aggregate_resists_outliers() {
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("aggregator");
+
+        // Twenty honest clients clustered near (1.0, -2.0) plus two extreme
+        // adversaries. With the documented 10%-per-tail trim and 22 clients the
+        // trim count is floor(0.1 * 22) = 2, exactly covering the two adversaries
+        // on whichever tail they land (this is the estimator's breakdown point).
+        let mut vectors: Vec<(String, Vec<f64>)> = Vec::new();
+        // Deterministic small jitter around the honest center.
+        let jitter = [
+            0.0_f64, 0.02, -0.02, 0.01, -0.01, 0.03, -0.03, 0.015, -0.015, 0.005,
+        ];
+        for i in 0..20usize {
+            let dx = jitter[i % jitter.len()];
+            vectors.push((format!("h{i}"), vec![1.0 + dx, -2.0 - dx]));
+        }
+        let mut updates = HashMap::new();
+        for (id, v) in &vectors {
+            updates.insert(id.clone(), Array1::from_vec(v.clone()));
+        }
+        // Two adversaries pushing in opposite directions per coordinate.
+        updates.insert("evil0".to_string(), Array1::from_vec(vec![1000.0, 1000.0]));
+        updates.insert("evil1".to_string(), Array1::from_vec(vec![900.0, 850.0]));
+
+        let allocations: HashMap<String, AdaptivePrivacyAllocation> = HashMap::new();
+        let robust = aggregator
+            .robust_aggregate(&updates, &allocations)
+            .expect("robust aggregate");
+
+        // The robust estimate must stay near the honest cluster.
+        assert!(
+            (robust[0] - 1.0).abs() < 0.1,
+            "robust[0] = {} should be near 1.0",
+            robust[0]
+        );
+        assert!(
+            (robust[1] - (-2.0)).abs() < 0.1,
+            "robust[1] = {} should be near -2.0",
+            robust[1]
+        );
+
+        // A plain mean, by contrast, is dragged far away by the adversaries.
+        let mean = plain_mean(&updates);
+        assert!(
+            (mean[0] - 1.0).abs() > 5.0,
+            "plain mean[0] = {} should be far from honest cluster",
+            mean[0]
+        );
+    }
+
+    #[test]
+    fn test_robust_aggregate_dimension_mismatch() {
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("aggregator");
+        let updates = make_updates(&[
+            ("a", vec![1.0, 2.0, 3.0]),
+            ("b", vec![1.0, 2.0]), // wrong length
+        ]);
+        let allocations: HashMap<String, AdaptivePrivacyAllocation> = HashMap::new();
+        let err = aggregator.robust_aggregate(&updates, &allocations);
+        assert!(matches!(err, Err(OptimError::DimensionMismatch(_))));
+    }
+
+    #[test]
+    fn test_robust_aggregate_empty_input() {
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("aggregator");
+        let updates: HashMap<String, Array1<f64>> = HashMap::new();
+        let allocations: HashMap<String, AdaptivePrivacyAllocation> = HashMap::new();
+        let err = aggregator.robust_aggregate(&updates, &allocations);
+        assert!(matches!(err, Err(OptimError::InvalidParameter(_))));
+    }
+
+    #[test]
+    fn test_detect_byzantine_flags_single_outlier() {
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("aggregator");
+
+        let mut updates = make_updates(&[
+            ("c0", vec![1.0, 1.0, 1.0]),
+            ("c1", vec![1.1, 0.9, 1.05]),
+            ("c2", vec![0.9, 1.1, 0.95]),
+            ("c3", vec![1.05, 1.0, 1.0]),
+            ("c4", vec![0.95, 0.98, 1.02]),
+            ("c5", vec![1.02, 1.03, 0.99]),
+        ]);
+        // One blatant Byzantine client far from the cluster.
+        updates.insert(
+            "traitor".to_string(),
+            Array1::from_vec(vec![50.0, -40.0, 60.0]),
+        );
+
+        let flagged = aggregator
+            .detect_byzantine_clients(&updates, 7)
+            .expect("detection");
+
+        assert_eq!(flagged.len(), 1, "exactly one client should be flagged");
+        let result = &flagged[0];
+        assert_eq!(result.clientid, "traitor");
+        assert!(result.is_outlier);
+        assert_eq!(result.round, 7);
+        assert!(result.outlier_score > 0.0);
+        assert_eq!(result.detection_method, "median_mad_l2_distance");
+    }
+
+    #[test]
+    fn test_detect_byzantine_no_false_positive() {
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("aggregator");
+
+        // All clients are similar; none should be flagged.
+        let updates = make_updates(&[
+            ("c0", vec![1.0, 2.0]),
+            ("c1", vec![1.02, 1.98]),
+            ("c2", vec![0.98, 2.02]),
+            ("c3", vec![1.01, 1.99]),
+            ("c4", vec![0.99, 2.01]),
+            ("c5", vec![1.0, 2.0]),
+        ]);
+
+        let flagged = aggregator
+            .detect_byzantine_clients(&updates, 3)
+            .expect("detection");
+        assert!(
+            flagged.is_empty(),
+            "no clients should be flagged, got {:?}",
+            flagged
+        );
+    }
+
+    #[test]
+    fn test_detect_byzantine_trivial_cases() {
+        let aggregator = ByzantineRobustAggregator::<f64>::new().expect("aggregator");
+
+        // Fewer than 3 clients: no decision possible.
+        let two = make_updates(&[("a", vec![1.0, 1.0]), ("b", vec![100.0, 100.0])]);
+        let flagged = aggregator
+            .detect_byzantine_clients(&two, 0)
+            .expect("detection");
+        assert!(flagged.is_empty());
+
+        let empty: HashMap<String, Array1<f64>> = HashMap::new();
+        let flagged_empty = aggregator
+            .detect_byzantine_clients(&empty, 0)
+            .expect("detection");
+        assert!(flagged_empty.is_empty());
     }
 }

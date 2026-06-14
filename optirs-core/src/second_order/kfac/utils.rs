@@ -9,6 +9,169 @@ use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
+/// Default Tikhonov damping applied when a matrix is detected as singular during
+/// general inversion. This mirrors the K-FAC regularization convention of
+/// inverting `(A + λI)` rather than failing outright on a (numerically) singular
+/// factor.
+pub(crate) const KFAC_SINGULAR_DAMPING: f64 = 1e-8;
+
+/// Invert a general square matrix using Gauss-Jordan elimination with partial
+/// pivoting, with K-FAC-style Tikhonov fallback on (near-)singularity.
+///
+/// # Algorithm
+///
+/// The routine forms the augmented system `[A | I]` and reduces the left block to
+/// the identity via elementary row operations. At each pivot column the row with
+/// the largest absolute pivot at or below the diagonal is swapped into place
+/// (partial pivoting) for numerical stability; the right block then holds `A⁻¹`.
+///
+/// # Singular handling
+///
+/// If, after partial pivoting, the chosen pivot is effectively zero (|pivot| below
+/// a scale-aware tolerance) the matrix is treated as singular. Rather than
+/// returning a bogus identity, the routine retries ONCE on the Tikhonov-damped
+/// matrix `A + λI` (with `λ = `[`KFAC_SINGULAR_DAMPING`]). If the damped system is
+/// still singular an [`OptimError::ComputationError`] is returned. This guarantees
+/// the result is either a genuine (possibly damped) inverse or an explicit error —
+/// never a silent identity.
+///
+/// Works for any square size `n ≥ 1` over a generic `T: Float`; no external linear
+/// algebra dependency is used.
+pub(crate) fn general_matrix_inverse<T>(matrix: &Array2<T>) -> Result<Array2<T>>
+where
+    T: Float,
+{
+    let n = matrix.nrows();
+    if n != matrix.ncols() {
+        return Err(crate::error::OptimError::InvalidParameter(
+            "Matrix must be square for inversion".to_string(),
+        ));
+    }
+
+    if n == 0 {
+        return Ok(
+            Array2::from_shape_vec((0, 0), Vec::new()).unwrap_or_else(|_| Array2::zeros((0, 0)))
+        );
+    }
+
+    // First attempt: invert A directly.
+    match gauss_jordan_inverse(matrix) {
+        Ok(inv) => Ok(inv),
+        Err(_) => {
+            // Singular: retry once on the Tikhonov-damped matrix (A + λI).
+            let lambda = T::from(KFAC_SINGULAR_DAMPING).unwrap_or_else(|| T::zero());
+            let mut damped = matrix.clone();
+            for i in 0..n {
+                damped[[i, i]] = damped[[i, i]] + lambda;
+            }
+            gauss_jordan_inverse(&damped).map_err(|_| {
+                crate::error::OptimError::ComputationError(
+                    "Matrix is singular even after Tikhonov damping; inverse does not exist"
+                        .to_string(),
+                )
+            })
+        }
+    }
+}
+
+/// Core Gauss-Jordan elimination with partial pivoting.
+///
+/// Returns `Err(ComputationError)` if a (near-)zero pivot is encountered after
+/// pivoting, signalling that the input is numerically singular. The caller is
+/// responsible for any damping/regularization retry.
+fn gauss_jordan_inverse<T>(matrix: &Array2<T>) -> Result<Array2<T>>
+where
+    T: Float,
+{
+    let n = matrix.nrows();
+
+    // Working copy of A and the augmented identity that becomes A^{-1}.
+    let mut a = matrix.clone();
+    let mut inv: Array2<T> = Array2::eye(n);
+
+    // Scale-aware singularity tolerance: relative to the largest magnitude entry
+    // so that the test is invariant to overall matrix scaling.
+    let mut max_abs = T::zero();
+    for &v in a.iter() {
+        let av = v.abs();
+        if av > max_abs {
+            max_abs = av;
+        }
+    }
+    let base_eps = T::from(1e-12).unwrap_or_else(|| T::zero());
+    let tol = if max_abs > T::zero() {
+        base_eps * max_abs
+    } else {
+        // All-zero matrix is singular.
+        return Err(crate::error::OptimError::ComputationError(
+            "Matrix is singular (zero matrix)".to_string(),
+        ));
+    };
+
+    for col in 0..n {
+        // Partial pivoting: find the row >= col with the largest |pivot| in `col`.
+        let mut pivot_row = col;
+        let mut pivot_mag = a[[col, col]].abs();
+        for row in (col + 1)..n {
+            let mag = a[[row, col]].abs();
+            if mag > pivot_mag {
+                pivot_mag = mag;
+                pivot_row = row;
+            }
+        }
+
+        if pivot_mag <= tol {
+            return Err(crate::error::OptimError::ComputationError(
+                "Matrix is singular (zero pivot after partial pivoting)".to_string(),
+            ));
+        }
+
+        // Swap the pivot row into position in both A and the augmented matrix.
+        if pivot_row != col {
+            swap_rows(&mut a, col, pivot_row);
+            swap_rows(&mut inv, col, pivot_row);
+        }
+
+        // Normalize the pivot row so that a[col, col] == 1.
+        let pivot = a[[col, col]];
+        let inv_pivot = T::one() / pivot;
+        for j in 0..n {
+            a[[col, j]] = a[[col, j]] * inv_pivot;
+            inv[[col, j]] = inv[[col, j]] * inv_pivot;
+        }
+
+        // Eliminate the pivot column from every other row.
+        for row in 0..n {
+            if row == col {
+                continue;
+            }
+            let factor = a[[row, col]];
+            if factor == T::zero() {
+                continue;
+            }
+            for j in 0..n {
+                a[[row, j]] = a[[row, j]] - factor * a[[col, j]];
+                inv[[row, j]] = inv[[row, j]] - factor * inv[[col, j]];
+            }
+        }
+    }
+
+    Ok(inv)
+}
+
+/// Swap two rows of a matrix in place.
+fn swap_rows<T: Float>(matrix: &mut Array2<T>, r1: usize, r2: usize) {
+    if r1 == r2 {
+        return;
+    }
+    let ncols = matrix.ncols();
+    for j in 0..ncols {
+        let tmp = matrix[[r1, j]];
+        matrix[[r1, j]] = matrix[[r2, j]];
+        matrix[[r2, j]] = tmp;
+    }
+}
+
 /// K-FAC utilities for layer-specific operations
 pub struct KFACUtils;
 
@@ -401,5 +564,139 @@ mod tests {
         // Variance should be positive
         assert!(var[0] > 0.0);
         assert!(var[1] > 0.0);
+    }
+
+    // ---- General matrix inversion (Gauss-Jordan with partial pivoting) ----
+
+    use approx::assert_abs_diff_eq;
+
+    /// Assert that `A · inv(A) ≈ I` to the given epsilon.
+    fn assert_is_inverse(a: &Array2<f64>, inv: &Array2<f64>, eps: f64) {
+        let n = a.nrows();
+        let product = a.dot(inv);
+        let identity: Array2<f64> = Array2::eye(n);
+        for i in 0..n {
+            for j in 0..n {
+                assert_abs_diff_eq!(product[[i, j]], identity[[i, j]], epsilon = eps);
+            }
+        }
+    }
+
+    #[test]
+    fn test_general_inverse_known_2x2() {
+        // Hand-chosen matrix with a known inverse.
+        // A = [[4, 7], [2, 6]]  =>  inv(A) = [[0.6, -0.7], [-0.2, 0.4]]
+        let a = Array2::from_shape_vec((2, 2), vec![4.0, 7.0, 2.0, 6.0]).expect("shape");
+        let inv = general_matrix_inverse(&a).expect("invertible");
+
+        assert_abs_diff_eq!(inv[[0, 0]], 0.6, epsilon = 1e-12);
+        assert_abs_diff_eq!(inv[[0, 1]], -0.7, epsilon = 1e-12);
+        assert_abs_diff_eq!(inv[[1, 0]], -0.2, epsilon = 1e-12);
+        assert_abs_diff_eq!(inv[[1, 1]], 0.4, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_general_inverse_4x4_spd() {
+        // 4x4 SPD matrix built as M = B^T B + I (guaranteed positive definite).
+        let b = Array2::from_shape_vec(
+            (4, 4),
+            vec![
+                1.0, 0.5, -0.3, 0.2, 0.0, 1.2, 0.7, -0.4, 0.3, -0.1, 0.9, 0.6, -0.2, 0.4, 0.1, 1.1,
+            ],
+        )
+        .expect("shape");
+        let mut spd = b.t().dot(&b);
+        for i in 0..4 {
+            spd[[i, i]] += 1.0;
+        }
+
+        let inv = general_matrix_inverse(&spd).expect("invertible");
+        assert_is_inverse(&spd, &inv, 1e-6);
+    }
+
+    #[test]
+    fn test_general_inverse_8x8_spd() {
+        // 8x8 SPD matrix M = B^T B + 2I with deterministic, well-conditioned data.
+        let n = 8usize;
+        let mut b = Array2::<f64>::zeros((n, n));
+        for i in 0..n {
+            for j in 0..n {
+                // A smooth, non-degenerate pattern.
+                let v = ((i as f64 + 1.0) * 0.3 - (j as f64) * 0.17).sin()
+                    + 0.05 * (i as f64 - j as f64);
+                b[[i, j]] = v;
+            }
+        }
+        let mut spd = b.t().dot(&b);
+        for i in 0..n {
+            spd[[i, i]] += 2.0;
+        }
+
+        let inv = general_matrix_inverse(&spd).expect("invertible");
+        assert_is_inverse(&spd, &inv, 1e-6);
+    }
+
+    #[test]
+    fn test_general_inverse_nonsymmetric() {
+        // A general (non-symmetric) invertible matrix; partial pivoting is needed
+        // because the (0,0) entry is zero.
+        let a = Array2::from_shape_vec(
+            (4, 4),
+            vec![
+                0.0, 2.0, 1.0, 3.0, 4.0, 1.0, 0.0, 2.0, 1.0, 5.0, 3.0, 0.0, 2.0, 1.0, 4.0, 1.0,
+            ],
+        )
+        .expect("shape");
+        let inv = general_matrix_inverse(&a).expect("invertible");
+        assert_is_inverse(&a, &inv, 1e-6);
+
+        // inv(A) · A ≈ I as well (left inverse).
+        let left = inv.dot(&a);
+        let identity: Array2<f64> = Array2::eye(4);
+        for i in 0..4 {
+            for j in 0..4 {
+                assert_abs_diff_eq!(left[[i, j]], identity[[i, j]], epsilon = 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn test_general_inverse_near_singular_damps_to_finite() {
+        // A genuinely singular matrix (row 2 = 2 * row 0). The damping path inverts
+        // (A + λI) and must yield a finite, well-defined result (no NaN/Inf).
+        let a = Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 2.0, 4.0, 6.0])
+            .expect("shape");
+        let inv = general_matrix_inverse(&a).expect("damping fallback should succeed");
+        for &v in inv.iter() {
+            assert!(v.is_finite(), "damped inverse contains non-finite entry");
+        }
+    }
+
+    #[test]
+    fn test_general_inverse_not_identity_regression() {
+        // Regression guard for the old bug where the inverse silently returned the
+        // identity. For a non-identity input the inverse must NOT equal the input's
+        // identity-shaped matrix.
+        let a = Array2::from_shape_vec(
+            (4, 4),
+            vec![
+                2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0, 1.0, 2.0,
+            ],
+        )
+        .expect("shape");
+        let inv = general_matrix_inverse(&a).expect("invertible");
+        let identity: Array2<f64> = Array2::eye(4);
+        assert!(
+            !KFACUtils::matrices_approx_equal(&inv, &identity, 1e-9),
+            "inverse of a non-identity matrix must not be the identity"
+        );
+        // And it must be a real inverse.
+        assert_is_inverse(&a, &inv, 1e-6);
+    }
+
+    #[test]
+    fn test_general_inverse_non_square_errors() {
+        let a = Array2::<f64>::zeros((2, 3));
+        assert!(general_matrix_inverse(&a).is_err());
     }
 }

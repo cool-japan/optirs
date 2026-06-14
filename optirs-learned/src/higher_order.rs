@@ -15,7 +15,17 @@ use crate::error::{OptimError, Result};
 
 /// Higher-order differentiation engine
 #[allow(dead_code)]
-pub struct HigherOrderEngine<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand> {
+pub struct HigherOrderEngine<
+    T: Float
+        + Debug
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + 'static
+        + std::iter::Sum
+        + scirs2_core::ndarray::ScalarOperand,
+> {
     /// Forward-mode engine for directional derivatives
     forward_engine: ForwardModeEngine<T>,
 
@@ -188,8 +198,17 @@ pub enum LayerType {
     Attention,
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum + scirs2_core::ndarray::ScalarOperand>
-    HigherOrderEngine<T>
+impl<
+        T: Float
+            + Debug
+            + Default
+            + Clone
+            + Send
+            + Sync
+            + 'static
+            + std::iter::Sum
+            + scirs2_core::ndarray::ScalarOperand,
+    > HigherOrderEngine<T>
 {
     /// Create a new higher-order differentiation engine
     pub fn new(_maxorder: usize) -> Self {
@@ -273,7 +292,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         if config.exact {
             for i in 0..n {
                 for j in i + 1..n {
-                    let avg = (hessian[[i, j]] + hessian[[j, i]]) / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
+                    let avg = (hessian[[i, j]] + hessian[[j, i]])
+                        / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
                     hessian[[i, j]] = avg;
                     hessian[[j, i]] = avg;
                 }
@@ -310,7 +330,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                 x_minus[j] = x_minus[j] - self.finite_diff_eps;
 
                 (function(&x_plus) - function(&x_minus))
-                    / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * self.finite_diff_eps)
+                    / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
+                        * self.finite_diff_eps)
             };
 
             // Compute gradient of partial derivative
@@ -346,7 +367,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             let f_minus = function(&x_minus);
 
             // Second derivative: f''(x) = (f(x+h) - 2f(x) + f(x-h)) / h^2
-            let second_deriv = (f_plus - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * f_center + f_minus)
+            let second_deriv = (f_plus
+                - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * f_center
+                + f_minus)
                 / (self.finite_diff_eps * self.finite_diff_eps);
 
             hessian[[i, i]] = second_deriv;
@@ -368,7 +391,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let mut cols = Vec::new();
         let mut values = Vec::new();
 
-        let threshold = scirs2_core::numeric::NumCast::from(config.sparsity_threshold).unwrap_or_else(|| T::zero());
+        let threshold = scirs2_core::numeric::NumCast::from(config.sparsity_threshold)
+            .unwrap_or_else(|| T::zero());
 
         for i in 0..dense_hessian.nrows() {
             for j in 0..dense_hessian.ncols() {
@@ -495,7 +519,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let avg_error = self.compute_avg_error(computed_hessian, &fd_hessian);
         let relative_error = self.compute_relative_error(computed_hessian, &fd_hessian);
 
-        let is_accurate = max_error < scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero());
+        let is_accurate =
+            max_error < scirs2_core::numeric::NumCast::from(1e-4).unwrap_or_else(|| T::zero());
 
         Ok(DerivativeVerification {
             max_absolute_error: max_error,
@@ -652,7 +677,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                 let grad_minus = Self::finite_diff_gradient(&function_copy, &point_minus)?;
 
                 // Approximate Hessian-vector product
-                let hess_col = (&grad_plus - &grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
+                let hess_col = (&grad_plus - &grad_minus)
+                    / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
                 hvp[i] = hess_col.dot(v);
             }
 
@@ -680,7 +706,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             let loss_plus = function(&point_plus);
             let loss_minus = function(&point_minus);
 
-            gradient[i] = (loss_plus - loss_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
+            gradient[i] = (loss_plus - loss_minus)
+                / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
         }
 
         Ok(gradient)
@@ -704,7 +731,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             x_minus[i] = x_minus[i] - self.finite_diff_eps;
 
             gradient[i] = (function(&x_plus) - function(&x_minus))
-                / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * self.finite_diff_eps);
+                / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
+                    * self.finite_diff_eps);
         }
 
         Ok(gradient)
@@ -723,7 +751,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let grad_plus = grad_fn(&point_plus);
         let grad_minus = grad_fn(&point_minus);
 
-        Ok((grad_plus - grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
+        Ok((grad_plus - grad_minus)
+            / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
     }
 
     fn finite_difference_hessian(
@@ -749,7 +778,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                     let f_center = function(point);
                     let f_minus = function(&x_minus);
 
-                    (f_plus - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * f_center + f_minus)
+                    (f_plus
+                        - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
+                            * f_center
+                        + f_minus)
                         / (self.finite_diff_eps * self.finite_diff_eps)
                 } else {
                     // Off-diagonal element: f''_ij
@@ -772,7 +804,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
                     x_mm[j] = x_mm[j] - eps;
 
                     (function(&x_pp) - function(&x_pm) - function(&x_mp) + function(&x_mm))
-                        / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()) * eps * eps)
+                        / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero())
+                            * eps
+                            * eps)
                 };
 
                 hessian[[i, j]] = second_deriv;
@@ -806,8 +840,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         x_mmm[k] = x_mmm[k] - eps;
 
         // Simplified third derivative approximation
-        let third_deriv =
-            (function(&x_ppp) - function(&x_mmm)) / (scirs2_core::numeric::NumCast::from(8.0).unwrap_or_else(|| T::zero()) * eps * eps * eps);
+        let third_deriv = (function(&x_ppp) - function(&x_mmm))
+            / (scirs2_core::numeric::NumCast::from(8.0).unwrap_or_else(|| T::zero())
+                * eps
+                * eps
+                * eps);
 
         Ok(third_deriv)
     }
@@ -886,7 +923,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
             let mixed_partial = (function(&x_pp) - function(&x_pm) - function(&x_mp)
                 + function(&x_mm))
-                / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero()) * eps * eps);
+                / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero())
+                    * eps
+                    * eps);
 
             Ok(mixed_partial)
         } else {
@@ -923,14 +962,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             .map(|(&x, &y)| (x - y).abs())
             .sum::<T>();
 
-        sum / T::from(a.len()).expect("unwrap failed")
+        let count = scirs2_core::numeric::NumCast::from(a.len()).unwrap_or_else(T::one);
+        sum / count
     }
 
     fn compute_relative_error(&self, a: &Array2<T>, b: &Array2<T>) -> T {
         a.iter()
             .zip(b.iter())
             .map(|(&x, &y)| {
-                if y.abs() > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero()) {
+                if y.abs() > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero())
+                {
                     ((x - y) / y).abs()
                 } else {
                     (x - y).abs()
@@ -977,7 +1018,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
     /// Apply adaptive sparsity to dense matrix
     #[allow(dead_code)]
     fn apply_adaptive_sparsity(&self, mut matrix: Array2<T>, threshold: f64) -> Result<Array2<T>> {
-        let sparsity_threshold = scirs2_core::numeric::NumCast::from(threshold).unwrap_or_else(|| T::zero());
+        let sparsity_threshold =
+            scirs2_core::numeric::NumCast::from(threshold).unwrap_or_else(|| T::zero());
 
         for elem in matrix.iter_mut() {
             if elem.abs() < sparsity_threshold {
@@ -1019,7 +1061,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let grad_plus = self.gradient_at_point(function, &point_plus)?;
         let grad_minus = self.gradient_at_point(function, &point_minus)?;
 
-        Ok((grad_plus - grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
+        Ok((grad_plus - grad_minus)
+            / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
     }
 
     /// Finite difference HVP implementation
@@ -1037,7 +1080,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         let grad_plus = self.gradient_at_point(function, &point_plus)?;
         let grad_minus = self.gradient_at_point(function, &point_minus)?;
 
-        Ok((grad_plus - grad_minus) / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
+        Ok((grad_plus - grad_minus)
+            / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
     }
 
     /// Pearlman trick for quadratic functions
@@ -1230,7 +1274,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
         // Simplified diagonal approximation
         for i in 0..n {
-            if matrix[[i, i]].abs() > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero()) {
+            if matrix[[i, i]].abs()
+                > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero())
+            {
                 result[i] = rhs[i] / matrix[[i, i]];
             } else {
                 result[i] = rhs[i];
@@ -1479,7 +1525,9 @@ mod tests {
         let function = |x: &Array1<f64>| x[0] * x[0] + 2.0 * x[1] * x[1];
         let point = Array1::from_vec(vec![1.0, 1.0]);
 
-        let hessian = engine.hessian_diagonal(&function, &point).expect("unwrap failed");
+        let hessian = engine
+            .hessian_diagonal(&function, &point)
+            .expect("unwrap failed");
 
         // Expected diagonal: [2, 4]
         assert!((hessian[[0, 0]] - 2.0).abs() < 1e-5);
@@ -1495,7 +1543,9 @@ mod tests {
         let function = |x: &Array1<f64>| x[0] * x[0] + x[0] * x[1] + x[1] * x[1];
         let point = Array1::from_vec(vec![1.0, 1.0]);
 
-        let hessian = engine.finite_difference_hessian(&function, &point).expect("unwrap failed");
+        let hessian = engine
+            .finite_difference_hessian(&function, &point)
+            .expect("unwrap failed");
 
         // Expected Hessian: [[2, 1], [1, 2]]
         assert!((hessian[[0, 0]] - 2.0).abs() < 1e-5);
@@ -1540,7 +1590,9 @@ mod tests {
             ..Default::default()
         };
 
-        let sparse_hessian = engine.sparse_hessian(function, &point, &config).expect("unwrap failed");
+        let sparse_hessian = engine
+            .sparse_hessian(function, &point, &config)
+            .expect("unwrap failed");
 
         // Should have 2 non-zero elements (diagonal)
         assert_eq!(sparse_hessian.nnz, 2);
@@ -1553,5 +1605,42 @@ mod tests {
         assert!(config.exact);
         assert!(!config.sparse);
         assert!(!config.diagonal_only);
+    }
+
+    /// Smoke test: higher-order AD computes the correct second derivative.
+    ///
+    /// For f(x) = x^2, f''(x) = 2 everywhere, so the (1x1) Hessian is [[2]].
+    #[test]
+    fn test_higher_order_hessian_of_square() {
+        let mut engine = HigherOrderEngine::<f64>::new(2);
+
+        let function = |x: &Array1<f64>| x[0] * x[0];
+        let point = Array1::from_vec(vec![3.0]);
+
+        let hessian = engine
+            .hessian_forward_over_reverse(function, &point, &HessianConfig::default())
+            .expect("hessian");
+
+        approx::assert_abs_diff_eq!(hessian[[0, 0]], 2.0, epsilon = 1e-3);
+    }
+
+    /// Smoke test: Hessian-vector product on a separable quadratic.
+    ///
+    /// For f(x) = 0.5 * (x_0^2 + x_1^2) the Hessian is the identity, so the
+    /// Hessian-vector product H * v must return v unchanged.
+    #[test]
+    fn test_higher_order_hvp_quadratic() {
+        let mut engine = HigherOrderEngine::<f64>::new(2);
+
+        let function = |x: &Array1<f64>| 0.5 * (x[0] * x[0] + x[1] * x[1]);
+        let point = Array1::from_vec(vec![1.0, -2.0]);
+        let vector = Array1::from_vec(vec![3.0, 4.0]);
+
+        let hv = engine
+            .hessian_vector_product(function, &point, &vector)
+            .expect("hvp");
+
+        approx::assert_abs_diff_eq!(hv[0], 3.0, epsilon = 1e-3);
+        approx::assert_abs_diff_eq!(hv[1], 4.0, epsilon = 1e-3);
     }
 }

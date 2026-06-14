@@ -389,14 +389,21 @@ pub struct WeightedSum<T: Float + Debug + Send + Sync + 'static> {
     /// Objective weights
     weights: Vec<T>,
 
+    /// Objective configurations (direction, type, ...) used for
+    /// scalarization and dominance computations.
+    objectives: Vec<ObjectiveConfig<T>>,
+
     /// Current best solution
     best_solution: Option<Individual<T>>,
 
     /// Statistics
     statistics: MultiObjectiveStatistics<T>,
 
-    /// Placeholder pareto front
+    /// Maintained non-dominated set (Pareto front)
     pareto_front: ParetoFront<T>,
+
+    /// Generation counter
+    generation: usize,
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> WeightedSum<T> {
@@ -404,10 +411,183 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> WeightedSum<T> 
         let weights = objectives.iter().map(|obj| obj.weight).collect();
         Ok(Self {
             weights,
+            objectives: objectives.to_vec(),
             best_solution: None,
             statistics: MultiObjectiveStatistics::default(),
             pareto_front: ParetoFront::default(),
+            generation: 0,
         })
+    }
+
+    /// Return the best scalarized solution observed by the most recent
+    /// [`select_candidates`](MultiObjectiveOptimizer::select_candidates) call,
+    /// if any.
+    pub fn best_solution(&self) -> Option<&Individual<T>> {
+        self.best_solution.as_ref()
+    }
+
+    /// Extract the objective vector for a search result, mapping each
+    /// configured [`ObjectiveType`] onto the corresponding
+    /// [`EvaluationMetric`]. Mirrors the mapping used by the NSGA-II
+    /// implementation so that the two optimizers agree on objective values.
+    fn extract_objectives(&self, result: &SearchResult<T>) -> Vec<T> {
+        let mut objectives = Vec::with_capacity(self.objectives.len());
+        for obj_config in &self.objectives {
+            let metric = match obj_config.objective_type {
+                ObjectiveType::Accuracy => EvaluationMetric::Accuracy,
+                ObjectiveType::Loss => EvaluationMetric::FinalPerformance,
+                ObjectiveType::TrainingTime => EvaluationMetric::TrainingTime,
+                ObjectiveType::InferenceTime => EvaluationMetric::ComputationTime,
+                ObjectiveType::MemoryUsage => EvaluationMetric::MemoryUsage,
+                ObjectiveType::EnergyConsumption => EvaluationMetric::ComputationTime,
+                ObjectiveType::ModelSize => EvaluationMetric::MemoryUsage,
+                ObjectiveType::Performance => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Efficiency => EvaluationMetric::ComputationalEfficiency,
+                ObjectiveType::Robustness => EvaluationMetric::Robustness,
+                ObjectiveType::Interpretability => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Fairness => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Privacy => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Sustainability => EvaluationMetric::ComputationalEfficiency,
+                ObjectiveType::Cost => EvaluationMetric::ComputationalEfficiency,
+                ObjectiveType::Custom(_) => EvaluationMetric::FinalPerformance,
+            };
+
+            let value = result
+                .evaluation_results
+                .metric_scores
+                .get(&metric)
+                .cloned()
+                .unwrap_or(T::zero());
+
+            objectives.push(value);
+        }
+        objectives
+    }
+
+    /// Determine whether objective vector `a` Pareto-dominates `b`.
+    ///
+    /// Uses the same convention as NSGA-II's `dominance_relation`: `a`
+    /// dominates `b` when `a` improves at least one objective and worsens
+    /// none, honoring each objective's optimization direction.
+    fn dominates(&self, a: &[T], b: &[T]) -> bool {
+        let mut a_strictly_better = false;
+
+        for (k, obj_config) in self.objectives.iter().enumerate() {
+            if k >= a.len() || k >= b.len() {
+                break;
+            }
+            let val_a = a[k];
+            let val_b = b[k];
+
+            match obj_config.direction {
+                OptimizationDirection::Minimize => {
+                    if val_a > val_b {
+                        return false;
+                    } else if val_a < val_b {
+                        a_strictly_better = true;
+                    }
+                }
+                OptimizationDirection::Maximize => {
+                    if val_a < val_b {
+                        return false;
+                    } else if val_a > val_b {
+                        a_strictly_better = true;
+                    }
+                }
+            }
+        }
+
+        a_strictly_better
+    }
+
+    /// Compute the weighted-sum scalarization (as a cost to be **minimized**)
+    /// for a single objective vector. Maximize objectives are negated so that
+    /// lower scalarized values are always preferred.
+    fn scalarize(&self, objectives: &[T], normalized_weights: &[T]) -> T {
+        let mut score = T::zero();
+        for (k, &weight) in normalized_weights.iter().enumerate() {
+            if k >= objectives.len() {
+                break;
+            }
+            let directed = match self.objectives.get(k).map(|c| &c.direction) {
+                Some(OptimizationDirection::Maximize) => -objectives[k],
+                _ => objectives[k],
+            };
+            score = score + weight * directed;
+        }
+        score
+    }
+
+    /// Return weights normalized to sum to one. Falls back to uniform weights
+    /// when the configured weights are degenerate (empty or non-positive sum).
+    fn normalized_weights(&self) -> Vec<T> {
+        let n = self.weights.len();
+        if n == 0 {
+            return Vec::new();
+        }
+
+        let mut sum = T::zero();
+        for &w in &self.weights {
+            if w > T::zero() {
+                sum = sum + w;
+            }
+        }
+
+        if sum > T::zero() {
+            self.weights
+                .iter()
+                .map(|&w| if w > T::zero() { w / sum } else { T::zero() })
+                .collect()
+        } else {
+            let uniform = T::one() / T::from(n).unwrap_or_else(T::one);
+            vec![uniform; n]
+        }
+    }
+
+    /// Rebuild the objective-space bounds and basic front metrics for the
+    /// maintained Pareto front. Mirrors NSGA-II's bookkeeping so downstream
+    /// consumers observe a consistently-populated [`ParetoFront`].
+    fn refresh_front_metrics(&mut self) {
+        if self.pareto_front.solutions.is_empty() {
+            self.pareto_front.objective_bounds = ObjectiveBounds {
+                min_values: Vec::new(),
+                max_values: Vec::new(),
+                ideal_point: Vec::new(),
+                nadir_point: Vec::new(),
+            };
+            self.pareto_front.metrics.num_solutions = 0;
+            self.statistics.pareto_front_size = 0;
+            return;
+        }
+
+        let num_objectives = self.pareto_front.solutions[0].objectives.len();
+        let mut min_values = vec![T::infinity(); num_objectives];
+        let mut max_values = vec![T::neg_infinity(); num_objectives];
+
+        for solution in &self.pareto_front.solutions {
+            for (i, &obj_val) in solution.objectives.iter().enumerate() {
+                if i >= num_objectives {
+                    break;
+                }
+                if obj_val < min_values[i] {
+                    min_values[i] = obj_val;
+                }
+                if obj_val > max_values[i] {
+                    max_values[i] = obj_val;
+                }
+            }
+        }
+
+        self.pareto_front.objective_bounds = ObjectiveBounds {
+            min_values: min_values.clone(),
+            max_values: max_values.clone(),
+            ideal_point: min_values,
+            nadir_point: max_values,
+        };
+
+        let count = self.pareto_front.solutions.len();
+        self.pareto_front.metrics.num_solutions = count;
+        self.statistics.pareto_front_size = count;
     }
 }
 
@@ -427,12 +607,76 @@ impl<
         Ok(())
     }
 
-    fn update_pareto_front(
-        &mut self,
-        _new_solutions: &[SearchResult<T>],
-    ) -> Result<ParetoFront<T>> {
-        // Simple placeholder implementation
-        Ok(ParetoFront::default())
+    fn update_pareto_front(&mut self, new_solutions: &[SearchResult<T>]) -> Result<ParetoFront<T>> {
+        // No new information: return the current front unchanged.
+        if new_solutions.is_empty() {
+            return Ok(self.pareto_front.clone());
+        }
+
+        self.generation += 1;
+        self.statistics.total_evaluations += new_solutions.len();
+
+        // Build the candidate pool from the currently-maintained
+        // non-dominated solutions plus the freshly-evaluated results.
+        // Each candidate is (objective_vector, ParetoSolution).
+        let mut candidates: Vec<(Vec<T>, ParetoSolution<T>)> =
+            Vec::with_capacity(self.pareto_front.solutions.len() + new_solutions.len());
+
+        for solution in &self.pareto_front.solutions {
+            candidates.push((solution.objectives.clone(), solution.clone()));
+        }
+
+        for result in new_solutions {
+            let objectives = self.extract_objectives(result);
+            let solution = ParetoSolution {
+                architecture: result.architecture.clone(),
+                objectives: objectives.clone(),
+                constraint_violations: Vec::new(),
+                rank: 0,
+                crowding_distance: T::zero(),
+                metadata: SolutionMetadata {
+                    id: result.architecture.architecture_id.clone(),
+                    generation: self.generation,
+                    evaluation_count: self.statistics.total_evaluations,
+                    parents: Vec::new(),
+                    creation_method: CreationMethod::RandomGeneration,
+                },
+            };
+            candidates.push((objectives, solution));
+        }
+
+        // Retain only non-dominated candidates. A candidate survives if no
+        // other candidate dominates it. Identical objective vectors do not
+        // dominate one another, so duplicates are de-duplicated explicitly.
+        let mut front: Vec<ParetoSolution<T>> = Vec::new();
+        for i in 0..candidates.len() {
+            let mut dominated = false;
+            for j in 0..candidates.len() {
+                if i != j && self.dominates(&candidates[j].0, &candidates[i].0) {
+                    dominated = true;
+                    break;
+                }
+            }
+
+            if dominated {
+                continue;
+            }
+
+            // Skip exact objective-vector duplicates already kept.
+            let is_duplicate = front
+                .iter()
+                .any(|existing| existing.objectives == candidates[i].0);
+            if !is_duplicate {
+                front.push(candidates[i].1.clone());
+            }
+        }
+
+        self.pareto_front.solutions = front;
+        self.pareto_front.generation = self.generation;
+        self.pareto_front.last_updated = std::time::SystemTime::now();
+        self.refresh_front_metrics();
+
+        Ok(self.pareto_front.clone())
     }
 
     fn get_pareto_front(&self) -> &ParetoFront<T> {
@@ -441,11 +685,75 @@ impl<
 
     fn select_candidates(
         &mut self,
-        _population: &[OptimizerArchitecture<T>],
-        _objectives: &[T],
+        population: &[OptimizerArchitecture<T>],
+        objectives: &[T],
     ) -> Result<Vec<OptimizerArchitecture<T>>> {
-        // Simple placeholder implementation
-        Ok(Vec::new())
+        if population.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let num_objectives = self.objectives.len();
+        let normalized_weights = self.normalized_weights();
+
+        // Score every architecture by its weighted-sum scalarization. The
+        // provided `objectives` slice is treated as a flattened, row-major
+        // matrix of `population.len() x num_objectives` objective values; if
+        // it is too short the missing entries are treated as zero so that
+        // selection still produces a deterministic ranking.
+        let mut scored: Vec<(usize, T)> = Vec::with_capacity(population.len());
+        for (idx, _architecture) in population.iter().enumerate() {
+            let obj_vector: Vec<T> = if num_objectives > 0 {
+                (0..num_objectives)
+                    .map(|k| {
+                        let flat = idx * num_objectives + k;
+                        objectives.get(flat).cloned().unwrap_or(T::zero())
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let score = self.scalarize(&obj_vector, &normalized_weights);
+            scored.push((idx, score));
+        }
+
+        // Rank by scalarized cost ascending (best first).
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+
+        // Record the single best-scoring architecture for later reference.
+        if let Some(&(best_idx, best_score)) = scored.first() {
+            let best_objectives: Vec<T> = if num_objectives > 0 {
+                (0..num_objectives)
+                    .map(|k| {
+                        let flat = best_idx * num_objectives + k;
+                        objectives.get(flat).cloned().unwrap_or(T::zero())
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            self.best_solution = Some(Individual {
+                architecture: population[best_idx].clone(),
+                objectives: best_objectives,
+                constraints: Vec::new(),
+                rank: 0,
+                crowding_distance: T::zero(),
+                fitness: best_score,
+                id: population[best_idx].architecture_id.clone(),
+            });
+        }
+
+        // Select the better half of the population (at least one).
+        let selection_count = (population.len() / 2).max(1).min(population.len());
+
+        let selected = scored
+            .iter()
+            .take(selection_count)
+            .map(|&(idx, _)| population[idx].clone())
+            .collect();
+
+        Ok(selected)
     }
 
     fn name(&self) -> &str {
@@ -1292,6 +1600,188 @@ impl<
             + std::iter::Sum,
     > NSGA2<T>
 {
+    /// Map a configured [`ObjectiveType`] onto the [`EvaluationMetric`] used to
+    /// read its value from an [`EvaluationResults`]. Kept identical to the
+    /// mapping used by [`MultiObjectiveOptimizer::update_pareto_front`] so the
+    /// helpers below agree with the main optimization path.
+    fn objective_vector_for_result(&self, result: &SearchResult<T>) -> Vec<T> {
+        let mut objectives = Vec::with_capacity(self.config.objectives.len());
+        for obj_config in &self.config.objectives {
+            let metric = match obj_config.objective_type {
+                ObjectiveType::Accuracy => EvaluationMetric::Accuracy,
+                ObjectiveType::Loss => EvaluationMetric::FinalPerformance,
+                ObjectiveType::TrainingTime => EvaluationMetric::TrainingTime,
+                ObjectiveType::InferenceTime => EvaluationMetric::ComputationTime,
+                ObjectiveType::MemoryUsage => EvaluationMetric::MemoryUsage,
+                ObjectiveType::EnergyConsumption => EvaluationMetric::ComputationTime,
+                ObjectiveType::ModelSize => EvaluationMetric::MemoryUsage,
+                ObjectiveType::Performance => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Efficiency => EvaluationMetric::ComputationalEfficiency,
+                ObjectiveType::Robustness => EvaluationMetric::Robustness,
+                ObjectiveType::Interpretability => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Fairness => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Privacy => EvaluationMetric::FinalPerformance,
+                ObjectiveType::Sustainability => EvaluationMetric::ComputationalEfficiency,
+                ObjectiveType::Cost => EvaluationMetric::ComputationalEfficiency,
+                ObjectiveType::Custom(_) => EvaluationMetric::FinalPerformance,
+            };
+
+            let value = result
+                .evaluation_results
+                .metric_scores
+                .get(&metric)
+                .cloned()
+                .unwrap_or(T::zero());
+
+            objectives.push(value);
+        }
+        objectives
+    }
+
+    /// Load `results` into the population (one individual per result), run the
+    /// complete NSGA-II non-dominated sort and crowding-distance assignment,
+    /// and return the indices (into `results`) of the best `k` solutions
+    /// ordered by ascending rank then descending crowding distance.
+    ///
+    /// This drives the engine-level multi-objective selection by reusing the
+    /// real NSGA-II machinery rather than re-deriving dominance externally.
+    pub(crate) fn select_by_rank_and_crowding(
+        &mut self,
+        results: &[SearchResult<T>],
+        k: usize,
+    ) -> Vec<usize> {
+        if results.is_empty() || k == 0 {
+            return Vec::new();
+        }
+
+        // Rebuild the population so that index `i` corresponds to `results[i]`.
+        self.population = results
+            .iter()
+            .enumerate()
+            .map(|(i, result)| Individual {
+                architecture: result.architecture.clone(),
+                objectives: self.objective_vector_for_result(result),
+                constraints: Vec::new(),
+                rank: 0,
+                crowding_distance: T::zero(),
+                fitness: T::zero(),
+                id: format!("sel_{}", i),
+            })
+            .collect();
+
+        // Non-dominated sort assigns `rank` to every individual.
+        let fronts = self.non_dominated_sort();
+
+        // Crowding distance within each front.
+        for front in &fronts {
+            self.calculate_crowding_distance(front);
+        }
+
+        let mut order: Vec<usize> = (0..self.population.len()).collect();
+        order.sort_by(|&a, &b| {
+            let rank_a = self.population[a].rank;
+            let rank_b = self.population[b].rank;
+            rank_a.cmp(&rank_b).then_with(|| {
+                self.population[b]
+                    .crowding_distance
+                    .partial_cmp(&self.population[a].crowding_distance)
+                    .unwrap_or(Ordering::Equal)
+            })
+        });
+
+        order.truncate(k.min(self.population.len()));
+        order
+    }
+
+    /// Build a Pareto front from `results` using the complete NSGA-II pipeline:
+    /// load one individual per result, run the non-dominated sort to assign
+    /// dominance ranks, assign crowding distances within each front, and then
+    /// collect the rank-0 (non-dominated) solutions together with objective
+    /// bounds and front metrics.
+    ///
+    /// This is the faithful counterpart to the trait-level
+    /// [`MultiObjectiveOptimizer::update_pareto_front`], but it performs the
+    /// non-dominated sort that the index-mapped trait method omits, so the
+    /// returned front contains exactly the non-dominated solutions.
+    pub(crate) fn pareto_front_from_results(
+        &mut self,
+        results: &[SearchResult<T>],
+    ) -> ParetoFront<T> {
+        self.population = results
+            .iter()
+            .enumerate()
+            .map(|(i, result)| {
+                let id = if result.architecture.architecture_id.is_empty() {
+                    format!("ind_{}", i)
+                } else {
+                    result.architecture.architecture_id.clone()
+                };
+                Individual {
+                    architecture: result.architecture.clone(),
+                    objectives: self.objective_vector_for_result(result),
+                    constraints: Vec::new(),
+                    rank: 0,
+                    crowding_distance: T::zero(),
+                    fitness: T::zero(),
+                    id,
+                }
+            })
+            .collect();
+
+        self.generation += 1;
+        self.statistics.total_evaluations += results.len();
+
+        // Assign dominance ranks across the whole population.
+        let fronts = self.non_dominated_sort();
+
+        // Assign crowding distances within each front.
+        for front in &fronts {
+            self.calculate_crowding_distance(front);
+        }
+
+        // Collect rank-0 solutions and refresh bounds + metrics.
+        self.update_pareto_front_from_population();
+
+        self.pareto_front.clone()
+    }
+
+    /// Compute the mean pairwise Euclidean distance between the objective
+    /// vectors of `results`, providing a real diversity metric for the
+    /// population. Returns `0.0` for fewer than two solutions.
+    pub(crate) fn mean_objective_distance(&self, results: &[SearchResult<T>]) -> f64 {
+        if results.len() < 2 {
+            return 0.0;
+        }
+
+        let objective_vectors: Vec<Vec<T>> = results
+            .iter()
+            .map(|r| self.objective_vector_for_result(r))
+            .collect();
+
+        let mut total = 0.0;
+        let mut count = 0usize;
+        for i in 0..objective_vectors.len() {
+            for j in (i + 1)..objective_vectors.len() {
+                let a = &objective_vectors[i];
+                let b = &objective_vectors[j];
+                let len = a.len().min(b.len());
+                let mut sq_sum = T::zero();
+                for d in 0..len {
+                    let diff = a[d] - b[d];
+                    sq_sum = sq_sum + diff * diff;
+                }
+                total += sq_sum.sqrt().to_f64().unwrap_or(0.0);
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            total / count as f64
+        } else {
+            0.0
+        }
+    }
+
     fn tournament_selection(&mut self, tournamentsize: usize) -> Result<Individual<T>> {
         if self.population.is_empty() {
             return Err(OptimError::InvalidConfig("Empty population".to_string()));
@@ -1415,6 +1905,9 @@ impl<T: Float + Debug + Default + Send + Sync> Default for MultiObjectiveStatist
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nas_engine::{
+        ArchitectureEncoding, EvaluationResults, ResourceUsage, SearchResultMetadata,
+    };
 
     #[test]
     fn test_nsga2_creation() {
@@ -1479,5 +1972,207 @@ mod tests {
 
         let relation = nsga2.dominance_relation(0, 1);
         assert_eq!(relation, DominanceRelation::NonDominated);
+    }
+
+    // ---- WeightedSum test helpers -------------------------------------
+
+    /// Build a minimal [`OptimizerArchitecture`] tagged with `id`.
+    fn make_architecture(id: &str) -> OptimizerArchitecture<f64> {
+        OptimizerArchitecture {
+            components: vec!["Adam".to_string()],
+            parameters: HashMap::new(),
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: id.to_string(),
+        }
+    }
+
+    /// Build a [`SearchResult`] whose first objective maps to
+    /// [`EvaluationMetric::Accuracy`] (= `obj0`) and whose second maps to
+    /// [`EvaluationMetric::MemoryUsage`] (= `obj1`).
+    fn make_search_result(id: &str, obj0: f64, obj1: f64) -> SearchResult<f64> {
+        let mut metric_scores = HashMap::new();
+        metric_scores.insert(EvaluationMetric::Accuracy, obj0);
+        metric_scores.insert(EvaluationMetric::MemoryUsage, obj1);
+
+        let evaluation_results = EvaluationResults {
+            metric_scores,
+            overall_score: 0.0,
+            confidence_intervals: HashMap::new(),
+            evaluation_time: std::time::Duration::from_secs(0),
+            success: true,
+            error_message: None,
+            cv_results: None,
+            benchmark_results: HashMap::new(),
+            training_trajectory: Vec::new(),
+        };
+
+        SearchResult {
+            architecture: make_architecture(id),
+            evaluation_results,
+            generation: 0,
+            search_time: 0.0,
+            resource_usage: ResourceUsage::default(),
+            encoding: ArchitectureEncoding::default(),
+            metadata: SearchResultMetadata::default(),
+        }
+    }
+
+    /// Two minimization objectives backed by distinct metrics.
+    fn two_minimize_objectives() -> Vec<ObjectiveConfig<f64>> {
+        vec![
+            ObjectiveConfig {
+                name: "accuracy".to_string(),
+                objective_type: ObjectiveType::Accuracy,
+                direction: OptimizationDirection::Minimize,
+                weight: 0.5,
+                priority: ObjectivePriority::High,
+                normalization_bounds: None,
+            },
+            ObjectiveConfig {
+                name: "memory".to_string(),
+                objective_type: ObjectiveType::MemoryUsage,
+                direction: OptimizationDirection::Minimize,
+                weight: 0.5,
+                priority: ObjectivePriority::High,
+                normalization_bounds: None,
+            },
+        ]
+    }
+
+    // ---- WeightedSum tests --------------------------------------------
+
+    #[test]
+    fn test_weighted_sum_creation() {
+        let ws = WeightedSum::new(&two_minimize_objectives()).expect("construct WeightedSum");
+        assert_eq!(ws.name(), "WeightedSum");
+        assert_eq!(ws.weights.len(), 2);
+        assert!(ws.get_pareto_front().solutions.is_empty());
+    }
+
+    #[test]
+    fn test_weighted_sum_update_pareto_front_keeps_non_dominated() {
+        let mut ws = WeightedSum::new(&two_minimize_objectives()).expect("construct WeightedSum");
+
+        // A = (1,2) and B = (2,1) are mutually non-dominated.
+        // C = (3,3) is dominated by both A and B.
+        let results = vec![
+            make_search_result("A", 1.0, 2.0),
+            make_search_result("B", 2.0, 1.0),
+            make_search_result("C", 3.0, 3.0),
+        ];
+
+        let front = ws
+            .update_pareto_front(&results)
+            .expect("update pareto front");
+
+        // Exactly the two non-dominated solutions must remain.
+        assert_eq!(front.solutions.len(), 2);
+        assert_eq!(front.metrics.num_solutions, 2);
+
+        let mut ids: Vec<String> = front
+            .solutions
+            .iter()
+            .map(|s| s.metadata.id.clone())
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["A".to_string(), "B".to_string()]);
+
+        // Bounds should bracket the surviving objective values.
+        assert_eq!(front.objective_bounds.min_values, vec![1.0, 1.0]);
+        assert_eq!(front.objective_bounds.max_values, vec![2.0, 2.0]);
+
+        // The stored front mirrors the returned one.
+        assert_eq!(ws.get_pareto_front().solutions.len(), 2);
+    }
+
+    #[test]
+    fn test_weighted_sum_update_pareto_front_incremental() {
+        let mut ws = WeightedSum::new(&two_minimize_objectives()).expect("construct WeightedSum");
+
+        // Seed the front with a single solution.
+        ws.update_pareto_front(&[make_search_result("A", 2.0, 2.0)])
+            .expect("seed front");
+        assert_eq!(ws.get_pareto_front().solutions.len(), 1);
+
+        // A new, strictly-better solution must dominate and replace it.
+        let front = ws
+            .update_pareto_front(&[make_search_result("B", 1.0, 1.0)])
+            .expect("update front");
+        assert_eq!(front.solutions.len(), 1);
+        assert_eq!(front.solutions[0].metadata.id, "B");
+
+        // Feeding no new solutions returns the front unchanged.
+        let unchanged = ws.update_pareto_front(&[]).expect("empty update");
+        assert_eq!(unchanged.solutions.len(), 1);
+        assert_eq!(unchanged.solutions[0].metadata.id, "B");
+    }
+
+    #[test]
+    fn test_weighted_sum_select_candidates_ranking() {
+        let mut ws = WeightedSum::new(&two_minimize_objectives()).expect("construct WeightedSum");
+
+        let population = vec![
+            make_architecture("p0"),
+            make_architecture("p1"),
+            make_architecture("p2"),
+            make_architecture("p3"),
+        ];
+
+        // Row-major objective matrix: 4 architectures x 2 objectives.
+        // scores (equal weights, minimize): p0=4, p1=1, p2=2.5, p3=3.
+        let objectives = vec![
+            4.0, 4.0, // p0 -> 4.0
+            1.0, 1.0, // p1 -> 1.0 (best)
+            2.0, 3.0, // p2 -> 2.5
+            3.0, 3.0, // p3 -> 3.0
+        ];
+
+        let selected = ws
+            .select_candidates(&population, &objectives)
+            .expect("select candidates");
+
+        // Better half of 4 -> top 2 by ascending scalarized cost.
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].architecture_id, "p1");
+        assert_eq!(selected[1].architecture_id, "p2");
+
+        // The recorded best solution must match the top-ranked architecture.
+        let best = ws.best_solution().expect("best solution recorded");
+        assert_eq!(best.architecture.architecture_id, "p1");
+    }
+
+    #[test]
+    fn test_weighted_sum_select_candidates_honors_maximize() {
+        // Single maximize objective: larger objective value is preferred,
+        // hence selected first despite weighted-sum minimizing internally.
+        let objectives_cfg = vec![ObjectiveConfig {
+            name: "accuracy".to_string(),
+            objective_type: ObjectiveType::Accuracy,
+            direction: OptimizationDirection::Maximize,
+            weight: 1.0,
+            priority: ObjectivePriority::High,
+            normalization_bounds: None,
+        }];
+        let mut ws = WeightedSum::new(&objectives_cfg).expect("construct WeightedSum");
+
+        let population = vec![make_architecture("low"), make_architecture("high")];
+        // One objective per architecture.
+        let objectives = vec![0.2, 0.9];
+
+        let selected = ws
+            .select_candidates(&population, &objectives)
+            .expect("select candidates");
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].architecture_id, "high");
+    }
+
+    #[test]
+    fn test_weighted_sum_select_candidates_empty_population() {
+        let mut ws = WeightedSum::new(&two_minimize_objectives()).expect("construct WeightedSum");
+        let selected = ws.select_candidates(&[], &[]).expect("select candidates");
+        assert!(selected.is_empty());
     }
 }

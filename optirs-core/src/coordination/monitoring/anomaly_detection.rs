@@ -789,11 +789,11 @@ impl<T: Float + Debug + Send + Sync + 'static> TimeSeriesAnalyzer<T> {
             };
         }
 
-        // Simplified seasonal decomposition
+        // Additive seasonal decomposition: value = trend + seasonal + residual.
         let window_size = (values.len() / 4).max(3);
         let mut trend = Vec::with_capacity(values.len());
 
-        // Moving average for trend
+        // Moving average for the trend component.
         for i in 0..values.len() {
             let start = i.saturating_sub(window_size / 2);
             let end = (i + window_size / 2 + 1).min(values.len());
@@ -809,10 +809,19 @@ impl<T: Float + Debug + Send + Sync + 'static> TimeSeriesAnalyzer<T> {
             .map(|(&val, &tr)| val - tr)
             .collect();
 
-        // Simple seasonal component (placeholder)
-        let seasonal = vec![T::zero(); values.len()];
+        // Determine the seasonal period. `AnomalyConfig` exposes no explicit season
+        // length, so estimate it from the autocorrelation of the detrended series:
+        // pick the first lag >= 2 that is a local ACF peak and is meaningfully
+        // positive. If no such period can be found, the seasonal component is left
+        // at zero (the series is treated as non-seasonal).
+        let seasonal = match Self::estimate_seasonal_period(&detrended) {
+            Some(period) if period >= 2 && period <= detrended.len() / 2 => {
+                Self::extract_seasonal_component(&detrended, period)
+            }
+            _ => vec![T::zero(); values.len()],
+        };
 
-        // Residuals
+        // Residuals = detrended - seasonal.
         let residuals: Vec<T> = detrended
             .iter()
             .zip(seasonal.iter())
@@ -824,6 +833,91 @@ impl<T: Float + Debug + Send + Sync + 'static> TimeSeriesAnalyzer<T> {
             seasonal,
             residuals,
         }
+    }
+
+    /// Estimate the dominant seasonal period from the autocorrelation function of a
+    /// (de-trended) series. Returns the lag `>= 2` of the first significant local
+    /// ACF peak, or `None` when no clear periodicity is present.
+    fn estimate_seasonal_period(series: &[T]) -> Option<usize> {
+        let n = series.len();
+        if n < 4 {
+            return None;
+        }
+
+        // Mean and lag-0 autocovariance (variance) for normalization.
+        let mean = series.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(n).unwrap_or_else(|| T::one());
+
+        let variance = series
+            .iter()
+            .map(|&x| (x - mean) * (x - mean))
+            .fold(T::zero(), |acc, x| acc + x);
+
+        if variance <= T::epsilon() {
+            return None;
+        }
+
+        // Normalized autocorrelation for lags 1..=max_lag.
+        let max_lag = n / 2;
+        let mut acf = vec![T::zero(); max_lag + 1];
+        acf[0] = T::one();
+        for lag in 1..=max_lag {
+            let mut sum = T::zero();
+            for i in lag..n {
+                sum = sum + (series[i] - mean) * (series[i - lag] - mean);
+            }
+            acf[lag] = sum / variance;
+        }
+
+        // Significance floor for an ACF peak (correlation strength), chosen so that
+        // weak/spurious correlations do not register as seasonality.
+        let significance = T::from(0.2).unwrap_or_else(|| T::zero());
+
+        // Find the first lag >= 2 that is a strict local maximum of the ACF and is
+        // above the significance floor; the first such peak wins.
+        for lag in 2..max_lag {
+            let val = acf[lag];
+            let is_local_peak = val > acf[lag - 1] && val >= acf[lag + 1];
+            if is_local_peak && val > significance {
+                return Some(lag);
+            }
+        }
+
+        None
+    }
+
+    /// Extract a centered additive seasonal component for the given period. The
+    /// seasonal index for phase `j` is the mean of `detrended[i]` over all
+    /// `i ≡ j (mod period)`; the indices are then centered (their mean subtracted)
+    /// so the seasonal component sums to ~0 over one period, and tiled across the
+    /// full series length.
+    fn extract_seasonal_component(detrended: &[T], period: usize) -> Vec<T> {
+        let n = detrended.len();
+        let mut sums = vec![T::zero(); period];
+        let mut counts = vec![0usize; period];
+
+        for (i, &value) in detrended.iter().enumerate() {
+            let phase = i % period;
+            sums[phase] = sums[phase] + value;
+            counts[phase] += 1;
+        }
+
+        let mut indices = vec![T::zero(); period];
+        for phase in 0..period {
+            if counts[phase] > 0 {
+                indices[phase] = sums[phase] / T::from(counts[phase]).unwrap_or_else(|| T::one());
+            }
+        }
+
+        // Center the seasonal indices so they sum to ~0 over one period.
+        let index_mean = indices.iter().fold(T::zero(), |acc, &x| acc + x)
+            / T::from(period).unwrap_or_else(|| T::one());
+        for index in indices.iter_mut() {
+            *index = *index - index_mean;
+        }
+
+        // Tile the centered indices across the full series.
+        (0..n).map(|i| indices[i % period]).collect()
     }
 
     fn compute_residual_threshold(&self, residuals: &[T]) -> T {
@@ -1835,5 +1929,85 @@ mod tests {
 
         let active_alerts = reporter.get_active_alerts();
         assert_eq!(active_alerts.len(), 1);
+    }
+
+    #[test]
+    fn test_seasonal_decomposition_recovers_periodic_pattern() {
+        let config = AnomalyConfig::<f64>::default();
+        let analyzer = AnomalyAnalyzer::new(config);
+
+        // Synthetic series: linear trend + known period-4 seasonal pattern + tiny noise.
+        let period = 4usize;
+        let pattern = [3.0_f64, -1.0, -3.0, 1.0]; // sums to 0 over one period
+        let length = 48usize;
+
+        // Small deterministic "noise" so the test is reproducible and the seasonal
+        // signal clearly dominates.
+        let noise = [0.05_f64, -0.04, 0.03, -0.05, 0.02, -0.03];
+
+        let base = Instant::now();
+        let mut data: Vec<(Instant, f64)> = Vec::with_capacity(length);
+        for i in 0..length {
+            let trend = 0.5 * i as f64; // strong linear trend
+            let seasonal = pattern[i % period];
+            let n = noise[i % noise.len()];
+            data.push((base + Duration::from_secs(i as u64), trend + seasonal + n));
+        }
+
+        let decomposition = analyzer.seasonal_decomposition(&data);
+
+        // The seasonal component must not be all zeros.
+        let any_nonzero = decomposition.seasonal.iter().any(|&s| s.abs() > 1e-6);
+        assert!(any_nonzero, "seasonal component should not be all zeros");
+
+        // The recovered seasonal component must be periodic with period 4.
+        for i in period..length {
+            let diff = (decomposition.seasonal[i] - decomposition.seasonal[i - period]).abs();
+            assert!(
+                diff < 1e-6,
+                "seasonal not periodic: index {} ({}) vs {} ({})",
+                i,
+                decomposition.seasonal[i],
+                i - period,
+                decomposition.seasonal[i - period]
+            );
+        }
+
+        // The recovered (centered) seasonal indices should track the injected,
+        // centered pattern. The injected pattern already sums to zero, so the
+        // centered indices should match it within a tolerance dominated by the
+        // moving-average trend leakage and the tiny noise.
+        for (phase, (&recovered, &injected)) in decomposition
+            .seasonal
+            .iter()
+            .zip(pattern.iter())
+            .take(period)
+            .enumerate()
+        {
+            assert!(
+                (recovered - injected).abs() < 0.5,
+                "phase {}: recovered {} should track injected {}",
+                phase,
+                recovered,
+                injected
+            );
+        }
+
+        // Sanity: value ≈ trend + seasonal + residual must hold (additive model).
+        for (i, (((&t, &s), &r), sample)) in decomposition
+            .trend
+            .iter()
+            .zip(decomposition.seasonal.iter())
+            .zip(decomposition.residuals.iter())
+            .zip(data.iter())
+            .enumerate()
+        {
+            let reconstructed = t + s + r;
+            assert!(
+                (reconstructed - sample.1).abs() < 1e-6,
+                "additive reconstruction failed at {}",
+                i
+            );
+        }
     }
 }

@@ -412,23 +412,159 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEnc
     }
 
     fn encode(&self, architecture: &OptimizerArchitecture<T>) -> Result<Array1<T>> {
-        // Simple encoding: one-hot component types + hyperparameters
-        let mut encoding = Vec::new();
+        // Deterministic, vocabulary-based encoding of the architecture's
+        // component types.  Each component string (produced elsewhere via
+        // `format!("{:?}", ComponentType)`) is mapped onto a fixed, ordered
+        // vocabulary and accumulated into a multi-hot block, followed by a few
+        // continuous descriptors.  Unlike a raw string hash this preserves
+        // locality (identical types collide on the same slot) and yields a
+        // meaningful, stable feature for the predictor network.
+        let mut encoding = encode_component_block::<T, _>(
+            architecture.components.iter().take(self.max_components),
+        );
 
-        for (i, component) in architecture.components.iter().enumerate() {
-            if i >= self.max_components {
-                break;
-            }
-
-            // Encode component type (use string hash as placeholder)
-            let hash = component.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-            encoding.push(scirs2_core::numeric::NumCast::from(hash).unwrap_or_else(|| T::zero()));
-        }
-
-        // Pad to fixed size
+        // Pad (or truncate) to the embedding dimension expected by the
+        // predictor network's input layer.  This preserves the original
+        // fixed-length contract of `_embeddingdim`.
         encoding.resize(self._embeddingdim, T::zero());
         Ok(Array1::from_vec(encoding))
     }
+}
+
+/// Ordered vocabulary of known optimizer-component type names.
+///
+/// These correspond exactly to the field-less variants of
+/// [`crate::architecture::ComponentType`], whose `Debug` representation is the
+/// variant name and is what populates `OptimizerArchitecture::components`
+/// across every search strategy.  The order is fixed (matching the enum's
+/// declaration order) so the produced encoding is deterministic and stable
+/// across runs and builds.  A trailing out-of-vocabulary slot (added by
+/// [`encode_component_block`]) absorbs any unrecognised name.
+const COMPONENT_VOCABULARY: [&str; 41] = [
+    "SGD",
+    "Adam",
+    "AdamW",
+    "RMSprop",
+    "AdaGrad",
+    "AdaDelta",
+    "Momentum",
+    "Nesterov",
+    "LRScheduler",
+    "GradientClipping",
+    "BatchNorm",
+    "Dropout",
+    "LAMB",
+    "LARS",
+    "Lion",
+    "RAdam",
+    "Lookahead",
+    "SAM",
+    "LBFGS",
+    "SparseAdam",
+    "GroupedAdam",
+    "MAML",
+    "L1Regularizer",
+    "L2Regularizer",
+    "ElasticNetRegularizer",
+    "DropoutRegularizer",
+    "WeightDecay",
+    "AdaptiveLR",
+    "AdaptiveMomentum",
+    "AdaptiveRegularization",
+    "LSTMOptimizer",
+    "TransformerOptimizer",
+    "AttentionOptimizer",
+    "MetaSGD",
+    "ConstantLR",
+    "ExponentialLR",
+    "StepLR",
+    "CosineAnnealingLR",
+    "OneCycleLR",
+    "CyclicLR",
+    "Reptile",
+];
+
+/// Number of continuous descriptors appended after the multi-hot block.
+const COMPONENT_DESCRIPTOR_COUNT: usize = 3;
+
+/// Total fixed length of the component feature block produced by
+/// [`encode_component_block`]: one slot per known type, one out-of-vocabulary
+/// slot, and the trailing continuous descriptors.
+const COMPONENT_BLOCK_LEN: usize = COMPONENT_VOCABULARY.len() + 1 + COMPONENT_DESCRIPTOR_COUNT;
+
+/// Resolve a component type name to its vocabulary index.
+///
+/// Returns the matching index for a known type, or the dedicated
+/// out-of-vocabulary index (`COMPONENT_VOCABULARY.len()`) for any unrecognised
+/// name.  The lookup is exact and deterministic.
+fn component_vocab_index(name: &str) -> usize {
+    COMPONENT_VOCABULARY
+        .iter()
+        .position(|known| *known == name)
+        .unwrap_or(COMPONENT_VOCABULARY.len())
+}
+
+/// Build a deterministic, fixed-length feature block for a sequence of
+/// component type names.
+///
+/// Layout (length [`COMPONENT_BLOCK_LEN`]):
+/// * `[0, VOCAB_LEN)`  multi-hot counts: how many components of each known type
+///   are present (occurrence counts, so repeated types accumulate);
+/// * `[VOCAB_LEN]`     out-of-vocabulary count for unrecognised names;
+/// * trailing descriptors: normalised component count, mean normalised name
+///   length, and fraction of names containing the `"Adam"` substring (a cheap
+///   family indicator).  These add continuous structure on top of the
+///   discrete one-hot signal.
+fn encode_component_block<'a, T, I>(components: I) -> Vec<T>
+where
+    T: Float + Debug + Send + Sync + 'static + Default + Clone,
+    I: Iterator<Item = &'a String>,
+{
+    let mut block = vec![T::zero(); COMPONENT_BLOCK_LEN];
+
+    let one: T = scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero());
+
+    let mut total: usize = 0;
+    let mut name_len_sum: usize = 0;
+    let mut adam_family: usize = 0;
+
+    for component in components {
+        // Unknown names resolve to the dedicated out-of-vocabulary index
+        // (`COMPONENT_VOCABULARY.len()`) so they never collide with a known
+        // type's slot.
+        let idx = component_vocab_index(component);
+        block[idx] = block[idx] + one;
+
+        total += 1;
+        name_len_sum += component.len();
+        if component.contains("Adam") {
+            adam_family += 1;
+        }
+    }
+
+    // Continuous descriptors.  Normalisers are chosen to keep values in a
+    // roughly unit range without depending on any RNG.
+    let descriptor_base = COMPONENT_VOCABULARY.len() + 1;
+    if total > 0 {
+        let total_t: T =
+            scirs2_core::numeric::NumCast::from(total as f64).unwrap_or_else(|| T::zero());
+
+        // Normalised component count (relative to a nominal cap of 16).
+        block[descriptor_base] =
+            scirs2_core::numeric::NumCast::from(total as f64 / 16.0).unwrap_or_else(|| T::zero());
+
+        // Mean name length, normalised by a nominal max name length of 24.
+        let mean_len = (name_len_sum as f64 / total as f64) / 24.0;
+        block[descriptor_base + 1] =
+            scirs2_core::numeric::NumCast::from(mean_len).unwrap_or_else(|| T::zero());
+
+        // Fraction of Adam-family components.
+        let adam_frac: T =
+            scirs2_core::numeric::NumCast::from(adam_family as f64).unwrap_or_else(|| T::zero());
+        block[descriptor_base + 2] = adam_frac / total_t;
+    }
+
+    block
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SearchOptimizer<T> {
@@ -439,5 +575,85 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> SearchOptimizer
             momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
             parameters: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_arch(components: &[&str]) -> OptimizerArchitecture<f64> {
+        OptimizerArchitecture {
+            components: components.iter().map(|s| s.to_string()).collect(),
+            parameters: HashMap::new(),
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn encode_is_deterministic_and_fixed_length() {
+        let embedding_dim = 96;
+        let encoder = ArchitectureEncoder::<f64>::new(embedding_dim);
+        let arch = make_arch(&["Adam", "SGD", "RMSprop"]);
+
+        let first = encoder.encode(&arch).expect("encode should succeed");
+        let second = encoder.encode(&arch).expect("encode should succeed");
+
+        assert_eq!(first.len(), embedding_dim);
+        assert_eq!(second.len(), embedding_dim);
+        assert_eq!(first, second, "encoding must be deterministic");
+    }
+
+    #[test]
+    fn different_known_types_differ_same_type_matches() {
+        let encoder = ArchitectureEncoder::<f64>::new(COMPONENT_BLOCK_LEN);
+
+        let adam = encoder.encode(&make_arch(&["Adam"])).expect("encode");
+        let adam_again = encoder.encode(&make_arch(&["Adam"])).expect("encode");
+        let sgd = encoder.encode(&make_arch(&["SGD"])).expect("encode");
+
+        assert_eq!(adam, adam_again, "same type must encode identically");
+        assert_ne!(adam, sgd, "different known types must differ");
+
+        // The multi-hot slots for Adam and SGD must be the distinct ones.
+        let adam_idx = component_vocab_index("Adam");
+        let sgd_idx = component_vocab_index("SGD");
+        assert_ne!(adam_idx, sgd_idx);
+        assert_eq!(adam[adam_idx], 1.0);
+        assert_eq!(sgd[sgd_idx], 1.0);
+    }
+
+    #[test]
+    fn unknown_type_maps_to_oov_slot() {
+        let encoder = ArchitectureEncoder::<f64>::new(COMPONENT_BLOCK_LEN);
+        let oov_index = COMPONENT_VOCABULARY.len();
+
+        let encoded = encoder
+            .encode(&make_arch(&["TotallyUnknownOptimizer"]))
+            .expect("encode must not panic on unknown type");
+
+        assert_eq!(encoded.len(), COMPONENT_BLOCK_LEN);
+        assert_eq!(
+            encoded[oov_index], 1.0,
+            "unknown name must land in the out-of-vocabulary slot"
+        );
+        // No known-type slot should be set by an unknown name.
+        for (i, value) in encoded.iter().enumerate().take(oov_index) {
+            assert_eq!(*value, 0.0, "known slot {} must stay zero", i);
+        }
+    }
+
+    #[test]
+    fn repeated_types_accumulate_counts() {
+        let block = encode_component_block::<f64, _>(
+            ["Adam".to_string(), "Adam".to_string(), "SGD".to_string()].iter(),
+        );
+        let adam_idx = component_vocab_index("Adam");
+        let sgd_idx = component_vocab_index("SGD");
+        assert_eq!(block[adam_idx], 2.0);
+        assert_eq!(block[sgd_idx], 1.0);
     }
 }

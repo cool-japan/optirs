@@ -101,23 +101,27 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     }
 
     fn encode_architecture(&self, architecture: &OptimizerArchitecture<T>) -> Array1<T> {
-        // Simple encoding: component types and hyperparameter values
-        let mut encoding = Vec::new();
+        // Deterministic, vocabulary-based encoding of the architecture's
+        // component types, followed by its hyperparameter values.  Each
+        // component string (produced elsewhere via
+        // `format!("{:?}", ComponentType)`) is mapped onto a fixed, ordered
+        // vocabulary and accumulated into a multi-hot block.  Unlike a raw
+        // string hash this preserves locality and gives the Gaussian-process
+        // kernel a meaningful, stable feature, so similar architectures map to
+        // nearby points in the input space.
+        let mut encoding = encode_component_block::<T, _>(architecture.components.iter());
 
-        for component_str in &architecture.components {
-            // Encode component type as one-hot (use a simple hash of the string as placeholder)
-            let hash = component_str
-                .bytes()
-                .fold(0u8, |acc, b| acc.wrapping_add(b));
-            encoding.push(scirs2_core::numeric::NumCast::from(hash).unwrap_or_else(|| T::zero()));
+        // Encode hyperparameters from the architecture's hyperparameters map.
+        // Sorted by key so the appended values are order-stable regardless of
+        // the underlying hash-map iteration order.
+        let mut hyperparameters: Vec<(&String, &T)> = architecture.hyperparameters.iter().collect();
+        hyperparameters.sort_by(|a, b| a.0.cmp(b.0));
+        for (_key, value) in hyperparameters {
+            encoding.push(*value);
         }
 
-        // Encode hyperparameters from the architecture's hyperparameters map
-        for &value in architecture.hyperparameters.values() {
-            encoding.push(value);
-        }
-
-        // Pad to fixed size
+        // Pad (or truncate) to the fixed GP input dimension.  This preserves
+        // the original 64-length contract consumed by the kernel/GP.
         encoding.resize(64, T::zero());
         Array1::from_vec(encoding)
     }
@@ -329,5 +333,228 @@ impl<T: Float + Debug + Default + Send + Sync> GPKernel<T> {
             _kerneltype: kerneltype,
             hyperparameters: Array1::ones(2), // length_scale and signal_variance
         }
+    }
+}
+
+/// Ordered vocabulary of known optimizer-component type names.
+///
+/// These correspond exactly to the field-less variants of
+/// [`crate::architecture::ComponentType`], whose `Debug` representation is the
+/// variant name and is what populates `OptimizerArchitecture::components`
+/// across every search strategy.  The order is fixed (matching the enum's
+/// declaration order) so the produced encoding is deterministic and stable
+/// across runs and builds.  A trailing out-of-vocabulary slot (added by
+/// [`encode_component_block`]) absorbs any unrecognised name.
+const COMPONENT_VOCABULARY: [&str; 41] = [
+    "SGD",
+    "Adam",
+    "AdamW",
+    "RMSprop",
+    "AdaGrad",
+    "AdaDelta",
+    "Momentum",
+    "Nesterov",
+    "LRScheduler",
+    "GradientClipping",
+    "BatchNorm",
+    "Dropout",
+    "LAMB",
+    "LARS",
+    "Lion",
+    "RAdam",
+    "Lookahead",
+    "SAM",
+    "LBFGS",
+    "SparseAdam",
+    "GroupedAdam",
+    "MAML",
+    "L1Regularizer",
+    "L2Regularizer",
+    "ElasticNetRegularizer",
+    "DropoutRegularizer",
+    "WeightDecay",
+    "AdaptiveLR",
+    "AdaptiveMomentum",
+    "AdaptiveRegularization",
+    "LSTMOptimizer",
+    "TransformerOptimizer",
+    "AttentionOptimizer",
+    "MetaSGD",
+    "ConstantLR",
+    "ExponentialLR",
+    "StepLR",
+    "CosineAnnealingLR",
+    "OneCycleLR",
+    "CyclicLR",
+    "Reptile",
+];
+
+/// Number of continuous descriptors appended after the multi-hot block.
+const COMPONENT_DESCRIPTOR_COUNT: usize = 3;
+
+/// Total fixed length of the component feature block produced by
+/// [`encode_component_block`]: one slot per known type, one out-of-vocabulary
+/// slot, and the trailing continuous descriptors.
+const COMPONENT_BLOCK_LEN: usize = COMPONENT_VOCABULARY.len() + 1 + COMPONENT_DESCRIPTOR_COUNT;
+
+/// Resolve a component type name to its vocabulary index.
+///
+/// Returns the matching index for a known type, or the dedicated
+/// out-of-vocabulary index (`COMPONENT_VOCABULARY.len()`) for any unrecognised
+/// name.  The lookup is exact and deterministic.
+fn component_vocab_index(name: &str) -> usize {
+    COMPONENT_VOCABULARY
+        .iter()
+        .position(|known| *known == name)
+        .unwrap_or(COMPONENT_VOCABULARY.len())
+}
+
+/// Build a deterministic, fixed-length feature block for a sequence of
+/// component type names.
+///
+/// Layout (length [`COMPONENT_BLOCK_LEN`]):
+/// * `[0, VOCAB_LEN)`  multi-hot counts: how many components of each known type
+///   are present (occurrence counts, so repeated types accumulate);
+/// * `[VOCAB_LEN]`     out-of-vocabulary count for unrecognised names;
+/// * trailing descriptors: normalised component count, mean normalised name
+///   length, and fraction of names containing the `"Adam"` substring (a cheap
+///   family indicator).  These add continuous structure on top of the
+///   discrete one-hot signal so the GP kernel can exploit gradients in
+///   component count / family composition.
+fn encode_component_block<'a, T, I>(components: I) -> Vec<T>
+where
+    T: Float + Debug + Send + Sync + 'static + Default + Clone,
+    I: Iterator<Item = &'a String>,
+{
+    let mut block = vec![T::zero(); COMPONENT_BLOCK_LEN];
+
+    let one: T = scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero());
+
+    let mut total: usize = 0;
+    let mut name_len_sum: usize = 0;
+    let mut adam_family: usize = 0;
+
+    for component in components {
+        let idx = component_vocab_index(component);
+        block[idx] = block[idx] + one;
+
+        total += 1;
+        name_len_sum += component.len();
+        if component.contains("Adam") {
+            adam_family += 1;
+        }
+    }
+
+    // Continuous descriptors.  Normalisers are chosen to keep values in a
+    // roughly unit range without depending on any RNG.
+    let descriptor_base = COMPONENT_VOCABULARY.len() + 1;
+    if total > 0 {
+        let total_t: T =
+            scirs2_core::numeric::NumCast::from(total as f64).unwrap_or_else(|| T::zero());
+
+        // Normalised component count (relative to a nominal cap of 16).
+        block[descriptor_base] =
+            scirs2_core::numeric::NumCast::from(total as f64 / 16.0).unwrap_or_else(|| T::zero());
+
+        // Mean name length, normalised by a nominal max name length of 24.
+        let mean_len = (name_len_sum as f64 / total as f64) / 24.0;
+        block[descriptor_base + 1] =
+            scirs2_core::numeric::NumCast::from(mean_len).unwrap_or_else(|| T::zero());
+
+        // Fraction of Adam-family components.
+        let adam_frac: T =
+            scirs2_core::numeric::NumCast::from(adam_family as f64).unwrap_or_else(|| T::zero());
+        block[descriptor_base + 2] = adam_frac / total_t;
+    }
+
+    block
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_arch(components: &[&str], hyper: &[(&str, f64)]) -> OptimizerArchitecture<f64> {
+        let mut hyperparameters = HashMap::new();
+        for (k, v) in hyper {
+            hyperparameters.insert(k.to_string(), *v);
+        }
+        OptimizerArchitecture {
+            components: components.iter().map(|s| s.to_string()).collect(),
+            parameters: HashMap::new(),
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters,
+            architecture_id: "test".to_string(),
+        }
+    }
+
+    fn make_bo() -> BayesianOptimization<f64> {
+        BayesianOptimization::<f64>::new(KernelType::RBF, AcquisitionType::UCB, 0.1)
+    }
+
+    #[test]
+    fn encode_is_deterministic_and_fixed_length() {
+        let bo = make_bo();
+        let arch = make_arch(&["Adam", "SGD"], &[("learning_rate", 0.01), ("beta1", 0.9)]);
+
+        let first = bo.encode_architecture(&arch);
+        let second = bo.encode_architecture(&arch);
+
+        assert_eq!(first.len(), 64);
+        assert_eq!(second.len(), 64);
+        assert_eq!(first, second, "encoding must be deterministic");
+    }
+
+    #[test]
+    fn different_known_types_differ_same_type_matches() {
+        let bo = make_bo();
+
+        let adam = bo.encode_architecture(&make_arch(&["Adam"], &[]));
+        let adam_again = bo.encode_architecture(&make_arch(&["Adam"], &[]));
+        let sgd = bo.encode_architecture(&make_arch(&["SGD"], &[]));
+
+        assert_eq!(adam, adam_again, "same type must encode identically");
+        assert_ne!(adam, sgd, "different known types must differ");
+
+        let adam_idx = component_vocab_index("Adam");
+        let sgd_idx = component_vocab_index("SGD");
+        assert_ne!(adam_idx, sgd_idx);
+        assert_eq!(adam[adam_idx], 1.0);
+        assert_eq!(sgd[sgd_idx], 1.0);
+    }
+
+    #[test]
+    fn unknown_type_maps_to_oov_slot() {
+        let bo = make_bo();
+        let oov_index = COMPONENT_VOCABULARY.len();
+
+        let encoded = bo.encode_architecture(&make_arch(&["NoSuchOptimizer"], &[]));
+
+        assert_eq!(encoded.len(), 64);
+        assert_eq!(
+            encoded[oov_index], 1.0,
+            "unknown name must land in the out-of-vocabulary slot"
+        );
+        for (i, value) in encoded.iter().enumerate().take(oov_index) {
+            assert_eq!(*value, 0.0, "known slot {} must stay zero", i);
+        }
+    }
+
+    #[test]
+    fn hyperparameter_order_is_stable() {
+        let bo = make_bo();
+        // Same hyperparameters supplied in different insertion order must yield
+        // identical encodings thanks to the key-sorted append.
+        let a = bo.encode_architecture(&make_arch(
+            &["Adam"],
+            &[("alpha", 0.1), ("beta", 0.2), ("gamma", 0.3)],
+        ));
+        let b = bo.encode_architecture(&make_arch(
+            &["Adam"],
+            &[("gamma", 0.3), ("alpha", 0.1), ("beta", 0.2)],
+        ));
+        assert_eq!(a, b, "hyperparameter ordering must be stable");
     }
 }

@@ -247,26 +247,17 @@ impl<
     }
 
     fn compute_matrix_inverse(&self, matrix: &Array2<T>) -> Result<Array2<T>> {
-        // Simple matrix inversion using LU decomposition
-        // In practice, you would use a more robust method like SVD
-        let n = matrix.nrows();
-        if n != matrix.ncols() {
+        // Robust general inversion: Gauss-Jordan elimination with partial pivoting
+        // and K-FAC-style Tikhonov damping on (near-)singular inputs. Implemented
+        // once in `kfac::utils` and shared with the natural-gradient path so the
+        // Kronecker-factor inverses are real (not a silent identity).
+        if matrix.nrows() != matrix.ncols() {
             return Err(OptimError::InvalidParameter(
                 "Matrix must be square".to_string(),
             ));
         }
 
-        // For now, use a simple identity matrix as a placeholder
-        // In a real implementation, you would use a proper matrix inversion library
-        let mut inv = Array2::eye(n);
-
-        // Add small regularization to ensure numerical stability
-        let reg_term = T::from(1e-8).unwrap_or_else(|| T::zero());
-        for i in 0..n {
-            inv[[i, i]] = inv[[i, i]] + reg_term;
-        }
-
-        Ok(inv)
+        super::utils::general_matrix_inverse(matrix)
     }
 
     fn estimate_condition_number(&self, matrix: &Array2<T>) -> T {
@@ -350,6 +341,74 @@ mod tests {
         // Identity matrix should have condition number 1
         assert!((a_cond - 1.0).abs() < 1e-6);
         assert!((g_cond - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_inverses_are_real_not_identity() {
+        // End-to-end KFAC path: drive non-trivial covariances into the layer state
+        // and confirm the computed inverses are genuine (A · A_inv ≈ I) and are NOT
+        // a silent identity (the previous bug).
+        let layer_info = LayerInfo {
+            name: "dense".to_string(),
+            input_dim: 4,
+            output_dim: 4,
+            layer_type: LayerType::Dense,
+            has_bias: false,
+        };
+        let mut state = KFACLayerState::<f64>::new(layer_info, 0.0);
+
+        // Build a non-identity SPD input covariance: A = B^T B + I.
+        let b = Array2::from_shape_vec(
+            (4, 4),
+            vec![
+                1.0, 0.5, -0.3, 0.2, 0.0, 1.2, 0.7, -0.4, 0.3, -0.1, 0.9, 0.6, -0.2, 0.4, 0.1, 1.1,
+            ],
+        )
+        .expect("shape");
+        let mut a_cov = b.t().dot(&b);
+        for i in 0..4 {
+            a_cov[[i, i]] += 1.0;
+        }
+        state.a_cov = a_cov.clone();
+        // A different non-identity SPD output covariance.
+        let mut g_cov = Array2::<f64>::eye(4) * 3.0;
+        g_cov[[0, 1]] = 0.5;
+        g_cov[[1, 0]] = 0.5;
+        g_cov[[2, 3]] = -0.7;
+        g_cov[[3, 2]] = -0.7;
+        state.g_cov = g_cov.clone();
+
+        // Use zero damping so we can verify the inverse of the raw covariance.
+        state.compute_inverses(0.0, 0.0).expect("inverses computed");
+        assert!(state.is_ready());
+
+        let a_inv = state.a_cov_inv.as_ref().expect("a_inv present");
+        let g_inv = state.g_cov_inv.as_ref().expect("g_inv present");
+
+        // Real inverse: A · A_inv ≈ I and G · G_inv ≈ I.
+        let a_prod = a_cov.dot(a_inv);
+        let g_prod = g_cov.dot(g_inv);
+        let identity: Array2<f64> = Array2::eye(4);
+        for i in 0..4 {
+            for j in 0..4 {
+                assert!((a_prod[[i, j]] - identity[[i, j]]).abs() < 1e-6);
+                assert!((g_prod[[i, j]] - identity[[i, j]]).abs() < 1e-6);
+            }
+        }
+
+        // Regression: the inverse must NOT be the identity for a non-identity input.
+        let mut a_inv_is_identity = true;
+        for i in 0..4 {
+            for j in 0..4 {
+                if (a_inv[[i, j]] - identity[[i, j]]).abs() > 1e-9 {
+                    a_inv_is_identity = false;
+                }
+            }
+        }
+        assert!(
+            !a_inv_is_identity,
+            "Kronecker-factor inverse collapsed to identity (the old bug)"
+        );
     }
 
     #[test]

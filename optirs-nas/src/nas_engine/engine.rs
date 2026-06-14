@@ -1039,12 +1039,45 @@ impl<
     }
 }
 
-// Strategy implementations (placeholder structures for compilation)
-struct RandomStrategy<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
+// Strategy implementations.
+//
+// `RandomStrategy`, `EvolutionaryStrategy`, and `NSGA2Optimizer` are the only
+// three types ever constructed by the factory functions above (every other
+// `SearchStrategyType` / `MultiObjectiveAlgorithm` variant falls back to one of
+// them). They therefore carry real implementations that delegate to the live,
+// tested strategies in `crate::search_strategies` and the complete NSGA-II in
+// `crate::multi_objective`. The remaining never-instantiated structs keep a
+// trivial macro-generated implementation purely so the trait bounds resolve.
+
+/// Random search strategy wrapper.
+///
+/// Holds a live [`crate::search_strategies::RandomSearch`] together with the
+/// search space and batch size so that `generate_candidates` produces a real
+/// batch of randomly-sampled valid architectures.
+struct RandomStrategy<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum> {
+    inner: crate::search_strategies::RandomSearch<T>,
+    search_space: SearchSpaceConfig,
+    batch_size: usize,
 }
-struct EvolutionaryStrategy<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
+
+/// Evolutionary search strategy wrapper.
+///
+/// Holds a live [`crate::search_strategies::EvolutionarySearch`] which performs
+/// tournament selection, crossover and mutation from the search history (and
+/// falls back to random sampling when history is insufficient). Tracks the
+/// best score per generation to drive a real convergence criterion.
+struct EvolutionaryStrategy<
+    T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum,
+> {
+    inner: crate::search_strategies::EvolutionarySearch<T>,
+    search_space: SearchSpaceConfig,
+    batch_size: usize,
+    /// Best overall score observed in each `update_strategy` call, used to
+    /// detect a lack of improvement over the most recent generations.
+    best_score_history: Vec<T>,
+    /// Number of trailing generations without improvement that signals
+    /// convergence.
+    convergence_patience: usize,
 }
 struct BayesianStrategy<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
@@ -1062,9 +1095,24 @@ struct HybridStrategy<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-// Multi-objective optimizer implementations (placeholder)
-struct NSGA2Optimizer<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
+// Multi-objective optimizer implementations.
+//
+// `NSGA2Optimizer` is the only optimizer the factory ever constructs (all
+// `MultiObjectiveAlgorithm` variants fall back to it). It delegates to the
+// complete NSGA-II implementation in `crate::multi_objective`. The remaining
+// optimizer structs keep trivial macro-generated implementations.
+
+/// NSGA-II multi-objective optimizer wrapper that delegates Pareto-front
+/// maintenance, candidate selection and diversity measurement to the complete
+/// [`crate::multi_objective::NSGA2`] implementation.
+struct NSGA2Optimizer<
+    T: Float + Debug + Default + Clone + Send + Sync + 'static + PartialOrd + std::iter::Sum,
+> {
+    /// Live NSGA-II engine holding population, Pareto front and statistics.
+    inner: crate::multi_objective::NSGA2<T>,
+    /// Configured objectives (direction + metric mapping) required by NSGA-II
+    /// to compute dominance.
+    config: MultiObjectiveConfig<T>,
 }
 struct NSGA3Optimizer<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
@@ -1222,8 +1270,10 @@ macro_rules! impl_search_strategy {
     };
 }
 
-impl_search_strategy!(RandomStrategy);
-impl_search_strategy!(EvolutionaryStrategy);
+// NOTE: RandomStrategy and EvolutionaryStrategy have real, hand-written
+// implementations below (see `impl ... SearchStrategy for RandomStrategy` and
+// `... for EvolutionaryStrategy`). Only the never-instantiated strategies use
+// the trivial macro.
 impl_search_strategy!(BayesianStrategy);
 impl_search_strategy!(ReinforcementStrategy);
 impl_search_strategy!(DifferentiableStrategy);
@@ -1289,11 +1339,309 @@ macro_rules! impl_multi_objective_optimizer {
     };
 }
 
-impl_multi_objective_optimizer!(NSGA2Optimizer);
+// NOTE: NSGA2Optimizer has a real, hand-written implementation below that
+// delegates to `crate::multi_objective::NSGA2`. Only the never-instantiated
+// optimizers use the trivial macro.
 impl_multi_objective_optimizer!(NSGA3Optimizer);
 impl_multi_objective_optimizer!(MOEADOptimizer);
 impl_multi_objective_optimizer!(PAESOptimizer);
 impl_multi_objective_optimizer!(SPEA2Optimizer);
+
+// ---------------------------------------------------------------------------
+// Real RandomStrategy implementation
+// ---------------------------------------------------------------------------
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum>
+    RandomStrategy<T>
+{
+    /// Construct a random-search strategy from a NAS configuration. A live
+    /// [`crate::search_strategies::RandomSearch`] is seeded deterministically
+    /// and initialized with the configured search space.
+    pub fn new(config: &NASConfig<T>) -> Result<Self> {
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+
+        let mut inner = crate::search_strategies::RandomSearch::<T>::new(Some(42));
+        inner.initialize(&config.search_space)?;
+
+        // Generate the configured population each round; fall back to a small
+        // non-zero batch so the search always makes progress.
+        let batch_size = if config.population_size > 0 {
+            config.population_size
+        } else {
+            8
+        };
+
+        Ok(Self {
+            inner,
+            search_space: config.search_space.clone(),
+            batch_size,
+        })
+    }
+
+    /// Synthesize a single valid architecture without indexing into the
+    /// (possibly empty) component config list. Used when the search space
+    /// provides no per-component hyperparameter configs but still declares the
+    /// component vocabulary via `component_types`.
+    fn synthesize_from_component_types(&self, index: usize) -> OptimizerArchitecture<T> {
+        let component_label = self
+            .search_space
+            .component_types
+            .first()
+            .map(|ct| format!("{:?}", ct))
+            .unwrap_or_else(|| "Adam".to_string());
+
+        OptimizerArchitecture {
+            components: vec![component_label],
+            parameters: HashMap::new(),
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: format!("random_arch_{}", index),
+        }
+    }
+}
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum> SearchStrategy<T>
+    for RandomStrategy<T>
+{
+    fn generate_candidates(
+        &mut self,
+        history: &VecDeque<SearchResult<T>>,
+    ) -> Result<Vec<OptimizerArchitecture<T>>> {
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+
+        let mut candidates = Vec::with_capacity(self.batch_size);
+        for idx in 0..self.batch_size {
+            // The live RandomSearch indexes into `search_space.components`; when
+            // that list is empty we synthesize a valid architecture instead of
+            // delegating (which would panic on an empty slice).
+            if self.search_space.components.is_empty() {
+                candidates.push(self.synthesize_from_component_types(idx));
+            } else {
+                let architecture = self
+                    .inner
+                    .generate_architecture(&self.search_space, history)?;
+                candidates.push(architecture);
+            }
+        }
+        Ok(candidates)
+    }
+
+    fn update_strategy(&mut self, results: &[SearchResult<T>]) -> Result<()> {
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+        self.inner.update_with_results(results)
+    }
+
+    fn has_converged(&self) -> bool {
+        // Random search never converges by construction; it keeps exploring.
+        false
+    }
+
+    fn strategy_name(&self) -> &str {
+        "RandomStrategy"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Real EvolutionaryStrategy implementation
+// ---------------------------------------------------------------------------
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum>
+    EvolutionaryStrategy<T>
+{
+    /// Construct an evolutionary strategy from a NAS configuration, wrapping a
+    /// live [`crate::search_strategies::EvolutionarySearch`] sized to the
+    /// configured population.
+    pub fn new(config: &NASConfig<T>) -> Result<Self> {
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+
+        let population_size = config.population_size.max(2);
+        // Reuse the early-stopping patience as the convergence window when
+        // available; otherwise fall back to a sensible default.
+        let convergence_patience = config.early_stopping.patience.max(5);
+
+        let mut inner = crate::search_strategies::EvolutionarySearch::<T>::new(
+            population_size,
+            0.1, // mutation rate
+            0.8, // crossover rate
+            3,   // tournament size
+        );
+        inner.initialize(&config.search_space)?;
+
+        let batch_size = if config.population_size > 0 {
+            config.population_size
+        } else {
+            8
+        };
+
+        Ok(Self {
+            inner,
+            search_space: config.search_space.clone(),
+            batch_size,
+            best_score_history: Vec::new(),
+            convergence_patience,
+        })
+    }
+}
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum> SearchStrategy<T>
+    for EvolutionaryStrategy<T>
+{
+    fn generate_candidates(
+        &mut self,
+        history: &VecDeque<SearchResult<T>>,
+    ) -> Result<Vec<OptimizerArchitecture<T>>> {
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+
+        // The live EvolutionarySearch performs tournament selection, crossover
+        // and mutation from `history` when enough evaluated results exist, and
+        // otherwise returns members of its (randomly-seeded) population. Calling
+        // it `batch_size` times yields a generation of offspring.
+        let mut candidates = Vec::with_capacity(self.batch_size);
+        for _ in 0..self.batch_size {
+            let architecture = self
+                .inner
+                .generate_architecture(&self.search_space, history)?;
+            candidates.push(architecture);
+        }
+        Ok(candidates)
+    }
+
+    fn update_strategy(&mut self, results: &[SearchResult<T>]) -> Result<()> {
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+
+        // Record the best overall score of this generation for convergence
+        // detection before forwarding the results to the inner strategy (which
+        // adapts its mutation rate and tracks performance statistics).
+        if !results.is_empty() {
+            let best = results
+                .iter()
+                .map(|r| r.evaluation_results.overall_score)
+                .fold(
+                    T::neg_infinity(),
+                    |acc, score| {
+                        if score > acc {
+                            score
+                        } else {
+                            acc
+                        }
+                    },
+                );
+            if best > T::neg_infinity() {
+                self.best_score_history.push(best);
+            }
+        }
+
+        self.inner.update_with_results(results)
+    }
+
+    fn has_converged(&self) -> bool {
+        // Converged when the best score has not improved over the last
+        // `convergence_patience` generations. Requires at least one generation
+        // beyond the window so a real comparison is possible.
+        let window = self.convergence_patience;
+        if self.best_score_history.len() <= window {
+            return false;
+        }
+
+        let len = self.best_score_history.len();
+        let recent_best = self.best_score_history[len - window..]
+            .iter()
+            .fold(T::neg_infinity(), |acc, &s| if s > acc { s } else { acc });
+
+        // Best score achieved strictly before the recent window.
+        let prior_best = self.best_score_history[..len - window]
+            .iter()
+            .fold(T::neg_infinity(), |acc, &s| if s > acc { s } else { acc });
+
+        // No improvement (recent window did not exceed the prior best).
+        recent_best <= prior_best
+    }
+
+    fn strategy_name(&self) -> &str {
+        "EvolutionaryStrategy"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Real NSGA2Optimizer implementation (delegates to crate::multi_objective)
+// ---------------------------------------------------------------------------
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + PartialOrd + std::iter::Sum>
+    NSGA2Optimizer<T>
+{
+    /// Construct an NSGA-II optimizer from a multi-objective configuration. The
+    /// inner [`crate::multi_objective::NSGA2`] is created with standard
+    /// crossover/mutation probabilities; its population is (re)sized per update
+    /// so that every individual carries real objective values.
+    pub fn new(config: &MultiObjectiveConfig<T>) -> Result<Self> {
+        use crate::multi_objective::MultiObjectiveOptimizer as InnerMultiObjective;
+
+        // Population size is set per-update in `update_pareto_front`; seed with
+        // a nominal value here. Install the objective configuration so the
+        // inner instance can compute objective vectors (used by
+        // `calculate_diversity`).
+        let mut inner = crate::multi_objective::NSGA2::<T>::new(1, 0.9, 0.1);
+        inner.initialize(config)?;
+        Ok(Self {
+            inner,
+            config: config.clone(),
+        })
+    }
+}
+
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + PartialOrd + std::iter::Sum>
+    MultiObjectiveOptimizer<T> for NSGA2Optimizer<T>
+{
+    fn update_pareto_front(
+        &mut self,
+        results: &[SearchResult<T>],
+    ) -> Result<multi_objective::ParetoFront<T>> {
+        use crate::multi_objective::MultiObjectiveOptimizer as InnerMultiObjective;
+
+        if results.is_empty() {
+            return Ok(self.inner.get_pareto_front().clone());
+        }
+
+        // Build a fresh NSGA-II instance carrying the objective configuration
+        // and delegate to the complete non-dominated-sort pipeline so the
+        // returned front contains exactly the non-dominated solutions.
+        let mut nsga2 = crate::multi_objective::NSGA2::<T>::new(results.len(), 0.9, 0.1);
+        nsga2.initialize(&self.config)?;
+        let front = nsga2.pareto_front_from_results(results);
+        self.inner = nsga2;
+        Ok(front)
+    }
+
+    fn select_candidates(
+        &self,
+        candidates: &[SearchResult<T>],
+        population_size: usize,
+    ) -> Result<Vec<SearchResult<T>>> {
+        use crate::multi_objective::MultiObjectiveOptimizer as InnerMultiObjective;
+
+        if candidates.is_empty() || population_size == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Delegate ranking to the real NSGA-II non-dominated sort + crowding
+        // distance via a dedicated instance so `&self` remains immutable.
+        let mut ranker = crate::multi_objective::NSGA2::<T>::new(candidates.len(), 0.9, 0.1);
+        ranker.initialize(&self.config)?;
+        let selected_indices = ranker.select_by_rank_and_crowding(candidates, population_size);
+
+        Ok(selected_indices
+            .into_iter()
+            .map(|idx| candidates[idx].clone())
+            .collect())
+    }
+
+    fn calculate_diversity(&self, population: &[SearchResult<T>]) -> f64 {
+        // Mean pairwise distance in objective space, computed by the NSGA-II
+        // helper using the same objective mapping as the optimization path.
+        self.inner.mean_objective_distance(population)
+    }
+}
 
 // Implementation for DefaultArchitectureController
 impl<T: Float + Debug + Send + Sync + 'static> DefaultArchitectureController<T> {
@@ -1335,5 +1683,311 @@ impl<T: Float + Debug + Send + Sync + 'static> ArchitectureController<T>
 
     fn validate(&self, _architecture: &OptimizerArchitecture<T>) -> Result<bool> {
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nas_engine::config::{
+        MultiObjectiveAlgorithm, ObjectiveConfig, ObjectivePriority, ObjectiveType,
+        OptimizationDirection,
+    };
+    use crate::nas_engine::{
+        ArchitectureEncoding, EvaluationResults, ResourceUsage, SearchResultMetadata,
+    };
+    use crate::EvaluationMetric;
+
+    /// Build a minimal valid architecture tagged with `id`.
+    fn make_architecture(id: &str) -> OptimizerArchitecture<f64> {
+        OptimizerArchitecture {
+            components: vec!["Adam".to_string()],
+            parameters: HashMap::new(),
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: id.to_string(),
+        }
+    }
+
+    /// Build a `SearchResult` whose first objective maps to
+    /// [`EvaluationMetric::Accuracy`] and second to
+    /// [`EvaluationMetric::MemoryUsage`], with the given `overall_score`.
+    fn make_search_result(id: &str, accuracy: f64, memory: f64, overall: f64) -> SearchResult<f64> {
+        let mut metric_scores = HashMap::new();
+        metric_scores.insert(EvaluationMetric::Accuracy, accuracy);
+        metric_scores.insert(EvaluationMetric::MemoryUsage, memory);
+        metric_scores.insert(EvaluationMetric::FinalPerformance, overall);
+
+        let evaluation_results = EvaluationResults {
+            metric_scores,
+            overall_score: overall,
+            confidence_intervals: HashMap::new(),
+            evaluation_time: Duration::from_secs(0),
+            success: true,
+            error_message: None,
+            cv_results: None,
+            benchmark_results: HashMap::new(),
+            training_trajectory: Vec::new(),
+        };
+
+        SearchResult {
+            architecture: make_architecture(id),
+            evaluation_results,
+            generation: 0,
+            search_time: 0.0,
+            resource_usage: ResourceUsage::default(),
+            encoding: ArchitectureEncoding::default(),
+            metadata: SearchResultMetadata::default(),
+        }
+    }
+
+    /// Two minimization objectives mapped onto distinct evaluation metrics.
+    fn two_minimize_objectives() -> Vec<ObjectiveConfig<f64>> {
+        vec![
+            ObjectiveConfig {
+                name: "accuracy".to_string(),
+                objective_type: ObjectiveType::Accuracy,
+                direction: OptimizationDirection::Minimize,
+                weight: 0.5,
+                priority: ObjectivePriority::High,
+                normalization_bounds: None,
+            },
+            ObjectiveConfig {
+                name: "memory".to_string(),
+                objective_type: ObjectiveType::MemoryUsage,
+                direction: OptimizationDirection::Minimize,
+                weight: 0.5,
+                priority: ObjectivePriority::High,
+                normalization_bounds: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_random_strategy_generates_non_empty_valid_candidates() {
+        let config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        let mut strategy = RandomStrategy::<f64>::new(&config).expect("construct RandomStrategy");
+
+        let history: VecDeque<SearchResult<f64>> = VecDeque::new();
+        let candidates = strategy
+            .generate_candidates(&history)
+            .expect("generate candidates");
+
+        // A full population worth of candidates must be produced.
+        assert_eq!(candidates.len(), config.population_size);
+        assert!(!candidates.is_empty());
+
+        // Each candidate must be a valid architecture: non-empty components and
+        // a non-empty identifier.
+        for candidate in &candidates {
+            assert!(
+                !candidate.components.is_empty(),
+                "candidate must have at least one component"
+            );
+            assert!(
+                !candidate.architecture_id.is_empty(),
+                "candidate must have an identifier"
+            );
+        }
+    }
+
+    #[test]
+    fn test_random_strategy_handles_empty_component_configs() {
+        // Default search space declares `component_types` but leaves the
+        // per-component `components` list empty; the strategy must still
+        // synthesize valid candidates without panicking.
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.search_space.components.clear();
+        config.population_size = 5;
+
+        let mut strategy = RandomStrategy::<f64>::new(&config).expect("construct RandomStrategy");
+        let candidates = strategy
+            .generate_candidates(&VecDeque::new())
+            .expect("generate candidates");
+
+        assert_eq!(candidates.len(), 5);
+        for candidate in &candidates {
+            assert!(!candidate.components.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_evolutionary_strategy_with_history_generates_candidates() {
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.population_size = 6;
+
+        let mut strategy =
+            EvolutionaryStrategy::<f64>::new(&config).expect("construct EvolutionaryStrategy");
+
+        // Build a non-empty history with enough evaluated results for the
+        // evolutionary step (population_size results).
+        let mut history: VecDeque<SearchResult<f64>> = VecDeque::new();
+        for i in 0..config.population_size {
+            history.push_back(make_search_result(
+                &format!("hist_{}", i),
+                0.1 * i as f64,
+                0.2 * i as f64,
+                0.5 + 0.05 * i as f64,
+            ));
+        }
+
+        let candidates = strategy
+            .generate_candidates(&history)
+            .expect("generate candidates");
+
+        assert_eq!(candidates.len(), config.population_size);
+        assert!(!candidates.is_empty());
+        for candidate in &candidates {
+            assert!(!candidate.components.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_evolutionary_strategy_empty_history_falls_back_to_random() {
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.population_size = 4;
+
+        let mut strategy =
+            EvolutionaryStrategy::<f64>::new(&config).expect("construct EvolutionaryStrategy");
+
+        // Empty history: the inner strategy returns members of its randomly
+        // seeded population, so candidates are still produced.
+        let candidates = strategy
+            .generate_candidates(&VecDeque::new())
+            .expect("generate candidates");
+
+        assert_eq!(candidates.len(), 4);
+        assert!(!candidates.is_empty());
+    }
+
+    #[test]
+    fn test_evolutionary_strategy_convergence_criterion() {
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.population_size = 4;
+        config.early_stopping.patience = 3;
+
+        let mut strategy =
+            EvolutionaryStrategy::<f64>::new(&config).expect("construct EvolutionaryStrategy");
+
+        // Fresh strategy has no history -> not converged.
+        assert!(!strategy.has_converged());
+
+        // Feed a stagnating best score (no improvement) over more than the
+        // patience window -> converged.
+        for _ in 0..(config.early_stopping.patience.max(5) + 2) {
+            let results = vec![make_search_result("stag", 1.0, 1.0, 0.5)];
+            strategy.update_strategy(&results).expect("update strategy");
+        }
+        assert!(strategy.has_converged());
+    }
+
+    #[test]
+    fn test_nsga2_optimizer_update_pareto_front_keeps_non_dominated() {
+        let config = MultiObjectiveConfig::<f64> {
+            algorithm: MultiObjectiveAlgorithm::NSGA2,
+            objectives: two_minimize_objectives(),
+            ..Default::default()
+        };
+
+        let mut optimizer = NSGA2Optimizer::<f64>::new(&config).expect("construct NSGA2Optimizer");
+
+        // A = (1,2), B = (2,1) are mutually non-dominated.
+        // C = (3,3) is dominated by both A and B (minimization).
+        let results = vec![
+            make_search_result("A", 1.0, 2.0, 0.9),
+            make_search_result("B", 2.0, 1.0, 0.8),
+            make_search_result("C", 3.0, 3.0, 0.1),
+        ];
+
+        let front = optimizer
+            .update_pareto_front(&results)
+            .expect("update pareto front");
+
+        // Exactly the two non-dominated solutions survive.
+        assert_eq!(front.solutions.len(), 2);
+        assert_eq!(front.metrics.num_solutions, 2);
+
+        let ids: std::collections::HashSet<String> = front
+            .solutions
+            .iter()
+            .map(|s| s.architecture.architecture_id.clone())
+            .collect();
+        assert!(ids.contains("A"));
+        assert!(ids.contains("B"));
+        assert!(!ids.contains("C"));
+    }
+
+    #[test]
+    fn test_nsga2_optimizer_select_candidates_prefers_non_dominated() {
+        let config = MultiObjectiveConfig::<f64> {
+            objectives: two_minimize_objectives(),
+            ..Default::default()
+        };
+
+        let optimizer = NSGA2Optimizer::<f64>::new(&config).expect("construct NSGA2Optimizer");
+
+        let results = vec![
+            make_search_result("A", 1.0, 2.0, 0.9), // rank 0
+            make_search_result("B", 2.0, 1.0, 0.8), // rank 0
+            make_search_result("C", 3.0, 3.0, 0.1), // dominated
+        ];
+
+        // Selecting the best 2 must return the two non-dominated solutions.
+        let selected = optimizer
+            .select_candidates(&results, 2)
+            .expect("select candidates");
+        assert_eq!(selected.len(), 2);
+        let ids: std::collections::HashSet<String> = selected
+            .iter()
+            .map(|s| s.architecture.architecture_id.clone())
+            .collect();
+        assert!(ids.contains("A"));
+        assert!(ids.contains("B"));
+    }
+
+    #[test]
+    fn test_nsga2_optimizer_diversity_is_non_constant() {
+        let config = MultiObjectiveConfig::<f64> {
+            objectives: two_minimize_objectives(),
+            ..Default::default()
+        };
+
+        let optimizer = NSGA2Optimizer::<f64>::new(&config).expect("construct NSGA2Optimizer");
+
+        // Identical objectives -> zero diversity.
+        let identical = vec![
+            make_search_result("A", 1.0, 1.0, 0.5),
+            make_search_result("B", 1.0, 1.0, 0.5),
+        ];
+        let div_identical = optimizer.calculate_diversity(&identical);
+        assert!(div_identical.abs() < 1e-12);
+
+        // Spread-out objectives -> strictly positive diversity (not the old
+        // hard-coded 0.5 constant).
+        let spread = vec![
+            make_search_result("A", 0.0, 0.0, 0.5),
+            make_search_result("B", 3.0, 4.0, 0.5),
+        ];
+        let div_spread = optimizer.calculate_diversity(&spread);
+        // Euclidean distance between (0,0) and (3,4) is exactly 5.
+        assert!((div_spread - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_nas_engine_generates_non_empty_candidates_end_to_end() {
+        // A full NASEngine built from a minimal config must produce a
+        // non-empty, valid candidate batch through its search strategy.
+        let config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        let mut engine = NeuralArchitectureSearch::<f64>::new(config).expect("construct NASEngine");
+
+        let candidates = engine.generate_candidates().expect("generate candidates");
+        assert!(
+            !candidates.is_empty(),
+            "engine must produce at least one candidate architecture"
+        );
+        for candidate in &candidates {
+            assert!(!candidate.components.is_empty());
+        }
     }
 }
