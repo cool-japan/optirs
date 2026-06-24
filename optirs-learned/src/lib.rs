@@ -107,32 +107,49 @@ pub mod adaptive;
 pub mod common;
 pub mod continual_learning;
 pub mod cross_domain_transfer;
+pub mod darts_optimizer_search;
 pub mod domain_optimizers;
 pub mod episodic_memory_impl;
 pub mod error;
 pub mod few_shot;
 pub mod few_shot_impl;
 pub mod forward_mode;
+pub mod gnn_optimizer;
 pub mod higher_order;
 pub mod lstm;
 pub mod meta_learning;
+pub mod ntm_optimizer;
 pub mod online_maml;
 pub mod reverse_mode;
 pub mod transformer;
 pub mod transformer_based_optimizer;
+pub mod zero_shot;
 
 pub use common::{
     LearnedOptimizerConfig, MetaOptimizationStrategy, NeuralOptimizerMetrics, NeuralOptimizerType,
     OptimizerState, StateMetadata, TaskContext, TaskPerformance,
 };
 pub use continual_learning::{ElasticWeightConsolidation, NetworkColumn, ProgressiveNetworks};
+pub use darts_optimizer_search::{
+    ClosureObjective, DartsConfig, DartsOptimizerSearch, DifferentiableObjective,
+    DiscoveredOptimizer, PrimitiveHyperparams, PrimitiveState, QuadraticBowl, Rosenbrock,
+    SearchOutcome, UpdatePrimitive,
+};
 pub use error::{OptimError, Result};
 pub use forward_mode::{DualNumber, ForwardModeEngine, ForwardModeStats, VectorDual};
+pub use gnn_optimizer::{
+    GnnOptimizer, GnnOptimizerConfig, GraphTopology, MessageActivation, MessageAggregation,
+};
 pub use higher_order::{
     HessianConfig, HigherOrderConfig, HigherOrderEngine, HigherOrderStats, HvpMode, LayerInfo,
     LayerType, MixedPartialMethod, MixedPartials, SparseHessian, ThirdOrderTensor,
 };
 pub use lstm::LSTMOptimizer;
+pub use ntm_optimizer::{NtmOptimizer, NtmOptimizerConfig};
 pub use reverse_mode::{GradientAccumulator, GradientContext, ReverseModeEngine, ReverseModeStats};
 pub use transformer::TransformerOptimizer;
 pub use transformer_based_optimizer::TransformerOptimizer as TransformerBasedOptimizer;
+pub use zero_shot::{
+    MetaExample, MetaFeatures, OptimizerHyperparameters, OptimizerKind, OptimizerRecommendation,
+    QuadraticProbe, RosenbrockProbe, TaskProbe, ZeroShotConfig, ZeroShotSelector,
+};

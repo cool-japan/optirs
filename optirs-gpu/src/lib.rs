@@ -82,14 +82,32 @@ use scirs2_core::ndarray::{Array, Dimension};
 use scirs2_core::numeric::Float;
 
 pub mod backends;
+pub mod kernel_fusion;
 pub mod kernels;
 pub mod memory;
 pub mod multi_gpu;
+pub mod occupancy;
+pub mod quantization;
+pub mod sparse_optimizer;
 pub mod tensor_cores;
 pub mod utils;
 
 pub use backends::GpuBackend;
+pub use kernel_fusion::{FusionGraph, FusionGroup, FusionOp, FusionPlan, FusionPlanner, OpKind};
 pub use memory::MemoryPool;
+pub use occupancy::{
+    calculate_occupancy, optimal_block_size, KernelResourceUsage, OccupancyLimiter,
+    OccupancyResult, SmResourceLimits,
+};
+pub use quantization::{
+    fake_quant_backward, fake_quant_fp8, fake_quant_int, fake_quant_int_per_channel,
+    per_channel_params, Fp8Format, IntDtype, QatConfig, QatOptimizer, QuantParams, QuantScheme,
+    QuantTarget, RoundingMode,
+};
+pub use sparse_optimizer::{
+    CooGradient, CsrGradient, LazyAdamMode, SparseAdam, SparseAdamConfig, SparseAdamTable,
+    SparseSgd, SparseSgdConfig, SparseSgdTable,
+};
 
 /// Error type for GPU optimizer operations
 #[derive(Debug, thiserror::Error)]

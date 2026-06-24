@@ -89,6 +89,7 @@ pub mod performance_prediction;
 pub mod performance_profiler;
 pub mod performance_regression_detector;
 pub mod regression_tester;
+pub mod report_templates;
 pub mod security_auditor;
 
 // Re-export common types for convenience
@@ -104,6 +105,9 @@ pub use mod_impl::visualization::{
     VisualizationExport,
 };
 
+// Re-export report generation types
+pub use report_templates::{ReportFormat, ReportTemplate};
+
 /// Prelude module for common imports
 pub mod prelude {
     pub use crate::{
@@ -116,6 +120,8 @@ pub mod prelude {
         ComparisonMetric, OptimizerDashboard, OptimizerStateSnapshot, OptimizerStateVisualizer,
         VisualizationExport,
     };
+
+    pub use crate::report_templates::{ReportFormat, ReportTemplate};
 
     pub use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
     pub use scirs2_core::random::{thread_rng, Rng};

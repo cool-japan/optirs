@@ -119,8 +119,10 @@ pub mod domain_specific_nas;
 pub mod error;
 pub mod evaluation;
 pub mod few_shot_architecture;
+pub mod hardware_cost;
 pub mod hyperparameter;
 pub mod multi_objective;
+pub mod multimodal_nas;
 pub mod nas_engine;
 pub mod progressive;
 pub mod search_strategies;
@@ -148,6 +150,15 @@ pub use error::{OptimError, Result};
 pub use few_shot_architecture::{
     ArchitectureExample, DistanceMetric, FewShotAlgorithm, FewShotArchitectureOptimizer,
     FewShotConfig, FewShotPrediction,
+};
+pub use hardware_cost::{
+    ActivationKind, Bottleneck, CostReport, HardwareCostModel, HardwareProfile, LatencyLookupTable,
+    LatencyPrediction, LatencySource, LayerKind, LayerSignature, LayerSpec, PerLayerCost, PoolKind,
+    RooflineResult,
+};
+pub use multimodal_nas::{
+    FusionOp, Modality, ModalityEncoder, MultimodalArchitecture, MultimodalEvaluation,
+    MultimodalLayer, MultimodalNasEngine, MultimodalSearchSpace, MultimodalValidationError,
 };
 pub use search_strategies::SearchStrategy;
 pub use speech_nas::{
