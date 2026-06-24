@@ -195,6 +195,9 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 - [x] FedProx with proximal term (distributed/fedprox.rs)
 - [x] Differential privacy integration — Rényi DP accountant with tight subsampled-Gaussian composition (`optirs-core/src/privacy/renyi_accountant.rs`; 20 tests)
 - [x] Secure aggregation protocols — Bonawitz-style pairwise additive masking with quantization, modular arithmetic, dropout reconstruction (`optirs-core/src/privacy/secure_aggregation.rs`; 32 tests)
+- [x] Bandwidth-optimal ring all-reduce + all-gather — segmented reduce-scatter / all-gather collective with a `CollectiveTransport` trait and in-memory `LocalTransport`, reduce ops sum/mean/max/min/product (`optirs-core/src/distributed/ring_allreduce.rs`; 14 tests) (2026-06-24)
+- [x] Pipeline parallelism (GPipe + 1F1B) — micro-batch schedulers, exact DP minimax stage partitioning, bubble-fraction / utilization / activation-stash / makespan metrics (`optirs-core/src/distributed/pipeline_parallel.rs`; 13 tests) (2026-06-24)
+- [x] Elastic training — dynamic world-size join/leave state machine, block + rendezvous (HRW) data re-sharding, linear LR scaling on resize, epoch snapshots (`optirs-core/src/distributed/elastic.rs`; 13 tests) (2026-06-24)
 
 ### Developer Experience
 - [x] Gradient flow visualization (GradientFlowAnalyzer with SVG output, vanishing/exploding detection)

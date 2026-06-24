@@ -4,7 +4,7 @@
 
 **Current Version**: v0.3.1
 **Release Date**: 2026-03-27
-**Total Tests**: 1,249 tests passing + 82 doc tests (100% pass rate, 9 skipped, 4 doc tests ignored)
+**Total Tests**: 2,004 unit/integration tests passing (`cargo nextest --workspace --all-features`; 9 skipped) + doc tests
 **SLoC**: 254,494 lines of Rust code (985 files, 325,228 total lines)
 **SciRS2 Compliance**: 100%
 
@@ -186,16 +186,16 @@
 ## Future Work (v0.4.0+)
 
 ### Learned Optimizers
-- [ ] Transformer-based optimization improvements
+- [ ] Transformer-based optimization improvements — open-ended future enhancement to the existing transformer optimizers (`optirs-learned`); deferred to v0.4.0+ (not in the v0.3.2 algorithm-module scope)
 
 ### Neural Architecture Search
-- [ ] Hardware-aware NAS enhancements
-- [ ] Multi-objective search improvements
+- [x] Hardware-aware NAS enhancements — analytical roofline cost models (`optirs-nas/src/hardware_cost.rs`; see optirs-nas TODO) (2026-06-24)
+- [ ] Multi-objective search improvements — open-ended future enhancement; core multi-objective NAS (MOEA/D, SMS-EMOA, NSGA-II/III, ε-dominance) already ships in `optirs-nas/src/multi_objective.rs`; deferred to v0.4.0+
 
 ### Distributed Training
-- [ ] Multi-GPU ring-allreduce optimization
-- [ ] Pipeline parallelism
-- [ ] Elastic training with dynamic workers
+- [x] Multi-GPU ring-allreduce optimization (`optirs-core/src/distributed/ring_allreduce.rs`; bandwidth-optimal segmented ring all-reduce + all-gather) (2026-06-24)
+- [x] Pipeline parallelism (`optirs-core/src/distributed/pipeline_parallel.rs`; GPipe + 1F1B schedulers) (2026-06-24)
+- [x] Elastic training with dynamic workers (`optirs-core/src/distributed/elastic.rs`; join/leave state machine + rendezvous re-sharding) (2026-06-24)
 
 ### Quantum-Inspired Methods (v0.3.2 progress — landed on branch 0.3.2)
 - [x] Quantum annealing simulation (`optirs-core/src/quantum_inspired/annealing.rs`)
@@ -234,6 +234,37 @@
 ### AutoML (v0.3.2 progress)
 - [x] AutoML pipeline coordinator (`optirs-nas/src/automl_pipeline/` — preprocessing, feature engineering, model selection, ensembling)
 
+### Autonomous implementation loop (/ucont, 2026-06-24) — 16 new pure-Rust algorithm modules
+All build + clippy (`-D warnings`)-clean + tested; full workspace green (`cargo nextest --workspace --all-features`: 2,004 passed, 9 skipped; `cargo clippy --workspace --all-features --all-targets -- -D warnings`: 0 diagnostics).
+
+**optirs-core / distributed**
+- [x] Ring all-reduce + all-gather (`optirs-core/src/distributed/ring_allreduce.rs`; 14 tests)
+- [x] Pipeline parallelism — GPipe + 1F1B (`optirs-core/src/distributed/pipeline_parallel.rs`; 13 tests)
+- [x] Elastic training (`optirs-core/src/distributed/elastic.rs`; 13 tests)
+
+**optirs-nas**
+- [x] Analytical hardware-aware cost models / roofline (`optirs-nas/src/hardware_cost.rs`; 18 tests)
+- [x] Multimodal NAS + `DomainType::Multimodal` (`optirs-nas/src/multimodal_nas/`; 28 tests)
+
+**optirs-learned**
+- [x] GNN optimizer (`optirs-learned/src/gnn_optimizer.rs`; 14 tests)
+- [x] DARTS-over-optimizers (`optirs-learned/src/darts_optimizer_search.rs`; 14 tests)
+- [x] Zero-shot optimizer selection (`optirs-learned/src/zero_shot.rs`; 17 tests)
+- [x] NTM memory-augmented optimizer (`optirs-learned/src/ntm_optimizer.rs`; 20 tests)
+- [x] Real-time adaptation controller (`optirs-learned/src/realtime_adaptation.rs`; 22 tests)
+- [x] Quantum-learned adapter (`optirs-learned/src/quantum_learned.rs`; 16 tests)
+
+**optirs-gpu** (host-side reference logic; no fabricated device behavior)
+- [x] CUDA occupancy calculator + optimal block size (`optirs-gpu/src/occupancy.rs`; 17 tests)
+- [x] Kernel-fusion planner (`optirs-gpu/src/kernel_fusion.rs`; 13 tests)
+- [x] Sparse optimizer — COO/CSR, lazy Adam/SGD (`optirs-gpu/src/sparse_optimizer.rs`; 21 tests)
+- [x] Quantization / QAT — int8/int4/fp8, STE (`optirs-gpu/src/quantization.rs`; 22 tests)
+
+**optirs-bench**
+- [x] Report generator / templates (`optirs-bench/src/report_templates.rs`; 9 tests)
+
+Items requiring external hardware / Google-Cloud APIs / framework runtimes / web & profiler stacks were moved to documented **"Out of scope for autonomous implementation"** sections in the optirs-gpu, optirs-bench, and optirs-tpu TODOs (not faked, not checked off).
+
 ---
 
 ## Test Coverage Summary
@@ -248,7 +279,8 @@ optirs-nas:      63 tests passing
 optirs-tpu:      58 tests passing
 optirs-wasm:     29 tests passing
 
-Total: 1,249 unit tests + 82 doc tests (9 skipped, 4 doc tests ignored)
+Total (after v0.3.2 /ucont loop): 2,004 unit/integration tests passing, 9 skipped
+(`cargo nextest --workspace --all-features`). Per-module counts above are the v0.3.1 snapshot.
 ```
 
 ### Test Quality

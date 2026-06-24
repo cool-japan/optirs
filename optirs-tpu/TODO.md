@@ -79,35 +79,37 @@
 
 ---
 
-## Future Work (v0.4.0+)
+## Out of scope for autonomous implementation
 
-### Google Cloud Integration
+Every remaining optirs-tpu item requires Google Cloud TPU APIs, cloud IAM/networking, or live pod hardware. These are intentionally NOT auto-implemented — faking them would invent cloud/hardware behavior. (Note: generic Byzantine-robust aggregation and federated optimization already exist as pure-Rust logic in `optirs-core` — `privacy/federated/byzantine_aggregation.rs` and `distributed/fedprox.rs`; the items below are specifically the Cloud-TPU-pod integrations of those ideas.)
+
+### Google Cloud Integration (Cloud TPU API / billing)
 - [ ] Cloud TPU API integration improvements
 - [ ] Preemptible TPU handling
 - [ ] Multi-region TPU coordination
 - [ ] Cost tracking and optimization
 - [ ] Automatic resource scaling
 
-### Authentication and Security
+### Authentication and Security (cloud IAM / networking)
 - [ ] Enhanced service account authentication
 - [ ] OAuth2 improvements
 - [ ] VPC and firewall configuration
 - [ ] Audit logging
 - [ ] RBAC integration
 
-### Advanced Scaling
+### Advanced Scaling (live pod orchestration)
 - [ ] Dynamic scaling algorithms
 - [ ] Cost-aware scaling decisions
 - [ ] Predictive scaling
 - [ ] Graceful scaling without interruption
 
-### Fault Tolerance
+### Fault Tolerance (live pod hardware)
 - [ ] Enhanced checkpoint and resume
 - [ ] Automatic failure detection
 - [ ] Redundant computation
 - [ ] Byzantine fault tolerance
 
-### Research Features
+### Research Features (external hardware / cloud)
 - [ ] TPU Edge integration
 - [ ] Quantum-TPU hybrid optimization
 - [ ] Federated learning support

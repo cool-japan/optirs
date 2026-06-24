@@ -99,35 +99,41 @@
 
 ---
 
-## Future Work (v0.4.0+)
+## v0.3.2 progress — host-side algorithm modules (/ucont, 2026-06-24)
 
-### Multi-GPU Coordination
+Pure-Rust reference logic on the CPU host (no fabricated device behavior):
+- [x] Kernel fusion for reduced memory bandwidth (`src/kernel_fusion.rs` — elementwise op-graph fusion planner: DAG with fusion-legality (shape / dependency hazards), Kahn topo + union-find grouping, acyclicity guard, bytes-moved fused-vs-unfused cost model; 13 tests)
+- [x] Optimal thread block sizing algorithms (`src/occupancy.rs` — `optimal_block_size()` search over the CUDA occupancy model)
+- [x] Occupancy optimization (`src/occupancy.rs` — CUDA occupancy calculator: registers / shared-mem / warps / blocks-per-SM limits → warps-per-SM and occupancy %, sm_70…sm_90 resource limits from `DeviceCapabilities`; 17 tests)
+- [x] Sparse tensor optimization kernels (`src/sparse_optimizer.rs` — COO / CSR gradients, lazy sparse Adam (TF LazyAdam + dormancy-decay catch-up) and sparse SGD touching only nonzero coordinates, global-step bias correction; 21 tests)
+- [x] Quantized model optimization (`src/quantization.rs` — QAT: int8 / int4 + fp8 (E4M3 / E5M2) fake-quant, per-tensor & per-channel scales, straight-through estimator, unbiased stochastic rounding, FP32-master-weight `QatOptimizer`; 22 tests)
+
+---
+
+## Out of scope for autonomous implementation
+
+These require real GPU hardware, vendor collectives, framework runtimes, or OS/driver APIs and are intentionally NOT auto-implemented — faking them would invent device behavior:
+
+### Multi-GPU coordination (real multi-GPU / NCCL/RCCL)
 - [ ] Data parallel training improvements
 - [ ] Model parallel training support
 - [ ] NCCL integration for gradient synchronization
 - [ ] Load balancing across heterogeneous GPUs
 - [ ] Fault tolerance and recovery
 
-### Performance Optimization
-- [ ] Kernel fusion for reduced memory bandwidth
-- [ ] Optimal thread block sizing algorithms
+### Performance optimization (real-kernel tuning on device)
 - [ ] Memory coalescing optimization
 - [ ] Shared memory utilization improvements
-- [ ] Occupancy optimization
-
-### Specialized Operations
-- [ ] Sparse tensor optimization kernels
-- [ ] Quantized model optimization
 - [ ] Custom operator compilation
 - [ ] Tensor core utilization improvements
 
-### Integration Features
+### Framework interop (external tensor runtimes)
 - [ ] PyTorch tensor integration
 - [ ] TensorFlow tensor compatibility
 - [ ] ONNX model optimization
 - [ ] Custom framework plugins
 
-### Platform-Specific
+### Platform-specific backends (vendor / OS APIs)
 - [ ] Windows DirectX consideration
 - [ ] Linux AMDGPU optimization
 - [ ] Mobile GPU support (iOS/Android)

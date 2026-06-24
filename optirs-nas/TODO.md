@@ -74,6 +74,7 @@
 - [x] Memory usage estimation
 - [x] Power consumption modeling
 - [x] Device-specific optimization
+- [x] Analytical hardware cost models (`src/hardware_cost.rs` — per-layer FLOPs / params / activation-memory, latency roofline (compute- vs bandwidth-bound), energy model, `LatencyLookupTable` predictor, edge-CPU / mobile-GPU / server-GPU `HardwareProfile`s; 18 tests) (2026-06-24)
 
 ### Evaluation Framework
 - [x] Early stopping mechanisms
@@ -103,7 +104,7 @@
 - [x] NLP model architecture optimization (DomainSearchSpace::NLP)
 - [x] Speech recognition NAS (`src/speech_nas.rs` — SpeechNasEngine with MelFilterBank/Conv1D/LSTM/BiLSTM/Attention/LinearProjection/LayerNorm/Dropout/CTCDecoder layers, positional constraints (StartOnly/EndOnly/Any), depth-bounded propose, hyperparameter-aware mutate, repair-pass crossover, Pareto front over (WER, latency_ms, memory_mb); 22 tests)
 - [x] Time series forecasting NAS (DomainSearchSpace::TimeSeries)
-- [ ] Multimodal architecture optimization
+- [x] Multimodal architecture optimization (`src/multimodal_nas/` — per-modality encoders + fusion ops EarlyConcat / LateFusion / CrossAttention / Gated / Bilinear, modality-balance constraints, propose / mutate / crossover, Pareto front over (accuracy, latency, memory); `DomainType::Multimodal`; 28 tests) (2026-06-24)
 - [x] Reinforcement learning NAS (DomainSearchSpace::Reinforcement)
 - [x] Scientific computing NAS (DomainSearchSpace::Scientific)
 - [x] DomainNASEngine with constraint validation

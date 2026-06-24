@@ -120,6 +120,8 @@ pub mod lstm;
 pub mod meta_learning;
 pub mod ntm_optimizer;
 pub mod online_maml;
+pub mod quantum_learned;
+pub mod realtime_adaptation;
 pub mod reverse_mode;
 pub mod transformer;
 pub mod transformer_based_optimizer;
@@ -146,6 +148,11 @@ pub use higher_order::{
 };
 pub use lstm::LSTMOptimizer;
 pub use ntm_optimizer::{NtmOptimizer, NtmOptimizerConfig};
+pub use quantum_learned::{QuantumBackend, QuantumLearnedOptimizer};
+pub use realtime_adaptation::{
+    AdaptationDecision, AdaptationReason, DriftDetector, DriftDetectorConfig, DriftSignal,
+    RealtimeAdaptationConfig, RealtimeAdaptationController,
+};
 pub use reverse_mode::{GradientAccumulator, GradientContext, ReverseModeEngine, ReverseModeStats};
 pub use transformer::TransformerOptimizer;
 pub use transformer_based_optimizer::TransformerOptimizer as TransformerBasedOptimizer;

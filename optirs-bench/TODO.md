@@ -123,18 +123,26 @@
 - [x] Performance pattern recognition (`src/performance_pattern_recognition.rs` — matrix-profile motif discovery, CUSUM and Page-Hinkley changepoint detection, binary-segmentation regime detection, trend classification; 28 tests)
 - [x] Performance forecast modeling (`src/performance_forecast.rs` — MovingAverage / ExponentialSmoothing / HoltLinear / HoltWinters forecasters with confidence intervals, autocorrelation-based seasonality detection; 27 tests)
 
-### Visualization
+### Report Generation
+- [x] Executive summary reports (`src/report_templates.rs` — `ReportTemplate` engine with executive-summary generation over `BenchmarkReport` / `OptimizerComparison` / `OptimizerPerformance`; 9 tests) (2026-06-24)
+- [x] Customizable report templates (`src/report_templates.rs` — Markdown / PlainText / CSV renderers, run-details & trajectory-summary sections, `save_report`) (2026-06-24)
+
+---
+
+## Out of scope for autonomous implementation
+
+These require external systems / UIs / OS profilers and are intentionally NOT auto-implemented — they need a web stack, a PDF layout engine, or platform-specific kernel tracing, not pure-Rust CPU logic (faking them would invent behavior):
+
+### Visualization (web / UI stack)
 - [ ] Interactive web dashboards
 - [ ] Real-time performance monitoring
 - [ ] Historical trend visualization
 - [ ] Custom dashboard configuration
 
-### Report Generation
-- [ ] PDF report generation
-- [ ] Executive summary reports
-- [ ] Customizable report templates
+### Report Generation (external engine)
+- [ ] PDF report generation (needs a PDF layout engine)
 
-### Platform-Specific
+### Platform-Specific profilers (OS / kernel APIs)
 - [ ] Linux perf integration
 - [ ] eBPF-based profiling
 - [ ] macOS Instruments integration

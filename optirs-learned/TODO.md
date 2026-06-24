@@ -90,23 +90,23 @@
 ### Online Learning and Adaptation
 - [x] Continual learning (EWC, Progressive Networks)
 - [x] Online MAML for continuous task streams (staleness decay, buffer management, adaptation efficiency)
-- [ ] Real-time adaptation mechanisms
+- [x] Real-time adaptation mechanisms (`src/realtime_adaptation.rs` — online EWMA + two-sided CUSUM drift detection on loss & grad-norm streams driving an AIMD learning-rate / momentum controller with plateau detection, clamping, and cooldown; 22 tests) (2026-06-24)
 
 ### Advanced Architectures
-- [ ] Graph Neural Network optimizers
-- [ ] Memory-augmented optimizers (NTM)
+- [x] Graph Neural Network optimizers (`src/gnn_optimizer.rs` — message-passing GNN over the parameter/layer graph: node gradient features, edge messages, GRU node update, readout → per-parameter update; Chain / FullyConnected / KNearest topologies; impl `AdvancedOptimizer<T>`; 14 tests) (2026-06-24)
+- [x] Memory-augmented optimizers (NTM) (`src/ntm_optimizer.rs` — full Graves-2014 addressing: content `softmax(β·cosine)` → interpolation → circular-convolution shift → sharpening, erase+add writes, feed-forward controller; impl `AdvancedOptimizer<T>`; 20 tests) (2026-06-24)
 - [x] Episodic memory systems (EpisodicMemoryBank, SupportSetManager)
 
 ### Multi-Task and Transfer
 - [x] Cross-domain knowledge transfer (domain registration, similarity, transferability matrix)
 - [x] Shared representation learning (shared representation updates)
-- [ ] Zero-shot optimization
+- [x] Zero-shot optimization (`src/zero_shot.rs` — 9 gradient/landscape meta-features → multinomial-logistic optimizer classifier + linear log-learning-rate regressor; offline meta-fit, no per-task training; 17 tests) (2026-06-24)
 - [x] Few-shot adaptation strategies (PrototypicalNetwork, FastAdaptationEngine, TaskSimilarityCalculator)
 
 ### Research Features
-- [ ] NAS for optimizer architectures (DARTS)
-- [ ] Quantum-inspired optimizers
-- [ ] Variational quantum optimizer
+- [x] NAS for optimizer architectures (DARTS) (`src/darts_optimizer_search.rs` — softmax architecture weights α over update primitives (grad / momentum / RMSprop / sign / Adam-like / weight-decay), closed-form α-gradient bilevel alternation, discretization to the final optimizer; 14 tests) (2026-06-24)
+- [x] Quantum-inspired optimizers (`src/quantum_learned.rs` — `QuantumLearnedOptimizer` adapter exposing core `QuantumAnnealing` / `HybridQuantumClassical` through `AdvancedOptimizer<T>`; 16 tests) (2026-06-24)
+- [x] Variational quantum optimizer (`src/quantum_learned.rs` — `QuantumBackend::Variational` wrapping core `VariationalQuantumOptimizer` (SPSA) behind `AdvancedOptimizer<T>`) (2026-06-24)
 
 ---
 
