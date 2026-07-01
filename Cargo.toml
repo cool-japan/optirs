@@ -61,7 +61,7 @@ tokio-test = "0.4.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-chrono = "0.4.44"
+chrono = "0.4.45"
 
 # GPU backends - cross-platform only
 cudarc = { version = "0.19", features = ["cuda-12000"] }
@@ -72,13 +72,13 @@ pollster = { version = "0.4" }
 # ML specific
 tokenizers = "0.23.1"
 autograd = "1.1.1"
-smallvec = "1.15.1"
-uuid = { version = "1.23.1", features = ["v4"] }
+smallvec = "1.15.2"
+uuid = { version = "1.23.4", features = ["v4"] }
 rustc-hash = "2.1.2"
 matrixmultiply = "0.3.10"
 
 # System information
-sysinfo = "0.39.2"
+sysinfo = "0.39.5"
 
 # Async dependencies
 tokio = { version = "1.52.3", features = ["full"] }
@@ -93,7 +93,7 @@ log = "0.4"
 sha2 = "0.11"
 md5 = "0.8.0"
 clap = { version = "4.6", features = ["derive"] }
-regex = "1.12.3"
+regex = "1.12.4"
 
 # Cryptography
 rsa = { version = "0.9" }
@@ -108,9 +108,9 @@ optirs-nas = { version = "0.3.1", path = "./optirs-nas" }
 optirs-bench = { version = "0.3.1", path = "./optirs-bench" }
 
 # WASM dependencies
-wasm-bindgen = "0.2.121"
+wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3.98"
+js-sys = "0.3.103"
 web-sys = "0.3"
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = "0.1.7"
