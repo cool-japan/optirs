@@ -44,8 +44,21 @@
 //! from a seed via [`scirs2_core::random`] and held fixed during
 //! [`AdvancedOptimizer::step`] (this is the genuine inference optimizer; the memory,
 //! addressing weights, read vector and gradient EMAs are persistent state that
-//! evolves across steps). The architecture is laid out so that meta-training of the
-//! controller weights could be added later without changing the forward path.
+//! evolves across steps). Meta-training of the controller weights is available
+//! through [`meta_training`], which supplies the
+//! [`crate::es_meta_training::MetaTrainable`] implementation for
+//! [`crate::es_meta_training::EsMetaTrainer`] — see
+//! [`NtmOptimizer::weight_vector`] / [`NtmOptimizer::set_weight_vector`] /
+//! [`NtmOptimizer::reset_state`].
+
+/// Meta-training of the learned controller weights by evolution strategies.
+///
+/// F75: everything below computes a real update from real learned weights, but
+/// nothing ever *trained* those weights — they stayed at their seeded draw
+/// forever. [`meta_training`] supplies the [`crate::es_meta_training::MetaTrainable`]
+/// implementation that makes [`crate::es_meta_training::EsMetaTrainer`] able to
+/// train them.
+pub mod meta_training;
 
 use scirs2_core::ndarray::{s, Array1, Array2};
 use scirs2_core::numeric::Float;
@@ -502,6 +515,9 @@ pub struct NtmOptimizer<T: Float + Debug + Send + Sync + 'static> {
     // --- learned controller (fixed during step) ---
     controller: NtmController<T>,
 
+    // --- the seeded initial memory, kept so `reset_state` can restore it ---
+    initial_memory: Array2<T>,
+
     // --- persistent memory + addressing state ---
     memory: Array2<T>,
     prev_weights: Array1<T>,
@@ -620,6 +636,7 @@ impl<T: Float + Debug + Send + Sync + 'static> NtmOptimizer<T> {
             seed: config.seed,
             shift_offsets: build_shift_offsets(config.shift_range),
             controller,
+            initial_memory: memory.clone(),
             memory,
             prev_weights: prev_weights.clone(),
             prev_read: Array1::zeros(config.mem_width),

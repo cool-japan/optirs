@@ -123,11 +123,15 @@ impl<T: AdapterFloat, S: InnerSearchStrategy<T>> SearchStrategy<T> for Delegatin
     }
 
     fn has_converged(&self) -> bool {
-        // Termination is owned by the engine (search budget, early stopping,
-        // resource limits). These strategies keep exploring until the engine
-        // stops them, which is the honest answer for a controller / GP / DARTS
-        // relaxation that has no intrinsic fixed point.
-        false
+        // Termination is otherwise owned by the engine (search budget, early
+        // stopping, resource limits): a controller / GP / DARTS relaxation has no
+        // intrinsic fixed point and reports `false` through the default
+        // `is_search_complete`.
+        //
+        // A strategy that *does* have a schedule — `ProgressiveNAS`, whose phases
+        // run out — reports it here, so the engine can stop instead of letting the
+        // strategy degenerate into sampling at its final complexity level.
+        self.inner.is_search_complete()
     }
 
     fn strategy_name(&self) -> &str {

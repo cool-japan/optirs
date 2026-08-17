@@ -32,8 +32,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+toml = { workspace = true }  # real plugin.toml manifest parsing (src/plugin/loader/manifest.rs)
 chrono = { workspace = true }
 sha2 = { workspace = true }
+oxicode = { workspace = true }  # FileCheckpointStorage on-disk codec (coordination/orchestration/checkpoint_manager)
 x25519-dalek = { workspace = true }  # X25519 ECDH for federated secure-aggregation pairwise seeds
 log = { workspace = true }
 rsa = { workspace = true, optional = true }         # OPTIONAL: only used behind crypto feature (plugin signature verification)

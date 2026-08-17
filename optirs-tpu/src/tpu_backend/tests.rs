@@ -281,3 +281,89 @@ fn test_decode_malformed_payload_is_error_not_panic() {
     // Empty payload cannot even hold the tensor count.
     assert!(decode_ref_tensors(&[]).is_err());
 }
+
+// Regression test: `compile_program` used to report `estimated_flops:
+// 1_000_000` and `estimated_execution_time: Duration::from_micros(100)`
+// unconditionally -- flat constants that never varied with the compiled
+// program. This backend only ever receives a bare `ComputationId` (no op
+// list, no tensor shapes), so there is no real per-op data to derive FLOPs
+// from here; the honest value is "not measured" (zero), not a plausible-
+// looking round number. Meanwhile `memory_requirements.data_memory` *is*
+// genuinely derived (from the real binary size and the configured batch
+// size), so this test pins both halves of the contrast: the derived field
+// must actually track its input, and the absent fields must stay at their
+// honest zero regardless -- neither fabricated as non-zero nor faked into
+// varying with configuration the way `data_memory` legitimately does.
+#[tokio::test]
+async fn compile_program_reports_flops_and_time_as_honestly_absent_not_fabricated() {
+    let mut small_config = TPUBackendConfig::default();
+    small_config.tpu_config.batch_size_per_core = 4;
+    let mut backend_small = TPUBackend::<f32>::new(small_config).expect("backend");
+
+    let mut large_config = TPUBackendConfig::default();
+    large_config.tpu_config.batch_size_per_core = 64;
+    let mut backend_large = TPUBackend::<f32>::new(large_config).expect("backend");
+
+    backend_small
+        .execute_computation(
+            ComputationId(1),
+            vec![TPUBuffer::new(
+                vec![1.0f32],
+                vec![1],
+                MemoryLayout::RowMajor,
+            )],
+        )
+        .await
+        .expect("execute_computation must succeed");
+    backend_large
+        .execute_computation(
+            ComputationId(1),
+            vec![TPUBuffer::new(
+                vec![1.0f32],
+                vec![1],
+                MemoryLayout::RowMajor,
+            )],
+        )
+        .await
+        .expect("execute_computation must succeed");
+
+    let program_small = backend_small
+        .compilation_cache
+        .read()
+        .expect("cache read")
+        .get(&ComputationId(1))
+        .cloned()
+        .expect("program must be cached after a successful compile");
+    let program_large = backend_large
+        .compilation_cache
+        .read()
+        .expect("cache read")
+        .get(&ComputationId(1))
+        .cloned()
+        .expect("program must be cached after a successful compile");
+
+    // The field that IS genuinely derived from configuration must actually
+    // track that configuration.
+    assert!(
+        program_large.memory_requirements.data_memory
+            > program_small.memory_requirements.data_memory,
+        "data_memory ({} vs {}) must scale with the configured batch size",
+        program_large.memory_requirements.data_memory,
+        program_small.memory_requirements.data_memory
+    );
+
+    // The fields with no real data behind them must stay honestly absent in
+    // both configurations -- never the old fabricated constants, and never
+    // faked into varying with batch size either.
+    for program in [&program_small, &program_large] {
+        assert_eq!(
+            program.performance_characteristics.estimated_flops, 0,
+            "estimated_flops must be honestly absent (0), not a fabricated constant"
+        );
+        assert_eq!(
+            program.performance_characteristics.estimated_execution_time,
+            Duration::ZERO,
+            "estimated_execution_time must be honestly absent, not a fabricated constant"
+        );
+    }
+}

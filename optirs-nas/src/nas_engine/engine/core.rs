@@ -12,7 +12,7 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
 use super::controller::DefaultArchitectureController;
-use super::mo_optimizers::{NSGA2Optimizer, WeightedSumOptimizer};
+use super::mo_optimizers::{MOEADAdapter, NSGA2Optimizer, NSGA3Optimizer, WeightedSumOptimizer};
 use super::strategies::{EvolutionaryStrategy, RandomStrategy};
 use super::support::{
     ArchitectureController, MultiObjectiveOptimizer, PerformanceEvaluator, PerformancePredictor,
@@ -196,13 +196,17 @@ impl<
     ) -> Result<Vec<SearchResult<T>>> {
         let mut results = Vec::new();
         for architecture in candidates {
-            let evaluation_results = if self.should_use_predictor(&architecture) {
-                self.performance_predictor
-                    .as_mut()
-                    .expect("unwrap failed")
-                    .predict(&architecture)?
-            } else {
-                self.evaluator.evaluate(&architecture)?
+            let predictor_wanted = self.should_use_predictor(&architecture);
+            // `should_use_predictor` already requires the predictor to be present,
+            // but expressing that as `.expect()` turns any future change to that
+            // predicate into a panic; matching on it evaluates for real instead.
+            let evaluation_results = match self
+                .performance_predictor
+                .as_mut()
+                .filter(|_| predictor_wanted)
+            {
+                Some(predictor) => predictor.predict(&architecture)?,
+                None => self.evaluator.evaluate(&architecture)?,
             };
             let resource_usage =
                 self.calculate_resource_usage(&architecture, &evaluation_results)?;
@@ -229,6 +233,12 @@ impl<
         }
         self.update_best_architectures(&results)?;
         self.search_strategy.update_strategy(&results)?;
+        // Record what each progressive stage actually produced. `stage_history` was
+        // declared but never written, so a progressive run could report nothing
+        // about its own stages.
+        if let Some(progressive) = &mut self.progressive_search {
+            progressive.record_stage_results(self.current_generation, &results);
+        }
         if let Some(optimizer) = &mut self.multi_objective_optimizer {
             self.pareto_front = Some(optimizer.update_pareto_front(&results)?);
         }
@@ -246,6 +256,20 @@ impl<
             return true;
         }
         if self.check_convergence() {
+            return true;
+        }
+        // The strategy's own termination signal. `SearchStrategy::has_converged`
+        // was implemented by every adapter in this crate and called from **nowhere**
+        // — a dead termination channel. Consulting it is what lets a strategy with
+        // an intrinsic schedule (`ProgressiveNAS`, once its complexity phases are
+        // exhausted) end the run instead of sampling on at its final complexity
+        // level until the generation budget runs out.
+        if self.search_strategy.has_converged() {
+            log::info!(
+                "search strategy {} reports it has finished; stopping at generation {}",
+                self.search_strategy.strategy_name(),
+                self.current_generation
+            );
             return true;
         }
         // Resource violations are deliberately NOT a stop condition here.
@@ -266,6 +290,14 @@ impl<
     /// Check early stopping criteria
     pub(super) fn check_early_stopping_criteria(&self) -> bool {
         if !self.config.early_stopping.enabled {
+            return false;
+        }
+        // `min_generations` was declared in `EarlyStoppingConfig`, set by both config
+        // builders, and enforced **nowhere**: a caller asking for "at least 50
+        // generations before you give up" was ignored. It is honored here and in
+        // `EvolutionaryStrategy::has_converged`, which are the crate's two
+        // lack-of-improvement stop paths, so a single floor applies to both.
+        if self.current_generation < self.config.early_stopping.min_generations {
             return false;
         }
         let patience = self.config.early_stopping.patience;
@@ -408,6 +440,8 @@ impl<
             MultiObjectiveAlgorithm::WeightedSum => {
                 Ok(Box::new(WeightedSumOptimizer::new(config)?))
             }
+            MultiObjectiveAlgorithm::NSGA3 => Ok(Box::new(NSGA3Optimizer::new(config)?)),
+            MultiObjectiveAlgorithm::MOEAD => Ok(Box::new(MOEADAdapter::new(config)?)),
             // Every remaining variant used to be served either by a macro-generated
             // placeholder that returned an empty Pareto front plus a hardcoded
             // diversity of 0.5, or by a silent substitution of NSGA-II that ignored
@@ -415,8 +449,7 @@ impl<
             // honest answer is an error naming what *is* available.
             other => Err(crate::error::OptimError::NotImplemented(format!(
                 "multi-objective algorithm {:?} is not implemented in optirs-nas; \
-                 configure MultiObjectiveAlgorithm::NSGA2 or \
-                 MultiObjectiveAlgorithm::WeightedSum",
+                 configure MultiObjectiveAlgorithm::NSGA2, NSGA3, MOEAD or WeightedSum",
                 other
             ))),
         }
@@ -629,8 +662,17 @@ impl<
             iteration: self.current_generation,
             best_score: best_scores_over_time.last().copied().unwrap_or(T::zero()),
             convergence_rate: if best_scores_over_time.len() > 1 {
-                let delta = *best_scores_over_time.last().expect("unwrap failed")
-                    - *best_scores_over_time.first().expect("unwrap failed");
+                // Both ends exist inside this branch, but reading them fallibly keeps
+                // the length guard and the access from being able to drift apart.
+                let last = best_scores_over_time
+                    .last()
+                    .copied()
+                    .unwrap_or_else(T::zero);
+                let first = best_scores_over_time
+                    .first()
+                    .copied()
+                    .unwrap_or_else(T::zero);
+                let delta = last - first;
                 delta
                     / scirs2_core::numeric::NumCast::from(best_scores_over_time.len())
                         .unwrap_or_else(|| T::one())

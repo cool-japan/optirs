@@ -918,7 +918,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ByzantineRobust
     pub fn with_config(config: ByzantineRobustConfig) -> Result<Self> {
         if !(0.0..0.5).contains(&config.expected_byzantine_ratio) {
             return Err(crate::error::OptimError::InvalidConfig(format!(
-                "expected_byzantine_ratio must lie in [0, 0.5), got {}; no robust aggregation rule                  tolerates half or more of the clients being adversarial",
+                "expected_byzantine_ratio must lie in [0, 0.5), got {}; no robust aggregation \
+                 rule tolerates half or more of the clients being adversarial",
                 config.expected_byzantine_ratio
             )));
         }

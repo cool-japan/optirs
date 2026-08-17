@@ -34,8 +34,20 @@
 //! from a seed via [`scirs2_core::random`] and held fixed during [`AdvancedOptimizer::step`]
 //! (this is the genuine forward / inference optimizer; the persistent per-node
 //! EMAs and GRU hidden vectors evolve across steps). The architecture is laid out
-//! so that meta-training of the weights could be added later without changing the
-//! forward path.
+//! so that meta-training operates purely through the flat weight-vector surface
+//! in [`meta_training`]: see [`GnnOptimizer::weight_vector`],
+//! [`GnnOptimizer::set_weight_vector`] and [`GnnOptimizer::reset_state`], driven
+//! by [`crate::es_meta_training::EsMetaTrainer`].
+
+/// Meta-training of the learned weights by evolution strategies.
+///
+/// F75: everything below computes a real update from real learned weights, but
+/// nothing ever *trained* those weights — they stayed at their seeded draw
+/// forever. [`meta_training::GnnMetaTrainer`] is the entry point that changes
+/// that, and it operates through the public
+/// [`GnnOptimizer::weight_vector`] / [`GnnOptimizer::set_weight_vector`] /
+/// [`GnnOptimizer::reset_state`] surface it defines.
+pub mod meta_training;
 
 use scirs2_core::ndarray::{s, Array1, Array2};
 use scirs2_core::numeric::Float;

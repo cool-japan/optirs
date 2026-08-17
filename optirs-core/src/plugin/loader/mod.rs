@@ -9,6 +9,7 @@
 
 mod functions;
 mod loaderconfig_traits;
+mod manifest;
 mod sandboxconfig_traits;
 mod securitypolicy_traits;
 mod securityscanresult_traits;

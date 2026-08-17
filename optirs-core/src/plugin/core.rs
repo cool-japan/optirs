@@ -198,7 +198,7 @@ pub enum PluginCategory {
 }
 
 /// Plugin dependency information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginDependency {
     /// Dependency name
     pub name: String,
@@ -211,7 +211,7 @@ pub struct PluginDependency {
 }
 
 /// Types of plugin dependencies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DependencyType {
     /// Another plugin
     Plugin,
@@ -224,7 +224,7 @@ pub enum DependencyType {
 }
 
 /// Optimizer configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OptimizerConfig {
     /// Learning rate
     pub learning_rate: f64,
@@ -239,7 +239,7 @@ pub struct OptimizerConfig {
 }
 
 /// Configuration value types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ConfigValue {
     Float(f64),
     Integer(i64),

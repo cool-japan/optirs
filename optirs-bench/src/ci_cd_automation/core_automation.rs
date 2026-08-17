@@ -391,38 +391,64 @@ impl CiCdAutomation {
     }
 
     /// Gather Git repository information
+    /// Gather real, read-only git metadata for the current working tree.
+    ///
+    /// Two hazards fixed here (mirroring the sibling implementation in
+    /// `test_execution::gather_git_info`, which this now matches exactly, so
+    /// the two never again diverge into different bugs):
+    ///
+    /// * `commit_message` used `--pretty=%B` (the full, possibly multi-line
+    ///   commit body). A multi-line body could smuggle raw newlines into the
+    ///   CSV/HTML reports built from this metadata. `%s` (subject line only)
+    ///   is used instead.
+    /// * `is_clean` was derived from `git diff --quiet`, which only compares
+    ///   tracked file content and misses untracked files entirely -- a repo
+    ///   with new untracked files was reported as clean. `git_is_clean` (via
+    ///   `git status --porcelain`) catches both, and an unverifiable working
+    ///   tree (e.g. git not installed) honestly reports `is_clean = false`
+    ///   rather than an unverified `true`.
+    ///
+    /// Every invocation here is strictly read-only (`rev-parse`, `log`,
+    /// `config --get`, `status --porcelain`); nothing mutates the shared
+    /// working tree, index, stash, or branches.
     fn gather_git_info(&self) -> Result<GitInfo> {
         use std::process::Command;
 
-        let commit_hash = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
+        fn git_field(args: &[&str]) -> String {
+            match Command::new("git").args(args).output() {
+                Ok(output) if output.status.success() => {
+                    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if value.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        value
+                    }
+                }
+                _ => "unknown".to_string(),
+            }
+        }
 
-        let branch = Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
+        let commit_hash = git_field(&["rev-parse", "HEAD"]);
+        let branch = git_field(&["rev-parse", "--abbrev-ref", "HEAD"]);
+        let commit_message = match git_field(&["log", "-1", "--pretty=%s"]).as_str() {
+            "unknown" => None,
+            message => Some(message.to_string()),
+        };
+        let author = match git_field(&["log", "-1", "--pretty=%an"]).as_str() {
+            "unknown" => None,
+            name => Some(name.to_string()),
+        };
+        let repository_url = match git_field(&["config", "--get", "remote.origin.url"]).as_str() {
+            "unknown" => std::env::var("GITHUB_REPOSITORY")
+                .ok()
+                .map(|repo| format!("https://github.com/{}", repo)),
+            url => Some(url.to_string()),
+        };
 
-        let commit_message = Command::new("git")
-            .args(["log", "-1", "--pretty=%B"])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok();
-
-        let author = Command::new("git")
-            .args(["log", "-1", "--pretty=%an"])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .ok();
-
-        let is_clean = Command::new("git")
-            .args(["diff", "--quiet"])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
+        let is_clean = crate::system_sampler::git_is_clean(".").unwrap_or_else(|e| {
+            log::debug!("working-tree cleanliness could not be determined: {e}");
+            false
+        });
 
         Ok(GitInfo {
             commit_hash,
@@ -430,9 +456,7 @@ impl CiCdAutomation {
             commit_message,
             author,
             commit_time: None, // Would parse from git log
-            repository_url: std::env::var("GITHUB_REPOSITORY")
-                .ok()
-                .map(|repo| format!("https://github.com/{}", repo)),
+            repository_url,
             is_clean,
         })
     }
@@ -762,6 +786,45 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.step_name, "test_step");
+    }
+
+    #[test]
+    fn test_gather_git_info_is_measured_not_placeholder() {
+        // Regression: commit_message used `--pretty=%B` (full, possibly
+        // multi-line body) and `is_clean` came from `git diff --quiet`,
+        // which misses untracked files -- a working tree with an untracked
+        // file was reported clean. Mirrors
+        // test_execution::test_environment_and_git_info_are_measured_not_placeholders.
+        let automation = CiCdAutomation::new(CiCdAutomationConfig::default())
+            .expect("automation construction succeeds");
+
+        let git = automation
+            .gather_git_info()
+            .expect("git info is gathered in a real git checkout");
+
+        assert!(!git.commit_hash.is_empty());
+        assert!(!git.branch.is_empty());
+        for field in [&git.commit_hash, &git.branch] {
+            assert!(
+                !field.contains('\n'),
+                "field must be single-line: {field:?}"
+            );
+        }
+        if let Some(message) = &git.commit_message {
+            assert!(
+                !message.contains('\n'),
+                "the commit subject must be a single line, got {message:?}"
+            );
+        }
+        // `is_clean` must agree with a real `git status`, and must never be
+        // an unverified `true`.
+        match crate::system_sampler::git_is_clean(".") {
+            Ok(clean) => assert_eq!(git.is_clean, clean),
+            Err(_) => assert!(
+                !git.is_clean,
+                "an unverifiable working tree must not be reported as clean"
+            ),
+        }
     }
 
     #[test]

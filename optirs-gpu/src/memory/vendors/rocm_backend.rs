@@ -15,6 +15,20 @@
 // module models the ROCm memory-management *API shape* for testing that
 // shape in isolation; treat every allocation as host memory and every
 // device number as illustrative.
+//
+// This extends to data movement: `memcpy` and `memcpy_async` copy **zero
+// bytes**. They build a `HipOperation` record, hand it to
+// `HipStreamManager::execute_operation` (which returns immediately and never
+// dereferences `src_ptr`/`dst_ptr`), and increment
+// `RocmStats::memory_transfers` — that counter says "this many `memcpy`
+// calls were made," not "this many bytes moved." An earlier revision of
+// this module also injected a `std::thread::sleep` here to imitate transfer
+// latency by operation kind; that fake timing has been removed, so the
+// distinction between `MemcpyHostToDevice`/`MemcpyDeviceToHost`/
+// `MemcpyDeviceToDevice`/`MemcpyAsync` no longer affects anything
+// observable. `RocmStats::stream_operations` and `RocmStats::kernel_launches`
+// are declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
 #[allow(dead_code)]
 use std::collections::HashMap;
@@ -632,29 +646,14 @@ impl HipStreamManager {
         Ok(())
     }
 
-    fn execute_operation(&self, operation: HipOperation) -> Result<(), RocmError> {
-        // Simulate operation execution
-        match operation.op_type {
-            HipOperationType::MemcpyHostToDevice => {
-                // Simulate hipMemcpy
-                std::thread::sleep(Duration::from_micros(120));
-            }
-            HipOperationType::MemcpyDeviceToHost => {
-                // Simulate hipMemcpy
-                std::thread::sleep(Duration::from_micros(120));
-            }
-            HipOperationType::MemcpyDeviceToDevice => {
-                // Simulate hipMemcpy
-                std::thread::sleep(Duration::from_micros(60));
-            }
-            HipOperationType::MemcpyAsync => {
-                // Simulate hipMemcpyAsync
-                std::thread::sleep(Duration::from_micros(15));
-            }
-            _ => {
-                // Other operations
-            }
-        }
+    fn execute_operation(&self, _operation: HipOperation) -> Result<(), RocmError> {
+        // Host-memory simulation (see module docs): there is no real ROCm/HIP
+        // device to transfer to or from, so no data movement happens here.
+        // This used to also inject an artificial `std::thread::sleep` per
+        // operation type to mimic device-transfer latency; that fake timing
+        // has been removed rather than left as an undisclosed simulated
+        // number, so callers now see the true (near-zero) cost of this
+        // simulation instead of a fabricated one.
         Ok(())
     }
 }

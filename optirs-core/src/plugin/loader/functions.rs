@@ -49,53 +49,6 @@ pub(super) fn decode_hex(s: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-/// Strip a `#`-introduced trailing comment from one TOML line, respecting
-/// quoted strings so a `#` inside a value (e.g. `description = "a # b"`) is
-/// not mistaken for a comment marker.
-pub(super) fn strip_toml_comment(line: &str) -> &str {
-    let mut in_string = false;
-    for (i, c) in line.char_indices() {
-        match c {
-            '"' => in_string = !in_string,
-            '#' if !in_string => return &line[..i],
-            _ => {}
-        }
-    }
-    line
-}
-
-/// Strip one layer of surrounding double quotes from a scalar TOML value,
-/// or return the trimmed raw text unchanged if it is not quoted (covers
-/// bare integers/booleans and malformed input alike -- this is a "best
-/// effort on a simplified reader", not a validating parser).
-pub(super) fn unquote_toml_string(raw_value: &str) -> String {
-    let v = raw_value.trim();
-    v.strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .unwrap_or(v)
-        .to_string()
-}
-
-/// Parse a single-line inline TOML string array, e.g. `["linux", "macos"]`.
-/// Returns `None` for anything not shaped like `[ ... ]` (multi-line arrays
-/// are not supported by this reader) or containing a non-string element.
-pub(super) fn parse_toml_string_array(raw_value: &str) -> Option<Vec<String>> {
-    let v = raw_value.trim();
-    let inner = v.strip_prefix('[')?.strip_suffix(']')?;
-    if inner.trim().is_empty() {
-        return Some(Vec::new());
-    }
-    inner
-        .split(',')
-        .map(|item| {
-            let item = item.trim();
-            item.strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .map(|s| s.to_string())
-        })
-        .collect()
-}
-
 /// Best-effort check for whether a named system shared library is present
 /// on disk, by looking for the conventional filename
 /// (`lib{name}.so`/`.dylib` or `{name}.dll`) under the platform's usual
@@ -318,6 +271,81 @@ description = "handles the # symbol correctly"
             metadata.plugin.description,
             "handles the # symbol correctly"
         );
+    }
+
+    // F62 follow-up: proves the real TOML parser's output actually reaches
+    // the rest of the loading pipeline, not just `parse_plugin_toml` in
+    // isolation. Before the rewrite, `dependencies`/`permissions` always
+    // parsed as empty `Vec`s, so `check_dependencies` and
+    // `SecurityManager::scan_plugin` never saw anything a manifest
+    // declared. This manifest declares one optional, unsatisfiable `Crate`
+    // dependency (must not block loading -- F65) and one well-formed
+    // `FileSystem` permission (must pass `PermissionValidator`), so the
+    // expected outcome is a successful load whose `PluginInfo.dependencies`
+    // actually reflects what was written to disk.
+    #[test]
+    fn full_featured_manifest_flows_through_load_plugin_from_file() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_manifest_integration_{}_{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let plugin_path = dir.join("libintegration.so");
+        std::fs::write(
+            &plugin_path,
+            b"not a real shared library, only its bytes are hashed",
+        )
+        .expect("write plugin file");
+        std::fs::write(
+            dir.join("plugin.toml"),
+            r#"
+[plugin]
+name = "integration-plugin"
+version = "1.0.0"
+
+[[plugin.dependencies]]
+name = "nice-to-have"
+version = "*"
+optional = true
+dependency_type = "Crate"
+
+[[plugin.permissions]]
+type = "FileSystem"
+value = "cache/data"
+"#,
+        )
+        .expect("write manifest");
+
+        let mut loader = PluginLoader::new(LoaderConfig::default());
+        let result = loader
+            .load_plugin_from_file(&plugin_path)
+            .expect("load_plugin_from_file must not itself error");
+        assert!(
+            result.success,
+            "expected a successful load, got errors: {:?}",
+            result.errors
+        );
+        let info = result
+            .plugin_info
+            .expect("plugin_info must be set on a successful load");
+        assert_eq!(info.name, "integration-plugin");
+        assert_eq!(info.version, "1.0.0");
+        assert_eq!(
+            info.dependencies,
+            vec![PluginDependency {
+                name: "nice-to-have".to_string(),
+                version: "*".to_string(),
+                optional: true,
+                dependency_type: DependencyType::Crate,
+            }],
+            "the manifest's real dependency must reach PluginInfo, not an empty Vec"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // F60/F63 regression: `load_plugin_from_registry` and

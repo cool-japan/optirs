@@ -35,6 +35,38 @@ pub(super) fn shannon_entropy(s: &str) -> f64 {
     })
 }
 
+/// `true` if `keyword` occurs in `text` bounded by non-identifier characters
+/// (matching neither `is_ident_byte` on either side), so a weak-crypto or
+/// security-pattern scan does not flag ordinary identifiers/URLs that merely
+/// contain the pattern as a substring -- e.g. `uses_weak_crypto("let cmd5 =
+/// 1;")` must not match `"md5"`, and a doc comment linking
+/// `https://example.com/md5sum-tool` must not either. ASCII-byte boundaries
+/// are sufficient here: every pattern this is called with is ASCII, and a
+/// non-ASCII UTF-8 continuation byte is never an identifier byte, so it can
+/// never register as a false "boundary".
+pub(super) fn contains_keyword(text: &str, keyword: &str) -> bool {
+    if keyword.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(keyword) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || !is_ident_byte(bytes[abs - 1]);
+        let after_index = abs + keyword.len();
+        let after_ok = after_index >= bytes.len() || !is_ident_byte(bytes[after_index]);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + keyword.len();
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 /// Extract maximal runs (length >= 20) of base64/token-shaped characters
 /// (`[A-Za-z0-9+/=_-]`) from `line`, as entropy-check candidates.
 pub(super) fn high_entropy_runs(line: &str) -> Vec<String> {
@@ -576,6 +608,44 @@ pub(super) mod tests {
         assert!(auditor.uses_weak_crypto("use md5::Md5;"));
         assert!(auditor.uses_weak_crypto("let hash = sha1(data);"));
         assert!(!auditor.uses_weak_crypto("use sha256::Sha256;"));
+    }
+
+    #[test]
+    fn test_weak_crypto_detection_ignores_substring_false_positives() {
+        // Regression (F14): a bare `line.contains("md5")` / `.contains("sha1")`
+        // also fires on identifiers and URLs that merely contain the pattern as
+        // a substring, neither of which is an actual use of the weak
+        // algorithm. `uses_weak_crypto` must match on identifier boundaries.
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+
+        assert!(
+            !auditor.uses_weak_crypto("let cmd5_result = queue.next();"),
+            "\"cmd5_result\" must not be treated as an md5 use"
+        );
+        assert!(
+            !auditor.uses_weak_crypto("// see https://example.com/md5sum-tool for background"),
+            "an md5-containing URL in a comment must not be treated as an md5 use"
+        );
+        assert!(
+            !auditor.uses_weak_crypto("let sha1024_variant = pick_variant();"),
+            "\"sha1024_variant\" must not be treated as a sha1 use"
+        );
+        // The real thing must still be caught with word-boundary matching.
+        assert!(auditor.uses_weak_crypto("let digest = Md5::new();"));
+    }
+
+    #[test]
+    fn test_contains_keyword_is_boundary_matched() {
+        // contains_keyword itself is case-sensitive; callers that want
+        // case-insensitive matching (like `uses_weak_crypto`) lower-case the
+        // haystack before calling, as exercised here.
+        assert!(contains_keyword("use md5::Md5;", "md5"));
+        assert!(contains_keyword(&"MD5".to_lowercase(), "md5"));
+        assert!(!contains_keyword("cmd5_result", "md5"));
+        assert!(!contains_keyword("md5sum_tool", "md5"));
+        assert!(!contains_keyword("", "md5"));
+        assert!(!contains_keyword("md5", ""));
     }
 
     #[test]

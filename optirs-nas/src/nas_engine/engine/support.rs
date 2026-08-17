@@ -196,27 +196,188 @@ pub enum PredictorType {
     RandomForest,
     Ensemble,
 }
-/// Progressive NAS implementation
+/// Engine-side progressive search: a staged complexity schedule that constrains
+/// which candidates may be evaluated in each phase of the run.
+///
+/// This complements [`crate::search_strategies::ProgressiveNAS`], which *generates*
+/// progressively more complex architectures: whatever strategy the engine is
+/// configured with, this filter enforces the schedule on the candidates that
+/// actually reach the evaluator, so `NASConfig::progressive_search` means
+/// something for every strategy.
+///
+/// It used to mean nothing at all. `new` built an empty `stages` vector and
+/// `filter_candidates` was `Ok(candidates)` — the input returned verbatim — while
+/// `current_stage` stayed `0` and `stage_history` was never written. Enabling
+/// `progressive_search` therefore changed no behaviour whatsoever, even though the
+/// engine reports it among the run's key hyperparameters.
 #[derive(Debug)]
 pub struct ProgressiveNAS<T: Float + Debug + Send + Sync + 'static> {
     pub(super) stages: Vec<ProgressiveStage<T>>,
     pub(super) current_stage: usize,
     pub(super) stage_history: Vec<Vec<SearchResult<T>>>,
+    /// Generations allotted to each stage, derived from the search budget.
+    pub(super) generations_per_stage: usize,
 }
-impl<T: Float + Debug + Send + Sync + 'static> ProgressiveNAS<T> {
-    pub fn new(_config: &NASConfig<T>) -> Result<Self> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ProgressiveNAS<T> {
+    /// Build the stage schedule from the configuration.
+    ///
+    /// One stage per allowed component count between
+    /// `SearchSpaceConfig::min_components` and `max_components`, each stage holding
+    /// a narrowed copy of the search space (its own `max_components`) so the stage
+    /// configuration describes exactly what that stage may explore. The generation
+    /// budget is split evenly across the stages, which is
+    /// [`TimeBudgetAllocation::Uniform`] applied to the generation axis.
+    pub fn new(config: &NASConfig<T>) -> Result<Self> {
+        let min_components = config.search_space.min_components.max(1);
+        let max_components = config.search_space.max_components.max(min_components);
+        let stage_count = max_components - min_components + 1;
+
+        let total_seconds = config
+            .resource_constraints
+            .time_constraints
+            .max_search_time
+            .as_secs_f64();
+        let per_stage_hours = total_seconds / 3600.0 / stage_count as f64;
+
+        let mut stages = Vec::with_capacity(stage_count);
+        for (index, complexity) in (min_components..=max_components).enumerate() {
+            let mut stage_search_space = config.search_space.clone();
+            stage_search_space.max_components = complexity;
+            let mut stage_config = config.clone();
+            stage_config.search_space = stage_search_space.clone();
+            stages.push(ProgressiveStage {
+                name: format!("stage_{index}_upto_{complexity}_components"),
+                search_space: stage_search_space,
+                duration_hours: scirs2_core::numeric::NumCast::from(per_stage_hours)
+                    .unwrap_or_else(T::zero),
+                transfer_knowledge: config.enable_transfer_learning,
+                stage_config,
+            });
+        }
+
+        let generations_per_stage = (config.search_budget / stage_count.max(1)).max(1);
         Ok(Self {
-            stages: Vec::new(),
+            stages,
             current_stage: 0,
-            stage_history: Vec::new(),
+            stage_history: vec![Vec::new(); stage_count],
+            generations_per_stage,
         })
     }
+
+    /// The stage `generation` falls into, clamped to the last stage once the
+    /// schedule is exhausted (the search may legitimately run longer than the
+    /// budget the stages were sized from).
+    pub fn stage_for_generation(&self, generation: usize) -> usize {
+        if self.stages.is_empty() {
+            return 0;
+        }
+        (generation / self.generations_per_stage.max(1)).min(self.stages.len() - 1)
+    }
+
+    /// Maximum component count allowed in the stage `generation` falls into.
+    pub fn complexity_limit(&self, generation: usize) -> Option<usize> {
+        self.stages
+            .get(self.stage_for_generation(generation))
+            .map(|stage| stage.search_space.max_components)
+    }
+
+    /// The stage schedule.
+    pub fn stages(&self) -> &[ProgressiveStage<T>] {
+        &self.stages
+    }
+
+    /// The stage the most recent `filter_candidates` call was in.
+    pub fn current_stage(&self) -> usize {
+        self.current_stage
+    }
+
+    /// Results recorded for `stage`.
+    pub fn stage_results(&self, stage: usize) -> &[SearchResult<T>] {
+        self.stage_history
+            .get(stage)
+            .map(|results| results.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Restrict `candidates` to the complexity the current stage allows.
+    ///
+    /// Candidates over the limit are held back rather than evaluated early — that
+    /// is the whole point of a progressive schedule. If *every* candidate exceeds
+    /// the limit the simplest ones are kept anyway: returning an empty list would
+    /// stall the search, and a stalled generation is a worse answer than evaluating
+    /// the closest candidates available.
     pub fn filter_candidates(
         &mut self,
         candidates: Vec<OptimizerArchitecture<T>>,
-        _generation: usize,
+        generation: usize,
     ) -> Result<Vec<OptimizerArchitecture<T>>> {
-        Ok(candidates)
+        if self.stages.is_empty() || candidates.is_empty() {
+            return Ok(candidates);
+        }
+        let stage = self.stage_for_generation(generation);
+        if stage != self.current_stage {
+            log::info!(
+                "progressive search entering {} at generation {}",
+                self.stages
+                    .get(stage)
+                    .map(|stage| stage.name.as_str())
+                    .unwrap_or("<unknown stage>"),
+                generation
+            );
+            self.current_stage = stage;
+        }
+        let limit = self
+            .stages
+            .get(stage)
+            .map(|stage| stage.search_space.max_components)
+            .unwrap_or(usize::MAX);
+
+        let (allowed, deferred): (Vec<_>, Vec<_>) = candidates
+            .into_iter()
+            .partition(|candidate| candidate.components.len() <= limit);
+        if !allowed.is_empty() {
+            if !deferred.is_empty() {
+                log::debug!(
+                    "progressive search deferred {} candidate(s) over the {}-component \
+                     limit of stage {}",
+                    deferred.len(),
+                    limit,
+                    stage
+                );
+            }
+            return Ok(allowed);
+        }
+
+        // Nothing fitted: keep the simplest candidates so the generation is not
+        // empty, and say so.
+        let mut fallback = deferred;
+        fallback.sort_by_key(|candidate| candidate.components.len());
+        let smallest = fallback
+            .first()
+            .map(|candidate| candidate.components.len())
+            .unwrap_or(0);
+        fallback.retain(|candidate| candidate.components.len() == smallest);
+        log::warn!(
+            "progressive search stage {} allows at most {} component(s) but every \
+             candidate exceeded it; evaluating the {} simplest ({} components each)",
+            stage,
+            limit,
+            fallback.len(),
+            smallest
+        );
+        Ok(fallback)
+    }
+
+    /// Record `results` against the stage they were produced in, so the stage
+    /// history describes what each stage actually achieved.
+    pub fn record_stage_results(&mut self, generation: usize, results: &[SearchResult<T>]) {
+        if results.is_empty() {
+            return;
+        }
+        let stage = self.stage_for_generation(generation);
+        if let Some(history) = self.stage_history.get_mut(stage) {
+            history.extend(results.iter().cloned());
+        }
     }
 }
 /// Progressive search stage

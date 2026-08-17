@@ -5,10 +5,9 @@
 
 use crate::ci_cd_automation::{CiCdAutomation, CiCdAutomationConfig};
 use crate::error::{OptimError, Result};
+use futures::stream::{self, StreamExt};
 use std::collections::{HashMap, HashSet};
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::process::Command as AsyncCommand;
 
 use super::aggregator::ResultAggregator;
 use super::cloud::{
@@ -17,6 +16,12 @@ use super::cloud::{
 };
 use super::config::*;
 use super::container::ContainerManager;
+use super::execution::{
+    extract_labelled_value, host_platform, is_windows_platform, parse_metrics_from_output,
+    parse_value_after, run_process, scale_bytes, scale_seconds, scale_throughput,
+    scenario_environment, shell_invocation, CommandOutcome, ExecutionTarget, ResolvedTarget,
+    SshAccess,
+};
 use super::matrix::TestMatrixGenerator;
 use super::resources::PlatformResourceManager;
 use super::types::platform_target_to_string;
@@ -40,345 +45,6 @@ fn convert_platform_target(platform: &PlatformTarget) -> CrossPlatformTarget {
         PlatformTarget::MacOSAarch64 => CrossPlatformTarget::MacOSArm64,
         _ => CrossPlatformTarget::LinuxX64, // Default fallback
     }
-}
-
-/// Outcome of one real process invocation performed by the orchestrator.
-///
-/// Every field is measured from the spawned child: nothing here is simulated.
-#[derive(Debug, Clone)]
-struct CommandOutcome {
-    /// Full command line that was executed (program plus arguments).
-    command_line: String,
-    /// Process exit code, when the platform reported one.
-    exit_code: Option<i32>,
-    /// Whether the process exited successfully (status code 0).
-    success: bool,
-    /// Captured standard output.
-    stdout: String,
-    /// Captured standard error.
-    stderr: String,
-    /// Wall-clock duration of the invocation.
-    duration: Duration,
-    /// Whether the invocation was aborted because it exceeded its timeout.
-    timed_out: bool,
-}
-
-/// Where a matrix entry's scenario commands are executed.
-#[derive(Debug)]
-enum ExecutionTarget<'a> {
-    /// Directly on the host running the orchestrator.
-    Local,
-    /// Inside an already provisioned container, through the container runtime.
-    Container(&'a ContainerInfo),
-    /// On a provisioned cloud instance, over its configured SSH access.
-    Cloud(&'a CloudInstance),
-}
-
-/// Resolved SSH access details for a provisioned cloud instance.
-#[derive(Debug, Clone)]
-struct SshAccess {
-    host: String,
-    user: String,
-    port: Option<u16>,
-    identity_file: Option<String>,
-}
-
-/// A target that has passed its reachability pre-flight and can actually run
-/// commands. Constructing one is the only way to reach [`run_process`], so a
-/// scenario can never be "executed" against an unreachable target.
-#[derive(Debug)]
-enum ResolvedTarget {
-    Local,
-    Container {
-        runtime: String,
-        container_id: String,
-        windows: bool,
-    },
-    Cloud(SshAccess),
-}
-
-/// Identify the platform this process is currently running on.
-///
-/// Returns `None` for OS/architecture combinations that have no
-/// [`PlatformTarget`] mapping. `None` is deliberate: silently falling back to a
-/// default platform would reintroduce exactly the "guessed metadata" class of
-/// bug that the declared-platform metadata was introduced to remove.
-fn host_platform() -> Option<PlatformTarget> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => Some(PlatformTarget::LinuxX86_64),
-        ("linux", "aarch64") => Some(PlatformTarget::LinuxAarch64),
-        ("linux", "mips64") => Some(PlatformTarget::LinuxMips64),
-        ("linux", "powerpc64") => Some(PlatformTarget::LinuxPowerPC64),
-        ("linux", "s390x") => Some(PlatformTarget::LinuxS390X),
-        ("windows", "x86_64") => Some(PlatformTarget::WindowsX86_64),
-        ("macos", "x86_64") => Some(PlatformTarget::MacOSX86_64),
-        ("macos", "aarch64") => Some(PlatformTarget::MacOSAarch64),
-        ("freebsd", "x86_64") => Some(PlatformTarget::FreeBSDX86_64),
-        ("openbsd", "x86_64") => Some(PlatformTarget::OpenBSDX86_64),
-        ("netbsd", "x86_64") => Some(PlatformTarget::NetBSDX86_64),
-        ("solaris", "x86_64") | ("illumos", "x86_64") => Some(PlatformTarget::SolarisX86_64),
-        _ => None,
-    }
-}
-
-/// Whether a platform target uses the Windows command interpreter.
-fn is_windows_platform(platform: &PlatformTarget) -> bool {
-    matches!(platform, PlatformTarget::WindowsX86_64)
-}
-
-/// Shell wrapper used to execute a scenario command string.
-fn shell_invocation(windows: bool, command: &str) -> (String, Vec<String>) {
-    if windows {
-        (
-            "cmd".to_string(),
-            vec!["/C".to_string(), command.to_string()],
-        )
-    } else {
-        (
-            "sh".to_string(),
-            vec!["-c".to_string(), command.to_string()],
-        )
-    }
-}
-
-/// Render an optimization level as a stable lowercase identifier for the
-/// environment handed to executed commands.
-fn optimization_level_to_string(level: &OptimizationLevel) -> String {
-    match level {
-        OptimizationLevel::Debug => "debug".to_string(),
-        OptimizationLevel::Release => "release".to_string(),
-        OptimizationLevel::ReleaseLTO => "release-lto".to_string(),
-        OptimizationLevel::MinSize => "min-size".to_string(),
-        OptimizationLevel::Custom(name) => name.clone(),
-    }
-}
-
-/// Environment variables handed to every command the orchestrator runs, so the
-/// executed scenario can adapt to the matrix entry it belongs to. All values are
-/// taken verbatim from the execution context; none are invented.
-fn scenario_environment(context: &TestExecutionContext) -> Vec<(String, String)> {
-    vec![
-        (
-            "OPTIRS_EXECUTION_ID".to_string(),
-            context.execution_id.clone(),
-        ),
-        (
-            "OPTIRS_TARGET_PLATFORM".to_string(),
-            context.platform.to_string(),
-        ),
-        (
-            "OPTIRS_RUST_VERSION".to_string(),
-            context.rust_version.clone(),
-        ),
-        (
-            "OPTIRS_BUILD_PROFILE".to_string(),
-            context.build_profile.clone(),
-        ),
-        ("OPTIRS_FEATURES".to_string(), context.features.join(",")),
-        (
-            "OPTIRS_OPTIMIZATION".to_string(),
-            optimization_level_to_string(&context.optimization),
-        ),
-    ]
-}
-
-/// Spawn `program` with `args` and wait for it, capturing the real exit status,
-/// stdout and stderr.
-///
-/// Failing to spawn the program (for example because a container runtime or an
-/// `ssh` client is not installed) is reported as
-/// [`OptimError::ResourceUnavailable`] — the command genuinely could not be run,
-/// which is a different thing from a test that ran and failed. Exceeding
-/// `timeout` kills the child (via `kill_on_drop`) and is reported through
-/// [`CommandOutcome::timed_out`].
-async fn run_process(
-    program: &str,
-    args: &[String],
-    envs: &[(String, String)],
-    timeout: Duration,
-) -> Result<CommandOutcome> {
-    let command_line = if args.is_empty() {
-        program.to_string()
-    } else {
-        format!("{} {}", program, args.join(" "))
-    };
-
-    let mut command = AsyncCommand::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-
-    let started = Instant::now();
-    let child = command.spawn().map_err(|e| {
-        OptimError::ResourceUnavailable(format!(
-            "cannot execute '{}': failed to spawn '{}' ({})",
-            command_line, program, e
-        ))
-    })?;
-
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => Ok(CommandOutcome {
-            command_line,
-            exit_code: output.status.code(),
-            success: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            duration: started.elapsed(),
-            timed_out: false,
-        }),
-        Ok(Err(e)) => Err(OptimError::ExecutionError(format!(
-            "failed while waiting for '{}': {}",
-            command_line, e
-        ))),
-        Err(_) => Ok(CommandOutcome {
-            command_line,
-            exit_code: None,
-            success: false,
-            stdout: String::new(),
-            stderr: String::new(),
-            duration: started.elapsed(),
-            timed_out: true,
-        }),
-    }
-}
-
-/// Parse the leading numeric value (and its unit token) out of the text that
-/// follows a metric label.
-fn parse_value_after(rest: &str) -> Option<(f64, String)> {
-    let trimmed =
-        rest.trim_start_matches(|c: char| matches!(c, ':' | '=' | '[' | '(') || c.is_whitespace());
-
-    let mut number_end = 0usize;
-    for (idx, ch) in trimmed.char_indices() {
-        let acceptable = ch.is_ascii_digit() || ch == '.' || ((ch == '-' || ch == '+') && idx == 0);
-        if acceptable {
-            number_end = idx + ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    if number_end == 0 {
-        return None;
-    }
-
-    let value: f64 = trimmed[..number_end].parse().ok()?;
-    let unit: String = trimmed[number_end..]
-        .trim_start()
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic() || *c == '%' || *c == '/' || *c == 'µ')
-        .collect();
-    Some((value, unit))
-}
-
-/// Find the value attached to the first of `labels` that occurs in `line` at a
-/// word boundary. `line` must already be lowercased.
-fn extract_labelled_value(line: &str, labels: &[&str]) -> Option<(f64, String)> {
-    for label in labels {
-        let mut search_from = 0usize;
-        while let Some(offset) = line[search_from..].find(label) {
-            let start = search_from + offset;
-            let after = start + label.len();
-            let boundary_ok = start == 0
-                || !matches!(line.as_bytes()[start - 1], b'a'..=b'z' | b'0'..=b'9' | b'_');
-            if boundary_ok {
-                if let Some(parsed) = parse_value_after(&line[after..]) {
-                    return Some(parsed);
-                }
-            }
-            search_from = after;
-        }
-    }
-    None
-}
-
-/// Convert a duration value expressed in `unit` to seconds.
-fn scale_seconds(value: f64, unit: &str) -> f64 {
-    match unit {
-        "ns" | "nsec" | "nanos" | "nanoseconds" => value * 1e-9,
-        "us" | "µs" | "usec" | "micros" | "microseconds" => value * 1e-6,
-        "ms" | "msec" | "millis" | "milliseconds" => value * 1e-3,
-        "m" | "min" | "mins" | "minutes" => value * 60.0,
-        _ => value,
-    }
-}
-
-/// Convert a memory value expressed in `unit` to bytes.
-fn scale_bytes(value: f64, unit: &str) -> usize {
-    let scaled = match unit {
-        "kb" => value * 1e3,
-        "kib" | "k" => value * 1024.0,
-        "mb" => value * 1e6,
-        "mib" | "m" => value * 1024.0 * 1024.0,
-        "gb" => value * 1e9,
-        "gib" | "g" => value * 1024.0 * 1024.0 * 1024.0,
-        _ => value,
-    };
-    if scaled.is_finite() && scaled > 0.0 {
-        scaled as usize
-    } else {
-        0
-    }
-}
-
-/// Convert a throughput value expressed in `unit` to operations per second.
-fn scale_throughput(value: f64, unit: &str) -> f64 {
-    match unit {
-        "kops/s" | "kops" | "k/s" => value * 1e3,
-        "mops/s" | "mops" | "m/s" => value * 1e6,
-        "gops/s" | "gops" => value * 1e9,
-        _ => value,
-    }
-}
-
-/// Parse real performance metrics out of a command's standard output.
-///
-/// Only values that are actually present in the output are recorded; every other
-/// field stays at zero, which by convention means "not measured" — never a
-/// fabricated default. Recognised forms are `label: value unit` and
-/// `label=value unit` (case-insensitive), with the value optionally wrapped in
-/// `[`/`(` as criterion prints it. When a label appears on several lines the
-/// last matching line wins, because summary lines are conventionally printed
-/// last. Labels fused with their unit (`execution_time_ms: 12`) are not
-/// recognised and are left unmeasured rather than guessed.
-fn parse_metrics_from_output(output: &str) -> PerformanceMetrics {
-    let mut metrics = PerformanceMetrics::default();
-
-    for line in output.lines() {
-        let lower = line.to_ascii_lowercase();
-
-        if let Some((value, unit)) = extract_labelled_value(
-            &lower,
-            &["throughput", "ops_per_sec", "operations_per_second"],
-        ) {
-            metrics.throughput = scale_throughput(value, &unit);
-        }
-        if let Some((value, unit)) =
-            extract_labelled_value(&lower, &["latency", "duration", "time"])
-        {
-            metrics.latency = scale_seconds(value, &unit);
-        }
-        if let Some((value, unit)) =
-            extract_labelled_value(&lower, &["peak_memory", "memory_usage", "memory", "rss"])
-        {
-            metrics.memory_usage = scale_bytes(value, &unit);
-        }
-        if let Some((value, _unit)) = extract_labelled_value(&lower, &["cpu_usage", "cpu"]) {
-            metrics.cpu_usage = value;
-        }
-        if let Some((value, _unit)) =
-            extract_labelled_value(&lower, &["energy_consumption", "energy"])
-        {
-            metrics.energy_consumption = Some(value);
-        }
-    }
-
-    metrics
 }
 
 /// Advanced cross-platform testing orchestrator
@@ -681,40 +347,50 @@ impl CrossPlatformOrchestrator {
         Ok(allocations)
     }
 
-    /// Execute tests in parallel
+    /// Execute tests in parallel.
+    ///
+    /// Genuinely concurrent (not merely batched-and-awaited-serially, which is
+    /// what this used to do despite the name -- see FC1 findings): up to
+    /// `max_concurrent_jobs` matrix entries are in flight at once via
+    /// `buffer_unordered`. Result order does not need to match matrix order --
+    /// `ResultAggregator::update_compatibility_matrix` groups results by
+    /// platform through a `HashMap`, not by position.
     async fn execute_parallel_testing(
         &self,
         matrix: &[TestMatrixEntry],
         allocations: &HashMap<String, ResourceAllocation>,
     ) -> Result<Vec<TestResult>> {
-        let max_concurrent = self.config.max_concurrent_jobs;
-        let mut results = Vec::new();
+        // `buffer_unordered(0)` panics; a non-positive configured limit is
+        // treated as "no concurrency limit configured" -> run one at a time
+        // rather than fail the whole matrix over a config typo.
+        let max_concurrent = self.config.max_concurrent_jobs.max(1);
 
-        // Execute in batches to respect concurrency limits
-        for chunk in matrix.chunks(max_concurrent) {
-            let mut handles = Vec::new();
-
-            for entry in chunk {
+        // Only entries with a live resource allocation are runnable at all --
+        // an entry without one was already skipped (with its reason logged)
+        // during `allocate_resources_for_matrix` and must not appear here,
+        // matching the previous chunked implementation's lookup-and-skip.
+        let runnable: Vec<(&TestMatrixEntry, &ResourceAllocation)> = matrix
+            .iter()
+            .filter_map(|entry| {
                 let allocation_id = format!(
                     "{}_{}",
                     platform_target_to_string(&entry.platform),
                     entry.priority
                 );
-                if let Some(allocation) = allocations.get(&allocation_id) {
-                    let handle = self.execute_matrix_entry(entry, allocation).await;
-                    handles.push((entry, handle));
-                }
-            }
+                allocations
+                    .get(&allocation_id)
+                    .map(|allocation| (entry, allocation))
+            })
+            .collect();
 
-            // Collect results from this batch. An entry whose execution
-            // environment turned out to be unusable is recorded as a skipped
-            // result carrying the real reason, mirroring the graceful
-            // per-platform skip already applied during allocation, so one
-            // unreachable runtime does not abort the whole matrix.
-            for (entry, handle) in handles {
-                results.push(self.result_or_skip(entry, handle));
-            }
-        }
+        let results: Vec<TestResult> = stream::iter(runnable)
+            .map(|(entry, allocation)| async move {
+                let outcome = self.execute_matrix_entry(entry, allocation).await;
+                self.result_or_skip(entry, outcome)
+            })
+            .buffer_unordered(max_concurrent)
+            .collect()
+            .await;
 
         Ok(results)
     }
@@ -1766,6 +1442,109 @@ mod tests {
             result.platform_details.get("commands_executed"),
             Some(&"1".to_string()),
             "execution must stop at the first failing command"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_parallel_testing_runs_concurrently() {
+        // Regression: execute_parallel_testing used to `await` every entry
+        // inline inside its "batch" loop, so despite the name it never ran
+        // more than one command at a time (see FC1 deferred notes). With N
+        // independent local entries that each take ~0.4s and
+        // max_concurrent_jobs >= N, real concurrency keeps the wall-clock time
+        // close to a single entry's duration; sequential execution would take
+        // roughly N * 0.4s and fails the bound below.
+        let Some(host) = host_platform() else {
+            return;
+        };
+
+        const N: usize = 4;
+        let sleep_cmd = if cfg!(windows) {
+            "ping -n 1 -w 400 127.0.0.1 > NUL".to_string()
+        } else {
+            "sleep 0.4".to_string()
+        };
+
+        let mut config = OrchestratorConfig {
+            enable_cloud_testing: false,
+            enable_container_testing: false,
+            enable_parallel_testing: true,
+            max_concurrent_jobs: N,
+            ..Default::default()
+        };
+        config.matrix_config.test_scenarios = vec![TestScenario {
+            name: "slow".to_string(),
+            commands: vec![sleep_cmd],
+            category: TestCategory::Functionality,
+            timeout: Duration::from_secs(10),
+            expected_results: HashMap::new(),
+        }];
+        let orchestrator =
+            CrossPlatformOrchestrator::new(config).expect("orchestrator construction succeeds");
+
+        let matrix: Vec<TestMatrixEntry> = (0..N)
+            .map(|i| TestMatrixEntry {
+                id: format!("entry_{i}"),
+                platform: host.clone(),
+                rust_version: "stable".to_string(),
+                features: vec!["default".to_string()],
+                optimization: OptimizationLevel::Debug,
+                build_profile: "test".to_string(),
+                scenarios: vec!["slow".to_string()],
+                priority: i as u8,
+                required_for_release: false,
+                estimated_duration: Duration::from_secs(10),
+                resource_requirements: HashMap::new(),
+            })
+            .collect();
+
+        let mut allocations = HashMap::new();
+        for entry in &matrix {
+            let allocation_id = format!(
+                "{}_{}",
+                platform_target_to_string(&entry.platform),
+                entry.priority
+            );
+            allocations.insert(
+                allocation_id.clone(),
+                ResourceAllocation {
+                    id: allocation_id,
+                    platform: entry.platform.clone(),
+                    resource_type: AllocatedResourceType::Local,
+                    allocated_at: SystemTime::now(),
+                    estimated_completion: SystemTime::now() + entry.estimated_duration,
+                    status: AllocationStatus::Available,
+                    usage: ResourceUsage::default(),
+                },
+            );
+        }
+
+        let start = Instant::now();
+        let results = orchestrator
+            .execute_parallel_testing(&matrix, &allocations)
+            .await
+            .expect("parallel execution succeeds");
+        let elapsed = start.elapsed();
+
+        assert_eq!(results.len(), N);
+        for result in &results {
+            assert!(
+                matches!(result.status, TestStatus::Passed),
+                "expected Passed, got {:?} ({:?})",
+                result.status,
+                result.error_message
+            );
+        }
+        // Sequential execution of N * 0.4s commands takes >= 1.6s (N=4).
+        // Real bounded concurrency (max_concurrent_jobs=N) keeps wall clock
+        // close to one command's duration; 1.2s leaves a wide margin above a
+        // single 0.4s run while staying well under the 1.6s sequential floor.
+        assert!(
+            elapsed < Duration::from_millis(1200),
+            "execute_parallel_testing took {:?} for {N} x 0.4s entries with \
+             max_concurrent_jobs={N}; expected real concurrency to keep this \
+             well under {N} * 0.4s",
+            elapsed
         );
     }
 

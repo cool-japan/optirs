@@ -30,3 +30,6 @@ pub use weighted_sum::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_nsga3;

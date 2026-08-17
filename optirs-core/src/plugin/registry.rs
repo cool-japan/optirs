@@ -154,9 +154,17 @@ pub struct RegistryConfig {
     pub auto_discovery: bool,
     /// Enable plugin validation on registration
     pub validate_on_registration: bool,
-    /// Enable plugin caching
+    /// Enable plugin caching. When `false`, [`PluginRegistry::create_optimizer`]
+    /// never reads or writes [`PluginCache`] -- every call reaches the
+    /// plugin factory, and `get_cache_stats()` stays at all-zero. See
+    /// [`PluginCache`] for the (f64-only) scope of what caching covers.
     pub enable_caching: bool,
-    /// Maximum cache size
+    /// Maximum number of distinct plugin names [`PluginCache`] holds at
+    /// once. Once reached, inserting a new entry evicts the
+    /// least-recently-used one first (see [`PluginCache`]). `0` means
+    /// "cache nothing": caching stays logically enabled (bypass is still
+    /// controlled solely by `enable_caching`) but every lookup misses and
+    /// nothing is ever retained.
     pub max_cache_size: usize,
     /// Plugin load timeout
     pub load_timeout: std::time::Duration,
@@ -179,13 +187,50 @@ pub enum PluginSource {
     Package(String),
 }
 
-/// Plugin cache for performance optimization
+/// Plugin cache for performance optimization.
+///
+/// # Scope: `f64` only
+///
+/// `CachedPlugin::plugin` is monomorphized to `Box<dyn OptimizerPlugin<f64>>`
+/// -- there is no generic `PluginCache<A>`. [`PluginRegistry::create_optimizer::<A>`]
+/// only consults this cache when `A = f64`; a call with `A = f32` (or any
+/// other `Float` impl) always goes straight to the factory and never
+/// touches `instances`, `stats.hits`, or `stats.misses`. This is a
+/// deliberate scope limitation, not an oversight: caching f32 instances
+/// too would need either a second, separately-bounded `HashMap` or an
+/// `Any`-erased value type, and nothing in this crate currently creates
+/// enough f32 optimizers through the registry to justify that complexity.
+///
+/// # Cache key and correctness
+///
+/// Entries are keyed by plugin *name*, but a lookup is only a hit when the
+/// caller's [`OptimizerConfig`] also equals the config the cached instance
+/// was built with (`CachedPlugin::config`). A name-only key would let a
+/// caller requesting e.g. a different `learning_rate` silently receive an
+/// instance built with someone else's config -- that would be exactly the
+/// kind of fabricated-success this crate's stub-removal pass exists to
+/// eliminate, so a config mismatch is treated as a miss (the stale entry is
+/// replaced by a freshly created one) rather than returned.
+///
+/// # Eviction
+///
+/// Bounded by [`RegistryConfig::max_cache_size`]: inserting past the limit
+/// evicts the least-recently-used entry first. "Recently used" is tracked
+/// with a monotonically increasing `u64` sequence number bumped on every
+/// insert and every hit, not a wall-clock timestamp -- two cache
+/// operations completing within the same clock tick (common on fast
+/// hardware or under `#[test]`) would otherwise tie under
+/// `SystemTime`-based LRU and evict a nondeterministically-chosen entry.
 #[derive(Debug)]
 pub struct PluginCache {
-    /// Cached plugin instances
+    /// Cached plugin instances, keyed by plugin name.
     instances: HashMap<String, CachedPlugin>,
     /// Cache statistics
     stats: CacheStats,
+    /// Source of the next `CachedPlugin::sequence` value; incremented on
+    /// every insert and every hit so eviction has a real, deterministic
+    /// "least recently used" ordering (see the struct-level doc comment).
+    next_sequence: u64,
 }
 
 /// Cached plugin instance
@@ -193,12 +238,18 @@ pub struct PluginCache {
 pub struct CachedPlugin {
     /// Plugin instance
     pub plugin: Box<dyn OptimizerPlugin<f64>>,
+    /// The exact [`OptimizerConfig`] this instance was created with. A
+    /// lookup with a different config is treated as a miss -- see
+    /// [`PluginCache`]'s "Cache key and correctness" section.
+    pub config: OptimizerConfig,
     /// Cache timestamp
     pub cached_at: std::time::SystemTime,
     /// Access count
     pub access_count: usize,
     /// Last accessed
     pub last_accessed: std::time::SystemTime,
+    /// Recency ordinal used for LRU eviction; see [`PluginCache::next_sequence`].
+    pub(super) sequence: u64,
 }
 
 /// Cache statistics
@@ -206,11 +257,20 @@ pub struct CachedPlugin {
 pub struct CacheStats {
     /// Total cache hits
     pub hits: usize,
-    /// Total cache misses
+    /// Total cache misses (an f64 `create_optimizer` call that reached the
+    /// factory: no matching cached entry existed, or its config differed)
     pub misses: usize,
     /// Total evictions
     pub evictions: usize,
-    /// Total memory used (bytes)
+    /// Approximate memory used by currently cached instances, in bytes.
+    /// Computed as `sum(size_of_val(&*cached.plugin))` -- the real,
+    /// runtime size of each cached optimizer's own concrete struct
+    /// (resolved through its vtable, not guessed). This deliberately does
+    /// **not** account for any heap allocations *inside* that struct
+    /// (e.g. a `Vec<f64>` momentum buffer): this crate has no allocator
+    /// instrumentation to attribute those bytes, and reporting only the
+    /// immediate struct size is an honest undercount rather than a
+    /// fabricated total.
     pub memory_used: usize,
 }
 
@@ -404,6 +464,10 @@ impl PluginRegistry {
         // while `factories` is held write-locked, so a panic is caught
         // rather than allowed to poison the registry-wide lock.
         let optimizer = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
+            // `PluginCache` is monomorphized to `Box<dyn OptimizerPlugin<f64>>`
+            // (see its doc comment) and so cannot represent an f32 instance
+            // at all -- this branch always reaches the factory, regardless
+            // of `enable_caching`.
             let opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 registration.factory.create_f32(config)
             }))
@@ -427,15 +491,62 @@ impl PluginRegistry {
                     )
                 })?
         } else if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f64>() {
-            let opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-                registration.factory.create_f64(config)
-            }))
-            .map_err(|_| {
-                OptimError::PluginLoadError(format!(
-                    "plugin '{name}' panicked while creating an f64 optimizer"
-                ))
-            })??;
-            let boxed_any: Box<dyn Any> = Box::new(opt);
+            let use_cache = self.config.enable_caching;
+
+            // A cache hit must match on *both* plugin name and config (see
+            // `PluginCache`'s "Cache key and correctness" doc section), so
+            // the lookup runs before the factory call and can skip it
+            // entirely on a hit -- `get_or_record_miss` also folds in the
+            // `stats.misses` bump for every other outcome.
+            let cached_hit = if use_cache {
+                let mut cache = mutex_lock(&self.cache);
+                cache.get_or_record_miss(name, &config)?
+            } else {
+                None
+            };
+
+            let opt_f64: Box<dyn OptimizerPlugin<f64>> = if let Some(hit) = cached_hit {
+                hit
+            } else {
+                // Only clone `config` when it will actually be stored --
+                // avoids the clone entirely when caching is disabled.
+                let config_for_cache = use_cache.then(|| config.clone());
+                let created = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    registration.factory.create_f64(config)
+                }))
+                .map_err(|_| {
+                    OptimError::PluginLoadError(format!(
+                        "plugin '{name}' panicked while creating an f64 optimizer"
+                    ))
+                })??;
+                if let Some(cache_config) = config_for_cache {
+                    // Same rationale as `get_or_record_miss`: `clone_plugin`
+                    // is third-party code, called here under `factories`'s
+                    // write lock, so a panic must be caught rather than
+                    // allowed to unwind through it.
+                    let created_ref = &created;
+                    let cloned_for_cache =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            created_ref.clone_plugin()
+                        }))
+                        .map_err(|_| {
+                            OptimError::PluginLoadError(format!(
+                                "plugin '{name}' panicked while cloning a newly created f64 \
+                                 optimizer for the cache"
+                            ))
+                        })?;
+                    let mut cache = mutex_lock(&self.cache);
+                    cache.insert(
+                        name.to_string(),
+                        cloned_for_cache,
+                        cache_config,
+                        self.config.max_cache_size,
+                    );
+                }
+                created
+            };
+
+            let boxed_any: Box<dyn Any> = Box::new(opt_f64);
             *boxed_any
                 .downcast::<Box<dyn OptimizerPlugin<A>>>()
                 .map_err(|_| {
@@ -721,7 +832,134 @@ impl PluginCache {
         Self {
             instances: HashMap::new(),
             stats: CacheStats::default(),
+            next_sequence: 0,
         }
+    }
+
+    /// Look up a cached instance for `name`. Only a hit when `config`
+    /// equals the config the cached instance was built with (see
+    /// [`PluginCache`]'s "Cache key and correctness" doc section); any
+    /// other outcome -- no entry, or a config mismatch -- is a miss and
+    /// bumps `stats.misses`. On a hit, returns an independent clone (via
+    /// [`OptimizerPlugin::clone_plugin`]) so the caller gets an owned
+    /// instance while the cache keeps its own, and refreshes the entry's
+    /// recency so it is not the next eviction candidate.
+    ///
+    /// `clone_plugin` is third-party trait code -- the registered plugin
+    /// author's own impl, not anything this crate controls -- called here
+    /// while both the caller's `factories` write lock and this cache's own
+    /// mutex are held. A panic inside it is caught the same way the
+    /// adjacent factory-call sites in `create_optimizer` already catch
+    /// `create_f32`/`create_f64` panics, so it surfaces as `Err` instead of
+    /// unwinding through two held locks. The poisoned entry is evicted
+    /// (bumping `stats.evictions`) rather than left cached: recency was
+    /// already refreshed above, so leaving it in place would make this
+    /// plugin name return `Err` on every subsequent call forever instead
+    /// of just this one, once a broken `clone_plugin` demonstrated it
+    /// cannot be trusted.
+    fn get_or_record_miss(
+        &mut self,
+        name: &str,
+        config: &OptimizerConfig,
+    ) -> Result<Option<Box<dyn OptimizerPlugin<f64>>>> {
+        if let Some(entry) = self.instances.get_mut(name) {
+            if &entry.config == config {
+                self.next_sequence += 1;
+                entry.access_count += 1;
+                entry.last_accessed = std::time::SystemTime::now();
+                entry.sequence = self.next_sequence;
+
+                let plugin = &entry.plugin;
+                let clone_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    plugin.clone_plugin()
+                }));
+
+                return match clone_result {
+                    Ok(cloned) => {
+                        self.stats.hits += 1;
+                        Ok(Some(cloned))
+                    }
+                    Err(_) => {
+                        self.instances.remove(name);
+                        self.stats.evictions += 1;
+                        Err(OptimError::PluginLoadError(format!(
+                            "plugin '{name}' panicked while cloning a cached f64 optimizer; \
+                             the poisoned cache entry has been evicted"
+                        )))
+                    }
+                };
+            }
+        }
+        self.stats.misses += 1;
+        Ok(None)
+    }
+
+    /// Insert a freshly created instance, evicting the least-recently-used
+    /// entry first if this insertion would exceed `max_size`.
+    /// `max_size == 0` means "cache nothing" -- the entry is not inserted
+    /// (and, since there is nothing to make room for, nothing is evicted
+    /// either).
+    fn insert(
+        &mut self,
+        name: String,
+        plugin: Box<dyn OptimizerPlugin<f64>>,
+        config: OptimizerConfig,
+        max_size: usize,
+    ) {
+        if max_size == 0 {
+            return;
+        }
+        if !self.instances.contains_key(&name) && self.instances.len() >= max_size {
+            self.evict_lru();
+        }
+        self.next_sequence += 1;
+        let now = std::time::SystemTime::now();
+        self.instances.insert(
+            name,
+            CachedPlugin {
+                plugin,
+                config,
+                cached_at: now,
+                access_count: 1,
+                last_accessed: now,
+                sequence: self.next_sequence,
+            },
+        );
+        self.recompute_memory_used();
+    }
+
+    /// Evict the entry with the smallest `sequence` (the one least
+    /// recently inserted or hit). A no-op on an empty cache.
+    fn evict_lru(&mut self) {
+        let lru_name = self
+            .instances
+            .iter()
+            .min_by_key(|(_, cached)| cached.sequence)
+            .map(|(name, _)| name.clone());
+        if let Some(lru_name) = lru_name {
+            self.instances.remove(&lru_name);
+            self.stats.evictions += 1;
+            self.recompute_memory_used();
+        }
+    }
+
+    /// Recompute `stats.memory_used` from the currently cached instances;
+    /// see [`CacheStats::memory_used`] for exactly what this does and does
+    /// not account for.
+    fn recompute_memory_used(&mut self) {
+        self.stats.memory_used = self
+            .instances
+            .values()
+            .map(|cached| std::mem::size_of_val(&*cached.plugin))
+            .sum();
+    }
+
+    /// Number of distinct plugin names currently cached. Exposed (crate-
+    /// visible only) for tests asserting eviction actually bounds cache
+    /// size rather than merely incrementing a counter.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.instances.len()
     }
 }
 
@@ -894,361 +1132,4 @@ mod tests {
 // error, never poison the process-wide registry), and the lock-poisoning
 // recovery helpers themselves.
 #[cfg(test)]
-mod regression_tests {
-    use super::*;
-    use scirs2_core::ndarray::Array1;
-
-    /// Minimal SGD-style optimizer used as a well-behaved test plugin.
-    #[derive(Debug, Clone)]
-    struct TestOptimizer<A: Float> {
-        lr: A,
-        initialized: bool,
-    }
-
-    impl<A: Float + Debug + Send + Sync + 'static> OptimizerPlugin<A> for TestOptimizer<A> {
-        fn step(&mut self, params: &Array1<A>, gradients: &Array1<A>) -> Result<Array1<A>> {
-            // Element-wise to avoid a `ScalarOperand` bound on `A`.
-            let out: Array1<A> = params
-                .iter()
-                .zip(gradients.iter())
-                .map(|(&p, &g)| p - g * self.lr)
-                .collect();
-            Ok(out)
-        }
-        fn name(&self) -> &str {
-            "test-sgd"
-        }
-        fn version(&self) -> &str {
-            "1.0.0"
-        }
-        fn plugin_info(&self) -> PluginInfo {
-            PluginInfo {
-                name: "test-sgd".to_string(),
-                version: "1.0.0".to_string(),
-                ..PluginInfo::default()
-            }
-        }
-        fn capabilities(&self) -> PluginCapabilities {
-            PluginCapabilities::default()
-        }
-        fn initialize(&mut self, _paramshape: &[usize]) -> Result<()> {
-            self.initialized = true;
-            Ok(())
-        }
-        fn reset(&mut self) -> Result<()> {
-            self.initialized = false;
-            Ok(())
-        }
-        fn get_config(&self) -> OptimizerConfig {
-            OptimizerConfig::default()
-        }
-        fn set_config(&mut self, _config: OptimizerConfig) -> Result<()> {
-            Ok(())
-        }
-        fn get_state(&self) -> Result<OptimizerState> {
-            Ok(OptimizerState::default())
-        }
-        fn set_state(&mut self, _state: OptimizerState) -> Result<()> {
-            Ok(())
-        }
-        fn clone_plugin(&self) -> Box<dyn OptimizerPlugin<A>> {
-            Box::new(self.clone())
-        }
-    }
-
-    #[derive(Debug)]
-    struct TestFactory;
-
-    impl PluginFactoryWrapper for TestFactory {
-        fn create_f32(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f32>>> {
-            Ok(Box::new(TestOptimizer::<f32> {
-                lr: 0.1,
-                initialized: false,
-            }))
-        }
-        fn create_f64(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f64>>> {
-            Ok(Box::new(TestOptimizer::<f64> {
-                lr: 0.1,
-                initialized: false,
-            }))
-        }
-        fn info(&self) -> PluginInfo {
-            PluginInfo {
-                name: "test-sgd".to_string(),
-                version: "1.0.0".to_string(),
-                ..PluginInfo::default()
-            }
-        }
-        fn validate_config(&self, _config: &OptimizerConfig) -> Result<()> {
-            Ok(())
-        }
-        fn default_config(&self) -> OptimizerConfig {
-            OptimizerConfig::default()
-        }
-        fn config_schema(&self) -> ConfigSchema {
-            ConfigSchema {
-                fields: HashMap::new(),
-                required_fields: Vec::new(),
-                version: "1.0.0".to_string(),
-            }
-        }
-        fn supports_type(&self, _datatype: &DataType) -> bool {
-            true
-        }
-    }
-
-    /// A factory whose creation always panics -- stands in for third-party
-    /// plugin code that blows up while a registry lock is held.
-    #[derive(Debug)]
-    struct PanicFactory;
-
-    impl PluginFactoryWrapper for PanicFactory {
-        fn create_f32(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f32>>> {
-            panic!("intentional panic inside factory create_f32");
-        }
-        fn create_f64(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f64>>> {
-            panic!("intentional panic inside factory create_f64");
-        }
-        fn info(&self) -> PluginInfo {
-            PluginInfo {
-                name: "panic-plugin".to_string(),
-                version: "1.0.0".to_string(),
-                ..PluginInfo::default()
-            }
-        }
-        fn validate_config(&self, _config: &OptimizerConfig) -> Result<()> {
-            Ok(())
-        }
-        fn default_config(&self) -> OptimizerConfig {
-            OptimizerConfig::default()
-        }
-        fn config_schema(&self) -> ConfigSchema {
-            ConfigSchema {
-                fields: HashMap::new(),
-                required_fields: Vec::new(),
-                version: "1.0.0".to_string(),
-            }
-        }
-        fn supports_type(&self, _datatype: &DataType) -> bool {
-            true
-        }
-    }
-
-    #[test]
-    fn static_plugin_roundtrip_creates_and_steps() {
-        let registry = PluginRegistry::new(RegistryConfig::default());
-        registry
-            .register_plugin(TestFactory)
-            .expect("registration should succeed");
-
-        // f64 path.
-        let mut opt = registry
-            .create_optimizer::<f64>("test-sgd", OptimizerConfig::default())
-            .expect("f64 optimizer should be creatable");
-        opt.initialize(&[3]).expect("initialize");
-        let params = Array1::from(vec![1.0_f64, 2.0, 3.0]);
-        let grads = Array1::from(vec![0.5_f64, 0.5, 0.5]);
-        let updated = opt.step(&params, &grads).expect("step should succeed");
-        // lr = 0.1, so each coordinate moves by 0.05.
-        assert!((updated[0] - 0.95).abs() < 1e-9);
-        assert!((updated[1] - 1.95).abs() < 1e-9);
-        assert!((updated[2] - 2.95).abs() < 1e-9);
-
-        // f32 path exercises the other `Any` downcast branch.
-        let opt32 = registry
-            .create_optimizer::<f32>("test-sgd", OptimizerConfig::default())
-            .expect("f32 optimizer should be creatable");
-        assert_eq!(opt32.name(), "test-sgd");
-    }
-
-    #[test]
-    fn create_optimizer_reliably_updates_usage_statistics() {
-        // F71 regression: `create_optimizer` previously dropped its read
-        // lock and reacquired a *new* write lock purely to bump
-        // `load_count`/`last_used`, leaving a window in which another
-        // thread could unregister the plugin -- the statistics update
-        // would then silently vanish (`factories.get_mut` finds nothing)
-        // even though the just-created optimizer was handed back as `Ok`.
-        // The fix folds the update into the single write guard already
-        // held for status-check/validate/create, so this can no longer
-        // race. This test cannot easily force the race itself, but it
-        // pins the now-guaranteed behaviour: `load_count` increments
-        // exactly once per successful `create_optimizer` call, every time.
-        let registry = PluginRegistry::new(RegistryConfig::default());
-        registry
-            .register_plugin(TestFactory)
-            .expect("registration should succeed");
-
-        for expected_count in 1..=5usize {
-            let _ = registry
-                .create_optimizer::<f64>("test-sgd", OptimizerConfig::default())
-                .expect("optimizer should be creatable");
-            let factories = read_lock(&registry.factories);
-            let registration = factories.get("test-sgd").expect("plugin must still exist");
-            assert_eq!(
-                registration.load_count, expected_count,
-                "load_count must increment exactly once per successful create_optimizer call"
-            );
-            assert!(
-                registration.last_used.is_some(),
-                "last_used must be set after a successful create_optimizer call"
-            );
-        }
-    }
-
-    /// A second factory identical to `TestFactory` except it declares
-    /// `gpu_support: true`, used to prove `required_capabilities`
-    /// filtering actually discriminates between plugins rather than
-    /// silently matching everything (F72).
-    #[derive(Debug)]
-    struct GpuTestFactory;
-
-    impl PluginFactoryWrapper for GpuTestFactory {
-        fn create_f32(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f32>>> {
-            Ok(Box::new(TestOptimizer::<f32> {
-                lr: 0.1,
-                initialized: false,
-            }))
-        }
-        fn create_f64(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f64>>> {
-            Ok(Box::new(TestOptimizer::<f64> {
-                lr: 0.1,
-                initialized: false,
-            }))
-        }
-        fn info(&self) -> PluginInfo {
-            PluginInfo {
-                name: "gpu-sgd".to_string(),
-                version: "1.0.0".to_string(),
-                ..PluginInfo::default()
-            }
-        }
-        fn capabilities(&self) -> PluginCapabilities {
-            PluginCapabilities {
-                gpu_support: true,
-                ..PluginCapabilities::default()
-            }
-        }
-        fn validate_config(&self, _config: &OptimizerConfig) -> Result<()> {
-            Ok(())
-        }
-        fn default_config(&self) -> OptimizerConfig {
-            OptimizerConfig::default()
-        }
-        fn config_schema(&self) -> ConfigSchema {
-            ConfigSchema {
-                fields: HashMap::new(),
-                required_fields: Vec::new(),
-                version: "1.0.0".to_string(),
-            }
-        }
-        fn supports_type(&self, _datatype: &DataType) -> bool {
-            true
-        }
-    }
-
-    #[test]
-    fn search_plugins_filters_by_required_capabilities() {
-        // F72 regression: `PluginQuery.required_capabilities` was declared
-        // and never consulted by `matches_query`, so a search filtering on
-        // it silently returned every plugin regardless of what it
-        // supported.
-        let registry = PluginRegistry::new(RegistryConfig::default());
-        registry
-            .register_plugin(TestFactory) // gpu_support: false (default)
-            .expect("registration should succeed");
-        registry
-            .register_plugin(GpuTestFactory) // gpu_support: true
-            .expect("registration should succeed");
-
-        let all = registry.search_plugins(PluginQuery::default());
-        assert_eq!(all.total_count, 2, "sanity: both plugins are registered");
-
-        let gpu_only = registry.search_plugins(PluginQuery {
-            required_capabilities: vec!["gpu_support".to_string()],
-            ..PluginQuery::default()
-        });
-        assert_eq!(
-            gpu_only.total_count, 1,
-            "only the GPU-capable plugin should match"
-        );
-        assert_eq!(gpu_only.plugins[0].name, "gpu-sgd");
-
-        // An unknown capability name must exclude everything rather than
-        // matching everything -- `has_capability` returns `false` for
-        // names it does not recognise.
-        let unknown = registry.search_plugins(PluginQuery {
-            required_capabilities: vec!["quantum_teleportation".to_string()],
-            ..PluginQuery::default()
-        });
-        assert_eq!(unknown.total_count, 0);
-    }
-
-    #[test]
-    fn panicking_factory_is_caught_and_registry_survives() {
-        // Disable creation-based validation so registration itself does not
-        // trip the panic; we want the panic to happen inside `create_optimizer`
-        // while the registry read lock is held.
-        let config = RegistryConfig {
-            validate_on_registration: false,
-            ..RegistryConfig::default()
-        };
-        let registry = PluginRegistry::new(config);
-        registry
-            .register_plugin(PanicFactory)
-            .expect("registration should succeed");
-
-        // Silence the default panic hook for the duration of the caught panic
-        // so the test output stays clean.
-        let prev_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = registry.create_optimizer::<f64>("panic-plugin", OptimizerConfig::default());
-        std::panic::set_hook(prev_hook);
-
-        assert!(
-            result.is_err(),
-            "a panicking factory must surface as Err, not unwind out of create_optimizer"
-        );
-
-        // The registry must remain fully usable: the lock was not poisoned
-        // (catch_unwind) or, if it were, the recovery helpers heal it.
-        registry
-            .register_plugin(TestFactory)
-            .expect("registry must still accept registrations after a caught panic");
-        let opt = registry
-            .create_optimizer::<f64>("test-sgd", OptimizerConfig::default())
-            .expect("registry must still create optimizers after a caught panic");
-        assert_eq!(opt.name(), "test-sgd");
-    }
-
-    #[test]
-    fn lock_helpers_recover_from_poisoning() {
-        use std::sync::{Arc, Mutex, RwLock};
-
-        // Poison an RwLock by panicking while holding its write guard.
-        let rw = Arc::new(RwLock::new(5_i32));
-        let rw_clone = Arc::clone(&rw);
-        let _ = std::thread::spawn(move || {
-            let _guard = rw_clone.write().unwrap_or_else(|e| e.into_inner());
-            panic!("poison the rwlock");
-        })
-        .join();
-        assert!(rw.read().is_err(), "precondition: the RwLock is poisoned");
-        // Helpers hand back a usable guard rather than panicking.
-        assert_eq!(*read_lock(&rw), 5);
-        *write_lock(&rw) = 7;
-        assert_eq!(*read_lock(&rw), 7);
-
-        // Poison a Mutex the same way.
-        let mx = Arc::new(Mutex::new(1_i32));
-        let mx_clone = Arc::clone(&mx);
-        let _ = std::thread::spawn(move || {
-            let _guard = mx_clone.lock().unwrap_or_else(|e| e.into_inner());
-            panic!("poison the mutex");
-        })
-        .join();
-        assert!(mx.lock().is_err(), "precondition: the Mutex is poisoned");
-        *mutex_lock(&mx) += 10;
-        assert_eq!(*mutex_lock(&mx), 11);
-    }
-}
+mod regression_tests;

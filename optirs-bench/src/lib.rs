@@ -81,6 +81,7 @@ pub mod cross_framework;
 pub mod cross_platform_tester;
 pub mod documentation_analyzer;
 pub mod enhanced_memory_monitor;
+pub mod leak_tool_reports;
 pub mod memory_leak_detector;
 pub mod memory_optimizer;
 pub mod notification_transport;

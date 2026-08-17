@@ -1,7 +1,11 @@
 //! Shared core types: the MultiObjectiveOptimizer trait and the Pareto-front / statistics data model used by every algorithm in this module.
 
 use crate::error::Result;
-use crate::nas_engine::{MultiObjectiveConfig, OptimizerArchitecture, SearchResult};
+use crate::nas_engine::{
+    MultiObjectiveConfig, ObjectiveConfig, ObjectiveType, OptimizationDirection,
+    OptimizerArchitecture, SearchResult,
+};
+use crate::EvaluationMetric;
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -180,6 +184,65 @@ pub struct SolutionMetadata {
     /// Creation method
     pub creation_method: CreationMethod,
 }
+/// The [`EvaluationMetric`] an [`ObjectiveType`] is read from.
+///
+/// Every optimizer in this module reads its objectives through this one mapping,
+/// so NSGA-II, NSGA-III, MOEA/D and the weighted sum can never disagree about what
+/// a configured objective means.
+pub fn evaluation_metric_for_objective(objective_type: &ObjectiveType) -> EvaluationMetric {
+    match objective_type {
+        ObjectiveType::Accuracy => EvaluationMetric::Accuracy,
+        ObjectiveType::Loss => EvaluationMetric::FinalPerformance,
+        ObjectiveType::TrainingTime => EvaluationMetric::TrainingTime,
+        ObjectiveType::InferenceTime => EvaluationMetric::ComputationTime,
+        ObjectiveType::MemoryUsage => EvaluationMetric::MemoryUsage,
+        ObjectiveType::EnergyConsumption => EvaluationMetric::ComputationTime,
+        ObjectiveType::ModelSize => EvaluationMetric::MemoryUsage,
+        ObjectiveType::Performance => EvaluationMetric::FinalPerformance,
+        ObjectiveType::Efficiency => EvaluationMetric::ComputationalEfficiency,
+        ObjectiveType::Robustness => EvaluationMetric::Robustness,
+        ObjectiveType::Interpretability => EvaluationMetric::FinalPerformance,
+        ObjectiveType::Fairness => EvaluationMetric::FinalPerformance,
+        ObjectiveType::Privacy => EvaluationMetric::FinalPerformance,
+        ObjectiveType::Sustainability => EvaluationMetric::ComputationalEfficiency,
+        ObjectiveType::Cost => EvaluationMetric::ComputationalEfficiency,
+        ObjectiveType::Custom(_) => EvaluationMetric::FinalPerformance,
+    }
+}
+
+/// Objective vector of `result` in the **raw** objective space the configuration
+/// declares (directions untouched), one entry per configured objective.
+///
+/// A metric the evaluation did not report contributes `0`, which is the
+/// convention the rest of the module already used.
+pub fn objective_vector_for_result<T: Float + Debug + Send + Sync + 'static>(
+    objectives: &[ObjectiveConfig<T>],
+    result: &SearchResult<T>,
+) -> Vec<T> {
+    objectives
+        .iter()
+        .map(|objective| {
+            let metric = evaluation_metric_for_objective(&objective.objective_type);
+            result
+                .evaluation_results
+                .metric_scores
+                .get(&metric)
+                .copied()
+                .unwrap_or_else(T::zero)
+        })
+        .collect()
+}
+
+/// Per-objective optimization directions of a configuration, in order.
+pub fn objective_directions<T: Float + Debug + Send + Sync + 'static>(
+    objectives: &[ObjectiveConfig<T>],
+) -> Vec<OptimizationDirection> {
+    objectives
+        .iter()
+        .map(|objective| objective.direction.clone())
+        .collect()
+}
+
 /// Base trait for multi-objective optimizers
 pub trait MultiObjectiveOptimizer<T: Float + Debug + Send + Sync + 'static>: Send + Sync {
     /// Initialize the optimizer

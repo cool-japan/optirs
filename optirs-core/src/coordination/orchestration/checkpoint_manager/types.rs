@@ -6,6 +6,7 @@ use crate::error::{OptimError, Result};
 #[allow(dead_code)]
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -21,7 +22,7 @@ use super::types_15::{
 };
 
 /// Optimizer state information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OptimizerState<T: Float + Debug + Send + Sync + 'static> {
     /// Optimizer type
     pub optimizer_type: String,
@@ -49,7 +50,7 @@ pub struct StorageConfig {
     pub options: HashMap<String, String>,
 }
 /// Permission set
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PermissionSet {
     /// Read permission
     pub read: bool,
@@ -61,21 +62,21 @@ pub struct PermissionSet {
     pub delete: bool,
 }
 /// Gradient clipping methods
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClippingMethod {
     Norm,
     Value,
     GlobalNorm,
 }
 /// Monitor modes for early stopping
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorMode {
     Min,
     Max,
     Auto,
 }
 /// Checkpoint representation
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Checkpoint<T: Float + Debug + Send + Sync + 'static> {
     /// Checkpoint identifier
     pub checkpoint_id: String,
@@ -99,7 +100,7 @@ pub struct Checkpoint<T: Float + Debug + Send + Sync + 'static> {
     pub dependencies: Vec<String>,
 }
 /// Compression algorithms
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionAlgorithm {
     None,
     Gzip,
@@ -110,7 +111,7 @@ pub enum CompressionAlgorithm {
     Custom(u8),
 }
 /// Model architecture specification
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModelArchitecture {
     /// Architecture type
     pub architecture_type: String,
@@ -303,7 +304,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RecoveryManager
     }
 }
 /// CPU information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CpuInfo {
     /// CPU model
     pub model: String,
@@ -317,7 +318,7 @@ pub struct CpuInfo {
     pub max_frequency: f64,
 }
 /// Types of checkpoints
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum CheckpointType {
     /// Full state checkpoint
     Full,
@@ -339,7 +340,7 @@ pub enum CheckpointType {
     Custom(String),
 }
 /// Types of attachments
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentType {
     /// Configuration file
     Configuration,
@@ -367,7 +368,7 @@ pub enum StateType {
     Custom,
 }
 /// Model state information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModelState<T: Float + Debug + Send + Sync + 'static> {
     /// Model parameters
     pub parameters: HashMap<String, Array1<T>>,
@@ -381,7 +382,7 @@ pub struct ModelState<T: Float + Debug + Send + Sync + 'static> {
     pub hash: String,
 }
 /// Warmup configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WarmupConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Warmup steps
     pub warmup_steps: usize,
@@ -391,7 +392,7 @@ pub struct WarmupConfig<T: Float + Debug + Send + Sync + 'static> {
     pub initial_lr: T,
 }
 /// System information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SystemInfo {
     /// Operating system
     pub os: String,
@@ -417,7 +418,7 @@ pub enum IndexingStrategy {
     Custom,
 }
 /// Batch normalization settings
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BatchNormSettings<T: Float + Debug + Send + Sync + 'static> {
     /// Enable batch normalization
     pub enabled: bool,
@@ -455,7 +456,7 @@ pub struct ValidationStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub success_rate: T,
 }
 /// Early stopping configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EarlyStoppingConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Enable early stopping
     pub enabled: bool,
@@ -645,7 +646,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CheckpointManag
     }
 }
 /// Storage information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StorageInfo {
     /// Storage device
     pub device: String,
@@ -657,7 +658,7 @@ pub struct StorageInfo {
     pub available_capacity: usize,
 }
 /// Learning rate schedule types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScheduleType {
     Constant,
     StepDecay,
@@ -667,7 +668,7 @@ pub enum ScheduleType {
     Custom,
 }
 /// Data loader state
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataLoaderState {
     /// Current batch index
     pub current_batch: usize,
@@ -681,7 +682,7 @@ pub struct DataLoaderState {
     pub config: DataLoaderConfig,
 }
 /// Hardware configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HardwareConfig {
     /// CPU information
     pub cpu_info: CpuInfo,
@@ -725,7 +726,7 @@ pub struct RecoveryConfig<T: Float + Debug + Send + Sync + 'static> {
 #[derive(Debug)]
 pub(super) struct NoSelfDependencyRule;
 /// Gradient clipping settings
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GradientClippingSettings<T: Float + Debug + Send + Sync + 'static> {
     /// Enable gradient clipping
     pub enabled: bool,
@@ -809,7 +810,7 @@ pub struct CompressionStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub total_decompression_time: Duration,
 }
 /// Training state information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TrainingState<T: Float + Debug + Send + Sync + 'static> {
     /// Current epoch
     pub current_epoch: usize,
@@ -839,7 +840,7 @@ pub struct RecoveryTarget {
     pub environment: Option<EnvironmentState>,
 }
 /// Creator information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CreatorInfo {
     /// Creator name
     pub name: String,
@@ -851,7 +852,7 @@ pub struct CreatorInfo {
     pub tool_version: String,
 }
 /// Optimization settings
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OptimizationSettings<T: Float + Debug + Send + Sync + 'static> {
     /// Optimizer type
     pub optimizer_type: String,
@@ -863,7 +864,7 @@ pub struct OptimizationSettings<T: Float + Debug + Send + Sync + 'static> {
     pub weight_decay: T,
 }
 /// Model configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModelConfiguration<T: Float + Debug + Send + Sync + 'static> {
     /// Hyperparameters
     pub hyperparameters: HashMap<String, T>,
@@ -875,7 +876,7 @@ pub struct ModelConfiguration<T: Float + Debug + Send + Sync + 'static> {
     pub optimization: OptimizationSettings<T>,
 }
 /// Sampler state information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SamplerState {
     /// Sampler type
     pub sampler_type: String,
@@ -885,7 +886,7 @@ pub struct SamplerState {
     pub state: Vec<u8>,
 }
 /// Learning rate schedule
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LearningRateSchedule<T: Float + Debug + Send + Sync + 'static> {
     /// Schedule type
     pub schedule_type: ScheduleType,
@@ -895,7 +896,7 @@ pub struct LearningRateSchedule<T: Float + Debug + Send + Sync + 'static> {
     pub warmup: Option<WarmupConfig<T>>,
 }
 /// GPU information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GpuInfo {
     /// GPU model
     pub model: String,
@@ -946,7 +947,7 @@ pub struct CompressionAlgorithmStats {
 #[derive(Debug)]
 pub(super) struct NonEmptyDataRule;
 /// Connection specification
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectionSpec {
     /// Connection identifier
     pub connection_id: String,
@@ -960,7 +961,7 @@ pub struct ConnectionSpec {
     pub parameters: HashMap<String, String>,
 }
 /// Layer specification
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LayerSpec {
     /// Layer identifier
     pub layer_id: String,
@@ -974,7 +975,7 @@ pub struct LayerSpec {
     pub output_shapes: Vec<Vec<usize>>,
 }
 /// Training configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TrainingConfiguration<T: Float + Debug + Send + Sync + 'static> {
     /// Learning rate
     pub learning_rate: T,
@@ -990,7 +991,7 @@ pub struct TrainingConfiguration<T: Float + Debug + Send + Sync + 'static> {
     pub lr_schedule: LearningRateSchedule<T>,
 }
 /// Checkpoint data container
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CheckpointData<T: Float + Debug + Send + Sync + 'static> {
     /// Model state
     pub model_state: Option<ModelState<T>>,

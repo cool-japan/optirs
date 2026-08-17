@@ -17,6 +17,7 @@ use crate::error::{OptimError, Result};
 pub mod bptt;
 pub mod components;
 pub mod features;
+pub mod introspection;
 pub mod trainer;
 
 pub use bptt::{
@@ -136,8 +137,13 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjectio
         output_size: usize,
         output_transform: OutputTransform,
     ) -> Result<Self> {
-        let scale = (2.0 / (input_size + output_size).max(1) as f64).sqrt();
-        let weights = LSTMLayer::<T>::xavier_init(output_size, input_size, scale);
+        // Xavier/Glorot *uniform* limit is sqrt(6 / (fan_in + fan_out)); the
+        // sqrt(2 / ...) that used to be here is the limit for a Xavier *normal*
+        // draw, and `xavier_init` samples uniformly. Uniform[-b, b] has variance
+        // b^2/3, so the old constant gave exactly one third of the intended
+        // variance in every LSTM weight matrix in this file (finding F64).
+        let limit = LSTMLayer::<T>::xavier_limit(input_size, output_size);
+        let weights = LSTMLayer::<T>::xavier_init(output_size, input_size, limit);
         let bias = Array1::zeros(output_size);
 
         Ok(Self {
@@ -167,8 +173,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjectio
     /// draw at the new shape is the honest response, since there is no
     /// meaningful way to reuse weights trained for a different output size.
     pub fn reset(&mut self, input_size: usize, output_size: usize) {
-        let scale = (2.0 / (input_size + output_size).max(1) as f64).sqrt();
-        self.weights = LSTMLayer::<T>::xavier_init(output_size, input_size, scale);
+        let limit = LSTMLayer::<T>::xavier_limit(input_size, output_size);
+        self.weights = LSTMLayer::<T>::xavier_init(output_size, input_size, limit);
         self.bias = Array1::zeros(output_size);
     }
 
@@ -233,13 +239,14 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechan
             )));
         }
         let head_size = hiddensize / num_heads;
-        let scale = (2.0 / (2 * hiddensize).max(1) as f64).sqrt();
+        // Square projections: fan_in == fan_out == hiddensize.
+        let limit = LSTMLayer::<T>::xavier_limit(hiddensize, hiddensize);
 
         Ok(Self {
-            query_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
-            key_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
-            value_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
-            output_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
+            query_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
+            key_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
+            value_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
+            output_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
             num_heads,
             head_size,
             attentionweights: None,
@@ -1570,12 +1577,18 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
 impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
     /// Create new LSTM layer
     fn new(_input_size: usize, hiddensize: usize) -> Result<Self> {
-        // Xavier initialization
-        let scale = (2.0 / (_input_size + hiddensize) as f64).sqrt();
+        // Xavier/Glorot uniform, with the fan pair taken *per matrix*: the four
+        // gates are independent maps stacked along the rows, so the fan-out of
+        // each is `hiddensize`, not `4 * hiddensize`. The input-to-hidden and
+        // hidden-to-hidden matrices therefore have different fan-ins and must not
+        // share one limit (they did, computed from `_input_size + hiddensize` for
+        // both).
+        let limit_ih = Self::xavier_limit(_input_size, hiddensize);
+        let limit_hh = Self::xavier_limit(hiddensize, hiddensize);
 
         Ok(Self {
-            weight_ih: Self::xavier_init(4 * hiddensize, _input_size, scale),
-            weight_hh: Self::xavier_init(4 * hiddensize, hiddensize, scale),
+            weight_ih: Self::xavier_init(4 * hiddensize, _input_size, limit_ih),
+            weight_hh: Self::xavier_init(4 * hiddensize, hiddensize, limit_hh),
             bias_ih: Array1::zeros(4 * hiddensize),
             bias_hh: Array1::zeros(4 * hiddensize),
             hidden_state: Array1::zeros(hiddensize),
@@ -1618,10 +1631,28 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
         Ok(self.hidden_state.clone())
     }
 
-    /// Xavier initialization
-    fn xavier_init(rows: usize, cols: usize, scale: f64) -> Array2<T> {
+    /// Xavier/Glorot **uniform** limit for a layer with the given fans:
+    /// `sqrt(6 / (fan_in + fan_out))`.
+    ///
+    /// `Uniform[-b, b]` has variance `b^2 / 3`, so reaching Glorot's target
+    /// variance `2 / (fan_in + fan_out)` needs `b = sqrt(6 / (fan_in + fan_out))`.
+    /// Every call site in this file previously passed `sqrt(2 / (fan_in +
+    /// fan_out))` — the limit for a *normal* draw — to the uniform sampler
+    /// below, so every LSTM weight matrix started with one third of the intended
+    /// variance and correspondingly attenuated signal and gradient (finding F64).
+    pub(crate) fn xavier_limit(fan_in: usize, fan_out: usize) -> f64 {
+        (6.0 / (fan_in + fan_out).max(1) as f64).sqrt()
+    }
+
+    /// Draw a matrix from `Uniform[-limit, limit]`.
+    ///
+    /// `limit` is the *uniform half-width*, not a standard deviation — use
+    /// [`Self::xavier_limit`] to compute it from the layer's fans. The generator
+    /// handle is taken once for the whole matrix rather than once per element.
+    fn xavier_init(rows: usize, cols: usize, limit: f64) -> Array2<T> {
+        let mut rng = scirs2_core::random::thread_rng();
         Array2::from_shape_fn((rows, cols), |_| {
-            let val = (scirs2_core::random::thread_rng().gen_range(0.0..1.0) - 0.5) * 2.0 * scale;
+            let val = (rng.gen_range(0.0..1.0) - 0.5) * 2.0 * limit;
             scirs2_core::numeric::NumCast::from(val).unwrap_or_else(|| T::zero())
         })
     }

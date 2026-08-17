@@ -63,14 +63,14 @@ use scirs2_core::ndarray::Array1;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut optimizer = GpuAdam::new(AdamParams::default())?;
-    optimizer.to_gpu()?;
+    optimizer.move_to_gpu()?;
 
     let mut params = Array1::from_elem(1_024, 1.0f32);
     let grads = Array1::from_elem(1_024, 0.01f32);
     optimizer.step_gpu(&mut params, &grads)?;
 
     // Bring the moment estimates back to host memory when done.
-    optimizer.to_cpu()?;
+    optimizer.move_to_cpu()?;
     Ok(())
 }
 ```

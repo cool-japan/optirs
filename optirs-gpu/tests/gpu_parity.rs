@@ -139,7 +139,7 @@ fn gpu_adam_matches_cpu_adam_single_step() {
 
     let mut gpu = GpuAdam::new(hyper).expect("GPU Adam construction");
     eprintln!("GPU Adam running on backend {}", gpu.backend());
-    gpu.to_gpu().expect("to_gpu");
+    gpu.move_to_gpu().expect("to_gpu");
     let mut gpu_params = params0.clone();
     gpu.step_gpu(&mut gpu_params, &grads)
         .expect("GPU Adam step");
@@ -180,7 +180,7 @@ fn gpu_adam_matches_cpu_adam_over_many_steps() {
         hyper.weight_decay,
     );
     let mut gpu = GpuAdam::new(hyper).expect("GPU Adam construction");
-    gpu.to_gpu().expect("to_gpu");
+    gpu.move_to_gpu().expect("to_gpu");
 
     let mut cpu_params = sample(3, N, 1.0);
     let mut gpu_params = cpu_params.clone();
@@ -202,8 +202,8 @@ fn gpu_adam_matches_cpu_adam_over_many_steps() {
     assert_eq!(gpu.step_count(), 10);
 }
 
-/// `to_cpu` / `to_gpu` must move the moment estimates for real: a round trip in
-/// the middle of training must not change the trajectory.
+/// `move_to_cpu` / `move_to_gpu` must move the moment estimates for real: a
+/// round trip in the middle of training must not change the trajectory.
 #[test]
 fn optimizer_state_survives_a_host_round_trip() {
     gpu_or_skip!("optimizer_state_survives_a_host_round_trip");
@@ -211,8 +211,8 @@ fn optimizer_state_survives_a_host_round_trip() {
     let hyper = AdamParams::default();
     let mut reference = GpuAdam::new(hyper).expect("GPU Adam construction");
     let mut roundtrip = GpuAdam::new(hyper).expect("GPU Adam construction");
-    reference.to_gpu().expect("to_gpu");
-    roundtrip.to_gpu().expect("to_gpu");
+    reference.move_to_gpu().expect("to_gpu");
+    roundtrip.move_to_gpu().expect("to_gpu");
 
     let mut a = sample(7, N, 1.0);
     let mut b = a.clone();
@@ -222,8 +222,8 @@ fn optimizer_state_survives_a_host_round_trip() {
         reference.step_gpu(&mut a, &grads).expect("reference step");
         roundtrip.step_gpu(&mut b, &grads).expect("roundtrip step");
         if step == 2 {
-            roundtrip.to_cpu().expect("to_cpu");
-            roundtrip.to_gpu().expect("to_gpu again");
+            roundtrip.move_to_cpu().expect("to_cpu");
+            roundtrip.move_to_gpu().expect("to_gpu again");
         }
     }
 
@@ -236,8 +236,8 @@ fn optimizer_state_survives_a_host_round_trip() {
 
 /// Stepping while the optimizer is on the CPU is an error, not a silent no-op.
 #[test]
-fn step_without_to_gpu_is_an_error() {
-    gpu_or_skip!("step_without_to_gpu_is_an_error");
+fn step_without_move_to_gpu_is_an_error() {
+    gpu_or_skip!("step_without_move_to_gpu_is_an_error");
     let mut gpu = GpuAdam::new(AdamParams::default()).expect("GPU Adam construction");
     let mut params = Array1::from_elem(16, 1.0f32);
     let grads = Array1::from_elem(16, 0.1f32);
@@ -258,7 +258,7 @@ fn all_optimizer_kernels_dispatch() {
     macro_rules! exercise {
         ($label:literal, $opt:expr) => {{
             let mut opt = $opt;
-            opt.to_gpu().expect(concat!($label, ": to_gpu"));
+            opt.move_to_gpu().expect(concat!($label, ": to_gpu"));
             let mut params = start.clone();
             opt.step_gpu(&mut params, &grads)
                 .expect(concat!($label, ": step_gpu"));
@@ -323,8 +323,8 @@ fn adamw_decay_is_decoupled() {
 
     let mut adam = GpuAdam::new(hyper).expect("adam");
     let mut adamw = GpuAdamW::new(hyper).expect("adamw");
-    adam.to_gpu().expect("to_gpu");
-    adamw.to_gpu().expect("to_gpu");
+    adam.move_to_gpu().expect("to_gpu");
+    adamw.move_to_gpu().expect("to_gpu");
 
     let mut a = start.clone();
     let mut w = start.clone();
@@ -353,8 +353,8 @@ fn lamb_applies_a_trust_ratio() {
 
     let mut adam = GpuAdam::new(hyper).expect("adam");
     let mut lamb = GpuLamb::new(hyper).expect("lamb");
-    adam.to_gpu().expect("to_gpu");
-    lamb.to_gpu().expect("to_gpu");
+    adam.move_to_gpu().expect("to_gpu");
+    lamb.move_to_gpu().expect("to_gpu");
 
     let mut a = start.clone();
     let mut l = start.clone();
@@ -368,5 +368,60 @@ fn lamb_applies_a_trust_ratio() {
     assert!(
         (lamb_step - adam_step).abs() > 1e-9,
         "LAMB step is identical to Adam's, so no trust ratio was applied"
+    );
+}
+
+/// The deprecated `to_gpu`/`to_cpu` names (kept for 0.3.1-era callers after
+/// the `move_to_gpu`/`move_to_cpu` rename) must still genuinely move state,
+/// not silently no-op: a deprecated-API run and a current-API run started
+/// from identical inputs must land on bit-for-bit identical parameters.
+#[test]
+#[allow(deprecated)]
+fn deprecated_to_gpu_to_cpu_still_delegate_to_move_to_gpu_move_to_cpu() {
+    gpu_or_skip!("deprecated_to_gpu_to_cpu_still_delegate_to_move_to_gpu_move_to_cpu");
+
+    let hyper = AdamParams {
+        learning_rate: 1e-2,
+        ..AdamParams::default()
+    };
+    let start = sample(41, N, 1.0);
+    let grads = sample(42, N, 0.2);
+
+    let mut via_deprecated = GpuAdam::new(hyper).expect("adam (deprecated path)");
+    let mut via_current = GpuAdam::new(hyper).expect("adam (current path)");
+
+    // The deprecated names, exercised end to end: upload, step, download,
+    // re-upload -- exactly the sequence a pre-rename caller would have run.
+    via_deprecated.to_gpu().expect("deprecated to_gpu");
+    let mut p_deprecated = start.clone();
+    via_deprecated
+        .step_gpu(&mut p_deprecated, &grads)
+        .expect("deprecated-path step");
+    via_deprecated.to_cpu().expect("deprecated to_cpu");
+    via_deprecated
+        .to_gpu()
+        .expect("deprecated to_gpu after round trip");
+
+    // The current names, same sequence.
+    via_current.move_to_gpu().expect("current move_to_gpu");
+    let mut p_current = start.clone();
+    via_current
+        .step_gpu(&mut p_current, &grads)
+        .expect("current-path step");
+    via_current.move_to_cpu().expect("current move_to_cpu");
+    via_current
+        .move_to_gpu()
+        .expect("current move_to_gpu after round trip");
+
+    let deprecated_vs_current = max_abs_diff(&p_deprecated, &p_current);
+    assert_eq!(
+        deprecated_vs_current, 0.0,
+        "the deprecated to_gpu/to_cpu shims diverged from move_to_gpu/move_to_cpu \
+         -- the shim must delegate, not reimplement, the state transition"
+    );
+    assert!(
+        max_abs_diff(&start, &p_current) > 0.0,
+        "neither path actually moved the parameters -- a no-op shim would pass \
+         the equality check above too, so this guards against exactly that"
     );
 }

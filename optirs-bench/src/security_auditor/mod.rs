@@ -554,11 +554,12 @@ impl SecurityAuditor {
     }
 }
 
-impl Default for SecurityAuditor {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default SecurityAuditor")
-    }
-}
+// `SecurityAuditor` intentionally does NOT implement `std::default::Default`.
+// Construction is fallible (`SecurityAuditConfig::validate()` can reject a
+// config), so a `Default::default() -> Self` here could only be made total by
+// panicking on that error (F79) -- the previous impl did exactly that via
+// `.expect(...)`. `SecurityAuditor::new() -> Result<Self>` is the honest
+// equivalent; callers that want the default configuration use that.
 
 #[cfg(test)]
 mod tests {

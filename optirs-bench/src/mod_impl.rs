@@ -519,6 +519,21 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
     where
         F: FnMut(&Array1<A>, &Array1<A>) -> Array1<A>,
     {
+        // Regression (F50): with `max_iterations == 0` the per-function loop
+        // below records zero function/gradient evaluations, and the
+        // `.last()` calls that used to build the final `BenchmarkResult`
+        // panicked via `.expect("unwrap failed")` on the empty history.
+        // Zero iterations is a genuine misconfiguration (there is nothing to
+        // benchmark), so it is rejected up front with a real error instead
+        // of being silently accepted and then crashing partway through.
+        if max_iterations == 0 {
+            return Err(OptimError::InvalidConfig(
+                "run_benchmark requires max_iterations > 0: with zero iterations no \
+                 function/gradient evaluations would be recorded at all"
+                    .to_string(),
+            ));
+        }
+
         let mut results = Vec::new();
 
         for testfunction in &self.test_functions {
@@ -554,8 +569,27 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
 
             let elapsed = start_time.elapsed();
 
+            // `max_iterations > 0` is enforced above, and every loop
+            // iteration pushes exactly one function value and one gradient
+            // norm before it can `break`, so both vectors are guaranteed
+            // non-empty here. `ok_or_else` + `?` is used anyway rather than
+            // `.expect(...)`, so a future change to the loop above fails
+            // with a real, propagated error instead of a panic.
+            let last_function_value = *function_values.last().ok_or_else(|| {
+                OptimError::OptimizationError(format!(
+                    "benchmark loop for '{}' produced no function-value samples",
+                    testfunction.name
+                ))
+            })?;
+            let last_gradient_norm = *gradient_norms.last().ok_or_else(|| {
+                OptimError::OptimizationError(format!(
+                    "benchmark loop for '{}' produced no gradient-norm samples",
+                    testfunction.name
+                ))
+            })?;
+
             let final_error = if let Some(optimal_value) = testfunction.optimal_value {
-                (function_values.last().copied().expect("unwrap failed") - optimal_value).abs()
+                (last_function_value - optimal_value).abs()
             } else {
                 A::zero()
             };
@@ -565,8 +599,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> OptimizerBenchmark<A> {
                 function_name: testfunction.name.clone(),
                 converged: convergence_step.is_some(),
                 convergence_step,
-                final_function_value: *function_values.last().expect("unwrap failed"),
-                final_gradient_norm: *gradient_norms.last().expect("unwrap failed"),
+                final_function_value: last_function_value,
+                final_gradient_norm: last_gradient_norm,
                 final_error,
                 iterations_taken: function_values.len(),
                 elapsed_time: elapsed,
@@ -1502,6 +1536,22 @@ mod tests {
 
         assert!(quadratic_result.converged);
         assert!(quadratic_result.final_function_value < 1e-3);
+    }
+
+    #[test]
+    fn test_run_benchmark_zero_iterations_is_a_real_error_not_a_panic() {
+        // Regression (F50): `max_iterations == 0` used to reach
+        // `function_values.last().expect("unwrap failed")` on an empty
+        // history and panic. It must now be a real, honest `Err`.
+        let mut benchmark = OptimizerBenchmark::<f64>::new();
+        benchmark.add_standard_test_functions();
+        let mut step_function = |x: &Array1<f64>, grad: &Array1<f64>| x - grad;
+
+        let result = benchmark.run_benchmark("Zero".to_string(), &mut step_function, 0, 1e-6);
+        assert!(
+            result.is_err(),
+            "zero iterations must be a configuration error, not a panic or a fabricated result"
+        );
     }
 
     #[test]

@@ -13,9 +13,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
-use super::functions::{
-    parse_toml_string_array, strip_toml_comment, system_library_exists, unquote_toml_string,
-};
+use super::functions::system_library_exists;
+use super::manifest::parse_manifest_toml;
 use super::types::{
     BuildInfo, CryptographicValidator, DependencyGraph, LoaderConfig, Permission,
     PermissionValidator, PluginConfig, PluginHandle, PluginLoadResult, RuntimeRequirements,
@@ -346,91 +345,18 @@ impl PluginLoader {
     }
     /// Parse a plugin TOML manifest.
     ///
-    /// This is a deliberately minimal, dependency-free line-based reader —
-    /// not a general TOML parser (no multi-line strings, no arrays of
-    /// tables like `[[plugin.dependencies]]`, no escape sequences beyond a
-    /// bare quote-strip). Adding the `toml` crate would let this delegate
-    /// to `serde` (already derived on every type here) instead, but that
-    /// requires a workspace-level `Cargo.toml` dependency addition outside
-    /// this module's scope.
-    ///
-    /// What this *does* fix over a flat key-value scan: it tracks
-    /// `[section]` headers and only applies a key to the field it names
-    /// inside the section that actually owns that field. A flat scan
-    /// previously let `[build] version = "..."` silently overwrite
-    /// `[plugin] version` (both lines match the bare key `"version"`),
-    /// corrupting the parsed manifest with no error. It also parses simple
-    /// inline string arrays (`platforms = ["linux", "macos"]`) for
-    /// `[plugin] platforms`, which the previous parser dropped entirely.
-    ///
-    /// Still unsupported: `dependencies` and `permissions`, which need
-    /// TOML's array-of-tables syntax to carry structured fields
-    /// (`optional`, `dependency_type`, ...) — a real implementation needs
-    /// the `toml` crate. Both are left as empty `Vec`s, which is what the
-    /// caller must not mistake for "this plugin declares no dependencies":
-    /// `check_dependencies` only sees what this parser could read.
+    /// Real TOML parsing via the `toml`/`serde` crates (see
+    /// `super::manifest` for the full schema, defaulting rules, and
+    /// leniency notes). This replaces the previous hand-rolled,
+    /// dependency-free line scanner, which could not represent
+    /// `[[plugin.dependencies]]` or `[[plugin.permissions]]` array-of-
+    /// tables entries at all -- both always parsed as empty `Vec`s
+    /// regardless of what the manifest declared. Both are now fully
+    /// supported, including `dependency_type`/`optional`/`version` on each
+    /// dependency and every `Permission` variant (unit and payload-
+    /// carrying) on each permission.
     pub(super) fn parse_plugin_toml(&self, content: &str, path: &Path) -> Result<PluginMetadata> {
-        let mut metadata = PluginMetadata::default_for_path(path);
-        let mut section = String::new();
-        for raw_line in content.lines() {
-            let line = strip_toml_comment(raw_line).trim();
-            if line.is_empty() {
-                continue;
-            }
-            if line.starts_with('[') {
-                if let Some(end) = line.find(']') {
-                    section = line[1..end].trim().to_string();
-                }
-                continue;
-            }
-            let Some(pos) = line.find('=') else {
-                continue;
-            };
-            let key = line[..pos].trim();
-            let raw_value = line[pos + 1..].trim();
-            let value = unquote_toml_string(raw_value);
-            match section.as_str() {
-                "plugin" => match key {
-                    "name" => metadata.plugin.name = value,
-                    "version" => metadata.plugin.version = value,
-                    "description" => metadata.plugin.description = value,
-                    "author" => metadata.plugin.author = value,
-                    "license" => metadata.plugin.license = value,
-                    "homepage" => metadata.plugin.homepage = Some(value),
-                    "entry_point" => metadata.plugin.entry_point = value,
-                    "platforms" => {
-                        if let Some(items) = parse_toml_string_array(raw_value) {
-                            metadata.plugin.platforms = items;
-                        }
-                    }
-                    _ => {}
-                },
-                "build" => match key {
-                    "rust_version" => metadata.build.rust_version = value,
-                    "target" => metadata.build.target = value,
-                    "profile" => metadata.build.profile = value,
-                    "timestamp" => metadata.build.timestamp = value,
-                    _ => {}
-                },
-                "runtime" => match key {
-                    "min_rust_version" => metadata.runtime.min_rust_version = value,
-                    "memory_mb" => metadata.runtime.memory_mb = value.parse().ok(),
-                    _ => {}
-                },
-                "" => match key {
-                    "name" => metadata.plugin.name = value,
-                    "version" => metadata.plugin.version = value,
-                    "description" => metadata.plugin.description = value,
-                    "author" => metadata.plugin.author = value,
-                    "license" => metadata.plugin.license = value,
-                    "homepage" => metadata.plugin.homepage = Some(value),
-                    "entry_point" => metadata.plugin.entry_point = value,
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-        Ok(metadata)
+        parse_manifest_toml(content, path)
     }
 }
 impl PluginLoader {

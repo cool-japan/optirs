@@ -112,9 +112,11 @@ pub mod common;
 pub mod continual_learning;
 pub mod cross_domain_transfer;
 pub mod darts_optimizer_search;
+pub mod domain_objectives;
 pub mod domain_optimizers;
 pub mod episodic_memory_impl;
 pub mod error;
+pub mod es_meta_training;
 pub mod few_shot;
 pub mod few_shot_impl;
 pub mod forward_mode;
@@ -141,7 +143,11 @@ pub use darts_optimizer_search::{
     DiscoveredOptimizer, PrimitiveHyperparams, PrimitiveState, QuadraticBowl, Rosenbrock,
     SearchOutcome, UpdatePrimitive,
 };
+pub use domain_objectives::{MetaObjective, QuadraticObjective};
 pub use error::{OptimError, Result};
+pub use es_meta_training::{
+    EsMetaTrainer, MetaTrainable, MetaTrainingConfig, MetaTrainingReport, SelectionMetric,
+};
 pub use forward_mode::{DualNumber, ForwardModeEngine, ForwardModeStats, VectorDual};
 pub use gnn_optimizer::{
     GnnOptimizer, GnnOptimizerConfig, GraphTopology, MessageActivation, MessageAggregation,

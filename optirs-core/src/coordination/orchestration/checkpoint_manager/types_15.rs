@@ -4,6 +4,7 @@
 
 use crate::error::Result;
 use scirs2_core::numeric::Float;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -17,7 +18,7 @@ use super::types::{
 };
 
 /// Optimizer configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OptimizerConfiguration<T: Float + Debug + Send + Sync + 'static> {
     /// Base learning rate
     pub base_lr: T,
@@ -29,7 +30,7 @@ pub struct OptimizerConfiguration<T: Float + Debug + Send + Sync + 'static> {
     pub regularization_params: HashMap<String, T>,
 }
 /// Metrics history
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MetricsHistory<T: Float + Debug + Send + Sync + 'static> {
     /// Metric values over time
     pub metrics: HashMap<String, Vec<T>>,
@@ -41,7 +42,7 @@ pub struct MetricsHistory<T: Float + Debug + Send + Sync + 'static> {
     pub steps: Vec<usize>,
 }
 /// Environment state information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EnvironmentState {
     /// Environment variables
     pub environment_vars: HashMap<String, String>,
@@ -53,7 +54,7 @@ pub struct EnvironmentState {
     pub hardware_config: HardwareConfig,
 }
 /// Regularization settings
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegularizationSettings<T: Float + Debug + Send + Sync + 'static> {
     /// L1 regularization strength
     pub l1_strength: T,
@@ -79,7 +80,7 @@ pub struct SchedulerConfig<T: Float + Debug + Send + Sync + 'static> {
     pub adaptive_params: HashMap<String, T>,
 }
 /// Compression information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CompressionInfo {
     /// Compression algorithm
     pub algorithm: CompressionAlgorithm,
@@ -109,14 +110,14 @@ pub struct SchedulerStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub efficiency: T,
 }
 /// Warmup methods
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WarmupMethod {
     Linear,
     Exponential,
     Constant,
 }
 /// Shuffle state information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ShuffleState {
     /// Random seed used
     pub seed: u64,
@@ -170,7 +171,7 @@ pub struct RecoveryCapabilities {
     pub version_compatibility: Vec<String>,
 }
 /// Attachment for additional data
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Attachment {
     /// Attachment identifier
     pub attachment_id: String,
@@ -184,7 +185,7 @@ pub struct Attachment {
     pub metadata: HashMap<String, String>,
 }
 /// Data loader configuration
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataLoaderConfig {
     /// Batch size
     pub batch_size: usize,
@@ -254,7 +255,7 @@ pub struct CheckpointConfiguration<T: Float + Debug + Send + Sync + 'static> {
     pub indexing_config: IndexerConfig<T>,
 }
 /// Principal types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrincipalType {
     User,
     Group,
@@ -262,7 +263,7 @@ pub enum PrincipalType {
     Service,
 }
 /// Access permissions
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AccessPermissions {
     /// Owner permissions
     pub owner: PermissionSet,
@@ -314,7 +315,7 @@ pub struct IndexEntry<T: Float + Debug + Send + Sync + 'static> {
     pub metadata: HashMap<String, T>,
 }
 /// Checkpoint metadata
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CheckpointMetadata<T: Float + Debug + Send + Sync + 'static> {
     /// Checkpoint description
     pub description: String,
@@ -336,7 +337,7 @@ pub struct CheckpointMetadata<T: Float + Debug + Send + Sync + 'static> {
     pub permissions: AccessPermissions,
 }
 /// Memory information
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MemoryInfo {
     /// Total memory (bytes)
     pub total_memory: usize,
@@ -360,7 +361,7 @@ pub struct RecoveryMetrics<T: Float + Debug + Send + Sync + 'static> {
     pub efficiency: T,
 }
 /// Validation status
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ValidationStatus {
     /// Validation result
     pub valid: bool,
@@ -489,7 +490,7 @@ pub struct RecoveryOptions {
     pub custom_options: HashMap<String, String>,
 }
 /// Random number generator state
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RngState {
     /// RNG type
     pub rng_type: String,
@@ -501,7 +502,7 @@ pub struct RngState {
     pub version: String,
 }
 /// Access control list entry
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AclEntry {
     /// Principal (user/group)
     pub principal: String,

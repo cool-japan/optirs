@@ -698,27 +698,486 @@ mod tests_2 {
         assert_eq!(signature(&a), signature(&b));
     }
 
+    // ---- MOEA/D (real decomposition-based optimizer) -------------------
+
+    /// A [`SearchResult`] carrying a caller-supplied architecture, so a test can
+    /// evaluate the architectures MOEA/D actually generated.
+    fn result_for_architecture(
+        architecture: OptimizerArchitecture<f64>,
+        obj0: f64,
+        obj1: f64,
+    ) -> SearchResult<f64> {
+        let mut result = make_search_result(&architecture.architecture_id, obj0, obj1);
+        result.architecture = architecture;
+        result
+    }
+
+    /// Deterministic two-objective test problem over an architecture's learning
+    /// rate: `x` is the log-scaled learning rate mapped into `[0, 1]`, and the
+    /// objectives `(x, 1 - sqrt(x))` form a concave Pareto front where every `x`
+    /// is non-dominated. Both are minimized.
+    fn concave_front_objectives(architecture: &OptimizerArchitecture<f64>) -> (f64, f64) {
+        let rate = architecture
+            .parameters
+            .get("learning_rate")
+            .copied()
+            .unwrap_or(1e-3);
+        let log_min = 1e-5f64.ln();
+        let log_max = 1e-1f64.ln();
+        let x = ((rate.max(1e-12).ln() - log_min) / (log_max - log_min)).clamp(0.0, 1.0);
+        (x, 1.0 - x.sqrt())
+    }
+
+    fn moead_config() -> MultiObjectiveConfig<f64> {
+        MultiObjectiveConfig {
+            objectives: two_minimize_objectives(),
+            algorithm: crate::nas_engine::MultiObjectiveAlgorithm::MOEAD,
+            ..MultiObjectiveConfig::default()
+        }
+    }
+
     #[test]
-    fn test_moead_reports_that_it_is_not_implemented() {
+    fn moead_builds_a_uniform_weight_lattice_with_real_neighborhoods() {
         use crate::multi_objective::MOEADOptimizer;
-        let mut moead = MOEADOptimizer::<f64>::new(two_objective_config())
-            .expect("the state container still constructs");
+        let moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 0x0EAD).expect("construct MOEA/D");
 
-        // Each of these used to return Ok with an empty/unchanged result, so a
-        // search configured for MOEA/D ran to completion and reported nothing.
-        let init = moead
-            .initialize(&two_objective_config())
-            .expect_err("initialize must report NotImplemented");
-        assert!(format!("{init}").contains("MOEA/D is not implemented"));
+        // The weight vectors used to be an empty Vec, so there were no subproblems
+        // at all.
+        assert!(
+            moead.subproblem_count() >= 20,
+            "expected at least the default subproblem target, got {}",
+            moead.subproblem_count()
+        );
+        for index in 0..moead.subproblem_count() {
+            let weight = moead.weight_vector(index).expect("weight exists");
+            assert_eq!(weight.len(), 2);
+            let total: f64 = weight.iter().sum();
+            assert!(
+                (total - 1.0).abs() < 1e-12,
+                "weight {weight:?} must sum to 1"
+            );
+            let neighborhood = moead.neighborhood(index).expect("neighborhood exists");
+            assert_eq!(neighborhood[0], index, "a subproblem neighbours itself");
+            assert!(neighborhood.len() >= 2);
+        }
+        // Every subproblem starts with its own sampled architecture, not one shared
+        // constant.
+        let signatures: std::collections::HashSet<Vec<String>> = moead
+            .population
+            .iter()
+            .map(|individual| individual.architecture.components.clone())
+            .collect();
+        assert!(
+            signatures.len() > 3,
+            "initial subproblem solutions collapsed to {} distinct signatures",
+            signatures.len()
+        );
+    }
 
-        let update = moead
-            .update_pareto_front(&[result_with_id("A", 1.0, 2.0)])
-            .expect_err("update_pareto_front must report NotImplemented");
-        assert!(format!("{update}").contains("MOEA/D is not implemented"));
+    #[test]
+    fn moead_accepts_an_improvement_and_rejects_a_regression() {
+        use crate::multi_objective::MOEADOptimizer;
+        let mut moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 991).expect("construct MOEA/D");
 
-        let select = moead
-            .select_candidates(&[], &[])
-            .expect_err("select_candidates must report NotImplemented");
-        assert!(format!("{select}").contains("MOEA/D is not implemented"));
+        // Evaluate MOEA/D's own initial population: every subproblem's own
+        // architecture comes back with a middling score, which is MOEA/D's initial
+        // population evaluation. Each result must land on its own subproblem.
+        let initial: Vec<SearchResult<f64>> = moead
+            .population
+            .iter()
+            .map(|individual| result_for_architecture(individual.architecture.clone(), 0.5, 0.5))
+            .collect();
+        moead.update_pareto_front(&initial).expect("initial update");
+        assert!(
+            moead
+                .population
+                .iter()
+                .all(|individual| individual.objectives.len() == 2),
+            "every subproblem must hold an evaluated solution after its own \
+             architecture has been evaluated"
+        );
+
+        // An improvement over the middling incumbents is accepted somewhere.
+        let good = result_with_id("good", 0.1, 0.1);
+        moead
+            .update_pareto_front(std::slice::from_ref(&good))
+            .expect("improvement update");
+        assert!(
+            moead.last_replacements() > 0,
+            "a solution better on both objectives must improve some subproblem"
+        );
+
+        // A solution that is worse in *both* objectives cannot improve any
+        // scalarization, so it must be rejected everywhere it is offered — and it
+        // must not enter the archive either. A fake that accepted everything (or
+        // one that never compared at all) fails this.
+        let worse = result_for_architecture(make_architecture("worse"), 9.0, 9.0);
+        moead
+            .update_pareto_front(std::slice::from_ref(&worse))
+            .expect("second update");
+        assert_eq!(
+            moead.last_replacements(),
+            0,
+            "a dominated solution must not replace any subproblem solution"
+        );
+        assert!(
+            moead
+                .archive()
+                .iter()
+                .all(|member| member.architecture.architecture_id != "worse"),
+            "a dominated solution must not enter the archive"
+        );
+
+        // A genuine improvement is accepted again.
+        let better = result_for_architecture(make_architecture("better"), 0.01, 0.01);
+        moead
+            .update_pareto_front(std::slice::from_ref(&better))
+            .expect("third update");
+        assert!(
+            moead.last_replacements() > 0,
+            "a dominating solution must replace at least one subproblem solution"
+        );
+        assert!(moead
+            .archive()
+            .iter()
+            .any(|member| member.architecture.architecture_id == "better"));
+        // ... and it removes the solution it dominates from the archive.
+        assert!(
+            moead
+                .archive()
+                .iter()
+                .all(|member| member.architecture.architecture_id != "good"),
+            "the archive must drop a member the newcomer dominates"
+        );
+    }
+
+    #[test]
+    fn moead_archive_is_exactly_the_non_dominated_set() {
+        use crate::multi_objective::MOEADOptimizer;
+        let mut moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 424242).expect("construct MOEA/D");
+
+        // Two mutually non-dominated solutions plus one dominated by both.
+        let results = vec![
+            result_with_id("edge_a", 0.0, 1.0),
+            result_with_id("edge_b", 1.0, 0.0),
+            result_with_id("dominated", 2.0, 2.0),
+        ];
+        let front = moead.update_pareto_front(&results).expect("update");
+
+        // The placeholder returned an *empty* front here, whatever it was fed.
+        let ids: std::collections::HashSet<String> = front
+            .solutions
+            .iter()
+            .map(|solution| solution.architecture.architecture_id.clone())
+            .collect();
+        assert_eq!(front.solutions.len(), 2, "front = {ids:?}");
+        assert!(ids.contains("edge_a") && ids.contains("edge_b"));
+        assert!(!ids.contains("dominated"));
+
+        // Real front metrics, not the old hardcoded 0.5 coverage / 0 convergence.
+        assert!(front.metrics.hypervolume > 0.0);
+        assert!(front.metrics.coverage.objective_space_coverage > 0.0);
+        assert!((front.metrics.coverage.objective_space_coverage - 0.5).abs() > 1e-9);
+        assert_eq!(front.metrics.num_solutions, 2);
+        assert_eq!(front.objective_bounds.ideal_point, vec![0.0, 0.0]);
+        assert_eq!(front.objective_bounds.nadir_point, vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn moead_tracks_the_ideal_point_across_updates() {
+        use crate::multi_objective::MOEADOptimizer;
+        let mut moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 7).expect("construct MOEA/D");
+        assert!(moead.ideal_point().iter().all(|value| value.is_infinite()));
+
+        moead
+            .update_pareto_front(&[result_with_id("a", 3.0, 8.0)])
+            .expect("update");
+        assert_eq!(moead.ideal_point(), &[3.0, 8.0]);
+
+        moead
+            .update_pareto_front(&[result_with_id("b", 5.0, 2.0)])
+            .expect("update");
+        assert_eq!(
+            moead.ideal_point(),
+            &[3.0, 2.0],
+            "the ideal point is the componentwise best, not the latest solution"
+        );
+    }
+
+    #[test]
+    fn moead_reproduction_produces_one_registered_offspring_per_subproblem() {
+        use crate::multi_objective::MOEADOptimizer;
+        let mut moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 20240817).expect("construct MOEA/D");
+        let subproblems = moead.subproblem_count();
+
+        let offspring = moead.select_candidates(&[], &[]).expect("reproduce");
+        assert_eq!(offspring.len(), subproblems);
+
+        // Every offspring is registered against the subproblem it was made for, so
+        // its evaluation is later compared against the right scalarization.
+        for child in &offspring {
+            assert!(
+                moead.subproblem_of.contains_key(&child.architecture_id),
+                "offspring {} was not registered against a subproblem",
+                child.architecture_id
+            );
+        }
+        // The offspring are genuinely different architectures, not one repeated.
+        let ids: std::collections::HashSet<&String> = offspring
+            .iter()
+            .map(|child| &child.architecture_id)
+            .collect();
+        assert_eq!(ids.len(), offspring.len(), "offspring ids must be unique");
+        let signatures: std::collections::HashSet<Vec<String>> = offspring
+            .iter()
+            .map(|child| child.components.clone())
+            .collect();
+        assert!(
+            signatures.len() > 2,
+            "reproduction collapsed to {} distinct component signatures",
+            signatures.len()
+        );
+        // Registered offspring are matched by id, so a result carrying an offspring
+        // id lands on that offspring's own subproblem.
+        let child = offspring[0].clone();
+        let owner = moead.subproblem_of[&child.architecture_id];
+        moead
+            .update_pareto_front(&[result_for_architecture(child.clone(), 0.0, 0.0)])
+            .expect("update");
+        assert_eq!(
+            moead.population[owner].architecture.architecture_id, child.architecture_id,
+            "an offspring must be able to take over the subproblem it was made for"
+        );
+    }
+
+    #[test]
+    fn moead_optimizes_a_concave_front_end_to_end() {
+        use crate::multi_objective::MOEADOptimizer;
+        let mut moead = MOEADOptimizer::<f64>::with_settings(
+            moead_config(),
+            20,
+            crate::multi_objective::DecompositionMethod::Tchebycheff,
+            5,
+            0xC0FFEE,
+        )
+        .expect("construct MOEA/D");
+
+        let mut hypervolumes = Vec::new();
+        // Pin the reference point so hypervolumes from different generations are
+        // comparable at all.
+        moead
+            .set_hypervolume_reference(vec![1.5, 1.5])
+            .expect("reference matches the objective count");
+
+        for _ in 0..12 {
+            let candidates = moead.select_candidates(&[], &[]).expect("reproduce");
+            let results: Vec<SearchResult<f64>> = candidates
+                .into_iter()
+                .map(|architecture| {
+                    let (obj0, obj1) = concave_front_objectives(&architecture);
+                    result_for_architecture(architecture, obj0, obj1)
+                })
+                .collect();
+            let front = moead.update_pareto_front(&results).expect("update");
+            hypervolumes.push(front.metrics.hypervolume);
+        }
+
+        // The archive must have grown a spread of mutually non-dominated solutions
+        // along the front, and the indicator must have improved. A no-op optimizer
+        // (empty front, or one that never varies its candidates) fails both.
+        let front = moead.get_pareto_front();
+        assert!(
+            front.solutions.len() >= 4,
+            "expected a populated front, got {}",
+            front.solutions.len()
+        );
+        let xs: Vec<f64> = front
+            .solutions
+            .iter()
+            .map(|solution| solution.objectives[0])
+            .collect();
+        let min_x = xs.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_x = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            max_x - min_x > 0.3,
+            "front is not spread along the first objective: [{min_x}, {max_x}]"
+        );
+        // Every published solution really is non-dominated.
+        for (i, a) in front.solutions.iter().enumerate() {
+            for (j, b) in front.solutions.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let dominated = a.objectives[0] >= b.objectives[0]
+                    && a.objectives[1] >= b.objectives[1]
+                    && (a.objectives[0] > b.objectives[0] || a.objectives[1] > b.objectives[1]);
+                assert!(
+                    !dominated,
+                    "{:?} is dominated by {:?}",
+                    a.objectives, b.objectives
+                );
+            }
+        }
+        let first = hypervolumes.first().copied().unwrap_or(0.0);
+        let last = hypervolumes.last().copied().unwrap_or(0.0);
+        assert!(
+            last > first,
+            "hypervolume did not improve over 12 generations: {first} -> {last}"
+        );
+        // The statistics are measured, not fabricated.
+        let statistics = moead.get_statistics();
+        assert_eq!(statistics.generation, 12);
+        assert!(statistics.total_evaluations >= 12 * 20);
+        assert!(statistics.best_hypervolume >= last);
+        assert!(statistics.algorithm_metrics["solved_subproblems"] > 0.0);
+    }
+
+    #[test]
+    fn moead_every_decomposition_method_ranks_solutions() {
+        use crate::multi_objective::{DecompositionMethod, MOEADOptimizer};
+        for method in [
+            DecompositionMethod::WeightedSum,
+            DecompositionMethod::Tchebycheff,
+            DecompositionMethod::PBI,
+            DecompositionMethod::ASF,
+        ] {
+            let mut moead =
+                MOEADOptimizer::<f64>::with_settings(moead_config(), 12, method, 4, 31337)
+                    .expect("construct MOEA/D");
+            assert_eq!(moead.decomposition(), method);
+            let front = moead
+                .update_pareto_front(&[
+                    result_with_id("a", 0.0, 1.0),
+                    result_with_id("b", 1.0, 0.0),
+                    result_with_id("bad", 5.0, 5.0),
+                ])
+                .expect("update");
+            assert_eq!(front.solutions.len(), 2, "{method:?} lost the front");
+            assert!(front.metrics.hypervolume > 0.0, "{method:?}");
+
+            // Ranking must be a real ordering: the dominated candidate comes last.
+            let ranked = moead.select_by_decomposition(
+                &[
+                    result_with_id("bad", 5.0, 5.0),
+                    result_with_id("a", 0.0, 1.0),
+                    result_with_id("b", 1.0, 0.0),
+                ],
+                2,
+            );
+            assert_eq!(ranked.len(), 2);
+            assert!(
+                !ranked.contains(&0),
+                "{method:?} ranked the dominated candidate into the top 2"
+            );
+        }
+    }
+
+    #[test]
+    fn moead_selection_spreads_across_subproblems_before_doubling_up() {
+        use crate::multi_objective::MOEADOptimizer;
+        let moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 5150).expect("construct MOEA/D");
+        // Three candidates: two near the first objective's corner, one near the
+        // other. Selecting two must not take both from the same corner.
+        let results = vec![
+            result_with_id("corner_a1", 0.0, 1.0),
+            result_with_id("corner_a2", 0.01, 0.99),
+            result_with_id("corner_b", 1.0, 0.0),
+        ];
+        let selected = moead.select_by_decomposition(&results, 2);
+        assert_eq!(selected.len(), 2);
+        let ids: Vec<&str> = selected
+            .iter()
+            .map(|index| results[*index].architecture.architecture_id.as_str())
+            .collect();
+        assert!(
+            ids.contains(&"corner_b"),
+            "selection ignored a whole region of the front: {ids:?}"
+        );
+        // Asking for more than exist returns all of them, never a panic.
+        assert_eq!(moead.select_by_decomposition(&results, 99).len(), 3);
+        assert!(moead.select_by_decomposition(&[], 3).is_empty());
+    }
+
+    #[test]
+    fn moead_archive_respects_its_capacity_and_keeps_the_extremes() {
+        use crate::multi_objective::MOEADOptimizer;
+        let mut moead =
+            MOEADOptimizer::<f64>::with_seed(moead_config(), 606).expect("construct MOEA/D");
+        moead.set_archive_capacity(5);
+
+        // 20 mutually non-dominated points on a line: obj0 up, obj1 down.
+        let results: Vec<SearchResult<f64>> = (0..20)
+            .map(|i| {
+                let x = i as f64 / 19.0;
+                result_with_id(&format!("p{i}"), x, 1.0 - x)
+            })
+            .collect();
+        let front = moead.update_pareto_front(&results).expect("update");
+        assert_eq!(front.solutions.len(), 5, "archive capacity not enforced");
+
+        // Density-based truncation keeps the extremes.
+        let ids: std::collections::HashSet<String> = front
+            .solutions
+            .iter()
+            .map(|solution| solution.architecture.architecture_id.clone())
+            .collect();
+        assert!(
+            ids.contains("p0") && ids.contains("p19"),
+            "extremes lost: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn moead_seeding_is_reproducible_and_unseeded_runs_differ() {
+        use crate::multi_objective::MOEADOptimizer;
+        let signature = |moead: &MOEADOptimizer<f64>| -> Vec<String> {
+            moead
+                .population
+                .iter()
+                .map(|individual| individual.architecture.components.join("+"))
+                .collect()
+        };
+        let a = MOEADOptimizer::<f64>::with_seed(moead_config(), 2024).expect("construct");
+        let b = MOEADOptimizer::<f64>::with_seed(moead_config(), 2024).expect("construct");
+        assert_eq!(signature(&a), signature(&b));
+
+        let mut differ = false;
+        for _ in 0..5 {
+            let x = MOEADOptimizer::<f64>::new(moead_config()).expect("construct");
+            let y = MOEADOptimizer::<f64>::new(moead_config()).expect("construct");
+            if signature(&x) != signature(&y) {
+                differ = true;
+                break;
+            }
+        }
+        assert!(
+            differ,
+            "two unseeded MOEA/D instances must not always produce identical populations"
+        );
+    }
+
+    #[test]
+    fn moead_reports_an_error_instead_of_an_empty_front_without_objectives() {
+        use crate::multi_objective::MOEADOptimizer;
+        let empty = MultiObjectiveConfig::<f64> {
+            objectives: Vec::new(),
+            ..MultiObjectiveConfig::default()
+        };
+        // Constructing without objectives is allowed (nothing to decompose yet)...
+        let mut moead = MOEADOptimizer::<f64>::with_seed(empty.clone(), 1).expect("construct");
+        assert_eq!(moead.subproblem_count(), 0);
+        // ... but every entry point then reports why it cannot run, instead of
+        // returning an empty front as if that were the answer.
+        assert!(moead.initialize(&empty).is_err());
+        assert!(moead
+            .update_pareto_front(&[result_with_id("a", 1.0, 1.0)])
+            .is_err());
+        assert!(moead.select_candidates(&[], &[]).is_err());
     }
 }

@@ -101,13 +101,16 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
         match (gaussian, delta) {
             (true, None) => {
                 return Err(OptimError::InvalidConfig(
-                    "Gaussian selection is an (epsilon, delta) mechanism, so a positive delta must                      be supplied; it is not defaulted, because a silently chosen delta is a                      silently changed guarantee"
+                    "Gaussian selection is an (epsilon, delta) mechanism, so a positive delta \
+                     must be supplied; it is not defaulted, because a silently chosen delta is a \
+                     silently changed guarantee"
                         .to_string(),
                 ))
             }
             (false, Some(delta)) => {
                 return Err(OptimError::InvalidConfig(format!(
-                    "a delta of {delta} was supplied for {mechanism_type:?}, which is a                      pure-epsilon mechanism and consumes no delta"
+                    "a delta of {delta} was supplied for {mechanism_type:?}, which is a \
+                     pure-epsilon mechanism and consumes no delta"
                 )))
             }
             _ => {}
@@ -215,17 +218,35 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
         }
         self.selection_mechanism.set_selection_parameters(params)?;
 
+        // These feed the reported `selection_confidence`. A silent `1.0` here
+        // would report a probability computed under a sensitivity the mechanism
+        // was not calibrated with, and a silent `-inf` utility would report a
+        // candidate as unreachable when it was merely unconvertible.
         let sensitivity = self
             .selection_mechanism
             .selection_params()
             .utility_sensitivity
             .to_f64()
-            .unwrap_or(1.0);
+            .ok_or_else(|| {
+                OptimError::InvalidParameter(
+                    "the utility sensitivity cannot be represented as f64, so the selection \
+                     probabilities cannot be reported"
+                        .to_string(),
+                )
+            })?;
+        let utilities_as_f64 = utilities
+            .iter()
+            .enumerate()
+            .map(|(index, utility)| {
+                utility.to_f64().ok_or_else(|| {
+                    OptimError::InvalidParameter(format!(
+                        "the utility of candidate {index} cannot be represented as f64"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<f64>>>()?;
         let probabilities = super::selection::exponential_mechanism_probabilities(
-            &utilities
-                .iter()
-                .map(|utility| utility.to_f64().unwrap_or(f64::NEG_INFINITY))
-                .collect::<Vec<f64>>(),
+            &utilities_as_f64,
             sensitivity,
             per_draw_epsilon,
         )?;
@@ -269,12 +290,27 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
 
         // Confidence interval for the released mean, accounting for both the
         // sampling error and the Laplace noise that was added to it.
+        // A failed conversion here used to become `0.0`, which silently moves the
+        // reported interval to be centred on zero -- a released statistic that
+        // never came out of the mechanism. It is an error instead.
         let mean_noise_scale = summary.mean_noise_scale;
-        let sample_std = summary_stats.noisy_std.to_f64().unwrap_or(0.0);
+        let sample_std = summary_stats.noisy_std.to_f64().ok_or_else(|| {
+            OptimError::InvalidState(
+                "the released noisy standard deviation cannot be represented as f64, so no \
+                 confidence interval can be derived from it"
+                    .to_string(),
+            )
+        })?;
         let count = objective_values.len() as f64;
         let combined_std =
             (sample_std * sample_std / count + 2.0 * mean_noise_scale * mean_noise_scale).sqrt();
-        let noisy_mean = summary_stats.noisy_mean.to_f64().unwrap_or(0.0);
+        let noisy_mean = summary_stats.noisy_mean.to_f64().ok_or_else(|| {
+            OptimError::InvalidState(
+                "the released noisy mean cannot be represented as f64, so no confidence interval \
+                 can be derived from it"
+                    .to_string(),
+            )
+        })?;
         let confidence_intervals = match (
             T::from(noisy_mean - 1.96 * combined_std),
             T::from(noisy_mean + 1.96 * combined_std),
@@ -496,6 +532,57 @@ mod tests {
         assert!(report.was_private);
         assert_eq!(report.mechanism, "exponential_mechanism");
         assert!(report.epsilon_spent > 0.0);
+    }
+
+    #[test]
+    fn every_draw_is_charged_exactly_the_epsilon_it_was_calibrated_with() {
+        // The invariant that makes the reported epsilon meaningful: the top-k
+        // draws are *calibrated* at `selection_epsilon / k`, and that is exactly
+        // what each of them is *charged*. Asserting only the total (as
+        // `the_selection_budget_is_charged_and_reported` does) cannot separate a
+        // correct split from one that under-noises each draw and books the
+        // difference against the summary half.
+        let total_epsilon = 1.0f64;
+        let mut aggregator = aggregator(total_epsilon, 2);
+        let _ = match aggregator.aggregate_results(&evaluations()) {
+            Ok(results) => results,
+            Err(err) => panic!("aggregation failed: {err}"),
+        };
+
+        // Half the reserve goes to the k selections, half to the summary.
+        let selection_half = total_epsilon * 0.5;
+        let per_draw = selection_half / PRIVATE_TOP_K as f64;
+
+        let calibrated = aggregator.selection_mechanism().selection_params().epsilon;
+        assert!(
+            (calibrated - per_draw).abs() < 1e-12,
+            "each draw must be calibrated at {per_draw}, mechanism reports {calibrated}"
+        );
+
+        let charged_by_the_mechanism = aggregator.selection_mechanism().epsilon_spent();
+        assert!(
+            (charged_by_the_mechanism - selection_half).abs() < 1e-9,
+            "the k draws must charge {selection_half} in total, got {charged_by_the_mechanism}"
+        );
+        assert!(
+            (charged_by_the_mechanism - calibrated * PRIVATE_TOP_K as f64).abs() < 1e-9,
+            "calibration and charge disagree: {charged_by_the_mechanism} charged for \
+             {PRIVATE_TOP_K} draws calibrated at {calibrated}"
+        );
+
+        // The remainder is the summary release, and nothing is left unaccounted.
+        let charged_in_total = aggregator.selection_budget().epsilon_consumed;
+        let charged_by_the_summary = charged_in_total - charged_by_the_mechanism;
+        assert!(
+            (charged_by_the_summary - selection_half).abs() < 1e-9,
+            "the summary statistics must charge the other {selection_half}, got \
+             {charged_by_the_summary}"
+        );
+        assert!(
+            (charged_in_total - total_epsilon).abs() < 1e-9,
+            "the selection reserve must be conserved: {charged_in_total} charged of \
+             {total_epsilon} reserved"
+        );
     }
 
     #[test]

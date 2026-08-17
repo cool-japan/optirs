@@ -636,7 +636,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct LongRunTestData {
     total_duration_seconds: f64,
     sampling_interval_seconds: f64,
@@ -651,7 +651,7 @@ struct LongRunTestData {
     system_events: Vec<SystemEvent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct FailureEvent {
     #[allow(dead_code)]
     timestamp: u64,
@@ -664,7 +664,7 @@ struct FailureEvent {
     root_cause: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ResourceUtilizationEvent {
     #[allow(dead_code)]
     timestamp: u64,
@@ -678,7 +678,7 @@ struct ResourceUtilizationEvent {
     duration_seconds: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct SystemEvent {
     #[allow(dead_code)]
     timestamp: u64,
@@ -700,20 +700,25 @@ fn load_longrun_test_results(path: &Path, verbose: bool) -> Result<LongRunTestDa
 
     let content = fs::read_to_string(path)?;
 
-    // Try to parse as JSON first
-    if let Ok(data) = serde_json::from_str::<LongRunTestData>(&content) {
-        return Ok(data);
-    }
-
-    // If JSON parsing fails, create mock data based on file existence
-    if verbose {
-        println!("  Creating mock long-running test data for analysis");
-    }
-
-    Ok(create_mock_longrundata())
+    // Regression (F53): a file that fails to parse as the expected schema
+    // used to be silently replaced with a fabricated 12-hour sine-wave
+    // dataset, and the analysis report built from it gave no indication
+    // that it was not describing the real test run at all. Malformed or
+    // unreadable input is now an honest error, carrying the real parse
+    // failure reason -- never a substituted fictional dataset.
+    serde_json::from_str::<LongRunTestData>(&content).map_err(|e| {
+        OptimError::InvalidConfig(format!(
+            "failed to parse long-running test results at {}: {e} (expected JSON matching \
+             LongRunTestData's schema)",
+            path.display()
+        ))
+    })
 }
 
-#[allow(dead_code)]
+/// Synthetic dataset for tests/local experimentation only. Production
+/// parsing (`load_longrun_test_results`) never falls back to this -- see the
+/// F53 regression note there.
+#[cfg(test)]
 fn create_mock_longrundata() -> LongRunTestData {
     let duration = 43200.0; // 12 hours
     let sampling_interval = 60.0; // Every minute
@@ -1761,4 +1766,73 @@ fn generate_github_actionsreport(report: &LongRunAnalysisReport) -> Result<Strin
     output.push_str(&jsonreport);
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "optirs_bench_longrun_analyzer_test_{label}_{}.json",
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn test_load_longrun_test_results_rejects_malformed_input_instead_of_fabricating() {
+        // Regression (F53): a file that fails to parse as LongRunTestData
+        // used to be silently replaced by a fabricated 12-hour sine-wave
+        // dataset (create_mock_longrundata), with the caller given no
+        // indication the "results" it analyzed were not real. It must now
+        // return a real error instead.
+        let path = scratch_path("malformed");
+        fs::write(&path, "{ this is not valid JSON at all").expect("write fixture");
+
+        let result = load_longrun_test_results(&path, false);
+        fs::remove_file(&path).ok();
+
+        assert!(
+            result.is_err(),
+            "malformed input must be a real error, not a silently substituted dataset"
+        );
+    }
+
+    #[test]
+    fn test_load_longrun_test_results_parses_real_json_faithfully() {
+        // The happy path must still work, and must return exactly what was
+        // written -- not the mock generator's output.
+        let fixture = create_mock_longrundata();
+        let json = serde_json::to_string(&fixture).expect("serialize fixture");
+        let path = scratch_path("valid");
+        fs::write(&path, &json).expect("write fixture");
+
+        let loaded = load_longrun_test_results(&path, false).expect("valid JSON must parse");
+        fs::remove_file(&path).ok();
+
+        assert_eq!(
+            loaded.total_duration_seconds,
+            fixture.total_duration_seconds
+        );
+        assert_eq!(
+            loaded.performancetimeline.len(),
+            fixture.performancetimeline.len()
+        );
+        // f64 values compared with a small epsilon rather than `==`: JSON's
+        // textual round-trip is not guaranteed bit-exact across parser
+        // implementations, and that is not what this test is checking --
+        // it checks that real values were read, not the mock generator's.
+        for ((lt, lv), (ft, fv)) in loaded
+            .performancetimeline
+            .iter()
+            .zip(fixture.performancetimeline.iter())
+        {
+            assert_eq!(lt, ft);
+            assert!((lv - fv).abs() < 1e-6, "loaded={lv} fixture={fv}");
+        }
+        assert_eq!(loaded.memorytimeline.len(), fixture.memorytimeline.len());
+    }
 }

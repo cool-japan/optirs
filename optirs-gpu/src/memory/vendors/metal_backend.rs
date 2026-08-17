@@ -16,6 +16,20 @@
 // `MTLBuffer` memory-management *API shape* for testing that shape in
 // isolation; treat every allocation as host memory and every device number
 // as illustrative. For real Metal compute, use [`crate::optimizers`].
+//
+// This extends to data movement: `blit_copy` copies **zero bytes**. It
+// records a `MetalCommand::BlitCommand` on a queued command buffer, commits
+// and "waits for" that buffer (both of which complete synchronously and
+// never dereference `src`/`dst`), and increments `MetalStats::blit_commands`
+// — that counter says "this many `blit_copy` calls were made," not "this
+// many bytes moved." An earlier revision of
+// `commit_command_buffer`/`wait_until_completed`/`wait_until_idle` also
+// injected a `std::thread::sleep` to imitate command-buffer execution
+// latency; that fake timing has been removed, so every command buffer now
+// completes the instant it is committed. `MetalStats::compute_commands`,
+// `MetalStats::render_commands` and `MetalStats::command_buffers_completed`
+// are declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
 #[allow(dead_code)]
 use std::collections::HashMap;
@@ -700,8 +714,12 @@ impl MetalCommandManager {
                 .find(|b| b.buffer_id == buffer_id)
             {
                 buffer.committed = true;
-                // Simulate command execution
-                std::thread::sleep(Duration::from_micros(50));
+                // Host-memory simulation (see module docs): there is no real
+                // Metal command queue to submit to, so this used to inject an
+                // artificial `std::thread::sleep` to mimic command-buffer
+                // execution latency before marking the buffer complete. That
+                // fake timing has been removed; the buffer now completes
+                // immediately rather than after a fabricated delay.
                 buffer.completed = true;
                 Ok(())
             } else {
@@ -721,19 +739,19 @@ impl MetalCommandManager {
         buffer_id: u32,
     ) -> Result<(), MetalError> {
         if let Some(queue) = self.queues.iter().find(|q| q.id == queue_id) {
-            if let Some(buffer) = queue
+            if queue
                 .command_buffers
                 .iter()
-                .find(|b| b.buffer_id == buffer_id)
+                .any(|b| b.buffer_id == buffer_id)
             {
-                if buffer.completed {
-                    Ok(())
-                } else {
-                    // In a real implementation, this would poll the Metal API
-                    // For now, assume completion after a short delay
-                    std::thread::sleep(Duration::from_micros(50));
-                    Ok(())
-                }
+                // Host-memory simulation (see module docs): there is no real
+                // Metal command queue to poll, and `commit_command_buffer`
+                // already completes every buffer synchronously, so there is
+                // nothing left to wait for here. This used to inject an
+                // artificial `std::thread::sleep` in the not-yet-completed
+                // case to mimic polling latency; that fake timing has been
+                // removed.
+                Ok(())
             } else {
                 Err(MetalError::InvalidCommandBuffer(
                     "Command buffer not found".to_string(),
@@ -985,14 +1003,13 @@ impl MetalMemoryBackend {
 
     /// Wait for all operations to complete
     pub fn wait_until_idle(&mut self) -> Result<(), MetalError> {
-        // Wait for all command buffers to complete
-        for queue in &self.command_manager.queues {
-            for buffer in &queue.command_buffers {
-                if buffer.committed && !buffer.completed {
-                    std::thread::sleep(Duration::from_micros(100));
-                }
-            }
-        }
+        // Host-memory simulation (see module docs): `commit_command_buffer`
+        // completes every buffer synchronously, so there is never a
+        // committed-but-incomplete buffer to wait on here. This used to walk
+        // every queue's command buffers and inject an artificial
+        // `std::thread::sleep` for any it found in that (unreachable) state;
+        // that fake timing has been removed along with the now-vestigial
+        // scan, since it never changed the `Ok(())` result below.
         Ok(())
     }
 }

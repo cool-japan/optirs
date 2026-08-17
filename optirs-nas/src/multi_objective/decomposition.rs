@@ -244,8 +244,8 @@ pub fn scalarize<T: Float>(
         Scalarization::PenaltyBoundaryIntersection => {
             let norm = {
                 let mut sum = T::zero();
-                for i in 0..len {
-                    sum = sum + weight[i] * weight[i];
+                for value in weight.iter().take(len) {
+                    sum = sum + *value * *value;
                 }
                 sum.sqrt()
             };
@@ -297,15 +297,15 @@ pub fn perpendicular_distance<T: Float>(point: &[T], direction: &[T]) -> T {
         return T::zero();
     }
     let mut norm_sq = T::zero();
-    for i in 0..len {
-        norm_sq = norm_sq + direction[i] * direction[i];
+    for value in direction.iter().take(len) {
+        norm_sq = norm_sq + *value * *value;
     }
     if norm_sq <= T::zero() {
         // A zero direction defines no ray; the honest distance is the point's own
         // norm, which is what an all-zero reference direction would measure.
         let mut point_norm_sq = T::zero();
-        for i in 0..len {
-            point_norm_sq = point_norm_sq + point[i] * point[i];
+        for value in point.iter().take(len) {
+            point_norm_sq = point_norm_sq + *value * *value;
         }
         return point_norm_sq.sqrt();
     }
@@ -395,11 +395,11 @@ pub fn solve_linear_system<T: Float>(matrix: &[Vec<T>], rhs: &[T]) -> Option<Vec
         // Partial pivot.
         let mut pivot_row = column;
         let mut pivot_magnitude = augmented[column][column].abs();
-        for row in (column + 1)..n {
-            let magnitude = augmented[row][column].abs();
+        for (index, row_values) in augmented.iter().enumerate().skip(column + 1) {
+            let magnitude = row_values[column].abs();
             if magnitude > pivot_magnitude {
                 pivot_magnitude = magnitude;
-                pivot_row = row;
+                pivot_row = index;
             }
         }
         if pivot_magnitude <= T::from(1e-12).unwrap_or_else(T::zero) {
@@ -409,13 +409,17 @@ pub fn solve_linear_system<T: Float>(matrix: &[Vec<T>], rhs: &[T]) -> Option<Vec
             augmented.swap(pivot_row, column);
         }
         let pivot = augmented[column][column];
-        for row in (column + 1)..n {
-            let factor = augmented[row][column] / pivot;
+        // The pivot row is read-only for the rest of this column's elimination, so
+        // it is copied out once instead of being re-borrowed against every target
+        // row.
+        let pivot_values = augmented[column].clone();
+        for target in augmented.iter_mut().skip(column + 1) {
+            let factor = target[column] / pivot;
             if factor == T::zero() {
                 continue;
             }
-            for col in column..=n {
-                augmented[row][col] = augmented[row][col] - factor * augmented[column][col];
+            for (col, pivot_value) in pivot_values.iter().enumerate().skip(column) {
+                target[col] = target[col] - factor * *pivot_value;
             }
         }
     }
@@ -748,7 +752,7 @@ mod tests {
         assert!((solution[1] - 3.0).abs() < 1e-12, "{solution:?}");
 
         let singular = vec![vec![1.0f64, 2.0], vec![2.0, 4.0]];
-        assert!(solve_linear_system(&singular, &vec![1.0, 2.0]).is_none());
+        assert!(solve_linear_system(&singular, &[1.0, 2.0]).is_none());
     }
 
     #[test]

@@ -38,10 +38,11 @@ pub type OptimizationTask<T> = ScheduledTask<T>;
 pub use orchestration::{
     AlertConfiguration, Checkpoint, CheckpointConfiguration, CheckpointManager, CheckpointMetadata,
     CheckpointStorage, Experiment, ExperimentConfiguration, ExperimentExecution, ExperimentManager,
-    ExperimentResult, ExperimentStatus, InMemoryCheckpointStorage, MonitoringConfiguration,
-    OptimizationPipeline, PipelineConfiguration, PipelineExecution, PipelineOrchestrator,
-    PipelineStage, RecoveryManager, RecoveryOptions, RecoveryStrategy, RecoveryTarget,
-    ResourceLimits, StageResult, StateType, StorageConfiguration, TimeoutSettings, ValidationRule,
+    ExperimentResult, ExperimentStatus, FileCheckpointStorage, InMemoryCheckpointStorage,
+    MonitoringConfiguration, OptimizationPipeline, PipelineConfiguration, PipelineExecution,
+    PipelineOrchestrator, PipelineStage, RecoveryManager, RecoveryOptions, RecoveryStrategy,
+    RecoveryTarget, ResourceLimits, StageResult, StateType, StorageConfiguration, TimeoutSettings,
+    ValidationRule,
 };
 
 pub use monitoring::{

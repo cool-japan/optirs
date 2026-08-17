@@ -17,6 +17,20 @@
 // isolation; treat every allocation as host memory and every device number
 // as illustrative. Real CUDA execution belongs in the `oxicuda-*` crates,
 // feature-gated off by default per COOLJAPAN policy.
+//
+// This extends to data movement: `memcpy` and `memcpy_async` copy **zero
+// bytes**. They build a `CudaOperation` record, hand it to
+// `CudaStreamManager::execute_operation` (which returns immediately and
+// never dereferences `src_ptr`/`dst_ptr`), and increment
+// `CudaStats::memory_transfers` — that counter says "this many `memcpy`
+// calls were made," not "this many bytes moved." An earlier revision of
+// this module also injected a `std::thread::sleep` here to imitate transfer
+// latency by operation kind; that fake timing has been removed, so the
+// distinction between `MemcpyHostToDevice`/`MemcpyDeviceToHost`/
+// `MemcpyDeviceToDevice`/`MemcpyAsync` no longer affects anything
+// observable. `CudaStats::stream_operations` and `CudaStats::kernel_launches`
+// are declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
 #[allow(dead_code)]
 use std::collections::HashMap;
@@ -580,29 +594,14 @@ impl CudaStreamManager {
         Ok(())
     }
 
-    fn execute_operation(&self, operation: CudaOperation) -> Result<(), CudaError> {
-        // Simulate operation execution
-        match operation.op_type {
-            CudaOperationType::MemcpyHostToDevice => {
-                // Simulate cudaMemcpy
-                std::thread::sleep(Duration::from_micros(100));
-            }
-            CudaOperationType::MemcpyDeviceToHost => {
-                // Simulate cudaMemcpy
-                std::thread::sleep(Duration::from_micros(100));
-            }
-            CudaOperationType::MemcpyDeviceToDevice => {
-                // Simulate cudaMemcpy
-                std::thread::sleep(Duration::from_micros(50));
-            }
-            CudaOperationType::MemcpyAsync => {
-                // Simulate cudaMemcpyAsync
-                std::thread::sleep(Duration::from_micros(10));
-            }
-            _ => {
-                // Other operations
-            }
-        }
+    fn execute_operation(&self, _operation: CudaOperation) -> Result<(), CudaError> {
+        // Host-memory simulation (see module docs): there is no real CUDA
+        // device to transfer to or from, so no data movement happens here.
+        // This used to also inject an artificial `std::thread::sleep` per
+        // operation type to mimic device-transfer latency; that fake timing
+        // has been removed rather than left as an undisclosed simulated
+        // number, so callers now see the true (near-zero) cost of this
+        // simulation instead of a fabricated one.
         Ok(())
     }
 }

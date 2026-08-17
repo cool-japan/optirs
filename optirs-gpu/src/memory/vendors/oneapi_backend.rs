@@ -15,6 +15,21 @@
 // real hardware. This module models the SYCL USM memory-management *API
 // shape* for testing that shape in isolation; treat every allocation as host
 // memory and every device number as illustrative.
+//
+// This extends to data movement: `usm_memcpy` copies **zero bytes**. It
+// builds a `SyclOperation` record, hands it to
+// `SyclQueueManager::execute_operation` (which returns immediately and never
+// dereferences `src_ptr`/`dst_ptr`), and increments
+// `OneApiStats::memory_transfers` — that counter says "this many
+// `usm_memcpy` calls were made," not "this many bytes moved." An earlier
+// revision of this module also injected a `std::thread::sleep` here to
+// imitate transfer/kernel-submission latency by operation kind; that fake
+// timing has been removed, so the distinction between
+// `MemcpyHostToDevice`/`MemcpyDeviceToHost`/`MemcpyDeviceToDevice`/
+// `UsmMemcpy`/`KernelSubmit` no longer affects anything observable.
+// `OneApiStats::queue_operations` and `OneApiStats::kernel_submissions` are
+// declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
 #[allow(dead_code)]
 use std::collections::HashMap;
@@ -683,33 +698,15 @@ impl SyclQueueManager {
         Ok(())
     }
 
-    fn execute_operation(&self, operation: SyclOperation) -> Result<(), OneApiError> {
-        // Simulate operation execution
-        match operation.op_type {
-            SyclOperationType::MemcpyHostToDevice => {
-                // Simulate memory copy
-                std::thread::sleep(Duration::from_micros(150));
-            }
-            SyclOperationType::MemcpyDeviceToHost => {
-                // Simulate memory copy
-                std::thread::sleep(Duration::from_micros(150));
-            }
-            SyclOperationType::MemcpyDeviceToDevice => {
-                // Simulate memory copy
-                std::thread::sleep(Duration::from_micros(80));
-            }
-            SyclOperationType::UsmMemcpy => {
-                // Simulate USM memory copy (typically faster)
-                std::thread::sleep(Duration::from_micros(20));
-            }
-            SyclOperationType::KernelSubmit => {
-                // Simulate kernel execution
-                std::thread::sleep(Duration::from_micros(500));
-            }
-            _ => {
-                // Other operations
-            }
-        }
+    fn execute_operation(&self, _operation: SyclOperation) -> Result<(), OneApiError> {
+        // Host-memory simulation (see module docs): there is no real
+        // SYCL/Level Zero device to transfer to or from, so no data movement
+        // happens here. This used to also inject an artificial
+        // `std::thread::sleep` per operation type to mimic device-transfer
+        // and kernel-submission latency; that fake timing has been removed
+        // rather than left as an undisclosed simulated number, so callers
+        // now see the true (near-zero) cost of this simulation instead of a
+        // fabricated one.
         Ok(())
     }
 }

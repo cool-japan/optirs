@@ -214,6 +214,276 @@ mod tests_2 {
         assert!(strategy.has_converged());
     }
 
+    /// An architecture with `count` components, so a complexity filter has
+    /// something to discriminate on.
+    fn architecture_with_components(id: &str, count: usize) -> OptimizerArchitecture<f64> {
+        OptimizerArchitecture {
+            components: (0..count).map(|_| "Adam".to_string()).collect(),
+            parameters: HashMap::new(),
+            connections: (1..count).map(|i| (i - 1, i)).collect(),
+            metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
+            architecture_id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn progressive_search_actually_stages_the_complexity_it_allows() {
+        // `NASConfig::progressive_search` used to change nothing: the engine built a
+        // `ProgressiveNAS` with an empty stage list whose `filter_candidates`
+        // returned its input verbatim, while the engine reported
+        // `progressive_search` among the run's key hyperparameters.
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.progressive_search = true;
+        config.search_space.min_components = 1;
+        config.search_space.max_components = 3;
+        config.search_budget = 30;
+
+        let mut progressive =
+            ProgressiveNAS::<f64>::new(&config).expect("build the progressive filter");
+        assert_eq!(
+            progressive.stages().len(),
+            3,
+            "one stage per allowed component count"
+        );
+        // Each stage narrows the search space it describes.
+        let limits: Vec<usize> = progressive
+            .stages()
+            .iter()
+            .map(|stage| stage.search_space.max_components)
+            .collect();
+        assert_eq!(limits, vec![1, 2, 3]);
+        assert!(progressive.stages().iter().all(|stage| stage
+            .stage_config
+            .search_space
+            .max_components
+            == stage.search_space.max_components));
+
+        let candidates = vec![
+            architecture_with_components("one", 1),
+            architecture_with_components("two", 2),
+            architecture_with_components("three", 3),
+        ];
+
+        // Generation 0 is in the first stage: only the single-component candidate
+        // may be evaluated. The old implementation returned all three.
+        let allowed = progressive
+            .filter_candidates(candidates.clone(), 0)
+            .expect("filter");
+        let ids: Vec<&str> = allowed
+            .iter()
+            .map(|architecture| architecture.architecture_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["one"],
+            "stage 0 must defer the complex candidates"
+        );
+        assert_eq!(progressive.current_stage(), 0);
+
+        // Late in the run the schedule has widened to the full complexity.
+        let allowed = progressive
+            .filter_candidates(candidates.clone(), 25)
+            .expect("filter");
+        assert_eq!(allowed.len(), 3, "the last stage allows everything");
+        assert_eq!(progressive.current_stage(), 2);
+
+        // A generation past the budget stays in the last stage rather than
+        // indexing out of the schedule.
+        assert_eq!(progressive.stage_for_generation(10_000), 2);
+        assert_eq!(progressive.complexity_limit(10_000), Some(3));
+
+        // Nothing fitting the stage must not produce an empty generation: the
+        // simplest candidates are evaluated and the situation is reported.
+        let too_complex = vec![
+            architecture_with_components("big", 3),
+            architecture_with_components("bigger", 4),
+        ];
+        let allowed = progressive
+            .filter_candidates(too_complex, 0)
+            .expect("filter");
+        assert_eq!(allowed.len(), 1);
+        assert_eq!(allowed[0].architecture_id, "big");
+    }
+
+    #[test]
+    fn progressive_stage_history_records_what_each_stage_produced() {
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.search_space.min_components = 1;
+        config.search_space.max_components = 2;
+        config.search_budget = 10;
+        let mut progressive =
+            ProgressiveNAS::<f64>::new(&config).expect("build the progressive filter");
+
+        // `stage_history` was declared and never written.
+        progressive.record_stage_results(0, &[make_search_result("early", 1.0, 1.0, 0.2)]);
+        progressive.record_stage_results(9, &[make_search_result("late", 1.0, 1.0, 0.9)]);
+
+        assert_eq!(progressive.stage_results(0).len(), 1);
+        assert_eq!(
+            progressive.stage_results(0)[0].architecture.architecture_id,
+            "early"
+        );
+        assert_eq!(progressive.stage_results(1).len(), 1);
+        assert_eq!(
+            progressive.stage_results(1)[0].architecture.architecture_id,
+            "late"
+        );
+        // An empty batch records nothing.
+        progressive.record_stage_results(0, &[]);
+        assert_eq!(progressive.stage_results(0).len(), 1);
+    }
+
+    #[test]
+    fn evolutionary_convergence_honors_min_generations() {
+        // `EarlyStoppingConfig::min_generations` was declared, set by both config
+        // builders, and enforced nowhere. Now that `has_converged` actually stops the
+        // engine, a short patience must not end a run before the caller's declared
+        // minimum: `patience: 3, min_generations: 50` used to stop at generation ~4.
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.population_size = 4;
+        config.early_stopping.patience = 3;
+        config.early_stopping.min_generations = 50;
+
+        let mut strategy =
+            EvolutionaryStrategy::<f64>::new(&config).expect("construct EvolutionaryStrategy");
+        for _ in 0..20 {
+            let results = vec![make_search_result("stag", 1.0, 1.0, 0.5)];
+            strategy.update_strategy(&results).expect("update strategy");
+        }
+        assert!(
+            !strategy.has_converged(),
+            "a stagnating strategy must not stop the search before min_generations"
+        );
+
+        // Past the floor, the patience window governs again.
+        for _ in 0..35 {
+            let results = vec![make_search_result("stag", 1.0, 1.0, 0.5)];
+            strategy.update_strategy(&results).expect("update strategy");
+        }
+        assert!(
+            strategy.has_converged(),
+            "once min_generations is met, a stagnating strategy must report convergence"
+        );
+    }
+
+    #[test]
+    fn engine_early_stopping_honors_min_generations() {
+        // The same floor on the engine's own lack-of-improvement path.
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.early_stopping.enabled = true;
+        config.early_stopping.patience = 2;
+        config.early_stopping.min_improvement = 10.0;
+        config.early_stopping.min_generations = 25;
+
+        let mut engine = NeuralArchitectureSearch::<f64>::new(config).expect("construct engine");
+        // A stagnating history that would satisfy patience on its own.
+        for _ in 0..8 {
+            engine
+                .search_history
+                .push_back(make_search_result("stag", 1.0, 1.0, 0.5));
+        }
+        engine.current_generation = 5;
+        assert!(
+            !engine.check_early_stopping_criteria(),
+            "generation 5 is below the configured minimum of 25"
+        );
+
+        engine.current_generation = 30;
+        assert!(
+            engine.check_early_stopping_criteria(),
+            "past the minimum, the stagnating history must trigger early stopping"
+        );
+    }
+
+    #[test]
+    fn evolutionary_convergence_honors_the_early_stopping_switch() {
+        // `has_converged` is now consulted by `should_stop_search`, so this
+        // no-improvement heuristic must respect a caller who turned early stopping
+        // off — otherwise disabling early stopping would stop the search anyway.
+        let mut config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        config.population_size = 4;
+        config.early_stopping.patience = 3;
+        config.early_stopping.enabled = false;
+
+        let mut strategy =
+            EvolutionaryStrategy::<f64>::new(&config).expect("construct EvolutionaryStrategy");
+        for _ in 0..10 {
+            let results = vec![make_search_result("stag", 1.0, 1.0, 0.5)];
+            strategy.update_strategy(&results).expect("update strategy");
+        }
+        assert!(
+            !strategy.has_converged(),
+            "a stagnating strategy must not report convergence when early stopping \
+             is disabled"
+        );
+    }
+
+    #[test]
+    fn a_finished_progressive_strategy_stops_the_engine_loop() {
+        // `SearchStrategy::has_converged` was implemented by every adapter and
+        // called from nowhere. A progressive search whose complexity schedule was
+        // exhausted therefore kept sampling at its final complexity level until the
+        // generation budget ran out; the strategy's own "I am done" was ignored.
+        use crate::search_strategies::SearchStrategy as InnerSearchStrategy;
+
+        let config = crate::nas_engine::create_minimal_nas_config::<f64>();
+        let strategy = crate::nas_engine::strategy_adapters::progressive(&config)
+            .expect("build the progressive strategy");
+        assert!(
+            !strategy.has_converged(),
+            "a fresh progressive search has not finished"
+        );
+
+        // Drive the inner strategy through its whole schedule directly, so the test
+        // does not depend on the engine's evaluator.
+        let mut inner = crate::search_strategies::ProgressiveNAS::<f64>::with_seed(2, 1, 1, 12345);
+        inner
+            .initialize(&config.search_space)
+            .expect("initialize the inner strategy");
+        let history = std::collections::VecDeque::new();
+        for _ in 0..2 {
+            let architecture = inner
+                .generate_architecture(&config.search_space, &history)
+                .expect("generate");
+            let mut result = make_search_result("phase", 1.0, 1.0, 0.5);
+            result.architecture = architecture;
+            inner.update_with_results(&[result]).expect("update");
+        }
+        assert!(
+            inner.is_search_complete(),
+            "the schedule must be exhausted after both phases have met their budget"
+        );
+
+        // And the engine reads exactly that signal through the adapter.
+        let mut finished = crate::nas_engine::strategy_adapters::progressive(&config)
+            .expect("build the progressive strategy");
+        let mut generated = Vec::new();
+        for _ in 0..64 {
+            if finished.has_converged() {
+                break;
+            }
+            let candidates = finished
+                .generate_candidates(&history)
+                .expect("generate candidates");
+            let results: Vec<_> = candidates
+                .into_iter()
+                .map(|architecture| {
+                    let mut result = make_search_result("cand", 1.0, 1.0, 0.5);
+                    result.architecture = architecture;
+                    result
+                })
+                .collect();
+            generated.extend(results.iter().cloned());
+            finished.update_strategy(&results).expect("update strategy");
+        }
+        assert!(
+            finished.has_converged(),
+            "the progressive adapter never reported completion after {} evaluations",
+            generated.len()
+        );
+    }
+
     #[test]
     fn test_nsga2_optimizer_update_pareto_front_keeps_non_dominated() {
         let config = MultiObjectiveConfig::<f64> {
@@ -539,10 +809,70 @@ mod tests_2 {
     }
 
     #[test]
-    fn unimplemented_multi_objective_algorithms_are_rejected() {
+    fn nsga3_and_moead_are_served_by_their_real_implementations() {
+        // Both used to be routed to a macro-generated placeholder that returned an
+        // empty Pareto front and a hardcoded diversity of 0.5, and were then made to
+        // report `NotImplemented`. They are now real algorithms.
         for algorithm in [
             MultiObjectiveAlgorithm::NSGA3,
             MultiObjectiveAlgorithm::MOEAD,
+        ] {
+            let config = MultiObjectiveConfig::<f64> {
+                algorithm: algorithm.clone(),
+                objectives: two_minimize_objectives(),
+                ..Default::default()
+            };
+            let mut optimizer =
+                NeuralArchitectureSearch::<f64>::create_multi_objective_optimizer(&config)
+                    .unwrap_or_else(|error| panic!("{algorithm:?} must construct: {error}"));
+
+            let front = optimizer
+                .update_pareto_front(&[
+                    make_search_result("A", 1.0, 2.0, 0.9),
+                    make_search_result("B", 2.0, 1.0, 0.8),
+                    make_search_result("C", 3.0, 3.0, 0.1),
+                ])
+                .unwrap_or_else(|error| panic!("{algorithm:?} update: {error}"));
+            assert_eq!(
+                front.solutions.len(),
+                2,
+                "{algorithm:?} must report a real front (C is dominated by both A and B)"
+            );
+            assert!(
+                front.metrics.hypervolume > 0.0,
+                "{algorithm:?} reported a zero hypervolume"
+            );
+
+            let selected = optimizer
+                .select_candidates(
+                    &[
+                        make_search_result("cheap", 1.0, 1.0, 0.9),
+                        make_search_result("costly", 5.0, 5.0, 0.1),
+                    ],
+                    1,
+                )
+                .unwrap_or_else(|error| panic!("{algorithm:?} select: {error}"));
+            assert_eq!(selected.len(), 1, "{algorithm:?}");
+            assert_eq!(
+                selected[0].architecture.architecture_id, "cheap",
+                "{algorithm:?} ranked the dominated candidate first"
+            );
+
+            // Measured diversity, not the placeholder's 0.5.
+            let diversity = optimizer.calculate_diversity(&[
+                make_search_result("a", 0.0, 0.0, 0.0),
+                make_search_result("b", 3.0, 4.0, 0.0),
+            ]);
+            assert!(
+                (diversity - 5.0).abs() < 1e-12,
+                "{algorithm:?} diversity = {diversity}"
+            );
+        }
+    }
+
+    #[test]
+    fn unimplemented_multi_objective_algorithms_are_rejected() {
+        for algorithm in [
             MultiObjectiveAlgorithm::PAES,
             MultiObjectiveAlgorithm::SPEA2,
             MultiObjectiveAlgorithm::EpsilonConstraint,

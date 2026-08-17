@@ -251,6 +251,39 @@ pub fn spacing<T: Float>(front: &[Vec<T>]) -> T {
     (variance / count).sqrt()
 }
 
+/// Mean pairwise Euclidean distance between objective vectors — the diversity
+/// measurement the engine adapters report.
+///
+/// `0.0` for fewer than two vectors (a single point has no spread). Vectors of
+/// differing length are compared over their common prefix, which is the same
+/// convention the rest of this module uses.
+pub fn mean_pairwise_distance<T: Float>(vectors: &[Vec<T>]) -> f64 {
+    if vectors.len() < 2 {
+        return 0.0;
+    }
+    let mut total = 0.0;
+    let mut count = 0usize;
+    for i in 0..vectors.len() {
+        for j in (i + 1)..vectors.len() {
+            let a = &vectors[i];
+            let b = &vectors[j];
+            let dims = a.len().min(b.len());
+            let mut sum_sq = T::zero();
+            for k in 0..dims {
+                let diff = a[k] - b[k];
+                sum_sq = sum_sq + diff * diff;
+            }
+            total += sum_sq.sqrt().to_f64().unwrap_or(0.0);
+            count += 1;
+        }
+    }
+    if count > 0 {
+        total / count as f64
+    } else {
+        0.0
+    }
+}
+
 /// Assemble a complete [`FrontMetrics`] from an already-measured hypervolume plus
 /// the front and population it was measured on.
 ///
@@ -270,7 +303,7 @@ pub fn spacing<T: Float>(front: &[Vec<T>]) -> T {
 /// * `previous_hypervolume` — the value from the previous update, or `None` on the
 ///   first one (which yields `convergence == 1`: nothing has been shown to
 ///   converge yet).
-pub fn front_metrics_in_minimization_space<T: Float>(
+pub fn front_metrics_in_minimization_space<T: Float + std::fmt::Debug + Send + Sync + 'static>(
     front: &[Vec<T>],
     population: &[Vec<T>],
     reference: &[T],

@@ -196,7 +196,16 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                     .last()
                     .and_then(|map| map.get(name))
                 {
-                    // gamma * old + new
+                    // gamma * old + new. The two Fisher diagonals for the same
+                    // parameter name can genuinely disagree in length (a layer
+                    // resized between tasks), and indexing `old_fisher[i]` over
+                    // `new_fisher`'s range used to panic on that (finding F71).
+                    Self::require_same_len(
+                        name,
+                        "previous Fisher diagonal",
+                        new_fisher.len(),
+                        old_fisher.len(),
+                    )?;
                     let mut result = Array1::from_elem(new_fisher.len(), T::zero());
                     for i in 0..result.len() {
                         result[i] = self.gamma * old_fisher[i] + new_fisher[i];
@@ -247,6 +256,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                     OptimError::InvalidState(format!("Fisher information for '{}' not found", name))
                 })?;
 
+                Self::require_same_len(name, "current parameter", anchor.len(), current.len())?;
+                Self::require_same_len(name, "Fisher diagonal", anchor.len(), fisher.len())?;
+
                 for i in 0..anchor.len() {
                     let diff = current[i] - anchor[i];
                     total_penalty = total_penalty + fisher[i] * diff * diff;
@@ -255,12 +267,35 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
         } else {
             // Standard EWC: sum penalty over all tasks, each with its own anchor
             for (task_idx, task_fisher) in self.task_fisher_diagonals.iter().enumerate() {
-                let task_anchor = &self.task_anchor_parameters[task_idx];
+                // `task_anchor_parameters` and `task_fisher_diagonals` are pushed
+                // together by `consolidate`, but a caller that mutated one
+                // through a future API (or a partially-applied deserialization)
+                // could desynchronise them; indexing used to panic.
+                let task_anchor = self.task_anchor_parameters.get(task_idx).ok_or_else(|| {
+                    OptimError::InvalidState(format!(
+                        "no anchor parameters stored for task {task_idx}: {} anchors for {} Fisher \
+                         diagonals",
+                        self.task_anchor_parameters.len(),
+                        self.task_fisher_diagonals.len()
+                    ))
+                })?;
                 for (name, anchor) in task_anchor {
                     let current = parameters.get(name).ok_or_else(|| {
                         OptimError::InvalidState(format!("parameter '{}' not found in input", name))
                     })?;
                     if let Some(fisher) = task_fisher.get(name) {
+                        Self::require_same_len(
+                            name,
+                            "current parameter",
+                            anchor.len(),
+                            current.len(),
+                        )?;
+                        Self::require_same_len(
+                            name,
+                            "Fisher diagonal",
+                            anchor.len(),
+                            fisher.len(),
+                        )?;
                         for i in 0..anchor.len() {
                             let diff = current[i] - anchor[i];
                             total_penalty = total_penalty + fisher[i] * diff * diff;
@@ -309,13 +344,28 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                     OptimError::InvalidState(format!("gradient entry for '{}' not found", name))
                 })?;
 
+                Self::require_same_len(name, "current parameter", anchor.len(), current.len())?;
+                Self::require_same_len(name, "Fisher diagonal", anchor.len(), fisher.len())?;
+                Self::require_same_len(name, "gradient buffer", anchor.len(), grad.len())?;
+
                 for i in 0..anchor.len() {
                     grad[i] = grad[i] + self.lambda * fisher[i] * (current[i] - anchor[i]);
                 }
             }
         } else {
             for (task_idx, task_fisher) in self.task_fisher_diagonals.iter().enumerate() {
-                let task_anchor = &self.task_anchor_parameters[task_idx];
+                // `task_anchor_parameters` and `task_fisher_diagonals` are pushed
+                // together by `consolidate`, but a caller that mutated one
+                // through a future API (or a partially-applied deserialization)
+                // could desynchronise them; indexing used to panic.
+                let task_anchor = self.task_anchor_parameters.get(task_idx).ok_or_else(|| {
+                    OptimError::InvalidState(format!(
+                        "no anchor parameters stored for task {task_idx}: {} anchors for {} Fisher \
+                         diagonals",
+                        self.task_anchor_parameters.len(),
+                        self.task_fisher_diagonals.len()
+                    ))
+                })?;
                 for (name, anchor) in task_anchor {
                     let current = parameters.get(name).ok_or_else(|| {
                         OptimError::InvalidState(format!("parameter '{}' not found in input", name))
@@ -328,6 +378,19 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                             ))
                         })?;
 
+                        Self::require_same_len(
+                            name,
+                            "current parameter",
+                            anchor.len(),
+                            current.len(),
+                        )?;
+                        Self::require_same_len(
+                            name,
+                            "Fisher diagonal",
+                            anchor.len(),
+                            fisher.len(),
+                        )?;
+                        Self::require_same_len(name, "gradient buffer", anchor.len(), grad.len())?;
                         for i in 0..anchor.len() {
                             grad[i] = grad[i] + self.lambda * fisher[i] * (current[i] - anchor[i]);
                         }
@@ -337,6 +400,25 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
         }
 
         Ok(gradients)
+    }
+
+    /// Reject a per-parameter array whose length does not match its anchor.
+    ///
+    /// F71: `ewc_penalty` / `ewc_gradient` / `consolidate` all looped
+    /// `for i in 0..anchor.len()` and indexed the *current* parameters, the Fisher
+    /// diagonal and the gradient buffer with `i`. They checked that each name was
+    /// **present** but never that the arrays were the same **length**, so a model
+    /// whose layer was resized between tasks — the exact situation continual
+    /// learning exists for — produced an index-out-of-bounds panic instead of a
+    /// diagnosable error.
+    fn require_same_len(name: &str, what: &str, expected: usize, got: usize) -> Result<()> {
+        if expected != got {
+            return Err(OptimError::InvalidState(format!(
+                "{what} for '{name}' has length {got} but its anchor has length {expected}; \
+                 EWC needs matching shapes"
+            )));
+        }
+        Ok(())
     }
 
     /// Return the number of tasks that have been consolidated so far.
@@ -759,6 +841,96 @@ mod tests {
     // -----------------------------------------------------------------------
     // EWC Tests
     // -----------------------------------------------------------------------
+
+    /// F71: every EWC loop was `for i in 0..anchor.len()` indexing the *current*
+    /// parameters, the Fisher diagonal and the gradient buffer with `i`. Presence
+    /// of each name was checked; length never was. A model whose layer was resized
+    /// between tasks — the whole point of continual learning — panicked with an
+    /// index-out-of-bounds instead of returning a diagnosable error.
+    #[test]
+    fn ewc_reports_length_mismatches_instead_of_panicking() {
+        // Consolidate on width-4 parameters, then evaluate against width-2 ones.
+        let build = |online: bool| -> ElasticWeightConsolidation<F> {
+            let mut ewc: ElasticWeightConsolidation<F> = ElasticWeightConsolidation::new(1.0)
+                .with_num_samples(2)
+                .with_online(online);
+            let wide = make_params(&["w"], 4, 1.0);
+            ewc.compute_fisher_diagonal(&wide, |params, _| {
+                Ok(params
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.mapv(|v| v * 0.5)))
+                    .collect())
+            })
+            .expect("fisher");
+            ewc.consolidate(&wide).expect("consolidate");
+            ewc
+        };
+
+        for online in [false, true] {
+            let ewc = build(online);
+            let narrow = make_params(&["w"], 2, 1.0);
+
+            let penalty = ewc.ewc_penalty(&narrow);
+            assert!(
+                penalty.is_err(),
+                "online={online}: a width-2 parameter against a width-4 anchor must be an error"
+            );
+            let text = penalty.expect_err("checked above").to_string();
+            assert!(
+                text.contains("length") && text.contains('w'),
+                "online={online}: unhelpful error {text}"
+            );
+
+            let gradient = ewc.ewc_gradient(&narrow);
+            assert!(
+                gradient.is_err(),
+                "online={online}: ewc_gradient must reject the mismatch too"
+            );
+
+            // The matching case must still work, so the guard is not just a
+            // blanket rejection.
+            let wide = make_params(&["w"], 4, 2.0);
+            let ok_penalty = ewc.ewc_penalty(&wide).expect("matching widths");
+            assert!(
+                ok_penalty > 0.0,
+                "online={online}: a displaced parameter must incur a positive penalty"
+            );
+            let grads = ewc.ewc_gradient(&wide).expect("matching widths");
+            assert_eq!(grads["w"].len(), 4);
+            assert!(
+                grads["w"].iter().all(|g| *g > 0.0),
+                "online={online}: gradient must push back toward the anchor"
+            );
+        }
+    }
+
+    /// The online branch of `consolidate` merges the previous Fisher diagonal into
+    /// the new one elementwise; a shorter previous diagonal used to panic.
+    #[test]
+    fn online_consolidation_reports_a_fisher_length_change() {
+        let mut ewc: ElasticWeightConsolidation<F> = ElasticWeightConsolidation::new(1.0)
+            .with_num_samples(2)
+            .with_online(true);
+        let grads = |params: &HashMap<String, Array1<F>>, _: usize| {
+            Ok(params
+                .iter()
+                .map(|(name, value)| (name.clone(), value.mapv(|v| v * 0.5)))
+                .collect())
+        };
+
+        let narrow = make_params(&["w"], 2, 1.0);
+        ewc.compute_fisher_diagonal(&narrow, grads).expect("fisher");
+        ewc.consolidate(&narrow).expect("first consolidate");
+
+        // Second task: same name, wider parameter.
+        let wide = make_params(&["w"], 5, 1.0);
+        ewc.compute_fisher_diagonal(&wide, grads)
+            .expect("fisher for the wider task");
+        let err = ewc
+            .consolidate(&wide)
+            .expect_err("a Fisher length change must be reported, not panic");
+        assert!(err.to_string().contains("length"), "{}", err);
+    }
 
     #[test]
     fn test_ewc_creation_and_configuration() {

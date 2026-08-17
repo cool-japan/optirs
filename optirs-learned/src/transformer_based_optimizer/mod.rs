@@ -99,8 +99,23 @@ impl<
             + scirs2_core::numeric::FromPrimitive,
     > TransformerOptimizer<T>
 {
-    /// Create new transformer optimizer
+    /// Create new transformer optimizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::InvalidConfig`] if `config` (or any of its three
+    /// sub-configurations — memory, meta-learning, performance) is inconsistent.
+    ///
+    /// F46: `TransformerBasedOptimizerConfig::validate` and the three sub-config
+    /// validators it delegates to existed and were correct, but *nothing in the
+    /// crate ever called them*. A `model_dimension` of 0, an
+    /// `attention_head_dimension · num_attention_heads` that did not equal
+    /// `model_dimension`, a `dropout_rate` of 2.0 or a zero `batch_size` were all
+    /// accepted here and then produced either a wrong answer or a panic several
+    /// layers down. The check now runs before anything is allocated.
     pub fn new(config: TransformerBasedOptimizerConfig<T>) -> Result<Self> {
+        config.validate().map_err(OptimError::InvalidConfig)?;
+
         let transformer_config = TransformerArchConfig::from_optimizer_config(&config);
         let transformer = TransformerArchitecture::new(transformer_config)?;
 
@@ -240,13 +255,24 @@ impl<
             ));
         }
 
+        if prediction.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "cannot take the mean squared error of an empty prediction".to_string(),
+            ));
+        }
+
         // Mean squared error
         let diff = prediction - target;
         let squared_diff = &diff * &diff;
         let sum = squared_diff.sum();
-        let mse = sum / T::from(prediction.len()).expect("unwrap failed");
+        let count = T::from(prediction.len()).ok_or_else(|| {
+            OptimError::ComputationError(format!(
+                "cannot represent the element count {} in the value type",
+                prediction.len()
+            ))
+        })?;
 
-        Ok(mse)
+        Ok(sum / count)
     }
 
     /// Backward pass: differentiate the sequence MSE and update the transformer.
@@ -310,17 +336,22 @@ impl<
             return Ok(0.0);
         }
 
+        // Most recent first; the window is the last 10 recorded losses.
         let recent_losses: Vec<_> = loss_history.iter().rev().take(10).collect();
-        if recent_losses.len() < 2 {
+        // `first`/`last` cannot fail after this guard, but pattern-matching says so
+        // to the compiler instead of asserting it at runtime.
+        let (Some(final_loss), Some(initial_loss)) = (recent_losses.first(), recent_losses.last())
+        else {
+            return Ok(0.0);
+        };
+        let (initial_loss, final_loss) = (**initial_loss, **final_loss);
+        if initial_loss == 0.0 {
+            // Already at zero loss: no relative improvement is definable.
             return Ok(0.0);
         }
 
-        let initial_loss = *recent_losses.last().expect("unwrap failed");
-        let final_loss = *recent_losses.first().expect("unwrap failed");
-
         let improvement = (initial_loss - final_loss) / initial_loss;
-        let improvement_f64 = improvement.to_f64().unwrap_or(0.0);
-        Ok(improvement_f64.clamp(0.0, 1.0))
+        Ok(improvement.clamp(0.0, 1.0))
     }
 
     /// Adopt a new architecture configuration.
@@ -555,6 +586,133 @@ mod tests {
         let config = TransformerBasedOptimizerConfig::default();
         let optimizer = TransformerOptimizer::<f32>::new(config);
         assert!(optimizer.is_ok());
+    }
+
+    /// F46: `TransformerBasedOptimizerConfig::validate` (and the memory /
+    /// meta-learning / performance validators it delegates to) had **zero call
+    /// sites in the crate**. Every one of the configurations below used to be
+    /// accepted by `TransformerOptimizer::new`, which then either produced a
+    /// silently wrong answer or panicked somewhere downstream.
+    ///
+    /// The list deliberately covers the top-level validator *and* all three
+    /// sub-config validators, because delegation is the part that is easy to
+    /// drop.
+    #[test]
+    fn construction_rejects_every_invalid_configuration() {
+        // A small but valid baseline, so each case below differs in exactly one
+        // field and the default's own consistency is not what is under test.
+        let base = || TransformerBasedOptimizerConfig::<f32> {
+            model_dimension: 8,
+            num_transformer_layers: 1,
+            num_attention_heads: 2,
+            attention_head_dimension: 4,
+            feedforward_dimension: 16,
+            sequence_length: 4,
+            batch_size: 2,
+            ..Default::default()
+        };
+        assert!(
+            TransformerOptimizer::<f32>::new(base()).is_ok(),
+            "the baseline configuration must itself be valid"
+        );
+
+        let mut cases: Vec<(&str, TransformerBasedOptimizerConfig<f32>)> = Vec::new();
+
+        // --- top-level validator ---
+        cases.push(("model_dimension = 0", {
+            let mut c = base();
+            c.model_dimension = 0;
+            c
+        }));
+        cases.push(("num_transformer_layers = 0", {
+            let mut c = base();
+            c.num_transformer_layers = 0;
+            c
+        }));
+        cases.push(("num_attention_heads = 0", {
+            let mut c = base();
+            c.num_attention_heads = 0;
+            c
+        }));
+        cases.push(("heads do not divide model_dimension", {
+            let mut c = base();
+            c.num_attention_heads = 3;
+            c
+        }));
+        cases.push(("head_dim * heads != model_dimension", {
+            let mut c = base();
+            c.attention_head_dimension = 3;
+            c
+        }));
+        cases.push(("sequence_length = 0", {
+            let mut c = base();
+            c.sequence_length = 0;
+            c
+        }));
+        cases.push(("dropout_rate above 1", {
+            let mut c = base();
+            c.dropout_rate = 2.0;
+            c
+        }));
+        cases.push(("negative learning_rate", {
+            let mut c = base();
+            c.learning_rate = -1.0;
+            c
+        }));
+        cases.push(("batch_size = 0", {
+            let mut c = base();
+            c.batch_size = 0;
+            c
+        }));
+
+        // --- delegated: MemoryConfig ---
+        cases.push(("max_cache_size = 0", {
+            let mut c = base();
+            c.memory_config.max_cache_size = 0;
+            c
+        }));
+        cases.push(("allocation_block_size = 0", {
+            let mut c = base();
+            c.memory_config.allocation_block_size = 0;
+            c
+        }));
+
+        // --- delegated: MetaLearningConfig ---
+        cases.push(("meta_learning_rate = 0", {
+            let mut c = base();
+            c.meta_learning_config.meta_learning_rate = 0.0;
+            c
+        }));
+        cases.push(("inner_steps = 0", {
+            let mut c = base();
+            c.meta_learning_config.inner_steps = 0;
+            c
+        }));
+        cases.push(("num_support = 0", {
+            let mut c = base();
+            c.meta_learning_config.num_support = 0;
+            c
+        }));
+
+        // --- delegated: PerformanceConfig ---
+        cases.push(("metrics_interval = 0", {
+            let mut c = base();
+            c.performance_config.metrics_interval = 0;
+            c
+        }));
+        cases.push(("max_history_size = 0", {
+            let mut c = base();
+            c.performance_config.max_history_size = 0;
+            c
+        }));
+
+        for (label, config) in cases {
+            let outcome = TransformerOptimizer::<f32>::new(config);
+            assert!(
+                outcome.is_err(),
+                "`{label}` was accepted by TransformerOptimizer::new"
+            );
+        }
     }
 
     /// F62: this struct used to also own a standalone `MultiHeadAttention`

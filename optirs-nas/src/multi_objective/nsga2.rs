@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::core::{
-    CoverageMetrics, CreationMethod, FrontMetrics, Individual, MultiObjectiveOptimizer,
-    MultiObjectiveStatistics, ObjectiveBounds, ParetoFront, ParetoSolution, SolutionMetadata,
+    CreationMethod, FrontMetrics, Individual, MultiObjectiveOptimizer, MultiObjectiveStatistics,
+    ObjectiveBounds, ParetoFront, ParetoSolution, SolutionMetadata,
 };
 use super::hypervolume::{
     derive_reference_point, hypervolume_minimization, normalize_front_for_minimization,
@@ -439,16 +439,8 @@ impl<
     pub(super) fn calculate_front_metrics(&mut self) {
         let front = self.front_in_minimization_space();
         let hypervolume = self.calculate_hypervolume();
-        let spread = metrics::spread(&front);
-        let spacing = metrics::spacing(&front);
 
         let previous = self.previous_hypervolume;
-        let convergence = match previous {
-            Some(previous) => metrics::hypervolume_convergence(hypervolume, previous),
-            // No earlier hypervolume exists, so nothing has been shown to
-            // converge yet.
-            None => T::one(),
-        };
         self.previous_hypervolume = Some(hypervolume);
 
         let directions = self.objective_directions();
@@ -458,8 +450,6 @@ impl<
             .map(|raw| normalize_reference_for_minimization(raw, &directions))
             .unwrap_or_default();
 
-        let objective_space_coverage = metrics::objective_space_coverage(&front, &reference);
-        let reference_distance = metrics::mean_reference_distance(&front, &reference);
         // How far the non-dominated front is from covering the whole population
         // the optimizer has in hand; zero when it dominates all of it.
         let population_objectives: Vec<Vec<T>> = normalize_front_for_minimization(
@@ -470,20 +460,16 @@ impl<
                 .collect::<Vec<_>>(),
             &directions,
         );
-        let epsilon_dominance = metrics::additive_epsilon_indicator(&front, &population_objectives);
 
-        self.pareto_front.metrics = FrontMetrics {
+        self.pareto_front.metrics = metrics::front_metrics_in_minimization_space(
+            &front,
+            &population_objectives,
+            &reference,
             hypervolume,
-            spread,
-            spacing,
-            convergence,
-            num_solutions: self.pareto_front.solutions.len(),
-            coverage: CoverageMetrics {
-                objective_space_coverage,
-                reference_distance,
-                epsilon_dominance,
-            },
-        };
+            previous,
+        );
+        let convergence = self.pareto_front.metrics.convergence;
+        let spread = self.pareto_front.metrics.spread;
         self.statistics.pareto_front_size = self.pareto_front.solutions.len();
         // `best_hypervolume` is the best value ever seen, not merely the latest.
         if hypervolume > self.statistics.best_hypervolume {
@@ -540,35 +526,7 @@ impl<
     /// mapping used by [`MultiObjectiveOptimizer::update_pareto_front`] so the
     /// helpers below agree with the main optimization path.
     pub(super) fn objective_vector_for_result(&self, result: &SearchResult<T>) -> Vec<T> {
-        let mut objectives = Vec::with_capacity(self.config.objectives.len());
-        for obj_config in &self.config.objectives {
-            let metric = match obj_config.objective_type {
-                ObjectiveType::Accuracy => EvaluationMetric::Accuracy,
-                ObjectiveType::Loss => EvaluationMetric::FinalPerformance,
-                ObjectiveType::TrainingTime => EvaluationMetric::TrainingTime,
-                ObjectiveType::InferenceTime => EvaluationMetric::ComputationTime,
-                ObjectiveType::MemoryUsage => EvaluationMetric::MemoryUsage,
-                ObjectiveType::EnergyConsumption => EvaluationMetric::ComputationTime,
-                ObjectiveType::ModelSize => EvaluationMetric::MemoryUsage,
-                ObjectiveType::Performance => EvaluationMetric::FinalPerformance,
-                ObjectiveType::Efficiency => EvaluationMetric::ComputationalEfficiency,
-                ObjectiveType::Robustness => EvaluationMetric::Robustness,
-                ObjectiveType::Interpretability => EvaluationMetric::FinalPerformance,
-                ObjectiveType::Fairness => EvaluationMetric::FinalPerformance,
-                ObjectiveType::Privacy => EvaluationMetric::FinalPerformance,
-                ObjectiveType::Sustainability => EvaluationMetric::ComputationalEfficiency,
-                ObjectiveType::Cost => EvaluationMetric::ComputationalEfficiency,
-                ObjectiveType::Custom(_) => EvaluationMetric::FinalPerformance,
-            };
-            let value = result
-                .evaluation_results
-                .metric_scores
-                .get(&metric)
-                .cloned()
-                .unwrap_or(T::zero());
-            objectives.push(value);
-        }
-        objectives
+        super::core::objective_vector_for_result(&self.config.objectives, result)
     }
     /// Load `results` into the population (one individual per result), run the
     /// complete NSGA-II non-dominated sort and crowding-distance assignment,
@@ -663,34 +621,11 @@ impl<
     /// vectors of `results`, providing a real diversity metric for the
     /// population. Returns `0.0` for fewer than two solutions.
     pub(crate) fn mean_objective_distance(&self, results: &[SearchResult<T>]) -> f64 {
-        if results.len() < 2 {
-            return 0.0;
-        }
         let objective_vectors: Vec<Vec<T>> = results
             .iter()
             .map(|r| self.objective_vector_for_result(r))
             .collect();
-        let mut total = 0.0;
-        let mut count = 0usize;
-        for i in 0..objective_vectors.len() {
-            for j in (i + 1)..objective_vectors.len() {
-                let a = &objective_vectors[i];
-                let b = &objective_vectors[j];
-                let len = a.len().min(b.len());
-                let mut sq_sum = T::zero();
-                for d in 0..len {
-                    let diff = a[d] - b[d];
-                    sq_sum = sq_sum + diff * diff;
-                }
-                total += sq_sum.sqrt().to_f64().unwrap_or(0.0);
-                count += 1;
-            }
-        }
-        if count > 0 {
-            total / count as f64
-        } else {
-            0.0
-        }
+        metrics::mean_pairwise_distance(&objective_vectors)
     }
     pub(super) fn tournament_selection(&mut self, tournamentsize: usize) -> Result<Individual<T>> {
         if self.population.is_empty() {

@@ -60,6 +60,7 @@ x509-parser = { workspace = true, optional = true }
 # Async support
 tokio = { workspace = true, features = ["rt"] }
 async-trait = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

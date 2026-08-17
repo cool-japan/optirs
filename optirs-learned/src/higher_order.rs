@@ -13,6 +13,11 @@ use super::forward_mode::ForwardModeEngine;
 use super::reverse_mode::ReverseModeEngine;
 use crate::error::{OptimError, Result};
 
+/// Hessian-vector-product and mixed-partial back ends.
+///
+/// Kept in its own file so `higher_order.rs` stays under the 2000-line cap.
+pub mod hvp;
+
 /// Higher-order differentiation engine
 #[allow(dead_code)]
 pub struct HigherOrderEngine<
@@ -170,13 +175,31 @@ pub struct MixedPartials<T: Float + Debug + Send + Sync + 'static> {
     pub method: MixedPartialMethod,
 }
 
-/// Methods for computing mixed partials
-#[derive(Debug, Clone, Copy)]
+/// Methods for computing mixed partials.
+///
+/// This used to list `ForwardOverReverse`, `ReverseOverForward` and
+/// `PureForward` alongside `FiniteDifference` — but all three delegated, in one
+/// line each, to the finite-difference routine (finding F89). The variants below
+/// are the ones that can genuinely differ behind this engine's black-box
+/// objective type; see [`crate::higher_order::hvp`] for why nested automatic
+/// differentiation cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MixedPartialMethod {
-    ForwardOverReverse,
-    ReverseOverForward,
-    PureForward,
+    /// Central finite differences: `O(h²)` accurate, evaluates on both sides of
+    /// the base point. The default and the most accurate available method.
     FiniteDifference,
+
+    /// One-sided *forward* finite differences: `O(h)` accurate, never evaluates
+    /// below the base point in any differentiated coordinate. Use it when the
+    /// objective is undefined or discontinuous on that side.
+    ForwardFiniteDifference,
+
+    /// Nested automatic differentiation. **Not available** behind this engine's
+    /// `Fn(&Array1<T>) -> T` objective — [`Self::is_available`] returns `false`
+    /// and [`HigherOrderEngine::mixed_partial`] returns a typed error naming the
+    /// alternative, instead of silently running a finite difference under an
+    /// autodiff name.
+    NestedAutodiff,
 }
 
 /// Layer information for K-FAC computation
@@ -339,7 +362,20 @@ impl<
         Ok(hessian)
     }
 
-    /// Compute Hessian matrix using reverse-over-forward mode
+    /// Compute the Hessian **column by column**, by taking the gradient of each
+    /// first partial derivative.
+    ///
+    /// The name is historical — it describes the reverse-over-forward autodiff
+    /// scheme this emulates, not the implementation, which is a nested central
+    /// finite difference (see [`hvp`] for why autodiff cannot be threaded through
+    /// this engine's objective type). Distinct from
+    /// [`Self::hessian_forward_over_reverse`], which works row-wise from a
+    /// directional derivative of the gradient.
+    ///
+    /// Both nested steps use the *order-2* step. With the old raw
+    /// `finite_diff_eps` (`1e-5`) on both levels the roundoff floor was
+    /// `ε/h² ≈ 2e-6` in `f64` and `≈ 1.2e3` in `f32` — i.e. the `f32` result was
+    /// pure noise.
     pub fn hessian_reverse_over_forward(
         &mut self,
         function: impl Fn(&Array1<T>) -> T,
@@ -348,6 +384,7 @@ impl<
     ) -> Result<Array2<T>> {
         let n = point.len();
         let mut hessian = Array2::zeros((n, n));
+        let inner_step = self.fd_step(2);
 
         // Use reverse-over-forward: compute one column of Hessian at a time
         for j in 0..n {
@@ -356,12 +393,12 @@ impl<
                 let mut x_plus = x.clone();
                 let mut x_minus = x.clone();
 
-                x_plus[j] = x_plus[j] + self.finite_diff_eps;
-                x_minus[j] = x_minus[j] - self.finite_diff_eps;
+                x_plus[j] = x_plus[j] + inner_step;
+                x_minus[j] = x_minus[j] - inner_step;
 
                 (function(&x_plus) - function(&x_minus))
                     / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
-                        * self.finite_diff_eps)
+                        * inner_step)
             };
 
             // Compute gradient of partial derivative
@@ -488,17 +525,16 @@ impl<
         }
 
         let value = match method {
-            MixedPartialMethod::ForwardOverReverse => {
-                self.mixed_partial_forward_over_reverse(&function, point, variables, orders)?
-            }
-            MixedPartialMethod::ReverseOverForward => {
-                self.mixed_partial_reverse_over_forward(&function, point, variables, orders)?
-            }
-            MixedPartialMethod::PureForward => {
-                self.mixed_partial_pure_forward(&function, point, variables, orders)?
-            }
             MixedPartialMethod::FiniteDifference => {
                 self.mixed_partial_finite_difference(&function, point, variables, orders)?
+            }
+            MixedPartialMethod::ForwardFiniteDifference => {
+                self.mixed_partial_forward_difference(&function, point, variables, orders)?
+            }
+            MixedPartialMethod::NestedAutodiff => {
+                return Err(OptimError::InvalidConfig(
+                    hvp::NESTED_AUTODIFF_UNAVAILABLE.to_string(),
+                ))
             }
         };
 
@@ -589,10 +625,13 @@ impl<
         let selected_mode = mode.unwrap_or_else(|| self.select_optimal_hvp_mode(n));
 
         match selected_mode {
-            HvpMode::ForwardOverReverse => self.hvp_forward_over_reverse(&function, point, vector),
-            HvpMode::ReverseOverForward => self.hvp_reverse_over_forward(&function, point, vector),
-            HvpMode::FiniteDifference => self.hvp_finite_difference(&function, point, vector),
-            HvpMode::PearLman => self.hvp_pearlman(&function, point, vector),
+            HvpMode::CentralDifference => self.hvp_central_difference(&function, point, vector),
+            HvpMode::ForwardDifference => self.hvp_forward_difference(&function, point, vector),
+            HvpMode::QuadraticSecant => self.hvp_quadratic_secant(&function, point, vector),
+            HvpMode::MaterializedHessian => self.hvp_materialized_hessian(&function, point, vector),
+            HvpMode::NestedAutodiff => Err(OptimError::InvalidConfig(
+                hvp::NESTED_AUTODIFF_UNAVAILABLE.to_string(),
+            )),
         }
     }
 
@@ -642,7 +681,25 @@ impl<
         activations: &[Array1<T>],
         gradients: &[Array1<T>],
     ) -> Result<Array2<T>> {
-        let mut kfac_blocks = Vec::new();
+        // The three slices are parallel arrays indexed by layer. Indexing them
+        // with the layer index without checking used to panic (out of bounds) on
+        // any caller that passed a short activation or gradient list.
+        if activations.len() != layers.len() || gradients.len() != layers.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "K-FAC needs one activation and one gradient per layer: {} layers, \
+                 {} activations, {} gradients",
+                layers.len(),
+                activations.len(),
+                gradients.len()
+            )));
+        }
+        if layers.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "K-FAC needs at least one layer".to_string(),
+            ));
+        }
+
+        let mut kfac_blocks = Vec::with_capacity(layers.len());
 
         for (i, layer) in layers.iter().enumerate() {
             let activation = &activations[i];
@@ -691,30 +748,41 @@ impl<
         let point_copy = point.clone();
         let function_copy = function;
 
+        // `Hv` by a central difference of the gradient *along `v`*: two gradient
+        // evaluations, i.e. `O(n)` objective calls.
+        //
+        // This used to materialize the whole Hessian one column at a time inside
+        // every CG iteration — `n` gradient pairs, so `O(n²)` objective calls per
+        // `Hv` and `O(n³)` for the solve — to compute a quantity that a single
+        // directional difference gives exactly as accurately. On a 1000-parameter
+        // problem that is ~4·10⁶ objective evaluations per CG step.
         let hvp_fn = move |v: &Array1<T>| -> Result<Array1<T>> {
-            // Use finite differences as a fallback to avoid borrow conflicts.
-            // Differencing the gradient is a second-order quantity.
-            let eps = central_step::<T>(2);
-            let mut hvp = Array1::zeros(v.len());
-
-            for i in 0..v.len() {
-                let mut point_plus = point_copy.clone();
-                let mut point_minus = point_copy.clone();
-
-                point_plus[i] = point_plus[i] + eps;
-                point_minus[i] = point_minus[i] - eps;
-
-                // Compute gradient at perturbed points
-                let grad_plus = Self::finite_diff_gradient(&function_copy, &point_plus)?;
-                let grad_minus = Self::finite_diff_gradient(&function_copy, &point_minus)?;
-
-                // Approximate Hessian-vector product
-                let hess_col = (&grad_plus - &grad_minus)
-                    / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps);
-                hvp[i] = hess_col.dot(v);
+            if v.len() != point_copy.len() {
+                return Err(OptimError::InvalidConfig(format!(
+                    "CG direction has length {} but the point has {}",
+                    v.len(),
+                    point_copy.len()
+                )));
             }
+            // Keep the displacement `h·v` at the intended scale even when `v` is
+            // large; CG residuals are not normalized.
+            let scale = v.iter().fold(T::one(), |acc, value| {
+                let magnitude = value.abs();
+                if magnitude > acc {
+                    magnitude
+                } else {
+                    acc
+                }
+            });
+            let eps = central_step::<T>(2) / scale;
+            let two: T = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::one());
 
-            Ok(hvp)
+            let grad_plus =
+                Self::finite_diff_gradient(&function_copy, &(&point_copy + &(v * eps)))?;
+            let grad_minus =
+                Self::finite_diff_gradient(&function_copy, &(&point_copy - &(v * eps)))?;
+
+            Ok((grad_plus - grad_minus) / (two * eps))
         };
 
         self.conjugate_gradient_solve(hvp_fn, &neg_gradient, max_cg_iterations, cg_tolerance)
@@ -795,6 +863,14 @@ impl<
     ) -> Result<Array2<T>> {
         let n = point.len();
         let mut hessian = Array2::zeros((n, n));
+        // Second-order stencils need the order-2 step. The raw `finite_diff_eps`
+        // default of 1e-5 that used to be inlined here divides by `h² = 1e-10`,
+        // putting the roundoff floor at `ε/h²` — ~2e-6 in `f64` and ~1.2e3 in
+        // `f32`, where the "Hessian" was noise.
+        let eps = self.fd_step(2);
+        // `f(x)` does not depend on `i`; it used to be re-evaluated once per
+        // diagonal entry.
+        let f_center = function(point);
 
         for i in 0..n {
             for j in i..n {
@@ -804,22 +880,19 @@ impl<
                     let mut x_plus = point.clone();
                     let mut x_minus = point.clone();
 
-                    x_plus[i] = x_plus[i] + self.finite_diff_eps;
-                    x_minus[i] = x_minus[i] - self.finite_diff_eps;
+                    x_plus[i] = x_plus[i] + eps;
+                    x_minus[i] = x_minus[i] - eps;
 
                     let f_plus = function(&x_plus);
-                    let f_center = function(point);
                     let f_minus = function(&x_minus);
 
                     (f_plus
                         - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
                             * f_center
                         + f_minus)
-                        / (self.finite_diff_eps * self.finite_diff_eps)
+                        / (eps * eps)
                 } else {
                     // Off-diagonal element: f''_ij
-                    let eps = self.finite_diff_eps;
-
                     let mut x_pp = point.clone();
                     x_pp[i] = x_pp[i] + eps;
                     x_pp[j] = x_pp[j] + eps;
@@ -930,40 +1003,6 @@ impl<
         };
 
         Ok(value)
-    }
-
-    fn mixed_partial_forward_over_reverse(
-        &self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        variables: &[usize],
-        orders: &[usize],
-    ) -> Result<T> {
-        // Simplified implementation
-        // Real implementation would use proper forward-over-reverse mode
-        self.mixed_partial_finite_difference(function, point, variables, orders)
-    }
-
-    fn mixed_partial_reverse_over_forward(
-        &self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        variables: &[usize],
-        orders: &[usize],
-    ) -> Result<T> {
-        // Simplified implementation
-        self.mixed_partial_finite_difference(function, point, variables, orders)
-    }
-
-    fn mixed_partial_pure_forward(
-        &self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        variables: &[usize],
-        orders: &[usize],
-    ) -> Result<T> {
-        // Simplified implementation
-        self.mixed_partial_finite_difference(function, point, variables, orders)
     }
 
     /// Mixed partial derivative by central finite differences, supporting every
@@ -1122,16 +1161,27 @@ impl<
         self.adaptive_sparsity && config.sparse && problemsize >= 100
     }
 
-    /// Select optimal HVP mode based on problem characteristics
+    /// Select an HVP mode from the problem size.
+    ///
+    /// Only two of the available modes are ever auto-selected, because only two
+    /// are unconditionally correct: the central difference (the accurate default)
+    /// and, for a problem small enough that `O(n²)` is free, the materialized
+    /// Hessian, whose result is reusable across directions. The forward
+    /// difference is opt-in (it trades accuracy for one-sidedness) and the
+    /// quadratic secant is opt-in (it is only sound on a quadratic model), so
+    /// neither may be chosen on the caller's behalf.
+    ///
+    /// Previously this returned `ForwardOverReverse` / `ReverseOverForward` /
+    /// `FiniteDifference` — three names for one identical finite difference — so
+    /// the "selection" changed nothing at all.
     fn select_optimal_hvp_mode(&self, problemsize: usize) -> HvpMode {
         if !self.auto_mode_selection {
-            return HvpMode::ForwardOverReverse;
+            return HvpMode::CentralDifference;
         }
 
         match problemsize {
-            0..=10 => HvpMode::FiniteDifference,
-            11..=100 => HvpMode::ForwardOverReverse,
-            _ => HvpMode::ReverseOverForward,
+            0..=8 => HvpMode::MaterializedHessian,
+            _ => HvpMode::CentralDifference,
         }
     }
 
@@ -1150,78 +1200,17 @@ impl<
         Ok(matrix)
     }
 
-    /// Forward-over-reverse HVP implementation
-    fn hvp_forward_over_reverse(
-        &mut self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        vector: &Array1<T>,
-    ) -> Result<Array1<T>> {
-        let grad_fn = |x: &Array1<T>| -> Array1<T> {
-            self.gradient_at_point(function, x)
-                .unwrap_or_else(|_| Array1::zeros(x.len()))
-        };
-
-        self.directional_derivative_of_gradient(&grad_fn, point, vector)
-    }
-
-    /// Reverse-over-forward HVP implementation
-    fn hvp_reverse_over_forward(
-        &mut self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        vector: &Array1<T>,
-    ) -> Result<Array1<T>> {
-        // Use R-operator (reverse-over-forward)
-        let eps = self.finite_diff_eps;
-
-        let point_plus = point + &(vector * eps);
-        let point_minus = point - &(vector * eps);
-
-        let grad_plus = self.gradient_at_point(function, &point_plus)?;
-        let grad_minus = self.gradient_at_point(function, &point_minus)?;
-
-        Ok((grad_plus - grad_minus)
-            / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
-    }
-
-    /// Finite difference HVP implementation
-    fn hvp_finite_difference(
-        &mut self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        vector: &Array1<T>,
-    ) -> Result<Array1<T>> {
-        let eps = self.finite_diff_eps;
-
-        let point_plus = point + &(vector * eps);
-        let point_minus = point - &(vector * eps);
-
-        let grad_plus = self.gradient_at_point(function, &point_plus)?;
-        let grad_minus = self.gradient_at_point(function, &point_minus)?;
-
-        Ok((grad_plus - grad_minus)
-            / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * eps))
-    }
-
-    /// Pearlman trick for quadratic functions
-    fn hvp_pearlman(
-        &mut self,
-        function: &impl Fn(&Array1<T>) -> T,
-        point: &Array1<T>,
-        vector: &Array1<T>,
-    ) -> Result<Array1<T>> {
-        // For quadratic functions: Hv = (∇f(x+v) - ∇f(x)) / ε can be exact
-        let eps = T::one(); // Use 1.0 for exact computation on quadratic functions
-
-        let point_plus = point + &(vector * eps);
-        let grad_plus = self.gradient_at_point(function, &point_plus)?;
-        let grad_orig = self.gradient_at_point(function, point)?;
-
-        Ok((grad_plus - grad_orig) / eps)
-    }
-
-    /// Forward-mode Jacobian computation
+    /// Jacobian **column by column**, one central difference per input.
+    ///
+    /// Cheaper than [`Self::jacobian_reverse_mode`] when `input_dim <=
+    /// output_dim`, which is exactly when [`Self::jacobian_efficient`] picks it.
+    /// It used to differ from the row-wise routine in accuracy as well as cost —
+    /// a *one-sided* step, so `jacobian_efficient` silently returned a
+    /// first-order answer for tall problems and a second-order one for wide
+    /// ones. Both are central now, so the choice is purely about cost.
+    ///
+    /// (It also re-evaluated `function(point)` once per input column; that base
+    /// evaluation is gone entirely with the central stencil.)
     fn jacobian_forward_mode<F>(
         &mut self,
         function: &F,
@@ -1233,22 +1222,25 @@ impl<
     {
         let input_dim = point.len();
         let mut jacobian = Array2::zeros((output_dim, input_dim));
+        let eps = self.fd_step(1);
+        let two: T = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::one());
 
-        // Compute Jacobian column by column using forward mode
         for j in 0..input_dim {
-            let mut direction = Array1::zeros(input_dim);
-            direction[j] = T::one();
-
-            // This would use forward-mode AD to compute J*v
-            // Simplified implementation using finite differences
-            let eps = self.finite_diff_eps;
             let mut point_plus = point.clone();
+            let mut point_minus = point.clone();
             point_plus[j] = point_plus[j] + eps;
+            point_minus[j] = point_minus[j] - eps;
 
             let f_plus = function(&point_plus);
-            let f_orig = function(point);
+            let f_minus = function(&point_minus);
+            if f_plus.len() < output_dim || f_minus.len() < output_dim {
+                return Err(OptimError::InvalidConfig(format!(
+                    "function returned {} outputs, expected at least {output_dim}",
+                    f_plus.len().min(f_minus.len())
+                )));
+            }
 
-            let column = (f_plus - f_orig) / eps;
+            let column = (f_plus - f_minus) / (two * eps);
 
             for i in 0..output_dim {
                 jacobian[[i, j]] = column[i];
@@ -1507,17 +1499,38 @@ impl<T: Float + Debug + Default + Send + Sync> Default for HigherOrderConfig<T> 
     }
 }
 
-/// Hessian-vector product computation modes
-#[derive(Debug, Clone, Copy)]
+/// Hessian-vector product computation modes.
+///
+/// Every variant below names a genuinely different numerical algorithm with its
+/// own cost and truncation error — see [`HvpMode::objective_evaluations`] and the
+/// [`hvp`] module docs. The previous four variants
+/// (`ForwardOverReverse`/`ReverseOverForward`/`FiniteDifference`/`PearLman`)
+/// advertised four differentiation schemes over what were, in the source, two
+/// byte-identical bodies plus a third copy behind a helper (finding F89).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HvpMode {
-    /// Forward-over-reverse mode (efficient for few vectors)
-    ForwardOverReverse,
-    /// Reverse-over-forward mode (efficient for many vectors)
-    ReverseOverForward,
-    /// Finite difference approximation
-    FiniteDifference,
-    /// Pearlman trick (for quadratic functions)
-    PearLman,
+    /// `Hv ≈ (∇f(x + h·v) − ∇f(x − h·v)) / 2h`. Second-order accurate; the
+    /// accurate default.
+    CentralDifference,
+
+    /// `Hv ≈ (∇f(x + h·v) − ∇f(x)) / h`. First-order accurate, and never
+    /// evaluates the objective at `x − h·v` — the mode to use at a domain edge.
+    ForwardDifference,
+
+    /// `Hv = ∇f(x + v) − ∇f(x)`, algebraically exact for a quadratic objective
+    /// and badly biased for anything else. Needs no step-size choice.
+    QuadraticSecant,
+
+    /// Materialize the finite-difference Hessian and multiply. `O(n²)` objective
+    /// evaluations; the reference path, and the right choice when one `H` will be
+    /// applied to many vectors.
+    MaterializedHessian,
+
+    /// Nested automatic differentiation. **Not available** behind this engine's
+    /// `Fn(&Array1<T>) -> T` objective; the call returns a typed error naming
+    /// [`crate::forward_mode`]/[`crate::reverse_mode`] instead of quietly
+    /// running a finite difference. [`HvpMode::is_available`] reports this.
+    NestedAutodiff,
 }
 
 /// Computation profiler for performance optimization

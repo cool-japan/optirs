@@ -11,6 +11,7 @@ pub mod checkpointstatistics_traits;
 pub mod compressioninfo_traits;
 pub mod compressionstatistics_traits;
 pub mod defaultrecoverystrategy_traits;
+pub mod file_storage;
 pub mod functions;
 pub mod indexingstatistics_traits;
 pub mod inmemorycheckpointstorage_traits;
@@ -24,6 +25,7 @@ pub mod types_15;
 pub mod validationstatistics_traits;
 
 // Re-export all types
+pub use file_storage::{storage_backend_from_config, FileCheckpointStorage};
 pub use functions::*;
 pub use types::*;
 pub use types_15::*;

@@ -50,14 +50,14 @@
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut optimizer = GpuAdam::new(AdamParams::default())?;
-//! optimizer.to_gpu()?;
+//! optimizer.move_to_gpu()?;
 //!
 //! let mut params = Array1::from_elem(1_024, 1.0f32);
 //! let grads = Array1::from_elem(1_024, 0.01f32);
 //! optimizer.step_gpu(&mut params, &grads)?;
 //!
 //! // Bring the moment estimates back to host memory when done.
-//! optimizer.to_cpu()?;
+//! optimizer.move_to_cpu()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -151,10 +151,33 @@ pub trait GpuOptimizer<A: Float, D: Dimension> {
     fn is_gpu_available(&self) -> bool;
 
     /// Move optimizer state to GPU
-    fn to_gpu(&mut self) -> Result<(), GpuOptimError>;
+    fn move_to_gpu(&mut self) -> Result<(), GpuOptimError>;
 
     /// Move optimizer state back to CPU
-    fn to_cpu(&mut self) -> Result<(), GpuOptimError>;
+    fn move_to_cpu(&mut self) -> Result<(), GpuOptimError>;
+
+    /// Deprecated alias for [`Self::move_to_gpu`].
+    ///
+    /// `to_gpu` on a `&mut self` method triggers
+    /// `clippy::wrong_self_convention` (`to_*` names are conventionally
+    /// reserved for cheap `&self` -> owned conversions); `move_to_gpu`
+    /// names what this actually does. This shim delegates to
+    /// [`Self::move_to_gpu`] and exists only so 0.3.1-era callers keep
+    /// compiling.
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_gpu`")]
+    fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.move_to_gpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_cpu`].
+    ///
+    /// See [`Self::to_gpu`] for why this was renamed. This shim delegates
+    /// to [`Self::move_to_cpu`] and exists only so 0.3.1-era callers keep
+    /// compiling.
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_cpu`")]
+    fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.move_to_cpu()
+    }
 
     /// Perform optimization step on GPU
     fn step_gpu(

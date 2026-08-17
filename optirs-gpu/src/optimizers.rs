@@ -5,8 +5,8 @@
 //! buffers, a WGSL kernel from [`crate::shaders::wgsl`] is dispatched, and the updated
 //! parameters are read back. The per-parameter optimizer state (Adam's `m`/`v`,
 //! SGD's momentum buffer, ...) stays resident in device memory between steps;
-//! [`crate::GpuOptimizer::to_cpu`] genuinely downloads it and
-//! [`crate::GpuOptimizer::to_gpu`] genuinely uploads it again.
+//! [`crate::GpuOptimizer::move_to_cpu`] genuinely downloads it and
+//! [`crate::GpuOptimizer::move_to_gpu`] genuinely uploads it again.
 //!
 //! # Backend support
 //!
@@ -253,7 +253,7 @@ impl GpuStepEngine {
         self.cache.backend()
     }
 
-    fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+    fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
         if self.on_gpu {
             return Ok(());
         }
@@ -265,7 +265,7 @@ impl GpuStepEngine {
         Ok(())
     }
 
-    fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
+    fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
         if !self.on_gpu {
             return Ok(());
         }
@@ -278,7 +278,7 @@ impl GpuStepEngine {
     fn prepare(&mut self, len: usize) -> Result<(), GpuOptimError> {
         if !self.on_gpu {
             return Err(GpuOptimError::InvalidState(
-                "optimizer is on the CPU; call to_gpu() before step_gpu()".into(),
+                "optimizer is on the CPU; call move_to_gpu() before step_gpu()".into(),
             ));
         }
         if len == 0 {
@@ -461,15 +461,30 @@ macro_rules! adam_family {
 
             /// Upload the optimizer state to device memory.
             ///
-            /// Inherent alias for [`GpuOptimizer::to_gpu`] so callers do not
-            /// need a turbofish to pin the unused dimension parameter.
-            pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-                self.engine.to_gpu()
+            /// Inherent alias for [`GpuOptimizer::move_to_gpu`] so callers do
+            /// not need a turbofish to pin the unused dimension parameter.
+            pub fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+                self.engine.move_to_gpu()
             }
 
             /// Download the optimizer state back to host memory.
+            ///
+            /// Inherent alias for [`GpuOptimizer::move_to_cpu`]; see
+            /// [`Self::move_to_gpu`].
+            pub fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+                self.engine.move_to_cpu()
+            }
+
+            /// Deprecated alias for [`Self::move_to_gpu`].
+            #[deprecated(since = "0.3.2", note = "renamed to `move_to_gpu`")]
+            pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+                self.move_to_gpu()
+            }
+
+            /// Deprecated alias for [`Self::move_to_cpu`].
+            #[deprecated(since = "0.3.2", note = "renamed to `move_to_cpu`")]
             pub fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-                self.engine.to_cpu()
+                self.move_to_cpu()
             }
 
             /// Whether a real device (not the CPU fallback) is backing this optimizer.
@@ -500,12 +515,12 @@ macro_rules! adam_family {
                 self.engine.backend() != GpuBackend::Cpu
             }
 
-            fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-                self.engine.to_gpu()
+            fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+                self.engine.move_to_gpu()
             }
 
-            fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-                self.engine.to_cpu()
+            fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+                self.engine.move_to_cpu()
             }
 
             fn step_gpu(
@@ -662,15 +677,30 @@ impl GpuSgd {
 
     /// Upload the optimizer state to device memory.
     ///
-    /// Inherent alias for [`GpuOptimizer::to_gpu`] so callers do not
+    /// Inherent alias for [`GpuOptimizer::move_to_gpu`] so callers do not
     /// need a turbofish to pin the unused dimension parameter.
-    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    pub fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
     /// Download the optimizer state back to host memory.
+    ///
+    /// Inherent alias for [`GpuOptimizer::move_to_cpu`]; see
+    /// [`Self::move_to_gpu`].
+    pub fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_gpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_gpu`")]
+    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.move_to_gpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_cpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_cpu`")]
     pub fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+        self.move_to_cpu()
     }
 
     /// Whether a real device (not the CPU fallback) is backing this optimizer.
@@ -689,12 +719,12 @@ impl<D: Dimension> GpuOptimizer<f32, D> for GpuSgd {
         self.engine.backend() != GpuBackend::Cpu
     }
 
-    fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
-    fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+    fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
     }
 
     fn step_gpu(
@@ -837,15 +867,30 @@ impl GpuRmsprop {
 
     /// Upload the optimizer state to device memory.
     ///
-    /// Inherent alias for [`GpuOptimizer::to_gpu`] so callers do not
+    /// Inherent alias for [`GpuOptimizer::move_to_gpu`] so callers do not
     /// need a turbofish to pin the unused dimension parameter.
-    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    pub fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
     /// Download the optimizer state back to host memory.
+    ///
+    /// Inherent alias for [`GpuOptimizer::move_to_cpu`]; see
+    /// [`Self::move_to_gpu`].
+    pub fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_gpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_gpu`")]
+    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.move_to_gpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_cpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_cpu`")]
     pub fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+        self.move_to_cpu()
     }
 
     /// Whether a real device (not the CPU fallback) is backing this optimizer.
@@ -864,12 +909,12 @@ impl<D: Dimension> GpuOptimizer<f32, D> for GpuRmsprop {
         self.engine.backend() != GpuBackend::Cpu
     }
 
-    fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
-    fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+    fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
     }
 
     fn step_gpu(
@@ -1011,15 +1056,30 @@ impl GpuAdagrad {
 
     /// Upload the optimizer state to device memory.
     ///
-    /// Inherent alias for [`GpuOptimizer::to_gpu`] so callers do not
+    /// Inherent alias for [`GpuOptimizer::move_to_gpu`] so callers do not
     /// need a turbofish to pin the unused dimension parameter.
-    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    pub fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
     /// Download the optimizer state back to host memory.
+    ///
+    /// Inherent alias for [`GpuOptimizer::move_to_cpu`]; see
+    /// [`Self::move_to_gpu`].
+    pub fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_gpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_gpu`")]
+    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.move_to_gpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_cpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_cpu`")]
     pub fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+        self.move_to_cpu()
     }
 
     /// Whether a real device (not the CPU fallback) is backing this optimizer.
@@ -1043,12 +1103,12 @@ impl<D: Dimension> GpuOptimizer<f32, D> for GpuAdagrad {
         self.engine.backend() != GpuBackend::Cpu
     }
 
-    fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
-    fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+    fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
     }
 
     fn step_gpu(
@@ -1141,15 +1201,30 @@ impl GpuLamb {
 
     /// Upload the optimizer state to device memory.
     ///
-    /// Inherent alias for [`GpuOptimizer::to_gpu`] so callers do not
+    /// Inherent alias for [`GpuOptimizer::move_to_gpu`] so callers do not
     /// need a turbofish to pin the unused dimension parameter.
-    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    pub fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
     /// Download the optimizer state back to host memory.
+    ///
+    /// Inherent alias for [`GpuOptimizer::move_to_cpu`]; see
+    /// [`Self::move_to_gpu`].
+    pub fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_gpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_gpu`")]
+    pub fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.move_to_gpu()
+    }
+
+    /// Deprecated alias for [`Self::move_to_cpu`].
+    #[deprecated(since = "0.3.2", note = "renamed to `move_to_cpu`")]
     pub fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+        self.move_to_cpu()
     }
 
     /// Whether a real device (not the CPU fallback) is backing this optimizer.
@@ -1177,12 +1252,12 @@ impl<D: Dimension> GpuOptimizer<f32, D> for GpuLamb {
         self.engine.backend() != GpuBackend::Cpu
     }
 
-    fn to_gpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_gpu()
+    fn move_to_gpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_gpu()
     }
 
-    fn to_cpu(&mut self) -> Result<(), GpuOptimError> {
-        self.engine.to_cpu()
+    fn move_to_cpu(&mut self) -> Result<(), GpuOptimError> {
+        self.engine.move_to_cpu()
     }
 
     fn step_gpu(

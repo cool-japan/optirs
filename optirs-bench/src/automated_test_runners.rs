@@ -593,13 +593,18 @@ impl AutomatedTestRunner {
         loop {
             // Get next execution
             let mut execution = {
-                let mut queue = match execution_queue.lock() {
-                    Ok(queue) => queue,
-                    Err(_) => {
-                        eprintln!("Worker {} failed to acquire _queue lock", worker_id);
-                        break;
-                    }
-                };
+                // Regression (F51): a poisoned mutex (some other worker
+                // panicked while holding it) used to make every remaining
+                // worker either panic too (`.expect(...)`, elsewhere in this
+                // function) or give up on the whole queue immediately. The
+                // queued/completed `TestExecution` data itself has no
+                // invariant that a single interrupted mutation can violate,
+                // so recovering the poisoned guard's data and continuing is
+                // legitimate here -- one worker's panic no longer takes the
+                // rest of the run down with it.
+                let mut queue = execution_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
 
                 match queue
                     .iter_mut()
@@ -627,7 +632,12 @@ impl AutomatedTestRunner {
 
             // Update execution status
             {
-                let mut queue = execution_queue.lock().expect("lock poisoned");
+                // See the F51 note above: recover a poisoned lock instead of
+                // panicking (and thereby poisoning it again for the next
+                // worker that reaches this same point).
+                let mut queue = execution_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(exec) = queue.iter_mut().find(|e| e.id == execution.id) {
                     exec.end_time = Some(Instant::now());
                     exec.resource_usage = execution.resource_usage.clone();
@@ -1241,6 +1251,44 @@ mod tests {
         let manager = ResourceManager::new(true);
         assert!(manager.available_cores > 0);
         assert!(manager.available_memory > 0);
+    }
+
+    #[test]
+    fn test_poisoned_execution_queue_lock_recovers_instead_of_cascading() {
+        // Regression (F51): `worker_thread` used to `.lock().expect("lock
+        // poisoned")` the shared execution queue, so one worker panicking
+        // while holding the lock poisoned it for every other worker, which
+        // then panicked too on their next lock attempt (or gave up
+        // silently). This exercises the exact recovery idiom
+        // (`unwrap_or_else(PoisonError::into_inner)`) now used at both lock
+        // sites in `worker_thread`, on the same `Arc<Mutex<VecDeque<..>>>`
+        // type, and asserts it returns the real (recovered) data instead of
+        // panicking.
+        let queue: Arc<Mutex<VecDeque<TestExecution>>> = Arc::new(Mutex::new(VecDeque::new()));
+
+        let poisoning_queue = Arc::clone(&queue);
+        let join_result = thread::spawn(move || {
+            let _guard = poisoning_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("deliberately poison the mutex while holding the lock");
+        })
+        .join();
+        assert!(
+            join_result.is_err(),
+            "the spawned thread must have panicked"
+        );
+        assert!(
+            queue.is_poisoned(),
+            "the mutex must actually be poisoned for this test to prove anything"
+        );
+
+        // The recovery idiom must succeed (not panic) and hand back real
+        // (here, still-empty) data rather than refusing to proceed.
+        let recovered = queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(recovered.is_empty());
     }
 
     /// Regression test for F84: `build_resource_usage` must derive its

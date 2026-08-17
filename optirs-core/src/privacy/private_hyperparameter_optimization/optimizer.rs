@@ -3,7 +3,7 @@
 //! Extracted from `types.rs` to keep every file under the 2000-line limit.
 
 use crate::error::{OptimError, Result};
-use crate::privacy::moment_accountant::MomentsAccountant;
+use crate::privacy::PrivacyBudget;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -17,6 +17,24 @@ use super::types::{
     PrivateBayesianOptimization, PrivateHPOConfig, PrivateHPOResults, PrivateObjective,
     PrivateRandomSearch, SearchAlgorithm, SearchStrategy,
 };
+
+/// The registry key of the private optimizer that implements `algorithm`.
+///
+/// Returns [`OptimError::UnsupportedOperation`] for the five `SearchAlgorithm`
+/// variants that have no private implementation here. They used to be mapped to
+/// `"random_search"` by a `_ =>` arm, so the configured algorithm never ran and
+/// nothing said so.
+pub(crate) fn optimizer_key(algorithm: SearchAlgorithm) -> Result<&'static str> {
+    match algorithm {
+        SearchAlgorithm::RandomSearch => Ok("random_search"),
+        SearchAlgorithm::BayesianOptimization => Ok("bayesian_opt"),
+        other => Err(OptimError::UnsupportedOperation(format!(
+            "SearchAlgorithm::{other:?} has no differentially private implementation in this \
+             crate; configure SearchAlgorithm::RandomSearch or \
+             SearchAlgorithm::BayesianOptimization"
+        ))),
+    }
+}
 
 /// Privacy-preserving hyperparameter optimizer
 pub struct PrivateHyperparameterOptimizer<T: Float + Debug + Send + Sync + 'static> {
@@ -34,8 +52,6 @@ pub struct PrivateHyperparameterOptimizer<T: Float + Debug + Send + Sync + 'stat
     search_strategy: SearchStrategy<T>,
     /// Results aggregator with privacy
     results_aggregator: PrivateResultsAggregator<T>,
-    /// Privacy accountant for hyperparameter selection
-    privacy_accountant: MomentsAccountant,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T> {
@@ -97,12 +113,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             config.num_evaluations,
             selection_fraction,
         )?;
-        let privacy_accountant = MomentsAccountant::new(
-            config.base_privacyconfig.noise_multiplier,
-            config.base_privacyconfig.target_delta,
-            config.base_privacyconfig.batch_size,
-            config.base_privacyconfig.dataset_size,
-        );
         // Only two search algorithms have a private implementation. The other
         // five used to fall through to `PrivateRandomSearch`, so a caller asking
         // for TPE (or a genetic search, or simulated annealing) silently got
@@ -144,13 +154,24 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             let delta = config.base_privacyconfig.target_delta;
             if !delta.is_finite() || !(0.0..1.0).contains(&delta) || delta <= 0.0 {
                 return Err(OptimError::InvalidPrivacyConfig(format!(
-                    "Gaussian hyperparameter selection needs a reporting delta in (0, 1), but                      base_privacyconfig.target_delta is {delta}"
+                    "Gaussian hyperparameter selection needs a reporting delta in (0, 1), but \
+                     base_privacyconfig.target_delta is {delta}"
                 )));
             }
-            let per_draw_epsilon = budget_manager.selection_epsilon() * 0.5 / PRIVATE_TOP_K as f64;
+            // `aggregate_results` draws `k = PRIVATE_TOP_K.min(evaluations)` times
+            // and splits half the selection epsilon across them, so the per-draw
+            // epsilon is largest when the run produces the fewest evaluations.
+            // Using `num_evaluations` here matches the k the run will actually
+            // use; a run cut short by budget exhaustion draws fewer times, and
+            // `gaussian_sigma` refuses the oversized epsilon at that point rather
+            // than quietly widening the guarantee.
+            let draws = PRIVATE_TOP_K.min(config.num_evaluations.max(1));
+            let per_draw_epsilon = budget_manager.selection_epsilon() * 0.5 / draws as f64;
             if per_draw_epsilon > 1.0 {
                 return Err(OptimError::InvalidPrivacyConfig(format!(
-                    "Gaussian selection would draw at epsilon {per_draw_epsilon} per selection,                      but the classic Gaussian bound requires epsilon <= 1; lower target_epsilon or                      choose HyperparameterNoiseMechanism::Exponential"
+                    "Gaussian selection would draw at epsilon {per_draw_epsilon} per selection, \
+                     but the classic Gaussian bound requires epsilon <= 1; lower target_epsilon \
+                     or choose HyperparameterNoiseMechanism::Exponential"
                 )));
             }
             Some(delta)
@@ -201,7 +222,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             private_objective,
             search_strategy: SearchStrategy::new(),
             results_aggregator,
-            privacy_accountant,
         })
     }
 
@@ -223,9 +243,21 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             .seed_for_tests(seed.wrapping_mul(OBJECTIVE_DOMAIN) | 1);
     }
 
-    /// The privacy accountant of the underlying optimizer.
-    pub fn privacy_accountant(&self) -> &MomentsAccountant {
-        &self.privacy_accountant
+    /// The epsilon spent so far across every objective release and the private
+    /// selection.
+    ///
+    /// This used to be `privacy_accountant() -> &MomentsAccountant`. That
+    /// accountant was constructed from `base_privacyconfig`'s DP-SGD parameters
+    /// (`noise_multiplier`, `batch_size`, `dataset_size`) and then **never
+    /// stepped**, so it reported the spend of a training run that had not
+    /// happened while the hyperparameter search's real, pure-epsilon spend was
+    /// tracked entirely by [`HPOBudgetManager`]. A moments accountant models
+    /// subsampled-Gaussian composition and is the wrong primitive for the
+    /// Laplace / exponential releases this optimizer performs, so it is gone
+    /// rather than fed fabricated `(sigma, q)` pairs. Read the real ledger here
+    /// or in [`PrivateHPOResults::total_privacy_cost`].
+    pub fn total_privacy_cost(&self) -> PrivacyBudget {
+        self.budget_manager.get_total_consumed_budget()
     }
 
     /// The budget manager.
@@ -236,6 +268,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
     /// The search strategy.
     pub fn search_strategy(&self) -> &SearchStrategy<T> {
         &self.search_strategy
+    }
+
+    /// The private objective, including the noise mechanism and the scale it
+    /// last used.
+    pub fn private_objective(&self) -> &PrivateObjective<T> {
+        &self.private_objective
     }
 
     /// Optimize hyperparameters with differential privacy.
@@ -254,11 +292,10 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
         let mut last_error: Option<OptimError> = None;
         let mut best_score_so_far = T::neg_infinity();
         let mut convergence_iteration = None;
-        let optimizer_name = match self.config.search_algorithm {
-            SearchAlgorithm::RandomSearch => "random_search",
-            SearchAlgorithm::BayesianOptimization => "bayesian_opt",
-            _ => "random_search",
-        };
+        // `new` already refused every algorithm without an implementation, so
+        // this cannot silently pick a different optimizer than the caller asked
+        // for; it propagates rather than defaulting all the same.
+        let optimizer_name = optimizer_key(self.config.search_algorithm)?;
         for iteration in 0..self.config.num_evaluations {
             if !self.budget_manager.has_budget_remaining()? {
                 break;
@@ -586,7 +623,9 @@ mod tests {
             constraints: Vec::new(),
             defaultconfig: None,
         };
-        assert!(PrivateHyperparameterOptimizer::new(config(false, None), empty).is_err());
+        // A declared sensitivity keeps this isolated to the empty-space check:
+        // with `None` it would now also fail for the missing sensitivity.
+        assert!(PrivateHyperparameterOptimizer::new(config(false, Some(1.0)), empty).is_err());
     }
 
     #[test]
@@ -691,11 +730,11 @@ mod tests {
 
     #[test]
     fn a_non_private_selection_is_reported_as_such() {
-        let mut optimizer = match PrivateHyperparameterOptimizer::new(config(false, None), space())
-        {
-            Ok(optimizer) => optimizer,
-            Err(err) => panic!("construction failed: {err}"),
-        };
+        let mut optimizer =
+            match PrivateHyperparameterOptimizer::new(config(false, Some(1.0)), space()) {
+                Ok(optimizer) => optimizer,
+                Err(err) => panic!("construction failed: {err}"),
+            };
         optimizer.seed_for_tests(5);
         let results = match optimizer.optimize(objective()) {
             Ok(results) => results,
@@ -752,11 +791,11 @@ mod tests {
 
     #[test]
     fn a_failing_objective_is_counted_and_propagated_when_nothing_succeeds() {
-        let mut optimizer = match PrivateHyperparameterOptimizer::new(config(false, None), space())
-        {
-            Ok(optimizer) => optimizer,
-            Err(err) => panic!("construction failed: {err}"),
-        };
+        let mut optimizer =
+            match PrivateHyperparameterOptimizer::new(config(false, Some(1.0)), space()) {
+                Ok(optimizer) => optimizer,
+                Err(err) => panic!("construction failed: {err}"),
+            };
         let always_fails: ObjectiveFn<f64> = Box::new(|_| {
             Err(crate::error::OptimError::ComputationError(
                 "the trial crashed".to_string(),
@@ -876,5 +915,155 @@ mod tests {
             );
         }
         assert!(results.selection.was_private);
+    }
+
+    #[test]
+    fn the_objective_release_also_requires_a_declared_sensitivity() {
+        // Regression: the objective sensitivity used to be read with
+        // `.unwrap_or_else(T::one)`, so an undeclared sensitivity silently became
+        // 1.0 whenever `private_model_selection` was off. The objective's noise
+        // scale is `sensitivity / epsilon`, so a true sensitivity of 8 would have
+        // been noised eight times too weakly while the run still reported the
+        // configured epsilon. The old code constructed happily here.
+        let outcome = PrivateHyperparameterOptimizer::new(config(false, None), space());
+        let message = match outcome {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("an undeclared objective sensitivity must be refused"),
+        };
+        assert!(
+            message.contains(OBJECTIVE_SENSITIVITY_KEY),
+            "the error must name the key the sensitivity is expected under, got: {message}"
+        );
+        assert!(
+            PrivateHyperparameterOptimizer::new(config(false, Some(2.0)), space()).is_ok(),
+            "a declared sensitivity must be accepted with private selection off"
+        );
+    }
+
+    #[test]
+    fn the_declared_sensitivity_reaches_the_objective_noise_scale() {
+        // The scale recorded after a release must be the one the mechanism
+        // actually used: `sensitivity / epsilon` for Laplace. Two runs differing
+        // only in the declared sensitivity must record scales in that ratio, so a
+        // constant substituted for the declaration cannot pass.
+        let mut scales = Vec::new();
+        for declared in [1.0f64, 4.0] {
+            let mut optimizer =
+                match PrivateHyperparameterOptimizer::new(config(false, Some(declared)), space()) {
+                    Ok(optimizer) => optimizer,
+                    Err(err) => panic!("construction failed for sensitivity {declared}: {err}"),
+                };
+            optimizer.seed_for_tests(7);
+            if let Err(err) = optimizer.optimize(objective()) {
+                panic!("optimize failed for sensitivity {declared}: {err}");
+            }
+            let params = optimizer
+                .private_objective()
+                .noise_mechanism()
+                .noise_params();
+            assert_eq!(params.sensitivity, declared);
+            let epsilon = params.epsilon;
+            assert!(epsilon > 0.0, "the release must have been charged epsilon");
+            let expected = declared / epsilon;
+            assert!(
+                (params.scale - expected).abs() < 1e-12,
+                "recorded scale {} is not sensitivity/epsilon = {expected}",
+                params.scale
+            );
+            scales.push(params.scale);
+        }
+        assert!(
+            (scales[1] / scales[0] - 4.0).abs() < 1e-9,
+            "quadrupling the declared sensitivity must quadruple the noise scale, got {scales:?}"
+        );
+    }
+
+    #[test]
+    fn the_reported_privacy_cost_is_the_real_ledger_not_an_unstepped_accountant() {
+        // Regression: `privacy_accountant()` handed out a `MomentsAccountant`
+        // built from the DP-SGD parameters in `base_privacyconfig` and never
+        // stepped, so it reported zero spend after a full search while the real
+        // spend sat in `HPOBudgetManager`. The accessor now reads that ledger.
+        let mut optimizer =
+            match PrivateHyperparameterOptimizer::new(config(true, Some(1.0)), space()) {
+                Ok(optimizer) => optimizer,
+                Err(err) => panic!("construction failed: {err}"),
+            };
+        assert_eq!(
+            optimizer.total_privacy_cost().epsilon_consumed,
+            0.0,
+            "nothing has been released yet"
+        );
+        optimizer.seed_for_tests(31);
+        let results = match optimizer.optimize(objective()) {
+            Ok(results) => results,
+            Err(err) => panic!("optimize failed: {err}"),
+        };
+
+        let reported = optimizer.total_privacy_cost();
+        assert!(
+            reported.epsilon_consumed > 0.0,
+            "a completed search must report a positive spend, got {}",
+            reported.epsilon_consumed
+        );
+        assert!(
+            (reported.epsilon_consumed - results.total_privacy_cost.epsilon_consumed).abs() < 1e-12,
+            "the accessor and the results must read the same ledger: {} vs {}",
+            reported.epsilon_consumed,
+            results.total_privacy_cost.epsilon_consumed
+        );
+        assert!(
+            reported.epsilon_consumed <= 4.0 + 1e-9,
+            "the spend must not exceed the 4.0 target, got {}",
+            reported.epsilon_consumed
+        );
+        // The private selection is part of that spend, so the ledger must cover
+        // at least what the selection itself reports charging.
+        assert!(
+            reported.epsilon_consumed >= results.selection.epsilon_spent,
+            "the ledger {} does not cover the selection's own charge {}",
+            reported.epsilon_consumed,
+            results.selection.epsilon_spent
+        );
+    }
+
+    #[test]
+    fn search_algorithms_without_a_private_implementation_are_refused() {
+        // Regression: a `_ =>` arm mapped GridSearch, GeneticAlgorithm,
+        // ParticleSwarm, SimulatedAnnealing and TPE onto `PrivateRandomSearch`,
+        // so the configured algorithm never ran and the caller was never told.
+        for algorithm in [
+            SearchAlgorithm::GridSearch,
+            SearchAlgorithm::GeneticAlgorithm,
+            SearchAlgorithm::ParticleSwarm,
+            SearchAlgorithm::SimulatedAnnealing,
+            SearchAlgorithm::TPE,
+        ] {
+            let mut hpo_config = config(true, Some(1.0));
+            hpo_config.search_algorithm = algorithm;
+            let message = match PrivateHyperparameterOptimizer::new(hpo_config, space()) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!(
+                    "{algorithm:?} has no private implementation and must not be substituted"
+                ),
+            };
+            assert!(
+                message.contains(&format!("{algorithm:?}")),
+                "the error must name the refused algorithm, got: {message}"
+            );
+            assert!(
+                optimizer_key(algorithm).is_err(),
+                "{algorithm:?} must not resolve to an optimizer key"
+            );
+        }
+
+        assert_eq!(
+            optimizer_key(SearchAlgorithm::RandomSearch).ok(),
+            Some("random_search")
+        );
+        assert_eq!(
+            optimizer_key(SearchAlgorithm::BayesianOptimization).ok(),
+            Some("bayesian_opt")
+        );
     }
 }

@@ -8,7 +8,9 @@ use crate::error::{OptimError, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::functions::{parse_cargo_lock_packages, read_crate_license, scan_dependencies_offline};
+use super::functions::{
+    contains_keyword, parse_cargo_lock_packages, read_crate_license, scan_dependencies_offline,
+};
 use super::types::{
     AuditSchedule, ConfigSecurityResult, DependencyScanConfig, DependencyScanResult,
     DependencyScanner, EffortLevel, LicenseComplianceResult, LicenseViolation, MitigationStrategy,
@@ -351,14 +353,21 @@ impl ComprehensiveSecurityAuditor {
         sanitized
     }
 
-    /// Check if line uses weak cryptography
+    /// Check if line uses weak cryptography.
+    ///
+    /// Matches are bounded by identifier boundaries (via `contains_keyword`),
+    /// not plain substring search (F14): a bare `line.contains("md5")` also
+    /// fires on identifiers and URLs that merely contain the pattern -- e.g.
+    /// `let cmd5_result = …` or a comment linking
+    /// `https://example.com/md5sum-tool` -- neither of which uses MD5 as a
+    /// cryptographic primitive.
     pub(super) fn uses_weak_crypto(&self, line: &str) -> bool {
         let weak_crypto_patterns = ["md5", "sha1", "des", "3des", "rc4", "md4"];
 
         let line_lower = line.to_lowercase();
         weak_crypto_patterns
             .iter()
-            .any(|pattern| line_lower.contains(pattern))
+            .any(|pattern| contains_keyword(&line_lower, pattern))
     }
 
     /// Find all Rust source files in project

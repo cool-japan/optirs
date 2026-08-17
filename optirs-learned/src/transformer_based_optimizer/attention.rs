@@ -55,13 +55,17 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
 
         let scale_factor = T::from(1.0 / (head_dimension as f64).sqrt()).expect("unwrap failed");
 
-        // Initialize weights with Xavier/Glorot initialization
-        let xavier_std = (2.0 / (model_dimension + head_dimension) as f64).sqrt();
+        // Xavier/Glorot uniform limit for the four square `model_dimension ×
+        // model_dimension` projections.
+        let xavier_limit = Self::xavier_limit(model_dimension, model_dimension);
 
-        let query_weights = Self::initialize_weights(model_dimension, model_dimension, xavier_std);
-        let key_weights = Self::initialize_weights(model_dimension, model_dimension, xavier_std);
-        let value_weights = Self::initialize_weights(model_dimension, model_dimension, xavier_std);
-        let output_weights = Self::initialize_weights(model_dimension, model_dimension, xavier_std);
+        let query_weights =
+            Self::initialize_weights(model_dimension, model_dimension, xavier_limit);
+        let key_weights = Self::initialize_weights(model_dimension, model_dimension, xavier_limit);
+        let value_weights =
+            Self::initialize_weights(model_dimension, model_dimension, xavier_limit);
+        let output_weights =
+            Self::initialize_weights(model_dimension, model_dimension, xavier_limit);
 
         Ok(Self {
             num_heads,
@@ -77,16 +81,38 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
         })
     }
 
-    /// Initialize weight matrix with Xavier initialization
+    /// Xavier/Glorot **uniform** limit: `sqrt(6 / (fan_in + fan_out))`.
     ///
-    /// The generator handle is acquired once per matrix rather than per element.
-    fn initialize_weights(rows: usize, cols: usize, std: f64) -> Array2<T> {
+    /// Two things were wrong here before (finding F64):
+    ///
+    /// 1. The limit was `sqrt(2 / (fan_in + fan_out))`, which is Glorot's target
+    ///    *standard deviation* for a normal draw. [`Self::initialize_weights`]
+    ///    samples `Uniform[-b, b]`, whose variance is `b² / 3`, so the projections
+    ///    started with exactly one third of the intended variance.
+    /// 2. The fan pair was `model_dimension + head_dimension`. All four
+    ///    projections are `model_dimension × model_dimension`, so both fans are
+    ///    `model_dimension`; with the default 8 heads the denominator was
+    ///    `model_dimension · 9/8` instead of `2 · model_dimension`, inflating the
+    ///    limit by a further ~1.33×.
+    ///
+    /// Net effect at the default 512/8 configuration: a per-weight standard
+    /// deviation of 0.0340 where Glorot asks for 0.0442.
+    pub fn xavier_limit(fan_in: usize, fan_out: usize) -> f64 {
+        (6.0 / (fan_in + fan_out).max(1) as f64).sqrt()
+    }
+
+    /// Draw a weight matrix from `Uniform[-limit, limit]`.
+    ///
+    /// `limit` is the uniform half-width, not a standard deviation — use
+    /// [`Self::xavier_limit`]. The generator handle is acquired once per matrix
+    /// rather than once per element.
+    fn initialize_weights(rows: usize, cols: usize, limit: f64) -> Array2<T> {
         let mut weights = Array2::<T>::zeros((rows, cols));
         let mut rng = scirs2_core::random::thread_rng();
 
         for elem in weights.iter_mut() {
             let random_val = rng.random::<f64>();
-            let scaled_val = (random_val - 0.5) * 2.0 * std;
+            let scaled_val = (random_val - 0.5) * 2.0 * limit;
             *elem = scirs2_core::numeric::NumCast::from(scaled_val).unwrap_or_else(|| T::zero());
         }
 
@@ -344,16 +370,16 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
 
     /// Reset parameters
     pub fn reset(&mut self) -> Result<()> {
-        let xavier_std = (2.0 / (self.model_dimension + self.head_dimension) as f64).sqrt();
+        let xavier_limit = Self::xavier_limit(self.model_dimension, self.model_dimension);
 
         self.query_weights =
-            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_std);
+            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_limit);
         self.key_weights =
-            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_std);
+            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_limit);
         self.value_weights =
-            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_std);
+            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_limit);
         self.output_weights =
-            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_std);
+            Self::initialize_weights(self.model_dimension, self.model_dimension, xavier_limit);
 
         self.attention_weights = None;
 
@@ -366,6 +392,22 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
             + self.key_weights.len()
             + self.value_weights.len()
             + self.output_weights.len()
+    }
+
+    /// Read-only views of the four projections, in `(query, key, value, output)`
+    /// order. Each is `model_dimension × model_dimension`.
+    ///
+    /// Immutable borrows only, so the shape invariants [`Self::forward`] relies on
+    /// stay under this type's control. Exposed so initialization statistics can be
+    /// asserted from outside the crate — see the `xavier_initialization`
+    /// integration test.
+    pub fn projection_snapshots(&self) -> (&Array2<T>, &Array2<T>, &Array2<T>, &Array2<T>) {
+        (
+            &self.query_weights,
+            &self.key_weights,
+            &self.value_weights,
+            &self.output_weights,
+        )
     }
 
     /// Set dropout rate

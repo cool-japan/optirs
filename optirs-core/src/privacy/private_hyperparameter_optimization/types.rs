@@ -849,7 +849,16 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
             }
         };
 
-        self.noise_params.scale = T::from(scale).unwrap_or_else(T::one);
+        // The recorded scale is read back by the Bayesian surrogate to derive the
+        // observation-noise variance of an already-released objective. Falling
+        // back to `T::one()` on a failed conversion would hand the surrogate a
+        // noise level the mechanism never used, so the conversion is fallible.
+        self.noise_params.scale = T::from(scale).ok_or_else(|| {
+            OptimError::InvalidState(format!(
+                "the noise scale {scale} actually used for this release cannot be represented in \
+                 the optimizer's value type, so it cannot be recorded"
+            ))
+        })?;
         self.noise_params.epsilon = epsilon;
         self.epsilon_spent += epsilon;
         self.releases += 1;

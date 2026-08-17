@@ -42,6 +42,52 @@ use super::config::*;
 use super::types::platform_target_to_string;
 use super::types::*;
 
+/// Argv tail appended after the image reference in `docker create` /
+/// `podman create`, so the container has a long-running foreground process
+/// and does not exit the instant it starts.
+///
+/// Without this, `docker create --name X ubuntu:22.04` (no command) uses the
+/// image's default `CMD` (an interactive shell), which exits immediately
+/// once started with no attached tty/stdin -- `docker start` then succeeds,
+/// but the container is already `Exited`, so every later `docker exec`
+/// against it fails. `ensure_container_running`'s liveness check catches
+/// that honestly (`ResourceUnavailable`), but the goal here is to make
+/// container-based execution actually reachable, not merely to report its
+/// absence correctly.
+///
+/// Linux-based images (all `PlatformTarget`s in this build except Windows
+/// share the `ubuntu:22.04` base -- see `get_image_for_platform`) always
+/// carry a POSIX `sleep`, so `sleep infinity` is used unconditionally there.
+/// The Windows Server Core image has no `sleep`; `ping -t localhost` is the
+/// standard keep-alive idiom for Windows containers. That path is untestable
+/// in this environment (no Windows container runtime available here) and is
+/// provided on a best-effort basis rather than left unhandled.
+fn keep_alive_command(platform: &PlatformTarget) -> &'static [&'static str] {
+    match platform {
+        PlatformTarget::WindowsX86_64 => &["ping", "-t", "localhost"],
+        _ => &["sleep", "infinity"],
+    }
+}
+
+/// Build the full `create` argv (runtime-agnostic: used for both `docker`
+/// and `podman`) for `container_id` running `image` on `platform`. Factored
+/// out as a pure function so the keep-alive command placement is unit
+/// testable without a container runtime installed.
+fn create_args(container_id: &str, image: &str, platform: &PlatformTarget) -> Vec<String> {
+    let mut args = vec![
+        "create".to_string(),
+        "--name".to_string(),
+        container_id.to_string(),
+        image.to_string(),
+    ];
+    args.extend(
+        keep_alive_command(platform)
+            .iter()
+            .map(|part| part.to_string()),
+    );
+    args
+}
+
 /// Container manager for cross-platform testing
 #[derive(Debug)]
 pub struct ContainerManager {
@@ -167,10 +213,13 @@ impl ContainerRuntimeTrait for DockerRuntime {
 
         // Actually create the container. If docker is missing or the command fails
         // (e.g. an invalid/nonexistent image), propagate the real error rather than
-        // fabricating a "sim_" container.
+        // fabricating a "sim_" container. The trailing keep-alive command keeps the
+        // container's main process running past `start`, so `docker exec` (used by
+        // the orchestrator to run tests inside it) has something to attach to.
+        let args = create_args(&container_id, image, platform);
         run_runtime_command(
             "docker",
-            &["create", "--name", container_id.as_str(), image],
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
 
         Ok(ContainerInfo {
@@ -230,11 +279,13 @@ impl ContainerRuntimeTrait for PodmanRuntime {
                 .as_secs()
         );
 
-        // Actually invoke podman (mirror of the docker path). If podman is missing or
+        // Actually invoke podman (mirror of the docker path, including the
+        // keep-alive command -- see `keep_alive_command`). If podman is missing or
         // the command fails, propagate the real error instead of fabricating an id.
+        let args = create_args(&container_id, image, platform);
         run_runtime_command(
             "podman",
-            &["create", "--name", container_id.as_str(), image],
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
 
         Ok(ContainerInfo {
@@ -328,6 +379,54 @@ mod tests {
             result.is_err(),
             "a bogus image / unavailable podman runtime must return Err, not a fabricated id"
         );
+    }
+
+    #[test]
+    fn test_create_args_keeps_linux_container_alive() {
+        // Regression: `docker create --name X ubuntu:22.04` with no command uses the
+        // image's default CMD, which exits immediately once started headless --
+        // `ensure_container_running`'s later inspect check then always reports
+        // "not running", so no in-container test could ever execute. The argv must
+        // carry a long-running foreground command after the image.
+        let args = create_args(
+            "test_container",
+            "ubuntu:22.04",
+            &PlatformTarget::LinuxX86_64,
+        );
+        assert_eq!(
+            args,
+            vec![
+                "create",
+                "--name",
+                "test_container",
+                "ubuntu:22.04",
+                "sleep",
+                "infinity"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_create_args_keep_alive_platform_specific() {
+        // Every non-Windows platform in this build shares the ubuntu:22.04 base
+        // image (see `ContainerManager::get_image_for_platform`), so `sleep
+        // infinity` applies uniformly; Windows Server Core has no `sleep`.
+        for platform in [
+            PlatformTarget::LinuxX86_64,
+            PlatformTarget::LinuxAarch64,
+            PlatformTarget::MacOSX86_64,
+            PlatformTarget::MacOSAarch64,
+        ] {
+            let args = create_args("c", "ubuntu:22.04", &platform);
+            assert_eq!(&args[4..], &["sleep", "infinity"], "platform: {platform:?}");
+        }
+
+        let windows_args = create_args(
+            "c",
+            "mcr.microsoft.com/windows/servercore:ltsc2022",
+            &PlatformTarget::WindowsX86_64,
+        );
+        assert_eq!(&windows_args[4..], &["ping", "-t", "localhost"]);
     }
 
     #[test]
