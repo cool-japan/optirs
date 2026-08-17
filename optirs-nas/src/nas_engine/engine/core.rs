@@ -117,6 +117,32 @@ impl<
     pub fn search_strategy_name(&self) -> &str {
         self.search_strategy.strategy_name()
     }
+    /// The resource monitor driving this search, for inspection.
+    pub fn resource_monitor(&self) -> &ResourceMonitor<T> {
+        &self.resource_monitor
+    }
+
+    /// The resource monitor, mutably — the supported way to inject real telemetry
+    /// from outside the crate (F12).
+    ///
+    /// The default [`crate::nas_engine::telemetry::StdTelemetry`] source measures
+    /// only what it honestly can, so most resource constraints go unenforced. Install
+    /// a tracker over your own [`crate::nas_engine::telemetry::TelemetrySource`] to
+    /// make them enforceable:
+    ///
+    /// ```ignore
+    /// engine.resource_monitor_mut().set_trackers(vec![Box::new(
+    ///     SystemResourceTracker::with_telemetry(
+    ///         "agent".to_string(),
+    ///         Duration::from_secs(5),
+    ///         Box::new(my_source),
+    ///     ),
+    /// )]);
+    /// ```
+    pub fn resource_monitor_mut(&mut self) -> &mut ResourceMonitor<T> {
+        &mut self.resource_monitor
+    }
+
     /// Run the complete architecture search
     pub fn run_search(&mut self) -> Result<SearchResults<T>> {
         let start_time = Instant::now();
@@ -222,11 +248,19 @@ impl<
         if self.check_convergence() {
             return true;
         }
-        if let Ok(violations) = self.resource_monitor.check_violations() {
-            if !violations.is_empty() {
-                return true;
-            }
-        }
+        // Resource violations are deliberately NOT a stop condition here.
+        //
+        // This used to call `check_violations()` and silently return `true`, so a
+        // search cut short by a resource limit returned `Ok(SearchResults)` with no
+        // indication that anything had gone wrong — while
+        // `check_resource_constraints`, called from the same loop, treated the very
+        // same situation as a hard error. The two contradicted each other, and with
+        // the old fabricated telemetry (16 GB "used") the silent path fired first,
+        // so a tight memory budget produced an empty successful run.
+        //
+        // Enforcement now lives in exactly one place:
+        // `check_resource_constraints`, which samples the monitor and returns
+        // `OptimError::ResourceLimitExceeded`.
         false
     }
     /// Check early stopping criteria
@@ -503,13 +537,47 @@ impl<
             }
         }
     }
-    /// Check resource constraints
+    /// Sample resource usage and enforce the configured constraints (F12).
+    ///
+    /// `update_usage` is called here — once per generation, from the search loop —
+    /// because before this it was never called at all: `ResourceMonitor::current_usage`
+    /// stayed at `ResourceUsage::default()` for the whole run, so
+    /// `check_resource_violations` compared zeros against the budget and could never
+    /// fire, and `resource_usage_summary` in the final results was always empty.
+    ///
+    /// With honest telemetry an unmeasurable resource yields no violation at all, so
+    /// this can only abort a search on a value that was actually observed.
     pub(super) fn check_resource_constraints(&mut self) -> Result<()> {
-        let violations = self.resource_monitor.check_resource_violations()?;
+        self.resource_monitor.update_usage()?;
+        // `optimize_resources` was dead code (F25): nothing ever called it. It is
+        // called here and its suggestions are logged most-urgent-first; it
+        // self-disables when `MonitoringConfig::enable_auto_optimization` is false.
+        for action in self.resource_monitor.optimize_resources()? {
+            log::info!(
+                "resource optimization suggested: {:?} (priority {:?}): {}",
+                action.action_type,
+                action.priority,
+                action.description
+            );
+        }
+        // Both views are checked: `check_violations` asks each tracker for an
+        // instantaneous reading (temperature, power, RSS) and
+        // `check_resource_violations` compares the accumulated usage against the
+        // budget. With honest telemetry an unmeasurable resource contributes nothing
+        // to either, so neither can abort on invented data.
+        let mut violations = self.resource_monitor.check_violations()?;
+        violations.extend(self.resource_monitor.check_resource_violations()?);
         if !violations.is_empty() {
+            let detail = violations
+                .iter()
+                .map(|violation| {
+                    format!("{:?} ({:?})", violation.violation_type, violation.severity)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(crate::error::OptimError::ResourceLimitExceeded(format!(
-                "Resource constraints violated: {} violations detected",
-                violations.len()
+                "resource constraints violated: {}",
+                detail
             )));
         }
         Ok(())

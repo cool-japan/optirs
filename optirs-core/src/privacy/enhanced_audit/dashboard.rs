@@ -484,8 +484,10 @@ mod tests {
 
     #[test]
     fn samples_outside_the_retention_window_are_dropped() {
-        let mut config = DashboardConfig::default();
-        config.history_retention_hours = 1;
+        let config = DashboardConfig {
+            history_retention_hours: 1,
+            ..DashboardConfig::default()
+        };
         let mut dashboard = MonitoringDashboard::with_config(config);
 
         let ok = dashboard.update_metrics(&event("old", 0.1, 0));

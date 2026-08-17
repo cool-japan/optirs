@@ -210,7 +210,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
                 "predictor architecture needs an input and at least one hidden layer".to_string(),
             ));
         }
-        if architecture.iter().any(|&w| w == 0) {
+        if architecture.contains(&0) {
             return Err(OptimError::InvalidConfig(
                 "predictor layer widths must be positive".to_string(),
             ));

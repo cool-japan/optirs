@@ -731,10 +731,7 @@ impl<T: Float + Default + Clone + Send + Sync> HyperparameterOptimizer<T> {
             if categories.is_empty() {
                 continue;
             }
-            let idx = {
-                use scirs2_core::random::Rng;
-                self.rng.gen_range(0..categories.len())
-            };
+            let idx = self.rng.gen_range(0..categories.len());
             categorical_parameters.insert(name, categories[idx].clone());
         }
 

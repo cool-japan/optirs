@@ -4,7 +4,6 @@ use crate::error::{OptimError, Result};
 use crate::nas_engine::OptimizationDirection;
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
-use scirs2_core::random::Rng;
 use scirs2_core::RngExt;
 use std::cmp::Ordering;
 use std::collections::HashMap;

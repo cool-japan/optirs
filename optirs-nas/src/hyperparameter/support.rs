@@ -9,8 +9,6 @@
 use super::{DistributionType, HyperparameterSpace, ParameterRange};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
-use scirs2_core::random::Rng;
-use scirs2_core::RngExt;
 
 /// A seeded RNG of the concrete type every strategy in this module uses.
 pub type StrategyRng = Random<scirs2_core::random::rngs::StdRng>;

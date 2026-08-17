@@ -1,4 +1,18 @@
 // Configuration structures for federated privacy algorithms
+//
+// # 0.3.2 changes
+//
+// * [`FederatedPrivacyConfig::validate`] was added (see the `validation`
+//   module) and is called from `FederatedPrivacyCoordinator::new`, so an
+//   invalid federation can no longer be constructed. Configurations that used
+//   to be accepted silently -- `target_epsilon: -1.0`, `noise_multiplier: 0.0`,
+//   `clients_per_round > total_clients` -- are now rejected.
+// * Two defaults were corrected because they advertised a guarantee that no
+//   code path delivered: `CommunicationPrivacyConfig::encryption_enabled` and
+//   `SecureAggregationConfig::aggregate_dp` now default to `false`, and
+//   `AmplificationConfig::multi_round_amplification` likewise. Setting any of
+//   them explicitly is refused by `validate()` with an error naming what is
+//   missing, rather than being ignored.
 
 use super::super::DifferentialPrivacyConfig;
 use std::time::Duration;
@@ -77,11 +91,25 @@ pub struct SecureAggregationConfig {
     /// Quantization bits for compressed aggregation
     pub quantization_bits: Option<u8>,
 
-    /// Enable differential privacy on aggregated result
+    /// Add differential privacy noise to the aggregated result.
+    ///
+    /// **Not implemented**: the coordinator's aggregation is a plain mean.
+    /// `validate()` refuses a configuration that sets this rather than ignoring
+    /// it. Defaults to `false` since 0.3.2 (it previously defaulted to `true`
+    /// and was never read).
     pub aggregate_dp: bool,
 }
 
 /// Privacy amplification configuration
+///
+/// # Relationship to `privacy::differential_privacy::AmplificationConfig`
+///
+/// That type is the canonical one consumed by the audited
+/// [`crate::privacy::differential_privacy::PrivacyAmplificationAnalyzer`]; it
+/// carries only the two switches the bounds actually depend on. This type is the
+/// federated-configuration surface and additionally carries switches that are
+/// not implemented (see `validate`). Use the [`From`] impl below rather than
+/// constructing the canonical type by hand, so the two cannot drift.
 #[derive(Debug, Clone)]
 pub struct AmplificationConfig {
     /// Enable privacy amplification analysis
@@ -93,7 +121,11 @@ pub struct AmplificationConfig {
     /// Shuffling amplification (if applicable)
     pub shuffling_enabled: bool,
 
-    /// Multi-round amplification
+    /// Compose the amplification benefit across rounds.
+    ///
+    /// **Not implemented**: amplification is recomputed per round and never
+    /// composed. `validate()` refuses a configuration that sets this. Defaults
+    /// to `false` since 0.3.2 (it previously defaulted to `true`).
     pub multi_round_amplification: bool,
 
     /// Heterogeneous client amplification
@@ -120,7 +152,7 @@ pub struct CrossDeviceConfig {
 }
 
 /// Federated composition methods
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum FederatedCompositionMethod {
     /// Basic composition
     Basic,
@@ -156,9 +188,16 @@ pub enum TrustModel {
 }
 
 /// Communication privacy configuration
-#[derive(Debug, Clone)]
+///
+/// Every switch defaults to `false`/`None`: none of them is implemented, and
+/// `FederatedPrivacyConfig::validate` refuses a configuration that sets one.
+#[derive(Debug, Clone, Default)]
 pub struct CommunicationPrivacyConfig {
-    /// Encrypt communications
+    /// Encrypt communications.
+    ///
+    /// **Not implemented**: this crate performs no transport. `validate()`
+    /// refuses a configuration that sets this. Defaults to `false` since 0.3.2
+    /// (it previously defaulted to `true` and was never read).
     pub encryption_enabled: bool,
 
     /// Use anonymous communication channels
@@ -1156,7 +1195,7 @@ pub struct ReputationSystemConfig {
 pub struct StatisticalTestConfig {
     pub enabled: bool,
     pub test_type: StatisticalTestType,
-    pub significancelevel: f64,
+    pub significance_level: f64,
     pub window_size: usize,
     pub adaptive_threshold: bool,
 }
@@ -1540,7 +1579,7 @@ impl Default for SecureAggregationConfig {
             masking_dimension: 1000,
             seed_sharing: SeedSharingMethod::ShamirSecretSharing,
             quantization_bits: None,
-            aggregate_dp: true,
+            aggregate_dp: false,
         }
     }
 }
@@ -1551,21 +1590,8 @@ impl Default for AmplificationConfig {
             enabled: true,
             subsampling_factor: 1.0,
             shuffling_enabled: false,
-            multi_round_amplification: true,
+            multi_round_amplification: false,
             heterogeneous_amplification: false,
-        }
-    }
-}
-
-impl Default for CommunicationPrivacyConfig {
-    fn default() -> Self {
-        Self {
-            encryption_enabled: true,
-            anonymous_channels: false,
-            communication_noise: false,
-            traffic_analysis_protection: false,
-            threat_modeling: AdvancedThreatModelingConfig::default(),
-            cross_silo_config: None,
         }
     }
 }
@@ -1687,7 +1713,7 @@ impl Default for StatisticalTestConfig {
         Self {
             enabled: false,
             test_type: StatisticalTestType::ZScore,
-            significancelevel: 0.05,
+            significance_level: 0.05,
             window_size: 10,
             adaptive_threshold: false,
         }
@@ -1849,6 +1875,21 @@ impl Default for AdaptiveBudgetConfig {
             dynamic_privacy: DynamicPrivacyConfig::default(),
             importance_weighting: false,
             contextual_adjustment: ContextualAdjustmentConfig::default(),
+        }
+    }
+}
+
+impl From<&AmplificationConfig> for crate::privacy::differential_privacy::AmplificationConfig {
+    /// Project the federated amplification switches onto the canonical ones.
+    ///
+    /// Only `enabled` and `shuffling_enabled` affect the published bounds, so
+    /// those are the only fields the canonical type carries. The remaining
+    /// federated fields are rejected by `FederatedPrivacyConfig::validate` when
+    /// set, so nothing is silently dropped here.
+    fn from(config: &AmplificationConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            shuffling_enabled: config.shuffling_enabled,
         }
     }
 }

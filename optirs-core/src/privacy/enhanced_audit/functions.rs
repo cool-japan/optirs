@@ -41,10 +41,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn now() -> u64 {
-        match unix_timestamp() {
-            Ok(timestamp) => timestamp,
-            Err(_) => 0,
-        }
+        unix_timestamp().unwrap_or_default()
     }
 
     #[test]

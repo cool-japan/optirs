@@ -626,17 +626,58 @@ pub fn mechanism_name(mechanism: HyperparameterNoiseMechanism) -> &'static str {
     }
 }
 
+/// Quantiles released by [`noisy_summary_statistics`], in order.
+///
+/// The median is the `0.5` entry of this list; it is **not** released a second
+/// time, because a second release would be a second query against the same data
+/// and would have to be paid for separately.
+pub const SUMMARY_QUANTILES: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// A differentially private summary, together with what it actually cost.
+///
+/// `epsilon_spent` is accumulated as each release is made, rather than asserted
+/// in a comment, so a caller charges exactly what the code path consumed.
+#[derive(Debug, Clone)]
+pub struct NoisySummary<T: Float + Debug + Send + Sync + 'static> {
+    /// The released statistics.
+    pub statistics: SummaryStatistics<T>,
+    /// Total epsilon consumed by every release in this summary.
+    pub epsilon_spent: f64,
+    /// Laplace scale used for the mean release, so a caller can widen a
+    /// confidence interval by the noise that was added.
+    pub mean_noise_scale: f64,
+}
+
 /// Differentially private summary statistics of the observed objectives.
 ///
-/// `epsilon` is split evenly across the mean, the standard deviation and the
-/// median, each released with the Laplace mechanism at the sensitivity implied
-/// by `value_range` (the public a-priori range of a single objective value).
+/// # Budget split
+///
+/// `epsilon` is divided into three equal shares -- mean, standard deviation and
+/// quantiles -- and the quantile share is divided again across
+/// [`SUMMARY_QUANTILES`]. The releases compose linearly, and the total is
+/// returned in [`NoisySummary::epsilon_spent`], which is asserted to equal
+/// `epsilon` by a test in this module.
+///
+/// # Sensitivities
+///
+/// With `R = value_range` the public a-priori range of one observation and `n`
+/// observations, under one substitution:
+///
+/// * **mean**: `|Delta mean| <= R / n`.
+/// * **variance**: `var = (1/n) sum x_i^2 - mean^2`; the first term moves by at
+///   most `R^2/n` and `mean^2` by at most `2R(R/n) + (R/n)^2`, so
+///   `|Delta var| <= 4 R^2 / n` for `n >= 1`. Since `|sqrt(a) - sqrt(b)| <=
+///   sqrt(|a - b|)` for non-negative `a, b`, the standard deviation has
+///   `|Delta std| <= 2 R / sqrt(n)`. That (deliberately loose) bound is what
+///   calibrates the noise, not the tighter-looking `R / sqrt(n)`.
+/// * **quantiles**: released by the exponential mechanism over the order
+///   statistics with rank utility, whose sensitivity is exactly 1.
 pub fn noisy_summary_statistics<T: Float + Debug + Send + Sync + 'static>(
     values: &[T],
     value_range: f64,
     epsilon: f64,
     rng: &mut HpoRng,
-) -> Result<SummaryStatistics<T>> {
+) -> Result<NoisySummary<T>> {
     if values.is_empty() {
         return Err(OptimError::InvalidParameter(
             "summary statistics need at least one observation".to_string(),
@@ -656,42 +697,51 @@ pub fn noisy_summary_statistics<T: Float + Debug + Send + Sync + 'static>(
     let observations = utilities_as_f64(values)?;
     let count = observations.len() as f64;
     let per_statistic_epsilon = epsilon / 3.0;
+    let mut epsilon_spent = 0.0f64;
 
-    // Mean: replacing one observation moves the mean by at most range / n.
+    // Mean: sensitivity R / n.
     let mean = observations.iter().sum::<f64>() / count;
-    let noisy_mean = mean + laplace_sample(rng, value_range / (count * per_statistic_epsilon))?;
+    let mean_noise_scale = value_range / (count * per_statistic_epsilon);
+    let noisy_mean = mean + laplace_sample(rng, mean_noise_scale)?;
+    epsilon_spent += per_statistic_epsilon;
 
-    // Standard deviation: bounded by the range, so its sensitivity is at most
-    // range / sqrt(n) (a single replacement cannot move the sample standard
-    // deviation of n bounded values by more).
+    // Standard deviation: sensitivity 2 R / sqrt(n), derived above.
     let variance = observations
         .iter()
         .map(|value| (value - mean) * (value - mean))
         .sum::<f64>()
         / count;
-    let noisy_std = (variance.sqrt()
-        + laplace_sample(rng, value_range / (count.sqrt() * per_statistic_epsilon))?)
-    .max(0.0);
+    let std_scale = 2.0 * value_range / (count.sqrt() * per_statistic_epsilon);
+    let noisy_std = (variance.sqrt() + laplace_sample(rng, std_scale)?).max(0.0);
+    epsilon_spent += per_statistic_epsilon;
 
-    // Median: released with the exponential mechanism over the order
-    // statistics, which is the standard private-median construction.
+    // Quantiles, including the median, by the exponential mechanism over the
+    // order statistics (Smith 2011). The median is taken from this loop and is
+    // not released a second time.
     let mut sorted = observations.clone();
     sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-    let median_index = private_quantile_index(&sorted, 0.5, per_statistic_epsilon, rng)?;
-    let noisy_median = sorted[median_index];
-
-    let mut noisy_quantiles = Vec::new();
-    for quantile in [0.25f64, 0.5, 0.75] {
-        // The quantile releases reuse the median's epsilon share by splitting it
-        // three ways, so the total stays at `epsilon`.
-        let index = private_quantile_index(&sorted, quantile, per_statistic_epsilon / 3.0, rng)?;
+    let per_quantile_epsilon = per_statistic_epsilon / SUMMARY_QUANTILES.len() as f64;
+    let mut noisy_quantiles = Vec::with_capacity(SUMMARY_QUANTILES.len());
+    let mut noisy_median = None;
+    for quantile in SUMMARY_QUANTILES {
+        let index = private_quantile_index(&sorted, quantile, per_quantile_epsilon, rng)?;
+        epsilon_spent += per_quantile_epsilon;
+        if (quantile - 0.5).abs() < f64::EPSILON {
+            noisy_median = Some(sorted[index]);
+        }
         let value = T::from(sorted[index]).ok_or_else(|| {
             OptimError::InvalidParameter("a quantile cannot be represented".to_string())
         })?;
         noisy_quantiles.push((quantile, value));
     }
+    let noisy_median = noisy_median.ok_or_else(|| {
+        OptimError::InvalidState(
+            "SUMMARY_QUANTILES must contain 0.5 so the median comes out of the quantile releases"
+                .to_string(),
+        )
+    })?;
 
-    Ok(SummaryStatistics {
+    let statistics = SummaryStatistics {
         noisy_mean: T::from(noisy_mean).ok_or_else(|| {
             OptimError::InvalidParameter("the noisy mean cannot be represented".to_string())
         })?,
@@ -704,6 +754,12 @@ pub fn noisy_summary_statistics<T: Float + Debug + Send + Sync + 'static>(
             OptimError::InvalidParameter("the noisy median cannot be represented".to_string())
         })?,
         noisy_quantiles,
+    };
+
+    Ok(NoisySummary {
+        statistics,
+        epsilon_spent,
+        mean_noise_scale,
     })
 }
 
@@ -1160,10 +1216,16 @@ mod tests {
     fn noisy_summary_statistics_track_the_true_values_and_are_not_exact() {
         let values: Vec<f64> = (0..200).map(|index| index as f64 / 200.0).collect();
         let mut rng = seeded(31);
-        let summary = match noisy_summary_statistics(&values, 1.0, 4.0, &mut rng) {
-            Ok(summary) => summary,
+        let released = match noisy_summary_statistics(&values, 1.0, 4.0, &mut rng) {
+            Ok(released) => released,
             Err(err) => panic!("summary failed: {err}"),
         };
+        assert!(
+            (released.epsilon_spent - 4.0).abs() < 1e-12,
+            "the summary spent {} of a 4.0 budget",
+            released.epsilon_spent
+        );
+        let summary = released.statistics;
         let true_mean = values.iter().sum::<f64>() / values.len() as f64;
         assert!(
             (summary.noisy_mean - true_mean).abs() < 0.2,

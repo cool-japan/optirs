@@ -14,6 +14,17 @@ use std::fmt::Debug;
 use super::{LearnedOptimizerConfig, MetaOptimizationStrategy};
 use crate::error::{OptimError, Result};
 
+pub mod bptt;
+pub mod components;
+pub mod features;
+pub mod trainer;
+
+pub use bptt::{
+    BpttConfig, DiagonalQuadraticTask, FrozenRollout, MetaTrainingTask, NetworkGradients,
+};
+pub use features::build_lstm_features;
+pub use trainer::MetaTrainer;
+
 /// LSTM-based neural optimizer with meta-learning capabilities
 #[derive(Debug)]
 pub struct LSTMOptimizer<T: Float + Debug + Send + Sync + 'static> {
@@ -62,6 +73,17 @@ pub struct LSTMNetwork<T: Float + Debug + Send + Sync + 'static> {
 
     /// Dropout for regularization
     dropout_rate: f64,
+
+    /// Whether dropout is active.
+    ///
+    /// Defaults to `false` (evaluation mode). Dropout used to be applied
+    /// unconditionally whenever `dropout_rate > 0.0`, which made
+    /// `LSTMOptimizer::lstm_step` non-deterministic and injected training-time
+    /// noise into deployed updates. It also made meta-training impossible to
+    /// verify: the truncated-BPTT gradient in [`bptt`] is the gradient of a
+    /// *deterministic* rollout. Call [`LSTMNetwork::set_training`] to turn it on
+    /// deliberately.
+    training: bool,
 }
 
 /// Individual LSTM layer
@@ -680,6 +702,17 @@ pub struct OptimizationStateTracker<T: Float + Debug + Send + Sync + 'static> {
 
     /// Stability metrics
     stability_metrics: StabilityMetrics<T>,
+
+    /// Previous step's gradient, for the direction-consistency, noise and
+    /// secant-curvature estimates computed by
+    /// [`OptimizationStateTracker::update`].
+    previous_gradient: Option<Array1<T>>,
+
+    /// Previous step's loss, for the loss-change trend.
+    previous_loss: Option<T>,
+
+    /// Number of observed steps, for the running moments.
+    step_count: usize,
 }
 
 /// Optimization phases
@@ -1137,6 +1170,40 @@ impl<
         &self.metrics
     }
 
+    /// Read-only access to the LSTM controller network.
+    pub fn network(&self) -> &LSTMNetwork<T> {
+        &self.lstm_network
+    }
+
+    /// Read-only access to the meta-learner, whose `adaptation_history` records
+    /// what each [`Self::meta_learning_step`] achieved.
+    pub fn meta_learner(&self) -> &MetaLearner<T> {
+        &self.meta_learner
+    }
+
+    /// Mutable access to the LSTM controller network.
+    ///
+    /// This is the handle a caller needs to meta-train the controller directly
+    /// with [`trainer::MetaTrainer`], rather than going through
+    /// [`Self::meta_learning_step`]'s trajectory-surrogate path.
+    pub fn network_mut(&mut self) -> &mut LSTMNetwork<T> {
+        &mut self.lstm_network
+    }
+
+    /// The learning rate the adaptive controller last produced.
+    ///
+    /// Meaningful only after at least one [`Self::lstm_step`]; before that it is
+    /// the configured base rate.
+    pub fn current_learning_rate(&self) -> T {
+        self.lr_controller.current_lr()
+    }
+
+    /// Consecutive steps without a new best loss, as tracked by the adaptive
+    /// learning-rate controller.
+    pub fn stagnation_counter(&self) -> usize {
+        self.lr_controller.stagnation_counter()
+    }
+
     /// Get optimization state analysis
     pub fn get_state_analysis(&self) -> OptimizationStateAnalysis<T> {
         OptimizationStateAnalysis {
@@ -1148,50 +1215,26 @@ impl<
         }
     }
 
-    /// Prepare input features for LSTM
+    /// Prepare input features for the LSTM.
+    ///
+    /// Delegates to [`features::build_lstm_features`] so that inference and
+    /// truncated-BPTT meta-training consume byte-identical features — training a
+    /// different function than the one that ships would make the meta-training
+    /// worthless. That shared builder also removed the
+    /// `gradients.as_slice().expect(...)` in the previous body, which panicked on
+    /// any gradient that was not in contiguous standard layout.
     fn prepare_lstm_input(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
-        let mut features = Vec::new();
-
-        // Current gradient features
-        features.extend_from_slice(gradients.as_slice().expect("unwrap failed"));
-
-        // Historical gradient features
-        if let Some(prev_gradients) = self.history_buffer.get_recent_gradients(5) {
-            for prev_grad in prev_gradients {
-                // Gradient differences
-                let grad_diff: Vec<T> = gradients
-                    .iter()
-                    .zip(prev_grad.iter())
-                    .map(|(&g1, &g2)| g1 - g2)
-                    .collect();
-                features.extend(grad_diff);
-            }
-        }
-
-        // Statistical features
-        let grad_norm = gradients.iter().map(|&g| g * g).sum::<T>().sqrt();
-        let grad_mean =
-            gradients.iter().cloned().sum::<T>() / T::from(gradients.len()).expect("unwrap failed");
-        let grad_std = {
-            let variance = gradients
-                .iter()
-                .map(|&g| (g - grad_mean) * (g - grad_mean))
-                .sum::<T>()
-                / T::from(gradients.len()).expect("unwrap failed");
-            variance.sqrt()
-        };
-
-        features.extend([grad_norm, grad_mean, grad_std]);
-
-        // Loss-based features
-        if let Some(loss_features) = self.history_buffer.get_loss_features() {
-            features.extend(loss_features);
-        }
-
-        // Pad or truncate to expected input size
-        features.resize(self.config.input_features, T::zero());
-
-        Ok(Array1::from_vec(features))
+        let recent = self
+            .history_buffer
+            .get_recent_gradients(5)
+            .unwrap_or_default();
+        let loss_features = self.history_buffer.get_loss_features();
+        features::build_lstm_features(
+            gradients,
+            &recent,
+            loss_features.as_deref(),
+            self.config.input_features,
+        )
     }
 
     /// Generate parameter updates from LSTM output
@@ -1397,8 +1440,11 @@ impl<
 // Implementation of major components
 
 impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> {
-    /// Create new LSTM network
-    fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
+    /// Create a new LSTM controller network from a configuration.
+    ///
+    /// Public because meta-training operates on a controller directly: see
+    /// [`trainer::MetaTrainer`] and [`LSTMOptimizer::network_mut`].
+    pub fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
         let mut layers = Vec::new();
 
         // Create LSTM layers
@@ -1437,11 +1483,46 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
             attention,
             layer_norms,
             dropout_rate: config.dropout_rate,
+            training: false,
         })
     }
 
-    /// Forward pass through LSTM network
-    fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
+    /// Enable or disable dropout.
+    ///
+    /// Meta-training and inference both run with dropout **off**; turn it on only
+    /// for a training regime that wants the regularization and can tolerate the
+    /// nondeterminism.
+    pub fn set_training(&mut self, training: bool) {
+        self.training = training;
+    }
+
+    /// Whether dropout is currently active.
+    pub fn is_training(&self) -> bool {
+        self.training
+    }
+
+    /// Zero every layer's hidden and cell state.
+    ///
+    /// Required before a meta-training rollout: the recurrent state is what makes
+    /// two rollouts of the same controller differ, so a reproducible rollout must
+    /// start from a known state.
+    pub fn reset_state(&mut self) {
+        for layer in self.layers.iter_mut() {
+            layer.hidden_state.fill(T::zero());
+            layer.cell_state.fill(T::zero());
+        }
+    }
+
+    /// Forward pass through the LSTM controller network.
+    ///
+    /// Public because the truncated-BPTT engine's taped forward
+    /// ([`bptt`]) must be checkable against it — see
+    /// `taped_forward_matches_the_deployed_forward` in
+    /// `tests/lstm_meta_training.rs`. If the two ever drift apart,
+    /// meta-training would optimize a different function than the one that runs
+    /// at inference time, and the finite-difference check alone would not notice
+    /// (it is self-consistent by construction).
+    pub fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
         let mut current_input = input.clone();
 
         // Forward through LSTM layers
@@ -1451,8 +1532,8 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
             // Apply layer normalization
             current_input = self.layer_norms[i].forward(&current_input)?;
 
-            // Apply dropout during training
-            if self.dropout_rate > 0.0 {
+            // Apply dropout during training only.
+            if self.training && self.dropout_rate > 0.0 {
                 current_input = self.apply_dropout(&current_input)?;
             }
         }

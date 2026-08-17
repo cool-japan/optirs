@@ -9,10 +9,11 @@
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
+use super::budget_manager::AdaptiveBudgetController;
 use super::types::{
-    AcquisitionFunction, AdaptiveBudgetController, AnomalyDetector, BootstrapEstimator,
-    ConfidenceEstimation, GaussianProcessModel, KernelFunction, ObjectiveNoiseMechanism,
-    ObjectiveSensitivityAnalyzer, PrivateCrossValidation, PrivateFoldAggregation, ResultValidator,
+    AcquisitionFunction, AnomalyDetector, BootstrapEstimator, ConfidenceEstimation,
+    GaussianProcessModel, KernelFunction, ObjectiveNoiseMechanism, ObjectiveSensitivityAnalyzer,
+    PrivateCrossValidation, PrivateFoldAggregation, ResultValidator,
     SampleBasedSensitivityEstimator, SearchStrategy, SelectionMechanism, UtilityFunction,
 };
 

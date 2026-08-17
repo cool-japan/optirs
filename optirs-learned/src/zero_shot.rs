@@ -1117,10 +1117,104 @@ impl ZeroShotSelector {
     }
 
     /// Load a previously-saved selector from JSON on disk.
+    ///
+    /// The deserialized value is validated before it is handed back: JSON is
+    /// structurally permissive, so a file that parses can still carry a weight
+    /// matrix of the wrong shape, a zero/negative feature standard deviation
+    /// (which would divide by zero during standardization) or a non-finite
+    /// parameter. Those used to sail through and panic — or silently produce
+    /// garbage predictions — at the first `predict` call.
+    ///
+    /// # Errors
+    /// Returns `Err` on I/O failure, on malformed JSON, or when
+    /// [`Self::validate_parameters`] rejects the loaded parameters.
     pub fn load_json(path: &Path) -> Result<Self> {
         let serialized = std::fs::read_to_string(path)?;
         let selector: ZeroShotSelector = serde_json::from_str(&serialized)?;
+        selector.validate_parameters()?;
         Ok(selector)
+    }
+
+    /// Check that the learned parameters are internally consistent and usable.
+    ///
+    /// Verifies the configuration, every array shape against `NUM_FEATURES` /
+    /// `NUM_CLASSES`, that no parameter is `NaN`/infinite, and that every feature
+    /// standard deviation is strictly positive.
+    ///
+    /// # Errors
+    /// Returns `Err` describing the first inconsistency found.
+    pub fn validate_parameters(&self) -> Result<()> {
+        self.config.validate()?;
+
+        let shape_err = |what: &str, got: String, want: String| {
+            OptimError::InvalidConfig(format!(
+                "loaded selector has {what} of shape {got}, expected {want}"
+            ))
+        };
+        if self.feature_mean.len() != NUM_FEATURES {
+            return Err(shape_err(
+                "feature_mean",
+                self.feature_mean.len().to_string(),
+                NUM_FEATURES.to_string(),
+            ));
+        }
+        if self.feature_std.len() != NUM_FEATURES {
+            return Err(shape_err(
+                "feature_std",
+                self.feature_std.len().to_string(),
+                NUM_FEATURES.to_string(),
+            ));
+        }
+        if self.clf_w.dim() != (NUM_CLASSES, NUM_FEATURES) {
+            return Err(shape_err(
+                "clf_w",
+                format!("{:?}", self.clf_w.dim()),
+                format!("({NUM_CLASSES}, {NUM_FEATURES})"),
+            ));
+        }
+        if self.clf_b.len() != NUM_CLASSES {
+            return Err(shape_err(
+                "clf_b",
+                self.clf_b.len().to_string(),
+                NUM_CLASSES.to_string(),
+            ));
+        }
+        if self.reg_w.len() != NUM_FEATURES {
+            return Err(shape_err(
+                "reg_w",
+                self.reg_w.len().to_string(),
+                NUM_FEATURES.to_string(),
+            ));
+        }
+
+        // A standard deviation of exactly zero is a legitimate state: it means a
+        // zero-variance feature, and `standardize` floors it at `STD_FLOOR` and
+        // divides by one. A *negative* or non-finite deviation, though, cannot
+        // come from `fit` and would silently corrupt every prediction.
+        for (i, &s) in self.feature_std.iter().enumerate() {
+            if !s.is_finite() || s < 0.0 {
+                return Err(OptimError::InvalidConfig(format!(
+                    "loaded selector has feature_std[{i}] = {s}; a standard \
+                     deviation must be finite and non-negative"
+                )));
+            }
+        }
+
+        let non_finite = self
+            .feature_mean
+            .iter()
+            .chain(self.clf_w.iter())
+            .chain(self.clf_b.iter())
+            .chain(self.reg_w.iter())
+            .chain(std::iter::once(&self.reg_b))
+            .any(|v| !v.is_finite());
+        if non_finite {
+            return Err(OptimError::InvalidConfig(
+                "loaded selector contains a non-finite parameter".to_string(),
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -1656,5 +1750,92 @@ mod tests {
         let reloaded = loaded.recommend(&probe).expect("recommend reloaded");
         assert_eq!(original.optimizer, reloaded.optimizer);
         assert!((original.learning_rate - reloaded.learning_rate).abs() < 1e-9);
+    }
+
+    /// F73: `load_json` deserialized without validating, so a file that parses
+    /// but carries inconsistent parameters was accepted and blew up (or produced
+    /// garbage) at the first `recommend`.
+    #[test]
+    fn load_json_rejects_structurally_valid_but_inconsistent_files() {
+        let sel = selector();
+        let probe = QuadraticProbe::isotropic(4, 2.0, 1.0).expect("probe");
+        let example = labeled_example(&sel, &probe, OptimizerKind::Adam, 0.01);
+        let mut fitted = selector();
+        fitted.fit(std::slice::from_ref(&example)).expect("fit");
+
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("optirs_zero_shot_bad_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let good = serde_json::to_string(&fitted).expect("serialize");
+        let json: serde_json::Value = serde_json::from_str(&good).expect("parse");
+
+        // 1. A negative standard deviation cannot come from `fit` and would
+        //    invert every standardized feature. (Zero is legitimate — it means a
+        //    zero-variance feature, which `standardize` floors — so it must
+        //    still load.)
+        {
+            let mut broken = json.clone();
+            broken["feature_std"]["data"][0] = serde_json::json!(-1.5);
+            let path = dir.join("negative_std.json");
+            std::fs::write(&path, broken.to_string()).expect("write");
+            assert!(
+                ZeroShotSelector::load_json(&path).is_err(),
+                "a negative feature_std must be rejected"
+            );
+
+            let mut zeroed = json.clone();
+            zeroed["feature_std"]["data"][0] = serde_json::json!(0.0);
+            let ok_path = dir.join("zero_std.json");
+            std::fs::write(&ok_path, zeroed.to_string()).expect("write");
+            assert!(
+                ZeroShotSelector::load_json(&ok_path).is_ok(),
+                "a zero feature_std is a legitimate zero-variance feature"
+            );
+        }
+
+        // 2. A truncated weight vector.
+        {
+            let mut broken = json.clone();
+            if let Some(arr) = broken["reg_w"]["data"].as_array_mut() {
+                arr.truncate(2);
+            }
+            let path = dir.join("short_reg_w.json");
+            std::fs::write(&path, broken.to_string()).expect("write");
+            assert!(
+                ZeroShotSelector::load_json(&path).is_err(),
+                "a mis-shaped reg_w must be rejected"
+            );
+        }
+
+        // 3. A non-finite parameter. JSON has no literal for infinity, so this
+        //    exercises the guard directly on the loaded struct — which is the
+        //    same check `load_json` runs.
+        {
+            let mut corrupted = fitted.clone();
+            corrupted.reg_b = f64::INFINITY;
+            assert!(
+                corrupted.validate_parameters().is_err(),
+                "an infinite reg_b must be rejected"
+            );
+
+            let mut nan_weight = fitted.clone();
+            nan_weight.clf_w[[0, 0]] = f64::NAN;
+            assert!(
+                nan_weight.validate_parameters().is_err(),
+                "a NaN classifier weight must be rejected"
+            );
+        }
+
+        // The freshly fitted selector itself must of course validate.
+        assert!(fitted.validate_parameters().is_ok());
+        let _ = &json;
+
+        // The unmodified file still loads.
+        let path = dir.join("good.json");
+        std::fs::write(&path, good).expect("write");
+        assert!(ZeroShotSelector::load_json(&path).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

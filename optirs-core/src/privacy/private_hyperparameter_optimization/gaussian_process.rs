@@ -554,8 +554,11 @@ pub fn cholesky_decompose(matrix: &[Vec<f64>]) -> Result<Vec<Vec<f64>>> {
     for row in 0..size {
         for column in 0..=row {
             let mut sum = matrix[row][column];
-            for inner in 0..column {
-                sum -= lower[row][inner] * lower[column][inner];
+            for (left, right) in lower[row][..column]
+                .iter()
+                .zip(lower[column][..column].iter())
+            {
+                sum -= left * right;
             }
             if row == column {
                 if sum <= 0.0 {

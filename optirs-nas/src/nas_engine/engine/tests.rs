@@ -370,4 +370,204 @@ mod tests_2 {
             assert!(!candidates.is_empty());
         }
     }
+    // ---- F12: the resource monitor is actually driven by the search loop ----
+
+    /// `ResourceMonitor::update_usage` was never called from anywhere, so
+    /// `current_usage` stayed at `ResourceUsage::default()` for a whole run and
+    /// `resource_usage_summary` in the results was always empty. The search loop now
+    /// samples once per generation.
+    #[test]
+    fn the_search_loop_samples_the_resource_monitor() {
+        use crate::nas_engine::create_minimal_nas_config;
+        use crate::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
+
+        let mut config = create_minimal_nas_config::<f64>();
+        config.search_budget = 2;
+        config.population_size = 2;
+
+        let mut engine = NeuralArchitectureSearch::new(config)
+            .expect("engine must build from the minimal config");
+
+        // Inject a source with known, measured values so the assertion is exact.
+        let sample = TelemetrySample {
+            process_memory_gb: Some(1.75),
+            total_memory_gb: Some(8.0),
+            available_memory_gb: Some(6.0),
+            logical_cpus: Some(4),
+            process_count: Some(99),
+            ..TelemetrySample::unknown()
+        };
+        engine.resource_monitor.set_trackers(vec![Box::new(
+            SystemResourceTracker::with_telemetry(
+                "injected".to_string(),
+                Duration::from_secs(1),
+                Box::new(FixedTelemetry::new("injected", sample)),
+            ),
+        )]);
+
+        let results = engine
+            .run_search()
+            .expect("a two-generation search must complete");
+
+        // The monitor must have been sampled, and with the injected values.
+        assert!(
+            !engine.resource_monitor.get_usage_history().is_empty(),
+            "update_usage must be called from the search loop"
+        );
+        assert_eq!(engine.resource_monitor.get_current_usage().memory_gb, 1.75);
+        assert_eq!(
+            engine.resource_monitor.get_usage_history()[0].active_processes,
+            Some(99)
+        );
+        assert_eq!(
+            results.resource_usage_summary.total_memory_gb, 1.75,
+            "the final summary must reflect the sampled usage, not a default"
+        );
+        assert!(!results.search_history.is_empty());
+    }
+
+    /// The other half of F12: a search must not be aborted by a resource the
+    /// telemetry cannot measure, however tight the configured budget is.
+    #[test]
+    fn a_tight_budget_on_an_unmeasurable_resource_does_not_abort_the_search() {
+        use crate::nas_engine::create_minimal_nas_config;
+        use crate::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
+
+        let mut config = create_minimal_nas_config::<f64>();
+        config.search_budget = 2;
+        config.population_size = 2;
+        // Budgets that the old fabricated readings (16 GB used, 250 W, 65 C) would
+        // have blown through immediately.
+        config.resource_constraints.hardware_resources.max_memory_gb = 0.001;
+        config.resource_constraints.max_memory_gb = 0.001;
+        config.resource_constraints.max_energy_kwh = 0.0;
+        config.resource_constraints.max_cost_usd = 0.0;
+
+        let mut engine = NeuralArchitectureSearch::new(config).expect("engine builds");
+        engine.resource_monitor.set_trackers(vec![Box::new(
+            SystemResourceTracker::with_telemetry(
+                "blind".to_string(),
+                Duration::from_secs(1),
+                Box::new(FixedTelemetry::new("blind", TelemetrySample::unknown())),
+            ),
+        )]);
+
+        let results = engine
+            .run_search()
+            .expect("an unmeasurable resource must never abort the search");
+        assert!(!results.search_history.is_empty());
+    }
+
+    /// A *measured* overrun must still stop the search, so the guard above has not
+    /// disabled enforcement.
+    #[test]
+    fn a_measured_overrun_still_stops_the_search() {
+        use crate::nas_engine::create_minimal_nas_config;
+        use crate::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
+
+        let mut config = create_minimal_nas_config::<f64>();
+        config.search_budget = 5;
+        config.population_size = 2;
+        config.resource_constraints.max_memory_gb = 1.0;
+        config.resource_constraints.hardware_resources.max_memory_gb = 1.0;
+
+        let mut engine = NeuralArchitectureSearch::new(config).expect("engine builds");
+        engine.resource_monitor.set_trackers(vec![Box::new(
+            SystemResourceTracker::with_telemetry(
+                "hog".to_string(),
+                Duration::from_secs(1),
+                Box::new(FixedTelemetry::new(
+                    "hog",
+                    TelemetrySample {
+                        process_memory_gb: Some(64.0),
+                        ..TelemetrySample::unknown()
+                    },
+                )),
+            ),
+        )]);
+
+        let error = engine
+            .run_search()
+            .expect_err("a measured 64 GB against a 1 GB budget must stop the search");
+        assert!(
+            format!("{error}").contains("resource constraints violated"),
+            "unexpected error: {error}"
+        );
+    }
+
+    // ---- the multi-objective algorithm routing ----------------------------
+
+    #[test]
+    fn weighted_sum_is_served_by_the_real_weighted_sum_optimizer() {
+        let config = MultiObjectiveConfig::<f64> {
+            algorithm: MultiObjectiveAlgorithm::WeightedSum,
+            objectives: two_minimize_objectives(),
+            ..Default::default()
+        };
+        let mut optimizer = WeightedSumOptimizer::<f64>::new(&config)
+            .expect("the weighted-sum adapter must construct");
+
+        let front = optimizer
+            .update_pareto_front(&[
+                make_search_result("A", 1.0, 2.0, 0.9),
+                make_search_result("B", 2.0, 1.0, 0.8),
+                make_search_result("C", 3.0, 3.0, 0.1),
+            ])
+            .expect("update pareto front");
+        assert_eq!(front.solutions.len(), 2, "C is dominated by both A and B");
+
+        let selected = optimizer
+            .select_candidates(
+                &[
+                    make_search_result("cheap", 1.0, 1.0, 0.9),
+                    make_search_result("costly", 5.0, 5.0, 0.1),
+                ],
+                1,
+            )
+            .expect("select candidates");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].architecture.architecture_id, "cheap");
+
+        // Diversity must be measured, not the hardcoded 0.5 the deleted placeholder
+        // optimizers returned.
+        let diversity = optimizer.calculate_diversity(&[
+            make_search_result("a", 0.0, 0.0, 0.0),
+            make_search_result("b", 3.0, 4.0, 0.0),
+        ]);
+        assert!((diversity - 5.0).abs() < 1e-12, "got {diversity}");
+        assert_ne!(diversity, 0.5);
+    }
+
+    #[test]
+    fn unimplemented_multi_objective_algorithms_are_rejected() {
+        for algorithm in [
+            MultiObjectiveAlgorithm::NSGA3,
+            MultiObjectiveAlgorithm::MOEAD,
+            MultiObjectiveAlgorithm::PAES,
+            MultiObjectiveAlgorithm::SPEA2,
+            MultiObjectiveAlgorithm::EpsilonConstraint,
+            MultiObjectiveAlgorithm::GoalProgramming,
+        ] {
+            let config = MultiObjectiveConfig::<f64> {
+                algorithm: algorithm.clone(),
+                objectives: two_minimize_objectives(),
+                ..Default::default()
+            };
+            let outcome =
+                NeuralArchitectureSearch::<f64>::create_multi_objective_optimizer(&config);
+            let error = match outcome {
+                Ok(_) => {
+                    panic!("{algorithm:?} must not be silently substituted by another optimizer")
+                }
+                Err(error) => error,
+            };
+            let message = format!("{error}");
+            assert!(
+                message.contains("is not implemented"),
+                "unexpected error for {algorithm:?}: {message}"
+            );
+            // The message must name what *is* available.
+            assert!(message.contains("NSGA2"), "{message}");
+        }
+    }
 }

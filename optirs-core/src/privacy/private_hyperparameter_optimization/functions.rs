@@ -8,8 +8,9 @@ use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use super::budget_manager::HPOBudgetManager;
 use super::types::{
-    BudgetAllocationStrategy, EarlyStoppingConfig, HPOBudgetManager, HPOEvaluation, HPOResult,
+    BudgetAllocationStrategy, EarlyStoppingConfig, HPOEvaluation, HPOResult,
     HyperparameterNoiseMechanism, ParameterBounds, ParameterConfiguration, ParameterDefinition,
     ParameterPrior, ParameterSpace, ParameterTransformation, ParameterType, PrivateHPOConfig,
     PrivateRandomSearch, SearchAlgorithm, SensitivityBounds, SmoothSensitivityParams,

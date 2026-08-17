@@ -7,7 +7,6 @@ use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-#[allow(unused_imports)]
 use crate::error::Result;
 use crate::nas_engine::{OptimizerArchitecture, SearchResult, SearchSpaceConfig};
 use crate::EvaluationMetric;
@@ -341,8 +340,11 @@ impl<
                 .unwrap_or(T::zero());
 
             let sum: T = performances.iter().cloned().sum();
-            self.statistics.average_performance =
-                sum / T::from(performances.len()).expect("conversion from usize to T failed");
+            // `performances` is non-empty here, and an unrepresentable count falls
+            // back to 1 rather than aborting the search.
+            let count: T = scirs2_core::numeric::NumCast::from(performances.len() as f64)
+                .unwrap_or_else(T::one);
+            self.statistics.average_performance = sum / count;
 
             // Train predictor with new data
             self.train_predictor(&architectures, &performances)?;

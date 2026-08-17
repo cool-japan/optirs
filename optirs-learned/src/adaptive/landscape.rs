@@ -350,7 +350,7 @@ mod tests {
     fn confidence_grows_with_samples() {
         let short =
             LandscapeStatistics::from_history(&grads(&[[1.0, 0.0], [1.0, 0.0]]), &[1.0, 0.5]);
-        let long = LandscapeStatistics::from_history(&grads(&[[1.0, 0.0]; 20]), &vec![1.0; 20]);
+        let long = LandscapeStatistics::from_history(&grads(&[[1.0, 0.0]; 20]), &[1.0; 20]);
         assert!(
             long.analysis_confidence(20) > short.analysis_confidence(20),
             "{} !> {}",

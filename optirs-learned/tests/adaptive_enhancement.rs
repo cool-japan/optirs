@@ -25,25 +25,27 @@ use optirs_learned::transformer_based_optimizer::{
 use scirs2_core::ndarray::Array1;
 
 fn small_optimizer_config() -> TransformerBasedOptimizerConfig<f64> {
-    let mut config = TransformerBasedOptimizerConfig::<f64>::default();
-    config.model_dimension = 8;
-    config.num_transformer_layers = 2;
-    config.num_attention_heads = 2;
-    config.attention_head_dimension = 4;
-    config.feedforward_dimension = 16;
-    config.sequence_length = 8;
-    config.dropout_rate = 0.0;
-    config
+    TransformerBasedOptimizerConfig::<f64> {
+        model_dimension: 8,
+        num_transformer_layers: 2,
+        num_attention_heads: 2,
+        attention_head_dimension: 4,
+        feedforward_dimension: 16,
+        sequence_length: 8,
+        dropout_rate: 0.0,
+        ..Default::default()
+    }
 }
 
 fn adaptive_config() -> AdaptiveConfig<f64> {
-    let mut config = AdaptiveConfig::<f64>::default();
-    config.min_sequence_length = 4;
-    config.max_sequence_length = 32;
-    config.prediction_horizon = 8;
-    config.adaptation_lr = 1e-2;
-    config.landscape_analysis_frequency = 1;
-    config
+    AdaptiveConfig::<f64> {
+        min_sequence_length: 4,
+        max_sequence_length: 32,
+        prediction_horizon: 8,
+        adaptation_lr: 1e-2,
+        landscape_analysis_frequency: 1,
+        ..Default::default()
+    }
 }
 
 fn descending_history() -> (Vec<Array1<f64>>, Vec<f64>) {
@@ -473,4 +475,111 @@ fn predictor_is_honest_before_training_and_learns_after() {
         easy.performance_prediction.confidence > 0.0,
         "a trained predictor should report non-zero confidence"
     );
+}
+
+/// F22 follow-up: calling `enhance_optimizer` repeatedly on the *same* history
+/// must converge, not ratchet. The first version proposed
+/// `num_transformer_layers + 1` whenever the landscape was complex, and because
+/// the adapter is seeded from the optimizer's live config each call, repeated
+/// calls walked the layer count up to the search-space maximum — rebuilding (and
+/// therefore re-initializing) the transformer every single time.
+#[test]
+fn repeated_enhancement_converges_instead_of_ratcheting() {
+    let mut enhancement =
+        AdaptiveTransformerEnhancement::<f64>::new(adaptive_config()).expect("construction");
+    let mut optimizer =
+        TransformerOptimizer::<f64>::new(small_optimizer_config()).expect("optimizer");
+    let (grads, losses) = oscillating_history();
+
+    let mut layer_counts = Vec::new();
+    for _ in 0..24 {
+        enhancement
+            .enhance_optimizer(&mut optimizer, &grads, &losses)
+            .expect("enhancement");
+        layer_counts.push(optimizer.config().num_transformer_layers);
+    }
+
+    let settled = *layer_counts.last().expect("at least one call");
+    assert!(
+        settled <= 12,
+        "layer count {settled} escaped the search-space maximum: {layer_counts:?}"
+    );
+    // `Gradual` approaches the landscape-derived target one layer at a time, so
+    // it must converge in a bounded number of steps and then stop moving. Under
+    // the old `current + 1` rule it never stopped until it hit the cap, and every
+    // step rebuilt (and re-initialized) the transformer.
+    let tail = &layer_counts[layer_counts.len() - 8..];
+    assert!(
+        tail.iter().all(|&n| n == settled),
+        "the architecture never settled: {layer_counts:?}"
+    );
+
+    // Once settled, further enhancement must not discard weights.
+    let before = optimizer.parameter_count();
+    let probe = Array1::from_vec(vec![0.1_f64; 8]);
+    let probe_matrix = scirs2_core::ndarray::Array2::from_shape_fn((3, 8), |(i, j)| {
+        ((i + j) as f64 * 0.05).tanh()
+    });
+    let output_before = optimizer
+        .forward_sequence(&probe_matrix)
+        .expect("forward before");
+    let _ = probe;
+
+    enhancement
+        .enhance_optimizer(&mut optimizer, &grads, &losses)
+        .expect("settled enhancement");
+
+    assert_eq!(
+        optimizer.parameter_count(),
+        before,
+        "a settled enhancement changed the parameter count"
+    );
+    let output_after = optimizer
+        .forward_sequence(&probe_matrix)
+        .expect("forward after");
+    assert_eq!(
+        output_before, output_after,
+        "a settled enhancement re-initialized the transformer, discarding \
+         everything it had learned"
+    );
+}
+
+/// `apply_architecture_config` must say *which* of the three things it did, so a
+/// caller can never mistake a destructive rebuild for a weight-preserving tweak.
+#[test]
+fn apply_architecture_config_reports_what_it_did() {
+    use optirs_learned::transformer_based_optimizer::ArchitectureUpdate;
+
+    let base = small_optimizer_config();
+    let mut optimizer = TransformerOptimizer::<f64>::new(base.clone()).expect("optimizer");
+
+    assert_eq!(
+        optimizer
+            .apply_architecture_config(&base)
+            .expect("no-op apply"),
+        ArchitectureUpdate::Unchanged
+    );
+
+    let mut tweaked = base.clone();
+    tweaked.learning_rate = base.learning_rate * 2.0;
+    let update = optimizer
+        .apply_architecture_config(&tweaked)
+        .expect("in-place apply");
+    assert_eq!(update, ArchitectureUpdate::InPlace);
+    assert!(update.changed() && !update.discarded_weights());
+
+    let mut deeper = tweaked.clone();
+    deeper.num_transformer_layers += 1;
+    let update = optimizer
+        .apply_architecture_config(&deeper)
+        .expect("structural apply");
+    assert_eq!(update, ArchitectureUpdate::Rebuilt);
+    assert!(update.changed() && update.discarded_weights());
+
+    // An invalid proposal must leave the optimizer untouched.
+    let mut invalid = deeper.clone();
+    invalid.num_attention_heads = 3; // does not divide model_dimension 8
+    let before = optimizer.config().num_attention_heads;
+    assert!(optimizer.apply_architecture_config(&invalid).is_err());
+    assert_eq!(optimizer.config().num_attention_heads, before);
 }

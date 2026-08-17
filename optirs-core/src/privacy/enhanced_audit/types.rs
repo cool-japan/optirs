@@ -1274,8 +1274,10 @@ mod tests {
 
     #[test]
     fn a_configuration_asking_for_at_rest_encryption_is_refused() {
-        let mut config = AuditConfig::default();
-        config.encrypt_audit_trail = true;
+        let config = AuditConfig {
+            encrypt_audit_trail: true,
+            ..AuditConfig::default()
+        };
         let outcome = EnhancedAuditSystem::<f64>::new(config);
         let message = match outcome {
             Err(err) => err.to_string(),
@@ -1289,22 +1291,31 @@ mod tests {
 
     #[test]
     fn a_configuration_asking_for_external_audit_submission_is_refused() {
-        let mut config = AuditConfig::default();
-        config.external_audit_integration = true;
+        let config = AuditConfig {
+            external_audit_integration: true,
+            ..AuditConfig::default()
+        };
         assert!(EnhancedAuditSystem::<f64>::new(config).is_err());
     }
 
     #[test]
     fn a_configuration_asking_for_zero_knowledge_proofs_is_refused() {
-        let mut config = AuditConfig::default();
-        config.proof_requirements.zero_knowledge_proofs = true;
+        let config = AuditConfig {
+            proof_requirements: ProofRequirements {
+                zero_knowledge_proofs: true,
+                ..ProofRequirements::default()
+            },
+            ..AuditConfig::default()
+        };
         assert!(EnhancedAuditSystem::<f64>::new(config).is_err());
     }
 
     #[test]
     fn a_zero_retention_period_is_refused() {
-        let mut config = AuditConfig::default();
-        config.retention_period_days = 0;
+        let config = AuditConfig {
+            retention_period_days: 0,
+            ..AuditConfig::default()
+        };
         assert!(EnhancedAuditSystem::<f64>::new(config).is_err());
     }
 
@@ -1312,8 +1323,10 @@ mod tests {
     fn disabling_formal_verification_errors_instead_of_passing_vacuously() {
         // The old engine returned Ok(vec![]) with no rules registered, which
         // reads as "verified". With verification disabled the call must fail.
-        let mut config = AuditConfig::default();
-        config.formal_verification = false;
+        let config = AuditConfig {
+            formal_verification: false,
+            ..AuditConfig::default()
+        };
         let audit = match EnhancedAuditSystem::<f64>::new(config) {
             Ok(audit) => audit,
             Err(err) => panic!("construction failed: {err}"),
@@ -1344,8 +1357,10 @@ mod tests {
 
     #[test]
     fn comprehensive_logging_off_skips_non_privacy_events() {
-        let mut config = AuditConfig::default();
-        config.comprehensive_logging = false;
+        let config = AuditConfig {
+            comprehensive_logging: false,
+            ..AuditConfig::default()
+        };
         let mut audit = match EnhancedAuditSystem::<f64>::new(config) {
             Ok(audit) => audit,
             Err(err) => panic!("construction failed: {err}"),
@@ -1378,14 +1393,8 @@ mod tests {
     #[test]
     fn the_compliance_report_reflects_the_recorded_events() {
         let mut audit = system();
-        let ok = audit.log_event(event(
-            "good",
-            0.1,
-            match super::super::proofs::unix_timestamp() {
-                Ok(now) => now,
-                Err(_) => 0,
-            },
-        ));
+        let now = super::super::proofs::unix_timestamp().unwrap_or_default();
+        let ok = audit.log_event(event("good", 0.1, now));
         assert!(ok.is_ok());
         let report = match audit
             .generate_compliance_report(&[ComplianceFramework::GDPR], ReportingPeriod::Daily)
@@ -1419,8 +1428,10 @@ mod tests {
 
     #[test]
     fn events_past_retention_are_listed_rather_than_silently_pruned() {
-        let mut config = AuditConfig::default();
-        config.retention_period_days = 1;
+        let config = AuditConfig {
+            retention_period_days: 1,
+            ..AuditConfig::default()
+        };
         let mut audit = match EnhancedAuditSystem::<f64>::new(config) {
             Ok(audit) => audit,
             Err(err) => panic!("construction failed: {err}"),

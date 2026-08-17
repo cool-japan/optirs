@@ -90,6 +90,7 @@ pub mod results;
 /// [`engine::NeuralArchitectureSearch::new`], which picks one per
 /// [`config::SearchStrategyType`].
 pub(crate) mod strategy_adapters;
+pub mod telemetry;
 
 // Re-export core types for convenience
 pub use config::*;

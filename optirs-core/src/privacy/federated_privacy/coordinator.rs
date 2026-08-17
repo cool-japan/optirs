@@ -205,7 +205,16 @@ impl<
     > FederatedPrivacyCoordinator<T>
 {
     /// Create a new federated privacy coordinator
+    ///
+    /// The configuration is validated first (see
+    /// [`FederatedPrivacyConfig::validate`]). Before 0.3.2 this forwarded
+    /// straight into `MomentsAccountant::new`, so `target_epsilon: -1.0`,
+    /// `target_delta: 2.0`, `noise_multiplier: 0.0` and
+    /// `clients_per_round > total_clients` were all accepted and produced a
+    /// meaningless epsilon.
     pub fn new(config: FederatedPrivacyConfig) -> Result<Self> {
+        config.validate()?;
+
         let global_accountant = MomentsAccountant::new(
             config.base_config.noise_multiplier,
             config.base_config.target_delta,
@@ -260,10 +269,20 @@ impl<
         // Compute sampling probability for amplification
         let sampling_probability = selectedclients.len() as f64 / availableclients.len() as f64;
 
-        // Analyze privacy amplification
+        // Analyze privacy amplification.
+        //
+        // 0.3.2: `compute_amplification_factor` now takes the base epsilon and
+        // the real client counts, because the factor is the published bound's
+        // ratio `eps / ln(1 + q(e^eps - 1))` rather than the discarded
+        // `(1/q).sqrt()` placeholder, and because the recorded history used to
+        // fabricate `total_clients: 1000`.
         let amplificationfactor = if self.config.amplification_config.enabled {
-            self.amplification_analyzer
-                .compute_amplification_factor(sampling_probability, self.current_round)?
+            self.amplification_analyzer.compute_amplification_factor(
+                self.config.base_config.target_epsilon,
+                selectedclients.len(),
+                availableclients.len(),
+                self.current_round,
+            )?
         } else {
             1.0
         };
@@ -518,7 +537,7 @@ impl<
                 epsilon: self.config.base_config.target_epsilon / amplificationfactor,
                 delta: self.config.base_config.target_delta,
                 client_contribution: 1.0 / selectedclients.len() as f64,
-                amplificationfactor,
+                amplification_factor: amplificationfactor,
                 composition_cost: 0.1, // Placeholder
             },
             aggregation_noise: self.config.base_config.noise_multiplier,
@@ -667,7 +686,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ByzantineRobustAggregator<T> {
             let is_outlier = distance > threshold;
             if is_outlier {
                 results.push(OutlierDetectionResult {
-                    clientid,
+                    client_id: clientid,
                     round,
                     is_outlier: true,
                     outlier_score: distance.to_f64().unwrap_or(0.0) - threshold_f64,
@@ -1131,7 +1150,7 @@ mod tests {
 
         assert_eq!(flagged.len(), 1, "exactly one client should be flagged");
         let result = &flagged[0];
-        assert_eq!(result.clientid, "traitor");
+        assert_eq!(result.client_id, "traitor");
         assert!(result.is_outlier);
         assert_eq!(result.round, 7);
         assert!(result.outlier_score > 0.0);

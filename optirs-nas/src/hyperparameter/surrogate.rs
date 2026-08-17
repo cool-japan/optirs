@@ -36,8 +36,6 @@ use super::{
 };
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
-use scirs2_core::RngExt;
 use std::collections::HashMap;
 
 /// Tunables of the surrogate search.

@@ -175,7 +175,11 @@ impl MerkleTree {
         let mut level = self.leaves.clone();
         let mut index = leaf_index;
         while level.len() > 1 {
-            let sibling_index = if index % 2 == 0 { index + 1 } else { index - 1 };
+            let sibling_index = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
             if sibling_index < level.len() {
                 steps.push(MerkleProofStep {
                     sibling: level[sibling_index],

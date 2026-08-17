@@ -1,4 +1,21 @@
 // Component implementations for federated privacy algorithms
+//
+// # 0.3.2 changes
+//
+// * Public field names were corrected to snake_case: `clientid` -> `client_id`,
+//   `epsilonconsumed` -> `epsilon_consumed`, `amplificationfactor` ->
+//   `amplification_factor`, `compressionratio` -> `compression_ratio`,
+//   `significancelevel` -> `significance_level`. These are breaking renames on a
+//   public API; the project's naming policy mandates snake_case and the 0.3.x
+//   series is the place to fix them.
+// * `RoundComposition` gained `total_clients` and `noise_multiplier`, without
+//   which `FederatedCompositionAnalyzer` cannot compose through the moments
+//   accountant.
+// * `FederatedMetaLearner::new` honours its argument (it was `_parametersize`).
+// * The real method bodies for `PrivacyAmplificationAnalyzer`,
+//   `FederatedCompositionAnalyzer`, `FederatedMetaLearner` and `TaskDetector`
+//   live in the `composition` and `adaptation` modules; this file keeps the type
+//   definitions and constructors.
 
 use super::super::PrivacyBudget;
 use super::config::*;
@@ -67,7 +84,7 @@ pub struct ContinualLearningCoordinator<T: Float + Debug + Send + Sync + 'static
 /// Statistical analyzer for Byzantine detection
 pub struct StatisticalAnalyzer<T: Float + Debug + Send + Sync + 'static> {
     window_size: usize,
-    significancelevel: f64,
+    significance_level: f64,
     test_statistics: VecDeque<TestStatistic<T>>,
 }
 
@@ -81,7 +98,7 @@ pub struct RobustEstimators<T: Float + Debug + Send + Sync + 'static> {
 /// Outlier detection result
 #[derive(Debug, Clone)]
 pub struct OutlierDetectionResult {
-    pub clientid: String,
+    pub client_id: String,
     pub round: usize,
     pub is_outlier: bool,
     pub outlier_score: f64,
@@ -117,10 +134,10 @@ pub struct ClusteringEngine<T: Float + Debug + Send + Sync + 'static> {
 
 /// Federated meta-learner
 pub struct FederatedMetaLearner<T: Float + Debug + Send + Sync + 'static> {
-    meta_parameters: Array1<T>,
-    client_adaptations: HashMap<String, Array1<T>>,
-    meta_gradient_buffer: Array1<T>,
-    task_distributions: HashMap<String, TaskDistribution<T>>,
+    pub(super) meta_parameters: Array1<T>,
+    pub(super) client_adaptations: HashMap<String, Array1<T>>,
+    pub(super) meta_gradient_buffer: Array1<T>,
+    pub(super) task_distributions: HashMap<String, TaskDistribution<T>>,
 }
 
 /// Task distribution for meta-learning
@@ -178,8 +195,8 @@ pub struct GlobalBudgetTracker {
 #[derive(Debug, Clone)]
 pub struct BudgetConsumption {
     pub round: usize,
-    pub clientid: String,
-    pub epsilonconsumed: f64,
+    pub client_id: String,
+    pub epsilon_consumed: f64,
     pub delta_consumed: f64,
     pub utility_achieved: f64,
 }
@@ -272,7 +289,7 @@ pub struct CompressionEngine<T: Float + Debug + Send + Sync + 'static> {
 pub struct CompressionResult<T: Float + Debug + Send + Sync + 'static> {
     pub original_size: usize,
     pub compressed_size: usize,
-    pub compressionratio: f64,
+    pub compression_ratio: f64,
     pub reconstruction_error: T,
     pub compression_time: u64,
 }
@@ -318,7 +335,7 @@ pub struct TransmissionScheduler {
 /// Transmission task
 #[derive(Debug, Clone)]
 pub struct TransmissionTask {
-    pub clientid: String,
+    pub client_id: String,
     pub data_size: usize,
     pub priority: f64,
     pub deadline: u64,
@@ -347,10 +364,10 @@ pub struct PerformanceMonitor {
 
 /// Task detector for continual learning
 pub struct TaskDetector<T: Float + Debug + Send + Sync + 'static> {
-    detection_method: TaskDetectionMethod,
-    gradient_buffer: VecDeque<Array1<T>>,
-    change_points: Vec<ChangePoint>,
-    detection_threshold: f64,
+    pub(super) detection_method: TaskDetectionMethod,
+    pub(super) gradient_buffer: VecDeque<Array1<T>>,
+    pub(super) change_points: Vec<ChangePoint>,
+    pub(super) detection_threshold: f64,
 }
 
 /// Change point for task detection
@@ -411,7 +428,7 @@ pub struct TestStatistic<T: Float + Debug + Send + Sync + 'static> {
     pub statistic_value: T,
     pub p_value: f64,
     pub test_type: StatisticalTestType,
-    pub clientid: String,
+    pub client_id: String,
 }
 
 /// Secure aggregation protocol implementation
@@ -425,9 +442,9 @@ pub struct SecureAggregator<T: Float + Debug + Send + Sync + 'static> {
 
 /// Privacy amplification analyzer
 pub struct PrivacyAmplificationAnalyzer {
-    config: AmplificationConfig,
-    subsampling_history: VecDeque<SubsamplingEvent>,
-    amplification_factors: HashMap<String, f64>,
+    pub(super) config: AmplificationConfig,
+    pub(super) subsampling_history: VecDeque<SubsamplingEvent>,
+    pub(super) amplification_factors: HashMap<String, f64>,
 }
 
 /// Cross-device privacy manager
@@ -440,9 +457,9 @@ pub struct CrossDevicePrivacyManager<T: Float + Debug + Send + Sync + 'static> {
 
 /// Federated composition analyzer
 pub struct FederatedCompositionAnalyzer {
-    method: FederatedCompositionMethod,
-    round_compositions: Vec<RoundComposition>,
-    client_compositions: HashMap<String, Vec<ClientComposition>>,
+    pub(super) method: FederatedCompositionMethod,
+    pub(super) round_compositions: Vec<RoundComposition>,
+    pub(super) client_compositions: HashMap<String, Vec<ClientComposition>>,
 }
 
 /// Client participation in a round
@@ -461,7 +478,7 @@ pub struct PrivacyCost {
     pub epsilon: f64,
     pub delta: f64,
     pub client_contribution: f64,
-    pub amplificationfactor: f64,
+    pub amplification_factor: f64,
     pub composition_cost: f64,
 }
 
@@ -472,7 +489,7 @@ pub struct SubsamplingEvent {
     pub sampling_rate: f64,
     pub clients_sampled: usize,
     pub total_clients: usize,
-    pub amplificationfactor: f64,
+    pub amplification_factor: f64,
 }
 
 /// Device profile for cross-device privacy
@@ -516,18 +533,33 @@ pub enum TemporalEventType {
 /// Round composition for privacy accounting
 #[derive(Debug, Clone)]
 pub struct RoundComposition {
+    /// Round number.
     pub round: usize,
+    /// Clients that participated in this round.
     pub participating_clients: usize,
-    pub epsilonconsumed: f64,
+    /// Size of the federation the round sampled from.
+    ///
+    /// Added in 0.3.2: the moments-accountant composition needs the sampling
+    /// rate, and the previous shape could only report the numerator.
+    pub total_clients: usize,
+    /// Epsilon consumed by the round.
+    pub epsilon_consumed: f64,
+    /// Delta the round's epsilon is reported at.
     pub delta_consumed: f64,
+    /// Whether the subsampling amplification bound was applied.
     pub amplification_applied: bool,
+    /// Composition method the round was accounted under.
     pub composition_method: FederatedCompositionMethod,
+    /// Noise multiplier used by the round, when the round was a Gaussian
+    /// mechanism. Required by
+    /// `FederatedCompositionMethod::FederatedMomentsAccountant`.
+    pub noise_multiplier: Option<f64>,
 }
 
 /// Client-specific composition tracking
 #[derive(Debug, Clone)]
 pub struct ClientComposition {
-    pub clientid: String,
+    pub client_id: String,
     pub round: usize,
     pub local_epsilon: f64,
     pub local_delta: f64,
@@ -589,16 +621,16 @@ impl FairnessMonitor {
     }
 
     /// Compute fairness weights for clients
-    pub fn compute_fairness_weights(&self, clientids: &[String]) -> HashMap<String, f64> {
+    pub fn compute_fairness_weights(&self, client_ids: &[String]) -> HashMap<String, f64> {
         let mut weights = HashMap::new();
-        for clientid in clientids {
+        for client_id in client_ids {
             // Use existing fairness score or default to 1.0
             let weight = self
                 .client_fairness_scores
-                .get(clientid)
+                .get(client_id)
                 .copied()
                 .unwrap_or(1.0);
-            weights.insert(clientid.clone(), weight);
+            weights.insert(client_id.clone(), weight);
         }
         weights
     }
@@ -621,25 +653,48 @@ impl<
             + scirs2_core::ndarray::ScalarOperand,
     > FederatedMetaLearner<T>
 {
-    /// Create a new federated meta-learner
-    pub fn new(_parametersize: usize) -> Self {
+    /// Create a new federated meta-learner sized for `parameter_size`
+    /// parameters.
+    ///
+    /// The argument used to be `_parametersize` and was discarded, so both
+    /// buffers were allocated as `Array1::default(0)`: a caller constructing for
+    /// a one-million-parameter model got empty buffers and every later
+    /// elementwise operation was a length mismatch. `0` remains legal and means
+    /// "not yet sized"; `compute_client_meta_gradients` (in
+    /// [`super::adaptation`]) reports that rather than returning a length-0
+    /// array.
+    pub fn new(parameter_size: usize) -> Self {
         Self {
-            meta_parameters: Array1::default(0),
+            meta_parameters: Array1::zeros(parameter_size),
             client_adaptations: HashMap::new(),
-            meta_gradient_buffer: Array1::default(0),
+            meta_gradient_buffer: Array1::zeros(parameter_size),
             task_distributions: HashMap::new(),
         }
     }
 
-    /// Compute meta-gradients for adaptation from client gradients
-    pub fn compute_client_meta_gradients(
-        &mut self,
-        _client_gradients: &HashMap<String, Array1<T>>,
-        _support_data: &HashMap<String, Array1<T>>,
-        _query_data: &HashMap<String, Array1<T>>,
-    ) -> Result<Array1<T>> {
-        // Placeholder implementation
-        Ok(Array1::default(0))
+    /// Number of parameters this learner is sized for.
+    pub fn parameter_size(&self) -> usize {
+        self.meta_parameters.len()
+    }
+
+    /// The current meta-parameters.
+    pub fn meta_parameters(&self) -> &Array1<T> {
+        &self.meta_parameters
+    }
+
+    /// The most recently computed meta-gradient.
+    pub fn meta_gradient_buffer(&self) -> &Array1<T> {
+        &self.meta_gradient_buffer
+    }
+
+    /// The per-client adaptation recorded for `client_id`, if any.
+    pub fn client_adaptation(&self, client_id: &str) -> Option<&Array1<T>> {
+        self.client_adaptations.get(client_id)
+    }
+
+    /// The task distribution recorded for `client_id`, if any.
+    pub fn task_distribution(&self, client_id: &str) -> Option<&TaskDistribution<T>> {
+        self.task_distributions.get(client_id)
     }
 }
 
@@ -705,11 +760,30 @@ impl<T: Float + Debug + Send + Sync + 'static> TaskDetector<T> {
         }
     }
 
-    /// Detect task change based on gradients
-    pub fn detect_task_change(&mut self, updates: &[Array1<T>]) -> Result<bool> {
-        // Placeholder implementation
-        let _ = updates;
-        Ok(false)
+    /// Detection threshold on the normalised gradient shift.
+    pub fn detection_threshold(&self) -> f64 {
+        self.detection_threshold
+    }
+
+    /// Replace the detection threshold.
+    pub fn set_detection_threshold(&mut self, threshold: f64) -> Result<()> {
+        if !threshold.is_finite() || threshold <= 0.0 {
+            return Err(crate::error::OptimError::InvalidParameter(format!(
+                "the task-detection threshold must be positive and finite, got {threshold}"
+            )));
+        }
+        self.detection_threshold = threshold;
+        Ok(())
+    }
+
+    /// The configured detection method.
+    pub fn detection_method(&self) -> TaskDetectionMethod {
+        self.detection_method
+    }
+
+    /// Change points detected so far.
+    pub fn change_points(&self) -> &[ChangePoint] {
+        &self.change_points
     }
 }
 
@@ -824,21 +898,50 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for ForgettingPreventionE
 // Default implementations for component creation
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ByzantineRobustAggregator<T> {
-    /// Create a new Byzantine robust aggregator
+    /// Create an aggregator with the historical hardcoded defaults.
+    ///
+    /// Retained for compatibility. Prefer
+    /// [`ByzantineRobustAggregator::with_config`]: this constructor takes no
+    /// argument, so whatever the user configured could never reach the
+    /// aggregator.
     pub fn new() -> Result<Self> {
+        Self::with_config(ByzantineRobustConfig {
+            method: ByzantineRobustMethod::TrimmedMean { trim_ratio: 0.2 },
+            expected_byzantine_ratio: 0.2,
+            dynamic_detection: true,
+            reputation_system: ReputationSystemConfig::default(),
+            statistical_tests: StatisticalTestConfig::default(),
+        })
+    }
+
+    /// Create an aggregator from a configuration.
+    pub fn with_config(config: ByzantineRobustConfig) -> Result<Self> {
+        if !(0.0..0.5).contains(&config.expected_byzantine_ratio) {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "expected_byzantine_ratio must lie in [0, 0.5), got {}; no robust aggregation rule                  tolerates half or more of the clients being adversarial",
+                config.expected_byzantine_ratio
+            )));
+        }
+        if let ByzantineRobustMethod::TrimmedMean { trim_ratio } = config.method {
+            if !(0.0..0.5).contains(&trim_ratio) {
+                return Err(crate::error::OptimError::InvalidConfig(format!(
+                    "TrimmedMean trim_ratio must lie in [0, 0.5), got {trim_ratio}"
+                )));
+            }
+        }
+        let significance_level = config.statistical_tests.significance_level;
+        if !(0.0..1.0).contains(&significance_level) || significance_level <= 0.0 {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "statistical_tests.significance_level must lie in (0, 1), got {significance_level}"
+            )));
+        }
         Ok(Self {
-            config: ByzantineRobustConfig {
-                method: ByzantineRobustMethod::TrimmedMean { trim_ratio: 0.2 },
-                expected_byzantine_ratio: 0.2,
-                dynamic_detection: true,
-                reputation_system: ReputationSystemConfig::default(),
-                statistical_tests: StatisticalTestConfig::default(),
-            },
+            config,
             client_reputations: HashMap::new(),
             outlier_history: VecDeque::new(),
             statistical_analyzer: StatisticalAnalyzer {
                 window_size: 10,
-                significancelevel: 0.05,
+                significance_level,
                 test_statistics: VecDeque::new(),
             },
             robust_estimators: RobustEstimators {
@@ -847,6 +950,21 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ByzantineRobust
                 krum_scores: HashMap::new(),
             },
         })
+    }
+
+    /// The configuration this aggregator is running under.
+    pub fn config(&self) -> &ByzantineRobustConfig {
+        &self.config
+    }
+
+    /// The significance level the outlier tests use.
+    pub fn significance_level(&self) -> f64 {
+        self.statistical_analyzer.significance_level
+    }
+
+    /// Recorded outlier detections, oldest first.
+    pub fn outlier_history(&self) -> impl Iterator<Item = &OutlierDetectionResult> {
+        self.outlier_history.iter()
     }
 }
 
@@ -861,30 +979,66 @@ impl<
             + scirs2_core::ndarray::ScalarOperand,
     > PersonalizationManager<T>
 {
-    /// Create a new personalization manager
+    /// Create a manager with personalization disabled.
+    ///
+    /// Retained for compatibility; prefer
+    /// [`PersonalizationManager::with_config`], which is the only way a
+    /// configured strategy can reach runtime.
     pub fn new() -> Result<Self> {
-        Ok(Self {
-            config: PersonalizationConfig {
+        Self::with_config(
+            PersonalizationConfig {
                 strategy: PersonalizationStrategy::None,
                 local_adaptation: LocalAdaptationConfig::default(),
                 clustering: ClusteringConfig::default(),
                 meta_learning: MetaLearningConfig::default(),
                 privacy_preserving: false,
             },
+            0,
+        )
+    }
+
+    /// Create a manager from a configuration, sized for `parameter_size`
+    /// parameters.
+    pub fn with_config(config: PersonalizationConfig, parameter_size: usize) -> Result<Self> {
+        Ok(Self {
+            config,
             client_models: HashMap::new(),
             global_model: None,
             clustering_engine: ClusteringEngine::new(),
-            meta_learner: FederatedMetaLearner::new(0),
+            meta_learner: FederatedMetaLearner::new(parameter_size),
             adaptation_tracker: AdaptationTracker::new(),
         })
+    }
+
+    /// The configuration this manager is running under.
+    pub fn config(&self) -> &PersonalizationConfig {
+        &self.config
+    }
+
+    /// The meta-learner backing the personalization strategy.
+    pub fn meta_learner(&self) -> &FederatedMetaLearner<T> {
+        &self.meta_learner
+    }
+
+    /// Mutable access to the meta-learner.
+    pub fn meta_learner_mut(&mut self) -> &mut FederatedMetaLearner<T> {
+        &mut self.meta_learner
     }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> AdaptiveBudgetManager<T> {
-    /// Create a new adaptive budget manager
+    /// Create a manager with the default (disabled) adaptive budget config.
+    ///
+    /// Retained for compatibility; prefer
+    /// [`AdaptiveBudgetManager::with_config`].
     pub fn new() -> Result<Self> {
+        Self::with_config(AdaptiveBudgetConfig::default())
+    }
+
+    /// Create a manager from a configuration.
+    pub fn with_config(config: AdaptiveBudgetConfig) -> Result<Self> {
         Ok(Self {
-            config: AdaptiveBudgetConfig::default(),
+            config,
             client_budgets: HashMap::new(),
             global_budget_tracker: GlobalBudgetTracker::new(),
             utility_estimator: UtilityEstimator {
@@ -899,21 +1053,47 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveBudgetManager<T> {
             _phantom: std::marker::PhantomData,
         })
     }
+
+    /// The configuration this manager is running under.
+    pub fn config(&self) -> &AdaptiveBudgetConfig {
+        &self.config
+    }
+
+    /// The fairness monitor.
+    pub fn fairness_monitor(&self) -> &FairnessMonitor {
+        &self.fairness_monitor
+    }
+
+    /// The adaptive budget recorded for a client, if any.
+    pub fn client_budget(&self, client_id: &str) -> Option<&AdaptiveBudget> {
+        self.client_budgets.get(client_id)
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default> CommunicationOptimizer<T> {
-    /// Create a new communication optimizer
+    /// Create an optimizer with compression disabled.
+    ///
+    /// Retained for compatibility; prefer
+    /// [`CommunicationOptimizer::with_config`], which is the only way a
+    /// configured compression strategy can reach the compression engine (the
+    /// strategy used to be hardcoded to `None` in two places).
     pub fn new() -> Result<Self> {
+        Self::with_config(CommunicationConfig {
+            compression: CompressionStrategy::None,
+            lazy_aggregation: LazyAggregationConfig::default(),
+            federated_dropout: FederatedDropoutConfig::default(),
+            async_updates: AsyncUpdateConfig::default(),
+            bandwidth_adaptation: BandwidthAdaptationConfig::default(),
+        })
+    }
+
+    /// Create an optimizer from a configuration.
+    pub fn with_config(config: CommunicationConfig) -> Result<Self> {
+        let strategy = config.compression;
         Ok(Self {
-            config: CommunicationConfig {
-                compression: CompressionStrategy::None,
-                lazy_aggregation: LazyAggregationConfig::default(),
-                federated_dropout: FederatedDropoutConfig::default(),
-                async_updates: AsyncUpdateConfig::default(),
-                bandwidth_adaptation: BandwidthAdaptationConfig::default(),
-            },
+            config,
             compression_engine: CompressionEngine {
-                strategy: CompressionStrategy::None,
+                strategy,
                 compression_history: VecDeque::new(),
                 error_feedback_memory: HashMap::new(),
             },
@@ -930,73 +1110,127 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> CommunicationOptimizer<
             quality_controller: QualityController::new(),
         })
     }
+
+    /// The configuration this optimizer is running under.
+    pub fn config(&self) -> &CommunicationConfig {
+        &self.config
+    }
+
+    /// The compression strategy actually installed in the engine.
+    pub fn compression_strategy(&self) -> CompressionStrategy {
+        self.compression_engine.strategy
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default> ContinualLearningCoordinator<T> {
-    /// Create a new continual learning coordinator
+    /// Create a coordinator with the task-agnostic strategy.
+    ///
+    /// Retained for compatibility; prefer
+    /// [`ContinualLearningCoordinator::with_config`].
     pub fn new() -> Result<Self> {
+        Self::with_config(ContinualLearningConfig {
+            strategy: ContinualLearningStrategy::TaskAgnostic,
+            memory_management: MemoryManagementConfig::default(),
+            task_detection: TaskDetectionConfig::default(),
+            knowledge_transfer: KnowledgeTransferConfig::default(),
+            forgetting_prevention: ForgettingPreventionConfig::default(),
+        })
+    }
+
+    /// Create a coordinator from a configuration.
+    ///
+    /// The task detector is configured from `config.task_detection`, so the
+    /// configured detection method and threshold reach runtime instead of the
+    /// hardcoded `GradientBased` / `0.1` pair.
+    pub fn with_config(config: ContinualLearningConfig) -> Result<Self> {
+        let mut task_detector = TaskDetector::new();
+        task_detector.detection_method = config.task_detection.detection_method;
+        task_detector.set_detection_threshold(config.task_detection.sensitivity_threshold)?;
         Ok(Self {
-            config: ContinualLearningConfig {
-                strategy: ContinualLearningStrategy::TaskAgnostic,
-                memory_management: MemoryManagementConfig::default(),
-                task_detection: TaskDetectionConfig::default(),
-                knowledge_transfer: KnowledgeTransferConfig::default(),
-                forgetting_prevention: ForgettingPreventionConfig::default(),
-            },
-            task_detector: TaskDetector::new(),
+            config,
+            task_detector,
             memory_manager: MemoryManager::new(),
             knowledge_transfer_engine: KnowledgeTransferEngine::new(),
             forgetting_prevention: ForgettingPreventionEngine::new(),
             task_history: VecDeque::new(),
         })
     }
+
+    /// The configuration this coordinator is running under.
+    pub fn config(&self) -> &ContinualLearningConfig {
+        &self.config
+    }
+
+    /// The task detector.
+    pub fn task_detector(&self) -> &TaskDetector<T> {
+        &self.task_detector
+    }
+
+    /// Mutable access to the task detector.
+    pub fn task_detector_mut(&mut self) -> &mut TaskDetector<T> {
+        &mut self.task_detector
+    }
+
+    /// Recorded task history, oldest first.
+    pub fn task_history(&self) -> impl Iterator<Item = &TaskInfo> {
+        self.task_history.iter()
+    }
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default> SecureAggregator<T> {
-    /// Create a new secure aggregator
+    /// Create a new secure aggregator.
+    ///
+    /// The aggregation threshold is taken from `config.min_clients`. It was
+    /// previously hardcoded to `10` while the configuration was stored and
+    /// ignored, so a federation configured with a different threshold silently
+    /// got 10.
     pub fn new(config: SecureAggregationConfig) -> Result<Self> {
+        if config.min_clients < 2 {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "secure_aggregation.min_clients must be at least 2, got {}",
+                config.min_clients
+            )));
+        }
+        if config.max_dropouts >= config.min_clients {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "secure_aggregation.max_dropouts ({}) must be below min_clients ({})",
+                config.max_dropouts, config.min_clients
+            )));
+        }
+        let aggregation_threshold = config.min_clients;
         Ok(Self {
             config,
             client_masks: HashMap::new(),
             shared_randomness: Arc::new(std::sync::Mutex::new(0u64)),
-            aggregation_threshold: 10,
+            aggregation_threshold,
             round_keys: Vec::new(),
         })
+    }
+
+    /// The configuration this aggregator is running under.
+    pub fn config(&self) -> &SecureAggregationConfig {
+        &self.config
+    }
+
+    /// Minimum number of clients required before an aggregate is released.
+    pub fn aggregation_threshold(&self) -> usize {
+        self.aggregation_threshold
     }
 }
 
 impl PrivacyAmplificationAnalyzer {
-    /// Create a new privacy amplification analyzer
+    /// Create a new privacy amplification analyzer.
+    ///
+    /// The analysis itself lives in [`super::composition`]:
+    /// `compute_amplification_factor` now evaluates the published subsampling
+    /// bound instead of the discarded `(1/q).sqrt()` placeholder, and records the
+    /// real client counts instead of a fabricated `total_clients: 1000`.
     pub fn new(config: AmplificationConfig) -> Self {
         Self {
             config,
             subsampling_history: VecDeque::new(),
             amplification_factors: HashMap::new(),
         }
-    }
-
-    /// Compute amplification factor for current round
-    pub fn compute_amplification_factor(
-        &mut self,
-        sampling_rate: f64,
-        round: usize,
-    ) -> Result<f64> {
-        // Placeholder implementation
-        let amplification_factor = if self.config.enabled {
-            (1.0 / sampling_rate).sqrt()
-        } else {
-            1.0
-        };
-
-        self.subsampling_history.push_back(SubsamplingEvent {
-            round,
-            sampling_rate,
-            clients_sampled: (sampling_rate * 1000.0) as usize,
-            total_clients: 1000,
-            amplificationfactor: amplification_factor,
-        });
-
-        Ok(amplification_factor)
     }
 }
 
@@ -1010,6 +1244,24 @@ impl<T: Float + Debug + Send + Sync + 'static> CrossDevicePrivacyManager<T> {
             temporal_correlations: HashMap::new(),
         }
     }
+
+    /// The configuration this manager is running under.
+    ///
+    /// Every field of it is currently unimplemented, which is why
+    /// `FederatedPrivacyConfig::validate` refuses a configuration that sets any
+    /// of them; see `privacy::federated::cross_device_manager` for the working
+    /// implementation of the same idea.
+    pub fn config(&self) -> &CrossDeviceConfig {
+        &self.config
+    }
+
+    /// Devices recorded for a user, if any.
+    pub fn user_devices(&self, user_id: &str) -> &[String] {
+        self.user_clusters
+            .get(user_id)
+            .map(|devices| devices.as_slice())
+            .unwrap_or(&[])
+    }
 }
 
 impl FederatedCompositionAnalyzer {
@@ -1020,5 +1272,247 @@ impl FederatedCompositionAnalyzer {
             round_compositions: Vec::new(),
             client_compositions: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::privacy::federated_privacy::config::{
+        AdaptiveBudgetConfig, BandwidthAdaptationConfig, ByzantineRobustConfig,
+        ByzantineRobustMethod, ClusteringConfig, CommunicationConfig, CompressionStrategy,
+        ContinualLearningConfig, ContinualLearningStrategy, CrossDeviceConfig,
+        FederatedDropoutConfig, ForgettingPreventionConfig, KnowledgeTransferConfig,
+        LazyAggregationConfig, LocalAdaptationConfig, MemoryManagementConfig, MetaLearningConfig,
+        PersonalizationConfig, PersonalizationStrategy, ReputationSystemConfig,
+        SecureAggregationConfig, StatisticalTestConfig, TaskDetectionConfig, TaskDetectionMethod,
+    };
+
+    fn byzantine_config(trim_ratio: f64, byzantine_ratio: f64) -> ByzantineRobustConfig {
+        ByzantineRobustConfig {
+            method: ByzantineRobustMethod::TrimmedMean { trim_ratio },
+            expected_byzantine_ratio: byzantine_ratio,
+            dynamic_detection: true,
+            reputation_system: ReputationSystemConfig::default(),
+            statistical_tests: StatisticalTestConfig::default(),
+        }
+    }
+
+    #[test]
+    fn the_byzantine_aggregator_takes_its_configuration() {
+        // Regression for F104: `new()` took no argument and hardcoded
+        // TrimmedMean{0.2} with expected_byzantine_ratio 0.2, so whatever the
+        // user configured could never reach the aggregator.
+        let aggregator =
+            match ByzantineRobustAggregator::<f64>::with_config(byzantine_config(0.35, 0.4)) {
+                Ok(aggregator) => aggregator,
+                Err(err) => panic!("construction failed: {err}"),
+            };
+        assert_eq!(aggregator.config().expected_byzantine_ratio, 0.4);
+        match aggregator.config().method {
+            ByzantineRobustMethod::TrimmedMean { trim_ratio } => {
+                assert!((trim_ratio - 0.35).abs() < 1e-12)
+            }
+            other => panic!("unexpected method {other:?}"),
+        }
+        assert!((aggregator.significance_level() - 0.05).abs() < 1e-12);
+    }
+
+    #[test]
+    fn an_unusable_byzantine_configuration_is_refused() {
+        for (trim, byzantine) in [
+            (0.5f64, 0.2f64),
+            (0.9, 0.2),
+            (-0.1, 0.2),
+            (0.2, 0.5),
+            (0.2, 1.0),
+        ] {
+            assert!(
+                ByzantineRobustAggregator::<f64>::with_config(byzantine_config(trim, byzantine))
+                    .is_err(),
+                "trim={trim}, byzantine={byzantine} must be refused"
+            );
+        }
+        let mut config = byzantine_config(0.2, 0.2);
+        config.statistical_tests.significance_level = 1.0;
+        assert!(ByzantineRobustAggregator::<f64>::with_config(config).is_err());
+    }
+
+    #[test]
+    fn the_secure_aggregator_honours_the_configured_threshold() {
+        // The threshold was hardcoded to 10 while the config was stored and
+        // ignored.
+        let config = SecureAggregationConfig {
+            min_clients: 25,
+            max_dropouts: 4,
+            ..SecureAggregationConfig::default()
+        };
+        let aggregator = match SecureAggregator::<f64>::new(config) {
+            Ok(aggregator) => aggregator,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        assert_eq!(aggregator.aggregation_threshold(), 25);
+        assert_eq!(aggregator.config().min_clients, 25);
+
+        for (min_clients, max_dropouts) in [(1usize, 0usize), (0, 0), (5, 5), (5, 9)] {
+            let config = SecureAggregationConfig {
+                min_clients,
+                max_dropouts,
+                ..SecureAggregationConfig::default()
+            };
+            assert!(
+                SecureAggregator::<f64>::new(config).is_err(),
+                "min_clients={min_clients}, max_dropouts={max_dropouts} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn the_personalization_manager_takes_its_strategy_and_size() {
+        let config = PersonalizationConfig {
+            strategy: PersonalizationStrategy::MetaLearning {
+                inner_lr: 0.01,
+                outer_lr: 0.001,
+            },
+            local_adaptation: LocalAdaptationConfig::default(),
+            clustering: ClusteringConfig::default(),
+            meta_learning: MetaLearningConfig::default(),
+            privacy_preserving: true,
+        };
+        let manager = match PersonalizationManager::<f64>::with_config(config, 128) {
+            Ok(manager) => manager,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        assert!(matches!(
+            manager.config().strategy,
+            PersonalizationStrategy::MetaLearning { .. }
+        ));
+        assert!(manager.config().privacy_preserving);
+        assert_eq!(
+            manager.meta_learner().parameter_size(),
+            128,
+            "the meta-learner must be sized for the model, not left at 0"
+        );
+
+        // The compatibility constructor keeps the historical behaviour.
+        let default_manager = match PersonalizationManager::<f64>::new() {
+            Ok(manager) => manager,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        assert!(matches!(
+            default_manager.config().strategy,
+            PersonalizationStrategy::None
+        ));
+    }
+
+    #[test]
+    fn the_communication_optimizer_installs_the_configured_compression() {
+        // `CompressionStrategy::None` was hardcoded twice, so the configured
+        // strategy never reached the engine.
+        let config = CommunicationConfig {
+            compression: CompressionStrategy::TopK { k: 128 },
+            lazy_aggregation: LazyAggregationConfig::default(),
+            federated_dropout: FederatedDropoutConfig::default(),
+            async_updates: AsyncUpdateConfig::default(),
+            bandwidth_adaptation: BandwidthAdaptationConfig::default(),
+        };
+        let optimizer = match CommunicationOptimizer::<f64>::with_config(config) {
+            Ok(optimizer) => optimizer,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        match optimizer.compression_strategy() {
+            CompressionStrategy::TopK { k } => assert_eq!(k, 128),
+            other => panic!("the engine got {other:?} instead of the configured strategy"),
+        }
+        match optimizer.config().compression {
+            CompressionStrategy::TopK { .. } => {}
+            other => panic!("the config records {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_continual_learning_coordinator_configures_its_detector() {
+        let config = ContinualLearningConfig {
+            strategy: ContinualLearningStrategy::EWC { lambda: 0.5 },
+            memory_management: MemoryManagementConfig::default(),
+            task_detection: TaskDetectionConfig {
+                enabled: true,
+                detection_method: TaskDetectionMethod::GradientBased,
+                sensitivity_threshold: 0.42,
+                adaptation_delay: 3,
+            },
+            knowledge_transfer: KnowledgeTransferConfig::default(),
+            forgetting_prevention: ForgettingPreventionConfig::default(),
+        };
+        let coordinator = match ContinualLearningCoordinator::<f64>::with_config(config) {
+            Ok(coordinator) => coordinator,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        assert!(matches!(
+            coordinator.config().strategy,
+            ContinualLearningStrategy::EWC { .. }
+        ));
+        assert!(
+            (coordinator.task_detector().detection_threshold() - 0.42).abs() < 1e-12,
+            "the configured sensitivity must reach the detector, got {}",
+            coordinator.task_detector().detection_threshold()
+        );
+        assert!(coordinator.task_history().next().is_none());
+    }
+
+    #[test]
+    fn an_unusable_task_detection_threshold_is_refused() {
+        let config = ContinualLearningConfig {
+            strategy: ContinualLearningStrategy::TaskAgnostic,
+            memory_management: MemoryManagementConfig::default(),
+            task_detection: TaskDetectionConfig {
+                enabled: true,
+                detection_method: TaskDetectionMethod::GradientBased,
+                sensitivity_threshold: 0.0,
+                adaptation_delay: 1,
+            },
+            knowledge_transfer: KnowledgeTransferConfig::default(),
+            forgetting_prevention: ForgettingPreventionConfig::default(),
+        };
+        assert!(ContinualLearningCoordinator::<f64>::with_config(config).is_err());
+    }
+
+    #[test]
+    fn the_adaptive_budget_manager_takes_its_configuration() {
+        let config = AdaptiveBudgetConfig {
+            enabled: true,
+            ..AdaptiveBudgetConfig::default()
+        };
+        let manager = match AdaptiveBudgetManager::<f64>::with_config(config) {
+            Ok(manager) => manager,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        assert!(
+            manager.config().enabled,
+            "the configured `enabled` flag must reach the manager"
+        );
+        assert!(manager.client_budget("nobody").is_none());
+
+        let default_manager = match AdaptiveBudgetManager::<f64>::new() {
+            Ok(manager) => manager,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        assert!(!default_manager.config().enabled);
+    }
+
+    #[test]
+    fn the_cross_device_manager_exposes_its_configuration() {
+        let manager = CrossDevicePrivacyManager::<f64>::new(CrossDeviceConfig::default());
+        assert!(!manager.config().user_level_privacy);
+        assert!(manager.user_devices("nobody").is_empty());
+    }
+
+    #[test]
+    fn fairness_weights_default_to_one_for_unknown_clients() {
+        let monitor = FairnessMonitor::new();
+        let weights = monitor.compute_fairness_weights(&["a".to_string(), "b".to_string()]);
+        assert_eq!(weights.len(), 2);
+        assert!(weights.values().all(|weight| (*weight - 1.0).abs() < 1e-12));
+        assert_eq!(monitor.get_metrics().demographic_parity, 0.0);
     }
 }

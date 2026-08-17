@@ -910,10 +910,7 @@ mod tests {
     fn compliant_event(id: &str) -> AuditEvent {
         AuditEvent {
             id: id.to_string(),
-            timestamp: match unix_timestamp() {
-                Ok(now) => now,
-                Err(_) => 0,
-            },
+            timestamp: unix_timestamp().unwrap_or_default(),
             event_type: AuditEventType::DataAccess,
             actor: "trainer".to_string(),
             data: AuditEventData {

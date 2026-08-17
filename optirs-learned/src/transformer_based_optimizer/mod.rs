@@ -325,18 +325,29 @@ impl<
 
     /// Adopt a new architecture configuration.
     ///
-    /// Returns `true` when something actually changed. When any *structural*
-    /// dimension differs (`model_dimension`, `num_transformer_layers`,
-    /// `num_attention_heads`, `attention_head_dimension`,
-    /// `feedforward_dimension`, `sequence_length`, `activation_function`,
-    /// `positional_encoding_type`) the transformer stack, the positional
-    /// encoding and the optimizer state are rebuilt at the new shape — the
-    /// existing weights cannot be reinterpreted at a different width, so a fresh
-    /// initialization is the honest response. Non-structural fields
-    /// (`learning_rate`, `dropout_rate`, clipping, weight decay) are adopted in
-    /// place and keep the learned weights.
+    /// The return value says exactly what happened, because the two cases differ
+    /// in a way callers must not be left guessing about:
     ///
-    /// This is what makes
+    /// * [`ArchitectureUpdate::Unchanged`] — the proposal matched the live
+    ///   configuration; nothing was touched.
+    /// * [`ArchitectureUpdate::InPlace`] — only non-structural fields differed
+    ///   (`learning_rate`, `dropout_rate`, clipping, weight decay). They were
+    ///   adopted and **all learned weights were kept**.
+    /// * [`ArchitectureUpdate::Rebuilt`] — a structural dimension differed
+    ///   (`model_dimension`, `num_transformer_layers`, `num_attention_heads`,
+    ///   `attention_head_dimension`, `feedforward_dimension`, `sequence_length`,
+    ///   `activation_function`, `positional_encoding_type`). Weights of one shape
+    ///   cannot be reinterpreted at another, so the transformer stack, positional
+    ///   encoding, meta-learning networks and optimizer state were **rebuilt from
+    ///   a fresh initialization — every learned parameter was discarded.**
+    ///
+    /// That last case is destructive, which is why it is reported rather than
+    /// signalled by a bare `true`. `AdaptiveTransformerEnhancement`'s architecture
+    /// proposal is a function of the measured landscape rather than of the current
+    /// architecture, so repeated enhancement converges and stops rebuilding
+    /// instead of wiping the weights on every call.
+    ///
+    /// This is also what makes
     /// `AdaptiveTransformerEnhancement::enhance_optimizer` actually enhance the
     /// optimizer it is given; before, its `&mut TransformerOptimizer` argument
     /// was never touched.
@@ -347,7 +358,7 @@ impl<
     pub fn apply_architecture_config(
         &mut self,
         config: &TransformerBasedOptimizerConfig<T>,
-    ) -> Result<bool> {
+    ) -> Result<ArchitectureUpdate> {
         let structural_change = config.model_dimension != self.config.model_dimension
             || config.num_transformer_layers != self.config.num_transformer_layers
             || config.num_attention_heads != self.config.num_attention_heads
@@ -378,7 +389,7 @@ impl<
             self.memory_manager = memory_manager;
             self.state = state;
             self.config = config.clone();
-            return Ok(true);
+            return Ok(ArchitectureUpdate::Rebuilt);
         }
 
         let non_structural_change = config.learning_rate != self.config.learning_rate
@@ -388,10 +399,10 @@ impl<
             || config.weight_decay != self.config.weight_decay;
         if non_structural_change {
             self.config = config.clone();
-            return Ok(true);
+            return Ok(ArchitectureUpdate::InPlace);
         }
 
-        Ok(false)
+        Ok(ArchitectureUpdate::Unchanged)
     }
 
     /// The configuration currently in force.
@@ -455,6 +466,33 @@ pub struct TrainingSequence<
     pub sequence_length: usize,
 }
 
+/// Outcome of [`TransformerOptimizer::apply_architecture_config`].
+///
+/// Distinguishes a no-op from a weight-preserving update from a **destructive**
+/// rebuild, so a caller can never mistake the third for the second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchitectureUpdate {
+    /// The proposal already matched the live configuration.
+    Unchanged,
+    /// Only non-structural fields changed; all learned weights were kept.
+    InPlace,
+    /// A structural dimension changed, so every learned parameter was discarded
+    /// and re-initialized.
+    Rebuilt,
+}
+
+impl ArchitectureUpdate {
+    /// Whether anything changed at all.
+    pub fn changed(self) -> bool {
+        !matches!(self, ArchitectureUpdate::Unchanged)
+    }
+
+    /// Whether learned parameters were discarded.
+    pub fn discarded_weights(self) -> bool {
+        matches!(self, ArchitectureUpdate::Rebuilt)
+    }
+}
+
 /// Training metrics
 #[derive(Debug, Clone)]
 pub struct TrainingMetrics {
@@ -478,16 +516,17 @@ mod tests {
 
     /// Small but structurally complete configuration for the training tests.
     fn small_config() -> TransformerBasedOptimizerConfig<f64> {
-        let mut config = TransformerBasedOptimizerConfig::<f64>::default();
-        config.model_dimension = 8;
-        config.num_transformer_layers = 2;
-        config.num_attention_heads = 2;
-        config.attention_head_dimension = 4;
-        config.feedforward_dimension = 16;
-        config.sequence_length = 8;
-        config.learning_rate = 1e-2;
-        config.dropout_rate = 0.0;
-        config
+        TransformerBasedOptimizerConfig::<f64> {
+            model_dimension: 8,
+            num_transformer_layers: 2,
+            num_attention_heads: 2,
+            attention_head_dimension: 4,
+            feedforward_dimension: 16,
+            sequence_length: 8,
+            learning_rate: 1e-2,
+            dropout_rate: 0.0,
+            ..Default::default()
+        }
     }
 
     fn trajectory(steps: usize, width: usize, scale: f64) -> OptimizationTrajectory<f64> {

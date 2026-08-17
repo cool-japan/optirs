@@ -400,15 +400,23 @@ impl<T: Float + Debug + Send + Sync + 'static> NetworkColumn<T> {
             z[i] = z[i] + sum;
         }
 
-        // ReLU activation (except for the last layer which is linear)
-        let is_last_layer = layer_idx == self.weights.len() - 1;
-        let a = if is_last_layer {
+        let a = self.apply_activation(&z, layer_idx);
+        Ok((z, a))
+    }
+
+    /// Apply layer `layer_idx`'s activation to a pre-activation vector.
+    ///
+    /// ReLU everywhere except the final layer, which is linear. Split out of
+    /// [`Self::forward_layer`] so a caller that needs to inject a lateral
+    /// contribution into the pre-activation (progressive networks) still applies
+    /// exactly the same nonlinearity.
+    fn apply_activation(&self, z: &Array1<T>, layer_idx: usize) -> Array1<T> {
+        let is_last_layer = layer_idx + 1 == self.weights.len();
+        if is_last_layer {
             z.clone()
         } else {
             z.mapv(|v| if v > T::zero() { v } else { T::zero() })
-        };
-
-        Ok((z, a))
+        }
     }
 }
 
@@ -600,13 +608,23 @@ impl<T: Float + Debug + Send + Sync + 'static> ProgressiveNetworks<T> {
             let mut h = input.clone();
 
             for l in 0..num_layers {
-                // Lateral contribution from previous columns (only for col > 0 and l > 0)
-                if col > 0 && l > 0 {
+                // Lateral contribution from previous columns (only for col > 0 and l > 0).
+                //
+                // Progressive Neural Networks (Rusu et al. 2016, eq. 1) add the
+                // lateral term to the **pre-activation** of layer `l`:
+                //
+                //     h_l^(k) = f( W_l^(k) h_{l-1}^(k) + Σ_{j<k} U_l^(k:j) h_{l-1}^(j) )
+                //
+                // The previous implementation added it to the layer *input*
+                // instead. `U_l` has `layer_sizes[l+1]` rows while the input has
+                // `layer_sizes[l]` entries, so an `if h.len() ==
+                // lateral_contribution.len()` guard silently dropped the whole
+                // lateral term for every network whose layer widths differ — i.e.
+                // no transfer at all, with no diagnostic.
+                let lateral_contribution = if col > 0 && l > 0 {
                     let laterals = &self.lateral_connections[col];
                     if !laterals.is_empty() && l < laterals.len() {
                         let lat_w = &laterals[l];
-                        // Concatenate activations from all previous columns at layer l-1
-                        // (previous layer's output for each previous column)
                         let mut lateral_input_parts: Vec<T> = Vec::new();
                         for prev_col_acts in all_activations.iter().take(col) {
                             if l - 1 < prev_col_acts.len() {
@@ -615,36 +633,54 @@ impl<T: Float + Debug + Send + Sync + 'static> ProgressiveNetworks<T> {
                             }
                         }
 
-                        if !lateral_input_parts.is_empty() {
+                        if lateral_input_parts.is_empty() {
+                            None
+                        } else {
                             let lateral_input = Array1::from_vec(lateral_input_parts);
-
-                            // Check dimension compatibility
-                            if lat_w.ncols() == lateral_input.len() {
-                                let lat_out_dim = lat_w.nrows();
-                                let lat_in_dim = lat_w.ncols();
-                                let mut lateral_contribution =
-                                    Array1::from_elem(lat_out_dim, T::zero());
-                                for i in 0..lat_out_dim {
-                                    let mut sum = T::zero();
-                                    for j in 0..lat_in_dim {
-                                        sum = sum + lat_w[[i, j]] * lateral_input[j];
-                                    }
-                                    lateral_contribution[i] = sum;
-                                }
-
-                                // Add lateral contribution to input before this layer
-                                // Dimensions must match: h and lateral_contribution
-                                if h.len() == lateral_contribution.len() {
-                                    for i in 0..h.len() {
-                                        h[i] = h[i] + lateral_contribution[i];
-                                    }
-                                }
+                            if lat_w.ncols() != lateral_input.len() {
+                                return Err(OptimError::NetworkError(format!(
+                                    "lateral weight at column {col} layer {l} expects \
+                                     {} inputs but the previous columns supplied {}",
+                                    lat_w.ncols(),
+                                    lateral_input.len()
+                                )));
                             }
+                            let lat_out_dim = lat_w.nrows();
+                            let mut contribution = Array1::from_elem(lat_out_dim, T::zero());
+                            for i in 0..lat_out_dim {
+                                let mut sum = T::zero();
+                                for j in 0..lat_w.ncols() {
+                                    sum = sum + lat_w[[i, j]] * lateral_input[j];
+                                }
+                                contribution[i] = sum;
+                            }
+                            Some(contribution)
                         }
+                    } else {
+                        None
                     }
-                }
+                } else {
+                    None
+                };
 
-                let (_pre, post) = column.forward_layer(&h, l)?;
+                let (mut pre, post_without_lateral) = column.forward_layer(&h, l)?;
+                let post = match lateral_contribution {
+                    Some(contribution) => {
+                        if contribution.len() != pre.len() {
+                            return Err(OptimError::NetworkError(format!(
+                                "lateral contribution at column {col} layer {l} has \
+                                 {} entries but the pre-activation has {}",
+                                contribution.len(),
+                                pre.len()
+                            )));
+                        }
+                        for i in 0..pre.len() {
+                            pre[i] = pre[i] + contribution[i];
+                        }
+                        column.apply_activation(&pre, l)
+                    }
+                    None => post_without_lateral,
+                };
                 col_activations.push(post.clone());
                 h = post;
             }
@@ -1080,6 +1116,74 @@ mod tests {
         // Freeze out-of-range column should error
         let err = pn.freeze_column(99);
         assert!(err.is_err(), "freezing out-of-range column should fail");
+    }
+
+    /// F39: the lateral contribution was added to the layer *input* while being
+    /// sized for the layer *output*, so an `if h.len() == contribution.len()`
+    /// guard silently dropped every lateral term whenever consecutive layer
+    /// widths differed — i.e. no transfer at all, with no diagnostic.
+    ///
+    /// With `hidden_sizes = [8, 4]` and input 4 / output 2, *every* consecutive
+    /// pair of widths differs (4→8→4→2), so under the old code the second column
+    /// was mathematically identical to a standalone column. Zeroing the lateral
+    /// weights must therefore change the output.
+    #[test]
+    fn lateral_connections_actually_contribute_with_varying_layer_widths() {
+        let mut pn: ProgressiveNetworks<F> = ProgressiveNetworks::new(vec![8, 4]);
+        pn.add_task_column(4, 2).expect("column 0");
+        pn.add_task_column(4, 2).expect("column 1");
+
+        let input = Array1::from_vec(vec![0.6, -0.4, 0.9, -1.1]);
+        let with_laterals = pn.forward(&input, 1).expect("forward with laterals");
+
+        // Confirm the lateral weights are non-trivial to begin with.
+        let lateral_magnitude = pn.lateral_connections[1]
+            .iter()
+            .flat_map(|m| m.iter())
+            .fold(0.0_f64, |acc, v| acc.max(v.abs()));
+        assert!(
+            lateral_magnitude > 0.0,
+            "column 1 has no lateral weights to contribute"
+        );
+
+        // Zero them out: if the laterals were being applied, the output changes.
+        for matrix in pn.lateral_connections[1].iter_mut() {
+            matrix.fill(0.0);
+        }
+        let without_laterals = pn.forward(&input, 1).expect("forward without laterals");
+
+        let delta = with_laterals
+            .iter()
+            .zip(without_laterals.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f64, f64::max);
+        assert!(
+            delta > 1e-9,
+            "zeroing the lateral weights changed nothing (max delta {delta}); \
+             the lateral contribution is still being silently dropped"
+        );
+
+        // Column 0 has no laterals, so it must be unaffected either way.
+        let col0 = pn.forward(&input, 0).expect("forward column 0");
+        assert_eq!(col0.len(), 2);
+    }
+
+    /// F39: an inconsistent lateral weight shape must now be an error rather
+    /// than a silent skip.
+    #[test]
+    fn a_mis_shaped_lateral_weight_is_an_error() {
+        let mut pn: ProgressiveNetworks<F> = ProgressiveNetworks::new(vec![8, 4]);
+        pn.add_task_column(4, 2).expect("column 0");
+        pn.add_task_column(4, 2).expect("column 1");
+
+        // Corrupt one lateral matrix's input width.
+        pn.lateral_connections[1][1] = Array2::from_elem((4, 3), 0.1);
+        let input = Array1::from_vec(vec![0.6, -0.4, 0.9, -1.1]);
+        assert!(
+            pn.forward(&input, 1).is_err(),
+            "a lateral weight whose width does not match the concatenated \
+             previous activations must be reported, not ignored"
+        );
     }
 
     #[test]

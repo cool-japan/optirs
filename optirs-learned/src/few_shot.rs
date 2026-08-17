@@ -14,6 +14,10 @@ use std::time::{Duration, Instant};
 use super::OptimizerState;
 use crate::error::{OptimError, Result};
 
+pub mod prototypical;
+
+pub use prototypical::{activate, xavier_encoder_layer};
+
 /// Few-shot learning coordinator for optimizer adaptation
 pub struct FewShotLearningSystem<T: Float + Debug + Send + Sync + 'static> {
     /// Base meta-learned optimizer
@@ -472,8 +476,9 @@ pub struct TransferStatistics<T: Float + Debug + Send + Sync + 'static> {
 
 /// Prototypical network for task representation
 pub struct PrototypicalNetwork<T: Float + Debug + Send + Sync + 'static> {
-    /// Encoder network
-    encoder: EncoderNetwork<T>,
+    /// Encoder network. Visible to the `prototypical` child module, which owns
+    /// the encoder's initialization and forward pass.
+    pub(super) encoder: EncoderNetwork<T>,
 
     /// Prototype storage
     prototypes: HashMap<String, Prototype<T>>,
@@ -1056,13 +1061,11 @@ impl<T: Float + Debug + Send + Sync + 'static> PrototypicalNetwork<T> {
                 "embedding_dim must be > 0".to_string(),
             ));
         }
-        // Build a single-layer encoder: input_dim -> embedding_dim
+        // Build a single-layer encoder: input_dim -> embedding_dim.
+        // Xavier-initialized, not zeros: a zero-weight encoder outputs the zero
+        // vector for every input and has a zero gradient, so it can never learn.
         let input_dim = config.hidden_dim.max(config.embedding_dim);
-        let layer = EncoderLayer {
-            weights: Array2::zeros((input_dim, config.embedding_dim)),
-            bias: Array1::zeros(config.embedding_dim),
-            layer_type: LayerType::Linear,
-        };
+        let layer = xavier_encoder_layer::<T>(input_dim, config.embedding_dim, LayerType::Linear)?;
         Ok(Self {
             encoder: EncoderNetwork {
                 layers: vec![layer],
@@ -1087,11 +1090,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrototypicalNetwork<T> {
                 "embedding_dim must be > 0".to_string(),
             ));
         }
-        let layer = EncoderLayer {
-            weights: Array2::zeros((embedding_dim, embedding_dim)),
-            bias: Array1::zeros(embedding_dim),
-            layer_type: LayerType::Linear,
-        };
+        let layer = xavier_encoder_layer::<T>(embedding_dim, embedding_dim, LayerType::Linear)?;
         Ok(Self {
             encoder: EncoderNetwork {
                 layers: vec![layer],
@@ -1135,29 +1134,47 @@ impl<T: Float + Debug + Send + Sync + 'static> PrototypicalNetwork<T> {
         &self.distance_metric
     }
 
-    /// Encode a task into an embedding vector
+    /// Encode a task into an embedding vector.
+    ///
+    /// Standard prototypical-network form (Snell et al. 2017): every support
+    /// example is passed through the learned encoder `f_φ` and the prototype is
+    /// the **mean of the embeddings**. Previously this computed a truncated
+    /// coordinate-wise mean of the *raw* features and never touched
+    /// `self.encoder` at all, so the encoder was dead weight and the
+    /// "embedding" was just the input.
+    ///
+    /// # Errors
+    /// Returns `Err` when the support set is empty or the encoder rejects the
+    /// feature width.
     pub fn encode_task(&self, task_data: &TaskData<T>) -> Result<Array1<T>> {
-        // Compute mean of support set features as task representation
         if task_data.support_set.examples.is_empty() {
             return Err(OptimError::InsufficientData(
                 "No support examples for encoding".to_string(),
             ));
         }
-        let dim = self.parameters.embedding_dim;
-        let mut sum = Array1::<T>::zeros(dim);
+
+        let width = self.encoder.embedding_width()?;
+        let mut sum = Array1::<T>::zeros(width);
         let count = task_data.support_set.examples.len();
         for ex in &task_data.support_set.examples {
-            let feat = &ex.features;
-            let len = feat.len().min(dim);
-            for i in 0..len {
-                sum[i] = sum[i] + feat[i];
+            let embedded = self.encoder.forward(&ex.features)?;
+            for i in 0..width {
+                sum[i] = sum[i] + embedded[i];
             }
         }
         let count_t = scirs2_core::numeric::NumCast::from(count).unwrap_or_else(|| T::one());
-        for i in 0..dim {
-            sum[i] = sum[i] / count_t;
+        for slot in sum.iter_mut() {
+            *slot = *slot / count_t;
         }
         Ok(sum)
+    }
+
+    /// Width of the embedding [`Self::encode_task`] produces.
+    ///
+    /// # Errors
+    /// Returns `Err` when the encoder has no layers.
+    pub fn embedding_width(&self) -> Result<usize> {
+        self.encoder.embedding_width()
     }
 
     /// Update prototypes with new experience

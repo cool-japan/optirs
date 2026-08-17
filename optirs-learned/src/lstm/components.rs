@@ -21,14 +21,16 @@ use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use super::bptt::{BpttConfig, DiagonalQuadraticTask, MetaTrainer};
+use super::bptt::{BpttConfig, DiagonalQuadraticTask};
+use super::trainer::MetaTrainer;
 use super::{
-    AdaptiveLearningRateController, ConvergenceIndicators, DomainSimilarityEstimator,
-    FlowStability, GradientAnalyzer, GradientCorrelationTracker, GradientFlowAnalyzer,
-    GradientNoiseEstimator, GradientStatistics, HistoryBuffer, InnerLoopState, LRAdaptationParams,
-    LSTMNetwork, LossLandscapeAnalyzer, MetaLearner, MetaLearningState, MetaTask, NoiseCharacteristics,
-    NoiseType, OptimizationPhase, OptimizationStateTracker, PerformanceTrend, PerformanceTracker,
-    SimilarityFunction, StabilityMetrics, TransferLearner, TransferMetrics, TransferResults,
+    AdaptationEvent, AdaptiveLearningRateController, ConvergenceIndicators,
+    DomainSimilarityEstimator, FlowStability, GradientAnalyzer, GradientCorrelationTracker,
+    GradientFlowAnalyzer, GradientNoiseEstimator, GradientStatistics, HistoryBuffer,
+    InnerLoopState, LRAdaptationParams, LSTMNetwork, LossLandscapeAnalyzer, MetaLearner,
+    MetaLearningState, MetaTask, NoiseCharacteristics, NoiseType, OptimizationPhase,
+    OptimizationStateTracker, PerformanceTracker, PerformanceTrend, SimilarityFunction,
+    StabilityMetrics, TransferLearner, TransferMetrics, TransferResults,
 };
 use crate::error::{OptimError, Result};
 use crate::{LearnedOptimizerConfig, MetaOptimizationStrategy};
@@ -38,6 +40,15 @@ const LR_TREND_WINDOW: usize = 8;
 
 /// How many samples the state tracker keeps in each trend vector.
 const STATE_TREND_WINDOW: usize = 32;
+
+/// Shortest truncated-BPTT horizon `MetaLearner::step` will use. Below ~4 steps
+/// the recurrent carry barely contributes and the meta-gradient degenerates
+/// towards plain backprop.
+const MIN_UNROLL_STEPS: usize = 4;
+
+/// Longest truncated-BPTT horizon `MetaLearner::step` will use. The unrolled tape
+/// costs `O(horizon · parameters)` memory, so this bounds one meta-step's cost.
+const MAX_UNROLL_STEPS: usize = 32;
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> {
     pub(super) fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
@@ -135,12 +146,19 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> 
             )));
         }
 
-        let unroll = self
-            .meta_state
-            .adaptation_history
-            .len()
-            .clamp(8, 32)
-            .max(8);
+        // Unroll horizon: the shortest observed trajectory, clamped to a sane
+        // range. That is the horizon over which the surrogates were actually
+        // identified, so unrolling for about that long is what the data supports.
+        //
+        // This used to read `adaptation_history.len().clamp(8, 32).max(8)`, and
+        // `adaptation_history` had no writers anywhere — so the expression was
+        // always exactly `8`, dressed up as if it adapted to something.
+        let shortest_trajectory = tasks
+            .iter()
+            .map(|t| t.training_trajectory.len())
+            .min()
+            .unwrap_or(0);
+        let unroll = shortest_trajectory.clamp(MIN_UNROLL_STEPS, MAX_UNROLL_STEPS);
         let bptt_config = BpttConfig {
             unroll_steps: unroll,
             meta_learning_rate: self.meta_state.meta_lr.to_f64().unwrap_or(1e-3),
@@ -150,6 +168,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> 
         let meta_loss = trainer.meta_step(network, &surrogates, &weights)?;
 
         // Record what was learned so the state is no longer write-only.
+        // `previous_loss` must be read *before* the field is overwritten,
+        // otherwise `performance_improvement` below is identically zero.
+        let previous_loss = self.meta_state.meta_validation_performance;
         self.meta_state.meta_step += 1;
         self.meta_state.meta_validation_performance = meta_loss;
         for task in tasks.iter().take(16) {
@@ -167,7 +188,37 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> 
             Array1::from_vec(trainer.last_gradient_vector()),
         );
 
+        // Record what this step actually achieved, so `adaptation_history` holds
+        // measurements instead of staying permanently empty.
+        self.meta_state
+            .adaptation_history
+            .push_back(AdaptationEvent {
+                source_task: tasks
+                    .first()
+                    .map(|t| t.id.clone())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                target_task: tasks
+                    .last()
+                    .map(|t| t.id.clone())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                adaptation_steps: unroll,
+                transfer_efficiency: if previous_loss > T::zero() {
+                    (previous_loss - meta_loss) / previous_loss
+                } else {
+                    T::zero()
+                },
+                performance_improvement: previous_loss - meta_loss,
+            });
+        while self.meta_state.adaptation_history.len() > 256 {
+            self.meta_state.adaptation_history.pop_front();
+        }
+
         Ok(meta_loss)
+    }
+
+    /// Adaptation events recorded by [`Self::step`], oldest first.
+    pub fn adaptation_history(&self) -> &VecDeque<AdaptationEvent<T>> {
+        &self.meta_state.adaptation_history
     }
 
     /// Number of meta-training steps performed so far.
@@ -391,7 +442,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveLearnin
         // Prefer the controller's own window; fall back to the shared history
         // buffer when the caller passes no per-step loss.
         let losses: Vec<T> = if self.performance_tracker.recent_losses.len() >= 2 {
-            self.performance_tracker.recent_losses.iter().copied().collect()
+            self.performance_tracker
+                .recent_losses
+                .iter()
+                .copied()
+                .collect()
         } else {
             history
                 .losses
@@ -430,7 +485,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveLearnin
         } else if improvement_rate < T::zero() {
             PerformanceTrend::Degrading
         } else {
-            PerformanceTrend::Stable
+            PerformanceTrend::Stagnating
         };
 
         // --- stagnation escape ----------------------------------------------
@@ -563,8 +618,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationSta
             return;
         }
         self.step_count += 1;
-        let n_t: T =
-            scirs2_core::numeric::NumCast::from(self.step_count).unwrap_or_else(T::one);
+        let n_t: T = scirs2_core::numeric::NumCast::from(self.step_count).unwrap_or_else(T::one);
 
         let grad_norm = gradients
             .iter()
@@ -644,7 +698,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationSta
                 }
                 let noise = diff_sq.sqrt();
                 self.gradient_analyzer.noise_estimator.noise_level = noise;
-                self.gradient_analyzer.noise_estimator.signal_to_noise_ratio = if noise > T::zero() {
+                self.gradient_analyzer.noise_estimator.signal_to_noise_ratio = if noise > T::zero()
+                {
                     grad_norm / noise
                 } else {
                     T::infinity()
@@ -673,8 +728,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationSta
             for w in trend.windows(3) {
                 second_diff = second_diff + (w[2] - w[1] - (w[1] - w[0])).abs();
             }
-            let count: T = scirs2_core::numeric::NumCast::from(trend.len() - 2)
-                .unwrap_or_else(T::one);
+            let count: T =
+                scirs2_core::numeric::NumCast::from(trend.len() - 2).unwrap_or_else(T::one);
             let mean_second = second_diff / count;
             self.landscape_analyzer.roughness = mean_second / (T::one() + mean_second);
         }
@@ -682,9 +737,9 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationSta
             self.gradient_analyzer.noise_estimator.noise_level;
         self.stability_metrics.stability_margin =
             T::one() / (T::one() + self.landscape_analyzer.local_curvature);
-        self.stability_metrics.robustness_score =
-            (T::one() + self.gradient_analyzer.gradient_stats.direction_consistency)
-                / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(T::one);
+        self.stability_metrics.robustness_score = (T::one()
+            + self.gradient_analyzer.gradient_stats.direction_consistency)
+            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(T::one);
 
         // --- phase ------------------------------------------------------------
         self.phase = Self::classify_phase(
@@ -701,10 +756,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationSta
     /// Classify the optimization phase from the gradient-norm trend.
     ///
     /// * fewer than 4 samples → `InitialDescent`
-    /// * norm shrinking fast (last < 25% of first) → `Convergence`
-    /// * norm roughly flat and direction consistency low → `Oscillation`
-    /// * norm roughly flat and direction consistency high → `Plateau`
-    /// * norm growing → `Divergence`
+    /// * norm shrinking fast (last < 25% of first) → `Converged`
+    /// * norm shrinking moderately (< 60%) → `FineTuning`
+    /// * norm growing (> 150%) → `Diverging`
+    /// * norm roughly flat (> 90%) → `Plateau`
     /// * otherwise → `SteadyProgress`
     fn classify_phase(trend: &[T], consistency: T) -> OptimizationPhase {
         if trend.len() < 4 {
@@ -713,20 +768,18 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationSta
         let first = trend[0];
         let last = trend[trend.len() - 1];
         if first <= T::zero() {
-            return OptimizationPhase::Convergence;
+            return OptimizationPhase::Converged;
         }
         let ratio = (last / first).to_f64().unwrap_or(1.0);
-        let low_consistency = consistency.to_f64().unwrap_or(1.0) < 0.0;
+        let _ = consistency;
         if ratio < 0.25 {
-            OptimizationPhase::Convergence
+            OptimizationPhase::Converged
         } else if ratio > 1.5 {
-            OptimizationPhase::Divergence
+            OptimizationPhase::Diverging
         } else if ratio > 0.9 {
-            if low_consistency {
-                OptimizationPhase::Oscillation
-            } else {
-                OptimizationPhase::Plateau
-            }
+            OptimizationPhase::Plateau
+        } else if ratio < 0.6 {
+            OptimizationPhase::FineTuning
         } else {
             OptimizationPhase::SteadyProgress
         }

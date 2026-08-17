@@ -280,18 +280,36 @@ mod tests {
     use super::*;
     use scirs2_core::ndarray::Array1;
 
+    /// F16: this test used to *assert the bug* — "All outputs should be zero
+    /// because weights are initialised to zero". The encoder is now
+    /// Xavier-initialized, so it must actually respond to its input.
     #[test]
     fn test_prototypical_network_encode() {
         let net = PrototypicalNetwork::<f64>::from_dims(4, 3)
             .expect("failed to create PrototypicalNetwork");
-        // With zero-initialised weights the encode should return all zeros (ReLU of 0 = 0)
         let features = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let encoded = net.encode(&features).expect("encode failed");
         assert_eq!(encoded.len(), 4);
-        // All outputs should be zero because weights are initialised to zero
-        for &v in encoded.iter() {
-            assert!((v - 0.0).abs() < 1e-12);
-        }
+
+        // ReLU output: non-negative, finite, and not identically zero.
+        assert!(encoded.iter().all(|v| v.is_finite() && *v >= 0.0));
+        let magnitude = encoded.iter().fold(0.0_f64, |a, &v| a.max(v));
+        assert!(
+            magnitude > 0.0,
+            "the encoder produced the zero vector for a non-zero input; \
+             its weights are zero-initialized again"
+        );
+
+        // Distinct inputs must give distinct embeddings.
+        let other = net
+            .encode(&Array1::from_vec(vec![-4.0, -3.0, -2.0, -1.0]))
+            .expect("encode failed");
+        let delta = encoded
+            .iter()
+            .zip(other.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f64, f64::max);
+        assert!(delta > 0.0, "the encoder ignores its input (delta {delta})");
     }
 
     #[test]

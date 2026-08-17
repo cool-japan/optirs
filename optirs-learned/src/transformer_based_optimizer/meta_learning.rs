@@ -1132,13 +1132,15 @@ mod tests {
     fn small_config(
         param_dim: usize,
     ) -> super::super::config::TransformerBasedOptimizerConfig<f64> {
-        let mut config = super::super::config::TransformerBasedOptimizerConfig::<f64>::default();
-        config.model_dimension = param_dim;
-        config.feedforward_dimension = 2 * param_dim;
-        config.num_attention_heads = 2;
-        config.attention_head_dimension = param_dim / 2;
-        config.num_transformer_layers = 1;
-        config.sequence_length = 8;
+        let mut config = super::super::config::TransformerBasedOptimizerConfig::<f64> {
+            model_dimension: param_dim,
+            feedforward_dimension: 2 * param_dim,
+            num_attention_heads: 2,
+            attention_head_dimension: param_dim / 2,
+            num_transformer_layers: 1,
+            sequence_length: 8,
+            ..Default::default()
+        };
         config.meta_learning_config.inner_steps = 3;
         config.meta_learning_config.inner_learning_rate = 0.05;
         config.meta_learning_config.meta_learning_rate = 0.1;
@@ -1367,8 +1369,10 @@ mod tests {
     /// and behave differently from plain SGD.
     #[test]
     fn meta_optimizer_momentum_branch_is_reachable() {
-        let mut cfg = MetaLearningConfig::<f64>::default();
-        cfg.meta_learning_rate = 0.1;
+        let mut cfg = MetaLearningConfig::<f64> {
+            meta_learning_rate: 0.1,
+            ..Default::default()
+        };
         let mut sgd = MetaOptimizer::new(&cfg).expect("sgd");
         assert!(sgd.momentum().is_none(), "default must be plain SGD");
 
@@ -1402,8 +1406,10 @@ mod tests {
     /// on a short gradient; it must return an error instead.
     #[test]
     fn meta_optimizer_rejects_short_gradients() {
-        let mut cfg = MetaLearningConfig::<f64>::default();
-        cfg.meta_momentum = Some(0.9);
+        let cfg = MetaLearningConfig::<f64> {
+            meta_momentum: Some(0.9),
+            ..Default::default()
+        };
         let mut opt = MetaOptimizer::new(&cfg).expect("optimizer");
         let mut state = MetaState::<f64>::new(4).expect("state");
         assert!(opt.update(&mut state, &[1.0, 2.0]).is_err());

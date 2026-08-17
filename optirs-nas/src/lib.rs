@@ -68,9 +68,12 @@
 //! cannot drift away from the real API.
 //!
 //! ```rust
+//! use optirs_nas::nas_engine::resources::SystemResourceTracker;
+//! use optirs_nas::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
 //! use optirs_nas::nas_engine::{
 //!     create_minimal_nas_config, NeuralArchitectureSearch, SearchStrategyType,
 //! };
+//! use std::time::Duration;
 //!
 //! # fn main() -> Result<(), optirs_nas::error::OptimError> {
 //! // A small, ready-made configuration: a populated search space, a Random
@@ -84,6 +87,17 @@
 //! // The engine reports which strategy is *actually* running, not just what was
 //! // requested.
 //! assert_eq!(engine.search_strategy_name(), "EvolutionaryStrategy");
+//!
+//! // Pin the telemetry so this example's outcome does not depend on how much
+//! // memory the host happens to have free. `resource_monitor_mut` is the supported
+//! // injection point for real telemetry too.
+//! engine.resource_monitor_mut().set_trackers(vec![Box::new(
+//!     SystemResourceTracker::with_telemetry(
+//!         "example".to_string(),
+//!         Duration::from_secs(5),
+//!         Box::new(FixedTelemetry::new("example", TelemetrySample::unknown())),
+//!     ),
+//! )]);
 //!
 //! // A short search: two generations against the built-in evaluator.
 //! let results = engine.run_search()?;
@@ -170,6 +184,20 @@
 //! ## Contributing
 //!
 //! Research contributions welcome! Follow SciRS2 integration guidelines.
+
+/// Compiles and runs every `rust` code block in `README.md` as a doctest, so the
+/// README cannot drift away from the API.
+///
+/// The previous README documented roughly twenty types that do not exist
+/// (`NASEngine`, `BayesianOptimizer`, `ProgressiveNAS::new().with_initial_depth(..)`,
+/// `HardwareAwareNAS`, `DistributedNAS`, ...) and `.await`ed every call in a crate
+/// with no `async fn` at all. Nothing caught it because nothing compiled it.
+///
+/// `#[cfg(doctest)]` keeps this out of the published documentation and out of
+/// normal builds; it exists only so `cargo test --doc` picks the file up.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
 
 pub mod architecture;
 pub mod architecture_embedding;
