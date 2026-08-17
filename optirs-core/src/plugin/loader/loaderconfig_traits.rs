@@ -8,8 +8,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(dead_code)]
-use crate::plugin::core::*;
 use crate::plugin::registry::*;
 use std::path::PathBuf;
 

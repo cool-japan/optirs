@@ -10,6 +10,7 @@
 //! - **Adaptive head scales**: Automatically adjust per-head scales from attention weights
 //! - **Warmup support**: Linear learning rate warmup
 
+use crate::common::{cast_positive, cast_scalar};
 use crate::domain_optimizers::{l2_norm, AdvancedOptimizer, OptimizerStateInfo};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
@@ -54,9 +55,9 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionOptimizer<T> {
     /// Create a new AttentionOptimizer.
     ///
     /// All heads start with equal gradient scale (1.0).
-    pub fn new(base_lr: T, num_heads: usize) -> Self {
+    pub fn new(base_lr: T, num_heads: usize) -> Result<Self> {
         let num_heads = if num_heads == 0 { 1 } else { num_heads };
-        Self {
+        Ok(Self {
             base_lr,
             current_lr: base_lr,
             num_heads,
@@ -66,10 +67,10 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionOptimizer<T> {
             warmup_steps: 0,
             head_gradient_scales: vec![T::one(); num_heads],
             velocity: None,
-            momentum: T::from(0.9).expect("0.9 convert"),
+            momentum: cast_scalar(0.9)?,
             grad_norm_ema: T::zero(),
-            ema_decay: T::from(0.999).expect("0.999 convert"),
-        }
+            ema_decay: cast_scalar(0.999)?,
+        })
     }
 
     /// Enable or disable per-head gradient scaling (builder pattern).
@@ -120,22 +121,23 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionOptimizer<T> {
         let entropies: Vec<T> = attention_weights
             .iter()
             .map(Self::compute_attention_entropy)
-            .collect();
+            .collect::<Result<Vec<T>>>()?;
 
         // Compute mean entropy
         let sum_entropy = entropies.iter().fold(T::zero(), |acc, &e| acc + e);
-        let mean_entropy = sum_entropy / T::from(self.num_heads).expect("num_heads convert");
-        let epsilon = T::from(1e-8).expect("epsilon convert");
+        let head_count: T = cast_positive(self.num_heads, "num_heads")?;
+        let mean_entropy = sum_entropy / head_count;
+        let epsilon: T = cast_scalar(1e-8)?;
 
         // Heads with below-average entropy get scale > 1, above-average get scale < 1
         // scale_i = 1 + alpha * (mean_entropy - entropy_i) / (mean_entropy + eps)
-        let alpha = T::from(0.5).expect("alpha convert");
+        let alpha: T = cast_scalar(0.5)?;
         for (i, &ent) in entropies.iter().enumerate() {
             let deviation = (mean_entropy - ent) / (mean_entropy + epsilon);
             self.head_gradient_scales[i] = T::one() + alpha * deviation;
             // Clamp to reasonable range [0.5, 2.0]
-            let lower = T::from(0.5).expect("lower convert");
-            let upper = T::from(2.0).expect("upper convert");
+            let lower: T = cast_scalar(0.5)?;
+            let upper: T = cast_scalar(2.0)?;
             if self.head_gradient_scales[i] < lower {
                 self.head_gradient_scales[i] = lower;
             }
@@ -152,11 +154,15 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionOptimizer<T> {
     /// H = -sum(p * log(p)) for p > 0
     ///
     /// Returns 0 if the distribution is empty.
-    pub fn compute_attention_entropy(attention_weights: &Array1<T>) -> T {
+    ///
+    /// # Errors
+    /// Returns `Err` when the numerical floor `1e-12` cannot be represented in
+    /// `T`.
+    pub fn compute_attention_entropy(attention_weights: &Array1<T>) -> Result<T> {
         if attention_weights.is_empty() {
-            return T::zero();
+            return Ok(T::zero());
         }
-        let epsilon = T::from(1e-12).expect("epsilon convert");
+        let epsilon: T = cast_scalar(1e-12)?;
         let mut entropy = T::zero();
         for &p in attention_weights.iter() {
             if p > epsilon {
@@ -164,11 +170,11 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionOptimizer<T> {
             }
         }
         // Ensure non-negative (numerical errors can cause tiny negatives)
-        if entropy < T::zero() {
+        Ok(if entropy < T::zero() {
             T::zero()
         } else {
             entropy
-        }
+        })
     }
 
     /// Apply per-head gradient scaling.
@@ -206,22 +212,23 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionOptimizer<T> {
     /// (more uniform attention) in the parameter space. This is a
     /// simplified proxy: it adds a constant push proportional to
     /// `attention_entropy_reg` toward zero (weight decay-like).
-    fn entropy_regularization_gradient(&self, params: &Array1<T>) -> Array1<T> {
-        if self.attention_entropy_reg <= T::from(1e-12).expect("eps") {
-            return Array1::zeros(params.len());
+    fn entropy_regularization_gradient(&self, params: &Array1<T>) -> Result<Array1<T>> {
+        let floor: T = cast_scalar(1e-12)?;
+        if self.attention_entropy_reg <= floor {
+            return Ok(Array1::zeros(params.len()));
         }
         // L2-style regularization as proxy for entropy regularization
-        params.mapv(|p| p * self.attention_entropy_reg)
+        Ok(params.mapv(|p| p * self.attention_entropy_reg))
     }
 
     /// Compute the warmup factor.
-    fn warmup_factor(&self) -> T {
+    fn warmup_factor(&self) -> Result<T> {
         if self.warmup_steps == 0 || self.step_count >= self.warmup_steps {
-            return T::one();
+            return Ok(T::one());
         }
-        let step_t = T::from(self.step_count + 1).expect("step convert");
-        let warmup_t = T::from(self.warmup_steps).expect("warmup convert");
-        step_t / warmup_t
+        let step_t: T = cast_scalar(self.step_count + 1)?;
+        let warmup_t: T = cast_positive(self.warmup_steps, "warmup_steps")?;
+        Ok(step_t / warmup_t)
     }
 }
 
@@ -241,7 +248,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for Attentio
         }
 
         // 1. Warmup
-        let warmup = self.warmup_factor();
+        let warmup = self.warmup_factor()?;
         let effective_lr = self.base_lr * warmup;
         self.current_lr = effective_lr;
 
@@ -249,7 +256,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for Attentio
         let grad = self.apply_head_scaling(gradients);
 
         // 3. Entropy regularization gradient
-        let entropy_grad = self.entropy_regularization_gradient(params);
+        let entropy_grad = self.entropy_regularization_gradient(params)?;
         let grad = &grad + &entropy_grad;
 
         // 4. Update gradient norm EMA
@@ -301,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_attention_optimizer_basic_step() {
-        let mut opt = AttentionOptimizer::new(0.01_f64, 4);
+        let mut opt = AttentionOptimizer::new(0.01_f64, 4).expect("optimizer");
         let params = Array1::from_vec(vec![1.0; 8]);
         let grads = Array1::from_vec(vec![0.1; 8]);
         let updated = opt.step(&params, &grads).expect("step should succeed");
@@ -315,6 +322,7 @@ mod tests {
     #[test]
     fn test_attention_optimizer_head_wise_scaling() {
         let mut opt = AttentionOptimizer::new(0.01_f64, 2)
+            .expect("optimizer")
             .with_head_wise_scaling(true)
             .with_momentum(0.0);
 
@@ -338,7 +346,8 @@ mod tests {
     fn test_attention_entropy_computation() {
         // Uniform distribution: entropy = ln(n)
         let uniform = Array1::from_vec(vec![0.25_f64, 0.25, 0.25, 0.25]);
-        let entropy = AttentionOptimizer::<f64>::compute_attention_entropy(&uniform);
+        let entropy =
+            AttentionOptimizer::<f64>::compute_attention_entropy(&uniform).expect("entropy");
         let expected = (4.0_f64).ln(); // ln(4) ≈ 1.386
         assert!(
             (entropy - expected).abs() < 1e-6,
@@ -348,7 +357,8 @@ mod tests {
 
         // Peaked distribution: low entropy
         let peaked = Array1::from_vec(vec![0.97_f64, 0.01, 0.01, 0.01]);
-        let entropy_peaked = AttentionOptimizer::<f64>::compute_attention_entropy(&peaked);
+        let entropy_peaked =
+            AttentionOptimizer::<f64>::compute_attention_entropy(&peaked).expect("entropy");
         assert!(
             entropy_peaked < entropy,
             "peaked distribution should have lower entropy"
@@ -356,13 +366,14 @@ mod tests {
 
         // Empty distribution
         let empty = Array1::from_vec(vec![]);
-        let entropy_empty = AttentionOptimizer::<f64>::compute_attention_entropy(&empty);
+        let entropy_empty =
+            AttentionOptimizer::<f64>::compute_attention_entropy(&empty).expect("entropy");
         assert!((entropy_empty - 0.0).abs() < 1e-12);
     }
 
     #[test]
     fn test_attention_update_head_scales() {
-        let mut opt = AttentionOptimizer::new(0.01_f64, 3);
+        let mut opt = AttentionOptimizer::new(0.01_f64, 3).expect("optimizer");
 
         // Head 0: uniform (high entropy), Head 1: peaked (low entropy), Head 2: medium
         let weights = vec![
@@ -384,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_attention_update_head_scales_wrong_count() {
-        let mut opt = AttentionOptimizer::new(0.01_f64, 2);
+        let mut opt = AttentionOptimizer::new(0.01_f64, 2).expect("optimizer");
         let weights = vec![Array1::from_vec(vec![0.5, 0.5])]; // only 1, need 2
         let result = opt.update_head_scales(&weights);
         assert!(result.is_err());
@@ -392,7 +403,9 @@ mod tests {
 
     #[test]
     fn test_attention_optimizer_warmup() {
-        let mut opt = AttentionOptimizer::new(0.1_f64, 2).with_warmup(10);
+        let mut opt = AttentionOptimizer::new(0.1_f64, 2)
+            .expect("optimizer")
+            .with_warmup(10);
         let params = Array1::from_vec(vec![1.0; 4]);
         let grads = Array1::from_vec(vec![1.0; 4]);
 
@@ -413,9 +426,12 @@ mod tests {
     #[test]
     fn test_attention_entropy_regularization() {
         let mut opt_reg = AttentionOptimizer::new(0.01_f64, 2)
+            .expect("optimizer")
             .with_attention_entropy_reg(0.1)
             .with_momentum(0.0);
-        let mut opt_base = AttentionOptimizer::new(0.01_f64, 2).with_momentum(0.0);
+        let mut opt_base = AttentionOptimizer::new(0.01_f64, 2)
+            .expect("optimizer")
+            .with_momentum(0.0);
 
         let params = Array1::from_vec(vec![2.0; 4]);
         let grads = Array1::zeros(4); // zero gradients
@@ -435,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_attention_optimizer_dimension_mismatch() {
-        let mut opt = AttentionOptimizer::new(0.01_f64, 2);
+        let mut opt = AttentionOptimizer::new(0.01_f64, 2).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0]);
         let grads = Array1::from_vec(vec![0.1]);
         let result = opt.step(&params, &grads);
@@ -444,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_attention_optimizer_state_info() {
-        let mut opt = AttentionOptimizer::new(0.05_f64, 4);
+        let mut opt = AttentionOptimizer::new(0.05_f64, 4).expect("optimizer");
         let params = Array1::from_vec(vec![1.0; 8]);
         let grads = Array1::from_vec(vec![0.1; 8]);
         let _ = opt.step(&params, &grads).expect("step ok");

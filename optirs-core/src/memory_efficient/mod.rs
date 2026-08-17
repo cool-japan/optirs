@@ -4,6 +4,7 @@
 // memory-efficient implementations of optimization algorithms.
 
 use crate::error::{OptimError, Result};
+use crate::utils::{scalar_or, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
@@ -130,6 +131,30 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceOptimi
     }
 }
 
+/// Adam's two moment accumulators.
+///
+/// They are created together, always share the parameter shape, and are only
+/// ever absent before the first step -- so they live behind a *single*
+/// `Option` rather than two independent ones. That makes "one is initialised
+/// and the other is not" unrepresentable instead of a state the step function
+/// has to defend against with `expect`.
+#[derive(Debug, Clone)]
+struct AdamMoments<A: Float, D: Dimension> {
+    /// First moment estimate (momentum)
+    m: Array<A, D>,
+    /// Second moment estimate (RMSprop)
+    v: Array<A, D>,
+}
+
+impl<A: Float, D: Dimension> AdamMoments<A, D> {
+    fn zeros(shape: D) -> Self {
+        Self {
+            m: Array::zeros(shape.clone()),
+            v: Array::zeros(shape),
+        }
+    }
+}
+
 /// Memory-efficient Adam optimizer with in-place updates
 #[derive(Debug)]
 pub struct InPlaceAdam<A: Float, D: Dimension> {
@@ -139,10 +164,8 @@ pub struct InPlaceAdam<A: Float, D: Dimension> {
     epsilon: A,
     weight_decay: A,
     t: i32,
-    /// First moment estimate (momentum)
-    m: Option<Array<A, D>>,
-    /// Second moment estimate (RMSprop)
-    v: Option<Array<A, D>>,
+    /// Moment estimates, absent until the first step
+    moments: Option<AdamMoments<A, D>>,
 }
 
 impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A, D> {
@@ -150,13 +173,12 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A
     pub fn new(_learningrate: A) -> Self {
         Self {
             _learningrate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.999).expect("unwrap failed"),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
+            beta1: scalar_or(0.9, A::zero()),
+            beta2: scalar_or(0.999, A::zero()),
+            epsilon: scalar_or(1e-8, A::zero()),
             weight_decay: A::zero(),
             t: 0,
-            m: None,
-            v: None,
+            moments: None,
         }
     }
 
@@ -187,8 +209,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A
     /// Reset optimizer state
     pub fn reset(&mut self) {
         self.t = 0;
-        self.m = None;
-        self.v = None;
+        self.moments = None;
     }
 }
 
@@ -197,18 +218,29 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceOptimi
 {
     fn step_inplace(&mut self, params: &mut Array<A, D>, gradients: &Array<A, D>) -> Result<()> {
         self.t += 1;
-        let _t = A::from(self.t).expect("unwrap failed");
+        let _t = try_scalar::<A, _>(self.t)?;
 
-        // Initialize momentum and variance if needed
-        if self.m.is_none() {
-            self.m = Some(Array::zeros(params.raw_dim()));
-        }
-        if self.v.is_none() {
-            self.v = Some(Array::zeros(params.raw_dim()));
+        // Initialize the moment estimates on the first step. `get_or_insert_with`
+        // yields them directly, so there is no "initialised a line ago, now
+        // unwrap it again" round-trip to defend with `expect`.
+        let moments = self
+            .moments
+            .get_or_insert_with(|| AdamMoments::zeros(params.raw_dim()));
+
+        // A caller that changes the parameter shape between steps would
+        // otherwise reach `zip_mut_with` with mismatched shapes and panic
+        // inside ndarray. Carrying stale moments across a reshape is not
+        // meaningful either, so report it instead of guessing.
+        if moments.m.raw_dim() != params.raw_dim() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "InPlaceAdam moment state has shape {:?} but was given parameters of shape {:?}; \
+                 call `reset()` before optimizing a differently-shaped parameter set",
+                moments.m.shape(),
+                params.shape()
+            )));
         }
 
-        let m = self.m.as_mut().expect("unwrap failed");
-        let v = self.v.as_mut().expect("unwrap failed");
+        let AdamMoments { m, v } = moments;
 
         // Apply weight decay if configured
         let grad_with_decay = if self.weight_decay > A::zero() {
@@ -562,7 +594,7 @@ pub mod mixed_precision {
             A: Float + ScalarOperand,
             D: Dimension,
         {
-            let inv_scale = A::one() / A::from(self.scale).expect("unwrap failed");
+            let inv_scale = A::one() / scalar_or(self.scale, A::one());
             for g in gradients.iter_mut() {
                 *g = *g * inv_scale;
             }

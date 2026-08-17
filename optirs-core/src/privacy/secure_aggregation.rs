@@ -72,7 +72,7 @@
 
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
-use scirs2_core::random::{Random, Rng};
+use scirs2_core::random::Random;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 

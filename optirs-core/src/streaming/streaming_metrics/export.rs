@@ -228,7 +228,7 @@ impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync> StreamingMetric
     fn export_rows(&self) -> Vec<ExportRow> {
         let batch = self.export_config.batch_size.max(1);
         let mut rows: Vec<ExportRow> = Vec::new();
-        for (timestamp, snapshot) in self.historical_data.time_series.iter().rev().take(batch) {
+        for (_key, snapshot) in self.historical_data.time_series.iter().rev().take(batch) {
             let mut metrics = BTreeMap::new();
             for path in KNOWN_METRIC_PATHS {
                 if let Some(value) = resolve_snapshot_metric(snapshot, path) {
@@ -237,7 +237,8 @@ impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync> StreamingMetric
                     }
                 }
             }
-            rows.push((*timestamp, metrics));
+            // Rows carry the second-resolution timestamp, not the micros key.
+            rows.push((snapshot.timestamp, metrics));
         }
         rows.reverse();
         rows

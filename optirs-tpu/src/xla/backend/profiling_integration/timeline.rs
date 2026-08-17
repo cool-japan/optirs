@@ -21,9 +21,6 @@ pub struct TimelineProfiler<T> {
     /// Timeline data
     timeline_data: Vec<TimelineEntry>,
 
-    /// Timeline configuration
-    timeline_config: TimelineConfig,
-
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -238,12 +235,6 @@ impl<T> TimelineProfiler<T> {
         Self {
             sessions: HashMap::new(),
             timeline_data: Vec::new(),
-            timeline_config: TimelineConfig {
-                detailed_operations: true,
-                include_resources: true,
-                resolution_us: 1, // 1 microsecond resolution
-                max_entries: 1000000,
-            },
             _phantom: std::marker::PhantomData,
         }
     }

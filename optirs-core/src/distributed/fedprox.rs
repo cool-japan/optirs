@@ -7,7 +7,7 @@
 // Reference: Li et al., "Federated Optimization in Heterogeneous Networks" (MLSys 2020)
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 

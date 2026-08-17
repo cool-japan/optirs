@@ -2,7 +2,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(dead_code)]
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
@@ -576,8 +575,31 @@ pub struct SyncBarrier {
 /// Learning rate adaptation state
 #[derive(Debug, Clone)]
 pub(super) struct LearningRateAdaptationState<A: Float + Send + Sync> {
-    /// Current learning rate
+    /// Current learning rate.
+    ///
+    /// When a per-coordinate strategy is active (see
+    /// [`Self::per_coordinate_scale`]) this is the *mean* of the per-coordinate
+    /// rates -- a faithful scalar summary for reporting, not the value handed
+    /// to the base optimizer.
     pub(super) current_lr: A,
+    /// Base (unadapted) learning rate, seeded from the base optimizer's own
+    /// rate at construction. Every adaptation is expressed relative to this
+    /// instead of a hard-coded constant.
+    pub(super) base_lr: A,
+    /// Per-coordinate multiplier on the gradient, produced by the AdaGrad and
+    /// RMSprop strategies (T6).
+    ///
+    /// `Optimizer::set_learning_rate` takes a single scalar, so a genuinely
+    /// per-coordinate rate cannot be expressed through it. It can be expressed
+    /// exactly by preconditioning the gradient instead: applying
+    /// `base_lr * (scale_i * g_i)` is identical to applying a per-coordinate
+    /// rate `base_lr * scale_i` to `g_i`. `None` for the scalar strategies.
+    ///
+    /// Composition note: this is an exact per-coordinate rate for SGD-like base
+    /// optimizers. An Adam-like base applies its own per-coordinate
+    /// second-moment normalisation, which largely absorbs this preconditioner
+    /// -- the effect there is a damped, not a doubled, adaptation.
+    pub(super) per_coordinate_scale: Option<Array1<A>>,
     /// Accumulated squared gradients (for AdaGrad)
     pub(super) accumulated_gradients: Option<Array1<A>>,
     /// Exponential moving average of squared gradients (for RMSprop)

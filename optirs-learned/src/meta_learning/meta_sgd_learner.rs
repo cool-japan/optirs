@@ -11,10 +11,11 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::functions::MetaLearner;
+use super::linear_model;
 use super::metrics::BatchObservations;
 use super::types::{
     AdaptationStep, MetaLearningAlgorithm, MetaTask, MetaTrainingResult, QueryEvaluationMetrics,
-    QueryEvaluationResult, TaskAdaptationMetrics, TaskAdaptationResult,
+    QueryEvaluationResult, TaskAdaptationMetrics, TaskAdaptationResult, TaskType,
 };
 
 /// Result type for inner loop adaptation: adapted parameters and adaptation trajectory
@@ -409,23 +410,60 @@ impl<
         let (adapted_parameters, adaptation_trajectory) =
             self.run_inner_loop(task, meta_parameters, adaptation_steps)?;
 
-        let final_loss = adaptation_trajectory
-            .last()
+        let initial_loss = adaptation_trajectory
+            .first()
             .map(|s| s.loss)
             .unwrap_or_else(T::zero);
+        let final_loss = self.compute_loss(
+            &task.support_set.features,
+            &task.support_set.targets,
+            &adapted_parameters,
+        )?;
+
+        // Every field below is measured from the trajectory this call just
+        // produced, matching what `ReptileLearner`/`MAMLLearner` report.
+        let steps_t = T::from(adaptation_steps.max(1)).ok_or_else(|| {
+            OptimError::ComputationError("Failed to convert adaptation steps".to_string())
+        })?;
+        let improvement = initial_loss - final_loss;
+        let travel = adaptation_trajectory
+            .iter()
+            .map(|s| s.parameter_change_norm)
+            .fold(T::zero(), |a, b| a + b);
+        let mut non_increasing = 0usize;
+        for pair in adaptation_trajectory.windows(2) {
+            if pair[1].loss <= pair[0].loss {
+                non_increasing += 1;
+            }
+        }
 
         Ok(TaskAdaptationResult {
             adapted_parameters,
+            metrics: TaskAdaptationMetrics {
+                // Mean loss reduction per inner step.
+                convergence_speed: improvement / steps_t,
+                // Fraction of the initial loss that adaptation removed.
+                final_performance: if initial_loss > T::zero() {
+                    (improvement / initial_loss).max(T::zero()).min(T::one())
+                } else {
+                    T::zero()
+                },
+                // Loss reduction bought per unit of parameter travel.
+                efficiency: if travel > T::zero() {
+                    improvement / travel
+                } else {
+                    T::zero()
+                },
+                // Fraction of steps that did not make the loss worse.
+                robustness: if adaptation_trajectory.len() > 1 {
+                    let denom = T::from(adaptation_trajectory.len() - 1).unwrap_or_else(T::one);
+                    T::from(non_increasing).unwrap_or_else(T::zero) / denom
+                } else {
+                    T::one()
+                },
+            },
             adaptation_trajectory,
             final_loss,
-            metrics: TaskAdaptationMetrics {
-                convergence_speed: scirs2_core::numeric::NumCast::from(1.5)
-                    .unwrap_or_else(|| T::zero()),
-                final_performance: scirs2_core::numeric::NumCast::from(0.9)
-                    .unwrap_or_else(|| T::zero()),
-                efficiency: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
-                robustness: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
-            },
         })
     }
 
@@ -434,25 +472,67 @@ impl<
         task: &MetaTask<T>,
         adapted_parameters: &HashMap<String, Array1<T>>,
     ) -> Result<QueryEvaluationResult<T>> {
-        let mut predictions = Vec::new();
-        let mut confidence_scores = Vec::new();
+        if task.query_set.features.is_empty() {
+            return Err(OptimError::InsufficientData(format!(
+                "task '{}' has an empty query set",
+                task.id
+            )));
+        }
+
+        let mut predictions = Vec::with_capacity(task.query_set.features.len());
         let mut total_loss = T::zero();
 
         for (features, target) in task.query_set.features.iter().zip(&task.query_set.targets) {
             let prediction = self.predict_single(features, adapted_parameters)?;
             let diff = prediction - *target;
-            let loss = diff * diff;
+            total_loss = total_loss + diff * diff;
             predictions.push(prediction);
-            confidence_scores
-                .push(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()));
-            total_loss = total_loss + loss;
         }
 
-        let n = T::from(task.query_set.features.len().max(1)).ok_or_else(|| {
+        let n = T::from(task.query_set.features.len()).ok_or_else(|| {
             OptimError::ComputationError("Failed to convert query set size".to_string())
         })?;
         let query_loss = total_loss / n;
-        let accuracy = scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero());
+
+        // Confidence is the squashed per-sample residual: 1 for an exact hit.
+        let confidence_scores: Vec<T> = predictions
+            .iter()
+            .zip(task.query_set.targets.iter())
+            .map(|(p, y)| T::one() / (T::one() + (*p - *y).abs()))
+            .collect();
+
+        let classification_accuracy = match task.task_type {
+            TaskType::Classification => {
+                linear_model::label_accuracy(&predictions, &task.query_set.targets)
+            }
+            _ => None,
+        };
+        // Task-appropriate goodness: label accuracy for classification, R^2
+        // clamped to [0, 1] for regression, 0 when neither is defined.
+        let accuracy = classification_accuracy
+            .or_else(|| {
+                linear_model::r_squared(&predictions, &task.query_set.targets)
+                    .map(|r| r.max(T::zero()).min(T::one()))
+            })
+            .unwrap_or_else(T::zero);
+
+        // Full-curve AUC-ROC ranked on the retained predictions; `None` unless
+        // the targets are genuinely binary with both classes represented.
+        let auc = match task.task_type {
+            TaskType::Classification => {
+                linear_model::roc_auc(&predictions, &task.query_set.targets)
+            }
+            _ => None,
+        };
+
+        let count = T::from(confidence_scores.len()).ok_or_else(|| {
+            OptimError::ComputationError("Failed to convert confidence count".to_string())
+        })?;
+        let uncertainty_quality = confidence_scores
+            .iter()
+            .copied()
+            .fold(T::zero(), |a, b| a + b)
+            / count;
 
         Ok(QueryEvaluationResult {
             query_loss,
@@ -461,10 +541,9 @@ impl<
             confidence_scores,
             metrics: QueryEvaluationMetrics {
                 mse: Some(query_loss),
-                classification_accuracy: Some(accuracy),
-                auc: Some(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())),
-                uncertainty_quality: scirs2_core::numeric::NumCast::from(0.8)
-                    .unwrap_or_else(|| T::zero()),
+                classification_accuracy,
+                auc,
+                uncertainty_quality,
             },
         })
     }

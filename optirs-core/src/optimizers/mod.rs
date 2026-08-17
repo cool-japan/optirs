@@ -4,10 +4,36 @@
 // such as Stochastic Gradient Descent (SGD), Adam, RMSprop, and others.
 
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
-use scirs2_core::numeric::Float;
+use scirs2_core::numeric::{Float, ToPrimitive};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
+
+/// Fallibly converts any primitive numeric value (an `f64` literal, a `usize`
+/// step count, ...) into the optimizer's generic scalar type `A`.
+///
+/// Centralizes what used to be `A::from(x).expect("unwrap failed")` call
+/// sites across the optimizer implementations: instead of panicking, a type
+/// that genuinely cannot represent `x` now produces an honest [`OptimError`].
+pub(crate) fn cast_scalar<A: Float, T: ToPrimitive>(value: T) -> Result<A> {
+    A::from(value).ok_or_else(|| {
+        OptimError::InvalidConfig(
+            "failed to convert a numeric value to the optimizer's scalar type".to_string(),
+        )
+    })
+}
+
+/// Fallibly converts the optimizer's generic scalar type `A` into `f64`.
+///
+/// Centralizes what used to be `x.to_f64().expect("unwrap failed")` call
+/// sites used for hyperparameter validation.
+pub(crate) fn scalar_to_f64<A: Float>(value: A) -> Result<f64> {
+    value.to_f64().ok_or_else(|| {
+        OptimError::InvalidConfig(
+            "failed to convert the optimizer's scalar type to f64".to_string(),
+        )
+    })
+}
 
 /// Trait that defines the interface for optimization algorithms
 pub trait Optimizer<A, D>

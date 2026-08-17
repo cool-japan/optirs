@@ -9,14 +9,15 @@ use crate::coordination::monitoring::anomaly_detection::{AnomalyConfig, AnomalyR
 use crate::coordination::monitoring::performance_tracking::{
     DashboardConfiguration, TrackerConfiguration,
 };
-use crate::coordination::orchestration::pipeline_orchestrator::OrchestratorConfiguration;
+use crate::coordination::orchestration::pipeline_orchestrator::{
+    ExecutionState, OrchestratorConfiguration,
+};
 use crate::coordination::scheduling::task_scheduler::SchedulerConfig;
 use crate::research::experiments::ResourceUsage;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 // Submodule declarations
@@ -27,9 +28,8 @@ pub mod scheduling;
 // Re-export key types from submodules
 pub use scheduling::{
     PriorityLevel, PriorityManager, PriorityQueue, PriorityUpdateStrategy,
-    ResourceAllocationStrategy, ResourceAllocationTracker, ResourceManager,
-    ResourceOptimizationEngine, ResourcePool, ScheduledTask, SchedulingStrategy,
-    StaticPriorityStrategy, TaskPriority, TaskScheduler,
+    ResourceAllocationStrategy, ResourceAllocationTracker, ResourceManager, ResourcePool,
+    ScheduledTask, SchedulingStrategy, StaticPriorityStrategy, TaskPriority, TaskScheduler,
 };
 
 // Type alias for convenience
@@ -48,8 +48,8 @@ pub use orchestration::{
 pub use monitoring::{
     AlertManager, AnomalyAlert, AnomalyAnalyzer, AnomalyClassifier, AnomalyDetector,
     AnomalyReporter, ConvergenceAnalyzer, ConvergenceCriteria, ConvergenceDetector,
-    ConvergenceIndicator, ConvergenceMonitor, ConvergenceResult, MetricAggregator, MetricCollector,
-    OutlierDetector, PerformanceAlert, PerformanceMetrics, PerformanceTracker,
+    ConvergenceIndicator, ConvergenceMonitor, ConvergenceResult, MetricCollector, OutlierDetector,
+    PerformanceAlert, PerformanceMetrics, PerformanceTracker,
 };
 
 /// Main coordination manager that integrates all coordination components
@@ -104,6 +104,13 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for CoordinatorConfig<T> 
 pub struct CoordinatorState<T: Float + Debug + Send + Sync + 'static> {
     pub active_tasks: HashMap<String, OptimizationTask<T>>,
     pub active_pipelines: HashMap<String, OptimizationPipeline<T>>,
+    /// Orchestrator execution id per submitted pipeline id, so a caller can ask
+    /// the orchestrator for the pipeline's real state.
+    pub pipeline_execution_ids: HashMap<String, String>,
+    /// Pipeline id each submitted experiment was converted into. Without this
+    /// the pipeline id returned by `submit_pipeline` was dropped on the floor
+    /// and an experiment's execution could not be located afterwards.
+    pub experiment_pipeline_ids: HashMap<String, String>,
     pub active_experiments: HashMap<String, Experiment<T>>,
     pub resource_usage: ResourceUsage,
     pub last_checkpoint: Option<Instant>,
@@ -132,6 +139,8 @@ impl<T: Float + Debug + Send + Sync + 'static> CoordinatorState<T> {
         Self {
             active_tasks: HashMap::new(),
             active_pipelines: HashMap::new(),
+            pipeline_execution_ids: HashMap::new(),
+            experiment_pipeline_ids: HashMap::new(),
             active_experiments: HashMap::new(),
             resource_usage: ResourceUsage::default(),
             last_checkpoint: None,
@@ -264,7 +273,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
         // Schedule the task
         match self.scheduler.submit_task(task.clone()) {
-            Ok(scheduling_result) => {
+            Ok(()) => {
                 self.state.active_tasks.insert(task_id.clone(), task);
                 self.state.total_tasks_processed += 1;
 
@@ -290,17 +299,38 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
         pipeline.pipeline_id = pipeline_id.clone();
 
-        // Execute pipeline - needs proper orchestrator API
-        let execution_result: Result<(), String> = Ok(());
-        match execution_result {
-            Ok(_) => {
-                self.state
-                    .active_pipelines
-                    .insert(pipeline_id.clone(), pipeline);
-                Ok(pipeline_id)
-            }
-            Err(e) => Err(format!("Failed to execute pipeline: {}", e)),
-        }
+        // Hand the pipeline to the orchestrator. Until 0.3.2 this block read
+        // `let execution_result: Result<(), String> = Ok(());` -- a hardcoded
+        // success with the comment "needs proper orchestrator API" -- so
+        // `submit_pipeline` reported that every pipeline had been executed while
+        // the `orchestrator` field was never touched at all. The orchestrator's
+        // `execute_pipeline` has been there the whole time; it returns the
+        // execution id, which is now recorded on the pipeline's state entry.
+        let execution_id = self
+            .orchestrator
+            .execute_pipeline(pipeline.clone())
+            .map_err(|err| format!("Failed to execute pipeline: {err}"))?;
+        self.state
+            .active_pipelines
+            .insert(pipeline_id.clone(), pipeline);
+        self.state
+            .pipeline_execution_ids
+            .insert(pipeline_id.clone(), execution_id);
+        Ok(pipeline_id)
+    }
+
+    /// Execution id the orchestrator assigned to a submitted pipeline.
+    pub fn pipeline_execution_id(&self, pipeline_id: &str) -> Option<&str> {
+        self.state
+            .pipeline_execution_ids
+            .get(pipeline_id)
+            .map(String::as_str)
+    }
+
+    /// Current orchestrator-reported state of a submitted pipeline.
+    pub fn pipeline_execution_status(&self, pipeline_id: &str) -> Option<ExecutionState> {
+        let execution_id = self.state.pipeline_execution_ids.get(pipeline_id)?;
+        self.orchestrator.get_execution_status(execution_id)
     }
 
     /// Submit an experiment
@@ -320,8 +350,19 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         self.state
             .active_experiments
             .insert(experiment_id.clone(), experiment);
+        self.state
+            .experiment_pipeline_ids
+            .insert(experiment_id.clone(), pipeline_id);
 
         Ok(experiment_id)
+    }
+
+    /// Pipeline id an experiment was converted into, if it was submitted.
+    pub fn experiment_pipeline_id(&self, experiment_id: &str) -> Option<&str> {
+        self.state
+            .experiment_pipeline_ids
+            .get(experiment_id)
+            .map(String::as_str)
     }
 
     /// Execute a coordination cycle

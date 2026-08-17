@@ -106,7 +106,6 @@ pub use types::*;
 use scirs2_core::ndarray::{Array, IxDyn};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use crate::error::{OptimError, Result};
 use scirs2_core::error::ErrorContext;
@@ -649,6 +648,7 @@ pub mod presets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_pod_coordination_builder() {

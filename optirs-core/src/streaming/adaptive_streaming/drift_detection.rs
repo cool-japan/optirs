@@ -11,6 +11,7 @@ use super::drift_tests::{
 };
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 
+use crate::utils::{scalar_or, try_scalar_str};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -28,7 +29,6 @@ pub struct EnhancedDriftDetector<A: Float + Send + Sync> {
     /// Model-based detectors
     model_detectors: HashMap<ModelType, Box<dyn ModelBasedDetector<A>>>,
     /// Ensemble voting strategy
-    ensemble_strategy: Option<VotingStrategy>,
     /// Detection history
     detection_history: VecDeque<DriftEvent<A>>,
     /// False positive tracker
@@ -279,13 +279,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             Box::new(LinearModelDetector::new(sensitivity)?),
         );
 
-        let ensemble_strategy = match &drift_config.detection_method {
-            DriftDetectionMethod::Ensemble {
-                voting_strategy, ..
-            } => Some(voting_strategy.clone()),
-            _ => None,
-        };
-
         let false_positive_tracker = FalsePositiveTracker::new();
 
         Ok(Self {
@@ -294,7 +287,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             statistical_tests,
             distribution_methods,
             model_detectors,
-            ensemble_strategy,
             detection_history: VecDeque::with_capacity(1000),
             false_positive_tracker,
             reference_window: VecDeque::with_capacity(drift_config.window_size),
@@ -604,14 +596,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         };
 
         // Aggregate confidence and p-values
-        let avg_confidence = results.iter().map(|r| r.confidence).sum::<A>()
-            / A::from(results.len()).expect("unwrap failed");
+        // `results` is non-empty (checked above), so this divisor is never zero.
+        let count = A::from(results.len()).ok_or_else(|| {
+            format!(
+                "result count {} is not representable in the element type",
+                results.len()
+            )
+        })?;
 
-        let avg_p_value = results.iter().map(|r| r.p_value).sum::<A>()
-            / A::from(results.len()).expect("unwrap failed");
-
-        let avg_test_statistic = results.iter().map(|r| r.test_statistic).sum::<A>()
-            / A::from(results.len()).expect("unwrap failed");
+        let avg_confidence = results.iter().map(|r| r.confidence).sum::<A>() / count;
+        let avg_p_value = results.iter().map(|r| r.p_value).sum::<A>() / count;
+        let avg_test_statistic = results.iter().map(|r| r.test_statistic).sum::<A>() / count;
 
         Ok(DriftTestResult {
             drift_detected,
@@ -655,11 +650,21 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
     }
 
     /// Classifies drift severity based on test results
+    /// Test-only view of [`Self::classify_drift_severity`].
+    #[cfg(test)]
+    pub(crate) fn classify_drift_severity_for_test(
+        &self,
+        result: &DriftTestResult<A>,
+    ) -> DriftSeverity {
+        self.classify_drift_severity(result)
+    }
+
     fn classify_drift_severity(&self, result: &DriftTestResult<A>) -> DriftSeverity {
         let confidence = result.confidence.to_f64().unwrap_or(0.0);
         let p_value = result.p_value.to_f64().unwrap_or(1.0);
 
-        if p_value < 0.001 && confidence > 0.95 {
+        // Significance-based band (what this used to return on its own).
+        let by_significance = if p_value < 0.001 && confidence > 0.95 {
             DriftSeverity::Critical
         } else if p_value < 0.01 && confidence > 0.9 {
             DriftSeverity::Major
@@ -667,7 +672,26 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             DriftSeverity::Moderate
         } else {
             DriftSeverity::Minor
-        }
+        };
+
+        // Magnitude-based band from the configured thresholds (CF1).
+        // `DriftConfig::warning_threshold` had no reader at all, so configuring
+        // a stricter warning level changed nothing; `drift_threshold` was only
+        // used by `config.validate()`. Both now bound the reported severity,
+        // and `validate()` guarantees warning < drift.
+        let statistic = result.test_statistic.to_f64().unwrap_or(0.0).abs();
+        let by_magnitude = if statistic >= self.config.drift_threshold {
+            DriftSeverity::Major
+        } else if statistic >= self.config.warning_threshold {
+            DriftSeverity::Moderate
+        } else {
+            DriftSeverity::Minor
+        };
+
+        // Report the more serious of the two readings: a hugely displaced
+        // statistic matters even when the p-value is unremarkable (small
+        // windows), and a decisive p-value matters even at modest magnitude.
+        by_significance.max(by_magnitude)
     }
 
     /// Updates the current drift state
@@ -686,15 +710,20 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         // Check if sensitivity should be adjusted based on false positive rate
         if self.config.enable_false_positive_tracking {
             let current_fp_rate = self.false_positive_tracker.current_fp_rate;
-            let target_fp_rate = A::from(0.05).expect("unwrap failed"); // 5% target false positive rate
+            // Read the tracker's own target rather than re-hardcoding 0.05 here:
+            // `FalsePositiveTracker::target_fp_rate` previously had no reader, so
+            // the two could silently disagree.
+            let target_fp_rate = self.false_positive_tracker.target_fp_rate;
+            let tolerance = scalar_or(0.02, A::zero());
+            let step = scalar_or(0.1, A::zero());
 
-            if (current_fp_rate - target_fp_rate).abs() > A::from(0.02).expect("unwrap failed") {
+            if (current_fp_rate - target_fp_rate).abs() > tolerance {
                 let adjustment = if current_fp_rate > target_fp_rate {
                     // Too many false positives, decrease sensitivity
-                    -A::from(0.1).expect("unwrap failed")
+                    -step
                 } else {
                     // Too few detections (potentially missing true positives), increase sensitivity
-                    A::from(0.1).expect("unwrap failed")
+                    step
                 };
 
                 let adaptation = Adaptation {
@@ -720,8 +749,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
     ) -> Result<(), String> {
         if adaptation.adaptation_type == AdaptationType::DriftSensitivity {
             self.sensitivity_factor = (self.sensitivity_factor + adaptation.magnitude)
-                .max(A::from(0.1).expect("unwrap failed"))
-                .min(A::from(2.0).expect("unwrap failed"));
+                .max(try_scalar_str::<A, _>(0.1)?)
+                .min(try_scalar_str::<A, _>(2.0)?);
         }
         Ok(())
     }
@@ -784,7 +813,7 @@ impl<A: Float + Send + Sync + Send + Sync> FalsePositiveTracker<A> {
             false_positives: VecDeque::new(),
             true_positives: VecDeque::new(),
             current_fp_rate: A::zero(),
-            target_fp_rate: A::from(0.05).expect("unwrap failed"),
+            target_fp_rate: scalar_or(0.05, A::zero()),
         }
     }
 
@@ -797,16 +826,22 @@ impl<A: Float + Send + Sync + Send + Sync> FalsePositiveTracker<A> {
             self.false_positives.push_back(now);
         }
 
-        // Keep only recent events (last hour)
-        let cutoff = now - Duration::from_secs(3600);
-        self.false_positives.retain(|&time| time > cutoff);
-        self.true_positives.retain(|&time| time > cutoff);
+        // Keep only recent events (last hour).
+        //
+        // `now - Duration` panics when the process has been up for less than
+        // the retention window, so the window is applied as a forward
+        // `duration_since` comparison rather than a materialised cutoff.
+        let retention = Duration::from_secs(3600);
+        self.false_positives
+            .retain(|&time| now.duration_since(time) <= retention);
+        self.true_positives
+            .retain(|&time| now.duration_since(time) <= retention);
 
         // Update false positive rate
         let total_detections = self.false_positives.len() + self.true_positives.len();
         if total_detections > 0 {
-            self.current_fp_rate = A::from(self.false_positives.len()).expect("unwrap failed")
-                / A::from(total_detections).expect("unwrap failed");
+            self.current_fp_rate = try_scalar_str::<A, _>(self.false_positives.len())?
+                / try_scalar_str::<A, _>(total_detections)?;
         }
 
         Ok(())

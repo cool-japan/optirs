@@ -2,7 +2,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(dead_code)]
 use crate::error::Result;
 use scirs2_core::ndarray::{Array1, ArrayBase};
 use scirs2_core::numeric::Float;

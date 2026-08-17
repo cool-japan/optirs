@@ -2,11 +2,11 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use super::types::{AdaptiveConfig, AdaptiveTransformerEnhancement, PositionalEncodingType};
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::adaptive::types::{
+        AdaptiveConfig, AdaptiveTransformerEnhancement, PositionalEncodingType,
+    };
     #[test]
     fn test_adaptive_transformer_creation() {
         let config = AdaptiveConfig::<f64>::default();

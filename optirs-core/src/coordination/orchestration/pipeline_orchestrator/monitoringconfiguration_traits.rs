@@ -10,7 +10,7 @@
 
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use super::types::{
     AlertingConfiguration, LoggingConfiguration, MetricsConfiguration, MonitoringConfiguration,

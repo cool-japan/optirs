@@ -1,40 +1,21 @@
-//! Honest, derived default values for TPU device capabilities, health, and
-//! program-utilization estimates, keyed off [`TPUVersion`]/
-//! [`XLAOptimizationLevel`]/[`PodTopology`] rather than hardcoded constants.
+//! Honest, derived default values for TPU device capabilities and health,
+//! keyed off [`TPUVersion`]/[`PodTopology`] rather than hardcoded constants.
+//!
+//! The two optimization-level-keyed utilization estimates that used to live
+//! here (`estimate_compute_utilization`/`estimate_bandwidth_utilization`) are
+//! gone: [`super::backend::TPUBackend`] now reports the compute utilization
+//! and memory bandwidth that the XLA performance analyzer and memory planner
+//! actually derived from the compiled graph, which supersedes a table keyed
+//! only off the optimization level.
 
 use std::time::Instant;
 
-use crate::{PodTopology, TPUVersion, XLAOptimizationLevel};
+use crate::{PodTopology, TPUVersion};
 
 use super::types::{
     ComputeCapability, ComputeHealthStatus, DataType, DeviceHealthStatus,
     DevicePerformanceCharacteristics, MemoryHealthStatus, TPUFeature,
 };
-
-/// Best honest estimate of compute utilization keyed off the optimization
-/// level. Real silicon utilization cannot be measured on a CPU reference, so
-/// this is a documented, monotonic-in-optimization estimate.
-pub(super) fn estimate_compute_utilization(level: XLAOptimizationLevel) -> f64 {
-    match level {
-        XLAOptimizationLevel::None => 0.30,
-        XLAOptimizationLevel::Basic => 0.50,
-        XLAOptimizationLevel::Standard => 0.70,
-        XLAOptimizationLevel::Aggressive => 0.85,
-        XLAOptimizationLevel::Experimental => 0.90,
-    }
-}
-
-/// Companion estimate for memory-bandwidth utilization, keyed off the
-/// optimization level.
-pub(super) fn estimate_bandwidth_utilization(level: XLAOptimizationLevel) -> f64 {
-    match level {
-        XLAOptimizationLevel::None => 0.40,
-        XLAOptimizationLevel::Basic => 0.55,
-        XLAOptimizationLevel::Standard => 0.68,
-        XLAOptimizationLevel::Aggressive => 0.75,
-        XLAOptimizationLevel::Experimental => 0.82,
-    }
-}
 
 /// Approximate per-core high-bandwidth memory capacity (bytes) for a version.
 pub(super) fn device_memory_capacity(version: TPUVersion) -> usize {
@@ -87,6 +68,19 @@ pub(super) fn device_compute_capability(version: TPUVersion) -> ComputeCapabilit
             TPUFeature::HighBandwidthMemory,
             TPUFeature::MixedPrecision,
         ],
+    }
+}
+
+/// Approximate peak inter-device (interconnect) bandwidth in GB/s for a
+/// version. Distinct from [`device_memory_bandwidth`], which describes the
+/// on-package HBM path rather than the device-to-device fabric.
+pub(super) fn device_interconnect_bandwidth(version: TPUVersion) -> f64 {
+    match version {
+        TPUVersion::V2 => 500.0,
+        TPUVersion::V3 => 900.0,
+        TPUVersion::V4 => 1200.0,
+        TPUVersion::V5e => 1600.0,
+        TPUVersion::V5p => 4800.0,
     }
 }
 

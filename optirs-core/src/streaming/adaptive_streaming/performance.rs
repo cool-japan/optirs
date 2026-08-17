@@ -5,11 +5,11 @@
 // real-time metrics collection, statistical analysis, and predictive modeling.
 
 use super::config::*;
-use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
+use super::optimizer::{Adaptation, AdaptationType};
 use super::resource_management::ResourceUsage;
 
+use crate::utils::{scalar_or, try_scalar_str};
 use scirs2_core::numeric::Float;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::iter::Sum;
 use std::time::{Duration, Instant};
@@ -126,6 +126,9 @@ pub struct PerformanceTracker<A: Float + Send + Sync + std::iter::Sum> {
     improvement_tracker: PerformanceImprovementTracker<A>,
     /// Anomaly detector for performance
     performance_anomaly_detector: PerformanceAnomalyDetector<A>,
+    /// Number of snapshots accepted since the baseline was last refreshed,
+    /// driving `PerformanceConfig::baseline_update_frequency`.
+    snapshots_since_baseline: usize,
 }
 
 /// Trend analysis for performance metrics
@@ -134,8 +137,6 @@ pub struct PerformanceTrendAnalyzer<A: Float + Send + Sync> {
     window_size: usize,
     /// Current trends for different metrics
     trends: HashMap<String, TrendData<A>>,
-    /// Trend computation methods
-    trend_methods: Vec<TrendMethod>,
 }
 
 /// Trend data for a specific metric
@@ -377,23 +378,58 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
             trend_analyzer,
             predictor,
             baseline: None,
+            snapshots_since_baseline: 0,
             current_context: None,
             improvement_tracker,
             performance_anomaly_detector,
         })
     }
 
-    /// Adds a new performance snapshot
+    /// Test-only view of the current baseline's loss.
+    #[cfg(test)]
+    pub(crate) fn baseline_loss_for_test(&self) -> Option<A> {
+        self.baseline.as_ref().map(|snapshot| snapshot.loss)
+    }
+
+    /// Adds a new performance snapshot.
+    ///
+    /// Two `PerformanceConfig` fields that previously had no reader at all now
+    /// govern this (CF1):
+    ///
+    /// * `enable_tracking == false` makes this a no-op, so turning tracking off
+    ///   actually stops history, trend, prediction and anomaly work instead of
+    ///   silently doing all of it anyway.
+    /// * `baseline_update_frequency` re-bases the comparison baseline every N
+    ///   accepted snapshots. Before, the baseline was pinned to the very first
+    ///   measurement forever, so every "improvement over baseline" figure was
+    ///   measured against the start of the run no matter how long it had been
+    ///   running.
     pub fn add_performance(&mut self, snapshot: PerformanceSnapshot<A>) -> Result<(), String> {
+        if !self.config.enable_tracking {
+            return Ok(());
+        }
+
         // Store in history
         if self.performance_history.len() >= self.config.history_size {
             self.performance_history.pop_front();
         }
         self.performance_history.push_back(snapshot.clone());
 
-        // Set baseline if this is the first measurement
-        if self.baseline.is_none() {
+        // Set baseline if this is the first measurement, then refresh it on the
+        // configured cadence.
+        self.snapshots_since_baseline = self.snapshots_since_baseline.saturating_add(1);
+        let refresh_due = self.config.baseline_update_frequency > 0
+            && self.snapshots_since_baseline >= self.config.baseline_update_frequency;
+        if self.baseline.is_none() || refresh_due {
             self.baseline = Some(snapshot.clone());
+            // Only a *refresh* starts a new window. Establishing the very first
+            // baseline must not also consume a window slot: the sample that
+            // set it is the first sample of the window, so zeroing here made
+            // every cadence one sample too long (a frequency of 3 re-based on
+            // the 4th sample, then the 7th).
+            if refresh_due {
+                self.snapshots_since_baseline = 0;
+            }
         }
 
         // Update trend analysis
@@ -496,6 +532,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     pub fn reset(&mut self) -> Result<(), String> {
         self.performance_history.clear();
         self.baseline = None;
+        self.snapshots_since_baseline = 0;
         self.current_context = None;
         self.trend_analyzer.reset();
         self.predictor.reset();
@@ -522,13 +559,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
         Self {
             window_size,
             trends: HashMap::new(),
-            trend_methods: vec![
-                TrendMethod::LinearRegression,
-                TrendMethod::MovingAverage {
-                    window: window_size / 2,
-                },
-                TrendMethod::ExponentialSmoothing { alpha: 0.3 },
-            ],
         }
     }
 
@@ -612,18 +642,20 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
             return Ok(A::zero());
         }
 
-        let n = A::from(values.len()).expect("unwrap failed");
+        let n = try_scalar_str::<A, _>(values.len())?;
         // Compute sum_x = 1 + 2 + ... + n = n*(n+1)/2
-        let sum_x = n * (n + A::one()) / A::from(2.0).expect("unwrap failed");
+        let sum_x = n * (n + A::one()) / try_scalar_str::<A, _>(2.0)?;
         let sum_y = values.iter().cloned().sum::<A>();
         let sum_xy = values
             .iter()
             .enumerate()
-            .map(|(i, &y)| A::from(i + 1).expect("unwrap failed") * y)
+            .map(|(i, &y)| try_scalar_str::<A, _>(i + 1).map(|x| x * y))
+            .collect::<Result<Vec<A>, String>>()?
+            .into_iter()
             .sum::<A>();
         // Compute sum_x_squared = 1^2 + 2^2 + ... + n^2 = n*(n+1)*(2n+1)/6
-        let two = A::from(2.0).expect("unwrap failed");
-        let six = A::from(6.0).expect("unwrap failed");
+        let two = try_scalar_str::<A, _>(2.0)?;
+        let six = try_scalar_str::<A, _>(6.0)?;
         let sum_x_squared = n * (n + A::one()) * (two * n + A::one()) / six;
 
         let denominator = n * sum_x_squared - sum_x * sum_x;
@@ -643,12 +675,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
         // Simplified correlation with time index
         let n = values.len();
         let time_values: Vec<A> = (1..=n)
-            .map(|i| A::from(i).expect("unwrap failed"))
-            .collect();
+            .map(try_scalar_str::<A, _>)
+            .collect::<Result<Vec<A>, String>>()?;
         let value_vec: Vec<A> = values.iter().cloned().collect();
 
-        let mean_time = time_values.iter().cloned().sum::<A>() / A::from(n).expect("unwrap failed");
-        let mean_value = value_vec.iter().cloned().sum::<A>() / A::from(n).expect("unwrap failed");
+        let mean_time = time_values.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(n)?;
+        let mean_value = value_vec.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(n)?;
 
         let numerator = time_values
             .iter()
@@ -679,10 +711,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
             return Ok(A::zero());
         }
 
-        let mean =
-            values.iter().cloned().sum::<A>() / A::from(values.len()).expect("unwrap failed");
+        let mean = values.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(values.len())?;
         let variance = values.iter().map(|&v| (v - mean) * (v - mean)).sum::<A>()
-            / A::from(values.len()).expect("unwrap failed");
+            / try_scalar_str::<A, _>(values.len())?;
 
         Ok(variance.sqrt())
     }
@@ -960,13 +991,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         let recent_count = values.len().min(10);
         let recent_values = &values[values.len() - recent_count..];
 
-        let mean = recent_values.iter().cloned().sum::<A>()
-            / A::from(recent_count).expect("unwrap failed");
+        let mean = recent_values.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(recent_count)?;
         let variance = recent_values
             .iter()
             .map(|&v| (v - mean) * (v - mean))
             .sum::<A>()
-            / A::from(recent_count).expect("unwrap failed");
+            / try_scalar_str::<A, _>(recent_count)?;
 
         Ok(variance.sqrt())
     }
@@ -1053,7 +1083,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         }
 
         let sum: A = self.model_accuracies.values().cloned().sum();
-        let avg = sum / A::from(self.model_accuracies.len()).expect("unwrap failed");
+        let avg = sum / scalar_or(self.model_accuracies.len(), A::one());
         avg.to_f64().unwrap_or(0.0)
     }
 
@@ -1074,7 +1104,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync>
             baseline_metrics: HashMap::new(),
             improvement_rates: HashMap::new(),
             improvement_history: VecDeque::with_capacity(1000),
-            plateau_detector: PlateauDetector::new(50, A::from(0.01).expect("unwrap failed")),
+            plateau_detector: PlateauDetector::new(50, scalar_or(0.01, A::zero())),
         }
     }
 
@@ -1255,7 +1285,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PlateauDetector<
 impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAnomalyDetector<A> {
     fn new(threshold: f64) -> Self {
         Self {
-            threshold: A::from(threshold).expect("unwrap failed"),
+            threshold: scalar_or(threshold, A::zero()),
             historical_stats: HashMap::new(),
             recent_anomalies: VecDeque::with_capacity(100),
             adaptive_threshold: true,
@@ -1308,7 +1338,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
         // Update running statistics
         stats.count += 1;
         let delta = value - stats.mean;
-        stats.mean = stats.mean + delta / A::from(stats.count).expect("unwrap failed");
+        stats.mean = stats.mean + delta / try_scalar_str::<A, _>(stats.count)?;
         let delta2 = value - stats.mean;
         stats.variance = stats.variance + delta * delta2;
         stats.min_value = stats.min_value.min(value);
@@ -1317,14 +1347,13 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
 
         // Check for anomaly after sufficient samples
         if stats.count >= 10 {
-            let std_dev =
-                (stats.variance / A::from(stats.count - 1).expect("unwrap failed")).sqrt();
-            let z_score = (value - stats.mean) / std_dev.max(A::from(1e-8).expect("unwrap failed"));
+            let std_dev = (stats.variance / try_scalar_str::<A, _>(stats.count - 1)?).sqrt();
+            let z_score = (value - stats.mean) / std_dev.max(try_scalar_str::<A, _>(1e-8)?);
 
             if z_score.abs() > self.threshold {
-                let severity = if z_score.abs() > A::from(3.0).expect("unwrap failed") {
+                let severity = if z_score.abs() > try_scalar_str::<A, _>(3.0)? {
                     AnomalySeverity::Critical
-                } else if z_score.abs() > A::from(2.5).expect("unwrap failed") {
+                } else if z_score.abs() > try_scalar_str::<A, _>(2.5)? {
                     AnomalySeverity::Major
                 } else {
                     AnomalySeverity::Moderate
@@ -1357,8 +1386,24 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
         Ok(None)
     }
 
-    fn update_threshold(&mut self, new_threshold: A) {
+    /// Move the anomaly-detection threshold, if this detector is configured to
+    /// adapt it.
+    ///
+    /// `adaptive_threshold` was set at construction and never consulted, so a
+    /// detector configured with a fixed threshold still had it moved by every
+    /// `AdaptationType::PerformanceThreshold` adaptation. Returns whether the
+    /// threshold actually moved.
+    fn update_threshold(&mut self, new_threshold: A) -> bool {
+        if !self.adaptive_threshold {
+            return false;
+        }
         self.threshold = new_threshold;
+        true
+    }
+
+    /// Whether this detector adapts its threshold.
+    pub fn is_threshold_adaptive(&self) -> bool {
+        self.adaptive_threshold
     }
 
     fn reset(&mut self) {

@@ -4,6 +4,7 @@
 // including weight averaging, gradient centralization, and other stabilization methods.
 
 use crate::error::{OptimError, Result};
+use crate::utils::{scalar_or, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
@@ -49,9 +50,9 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> WeightAverage
     pub fn new(method: AveragingMethod, maxhistory: usize) -> Self {
         let ema_decay = match method {
             AveragingMethod::ExponentialMovingAverage { decay } => {
-                A::from(decay).unwrap_or_else(|| A::from(0.999).expect("unwrap failed"))
+                A::from(decay).unwrap_or_else(|| scalar_or(0.999, A::zero()))
             }
-            _ => A::from(0.999).expect("unwrap failed"),
+            _ => scalar_or(0.999, A::zero()),
         };
 
         Self {
@@ -134,7 +135,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> WeightAverage
         }
 
         let num_snapshots = self.weight_history.len();
-        let inv_count = A::one() / A::from(num_snapshots).expect("unwrap failed");
+        let inv_count = A::one() / try_scalar::<A, _>(num_snapshots)?;
 
         // Reset averaged weights to zero
         for avg_weight in &mut self.averaged_weights {
@@ -174,7 +175,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> WeightAverage
     /// Update using Stochastic Weight Averaging (SWA)
     fn update_swa(&mut self, weights: &[Array<A, D>]) -> Result<()> {
         // SWA uses a running average with equal weights
-        let n = A::from(self.step_count).expect("unwrap failed");
+        let n = try_scalar::<A, _>(self.step_count)?;
         let inv_n = A::one() / n;
         let prev_weight = (n - A::one()) / n;
 
@@ -278,7 +279,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> PolyakAverage
             + self.final_decay.to_f64().unwrap_or(0.999) * progress;
 
         self.averager
-            .set_ema_decay(A::from(current_decay).expect("unwrap failed"));
+            .set_ema_decay(try_scalar::<A, _>(current_decay)?);
         self.averager.update(weights)
     }
 
@@ -320,7 +321,7 @@ pub mod gradient_centralization {
         }
 
         // Compute mean
-        let mean = gradient.sum() / A::from(gradient.len()).expect("unwrap failed");
+        let mean = gradient.sum() / try_scalar::<A, _>(gradient.len())?;
 
         // Subtract mean from all elements
         gradient.mapv_inplace(|x| x - mean);

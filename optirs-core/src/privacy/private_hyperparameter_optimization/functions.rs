@@ -2,19 +2,13 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use crate::error::{OptimError, Result};
-use crate::privacy::{DifferentialPrivacyConfig, PrivacyBudget};
+use crate::error::Result;
+use crate::privacy::PrivacyBudget;
 use scirs2_core::numeric::Float;
-use std::collections::HashMap;
 use std::fmt::Debug;
 
-use super::budget_manager::HPOBudgetManager;
 use super::types::{
-    BudgetAllocationStrategy, EarlyStoppingConfig, HPOEvaluation, HPOResult,
-    HyperparameterNoiseMechanism, ParameterBounds, ParameterConfiguration, ParameterDefinition,
-    ParameterPrior, ParameterSpace, ParameterTransformation, ParameterType, PrivateHPOConfig,
-    PrivateRandomSearch, SearchAlgorithm, SensitivityBounds, SmoothSensitivityParams,
-    StatisticalTestResult, ValidationStrategy,
+    HPOEvaluation, HPOResult, ParameterConfiguration, ParameterSpace, StatisticalTestResult,
 };
 
 pub type ObjectiveFn<T> = Box<dyn Fn(&ParameterConfiguration<T>) -> Result<f64> + Send + Sync>;
@@ -41,7 +35,16 @@ pub trait NoisyOptimizer<T: Float + Debug + Send + Sync + 'static>: Send + Sync 
 }
 #[cfg(test)]
 mod tests {
+    use super::super::budget_manager::HPOBudgetManager;
+    use super::super::types::{
+        BudgetAllocationStrategy, EarlyStoppingConfig, HyperparameterNoiseMechanism,
+        ParameterBounds, ParameterDefinition, ParameterPrior, ParameterTransformation,
+        ParameterType, PrivateHPOConfig, PrivateRandomSearch, SearchAlgorithm, SensitivityBounds,
+        SmoothSensitivityParams, ValidationStrategy,
+    };
     use super::*;
+    use crate::privacy::DifferentialPrivacyConfig;
+    use std::collections::HashMap;
     #[test]
     fn test_private_hpoconfig() {
         let config = PrivateHPOConfig {

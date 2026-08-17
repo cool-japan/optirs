@@ -5,7 +5,6 @@
 use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TopologyManager {

@@ -91,6 +91,22 @@ impl<A> VariationalQuantumOptimizer<A>
 where
     A: Float + ScalarOperand + Debug + Send + Sync,
 {
+    /// Create a VQE-inspired SPSA optimizer with the canonical SPSA gain
+    /// `a = 0.1`, matching the defaults already used for `c`, `α`, `γ` and
+    /// `A`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use optirs_core::quantum_inspired::VariationalQuantumOptimizer;
+    ///
+    /// let optimizer = VariationalQuantumOptimizer::<f64>::with_default_gain();
+    /// assert!((optimizer.learning_rate() - 0.1).abs() < 1e-12);
+    /// ```
+    pub fn with_default_gain() -> Self {
+        Self::new(A::from(DEFAULT_SPSA_A).unwrap_or_else(A::one))
+    }
+
     /// Create a new VQE-inspired SPSA optimizer with the given learning rate.
     pub fn new(learning_rate: A) -> Self {
         let c = A::from(DEFAULT_SPSA_C).unwrap_or_else(|| A::epsilon());

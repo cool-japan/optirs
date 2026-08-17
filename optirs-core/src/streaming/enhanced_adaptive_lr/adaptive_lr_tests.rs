@@ -327,10 +327,7 @@ fn a_registered_source_task_shifts_the_meta_proposal() {
         ..config()
     });
     with_transfer.add_source_task(TaskData {
-        task_id: "prior".to_string(),
         optimal_lr_sequence: vec![0.05],
-        task_features: Array1::from_vec(vec![1.0]),
-        performance_curve: vec![1.0],
     });
 
     let gradients = Array1::from_vec(vec![0.4f64, -0.3, 0.2]);

@@ -11,10 +11,14 @@ pub mod drift_detection;
 pub mod drift_tests;
 pub mod meta_bandit;
 pub mod meta_learning;
+pub mod meta_transfer;
 pub mod optimizer;
 pub mod performance;
 pub mod resource_management;
 pub mod statistics;
+
+#[cfg(test)]
+mod config_wiring_tests;
 
 // NOTE: `anomaly_ml`, `anomaly_statistical`, `drift_tests`, `meta_bandit`
 // and `statistics` are deliberately NOT glob-re-exported. The glob exports below already
@@ -39,11 +43,10 @@ pub use anomaly_detection::{
     EffectivenessMetrics, EnsembleAnomalyDetector, EnsembleConfig, EnsembleVotingStrategy,
     EscalationCondition, EscalationRule, FPMitigationStrategy, FPRateCalculator,
     FalsePositiveEvent, FalsePositivePatterns, FalsePositiveTracker as AnomalyDetectionFPTracker,
-    MLModelMetrics, OutcomeMeasurement, PendingResponse, ResponseAction,
-    ResponseEffectivenessTracker, ResponseExecution, ResponseExecutor, ResponseOutcome,
-    ResponsePriority, ResponseResourceLimits, TemporalPattern, TemporalPatternType,
-    ThresholdAdaptationParams, ThresholdAdaptationStrategy, ThresholdPerformanceFeedback,
-    TrendAnalysis, TrendDirection,
+    MLModelMetrics, OutcomeMeasurement, PendingResponse, ResponseAction, ResponseExecution,
+    ResponseExecutor, ResponseOutcome, ResponsePriority, ResponseResourceLimits, TemporalPattern,
+    TemporalPatternType, ThresholdAdaptationParams, ThresholdAdaptationStrategy,
+    ThresholdPerformanceFeedback, TrendAnalysis, TrendDirection,
 };
 
 // Drift detection module exports
@@ -77,11 +80,10 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray::Data<Elem = A>
-        + scirs2_core::ndarray::Dimension
-        + Send
-        + Sync
-        + 'static,
+    // `Data` is ndarray's *storage* trait, not a dimension trait: no type
+    // implements both it and `Dimension`, so this bound was unsatisfiable and
+    // neither factory could ever be instantiated by any caller.
+    D: scirs2_core::ndarray::Dimension + Send + Sync + 'static,
 {
     let config = StreamingConfig::default();
     let default_learning_rate = A::from(DEFAULT_LEARNING_RATE).ok_or_else(|| {
@@ -105,11 +107,10 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray::Data<Elem = A>
-        + scirs2_core::ndarray::Dimension
-        + Send
-        + Sync
-        + 'static,
+    // `Data` is ndarray's *storage* trait, not a dimension trait: no type
+    // implements both it and `Dimension`, so this bound was unsatisfiable and
+    // neither factory could ever be instantiated by any caller.
+    D: scirs2_core::ndarray::Dimension + Send + Sync + 'static,
 {
     let default_learning_rate = A::from(DEFAULT_LEARNING_RATE).ok_or_else(|| {
         format!("element type cannot represent the default learning rate {DEFAULT_LEARNING_RATE}")

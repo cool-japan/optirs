@@ -30,7 +30,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = RMSprop::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct RMSprop<A: Float + ScalarOperand + Debug> {
@@ -55,8 +55,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSprop<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            rho: A::from(0.9).expect("unwrap failed"),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
+            rho: A::from(0.9).expect("RMSprop: default rho (0.9) must fit in A"),
+            epsilon: A::from(1e-8).expect("RMSprop: default epsilon (1e-8) must fit in A"),
             weight_decay: A::zero(),
             v: None,
         }

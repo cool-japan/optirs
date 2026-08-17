@@ -4,7 +4,6 @@
 // for quickly adapting optimizers to new tasks with minimal data. It includes
 // prototypical networks, meta-learning approaches, and rapid adaptation mechanisms.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
@@ -25,15 +24,6 @@ pub struct FewShotLearningSystem<T: Float + Debug + Send + Sync + 'static> {
 
     /// Prototypical network for task representation
     prototype_network: PrototypicalNetwork<T>,
-
-    /// Support set manager
-    support_set_manager: SupportSetManager<T>,
-
-    /// Adaptation strategies
-    adaptation_strategies: Vec<Box<dyn AdaptationStrategy<T>>>,
-
-    /// Task similarity calculator
-    similarity_calculator: TaskSimilarityCalculator<T>,
 
     /// Memory bank for storing task experiences
     memory_bank: EpisodicMemoryBank<T>,
@@ -595,27 +585,16 @@ pub struct PrototypicalNetworkParams<T: Float + Debug + Send + Sync + 'static> {
     pub prototype_update_rate: T,
 }
 
-/// Support set manager
+/// Support set manager.
+///
+/// Currently a validated holder for [`SupportSetManagerConfig`]: the support-set
+/// store and selection strategy it declared were never written to or consulted
+/// by anything, so they have been removed rather than left as write-only state.
 pub struct SupportSetManager<T: Float + Debug + Send + Sync + 'static> {
-    /// Current support sets
-    support_sets: HashMap<String, SupportSet<T>>,
-
-    /// Support set selection strategy
-    selection_strategy: SupportSetSelectionStrategy,
-
     /// Manager configuration
     config: SupportSetManagerConfig,
-}
 
-/// Support set selection strategies
-#[derive(Debug, Clone, Copy)]
-pub enum SupportSetSelectionStrategy {
-    Random,
-    DiversityBased,
-    DifficultyBased,
-    UncertaintyBased,
-    PrototypeBased,
-    Adaptive,
+    _element: std::marker::PhantomData<T>,
 }
 
 /// Support set manager configuration
@@ -659,12 +638,6 @@ pub trait AdaptationStrategy<T: Float + Debug + Send + Sync + 'static>: Send + S
 
 /// Task similarity calculator
 pub struct TaskSimilarityCalculator<T: Float + Debug + Send + Sync + 'static> {
-    /// Similarity metrics
-    similarity_metrics: Vec<Box<dyn SimilarityMetric<T>>>,
-
-    /// Metric weights
-    metric_weights: HashMap<String, T>,
-
     /// Similarity cache
     similarity_cache: HashMap<(String, String), T>,
 
@@ -855,9 +828,6 @@ pub struct FewShotPerformanceTracker<T: Float + Debug + Send + Sync + 'static> {
     /// Performance history
     performance_history: VecDeque<PerformanceRecord<T>>,
 
-    /// Performance metrics
-    metrics: Vec<Box<dyn PerformanceMetric<T>>>,
-
     /// Tracking configuration
     config: TrackingConfig,
 
@@ -944,9 +914,6 @@ impl<T: Float + Debug + Send + Sync + 'static> FewShotLearningSystem<T> {
         Ok(Self {
             base_optimizer,
             prototype_network: PrototypicalNetwork::new(config.prototype_config)?,
-            support_set_manager: SupportSetManager::new(config.support_set_config)?,
-            adaptation_strategies: Vec::new(),
-            similarity_calculator: TaskSimilarityCalculator::new(config.similarity_config)?,
             memory_bank: EpisodicMemoryBank::new(config.memory_config)?,
             fast_adaptation: FastAdaptationEngine::new(config.adaptation_config)?,
             performance_tracker: FewShotPerformanceTracker::new(config.tracking_config)?,
@@ -1225,9 +1192,8 @@ impl<T: Float + Debug + Send + Sync + 'static> SupportSetManager<T> {
             ));
         }
         Ok(Self {
-            support_sets: HashMap::new(),
-            selection_strategy: SupportSetSelectionStrategy::DiversityBased,
             config,
+            _element: std::marker::PhantomData,
         })
     }
 
@@ -1257,8 +1223,6 @@ impl<T: Float + Debug + Send + Sync + 'static> TaskSimilarityCalculator<T> {
     /// Create a new task similarity calculator
     pub fn new(config: SimilarityCalculatorConfig<T>) -> Result<Self> {
         Ok(Self {
-            similarity_metrics: Vec::new(),
-            metric_weights: HashMap::new(),
             similarity_cache: HashMap::new(),
             config,
         })
@@ -1488,7 +1452,6 @@ impl<T: Float + Debug + Send + Sync + 'static> FewShotPerformanceTracker<T> {
     pub fn new(config: TrackingConfig) -> Result<Self> {
         Ok(Self {
             performance_history: VecDeque::new(),
-            metrics: Vec::new(),
             config,
             stats: PerformanceStats {
                 best_performance: T::zero(),

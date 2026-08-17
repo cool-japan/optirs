@@ -33,7 +33,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = Adagrad::new(0.01);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Adagrad<A: Float + ScalarOperand + Debug> {
@@ -56,7 +56,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Adagrad<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            epsilon: A::from(1e-10).expect("unwrap failed"),
+            epsilon: A::from(1e-10).expect("Adagrad: default epsilon (1e-10) must fit in A"),
             weight_decay: A::zero(),
             sum_squared_grads: None,
         }

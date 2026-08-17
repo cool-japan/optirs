@@ -11,10 +11,8 @@ use std::fmt::Debug;
 
 use super::budget_manager::AdaptiveBudgetController;
 use super::types::{
-    AcquisitionFunction, AnomalyDetector, BootstrapEstimator, ConfidenceEstimation,
-    GaussianProcessModel, KernelFunction, ObjectiveNoiseMechanism, ObjectiveSensitivityAnalyzer,
-    PrivateCrossValidation, PrivateFoldAggregation, ResultValidator,
-    SampleBasedSensitivityEstimator, SearchStrategy, SelectionMechanism, UtilityFunction,
+    AnomalyDetector, GaussianProcessModel, KernelFunction, ObjectiveNoiseMechanism,
+    ResultValidator, SelectionMechanism, UtilityFunction,
 };
 
 impl Default for AdaptiveBudgetController {
@@ -36,19 +34,11 @@ macro_rules! default_via_new {
 }
 
 default_via_new!(
-    AcquisitionFunction,
     AnomalyDetector,
-    BootstrapEstimator,
-    ConfidenceEstimation,
     GaussianProcessModel,
     KernelFunction,
     ObjectiveNoiseMechanism,
-    ObjectiveSensitivityAnalyzer,
-    PrivateCrossValidation,
-    PrivateFoldAggregation,
     ResultValidator,
-    SampleBasedSensitivityEstimator,
-    SearchStrategy,
     SelectionMechanism,
     UtilityFunction,
 );
@@ -61,18 +51,10 @@ mod tests {
     #[test]
     fn every_component_still_has_a_default() {
         let _ = AdaptiveBudgetController::default();
-        let _ = AcquisitionFunction::<f64>::default();
         let _ = AnomalyDetector::<f64>::default();
-        let _ = BootstrapEstimator::<f64>::default();
-        let _ = ConfidenceEstimation::<f64>::default();
         let _ = GaussianProcessModel::<f64>::default();
         let _ = KernelFunction::<f64>::default();
-        let _ = ObjectiveSensitivityAnalyzer::<f64>::default();
-        let _ = PrivateCrossValidation::<f64>::default();
-        let _ = PrivateFoldAggregation::<f64>::default();
         let _ = ResultValidator::<f64>::default();
-        let _ = SampleBasedSensitivityEstimator::<f64>::default();
-        let _ = SearchStrategy::<f64>::default();
         let _ = UtilityFunction::<f64>::default();
 
         let noise = ObjectiveNoiseMechanism::<f64>::default();

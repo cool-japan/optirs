@@ -26,6 +26,16 @@
 //!   folding, common-subexpression elimination, kernel-fusion legality checks,
 //!   a real (non-bump) memory allocator with free/coalescing, and shape
 //!   inference for reshape/convolution/dot/broadcast.
+//! - **[`tpu_backend::TPUBackend`]**: the run side -- device selection, memory
+//!   pools, retry policy, profiling. It owns no compiler of its own:
+//!   [`xla::XLACompiler`] is the single graph-to-binary path and this backend
+//!   drives it, so a program's FLOP count, time estimate and memory footprint
+//!   all come from the graph that was actually compiled. Register a graph with
+//!   `register_computation` before executing it; an id with no registered graph
+//!   is an error rather than a synthesized binary. Execution evaluates that
+//!   graph through [`xla::execution::ReferenceExecutor`], and every device
+//!   memory reservation it makes is recorded into the same profile the compile
+//!   step opened.
 //! - **[`coordination::PodCoordinator`]**: device/channel topology, barrier
 //!   synchronization, load balancing, and fault detection over real in-process
 //!   state (no `sleep`-and-report-success placeholders).

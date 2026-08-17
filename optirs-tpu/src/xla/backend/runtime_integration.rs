@@ -4,8 +4,7 @@
 // including executable creation, device management, execution scheduling,
 // and resource management.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, RwLock};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::super::{GeneratedCode, TPUConfig, TPUVersion};
@@ -25,12 +24,6 @@ pub struct RuntimeIntegration {
 
     /// Executable manager
     executable_manager: ExecutableManager,
-
-    /// Execution scheduler
-    execution_scheduler: ExecutionScheduler,
-
-    /// Resource manager
-    resource_manager: ResourceManager,
 
     /// Memory manager
     memory_manager: RuntimeMemoryManager,
@@ -256,19 +249,17 @@ pub enum TopologyType {
     Custom(String),
 }
 
-/// Executable manager
+/// Executable manager.
+///
+/// The [`ExecutableCache`] is the single store: it owns the loaded executables,
+/// tracks access for eviction and keeps real hit/miss statistics. There is no
+/// separate `executables` map, no `loading_queue` and no `execution_contexts`
+/// map any more -- all three were written once by the constructor and never read,
+/// and a second owning map alongside the cache would have to duplicate every
+/// executable (`TPUExecutable` is not `Clone`) to exist at all.
 pub struct ExecutableManager {
-    /// Loaded executables
-    executables: HashMap<String, TPUExecutable>,
-
-    /// Executable cache
+    /// Executable store with LRU/LFU eviction and hit/miss statistics
     executable_cache: ExecutableCache,
-
-    /// Loading queue
-    loading_queue: VecDeque<LoadingRequest>,
-
-    /// Execution contexts
-    execution_contexts: HashMap<String, ExecutionContext>,
 }
 
 /// TPU executable representation
@@ -661,201 +652,20 @@ pub enum ContextState {
     Error(String),
 }
 
-/// Execution scheduler for managing concurrent executions
-pub struct ExecutionScheduler {
-    /// Execution queue
-    execution_queue: VecDeque<ExecutionRequest>,
+// NOTE: this module used to define its own `ExecutionScheduler`, `ResourceManager`,
+// `ExecutionRequest`, `ActiveExecution`, `ExecutionProgress`, `SchedulerConfig`,
+// `SchedulingPolicy`, `ResourcePool`, `ResourceType`, `ResourceAllocation`,
+// `ResourceUsageTracking` and `UsageSnapshot`. Every one of them was constructed
+// by `RuntimeIntegration::new` and then never read again: nothing in the crate
+// ever enqueued an execution request or reserved a resource through them, and the
+// names collided with the *real* `ExecutionScheduler`/`ResourceManager` in
+// `xla::optimization::scheduling` (which the optimization pipeline does drive)
+// and with `tpu_backend`'s real `ExecutionEngine`, which is where execution
+// actually happens. They are deleted rather than left as a public API that
+// schedules nothing.
 
-    /// Active executions
-    active_executions: HashMap<String, ActiveExecution>,
-
-    /// Scheduler configuration
-    scheduler_config: SchedulerConfig,
-
-    /// Scheduling policy
-    scheduling_policy: SchedulingPolicy,
-}
-
-/// Execution request
-#[derive(Debug)]
-pub struct ExecutionRequest {
-    /// Request ID
-    pub id: String,
-
-    /// Executable to run
-    pub executable_id: String,
-
-    /// Input data
-    pub inputs: HashMap<String, Vec<u8>>,
-
-    /// Request priority
-    pub priority: u32,
-
-    /// Request timestamp
-    pub timestamp: Instant,
-
-    /// Timeout
-    pub timeout: Option<Duration>,
-}
-
-/// Active execution tracking
-#[derive(Debug)]
-pub struct ActiveExecution {
-    /// Execution ID
-    pub id: String,
-
-    /// Associated context
-    pub context_id: String,
-
-    /// Start time
-    pub start_time: Instant,
-
-    /// Expected completion time
-    pub expected_completion: Option<Instant>,
-
-    /// Progress tracking
-    pub progress: ExecutionProgress,
-}
-
-/// Execution progress tracking
-#[derive(Debug, Default)]
-pub struct ExecutionProgress {
-    /// Completion percentage (0.0-1.0)
-    pub completion_percentage: f64,
-
-    /// Current stage
-    pub current_stage: String,
-
-    /// Stages completed
-    pub stages_completed: usize,
-
-    /// Total stages
-    pub total_stages: usize,
-}
-
-/// Scheduler configuration
-#[derive(Debug)]
-pub struct SchedulerConfig {
-    /// Maximum concurrent executions
-    pub max_concurrent: usize,
-
-    /// Scheduling quantum (milliseconds)
-    pub quantum_ms: u64,
-
-    /// Enable preemption
-    pub enable_preemption: bool,
-
-    /// Priority levels
-    pub priority_levels: usize,
-}
-
-/// Scheduling policies
-#[derive(Debug)]
-pub enum SchedulingPolicy {
-    /// First-come first-served
-    FCFS,
-
-    /// Priority-based scheduling
-    Priority,
-
-    /// Round-robin scheduling
-    RoundRobin,
-
-    /// Fair sharing
-    FairShare,
-
-    /// Shortest job first
-    SJF,
-}
-
-/// Resource manager for runtime resources
-pub struct ResourceManager {
-    /// Resource pools
-    resource_pools: HashMap<String, ResourcePool>,
-
-    /// Resource allocations
-    allocations: HashMap<String, ResourceAllocation>,
-
-    /// Resource usage tracking
-    usage_tracking: ResourceUsageTracking,
-}
-
-/// Resource pool
-#[derive(Debug)]
-pub struct ResourcePool {
-    /// Pool name
-    pub name: String,
-
-    /// Resource type
-    pub resource_type: ResourceType,
-
-    /// Available resources
-    pub available: usize,
-
-    /// Total resources
-    pub total: usize,
-
-    /// Reserved resources
-    pub reserved: usize,
-}
-
-/// Types of resources
-#[derive(Debug)]
-pub enum ResourceType {
-    /// Compute resources
-    Compute,
-
-    /// Memory resources
-    Memory,
-
-    /// Communication resources
-    Communication,
-
-    /// Storage resources
-    Storage,
-}
-
-/// Resource allocation
-#[derive(Debug)]
-pub struct ResourceAllocation {
-    /// Allocation ID
-    pub id: String,
-
-    /// Allocated resources by type
-    pub resources: HashMap<ResourceType, usize>,
-
-    /// Allocation timestamp
-    pub timestamp: Instant,
-
-    /// Allocation duration
-    pub duration: Option<Duration>,
-}
-
-/// Resource usage tracking
-#[derive(Debug, Default)]
-pub struct ResourceUsageTracking {
-    /// Peak usage by resource type
-    pub peak_usage: HashMap<ResourceType, usize>,
-
-    /// Average usage by resource type
-    pub avg_usage: HashMap<ResourceType, f64>,
-
-    /// Usage timeline
-    pub timeline: Vec<UsageSnapshot>,
-}
-
-/// Usage snapshot
-#[derive(Debug)]
-pub struct UsageSnapshot {
-    /// Snapshot timestamp
-    pub timestamp: Instant,
-
-    /// Usage by resource type
-    pub usage: HashMap<ResourceType, usize>,
-
-    /// Utilization percentage
-    pub utilization: f64,
-}
+/// Name of the pool [`RuntimeMemoryManager`] reserves executables from.
+const RUNTIME_DEVICE_POOL: &str = "device";
 
 /// Runtime memory manager
 pub struct RuntimeMemoryManager {
@@ -942,8 +752,6 @@ impl RuntimeIntegration {
         Self {
             device_manager: DeviceManager::new(&target_config),
             executable_manager: ExecutableManager::new(),
-            execution_scheduler: ExecutionScheduler::new(&runtime_config),
-            resource_manager: ResourceManager::new(),
             memory_manager: RuntimeMemoryManager::new(&runtime_config),
             target_config,
             runtime_config,
@@ -951,23 +759,98 @@ impl RuntimeIntegration {
         }
     }
 
-    /// Integrate generated code with runtime
-    pub fn integrate(&mut self, code: GeneratedCode, _target_tpu: &TPUConfig) -> Result<Vec<u8>> {
+    /// Integrate generated code with runtime.
+    ///
+    /// This is a real admission path, not a pass-through: when error checking is
+    /// enabled the generated code has to be non-empty, `target_tpu` has to be at
+    /// least the version the executable declares it needs, at least one device
+    /// has to be available to run it, and the executable's footprint has to fit
+    /// in the runtime memory pool. Any of those failing is an honest `Err`
+    /// instead of a container wrapping code that could never run.
+    pub fn integrate(&mut self, code: GeneratedCode, target_tpu: &TPUConfig) -> Result<Vec<u8>> {
         let start_time = Instant::now();
+
+        if self.runtime_config.enable_error_checking && code.kernel_code.trim().is_empty() {
+            self.integration_stats.error_count += 1;
+            return Err(OptimError::from(
+                "runtime integration received an empty computation kernel".to_string(),
+            ));
+        }
 
         // Create executable from generated code
         let executable = self.create_executable(code)?;
 
-        // Load executable into runtime
-        let executable_id = self.executable_manager.load_executable(executable)?;
+        // The caller's target has to satisfy what the executable declares it
+        // needs, and a device has to exist to run it on.
+        let device_id = match self
+            .device_manager
+            .select_device(&executable.metadata.target_requirements, target_tpu)
+        {
+            Ok(device_id) => device_id,
+            Err(error) => {
+                self.integration_stats.error_count += 1;
+                return Err(error);
+            }
+        };
+
+        // Reserve the executable's footprint in the runtime memory pool.
+        let footprint = executable
+            .binary
+            .len()
+            .saturating_add(executable.metadata.target_requirements.required_memory);
+        let executable_id = executable.id.clone();
+        if let Err(error) = self.memory_manager.reserve(&executable_id, footprint) {
+            self.integration_stats.error_count += 1;
+            return Err(error);
+        }
+
+        // Load executable into runtime; anything evicted to make room releases
+        // its reservation so the pool cannot drift upward.
+        let evicted = self.executable_manager.load_executable(executable)?;
+        for evicted_id in &evicted {
+            self.memory_manager.release(evicted_id);
+            self.device_manager.unassign(evicted_id);
+        }
+        self.device_manager.assign(&executable_id, device_id);
 
         // Create binary representation
         let binary = self.create_binary(&executable_id)?;
 
         self.integration_stats.runtime_overhead_us = start_time.elapsed().as_micros() as u64;
         self.integration_stats.executables_created += 1;
+        self.integration_stats.peak_memory_usage = self
+            .integration_stats
+            .peak_memory_usage
+            .max(self.memory_manager.total_allocated());
+        self.integration_stats.device_utilization = self.device_manager.utilization();
 
         Ok(binary)
+    }
+
+    /// Unload an executable, releasing its memory reservation and device
+    /// assignment. The counterpart to [`Self::integrate`]'s reservation.
+    pub fn unload_executable(&mut self, executable_id: &str) -> bool {
+        let removed = self.executable_manager.remove_executable(executable_id);
+        if removed {
+            self.memory_manager.release(executable_id);
+            self.device_manager.unassign(executable_id);
+        }
+        removed
+    }
+
+    /// Cache statistics for the executable store.
+    pub fn cache_statistics(&self) -> &CacheStats {
+        self.executable_manager.cache_statistics()
+    }
+
+    /// Runtime memory usage statistics.
+    pub fn memory_statistics(&self) -> &MemoryUsageStats {
+        self.memory_manager.usage_stats()
+    }
+
+    /// Integration statistics accumulated across every [`Self::integrate`] call.
+    pub fn integration_statistics(&self) -> &RuntimeIntegrationStats {
+        &self.integration_stats
     }
 
     /// Create executable from generated code
@@ -1002,7 +885,7 @@ impl RuntimeIntegration {
     /// (the executable's `binary` bytes) framed with a magic tag, a version, the
     /// executable id and length prefixes, so it can be round-tripped/inspected.
     /// It is not a fixed placeholder — a caller must first `load_executable`.
-    fn create_binary(&self, executable_id: &str) -> Result<Vec<u8>> {
+    fn create_binary(&mut self, executable_id: &str) -> Result<Vec<u8>> {
         let executable = self
             .executable_manager
             .get_executable(executable_id)
@@ -1044,24 +927,208 @@ impl DeviceManager {
             PodTopology::Pod32x32 => 1024,
         };
 
+        let mut device_status = HashMap::with_capacity(num_chips);
+        let mut capabilities_cache = HashMap::with_capacity(num_chips);
+
         for i in 0..num_chips {
+            let memory_capacity = 16 * 1024 * 1024 * 1024 / num_chips;
             devices.push(TPUDevice {
                 id: i,
                 device_type: TPUDeviceType::SingleChip,
                 version: target_config.tpu_version,
-                memory_capacity: 16 * 1024 * 1024 * 1024 / num_chips, // Default 16GB per chip
-                compute_throughput: 420.0 / num_chips as f64,         // Default 420 TFLOPS total
+                memory_capacity,
+                compute_throughput: 420.0 / num_chips as f64,
                 state: DeviceState::Available,
                 last_health_check: Instant::now(),
             });
+            // Populate the status and capability records at enumeration time.
+            // Leaving these empty meant `select_device` had nothing to consult
+            // and every capability query would have missed.
+            device_status.insert(i, DeviceStatus::default());
+            capabilities_cache.insert(i, device_capabilities(target_config.tpu_version));
         }
 
         Self {
             available_devices: devices,
             device_assignments: HashMap::new(),
-            device_status: HashMap::new(),
-            capabilities_cache: HashMap::new(),
+            device_status,
+            capabilities_cache,
         }
+    }
+
+    /// Choose a device able to run an executable with the given requirements.
+    ///
+    /// `target_tpu` is the target the caller is compiling for; a device younger
+    /// than the executable's declared minimum cannot run it, so that is a real
+    /// rejection rather than a silent success.
+    pub fn select_device(
+        &self,
+        requirements: &TargetRequirements,
+        target_tpu: &TPUConfig,
+    ) -> Result<usize> {
+        if tpu_version_rank(target_tpu.tpu_version) < tpu_version_rank(requirements.min_tpu_version)
+        {
+            return Err(OptimError::from(format!(
+                "target {:?} is older than the executable's minimum {:?}",
+                target_tpu.tpu_version, requirements.min_tpu_version
+            )));
+        }
+
+        // Prefer the least-utilized available device that has the memory and the
+        // required features.
+        let mut best: Option<(usize, f64)> = None;
+        for device in &self.available_devices {
+            if !matches!(device.state, DeviceState::Available | DeviceState::InUse) {
+                continue;
+            }
+            if device.memory_capacity < requirements.required_memory {
+                continue;
+            }
+            if tpu_version_rank(device.version) < tpu_version_rank(requirements.min_tpu_version) {
+                continue;
+            }
+            if let Some(capabilities) = self.capabilities_cache.get(&device.id) {
+                let supports_all = requirements.required_features.iter().all(|feature| {
+                    capabilities
+                        .special_instructions
+                        .iter()
+                        .any(|available| available == feature)
+                });
+                if !supports_all {
+                    continue;
+                }
+            }
+            let utilization = self
+                .device_status
+                .get(&device.id)
+                .map(|status| status.utilization)
+                .unwrap_or(0.0);
+            match best {
+                Some((_, best_utilization)) if best_utilization <= utilization => {}
+                _ => best = Some((device.id, utilization)),
+            }
+        }
+
+        best.map(|(id, _)| id).ok_or_else(|| {
+            OptimError::from(format!(
+                "no TPU device among {} available satisfies the executable's requirements \
+                 ({} bytes, features {:?})",
+                self.available_devices.len(),
+                requirements.required_memory,
+                requirements.required_features
+            ))
+        })
+    }
+
+    /// Record that an executable is placed on a device.
+    pub fn assign(&mut self, executable_id: &str, device_id: usize) {
+        self.device_assignments
+            .insert(executable_id.to_string(), device_id);
+        if let Some(device) = self
+            .available_devices
+            .iter_mut()
+            .find(|device| device.id == device_id)
+        {
+            device.state = DeviceState::InUse;
+        }
+    }
+
+    /// Drop an executable's placement, freeing the device when nothing else is
+    /// assigned to it.
+    pub fn unassign(&mut self, executable_id: &str) {
+        if let Some(device_id) = self.device_assignments.remove(executable_id) {
+            let still_used = self
+                .device_assignments
+                .values()
+                .any(|assigned| *assigned == device_id);
+            if !still_used {
+                if let Some(device) = self
+                    .available_devices
+                    .iter_mut()
+                    .find(|device| device.id == device_id)
+                {
+                    device.state = DeviceState::Available;
+                }
+            }
+        }
+    }
+
+    /// Fraction of enumerated devices currently holding at least one executable.
+    pub fn utilization(&self) -> f64 {
+        if self.available_devices.is_empty() {
+            return 0.0;
+        }
+        let busy: std::collections::HashSet<usize> =
+            self.device_assignments.values().copied().collect();
+        busy.len() as f64 / self.available_devices.len() as f64
+    }
+
+    /// Devices enumerated from the target configuration.
+    pub fn devices(&self) -> &[TPUDevice] {
+        &self.available_devices
+    }
+
+    /// Cached capabilities for a device, if it is enumerated.
+    pub fn capabilities(&self, device_id: usize) -> Option<&DeviceCapabilities> {
+        self.capabilities_cache.get(&device_id)
+    }
+
+    /// Live status record for a device, if it is enumerated.
+    pub fn status(&self, device_id: usize) -> Option<&DeviceStatus> {
+        self.device_status.get(&device_id)
+    }
+}
+
+/// Ordering rank for a TPU version, so "at least version X" is expressible.
+/// `TPUVersion` is deliberately not `Ord` (V5e and V5p are different product
+/// lines rather than a strict upgrade), so the rank is stated explicitly here.
+fn tpu_version_rank(version: TPUVersion) -> u8 {
+    match version {
+        TPUVersion::V2 => 2,
+        TPUVersion::V3 => 3,
+        TPUVersion::V4 => 4,
+        TPUVersion::V5e => 5,
+        TPUVersion::V5p => 6,
+    }
+}
+
+/// Capabilities of one device of a given TPU version, derived from the version
+/// rather than left as an empty cache entry.
+fn device_capabilities(version: TPUVersion) -> DeviceCapabilities {
+    let (matrix_dims, vector_width, memory_bandwidth, inter_chip, inter_pod) = match version {
+        TPUVersion::V2 => ((128, 128), 8, 600.0, 500.0, 100.0),
+        TPUVersion::V3 => ((128, 128), 8, 900.0, 900.0, 200.0),
+        TPUVersion::V4 => ((128, 128), 8, 1200.0, 1200.0, 300.0),
+        TPUVersion::V5e => ((128, 128), 8, 819.0, 1600.0, 400.0),
+        TPUVersion::V5p => ((128, 128), 8, 2765.0, 4800.0, 800.0),
+    };
+    DeviceCapabilities {
+        supported_dtypes: vec![
+            "f32".to_string(),
+            "bf16".to_string(),
+            "f16".to_string(),
+            "s32".to_string(),
+            "s8".to_string(),
+        ],
+        max_matrix_dims: matrix_dims,
+        vector_width,
+        memory_bandwidth,
+        special_instructions: vec![
+            "matmul".to_string(),
+            "conv".to_string(),
+            "reduce".to_string(),
+            "transpose".to_string(),
+        ],
+        interconnect_capabilities: InterconnectCapabilities {
+            inter_chip_bandwidth: inter_chip,
+            inter_pod_bandwidth: inter_pod,
+            collective_ops: vec![
+                "all-reduce".to_string(),
+                "all-gather".to_string(),
+                "reduce-scatter".to_string(),
+            ],
+            topology_type: TopologyType::Mesh,
+        },
     }
 }
 
@@ -1075,23 +1142,31 @@ impl ExecutableManager {
     /// Create new executable manager
     pub fn new() -> Self {
         Self {
-            executables: HashMap::new(),
             executable_cache: ExecutableCache::new(),
-            loading_queue: VecDeque::new(),
-            execution_contexts: HashMap::new(),
         }
     }
 
-    /// Load executable into runtime
-    pub fn load_executable(&mut self, executable: TPUExecutable) -> Result<String> {
-        let id = executable.id.clone();
-        self.executables.insert(id.clone(), executable);
-        Ok(id)
+    /// Load an executable into the runtime store.
+    ///
+    /// Returns the ids evicted to make room, so the caller can release whatever
+    /// those executables were holding.
+    pub fn load_executable(&mut self, executable: TPUExecutable) -> Result<Vec<String>> {
+        Ok(self.executable_cache.insert(executable))
     }
 
-    /// Look up a previously loaded executable by id.
-    pub fn get_executable(&self, id: &str) -> Option<&TPUExecutable> {
-        self.executables.get(id)
+    /// Look up a previously loaded executable by id, recording the hit or miss.
+    pub fn get_executable(&mut self, id: &str) -> Option<&TPUExecutable> {
+        self.executable_cache.lookup(id)
+    }
+
+    /// Drop an executable from the store.
+    pub fn remove_executable(&mut self, id: &str) -> bool {
+        self.executable_cache.remove(id)
+    }
+
+    /// Hit/miss/eviction statistics for the store.
+    pub fn cache_statistics(&self) -> &CacheStats {
+        self.executable_cache.statistics()
     }
 }
 
@@ -1114,68 +1189,213 @@ impl ExecutableCache {
             stats: CacheStats::default(),
         }
     }
-}
 
-impl ExecutionScheduler {
-    /// Create new execution scheduler
-    pub fn new(runtime_config: &RuntimeConfig) -> Self {
-        Self {
-            execution_queue: VecDeque::new(),
-            active_executions: HashMap::new(),
-            scheduler_config: SchedulerConfig {
-                max_concurrent: runtime_config.max_concurrent_executions,
-                quantum_ms: 100,
-                enable_preemption: false,
-                priority_levels: 4,
-            },
-            scheduling_policy: SchedulingPolicy::Priority,
-        }
-    }
-}
-
-impl Default for ResourceManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ResourceManager {
-    /// Create new resource manager
-    pub fn new() -> Self {
-        let mut resource_pools = HashMap::new();
-
-        // Create default resource pools
-        resource_pools.insert(
-            "compute".to_string(),
-            ResourcePool {
-                name: "compute".to_string(),
-                resource_type: ResourceType::Compute,
-                available: 100,
-                total: 100,
-                reserved: 0,
+    /// Insert an executable, evicting entries until the configured size and
+    /// entry budgets are met. Returns the evicted ids.
+    pub fn insert(&mut self, executable: TPUExecutable) -> Vec<String> {
+        let id = executable.id.clone();
+        let size = executable.binary.len();
+        self.cache.insert(
+            id,
+            CachedExecutable {
+                executable,
+                last_access: Instant::now(),
+                access_count: 1,
+                score: size as f64,
             },
         );
+        let evicted = self.enforce_budget();
+        self.refresh_utilization();
+        evicted
+    }
 
-        resource_pools.insert(
-            "memory".to_string(),
-            ResourcePool {
-                name: "memory".to_string(),
-                resource_type: ResourceType::Memory,
-                available: 32 * 1024 * 1024 * 1024, // 32GB
-                total: 32 * 1024 * 1024 * 1024,
-                reserved: 0,
-            },
-        );
+    /// Look up an executable without touching the access bookkeeping.
+    pub fn peek(&self, id: &str) -> Option<&TPUExecutable> {
+        self.cache.get(id).map(|entry| &entry.executable)
+    }
 
-        Self {
-            resource_pools,
-            allocations: HashMap::new(),
-            usage_tracking: ResourceUsageTracking::default(),
+    /// Look up an executable, recording the hit or miss and refreshing the
+    /// entry's recency/frequency so eviction ordering reflects real use.
+    pub fn lookup(&mut self, id: &str) -> Option<&TPUExecutable> {
+        match self.cache.get_mut(id) {
+            Some(entry) => {
+                entry.last_access = Instant::now();
+                entry.access_count += 1;
+                entry.score = entry.executable.binary.len() as f64 * entry.access_count as f64;
+                self.stats.hits += 1;
+                Some(&entry.executable)
+            }
+            None => {
+                self.stats.misses += 1;
+                None
+            }
         }
+    }
+
+    /// Remove an executable from the cache.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let removed = self.cache.remove(id).is_some();
+        if removed {
+            self.refresh_utilization();
+        }
+        removed
+    }
+
+    /// Cache statistics.
+    pub fn statistics(&self) -> &CacheStats {
+        &self.stats
+    }
+
+    /// Total bytes currently held.
+    fn occupied_bytes(&self) -> usize {
+        self.cache
+            .values()
+            .map(|entry| entry.executable.binary.len())
+            .sum()
+    }
+
+    /// Evict until both the byte and entry budgets are satisfied, in the order
+    /// the configured policy prescribes.
+    fn enforce_budget(&mut self) -> Vec<String> {
+        let mut evicted = Vec::new();
+        while self.cache.len() > self.config.max_entries.max(1)
+            || (self.occupied_bytes() > self.config.max_size && self.cache.len() > 1)
+        {
+            let victim = match self.config.eviction_policy {
+                // Oldest access first.
+                EvictionPolicy::LRU => self
+                    .cache
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.last_access)
+                    .map(|(id, _)| id.clone()),
+                // Fewest accesses first.
+                EvictionPolicy::LFU => self
+                    .cache
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.access_count)
+                    .map(|(id, _)| id.clone()),
+                // Belady's optimal policy needs the future reference string,
+                // which a runtime cache does not have; the closest realizable
+                // approximation is to evict the entry with the worst
+                // size-weighted access score.
+                EvictionPolicy::Optimal => self
+                    .cache
+                    .iter()
+                    .min_by(|a, b| a.1.score.total_cmp(&b.1.score))
+                    .map(|(id, _)| id.clone()),
+            };
+            match victim {
+                Some(id) => {
+                    self.cache.remove(&id);
+                    self.stats.evictions += 1;
+                    evicted.push(id);
+                }
+                None => break,
+            }
+        }
+        evicted
+    }
+
+    fn refresh_utilization(&mut self) {
+        self.stats.utilization = if self.config.max_size == 0 {
+            0.0
+        } else {
+            self.occupied_bytes() as f64 / self.config.max_size as f64
+        };
     }
 }
 
 impl RuntimeMemoryManager {
+    /// Reserve `size` bytes for `buffer_id` out of the device pool.
+    ///
+    /// An oversubscribed pool is an honest `Err`: the executable genuinely does
+    /// not fit in the configured runtime memory.
+    pub fn reserve(&mut self, buffer_id: &str, size: usize) -> Result<()> {
+        let pool = self
+            .memory_pools
+            .get_mut(RUNTIME_DEVICE_POOL)
+            .ok_or_else(|| {
+                OptimError::from(format!(
+                    "runtime memory pool {RUNTIME_DEVICE_POOL} is missing"
+                ))
+            })?;
+        if size > pool.available {
+            return Err(OptimError::from(format!(
+                "executable needs {size} bytes but only {} of {} bytes are free in the runtime pool",
+                pool.available, pool.size
+            )));
+        }
+        pool.available -= size;
+        pool.fragmentation = if pool.size == 0 {
+            0.0
+        } else {
+            1.0 - (pool.available as f64 / pool.size as f64)
+        };
+
+        self.buffer_allocations.insert(
+            buffer_id.to_string(),
+            BufferAllocation {
+                buffer_id: buffer_id.to_string(),
+                size,
+                pool: RUNTIME_DEVICE_POOL.to_string(),
+                timestamp: Instant::now(),
+                ref_count: 1,
+            },
+        );
+
+        self.usage_stats.total_allocated += size;
+        self.usage_stats.allocation_count += 1;
+        self.usage_stats.peak_usage = self
+            .usage_stats
+            .peak_usage
+            .max(self.usage_stats.total_allocated);
+        self.usage_stats.fragmentation_ratio = self
+            .memory_pools
+            .get(RUNTIME_DEVICE_POOL)
+            .map(|pool| pool.fragmentation)
+            .unwrap_or(0.0);
+        Ok(())
+    }
+
+    /// Release a previous reservation. Returns the bytes returned to the pool.
+    pub fn release(&mut self, buffer_id: &str) -> usize {
+        let Some(allocation) = self.buffer_allocations.remove(buffer_id) else {
+            return 0;
+        };
+        if let Some(pool) = self.memory_pools.get_mut(&allocation.pool) {
+            pool.available = pool
+                .available
+                .saturating_add(allocation.size)
+                .min(pool.size);
+            pool.fragmentation = if pool.size == 0 {
+                0.0
+            } else {
+                1.0 - (pool.available as f64 / pool.size as f64)
+            };
+        }
+        self.usage_stats.total_allocated = self
+            .usage_stats
+            .total_allocated
+            .saturating_sub(allocation.size);
+        self.usage_stats.deallocation_count += 1;
+        self.usage_stats.fragmentation_ratio = self
+            .memory_pools
+            .get(&allocation.pool)
+            .map(|pool| pool.fragmentation)
+            .unwrap_or(0.0);
+        allocation.size
+    }
+
+    /// Bytes currently reserved across all pools.
+    pub fn total_allocated(&self) -> usize {
+        self.usage_stats.total_allocated
+    }
+
+    /// Usage statistics.
+    pub fn usage_stats(&self) -> &MemoryUsageStats {
+        &self.usage_stats
+    }
+
     /// Create new runtime memory manager
     pub fn new(runtime_config: &RuntimeConfig) -> Self {
         let mut memory_pools = HashMap::new();
@@ -1203,6 +1423,7 @@ impl RuntimeMemoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::main_types::TPUConfig;
 
     #[test]
     fn test_runtime_integration_creation() {
@@ -1322,10 +1543,97 @@ mod tests {
             experimental_features: false,
         };
 
-        let runtime = RuntimeIntegration::new(tpu_config);
+        let mut runtime = RuntimeIntegration::new(tpu_config);
         assert!(
             runtime.create_binary("never_loaded").is_err(),
             "create_binary must fail for an unloaded executable id"
         );
+        // The failed lookup is a real cache miss, not a silent zero.
+        assert_eq!(runtime.cache_statistics().misses, 1);
+        assert_eq!(runtime.cache_statistics().hits, 0);
+    }
+
+    /// `integrate` must reserve real memory, record a cache hit when it reads
+    /// the executable back, and hand the reservation back on unload.
+    #[test]
+    fn integrate_reserves_and_unload_releases() {
+        let tpu_config = test_config(PodTopology::Pod2x2);
+        let mut runtime = RuntimeIntegration::new(tpu_config.clone());
+
+        let code = GeneratedCode {
+            kernel_code: "tpu.add %a, %b -> %c".to_string(),
+            init_code: String::new(),
+            cleanup_code: String::new(),
+            memory_code: String::new(),
+        };
+        runtime
+            .integrate(code, &tpu_config)
+            .expect("integration should succeed");
+
+        assert!(
+            runtime.memory_statistics().total_allocated > 0,
+            "the executable's footprint must actually be reserved"
+        );
+        assert_eq!(runtime.cache_statistics().hits, 1);
+        assert_eq!(runtime.integration_statistics().executables_created, 1);
+        assert!(runtime.integration_statistics().device_utilization > 0.0);
+
+        assert!(runtime.unload_executable("exec_0"));
+        assert_eq!(runtime.memory_statistics().total_allocated, 0);
+        assert!(!runtime.unload_executable("exec_0"));
+    }
+
+    /// An empty kernel is a real integration failure, not a container wrapping
+    /// nothing.
+    #[test]
+    fn integrate_rejects_an_empty_kernel() {
+        let tpu_config = test_config(PodTopology::Single);
+        let mut runtime = RuntimeIntegration::new(tpu_config.clone());
+
+        let code = GeneratedCode {
+            kernel_code: "   \n".to_string(),
+            init_code: String::new(),
+            cleanup_code: String::new(),
+            memory_code: String::new(),
+        };
+        assert!(runtime.integrate(code, &tpu_config).is_err());
+        assert_eq!(runtime.integration_statistics().error_count, 1);
+    }
+
+    /// A target older than the executable's declared minimum cannot run it.
+    #[test]
+    fn integrate_rejects_a_target_older_than_the_executable_needs() {
+        let build_config = test_config(PodTopology::Single);
+        let mut runtime = RuntimeIntegration::new(build_config.clone());
+
+        let mut older = build_config.clone();
+        older.tpu_version = TPUVersion::V2;
+
+        let code = GeneratedCode {
+            kernel_code: "tpu.matmul %a, %b -> %c".to_string(),
+            init_code: String::new(),
+            cleanup_code: String::new(),
+            memory_code: String::new(),
+        };
+        // `create_executable` stamps the generator's own target as the minimum,
+        // so a V2 caller cannot run a V4-built executable.
+        assert!(runtime.integrate(code, &older).is_err());
+    }
+
+    fn test_config(pod_topology: PodTopology) -> TPUConfig {
+        TPUConfig {
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
+        }
     }
 }

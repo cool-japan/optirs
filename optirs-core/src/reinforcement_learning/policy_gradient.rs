@@ -12,7 +12,6 @@ use super::{
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
 use scirs2_core::numeric::Float;
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 /// Policy gradient optimization methods
@@ -428,7 +427,7 @@ impl<
                 total_entropy_loss += entropy_loss;
                 n_updates += 1;
 
-                clip_fraction = clip_fraction + T::from(n_clipped).unwrap_or_else(T::zero) * inv_n;
+                clip_fraction += T::from(n_clipped).unwrap_or_else(T::zero) * inv_n;
 
                 // Standard second-order KL estimator: ½·E[(log ratio)²].
                 let batch_kl = half * log_ratio.mapv(|x| x * x).mean().unwrap_or(T::zero());
@@ -727,7 +726,7 @@ impl<
                 let mut surrogate = T::zero();
                 for i in 0..batch_len {
                     let ratio = (evaluation.log_probs[i] - old_log_probs[i]).exp();
-                    surrogate = surrogate + ratio * advantages[i];
+                    surrogate += ratio * advantages[i];
                 }
                 Ok(surrogate * inv_n)
             })?
@@ -1063,7 +1062,7 @@ impl<
         if self.value_network.is_some() {
             for t in 0..batch_size {
                 let err = values_now[t] - vtrace_targets[t];
-                value_loss = value_loss + err * err * inv_n;
+                value_loss += err * err * inv_n;
                 dloss_dv[t] = two * err * inv_n * self.config.base_config.value_loss_coeff;
             }
         }
@@ -1244,10 +1243,10 @@ impl<
                 let l2 = clipped_err * clipped_err;
 
                 if l1 >= l2 {
-                    loss = loss + l1 * inv_n;
+                    loss += l1 * inv_n;
                     grad[i] = two * raw_err * inv_n;
                 } else {
-                    loss = loss + l2 * inv_n;
+                    loss += l2 * inv_n;
                     // d clipped_pred / d predicted is 1 inside the clip interval, 0 outside.
                     let inside = diff.abs() < clip_range;
                     grad[i] = if inside {
@@ -1260,7 +1259,7 @@ impl<
         } else {
             for i in 0..n {
                 let err = predicted[i] - returns[i];
-                loss = loss + err * err * inv_n;
+                loss += err * err * inv_n;
                 grad[i] = two * err * inv_n;
             }
         }

@@ -869,15 +869,15 @@ fn f12_kfac_bias_column_is_not_annihilated_by_centering() {
         [49.0 / 3.0, 23.0, 13.0 / 3.0],
         [3.0, 13.0 / 3.0, 1.0],
     ];
-    for i in 0..3 {
-        for j in 0..3 {
+    for (i, expected_row) in expected.iter().enumerate() {
+        for (j, &expected_value) in expected_row.iter().enumerate() {
             assert!(
-                (state.a_cov[[i, j]] - expected[i][j]).abs() < 1e-12,
+                (state.a_cov[[i, j]] - expected_value).abs() < 1e-12,
                 "A[{},{}] = {}, expected {}",
                 i,
                 j,
                 state.a_cov[[i, j]],
-                expected[i][j]
+                expected_value
             );
         }
     }

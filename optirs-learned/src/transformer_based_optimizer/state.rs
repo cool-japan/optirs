@@ -2,13 +2,14 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use super::meta_learning::MetaState;
+use crate::common::cast_scalar;
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Transformer optimizer state
 pub struct TransformerOptimizerState<
@@ -354,7 +355,21 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         })
     }
 
+    /// Record a parameter snapshot.
+    ///
+    /// # Errors
+    /// Returns `Err` when `parameters` is not `parameter_dimension` long. The
+    /// history is later averaged and differenced across snapshots, so a
+    /// mixed-width history silently produces meaningless statistics; the
+    /// declared dimension used to be stored and never checked against anything.
     pub fn record_parameters(&mut self, parameters: &Array1<T>) -> Result<()> {
+        if parameters.len() != self.parameter_dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "ParameterHistory holds {}-dimensional snapshots but was given {}",
+                self.parameter_dimension,
+                parameters.len()
+            )));
+        }
         let snapshot = ParameterSnapshot {
             parameters: parameters.clone(),
             timestamp: std::time::Instant::now(),
@@ -563,12 +578,23 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         }
 
         self.performance_metrics.record_loss(loss);
+        self.learning_schedule.step();
 
         if let Some(ref mut meta) = self.meta_state {
             meta.update_loss_history(loss);
         }
 
         Ok(())
+    }
+
+    /// Learning rate the schedule is currently at.
+    pub fn current_learning_rate(&self) -> T {
+        self.learning_schedule.current_rate
+    }
+
+    /// The learning-rate schedule this state advances on every recorded loss.
+    pub fn learning_schedule(&self) -> &LearningSchedule<T> {
+        &self.learning_schedule
     }
 
     pub fn get_statistics(&self) -> LearningStatistics<T> {
@@ -582,14 +608,16 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     }
 
     pub fn get_average_loss(&self) -> T {
-        if self.loss_history.is_empty() {
-            T::zero()
-        } else {
-            self.loss_history
-                .iter()
-                .fold(T::zero(), |acc, &loss| acc + loss)
-                / T::from(self.loss_history.len()).expect("unwrap failed")
-        }
+        let Some(count) = cast_scalar::<T, _>(self.loss_history.len())
+            .ok()
+            .filter(|c| *c > T::zero())
+        else {
+            return T::zero();
+        };
+        self.loss_history
+            .iter()
+            .fold(T::zero(), |acc, &loss| acc + loss)
+            / count
     }
 
     pub fn get_best_loss(&self) -> T {
@@ -608,11 +636,15 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             return T::zero();
         }
 
-        let initial = recent_losses.last().expect("unwrap failed");
-        let final_loss = recent_losses.first().expect("unwrap failed");
+        // `recent_losses.len() >= 2` was checked above; the fallible reads keep
+        // that reasoning next to the accesses it justifies.
+        let (Some(&initial), Some(&final_loss)) = (recent_losses.last(), recent_losses.first())
+        else {
+            return T::zero();
+        };
 
-        if *initial > T::zero() {
-            (*initial - *final_loss) / *initial
+        if initial > T::zero() {
+            (initial - final_loss) / initial
         } else {
             T::zero()
         }
@@ -693,6 +725,16 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     }
 }
 
+/// Explicitly-saved checkpoints retained before the oldest is evicted. The
+/// optimizer configuration carries no checkpoint-retention setting, so this is a
+/// documented default rather than something derived from it.
+const DEFAULT_MAX_CHECKPOINTS: usize = 10;
+
+/// Name prefix that marks a checkpoint as produced by
+/// [`CheckpointManager::maybe_auto_save`] rather than an explicit save, so the
+/// two are retained under separate limits.
+const AUTO_SAVE_PREFIX: &str = "auto_";
+
 /// Checkpoint management
 pub struct CheckpointManager<
     T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
@@ -713,13 +755,89 @@ pub struct CheckpointManager<
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     CheckpointManager<T>
 {
+    /// Build a checkpoint manager whose auto-save cadence follows `config`.
+    ///
+    /// The auto-save frequency used to be a fixed 100 steps regardless of the
+    /// optimizer's configuration; it now tracks
+    /// [`StateConfig::from_optimizer_config`], which derives it from
+    /// `performance_config.metrics_interval`.
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
+        let state_config = StateConfig::from_optimizer_config(config);
         Ok(Self {
             checkpoints: HashMap::new(),
             metadata: HashMap::new(),
-            max_checkpoints: 10,
-            auto_save_config: AutoSaveConfig::default(),
+            max_checkpoints: DEFAULT_MAX_CHECKPOINTS,
+            auto_save_config: AutoSaveConfig {
+                enabled: state_config.auto_save_enabled,
+                frequency: state_config.checkpoint_frequency,
+                ..AutoSaveConfig::default()
+            },
         })
+    }
+
+    /// The auto-save policy this manager was built with.
+    pub fn auto_save_config(&self) -> &AutoSaveConfig {
+        &self.auto_save_config
+    }
+
+    /// Save `snapshot` if `step` falls on the configured auto-save cadence.
+    ///
+    /// Returns the new checkpoint id, or `None` when auto-save is disabled or
+    /// `step` is not a save point. Auto-saves are named `auto_<step>` and are
+    /// capped at [`AutoSaveConfig::max_auto_saves`] independently of the
+    /// explicit-checkpoint limit, oldest evicted first, so a long run cannot
+    /// grow the store without bound. `step == 0` saves the initial state.
+    ///
+    /// Without this, `auto_save_config` was populated at construction and never
+    /// read by anything: the auto-save policy existed only as a value.
+    pub fn maybe_auto_save(
+        &mut self,
+        step: usize,
+        snapshot: OptimizerStateSnapshot<T>,
+    ) -> Result<Option<String>> {
+        if !self.auto_save_config.enabled
+            || self.auto_save_config.frequency == 0
+            || !step.is_multiple_of(self.auto_save_config.frequency)
+        {
+            return Ok(None);
+        }
+        let max_auto_saves = self.auto_save_config.max_auto_saves;
+        let id = self.save_checkpoint(format!("{AUTO_SAVE_PREFIX}{step}"), snapshot)?;
+        self.evict_surplus_auto_saves(max_auto_saves);
+        Ok(Some(id))
+    }
+
+    /// Number of auto-saved checkpoints currently retained.
+    pub fn auto_save_count(&self) -> usize {
+        self.metadata
+            .values()
+            .filter(|m| m.name.starts_with(AUTO_SAVE_PREFIX))
+            .count()
+    }
+
+    /// Drop the oldest auto-saves until at most `max_auto_saves` remain.
+    /// Explicit checkpoints are untouched.
+    fn evict_surplus_auto_saves(&mut self, max_auto_saves: usize) {
+        loop {
+            let mut autos: Vec<(String, std::time::Instant)> = self
+                .metadata
+                .iter()
+                .filter(|(_, m)| m.name.starts_with(AUTO_SAVE_PREFIX))
+                .map(|(id, m)| (id.clone(), m.created_at))
+                .collect();
+            if autos.len() <= max_auto_saves {
+                return;
+            }
+            autos.sort_by_key(|(_, created)| *created);
+            match autos.first() {
+                Some((oldest, _)) => {
+                    let oldest = oldest.clone();
+                    self.checkpoints.remove(&oldest);
+                    self.metadata.remove(&oldest);
+                }
+                None => return,
+            }
+        }
     }
 
     pub fn save_checkpoint(
@@ -955,13 +1073,40 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         }
     }
 
+    /// Whether the tracked stream has converged: the mean absolute step-to-step
+    /// loss change over the stability window is at or below
+    /// `convergence_threshold`.
+    ///
+    /// Returns `false` until the window has at least two observations. The
+    /// threshold used to be stored at construction and consulted by nothing, so
+    /// the tracker could report a rate and a stability score but never a verdict.
+    pub fn has_converged(&self) -> bool {
+        if self.recent_losses.len() < 2 {
+            return false;
+        }
+        let mut total = T::zero();
+        for pair in self.recent_losses.iter().collect::<Vec<_>>().windows(2) {
+            total = total + (*pair[1] - *pair[0]).abs();
+        }
+        let steps: T = scirs2_core::numeric::NumCast::from(self.recent_losses.len() - 1)
+            .unwrap_or_else(|| T::one());
+        (total / steps) <= self.convergence_threshold
+    }
+
+    /// The configured convergence threshold.
+    pub fn convergence_threshold(&self) -> T {
+        self.convergence_threshold
+    }
+
     pub fn get_convergence_rate(&self) -> T {
         if self.recent_losses.len() < 2 {
             return T::zero();
         }
 
-        let first = self.recent_losses[0];
-        let last = *self.recent_losses.back().expect("unwrap failed");
+        let (Some(&first), Some(&last)) = (self.recent_losses.front(), self.recent_losses.back())
+        else {
+            return T::zero();
+        };
 
         if first > T::zero() {
             (first - last) / first
@@ -975,14 +1120,19 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             return T::zero();
         }
 
-        let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(self.recent_losses.len()).expect("unwrap failed");
+        let Some(count) = cast_scalar::<T, _>(self.recent_losses.len())
+            .ok()
+            .filter(|c| *c > T::zero())
+        else {
+            return T::zero();
+        };
+        let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x) / count;
         let variance = self
             .recent_losses
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(self.recent_losses.len()).expect("unwrap failed");
+            / count;
 
         T::one() / (T::one() + variance.sqrt())
     }
@@ -1036,14 +1186,24 @@ pub struct StateConfig {
 }
 
 impl StateConfig {
+    /// Derive the state-tracking configuration from the optimizer's own
+    /// performance-tracking settings.
+    ///
+    /// Every field used to be a hard-coded literal, so a caller who shrank
+    /// `performance_config.max_history_size` to bound memory still got a
+    /// 1000-entry state history. `max_history_size` and `checkpoint_frequency`
+    /// now follow the optimizer's configured history bound and metric cadence.
+    /// `auto_save_enabled` and `validation_enabled` stay `true`: the optimizer
+    /// config carries no corresponding switch, so there is nothing honest to
+    /// derive them from.
     pub fn from_optimizer_config<
         T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
     >(
         config: &TransformerBasedOptimizerConfig<T>,
     ) -> Self {
         Self {
-            max_history_size: 1000,
-            checkpoint_frequency: 100,
+            max_history_size: config.performance_config.max_history_size,
+            checkpoint_frequency: config.performance_config.metrics_interval.max(1),
             auto_save_enabled: true,
             validation_enabled: true,
         }
@@ -1200,6 +1360,11 @@ pub struct TaskAdaptationRecord<
 }
 
 #[derive(Debug, Clone)]
+/// Linear-warmup-then-exponential-decay learning-rate schedule.
+///
+/// `initial_rate`, `warmup_steps` and `decay_factor` used to be stored and never
+/// consulted: the schedule had no way to advance, so `current_rate` stayed at
+/// `initial_rate` forever and [`LearningState`] held a schedule it never used.
 pub struct LearningSchedule<
     T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
@@ -1207,6 +1372,8 @@ pub struct LearningSchedule<
     pub current_rate: T,
     pub warmup_steps: usize,
     pub decay_factor: T,
+    /// Steps taken so far, advanced by [`LearningSchedule::step`].
+    steps_taken: usize,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
@@ -1218,7 +1385,36 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             current_rate: initial_rate,
             warmup_steps,
             decay_factor: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
+            steps_taken: 0,
         }
+    }
+
+    /// Rate at `step`: `initial_rate · step / warmup_steps` while warming up,
+    /// then `initial_rate · decay_factor^(step - warmup_steps)`.
+    ///
+    /// With `warmup_steps == 0` the warmup phase is skipped entirely.
+    pub fn rate_at(&self, step: usize) -> T {
+        if step < self.warmup_steps {
+            let progress: T =
+                scirs2_core::numeric::NumCast::from((step + 1) as f64 / self.warmup_steps as f64)
+                    .unwrap_or_else(T::one);
+            return self.initial_rate * progress;
+        }
+        let decayed: T = scirs2_core::numeric::NumCast::from((step - self.warmup_steps) as f64)
+            .unwrap_or_else(T::zero);
+        self.initial_rate * self.decay_factor.powf(decayed)
+    }
+
+    /// Advance one step and return the new rate.
+    pub fn step(&mut self) -> T {
+        self.current_rate = self.rate_at(self.steps_taken);
+        self.steps_taken += 1;
+        self.current_rate
+    }
+
+    /// Steps taken so far.
+    pub fn steps_taken(&self) -> usize {
+        self.steps_taken
     }
 }
 
@@ -1390,7 +1586,7 @@ mod tests {
         let state = TransformerOptimizerState::new(&config);
         assert!(state.is_ok());
 
-        let s = state.expect("unwrap failed");
+        let s = state.expect("TransformerOptimizerState::new should succeed");
         assert_eq!(s.version, 0);
         assert!(!s.current_parameters.is_empty());
     }
@@ -1398,7 +1594,8 @@ mod tests {
     #[test]
     fn test_state_update() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let update = Array1::<f32>::ones(state.current_parameters.len());
         let result = state.update_with_step(&update, Some(1.5));
@@ -1419,7 +1616,8 @@ mod tests {
             config.num_transformer_layers, 1,
             "test is only meaningful when layers > 1"
         );
-        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
         let total_len = state.current_parameters.len();
         assert_eq!(
             total_len,
@@ -1451,7 +1649,8 @@ mod tests {
     #[test]
     fn test_update_with_step_rejects_untileable_length() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
         let bad_update = Array1::<f32>::ones(state.current_parameters.len() + 3);
         let result = state.update_with_step(&bad_update, None);
         assert!(result.is_err(), "an untileable update length must error");
@@ -1460,12 +1659,13 @@ mod tests {
     #[test]
     fn test_snapshot_creation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let snapshot = state.create_snapshot();
         assert!(snapshot.is_ok());
 
-        let snap = snapshot.expect("unwrap failed");
+        let snap = snapshot.expect("create_snapshot should succeed");
         assert_eq!(snap.version, 0);
         assert_eq!(snap.parameters.len(), state.current_parameters.len());
     }
@@ -1473,12 +1673,13 @@ mod tests {
     #[test]
     fn test_checkpoint_management() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let checkpoint_id = state.save_checkpoint("test_checkpoint".to_string());
         assert!(checkpoint_id.is_ok());
 
-        let id = checkpoint_id.expect("unwrap failed");
+        let id = checkpoint_id.expect("save_checkpoint should succeed");
         let load_result = state.load_checkpoint(&id);
         assert!(load_result.is_ok());
     }
@@ -1488,7 +1689,7 @@ mod tests {
         let history = ParameterHistory::<f32>::new(10, 5);
         assert!(history.is_ok());
 
-        let mut h = history.expect("unwrap failed");
+        let mut h = history.expect("ParameterHistory::new should succeed");
         let params = Array1::<f32>::ones(5);
         assert!(h.record_parameters(&params).is_ok());
 
@@ -1514,12 +1715,107 @@ mod tests {
     #[test]
     fn test_state_validation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let validation = state.validate_state();
         assert!(validation.is_ok());
 
-        let report = validation.expect("unwrap failed");
+        let report = validation.expect("validate_state should succeed");
         assert!(report.is_valid);
+    }
+
+    /// `StateConfig::from_optimizer_config` used to ignore its argument entirely
+    /// and return four hard-coded literals, so shrinking the optimizer's history
+    /// bound had no effect on the state tracker.
+    #[test]
+    fn state_config_follows_the_optimizer_performance_config() {
+        let mut config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        config.performance_config.max_history_size = 42;
+        config.performance_config.metrics_interval = 7;
+
+        let derived = StateConfig::from_optimizer_config(&config);
+        assert_eq!(derived.max_history_size, 42);
+        assert_eq!(derived.checkpoint_frequency, 7);
+
+        // A zero interval would make the auto-save modulus undefined, so it is
+        // floored at 1 rather than propagated.
+        config.performance_config.metrics_interval = 0;
+        assert_eq!(
+            StateConfig::from_optimizer_config(&config).checkpoint_frequency,
+            1
+        );
+    }
+
+    /// `CheckpointManager::auto_save_config` was written at construction and
+    /// never read: there was no auto-save path at all, and the cadence was a
+    /// fixed 100 steps regardless of configuration.
+    #[test]
+    fn checkpoint_manager_auto_saves_on_the_configured_cadence() {
+        let mut config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        config.performance_config.metrics_interval = 3;
+        let state = TransformerOptimizerState::new(&config).expect("state");
+
+        let mut manager = CheckpointManager::<f32>::new(&config).expect("manager");
+        assert_eq!(manager.auto_save_config().frequency, 3);
+
+        // Off-cadence steps must not save.
+        for step in [1_usize, 2, 4, 5] {
+            assert_eq!(
+                manager
+                    .maybe_auto_save(step, state.create_snapshot().expect("snapshot"))
+                    .expect("auto save"),
+                None,
+                "step {step} is not a multiple of 3"
+            );
+        }
+        assert_eq!(manager.auto_save_count(), 0);
+
+        // On-cadence steps must save, and be capped at `max_auto_saves`.
+        let cap = manager.auto_save_config().max_auto_saves;
+        assert!(cap > 0, "default policy should retain some auto-saves");
+        for step in (0..).step_by(3).take(cap + 3) {
+            let id = manager
+                .maybe_auto_save(step, state.create_snapshot().expect("snapshot"))
+                .expect("auto save")
+                .expect("on-cadence step must produce a checkpoint");
+            assert!(id.starts_with("auto_"), "unexpected id {id}");
+        }
+        assert_eq!(
+            manager.auto_save_count(),
+            cap,
+            "surplus auto-saves must be evicted oldest-first"
+        );
+
+        // An explicit checkpoint is retained under its own limit and is not
+        // counted as (or evicted by) an auto-save.
+        manager
+            .save_checkpoint("manual".to_string(), state.create_snapshot().expect("snap"))
+            .expect("manual save");
+        manager
+            .maybe_auto_save(3_000, state.create_snapshot().expect("snap"))
+            .expect("auto save");
+        assert_eq!(manager.auto_save_count(), cap);
+        assert!(manager
+            .list_checkpoints()
+            .iter()
+            .any(|m| m.name == "manual"));
+    }
+
+    /// Auto-save must be a no-op when the policy is disabled.
+    #[test]
+    fn checkpoint_manager_auto_save_respects_a_disabled_policy() {
+        let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        let state = TransformerOptimizerState::new(&config).expect("state");
+        let mut manager = CheckpointManager::<f32>::new(&config).expect("manager");
+        manager.auto_save_config.enabled = false;
+
+        assert_eq!(
+            manager
+                .maybe_auto_save(0, state.create_snapshot().expect("snapshot"))
+                .expect("auto save"),
+            None
+        );
+        assert_eq!(manager.get_checkpoint_count(), 0);
     }
 }

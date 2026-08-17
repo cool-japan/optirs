@@ -891,11 +891,13 @@ impl CitationManager {
         }
 
         let mut chars = s.chars();
-        let first = chars
-            .next()
-            .expect("unwrap failed")
-            .to_uppercase()
-            .collect::<String>();
+        // The emptiness guard above makes `next()` a `Some`, but reading it out
+        // fallibly means a future change to that guard cannot turn this into a
+        // panic.
+        let Some(leading) = chars.next() else {
+            return String::new();
+        };
+        let first = leading.to_uppercase().collect::<String>();
         first + &chars.as_str().to_lowercase()
     }
 
@@ -1327,6 +1329,45 @@ impl BibTeXProcessor {
         Self { settings }
     }
 
+    /// The settings this processor applies.
+    pub fn settings(&self) -> &BibTeXSettings {
+        &self.settings
+    }
+
+    /// Normalise a BibTeX field value according to the configured settings.
+    ///
+    /// * `preserve_case == false` strips BibTeX's protective braces (`{DNA}`
+    ///   becomes `DNA`), which is what makes a style's own capitalisation rules
+    ///   apply. With it set, the braces are kept verbatim.
+    /// * `utf8_conversion` decodes the common LaTeX accent escapes into the
+    ///   characters they denote, so a parsed citation is usable outside LaTeX.
+    fn apply_settings(&self, value: String) -> String {
+        let mut value = if self.settings.preserve_case {
+            value
+        } else {
+            value.replace(['{', '}'], "")
+        };
+        if self.settings.utf8_conversion {
+            for (escape, replacement) in [
+                ("\\\"a", "ä"),
+                ("\\\"o", "ö"),
+                ("\\\"u", "ü"),
+                ("\\'e", "é"),
+                ("\\'a", "á"),
+                ("\\`e", "è"),
+                ("\\^o", "ô"),
+                ("\\~n", "ñ"),
+                ("\\c c", "ç"),
+                ("\\ss", "ß"),
+                ("---", "\u{2014}"),
+                ("--", "\u{2013}"),
+            ] {
+                value = value.replace(escape, replacement);
+            }
+        }
+        value
+    }
+
     /// Parse BibTeX content into citations.
     ///
     /// Unlike a line-oriented scanner, this walks the input character by
@@ -1371,7 +1412,11 @@ impl BibTeXProcessor {
         pub_type: PublicationType,
         fields: HashMap<String, String>,
     ) -> Result<Citation> {
-        let title = fields.get("title").cloned().unwrap_or_default();
+        // `settings` actually shapes the parse now. Until 0.3.2 it was stored
+        // by `new` and never read, so `preserve_case` and `utf8_conversion`
+        // were inert: a title's protective braces survived into the rendered
+        // citation and LaTeX escapes were never decoded.
+        let title = self.apply_settings(fields.get("title").cloned().unwrap_or_default());
 
         // Parse authors
         let authors = if let Some(author_str) = fields.get("author") {

@@ -7,10 +7,7 @@ use std::fmt::Debug;
 
 use scirs2_core::ndarray::{Array1, Array2, Array3};
 use scirs2_core::numeric::Float;
-use std::collections::HashMap;
 
-use super::forward_mode::ForwardModeEngine;
-use super::reverse_mode::ReverseModeEngine;
 use crate::error::{OptimError, Result};
 
 /// Hessian-vector-product and mixed-partial back ends.
@@ -19,7 +16,6 @@ use crate::error::{OptimError, Result};
 pub mod hvp;
 
 /// Higher-order differentiation engine
-#[allow(dead_code)]
 pub struct HigherOrderEngine<
     T: Float
         + Debug
@@ -31,20 +27,11 @@ pub struct HigherOrderEngine<
         + std::iter::Sum
         + scirs2_core::ndarray::ScalarOperand,
 > {
-    /// Forward-mode engine for directional derivatives
-    forward_engine: ForwardModeEngine<T>,
-
-    /// Reverse-mode engine for efficient gradient computation
-    reverse_engine: ReverseModeEngine<T>,
-
     /// Maximum derivative order to compute
     _maxorder: usize,
 
     /// Use mixed-mode for Hessian computation
     mixed_mode: bool,
-
-    /// Cache for computed derivatives
-    derivative_cache: HashMap<DerivativeKey, DerivativeValue<T>>,
 
     /// Finite difference settings for numerical verification
     finite_diff_eps: T,
@@ -63,24 +50,6 @@ pub struct HigherOrderEngine<
 
     /// Performance profiler
     profiler: ComputationProfiler<T>,
-}
-
-/// Key for derivative caching
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct DerivativeKey {
-    function_id: usize,
-    variable_ids: Vec<usize>,
-    order: usize,
-}
-
-/// Cached derivative value
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-enum DerivativeValue<T: Float + Debug + Send + Sync + 'static> {
-    Scalar(T),
-    Vector(Array1<T>),
-    Matrix(Array2<T>),
-    Tensor3(Array3<T>),
 }
 
 /// Hessian computation configuration
@@ -143,20 +112,8 @@ pub struct ThirdOrderTensor<T: Float + Debug + Send + Sync + 'static> {
     /// Dense tensor data
     pub data: Array3<T>,
 
-    /// Sparse representation (optional)
-    pub sparse_data: Option<SparseTensor3<T>>,
-
     /// Tensor dimensions
     pub shape: (usize, usize, usize),
-}
-
-/// Sparse third-order tensor
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct SparseTensor3<T: Float + Debug + Send + Sync + 'static> {
-    indices: Vec<(usize, usize, usize)>,
-    values: Vec<T>,
-    shape: (usize, usize, usize),
 }
 
 /// Mixed partial derivatives
@@ -251,11 +208,8 @@ impl<
     /// Create a new higher-order differentiation engine
     pub fn new(_maxorder: usize) -> Self {
         Self {
-            forward_engine: ForwardModeEngine::new(),
-            reverse_engine: ReverseModeEngine::new(),
             _maxorder,
             mixed_mode: true,
-            derivative_cache: HashMap::new(),
             finite_diff_eps: scirs2_core::numeric::NumCast::from(1e-5).unwrap_or_else(|| T::zero()),
             parallel_computation: true,
             thread_pool_size: 4, // Conservative default
@@ -268,11 +222,8 @@ impl<
     /// Create a new engine with advanced configuration
     pub fn with_config(config: HigherOrderConfig<T>) -> Self {
         Self {
-            forward_engine: ForwardModeEngine::new(),
-            reverse_engine: ReverseModeEngine::new(),
             _maxorder: config._maxorder,
             mixed_mode: config.mixed_mode,
-            derivative_cache: HashMap::new(),
             finite_diff_eps: config.finite_diff_eps,
             parallel_computation: config.parallel_computation,
             thread_pool_size: config.thread_pool_size,
@@ -307,7 +258,18 @@ impl<
         }
     }
 
-    /// Compute Hessian matrix using forward-over-reverse mode
+    /// Compute Hessian matrix using forward-over-reverse mode.
+    ///
+    /// When `HessianConfig::sparse` is set and the problem is large enough that
+    /// sparsification pays for itself, entries
+    /// below `HessianConfig::sparsity_threshold` are zeroed. Previously
+    /// `sparse`/`sparsity_threshold` were accepted and ignored: the sparsity
+    /// decision and the thresholding routine both existed but nothing called
+    /// them.
+    ///
+    /// The wall time is recorded on the engine's profiler, so
+    /// [`Self::get_derivative_stats`]'s `performance_profile` reports measured
+    /// numbers rather than the zeros it returned when nothing was ever recorded.
     pub fn hessian_forward_over_reverse(
         &mut self,
         function: impl Fn(&Array1<T>) -> T,
@@ -320,6 +282,9 @@ impl<
             return self.hessian_diagonal(&function, point);
         }
 
+        let started = std::time::Instant::now();
+        let parallel = self.should_use_parallel(n);
+        let sparse = self.should_use_sparse(n, config);
         let mut hessian = Array2::zeros((n, n));
 
         // Use forward-over-reverse: compute one row of Hessian at a time
@@ -358,6 +323,12 @@ impl<
             let fd_hessian = self.finite_difference_hessian(&function, point)?;
             self.verify_hessian_accuracy(&hessian, &fd_hessian)?;
         }
+
+        if sparse {
+            hessian = self.apply_adaptive_sparsity(hessian, config.sparsity_threshold)?;
+        }
+        self.profiler
+            .record_hessian_computation(n, started.elapsed(), parallel, sparse);
 
         Ok(hessian)
     }
@@ -504,7 +475,6 @@ impl<
 
         Ok(ThirdOrderTensor {
             data: tensor.clone(),
-            sparse_data: None, // Could be computed if needed
             shape: tensor.dim(),
         })
     }
@@ -602,7 +572,6 @@ impl<
     pub fn get_derivative_stats(&self) -> HigherOrderStats {
         HigherOrderStats {
             _maxorder: self._maxorder,
-            cache_size: self.derivative_cache.len(),
             mixed_mode_enabled: self.mixed_mode,
             memory_usage_estimate: self.estimate_memory_usage(),
             parallel_computation: self.parallel_computation,
@@ -624,7 +593,8 @@ impl<
         let n = point.len();
         let selected_mode = mode.unwrap_or_else(|| self.select_optimal_hvp_mode(n));
 
-        match selected_mode {
+        let started = std::time::Instant::now();
+        let product = match selected_mode {
             HvpMode::CentralDifference => self.hvp_central_difference(&function, point, vector),
             HvpMode::ForwardDifference => self.hvp_forward_difference(&function, point, vector),
             HvpMode::QuadraticSecant => self.hvp_quadratic_secant(&function, point, vector),
@@ -632,7 +602,11 @@ impl<
             HvpMode::NestedAutodiff => Err(OptimError::InvalidConfig(
                 hvp::NESTED_AUTODIFF_UNAVAILABLE.to_string(),
             )),
-        }
+        }?;
+        // Only successful products are timed: an unavailable mode returns
+        // immediately and its duration says nothing about the cost of the work.
+        self.profiler.record_hvp_computation(n, started.elapsed());
+        Ok(product)
     }
 
     /// Compute vector-Hessian-vector efficiently
@@ -664,14 +638,18 @@ impl<
     {
         let input_dim = point.len();
 
+        let started = std::time::Instant::now();
         // Select mode based on dimensions
-        if input_dim <= output_dim {
+        let jacobian = if input_dim <= output_dim {
             // Forward mode is more efficient
-            self.jacobian_forward_mode(&function, point, output_dim)
+            self.jacobian_forward_mode(&function, point, output_dim)?
         } else {
             // Reverse mode is more efficient
-            self.jacobian_reverse_mode(&function, point, output_dim)
-        }
+            self.jacobian_reverse_mode(&function, point, output_dim)?
+        };
+        self.profiler
+            .record_jacobian_computation(input_dim, started.elapsed());
+        Ok(jacobian)
     }
 
     /// Compute K-FAC approximation to the Hessian
@@ -704,6 +682,33 @@ impl<
         for (i, layer) in layers.iter().enumerate() {
             let activation = &activations[i];
             let gradient = &gradients[i];
+
+            // K-FAC factorizes the layer's Fisher block as `A ⊗ G` with
+            // `A = E[a aᵀ]` over the layer *inputs* and `G = E[g gᵀ]` over the
+            // layer *output* pre-activation gradients. So `activation` must be
+            // `input_size` long and `gradient` `output_size` long. Without this
+            // check a caller that swapped or mis-sized the two slices still got
+            // a plausible-looking matrix back — a silently wrong curvature
+            // estimate — because the factor builders just square whatever
+            // length they are handed.
+            if activation.len() != layer.input_size {
+                return Err(OptimError::InvalidConfig(format!(
+                    "K-FAC layer {i} ({:?}) declares input_size {} but its activation \
+                     vector has {} entries",
+                    layer.layer_type,
+                    layer.input_size,
+                    activation.len()
+                )));
+            }
+            if gradient.len() != layer.output_size {
+                return Err(OptimError::InvalidConfig(format!(
+                    "K-FAC layer {i} ({:?}) declares output_size {} but its gradient \
+                     vector has {} entries",
+                    layer.layer_type,
+                    layer.output_size,
+                    gradient.len()
+                )));
+            }
 
             // Compute Kronecker factors
             let factor_a = self.compute_activation_factor(activation)?;
@@ -1139,24 +1144,22 @@ impl<
             .fold(T::zero(), |acc, x| if x > acc { x } else { acc })
     }
 
+    /// Rough resident-size estimate: the engine struct itself plus the timing
+    /// records the profiler has accumulated.
     fn estimate_memory_usage(&self) -> usize {
-        let cache_size = self.derivative_cache.len()
-            * std::mem::size_of::<(DerivativeKey, DerivativeValue<T>)>();
         let engine_size = std::mem::size_of::<Self>();
         let profiler_size =
-            self.profiler.hessian_timings.len() * std::mem::size_of::<ComputationTiming>();
+            self.profiler.recorded_timings() * std::mem::size_of::<ComputationTiming>();
 
-        cache_size + engine_size + profiler_size
+        engine_size + profiler_size
     }
 
     /// Decide whether to use parallel computation
-    #[allow(dead_code)]
     fn should_use_parallel(&self, problemsize: usize) -> bool {
         self.parallel_computation && problemsize >= 50
     }
 
     /// Decide whether to use sparse computations
-    #[allow(dead_code)]
     fn should_use_sparse(&self, problemsize: usize, config: &HessianConfig) -> bool {
         self.adaptive_sparsity && config.sparse && problemsize >= 100
     }
@@ -1186,7 +1189,6 @@ impl<
     }
 
     /// Apply adaptive sparsity to dense matrix
-    #[allow(dead_code)]
     fn apply_adaptive_sparsity(&self, mut matrix: Array2<T>, threshold: f64) -> Result<Array2<T>> {
         let sparsity_threshold =
             scirs2_core::numeric::NumCast::from(threshold).unwrap_or_else(|| T::zero());
@@ -1461,7 +1463,6 @@ pub struct DerivativeVerification<T: Float + Debug + Send + Sync + 'static> {
 #[derive(Debug, Clone)]
 pub struct HigherOrderStats {
     pub _maxorder: usize,
-    pub cache_size: usize,
     pub mixed_mode_enabled: bool,
     pub memory_usage_estimate: usize,
     pub parallel_computation: bool,
@@ -1535,7 +1536,6 @@ pub enum HvpMode {
 
 /// Computation profiler for performance optimization
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ComputationProfiler<T: Float + Debug + Send + Sync + 'static> {
     hessian_timings: Vec<ComputationTiming>,
     hvp_timings: Vec<ComputationTiming>,
@@ -1544,24 +1544,46 @@ pub struct ComputationProfiler<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
+/// Method tag for a recorded [`ComputationTiming`].
+const HESSIAN_METHOD: &str = "hessian";
+/// Method tag for a recorded Hessian-vector-product timing.
+const HVP_METHOD: &str = "hvp";
+/// Method tag for a recorded Jacobian timing.
+const JACOBIAN_METHOD: &str = "jacobian";
+
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct ComputationTiming {
     problemsize: usize,
     duration_us: u64,
     parallel: bool,
     sparse: bool,
-    method: String,
+    method: &'static str,
 }
 
+/// Measured performance of a [`HigherOrderEngine`], from
+/// [`HigherOrderEngine::get_derivative_stats`].
+///
+/// Every field is derived from timings recorded by the engine's own entry
+/// points. Before those entry points recorded anything, `avg_hvp_time_us`,
+/// `avg_jacobian_time_us` and `cache_hit_rate` were hard-coded zeros.
 #[derive(Debug, Clone)]
 pub struct PerformanceProfile {
+    /// Mean wall time of a full Hessian computation, in microseconds.
     pub avg_hessian_time_us: f64,
+    /// Mean wall time of a Hessian-vector product, in microseconds.
     pub avg_hvp_time_us: f64,
+    /// Mean wall time of a Jacobian computation, in microseconds.
     pub avg_jacobian_time_us: f64,
+    /// Mean sequential time / mean parallel time over recorded Hessians; `1.0`
+    /// when only one of the two regimes has been observed.
     pub parallel_efficiency: f64,
+    /// Mean dense time / mean sparsified time over recorded Hessians; `1.0`
+    /// when only one of the two regimes has been observed.
     pub sparsity_benefit: f64,
-    pub cache_hit_rate: f64,
+    /// Number of timings recorded across all three kinds.
+    pub recorded_computations: usize,
+    /// Largest problem dimension seen in a recorded Hessian computation.
+    pub largest_hessian_problem: usize,
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ComputationProfiler<T> {
@@ -1575,7 +1597,6 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ComputationProf
         }
     }
 
-    #[allow(dead_code)]
     fn record_hessian_computation(
         &mut self,
         size: usize,
@@ -1588,29 +1609,72 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ComputationProf
             duration_us: duration.as_micros() as u64,
             parallel,
             sparse,
-            method: "hessian".to_string(),
+            method: HESSIAN_METHOD,
         });
         self.total_computations += 1;
     }
 
-    fn get_summary(&self) -> PerformanceProfile {
-        let avg_hessian_time = if self.hessian_timings.is_empty() {
-            0.0
-        } else {
-            self.hessian_timings
-                .iter()
-                .map(|t| t.duration_us as f64)
-                .sum::<f64>()
-                / self.hessian_timings.len() as f64
-        };
+    fn record_hvp_computation(&mut self, size: usize, duration: std::time::Duration) {
+        self.hvp_timings.push(ComputationTiming {
+            problemsize: size,
+            duration_us: duration.as_micros() as u64,
+            parallel: false,
+            sparse: false,
+            method: HVP_METHOD,
+        });
+        self.total_computations += 1;
+    }
 
+    fn record_jacobian_computation(&mut self, size: usize, duration: std::time::Duration) {
+        self.jacobian_timings.push(ComputationTiming {
+            problemsize: size,
+            duration_us: duration.as_micros() as u64,
+            parallel: false,
+            sparse: false,
+            method: JACOBIAN_METHOD,
+        });
+        self.total_computations += 1;
+    }
+
+    /// Total recorded computations across all three kinds.
+    fn total_computations(&self) -> usize {
+        self.total_computations
+    }
+
+    /// Number of individual timing records held.
+    fn recorded_timings(&self) -> usize {
+        self.hessian_timings.len() + self.hvp_timings.len() + self.jacobian_timings.len()
+    }
+
+    /// Mean recorded duration, or `0.0` when nothing has been recorded.
+    fn mean_duration_us(timings: &[ComputationTiming]) -> f64 {
+        if timings.is_empty() {
+            return 0.0;
+        }
+        timings.iter().map(|t| t.duration_us as f64).sum::<f64>() / timings.len() as f64
+    }
+
+    /// The largest problem size seen for `method`, or `0` when none.
+    fn largest_problem(&self, method: &'static str) -> usize {
+        self.hessian_timings
+            .iter()
+            .chain(self.hvp_timings.iter())
+            .chain(self.jacobian_timings.iter())
+            .filter(|t| t.method == method)
+            .map(|t| t.problemsize)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn get_summary(&self) -> PerformanceProfile {
         PerformanceProfile {
-            avg_hessian_time_us: avg_hessian_time,
-            avg_hvp_time_us: 0.0,      // Would compute from hvp_timings
-            avg_jacobian_time_us: 0.0, // Would compute from jacobian_timings
+            avg_hessian_time_us: Self::mean_duration_us(&self.hessian_timings),
+            avg_hvp_time_us: Self::mean_duration_us(&self.hvp_timings),
+            avg_jacobian_time_us: Self::mean_duration_us(&self.jacobian_timings),
             parallel_efficiency: self.compute_parallel_efficiency(),
             sparsity_benefit: self.compute_sparsity_benefit(),
-            cache_hit_rate: 0.0, // Would track cache hits
+            recorded_computations: self.total_computations(),
+            largest_hessian_problem: self.largest_problem(HESSIAN_METHOD),
         }
     }
 
@@ -1644,9 +1708,33 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ComputationProf
         avg_sequential / avg_parallel
     }
 
+    /// Mean dense time divided by mean sparsified time over recorded Hessians.
+    ///
+    /// Symmetric with [`Self::compute_parallel_efficiency`], and `1.0` until both
+    /// regimes have actually been observed. This used to return a hard-coded
+    /// `1.2` — a made-up speedup reported through the public
+    /// [`PerformanceProfile`] as if it had been measured.
     fn compute_sparsity_benefit(&self) -> f64 {
-        // Simplified computation - would analyze sparse vs dense performance
-        1.2
+        let sparse = Self::mean_duration_us(
+            &self
+                .hessian_timings
+                .iter()
+                .filter(|t| t.sparse)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        let dense = Self::mean_duration_us(
+            &self
+                .hessian_timings
+                .iter()
+                .filter(|t| !t.sparse)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        if sparse <= 0.0 || dense <= 0.0 {
+            return 1.0;
+        }
+        dense / sparse
     }
 }
 
@@ -1671,7 +1759,7 @@ mod tests {
 
         let hessian = engine
             .hessian_diagonal(&function, &point)
-            .expect("unwrap failed");
+            .expect("hessian_diagonal should succeed");
 
         // Expected diagonal: [2, 4]
         assert!((hessian[[0, 0]] - 2.0).abs() < 1e-5);
@@ -1689,7 +1777,7 @@ mod tests {
 
         let hessian = engine
             .finite_difference_hessian(&function, &point)
-            .expect("unwrap failed");
+            .expect("finite_difference_hessian should succeed");
 
         // Expected Hessian: [[2, 1], [1, 2]]
         assert!((hessian[[0, 0]] - 2.0).abs() < 1e-5);
@@ -1714,7 +1802,7 @@ mod tests {
                 &[1, 1],
                 MixedPartialMethod::FiniteDifference,
             )
-            .expect("unwrap failed");
+            .expect("mixed_partial should succeed");
 
         // ∂²f/∂x∂y = 2x + 2y = 4 at (1,1)
         assert!((mixed_partial.value - 4.0).abs() < 1e-6);
@@ -1736,7 +1824,7 @@ mod tests {
 
         let sparse_hessian = engine
             .sparse_hessian(function, &point, &config)
-            .expect("unwrap failed");
+            .expect("sparse_hessian should succeed");
 
         // Should have 2 non-zero elements (diagonal)
         assert_eq!(sparse_hessian.nnz, 2);

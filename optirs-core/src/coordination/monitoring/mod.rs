@@ -11,8 +11,7 @@ pub mod performance_tracking;
 
 // Re-export key types
 pub use performance_tracking::{
-    AlertManager, MetricAggregator, MetricCollector, PerformanceAlert, PerformanceMetrics,
-    PerformanceTracker,
+    AlertManager, MetricCollector, PerformanceAlert, PerformanceMetrics, PerformanceTracker,
 };
 
 pub use convergence_detection::{

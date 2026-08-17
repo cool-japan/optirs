@@ -3,12 +3,11 @@
 // This module implements various curriculum learning approaches that progressively
 // introduce optimization challenges of increasing difficulty to improve learning.
 
-use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 
 /// Curriculum learning strategies
 #[derive(Debug, Clone, Copy)]
@@ -39,9 +38,6 @@ pub struct CurriculumLearner<T: Float + Debug + Send + Sync + 'static> {
 
     /// Curriculum parameters
     curriculum_params: CurriculumParams<T>,
-
-    /// Task difficulty estimator
-    difficulty_estimator: TaskDifficultyEstimator<T>,
 
     /// Learning progress tracker
     progress_tracker: LearningProgressTracker<T>,
@@ -84,22 +80,6 @@ pub struct CurriculumParams<T: Float + Debug + Send + Sync + 'static> {
     teacher_confidence: T,
 }
 
-/// Task difficulty estimator
-#[derive(Debug, Clone)]
-pub struct TaskDifficultyEstimator<T: Float + Debug + Send + Sync + 'static> {
-    /// Learned difficulty predictor
-    difficulty_predictor: DifficultyPredictor<T>,
-
-    /// Feature extractors for tasks
-    task_features: HashMap<String, Array1<T>>,
-
-    /// Historical difficulty measurements
-    difficulty_history: HashMap<String, Vec<T>>,
-
-    /// Difficulty estimation method
-    estimation_method: DifficultyEstimationMethod,
-}
-
 /// Learning progress tracker
 #[derive(Debug, Clone)]
 pub struct LearningProgressTracker<T: Float + Debug + Send + Sync + 'static> {
@@ -111,9 +91,6 @@ pub struct LearningProgressTracker<T: Float + Debug + Send + Sync + 'static> {
 
     /// Competency levels for different task types
     competency_levels: HashMap<String, T>,
-
-    /// Progress milestones
-    milestones: Vec<ProgressMilestone<T>>,
 }
 
 /// Current curriculum state
@@ -133,9 +110,6 @@ pub struct CurriculumState<T: Float + Debug + Send + Sync + 'static> {
 
     /// Current learning phase
     learning_phase: LearningPhase,
-
-    /// Adaptive parameters
-    adaptive_params: HashMap<String, T>,
 }
 
 /// Task scheduler for curriculum
@@ -171,41 +145,33 @@ pub struct PerformanceRecord<T: Float + Debug + Send + Sync + 'static> {
 
     /// Timestamp
     timestamp: usize,
-
-    /// Additional metrics
-    metrics: HashMap<String, T>,
 }
 
-/// Difficulty predictor network
-#[derive(Debug, Clone)]
-pub struct DifficultyPredictor<T: Float + Debug + Send + Sync + 'static> {
-    /// Input features dimension
-    input_dim: usize,
+impl<T: Float + Debug + Send + Sync + 'static> PerformanceRecord<T> {
+    /// Task this record was measured on.
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
 
-    /// Hidden layers
-    hidden_layers: Vec<Array2<T>>,
+    /// Performance score reported for the task.
+    pub fn performance(&self) -> T {
+        self.performance
+    }
 
-    /// Output layer
-    output_layer: Array1<T>,
+    /// Curriculum difficulty in force when the task was attempted.
+    pub fn difficulty_level(&self) -> T {
+        self.difficulty_level
+    }
 
-    /// Training history
-    training_history: Vec<(Array1<T>, T)>,
-}
+    /// Training steps the task ran for.
+    pub fn training_steps(&self) -> usize {
+        self.training_steps
+    }
 
-/// Progress milestone
-#[derive(Debug, Clone)]
-pub struct ProgressMilestone<T: Float + Debug + Send + Sync + 'static> {
-    /// Milestone name
-    name: String,
-
-    /// Performance threshold
-    threshold: T,
-
-    /// Whether milestone is achieved
-    achieved: bool,
-
-    /// Achievement timestamp
-    achieved_at: Option<usize>,
+    /// Position of this record in the curriculum history.
+    pub fn timestamp(&self) -> usize {
+        self.timestamp
+    }
 }
 
 /// Scheduled task with priority
@@ -222,9 +188,6 @@ pub struct ScheduledTask<T: Float + Debug + Send + Sync + 'static> {
 
     /// Required competency level
     required_competency: T,
-
-    /// Task parameters
-    parameters: HashMap<String, T>,
 }
 
 /// Learning phases in curriculum
@@ -240,21 +203,6 @@ pub enum LearningPhase {
     Transfer,
     /// Generalization phase
     Generalization,
-}
-
-/// Difficulty estimation methods
-#[derive(Debug, Clone, Copy)]
-pub enum DifficultyEstimationMethod {
-    /// Performance-based estimation
-    PerformanceBased,
-    /// Feature-based prediction
-    FeatureBased,
-    /// Gradient-based estimation
-    GradientBased,
-    /// Uncertainty-based estimation
-    UncertaintyBased,
-    /// Multi-modal estimation
-    MultiModal,
 }
 
 /// Scheduling policies
@@ -278,12 +226,20 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         Ok(Self {
             strategy,
             curriculum_params: CurriculumParams::default(),
-            difficulty_estimator: TaskDifficultyEstimator::new()?,
             progress_tracker: LearningProgressTracker::new(),
             curriculum_state: CurriculumState::new()?,
             task_scheduler: TaskScheduler::new()?,
             performance_history: VecDeque::new(),
         })
+    }
+
+    /// Recorded performance history, oldest first (capped at 1000 entries).
+    ///
+    /// `difficulty_level`, `training_steps` and `timestamp` are filled in on
+    /// every [`Self::update_curriculum`] call but had no accessor, so the
+    /// curriculum's own record of what it did was unreadable from outside.
+    pub fn performance_history(&self) -> impl ExactSizeIterator<Item = &PerformanceRecord<T>> {
+        self.performance_history.iter()
     }
 
     /// Update curriculum based on performance
@@ -300,7 +256,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             difficulty_level: self.curriculum_state.current_difficulty,
             training_steps,
             timestamp: self.performance_history.len(),
-            metrics: HashMap::new(),
         };
 
         self.performance_history.push_back(record);
@@ -520,7 +475,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             .insert(task_id.to_string(), new_competency);
 
         // Adapt curriculum parameters
-        self.adapt_curriculum_parameters(task_id, performance)?;
+        self.adapt_curriculum_parameters(task_id)?;
 
         Ok(())
     }
@@ -547,8 +502,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         };
     }
 
-    /// Adapt curriculum parameters based on performance
-    fn adapt_curriculum_parameters(&mut self, task_id: &str, performance: T) -> Result<()> {
+    /// Adapt curriculum parameters from the recorded performance history.
+    ///
+    /// This takes no separate `performance` argument: `update_curriculum` pushes
+    /// the fresh observation onto `performance_history` *before* dispatching to
+    /// the per-strategy update, so both
+    /// [`Self::calculate_performance_variance`] and
+    /// [`Self::calculate_performance_trend`] already include it. Passing it again
+    /// would let the two views of "current performance" drift apart.
+    fn adapt_curriculum_parameters(&mut self, task_id: &str) -> Result<()> {
         // Adapt patience based on task performance variance
         let performance_variance = self.calculate_performance_variance(task_id);
         if performance_variance
@@ -653,7 +615,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             priority: T::one() / estimated_difficulty, // Higher priority for easier tasks initially
             difficulty: estimated_difficulty,
             required_competency,
-            parameters: HashMap::new(),
         };
 
         self.task_scheduler.add_task(scheduled_task);
@@ -736,25 +697,12 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
     }
 }
 
-// Supporting type implementations
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskDifficultyEstimator<T> {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            difficulty_predictor: DifficultyPredictor::new(10)?, // Default 10-dim input
-            task_features: HashMap::new(),
-            difficulty_history: HashMap::new(),
-            estimation_method: DifficultyEstimationMethod::PerformanceBased,
-        })
-    }
-}
-
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LearningProgressTracker<T> {
     fn new() -> Self {
         Self {
             performance_timeline: VecDeque::new(),
             learning_rates: VecDeque::new(),
             competency_levels: HashMap::new(),
-            milestones: Vec::new(),
         }
     }
 
@@ -769,7 +717,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LearningProgres
         self.performance_timeline.clear();
         self.learning_rates.clear();
         self.competency_levels.clear();
-        self.milestones.clear();
     }
 }
 
@@ -786,7 +733,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumState
             recent_performance: T::zero(),
             epochs_since_increase: 0,
             learning_phase: LearningPhase::Exploration,
-            adaptive_params: HashMap::new(),
         }
     }
 }
@@ -896,17 +842,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskScheduler<T
         self.task_queue.clear();
         self.task_weights.clear();
         self.load_balancing.clear();
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> DifficultyPredictor<T> {
-    fn new(input_dim: usize) -> Result<Self> {
-        Ok(Self {
-            input_dim,
-            hidden_layers: vec![Array2::eye(input_dim)],
-            output_layer: Array1::ones(input_dim),
-            training_history: Vec::new(),
-        })
     }
 }
 

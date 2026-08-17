@@ -52,7 +52,7 @@ use crate::optimizers::Optimizer;
 ///     Array1::from_elem(1500, 0.1),
 /// ];
 ///
-/// let updated = parallel_opt.step_parallel_groups(&params_list, &grads_list).expect("unwrap failed");
+/// let updated = parallel_opt.step_parallel_groups(&params_list, &grads_list).expect("parallel_opt.step_parallel_groups succeeds");
 /// ```
 ///
 /// # State handling
@@ -367,7 +367,7 @@ mod tests {
 
         let results = parallel_opt
             .step_parallel_groups(&params_list, &grads_list)
-            .expect("unwrap failed");
+            .expect("step_parallel_groups succeeds in test_parallel_optimizer_basic");
 
         assert_eq!(results.len(), 2);
         assert_relative_eq!(results[0][0], 0.99, epsilon = 1e-6);
@@ -386,7 +386,7 @@ mod tests {
 
         let results = parallel_opt
             .step_parallel_groups(&params_list, &grads_list)
-            .expect("unwrap failed");
+            .expect("step_parallel_groups succeeds in test_parallel_optimizer_multiple_groups");
 
         assert_eq!(results.len(), 10);
         // Verify first group was updated correctly
@@ -406,8 +406,8 @@ mod tests {
             Array1::from_vec(vec![0.3, 0.4]),
         ];
 
-        let results =
-            parallel_step(&mut optimizer, &params_list, &grads_list).expect("unwrap failed");
+        let results = parallel_step(&mut optimizer, &params_list, &grads_list)
+            .expect("parallel_step succeeds in test_parallel_step_function");
 
         assert_eq!(results.len(), 2);
         assert_relative_eq!(results[0][0], 0.99, epsilon = 1e-6);
@@ -575,8 +575,8 @@ mod tests {
             Array1::from_vec(vec![0.1, 0.2, 0.3]),
         ];
 
-        let results =
-            parallel_step_array1(&mut optimizer, &params_list, &grads_list).expect("unwrap failed");
+        let results = parallel_step_array1(&mut optimizer, &params_list, &grads_list)
+            .expect("parallel_step_array1 succeeds in test_parallel_step_array1");
 
         assert_eq!(results.len(), 2);
         assert_relative_eq!(results[0][0], 0.99, epsilon = 1e-6);

@@ -1,6 +1,5 @@
 // Coordination Configuration Module
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

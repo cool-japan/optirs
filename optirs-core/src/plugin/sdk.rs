@@ -71,18 +71,6 @@ pub struct BaseOptimizerState<A: Float + std::fmt::Debug> {
 /// Plugin development utilities
 pub struct PluginSDK;
 
-/// Plugin testing framework
-pub struct PluginTester<A: Float> {
-    /// Test configuration
-    config: TestConfig,
-    /// Test suite
-    test_suite: TestSuite<A>,
-    /// Benchmark suite
-    benchmark_suite: BenchmarkSuite<A>,
-    /// Validation framework
-    validator: PluginValidator<A>,
-}
-
 /// Test configuration
 #[derive(Debug, Clone)]
 pub struct TestConfig {
@@ -248,15 +236,6 @@ pub struct MemoryConstraints {
     pub leak_tolerance: usize,
 }
 
-/// Plugin validator for comprehensive validation
-#[derive(Debug)]
-pub struct PluginValidator<A: Float> {
-    /// Validation rules
-    rules: Vec<Box<dyn ValidationRule<A>>>,
-    /// Compatibility checker
-    compatibility_checker: CompatibilityChecker,
-}
-
 /// Validation rule trait
 pub trait ValidationRule<A: Float>: Debug {
     /// Validate plugin
@@ -289,28 +268,6 @@ pub enum ValidationSeverity {
     Warning,
     Error,
     Critical,
-}
-
-/// Compatibility checker
-#[derive(Debug)]
-pub struct CompatibilityChecker {
-    /// Target platforms
-    target_platforms: Vec<String>,
-    /// Rust version requirements
-    rust_versions: Vec<String>,
-    /// Dependency compatibility
-    dependency_compatibility: HashMap<String, String>,
-}
-
-/// Benchmark suite for performance evaluation
-#[derive(Debug)]
-pub struct BenchmarkSuite<A: Float> {
-    /// Standard benchmarks
-    standard_benchmarks: Vec<Box<dyn Benchmark<A>>>,
-    /// Custom benchmarks
-    custom_benchmarks: Vec<Box<dyn Benchmark<A>>>,
-    /// Benchmark configuration
-    config: BenchmarkConfig,
 }
 
 /// Benchmark trait
@@ -517,6 +474,11 @@ pub enum TemplateFileType {
 }
 
 impl PluginTemplate {
+    /// The template's name, which is also the generated crate/type prefix.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Create a new plugin template
     pub fn new(name: &str) -> Self {
         let structure = Self::create_default_structure(name);
@@ -635,7 +597,12 @@ pub struct {}Factory;
 
 impl<A: Float + std::fmt::Debug + Send + Sync + 'static> OptimizerPluginFactory<A> for {}Factory {{
     fn create_optimizer(&self, config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<A>>> {{
-        let learning_rate = A::from(config.learning_rate).expect("unwrap failed");
+        let learning_rate = A::from(config.learning_rate).ok_or_else(|| {{
+            OptimError::InvalidConfig(format!(
+                "learning_rate {{}} is not representable in this optimizer's element type",
+                config.learning_rate
+            ))
+        }})?;
         Ok(Box::new({}Optimizer::new(learning_rate)))
     }}
     
@@ -717,7 +684,7 @@ fn test_{}_basic_functionality() {{
     let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
     let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
     
-    let result = optimizer.step(&params, &gradients).expect("unwrap failed");
+    let result = optimizer.step(&params, &gradients).expect("a step over finite inputs");
     
     // Verify the result
     assert!((result[0] - 0.999).abs() < 1e-6);
@@ -734,7 +701,7 @@ fn test_{}_convergence() {{
     // Optimize towards zero
     for _ in 0..100 {{
         let gradients = &params * 2.0; // Gradient of x^2
-        params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        params = optimizer.step(&params, &gradients).expect("a step over finite inputs");
     }}
     
     // Should converge close to zero

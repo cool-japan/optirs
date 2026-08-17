@@ -33,7 +33,7 @@ use super::{
     StabilityMetrics, TransferLearner, TransferMetrics, TransferResults,
 };
 use crate::error::{OptimError, Result};
-use crate::{LearnedOptimizerConfig, MetaOptimizationStrategy};
+use crate::LearnedOptimizerConfig;
 
 /// How many recent losses the LR controller keeps for its trend estimate.
 const LR_TREND_WINDOW: usize = 8;
@@ -55,7 +55,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> 
         let meta_lr: T =
             scirs2_core::numeric::NumCast::from(config.meta_learning_rate).unwrap_or_else(T::zero);
         Ok(Self {
-            strategy: MetaOptimizationStrategy::MAML,
             meta_parameters: HashMap::new(),
             meta_gradients: HashMap::new(),
             task_history: VecDeque::new(),
@@ -379,7 +378,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveLearnin
                 best_performance: T::infinity(),
                 improvement_rate: T::zero(),
             },
-            schedule_params: None,
         })
     }
 

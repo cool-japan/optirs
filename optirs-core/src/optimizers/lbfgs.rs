@@ -45,7 +45,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = LBFGS::new(1.0);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct LBFGS<A: Float + ScalarOperand + Debug> {
@@ -404,8 +404,10 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LBFGS<A> {
         let mut direction = self.prepare_direction(&params_flat, &gradients_flat);
 
         // Directional derivative g^T d must be negative for a descent direction.
+        // A NaN (or otherwise incomparable) `gtd` is not a valid descent direction
+        // either, so it must fall into this branch alongside non-negative values.
         let mut gtd = gradients_flat.dot(&direction);
-        if !(gtd < A::zero()) {
+        if !matches!(gtd.partial_cmp(&A::zero()), Some(std::cmp::Ordering::Less)) {
             direction = gradients_flat.mapv(|x| -x);
             gtd = -gradients_flat.dot(&gradients_flat);
         }
@@ -442,7 +444,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LBFGS<A> {
             }
 
             alpha = alpha * self.ls_contraction;
-            if !(alpha > A::zero()) {
+            // Stop on a non-positive (or NaN) step size rather than looping forever.
+            if !matches!(
+                alpha.partial_cmp(&A::zero()),
+                Some(std::cmp::Ordering::Greater)
+            ) {
                 break;
             }
         }
@@ -558,7 +564,9 @@ mod tests {
 
         for _ in 0..50 {
             let gradients = Array1::from_vec(vec![2.0 * params[0]]);
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_lbfgs_convergence");
         }
 
         // Should converge close to 0
@@ -574,7 +582,9 @@ mod tests {
 
         for _ in 0..50 {
             let gradients = Array1::from_vec(vec![2.0 * params[0], 2.0 * params[1]]);
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_lbfgs_2d");
         }
 
         // Should converge close to (0, 0)
@@ -589,15 +599,21 @@ mod tests {
         // Perform some steps
         let mut params = Array1::from_vec(vec![1.0]);
         let gradients = Array1::from_vec(vec![2.0]);
-        params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lbfgs_reset");
 
         // Need one more step to actually update history
         let gradients2 = Array1::from_vec(vec![1.5]);
-        params = optimizer.step(&params, &gradients2).expect("unwrap failed");
+        params = optimizer
+            .step(&params, &gradients2)
+            .expect("optimizer.step succeeds in test_lbfgs_reset");
 
         // Third step to populate history
         let gradients3 = Array1::from_vec(vec![1.0]);
-        let _ = optimizer.step(&params, &gradients3).expect("unwrap failed");
+        let _ = optimizer
+            .step(&params, &gradients3)
+            .expect("optimizer.step succeeds in test_lbfgs_reset");
 
         // Verify state exists
         assert!(!optimizer.old_dirs.is_empty());

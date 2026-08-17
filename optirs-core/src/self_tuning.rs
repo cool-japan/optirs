@@ -4,13 +4,12 @@
 // tune hyperparameters, select optimizers, and adjust configurations based
 // on training dynamics and problem characteristics.
 
-#[allow(dead_code)]
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::*;
-use crate::schedulers::*;
+use crate::utils::{scalar_or, total_order, try_f64, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -47,6 +46,14 @@ pub struct SelfTuningConfig {
 
     /// Performance metric to optimize
     pub target_metric: TargetMetric,
+
+    /// Minimum wall-clock time that must pass between two optimizer switches.
+    ///
+    /// Switching optimizers throws away momentum/accumulator state that has
+    /// not transferred, so back-to-back switches can cost more than they gain.
+    /// `Duration::ZERO` disables the throttle and restores step-count-only
+    /// gating.
+    pub min_adaptation_interval: Duration,
 }
 
 impl Default for SelfTuningConfig {
@@ -62,6 +69,7 @@ impl Default for SelfTuningConfig {
             exploration_rate: 0.1,
             exploration_decay: 0.99,
             target_metric: TargetMetric::Loss,
+            min_adaptation_interval: Duration::from_secs(1),
         }
     }
 }
@@ -129,11 +137,15 @@ pub struct SelfTuningOptimizer<A: Float, D: Dimension> {
     /// Hyperparameter search state
     search_state: HyperparameterSearchState,
 
-    /// Learning rate scheduler
-    lr_scheduler: Option<Box<dyn LearningRateScheduler<A>>>,
-
     /// Optimizer selection strategy
     selection_strategy: OptimizerSelectionStrategy,
+
+    /// Index into `optimizer_candidates` of the optimizer currently running.
+    ///
+    /// Without it there was no way to attribute an observed performance back
+    /// to the candidate that produced it, which is why every candidate's
+    /// `average_reward` stayed pinned at its initial `0.0`.
+    current_candidate_idx: usize,
 
     /// Current step count
     step_count: usize,
@@ -159,16 +171,21 @@ struct OptimizerCandidate<A: Float, D: Dimension> {
     /// Factory function to create the optimizer
     factory: Box<dyn Fn() -> Box<dyn OptimizerTrait<A, D>>>,
 
-    /// Performance history for this optimizer
+    /// Rewards observed while this candidate was the active optimizer, most
+    /// recent last and bounded by the configured evaluation window.
     performance_history: Vec<f64>,
 
     /// Usage count
     usage_count: usize,
 
-    /// Average performance
-    average_performance: f64,
+    /// Mean of `performance_history`, in *reward* orientation: always
+    /// higher-is-better, with loss-like target metrics negated. Selection
+    /// maximises this, so storing the raw metric would make the tuner prefer
+    /// the *worst* optimizer whenever the target metric is a loss.
+    average_reward: f64,
 
-    /// Confidence interval
+    /// 95% confidence interval around `average_reward`, as
+    /// `(lower, upper)`. Width feeds the bandit's exploration bonus.
     confidence_interval: (f64, f64),
 }
 
@@ -187,75 +204,49 @@ struct HyperparameterSearchState {
     /// Batch size search bounds
     batch_size_bounds: (usize, usize),
 
-    /// Number of search iterations performed
+    /// Number of search iterations (reported optimization steps) folded into
+    /// the search state so far.
     search_iterations: usize,
 
-    /// Best hyperparameters found
+    /// Target-metric values observed for the configurations tried so far, most
+    /// recent last, bounded to a few evaluation windows.
+    observed_metrics: Vec<f64>,
+
+    /// Best hyperparameters found: the learning rate and batch size in force
+    /// when the best target-metric value so far was observed.
     best_hyperparameters: HashMap<String, f64>,
-
-    /// Search algorithm state
-    search_algorithm: SearchAlgorithm,
 }
 
-/// Hyperparameter search algorithms
-#[derive(Debug)]
-enum SearchAlgorithm {
-    /// Random search
-    Random {
-        /// Random number generator seed
-        seed: u64,
-    },
-
-    /// Bayesian optimization
-    Bayesian {
-        /// Gaussian process state
-        gp_state: GaussianProcessState,
-    },
-
-    /// Grid search
-    Grid {
-        /// Current grid position
-        position: Vec<usize>,
-        /// Grid dimensions
-        dimensions: Vec<usize>,
-    },
-
-    /// Successive halving (Hyperband)
-    SuccessiveHalving {
-        /// Current bracket
-        bracket: usize,
-        /// Configurations in current round
-        configurations: Vec<HashMap<String, f64>>,
-    },
-}
-
-/// Gaussian process state for Bayesian optimization
-#[derive(Debug)]
-struct GaussianProcessState {
-    /// Observed points
-    observed_points: Vec<Vec<f64>>,
-
-    /// Observed values
-    observed_values: Vec<f64>,
-
-    /// Kernel hyperparameters
-    kernel_params: Vec<f64>,
-
-    /// Acquisition function type
-    acquisition_function: AcquisitionFunction,
-}
-
-/// Acquisition functions for Bayesian optimization
-#[derive(Debug, Clone, Copy)]
-enum AcquisitionFunction {
-    ExpectedImprovement,
-    ProbabilityOfImprovement,
-    UpperConfidenceBound,
-}
-
-/// Optimizer selection strategies
+/// Public snapshot of the hyperparameter-search state.
 #[derive(Debug, Clone)]
-enum OptimizerSelectionStrategy {
+pub struct HyperparameterSearchSummary {
+    /// Reported optimization steps folded into the search state.
+    pub search_iterations: usize,
+    /// Number of retained target-metric observations.
+    pub observations: usize,
+    /// Learning rate currently in force.
+    pub learning_rate: f64,
+    /// Inclusive learning-rate search bounds.
+    pub lr_bounds: (f64, f64),
+    /// Batch size currently in force.
+    pub batch_size: usize,
+    /// Inclusive batch-size search bounds.
+    pub batch_size_bounds: (usize, usize),
+    /// Best configuration observed so far, keyed by hyperparameter name plus a
+    /// `target_metric` entry holding the metric value it achieved.
+    pub best_hyperparameters: HashMap<String, f64>,
+}
+
+/// Optimizer selection strategies.
+///
+/// Every variant below has a working implementation in
+/// [`SelfTuningOptimizer`]; this enum is public so a caller can actually
+/// choose between them via
+/// [`SelfTuningOptimizer::set_selection_strategy`]. It used to be private
+/// with the constructor hard-coding `MultiArmedBandit { UCB1 }`, which left
+/// three fully-implemented strategies unreachable.
+#[derive(Debug, Clone)]
+pub enum OptimizerSelectionStrategy {
     /// Multi-armed bandit approach
     MultiArmedBandit {
         /// Bandit algorithm type
@@ -283,12 +274,22 @@ enum OptimizerSelectionStrategy {
     },
 }
 
-/// Multi-armed bandit algorithms
-#[derive(Debug, Clone, Copy)]
-enum BanditAlgorithm {
+/// Multi-armed bandit algorithms.
+///
+/// All four are implemented by `select_optimizer_bandit`; public so
+/// [`OptimizerSelectionStrategy::MultiArmedBandit`] can be built with any of
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BanditAlgorithm {
+    /// Explore uniformly at random with probability `exploration_rate`,
+    /// otherwise take the current best reward estimate.
     EpsilonGreedy,
+    /// Deterministic upper-confidence-bound selection (Auer et al. 2002).
     UCB1,
+    /// Sample each arm from its estimated reward interval and take the best
+    /// draw.
     ThompsonSampling,
+    /// Contextual UCB variant.
     LinUCB,
 }
 
@@ -350,16 +351,16 @@ impl<
             factory: Box::new(|| Box::new(AdamOptimizerWrapper::new(0.001, 0.9, 0.999, 1e-8, 0.0))),
             performance_history: Vec::new(),
             usage_count: 0,
-            average_performance: 0.0,
+            average_reward: 0.0,
             confidence_interval: (0.0, 0.0),
         });
 
         optimizer_candidates.push(OptimizerCandidate {
             name: "SGD".to_string(),
-            factory: Box::new(|| Box::new(SGDOptimizerWrapper::new(0.01, 0.9, 0.0, false))),
+            factory: Box::new(|| Box::new(SGDOptimizerWrapper::new(0.01, 0.9, 0.0))),
             performance_history: Vec::new(),
             usage_count: 0,
-            average_performance: 0.0,
+            average_reward: 0.0,
             confidence_interval: (0.0, 0.0),
         });
 
@@ -370,7 +371,7 @@ impl<
             }),
             performance_history: Vec::new(),
             usage_count: 0,
-            average_performance: 0.0,
+            average_reward: 0.0,
             confidence_interval: (0.0, 0.0),
         });
 
@@ -383,8 +384,8 @@ impl<
             batch_size: 32,
             batch_size_bounds: (8, 512),
             search_iterations: 0,
+            observed_metrics: Vec::new(),
             best_hyperparameters: HashMap::new(),
-            search_algorithm: SearchAlgorithm::Random { seed: 42 },
         };
 
         let selection_strategy = OptimizerSelectionStrategy::MultiArmedBandit {
@@ -405,8 +406,8 @@ impl<
             optimizer_candidates,
             performance_history: VecDeque::new(),
             search_state,
-            lr_scheduler: None,
             selection_strategy,
+            current_candidate_idx: 0,
             step_count: 0,
             switches_this_epoch: 0,
             best_performance: None,
@@ -425,7 +426,7 @@ impl<
             factory: Box::new(factory),
             performance_history: Vec::new(),
             usage_count: 0,
-            average_performance: 0.0,
+            average_reward: 0.0,
             confidence_interval: (0.0, 0.0),
         });
 
@@ -433,6 +434,20 @@ impl<
         self.bandit_state.reward_estimates.push(0.0);
         self.bandit_state.confidence_bounds.push(1.0);
         self.bandit_state.selection_counts.push(0);
+    }
+
+    /// Choose how the next optimizer is selected.
+    ///
+    /// All four [`OptimizerSelectionStrategy`] variants are implemented; before
+    /// this setter existed the constructor's `MultiArmedBandit { UCB1 }` was
+    /// the only reachable one.
+    pub fn set_selection_strategy(&mut self, strategy: OptimizerSelectionStrategy) {
+        self.selection_strategy = strategy;
+    }
+
+    /// The strategy currently in force.
+    pub fn selection_strategy(&self) -> &OptimizerSelectionStrategy {
+        &self.selection_strategy
     }
 
     /// Perform optimization step with automatic tuning
@@ -453,6 +468,16 @@ impl<
         // Perform optimization step
         self.current_optimizer.step(params, grads)?;
 
+        // Attribute this step's observation to the optimizer that produced it,
+        // *before* any adaptation can switch which optimizer is current.
+        // Without this every candidate's reward estimate stayed at its initial
+        // 0.0, so `PerformanceBased` selection ranked a constant and the bandit
+        // chose between identical arms forever; recording it after the switch
+        // would credit the incoming optimizer with the outgoing one's result,
+        // which is worse than not recording at all -- it would systematically
+        // reward whichever optimizer was switched *to* after a bad step.
+        self.record_candidate_performance(&stats);
+
         // Self-tuning adaptations
         if self.step_count > self.config.warmup_steps {
             self.maybe_adapt_optimizer(&stats)?;
@@ -461,14 +486,12 @@ impl<
         }
 
         // Update best performance
-        let current_performance = self.extract_performance_metric(&stats);
-        if let Some(performance) = current_performance {
-            if self.best_performance.is_none()
-                || self.is_better_performance(
-                    performance,
-                    self.best_performance.expect("unwrap failed"),
-                )
-            {
+        if let Some(performance) = self.extract_performance_metric(&stats) {
+            let improved = match self.best_performance {
+                None => true,
+                Some(best) => self.is_better_performance(performance, best),
+            };
+            if improved {
                 self.best_performance = Some(performance);
             }
         }
@@ -483,6 +506,15 @@ impl<
         }
 
         if self.switches_this_epoch >= self.config.max_switches_per_epoch {
+            return Ok(());
+        }
+
+        // Respect the cool-down since the last switch. `last_adaptation_time`
+        // was recorded but never consulted, so the only limit on switching was
+        // the per-epoch count.
+        if self.switches_this_epoch > 0
+            && self.last_adaptation_time.elapsed() < self.config.min_adaptation_interval
+        {
             return Ok(());
         }
 
@@ -502,14 +534,20 @@ impl<
             return false;
         }
 
-        // Check for performance degradation or stagnation
-        let recent_performance: Vec<f64> = self
+        // Check for performance degradation or stagnation. The freshest
+        // observation is the `stats` just reported, which is not yet in
+        // `performance_history`; including it is what makes this decision react
+        // to the current step rather than lagging a full window behind it.
+        let mut recent_performance: Vec<f64> = self
             .performance_history
             .iter()
             .rev()
             .take(self.config.evaluation_window / 4)
             .filter_map(|s| self.extract_performance_metric(s))
             .collect();
+        if let Some(current) = self.extract_performance_metric(stats) {
+            recent_performance.insert(0, current);
+        }
 
         let older_performance: Vec<f64> = self
             .performance_history
@@ -550,8 +588,12 @@ impl<
             OptimizerSelectionStrategy::PerformanceBased { .. } => {
                 self.select_optimizer_performance_based()
             }
-            OptimizerSelectionStrategy::RoundRobin { current_index } => {
-                (*current_index + 1) % self.optimizer_candidates.len()
+            // Advance from the optimizer that is actually running. The
+            // strategy's own `current_index` was never written back, so this
+            // used to return the same successor on every call and round-robin
+            // never got past the second candidate.
+            OptimizerSelectionStrategy::RoundRobin { .. } => {
+                (self.current_candidate_idx + 1) % self.optimizer_candidates.len()
             }
             OptimizerSelectionStrategy::MetaLearning { .. } => {
                 self.select_optimizer_meta_learning(stats)
@@ -573,6 +615,15 @@ impl<
 
             // Update usage statistics
             self.optimizer_candidates[new_optimizer_idx].usage_count += 1;
+            self.current_candidate_idx = new_optimizer_idx;
+            self.last_adaptation_time = Instant::now();
+            // Keep the strategy's own cursor in step with reality so
+            // `selection_strategy()` reports where the rotation actually is.
+            if let OptimizerSelectionStrategy::RoundRobin { current_index } =
+                &mut self.selection_strategy
+            {
+                *current_index = new_optimizer_idx;
+            }
         }
 
         Ok(())
@@ -597,7 +648,7 @@ impl<
         let mut best_score = f64::NEG_INFINITY;
         let mut best_idx = 0;
 
-        for (i, candidate) in self.optimizer_candidates.iter().enumerate() {
+        for i in 0..self.optimizer_candidates.len() {
             let ucb_score = if self.bandit_state.selection_counts[i] == 0 {
                 f64::INFINITY
             } else {
@@ -622,8 +673,8 @@ impl<
     fn select_epsilon_greedy(&self) -> usize {
         let mut rng = thread_rng();
 
-        if A::from(rng.random::<f64>()).expect("unwrap failed")
-            < A::from(self.config.exploration_rate).expect("unwrap failed")
+        if scalar_or(rng.random::<f64>(), A::zero())
+            < scalar_or(self.config.exploration_rate, A::zero())
         {
             // Explore: random selection
             rng.gen_range(0..self.optimizer_candidates.len())
@@ -633,7 +684,7 @@ impl<
                 .reward_estimates
                 .iter()
                 .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).expect("unwrap failed"))
+                .max_by(|a, b| total_order(a.1, b.1))
                 .map(|(idx, _)| idx)
                 .unwrap_or(0)
         }
@@ -672,19 +723,83 @@ impl<
         self.optimizer_candidates
             .iter()
             .enumerate()
-            .max_by(|a, b| {
-                a.1.average_performance
-                    .partial_cmp(&b.1.average_performance)
-                    .expect("unwrap failed")
-            })
+            .max_by(|a, b| total_order(&a.1.average_reward, &b.1.average_reward))
             .map(|(idx, _)| idx)
             .unwrap_or(0)
     }
 
-    /// Meta-learning based optimizer selection
+    /// Feature vector describing the current optimization problem, in the same
+    /// order as `OptimizerSelectionStrategy::MetaLearning::problem_features`:
+    /// `[loss, gradient_norm, throughput, memory_usage, learning_rate]`.
+    fn problem_feature_vector(stats: &PerformanceStats) -> [f64; 5] {
+        [
+            stats.loss,
+            stats.gradient_norm,
+            stats.throughput,
+            stats.memory_usage,
+            stats.learning_rate,
+        ]
+    }
+
+    /// Meta-learning based optimizer selection.
+    ///
+    /// The strategy carries a learned `optimizer_mappings` table (optimizer name
+    /// to expected quality) that was fitted on a problem described by
+    /// `problem_features`. That table is only trustworthy for problems that
+    /// resemble the one it was fitted on, so the current problem's features are
+    /// compared to the stored ones by cosine similarity and the learned ranking
+    /// is used only above a similarity threshold; otherwise selection falls back
+    /// to the measured `average_reward` of each candidate.
+    ///
+    /// This replaces a stub that ignored `stats` and unconditionally returned
+    /// candidate 0, which made `MetaLearning` silently equivalent to "never
+    /// switch away from the first optimizer".
     fn select_optimizer_meta_learning(&self, stats: &PerformanceStats) -> usize {
-        // Simplified meta-learning - would use problem features in practice
-        0
+        /// Minimum cosine similarity between the current problem and the one the
+        /// mappings were learned on before the learned ranking is trusted.
+        const SIMILARITY_THRESHOLD: f64 = 0.9;
+
+        let OptimizerSelectionStrategy::MetaLearning {
+            problem_features,
+            optimizer_mappings,
+        } = &self.selection_strategy
+        else {
+            return self.select_optimizer_performance_based();
+        };
+        if optimizer_mappings.is_empty() {
+            return self.select_optimizer_performance_based();
+        }
+
+        let current = Self::problem_feature_vector(stats);
+        let shared = problem_features.len().min(current.len());
+        let (mut dot, mut norm_stored, mut norm_current) = (0.0, 0.0, 0.0);
+        for i in 0..shared {
+            dot += problem_features[i] * current[i];
+            norm_stored += problem_features[i] * problem_features[i];
+            norm_current += current[i] * current[i];
+        }
+        let similarity = if norm_stored > 0.0 && norm_current > 0.0 {
+            dot / (norm_stored.sqrt() * norm_current.sqrt())
+        } else {
+            // No usable feature vector on one side: the mappings cannot be
+            // shown to apply here.
+            0.0
+        };
+        if similarity < SIMILARITY_THRESHOLD {
+            return self.select_optimizer_performance_based();
+        }
+
+        self.optimizer_candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, candidate)| {
+                optimizer_mappings
+                    .get(&candidate.name)
+                    .map(|score| (idx, *score))
+            })
+            .max_by(|a, b| total_order(&a.1, &b.1))
+            .map(|(idx, _)| idx)
+            .unwrap_or_else(|| self.select_optimizer_performance_based())
     }
 
     /// Adapt learning rate based on performance
@@ -694,11 +809,7 @@ impl<
         }
 
         // Simple adaptive learning rate based on gradient norm
-        let current_lr = self
-            .current_optimizer
-            .learning_rate()
-            .to_f64()
-            .expect("unwrap failed");
+        let current_lr = try_f64(self.current_optimizer.learning_rate())?;
         let gradient_norm = stats.gradient_norm;
 
         let new_lr = if gradient_norm > 10.0 {
@@ -717,18 +828,86 @@ impl<
 
         if (clamped_lr - current_lr).abs() > current_lr * 0.01 {
             self.current_optimizer
-                .set_learning_rate(A::from(clamped_lr).expect("unwrap failed"));
+                .set_learning_rate(try_scalar::<A, _>(clamped_lr)?);
             self.search_state.learning_rate = clamped_lr;
         }
 
         Ok(())
     }
 
-    /// Adapt other hyperparameters
+    /// Record the reported statistics against the active hyperparameter search
+    /// trial.
+    ///
+    /// Only the *observation* half of hyperparameter search is implemented here:
+    /// the metric for the current configuration is appended to the search
+    /// state's history so a search driver has real data to work from. Proposing
+    /// the next configuration (Bayesian optimization / grid / successive
+    /// halving) is not implemented — see `HyperparameterSearchState` and the
+    /// unimplemented `SearchStrategy` variants — so nothing is mutated behind
+    /// the caller's back and no configuration change is fabricated.
     fn maybe_adapt_hyperparameters(&mut self, stats: &PerformanceStats) -> Result<()> {
-        // Placeholder for hyperparameter adaptation
-        // Would implement Bayesian optimization, random search, etc.
+        let Some(metric) = self.extract_performance_metric(stats) else {
+            return Ok(());
+        };
+
+        let improved = match self.best_observed_metric() {
+            Some(best) => self.metric_is_better(metric, best),
+            None => true,
+        };
+
+        self.search_state.observed_metrics.push(metric);
+        let cap = self.config.evaluation_window.max(1) * 4;
+        if self.search_state.observed_metrics.len() > cap {
+            self.search_state.observed_metrics.remove(0);
+        }
+        self.search_state.search_iterations += 1;
+
+        if improved {
+            self.search_state
+                .best_hyperparameters
+                .insert("learning_rate".to_string(), self.search_state.learning_rate);
+            self.search_state.best_hyperparameters.insert(
+                "batch_size".to_string(),
+                self.search_state.batch_size as f64,
+            );
+            self.search_state
+                .best_hyperparameters
+                .insert("target_metric".to_string(), metric);
+        }
+
         Ok(())
+    }
+
+    /// Whether `candidate` is a better target-metric value than `incumbent`,
+    /// respecting the configured metric's direction.
+    fn metric_is_better(&self, candidate: f64, incumbent: f64) -> bool {
+        match self.config.target_metric {
+            TargetMetric::Loss => candidate < incumbent,
+            _ => candidate > incumbent,
+        }
+    }
+
+    /// Best target-metric value recorded by the hyperparameter search so far.
+    fn best_observed_metric(&self) -> Option<f64> {
+        self.search_state
+            .best_hyperparameters
+            .get("target_metric")
+            .copied()
+    }
+
+    /// Snapshot of the hyperparameter-search state: the number of reported
+    /// steps folded in, the best configuration observed, and the batch-size
+    /// search bounds the (not yet implemented) proposal step would respect.
+    pub fn hyperparameter_search_summary(&self) -> HyperparameterSearchSummary {
+        HyperparameterSearchSummary {
+            search_iterations: self.search_state.search_iterations,
+            observations: self.search_state.observed_metrics.len(),
+            learning_rate: self.search_state.learning_rate,
+            lr_bounds: self.search_state.lr_bounds,
+            batch_size: self.search_state.batch_size,
+            batch_size_bounds: self.search_state.batch_size_bounds,
+            best_hyperparameters: self.search_state.best_hyperparameters.clone(),
+        }
     }
 
     /// Extract performance metric from stats
@@ -739,6 +918,82 @@ impl<
             TargetMetric::Throughput => Some(stats.throughput),
             TargetMetric::ConvergenceTime => Some(stats.step_time.as_secs_f64()),
             TargetMetric::Custom => stats.custom_metrics.values().next().copied(),
+        }
+    }
+
+    /// Whether the target metric is one where a *smaller* value is better.
+    fn lower_is_better(&self) -> bool {
+        matches!(
+            self.config.target_metric,
+            TargetMetric::Loss | TargetMetric::ConvergenceTime
+        )
+    }
+
+    /// The observed metric expressed as a reward: always higher-is-better, so
+    /// that every selection rule can simply maximise it.
+    fn reward_from_metric(&self, metric: f64) -> f64 {
+        if self.lower_is_better() {
+            -metric
+        } else {
+            metric
+        }
+    }
+
+    /// Fold this step's observation into the active candidate's statistics and
+    /// the bandit's estimate of that arm.
+    ///
+    /// This is the update that makes `performance_history`, `average_reward`,
+    /// `confidence_interval`, `reward_estimates` and `confidence_bounds`
+    /// carry real measurements instead of their initial constants.
+    fn record_candidate_performance(&mut self, stats: &PerformanceStats) {
+        let Some(metric) = self.extract_performance_metric(stats) else {
+            return;
+        };
+        if !metric.is_finite() {
+            return;
+        }
+        let reward = self.reward_from_metric(metric);
+
+        let window = self.config.evaluation_window.max(1);
+        let idx = self.current_candidate_idx;
+        let Some(candidate) = self.optimizer_candidates.get_mut(idx) else {
+            return;
+        };
+
+        candidate.performance_history.push(reward);
+        if candidate.performance_history.len() > window {
+            let excess = candidate.performance_history.len() - window;
+            candidate.performance_history.drain(0..excess);
+        }
+
+        let samples = candidate.performance_history.len();
+        let count = samples as f64;
+        let mean = candidate.performance_history.iter().sum::<f64>() / count;
+        // Sample standard error; a single observation has no spread to report,
+        // so its interval is a point.
+        let half_width = if samples > 1 {
+            let variance = candidate
+                .performance_history
+                .iter()
+                .map(|&r| (r - mean) * (r - mean))
+                .sum::<f64>()
+                / (count - 1.0);
+            1.96 * (variance / count).sqrt()
+        } else {
+            0.0
+        };
+
+        candidate.average_reward = mean;
+        candidate.confidence_interval = (mean - half_width, mean + half_width);
+
+        // Mirror into the bandit arms, which select on exactly these numbers.
+        if let Some(estimate) = self.bandit_state.reward_estimates.get_mut(idx) {
+            *estimate = mean;
+        }
+        if let Some(bound) = self.bandit_state.confidence_bounds.get_mut(idx) {
+            // A never-measured arm keeps its optimistic initial bound so it
+            // still gets explored; a measured one reports its real spread.
+            *bound = if samples > 1 { half_width } else { 1.0 };
         }
     }
 
@@ -760,11 +1015,9 @@ impl<
     pub fn get_optimizer_info(&self) -> OptimizerInfo {
         OptimizerInfo {
             name: self.current_optimizer.name().to_string(),
-            learning_rate: self
-                .current_optimizer
-                .learning_rate()
-                .to_f64()
-                .expect("unwrap failed"),
+            // A learning rate with no `f64` image cannot be reported; `NaN`
+            // marks it as unavailable rather than panicking an info getter.
+            learning_rate: try_f64(self.current_optimizer.learning_rate()).unwrap_or(f64::NAN),
             step_count: self.step_count,
             switches_this_epoch: self.switches_this_epoch,
             performance_window_size: self.performance_history.len(),
@@ -834,11 +1087,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     fn new(_lr: f64, beta1: f64, beta2: f64, eps: f64, weightdecay: f64) -> Self {
         Self {
             inner: crate::optimizers::Adam::new_with_config(
-                A::from(_lr).expect("unwrap failed"),
-                A::from(beta1).expect("unwrap failed"),
-                A::from(beta2).expect("unwrap failed"),
-                A::from(eps).expect("unwrap failed"),
-                A::from(weightdecay).expect("unwrap failed"),
+                scalar_or(_lr, A::zero()),
+                scalar_or(beta1, A::zero()),
+                scalar_or(beta2, A::zero()),
+                scalar_or(eps, A::zero()),
+                scalar_or(weightdecay, A::zero()),
             ),
             _phantom: std::marker::PhantomData,
         }
@@ -877,12 +1130,24 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + 'static, D: Dimension + 's
         );
     }
 
+    /// Returns an empty map: the wrapped optimizer does not expose its internal
+    /// moment/accumulator arrays, so there is genuinely nothing to serialize.
+    /// This is reported honestly rather than emitting a partial snapshot that
+    /// would silently lose state on restore.
     fn get_state(&self) -> HashMap<String, Vec<u8>> {
         HashMap::new()
     }
 
     fn set_state(&mut self, state: HashMap<String, Vec<u8>>) -> Result<()> {
-        Ok(())
+        if state.is_empty() {
+            return Ok(());
+        }
+        Err(OptimError::UnsupportedOperation(format!(
+            "{} does not expose serializable moment state, so a {}-entry state \
+             snapshot cannot be restored; the optimizer starts from a fresh state",
+            self.name(),
+            state.len()
+        )))
     }
 
     fn clone_optimizer(&self) -> Box<dyn OptimizerTrait<A, D>> {
@@ -901,12 +1166,19 @@ struct SGDOptimizerWrapper<A: Float + ScalarOperand + Debug, D: Dimension> {
 impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     SGDOptimizerWrapper<A, D>
 {
-    fn new(_lr: f64, momentum: f64, weightdecay: f64, nesterov: bool) -> Self {
+    /// Build an SGD wrapper.
+    ///
+    /// There is deliberately no `nesterov` parameter: `crate::optimizers::SGD`
+    /// implements classical (heavy-ball) momentum only, with no Nesterov
+    /// look-ahead term, so a flag here could not be honoured. It previously
+    /// accepted `nesterov: bool` and discarded it, which advertised support
+    /// that does not exist.
+    fn new(lr: f64, momentum: f64, weightdecay: f64) -> Self {
         Self {
             inner: crate::optimizers::SGD::new_with_config(
-                A::from(_lr).expect("unwrap failed"),
-                A::from(momentum).expect("unwrap failed"),
-                A::from(weightdecay).expect("unwrap failed"),
+                scalar_or(lr, A::zero()),
+                scalar_or(momentum, A::zero()),
+                scalar_or(weightdecay, A::zero()),
             ),
             _phantom: std::marker::PhantomData,
         }
@@ -945,12 +1217,24 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + 'static, D: Dimension + 's
         );
     }
 
+    /// Returns an empty map: the wrapped optimizer does not expose its internal
+    /// moment/accumulator arrays, so there is genuinely nothing to serialize.
+    /// This is reported honestly rather than emitting a partial snapshot that
+    /// would silently lose state on restore.
     fn get_state(&self) -> HashMap<String, Vec<u8>> {
         HashMap::new()
     }
 
     fn set_state(&mut self, state: HashMap<String, Vec<u8>>) -> Result<()> {
-        Ok(())
+        if state.is_empty() {
+            return Ok(());
+        }
+        Err(OptimError::UnsupportedOperation(format!(
+            "{} does not expose serializable moment state, so a {}-entry state \
+             snapshot cannot be restored; the optimizer starts from a fresh state",
+            self.name(),
+            state.len()
+        )))
     }
 
     fn clone_optimizer(&self) -> Box<dyn OptimizerTrait<A, D>> {
@@ -972,11 +1256,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     fn new(_lr: f64, beta1: f64, beta2: f64, eps: f64, weightdecay: f64) -> Self {
         Self {
             inner: crate::optimizers::AdamW::new_with_config(
-                A::from(_lr).expect("unwrap failed"),
-                A::from(beta1).expect("unwrap failed"),
-                A::from(beta2).expect("unwrap failed"),
-                A::from(eps).expect("unwrap failed"),
-                A::from(weightdecay).expect("unwrap failed"),
+                scalar_or(_lr, A::zero()),
+                scalar_or(beta1, A::zero()),
+                scalar_or(beta2, A::zero()),
+                scalar_or(eps, A::zero()),
+                scalar_or(weightdecay, A::zero()),
             ),
             _phantom: std::marker::PhantomData,
         }
@@ -1015,12 +1299,24 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + 'static, D: Dimension + 's
         );
     }
 
+    /// Returns an empty map: the wrapped optimizer does not expose its internal
+    /// moment/accumulator arrays, so there is genuinely nothing to serialize.
+    /// This is reported honestly rather than emitting a partial snapshot that
+    /// would silently lose state on restore.
     fn get_state(&self) -> HashMap<String, Vec<u8>> {
         HashMap::new()
     }
 
     fn set_state(&mut self, state: HashMap<String, Vec<u8>>) -> Result<()> {
-        Ok(())
+        if state.is_empty() {
+            return Ok(());
+        }
+        Err(OptimError::UnsupportedOperation(format!(
+            "{} does not expose serializable moment state, so a {}-entry state \
+             snapshot cannot be restored; the optimizer starts from a fresh state",
+            self.name(),
+            state.len()
+        )))
     }
 
     fn clone_optimizer(&self) -> Box<dyn OptimizerTrait<A, D>> {
@@ -1075,7 +1371,7 @@ mod tests {
     fn test_optimizer_step() {
         let config = SelfTuningConfig::default();
         let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).expect("unwrap failed");
+            SelfTuningOptimizer::new(config).expect("default config must construct");
 
         let mut params = vec![Array1::zeros(10)];
         let grads = vec![Array1::ones(10)];
@@ -1104,7 +1400,7 @@ mod tests {
     fn test_bandit_selection() {
         let config = SelfTuningConfig::default();
         let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).expect("unwrap failed");
+            SelfTuningOptimizer::new(config).expect("default config must construct");
 
         let selection = optimizer.select_ucb1();
         assert!(selection < optimizer.optimizer_candidates.len());
@@ -1117,7 +1413,7 @@ mod tests {
             ..Default::default()
         };
         let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).expect("unwrap failed");
+            SelfTuningOptimizer::new(config).expect("default config must construct");
 
         let stats = PerformanceStats {
             loss: 0.8,
@@ -1139,10 +1435,226 @@ mod tests {
     fn test_statistics() {
         let config = SelfTuningConfig::default();
         let optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
-            SelfTuningOptimizer::new(config).expect("unwrap failed");
+            SelfTuningOptimizer::new(config).expect("default config must construct");
 
         let stats = optimizer.get_statistics();
         assert_eq!(stats.total_steps, 0);
         assert!(stats.optimizer_usage.contains_key("Adam"));
+    }
+    // ------------------------------------------------- candidate accounting --
+
+    fn stats_with_loss(loss: f64) -> PerformanceStats {
+        PerformanceStats {
+            loss,
+            accuracy: None,
+            gradient_norm: 1.0,
+            throughput: 50.0,
+            memory_usage: 512.0,
+            step_time: Duration::from_millis(10),
+            learning_rate: 0.001,
+            optimizer_type: "Adam".to_string(),
+            custom_metrics: HashMap::new(),
+        }
+    }
+
+    /// The active candidate's reward statistics must track the observations
+    /// that were actually reported. They used to be pinned at their initial
+    /// `0.0` forever, which made every selection rule rank a constant.
+    #[test]
+    fn observed_performance_reaches_the_active_candidate() {
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig::default())
+                .expect("default config must construct");
+        let mut params = vec![Array1::zeros(4)];
+        let grads = vec![Array1::ones(4)];
+
+        for loss in [1.0, 0.8, 0.6, 0.4] {
+            optimizer
+                .step(&mut params, &grads, stats_with_loss(loss))
+                .expect("step");
+        }
+
+        let active = &optimizer.optimizer_candidates[optimizer.current_candidate_idx];
+        assert_eq!(
+            active.performance_history.len(),
+            4,
+            "every reported observation must be attributed to the active candidate"
+        );
+        // Target metric is Loss (lower is better), so rewards are negated:
+        // mean of -1.0, -0.8, -0.6, -0.4 is -0.7.
+        assert!(
+            (active.average_reward - (-0.7)).abs() < 1e-12,
+            "average reward must be the mean of the negated losses, got {}",
+            active.average_reward
+        );
+        assert_ne!(
+            active.average_reward, 0.0,
+            "regression: candidate statistics are still frozen at their initial 0.0"
+        );
+        let (lo, hi) = active.confidence_interval;
+        assert!(
+            lo < active.average_reward && active.average_reward < hi,
+            "the confidence interval must bracket the mean, got ({lo}, {hi})"
+        );
+        assert!(
+            (optimizer.bandit_state.reward_estimates[optimizer.current_candidate_idx] - (-0.7))
+                .abs()
+                < 1e-12,
+            "the bandit arm must see the same estimate as the candidate"
+        );
+    }
+
+    /// Rewards must be higher-is-better regardless of the target metric,
+    /// otherwise `PerformanceBased` selection would prefer the *worst*
+    /// optimizer whenever the target metric is a loss.
+    #[test]
+    fn reward_orientation_follows_the_target_metric() {
+        let loss_tuner: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig {
+                target_metric: TargetMetric::Loss,
+                ..Default::default()
+            })
+            .expect("construct");
+        assert_eq!(loss_tuner.reward_from_metric(0.3), -0.3);
+
+        let acc_tuner: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig {
+                target_metric: TargetMetric::Accuracy,
+                ..Default::default()
+            })
+            .expect("construct");
+        assert_eq!(acc_tuner.reward_from_metric(0.3), 0.3);
+    }
+
+    /// A non-finite observation must not poison the running statistics.
+    #[test]
+    fn non_finite_observations_are_ignored() {
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig::default()).expect("construct");
+        let mut params = vec![Array1::zeros(2)];
+        let grads = vec![Array1::ones(2)];
+
+        optimizer
+            .step(&mut params, &grads, stats_with_loss(1.0))
+            .expect("step");
+        optimizer
+            .step(&mut params, &grads, stats_with_loss(f64::NAN))
+            .expect("step");
+
+        let active = &optimizer.optimizer_candidates[optimizer.current_candidate_idx];
+        assert_eq!(active.performance_history.len(), 1);
+        assert!(active.average_reward.is_finite());
+    }
+
+    /// All four selection strategies must be reachable by a caller. Only
+    /// `MultiArmedBandit { UCB1 }` used to be constructible.
+    #[test]
+    fn every_selection_strategy_is_reachable() {
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig::default()).expect("construct");
+
+        for strategy in [
+            OptimizerSelectionStrategy::MultiArmedBandit {
+                algorithm: BanditAlgorithm::EpsilonGreedy,
+            },
+            OptimizerSelectionStrategy::MultiArmedBandit {
+                algorithm: BanditAlgorithm::ThompsonSampling,
+            },
+            OptimizerSelectionStrategy::MultiArmedBandit {
+                algorithm: BanditAlgorithm::LinUCB,
+            },
+            OptimizerSelectionStrategy::PerformanceBased {
+                min_difference: 0.01,
+            },
+            OptimizerSelectionStrategy::RoundRobin { current_index: 0 },
+            OptimizerSelectionStrategy::MetaLearning {
+                problem_features: vec![0.0; 5],
+                optimizer_mappings: HashMap::new(),
+            },
+        ] {
+            optimizer.set_selection_strategy(strategy);
+            let picked = optimizer.adapt_optimizer(&stats_with_loss(1.0));
+            assert!(picked.is_ok(), "strategy must be usable end to end");
+            assert!(optimizer.current_candidate_idx < optimizer.optimizer_candidates.len());
+        }
+    }
+
+    /// `PerformanceBased` selection must pick the candidate with the best
+    /// measured reward, which is only possible now that rewards are recorded.
+    #[test]
+    fn performance_based_selection_picks_the_best_measured_candidate() {
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig::default()).expect("construct");
+        // Candidate 1 measured better (less negative reward) than 0 and 2.
+        optimizer.optimizer_candidates[0].average_reward = -1.0;
+        optimizer.optimizer_candidates[1].average_reward = -0.1;
+        optimizer.optimizer_candidates[2].average_reward = -0.5;
+
+        assert_eq!(optimizer.select_optimizer_performance_based(), 1);
+    }
+    /// An observation must be credited to the optimizer that produced it, not
+    /// to whichever optimizer a switch on the same step happened to select.
+    ///
+    /// `record_candidate_performance` used to run *after* `maybe_adapt_optimizer`,
+    /// so on every switching step the incoming optimizer was handed the outgoing
+    /// one's result — systematically rewarding whichever optimizer was switched
+    /// *to* after a bad step, which is exactly backwards.
+    #[test]
+    fn an_observation_is_credited_to_the_optimizer_that_produced_it() {
+        let mut optimizer: SelfTuningOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            SelfTuningOptimizer::new(SelfTuningConfig {
+                warmup_steps: 0,
+                evaluation_window: 4,
+                max_switches_per_epoch: 10,
+                min_adaptation_interval: Duration::ZERO,
+                improvement_threshold: 10.0, // any step counts as "stagnating"
+                ..Default::default()
+            })
+            .expect("construct");
+        // Round-robin makes every adaptation move to a different candidate, so
+        // a mis-ordered recording is guaranteed to land on the wrong one.
+        optimizer
+            .set_selection_strategy(OptimizerSelectionStrategy::RoundRobin { current_index: 0 });
+
+        let mut params = vec![Array1::zeros(3)];
+        let grads = vec![Array1::ones(3)];
+
+        // Each step carries a unique loss, so each reward identifies its step.
+        // Run until a step actually switches optimizers, then assert on that
+        // step: that is the only step where the ordering is observable.
+        let mut switched_on: Option<(usize, usize, f64)> = None;
+        for i in 0..40 {
+            let active_before = optimizer.current_candidate_idx;
+            let loss = 1.0 + i as f64;
+            optimizer
+                .step(&mut params, &grads, stats_with_loss(loss))
+                .expect("step");
+            if optimizer.current_candidate_idx != active_before {
+                switched_on = Some((active_before, optimizer.current_candidate_idx, -loss));
+                break;
+            }
+        }
+
+        let (produced_by, switched_to, reward) =
+            switched_on.expect("no switch occurred, so the ordering is not under test");
+        assert_ne!(produced_by, switched_to);
+        assert_eq!(
+            optimizer.optimizer_candidates[produced_by]
+                .performance_history
+                .last()
+                .copied(),
+            Some(reward),
+            "the observation must sit on the candidate that was active when it \
+             was measured (candidate {produced_by}), not on the one switched to"
+        );
+        assert_ne!(
+            optimizer.optimizer_candidates[switched_to]
+                .performance_history
+                .last()
+                .copied(),
+            Some(reward),
+            "the candidate switched *to* (candidate {switched_to}) must not be \
+             credited with the outgoing optimizer's result"
+        );
     }
 }

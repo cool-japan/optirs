@@ -420,7 +420,7 @@ impl<
         for i in 0..batch_size {
             for j in 0..self.paramdim {
                 let g = scores[[i, j]];
-                diagonal[j] = diagonal[j] + g * g;
+                diagonal[j] += g * g;
             }
         }
         for j in 0..self.paramdim {
@@ -460,7 +460,7 @@ impl<
                         continue;
                     }
                     for b in 0..len {
-                        matrix[[a, b]] = matrix[[a, b]] + ga * scores[[i, offset + b]];
+                        matrix[[a, b]] += ga * scores[[i, offset + b]];
                     }
                 }
             }
@@ -468,7 +468,7 @@ impl<
                 for b in 0..len {
                     matrix[[a, b]] = matrix[[a, b]] / count;
                 }
-                matrix[[a, a]] = matrix[[a, a]] + self._config.damping;
+                matrix[[a, a]] += self._config.damping;
             }
             blocks.push(FisherBlock {
                 name,
@@ -544,7 +544,7 @@ impl<
                         continue;
                     }
                     for c in 0..n_in {
-                        a_factor[[r, c]] = a_factor[[r, c]] + value * block.inputs[[i, c]];
+                        a_factor[[r, c]] += value * block.inputs[[i, c]];
                     }
                 }
             }
@@ -556,7 +556,7 @@ impl<
                         continue;
                     }
                     for c in 0..n_out {
-                        g_factor[[r, c]] = g_factor[[r, c]] + value * block.outputs[[i, c]];
+                        g_factor[[r, c]] += value * block.outputs[[i, c]];
                     }
                 }
             }
@@ -691,11 +691,11 @@ impl<
 
             let mut a_damped = a_factor.clone();
             for i in 0..n_in {
-                a_damped[[i, i]] = a_damped[[i, i]] + sqrt_damping;
+                a_damped[[i, i]] += sqrt_damping;
             }
             let mut g_damped = g_factor.clone();
             for i in 0..n_out {
-                g_damped[[i, i]] = g_damped[[i, i]] + sqrt_damping;
+                g_damped[[i, i]] += sqrt_damping;
             }
 
             // Y = G_λ⁻¹ M
@@ -740,14 +740,18 @@ impl<
         let mut p = r.clone();
         let mut rsold = self.dot(&r, &r);
 
-        if !(rsold > tiny) {
+        if !matches!(rsold.partial_cmp(&tiny), Some(std::cmp::Ordering::Greater)) {
             return Ok(x);
         }
 
         for _i in 0..self._config.cg_iters {
             let ap = fisher.dot(&p);
             let pap = self.dot(&p, &ap);
-            if !(pap.abs() > tiny) || !pap.is_finite() {
+            if !matches!(
+                pap.abs().partial_cmp(&tiny),
+                Some(std::cmp::Ordering::Greater)
+            ) || !pap.is_finite()
+            {
                 break;
             }
 
@@ -761,7 +765,7 @@ impl<
             if rsnew.sqrt() < self._config.cg_tolerance {
                 break;
             }
-            if !(rsnew > tiny) {
+            if !matches!(rsnew.partial_cmp(&tiny), Some(std::cmp::Ordering::Greater)) {
                 break;
             }
 
@@ -829,7 +833,13 @@ impl<
     /// Prefers the policy's analytic oracle and falls back to central finite
     /// differences for small policies. Returns an error when neither is available
     /// — never a vector of zeros, which would silently zero the Fisher.
-    fn compute_log_prob_gradients(
+    ///
+    /// This is a public single-sample convenience wrapper; the batched Fisher
+    /// estimation path ([`Self::per_sample_scores`]) computes the same
+    /// quantity for a whole trajectory more efficiently (one analytic
+    /// `score_matrix` call for the batch, rather than one per sample) and does
+    /// not call through this method.
+    pub fn compute_log_prob_gradients(
         &mut self,
         obs: &Array1<T>,
         action: &Array1<T>,
@@ -1049,7 +1059,10 @@ fn gaussian_solve<T: Float + Debug + Send + Sync + 'static>(
             }
         }
 
-        if !(pivot_value > T::epsilon()) {
+        if !matches!(
+            pivot_value.partial_cmp(&T::epsilon()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Err(OptimError::ComputationError(
                 "singular matrix in Fisher system solve (increase the damping)".to_string(),
             ));

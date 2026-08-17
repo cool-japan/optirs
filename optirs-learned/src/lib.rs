@@ -107,6 +107,10 @@
 //!
 //! Research contributions welcome! Follow SciRS2 integration guidelines.
 
+/// Adaptive architecture / performance-prediction layer for the transformer
+/// optimizers. Written directly against
+/// [`transformer_based_optimizer`], so it lives behind the same feature.
+#[cfg(feature = "transformer")]
 pub mod adaptive;
 pub mod common;
 pub mod continual_learning;
@@ -122,14 +126,18 @@ pub mod few_shot_impl;
 pub mod forward_mode;
 pub mod gnn_optimizer;
 pub mod higher_order;
+#[cfg(feature = "lstm")]
 pub mod lstm;
+#[cfg(feature = "meta_learning")]
 pub mod meta_learning;
 pub mod ntm_optimizer;
 pub mod online_maml;
 pub mod quantum_learned;
 pub mod realtime_adaptation;
 pub mod reverse_mode;
+#[cfg(feature = "transformer")]
 pub mod transformer;
+#[cfg(feature = "transformer")]
 pub mod transformer_based_optimizer;
 pub mod zero_shot;
 
@@ -156,6 +164,7 @@ pub use higher_order::{
     HessianConfig, HigherOrderConfig, HigherOrderEngine, HigherOrderStats, HvpMode, LayerInfo,
     LayerType, MixedPartialMethod, MixedPartials, SparseHessian, ThirdOrderTensor,
 };
+#[cfg(feature = "lstm")]
 pub use lstm::LSTMOptimizer;
 pub use ntm_optimizer::{NtmOptimizer, NtmOptimizerConfig};
 pub use quantum_learned::{QuantumBackend, QuantumLearnedOptimizer};
@@ -164,7 +173,9 @@ pub use realtime_adaptation::{
     RealtimeAdaptationConfig, RealtimeAdaptationController,
 };
 pub use reverse_mode::{GradientAccumulator, GradientContext, ReverseModeEngine, ReverseModeStats};
+#[cfg(feature = "transformer")]
 pub use transformer::TransformerOptimizer;
+#[cfg(feature = "transformer")]
 pub use transformer_based_optimizer::TransformerOptimizer as TransformerBasedOptimizer;
 pub use zero_shot::{
     MetaExample, MetaFeatures, OptimizerHyperparameters, OptimizerKind, OptimizerRecommendation,

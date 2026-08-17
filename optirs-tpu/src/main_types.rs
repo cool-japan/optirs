@@ -5,7 +5,6 @@
 
 use optirs_core::Optimizer;
 use scirs2_core::error::ErrorContext;
-#[allow(dead_code)]
 use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension, Ix1};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
@@ -147,7 +146,25 @@ where
     computation_cache: HashMap<String, CompiledComputation>,
 }
 
-/// XLA computation graph for optimizer operations
+/// XLA computation graph for optimizer operations.
+///
+/// # Why this is not [`crate::xla::frontend::XLAComputation`]
+///
+/// This is a deliberately private, two-operation graph (see [`XLAOperation`])
+/// serving exactly one caller: [`TPUOptimizer::compile_step`], which needs a
+/// cheap elementwise description of a parameter update to size and cost. The
+/// crate's real IR -- with the full operation set, an operand graph, an
+/// optimization pipeline and a reference executor -- is
+/// [`crate::xla::frontend::XLAComputation`], and it is what
+/// [`crate::tpu_backend::TPUBackend`] compiles and runs.
+///
+/// The two are not unified because `TPUOptimizer` never executes a graph: it
+/// delegates the actual parameter update to the wrapped
+/// [`optirs_core::Optimizer`] and uses this description only for the compile
+/// metrics it reports. Rebuilding `tpu_step` on the full IR would mean lowering
+/// every base optimizer's update into XLA operations -- a much larger change
+/// than the accounting this type exists for. Recorded here rather than left as
+/// an unexplained second graph type.
 #[derive(Debug)]
 struct XLAComputationGraph {
     /// Graph nodes
@@ -182,31 +199,18 @@ struct XLANode {
     metadata: XLANodeMetadata,
 }
 
-/// XLA operations
+/// XLA operations emitted by [`TPUOptimizer::build_optimizer_computation`].
+///
+/// This is deliberately just the elementwise vocabulary the optimizer update
+/// needs. The full XLA operation set -- matmul, convolution, reductions,
+/// activations, custom calls -- lives in [`crate::xla::frontend::OperationType`],
+/// which is the IR the real compiler pipeline consumes; carrying a second,
+/// never-constructed copy of it here only advertised operations this builder
+/// cannot emit.
 #[derive(Debug, Clone)]
 enum XLAOperation {
     Add,
     Multiply,
-    Divide,
-    MatMul,
-    Reduce,
-    Broadcast,
-    Reshape,
-    Transpose,
-    Convolution,
-    BatchNorm,
-    Activation(ActivationType),
-    Custom(String),
-}
-
-/// Activation function types
-#[derive(Debug, Clone, Copy)]
-enum ActivationType {
-    ReLU,
-    Tanh,
-    Sigmoid,
-    Gelu,
-    Swish,
 }
 
 /// XLA operand reference
@@ -224,22 +228,20 @@ pub struct XLAShape {
     element_type: XLAElementType,
 }
 
-/// XLA element types
+/// XLA element types the optimizer graph can carry.
+///
+/// `TPUOptimizer` is generic over a floating-point element type and selects
+/// `BF16` when mixed precision is configured, `F32` otherwise; integer element
+/// types were never constructible here.
 #[derive(Debug, Clone, Copy)]
 enum XLAElementType {
-    F16,
     F32,
     BF16,
-    S32,
-    U32,
 }
 
 /// XLA computation builder
 #[derive(Debug)]
 struct XLAComputationBuilder {
-    /// Current instruction count
-    instruction_count: usize,
-
     /// Optimization level
     optimization_level: XLAOptimizationLevel,
 
@@ -266,15 +268,17 @@ struct XLANodeMetadata {
 
     /// Memory usage estimate
     memory_bytes: usize,
-
-    /// Fusion opportunities
-    fusable_with: Vec<usize>,
-
-    /// Performance hints
-    hints: Vec<String>,
 }
 
-/// TPU memory allocator
+/// Aggregate TPU memory accounting for a [`TPUOptimizer`].
+///
+/// This tracks totals only. The pool/free-list/block machinery that used to be
+/// declared here (`memory_pools`, `MemoryPool`, `MemoryBlock`,
+/// `PoolUsageStats`) was constructed empty and never read, and the real
+/// per-device pool allocator -- with free lists, fit strategies, coalescing
+/// garbage collection and honest out-of-memory errors -- lives in
+/// [`crate::tpu_backend::TPUMemoryManager`]. A second, inert copy of it here
+/// claimed an allocator this type does not have.
 #[derive(Debug)]
 struct TPUMemoryAllocator<A: Float> {
     /// Total TPU memory (bytes)
@@ -283,49 +287,11 @@ struct TPUMemoryAllocator<A: Float> {
     /// Allocated memory (bytes)
     allocated_memory: usize,
 
-    /// Memory pools
-    memory_pools: HashMap<String, MemoryPool<A>>,
-
-    /// Allocation strategy
-    strategy: TPUMemoryOptimization,
-
     /// Fragmentation statistics
     fragmentation_stats: FragmentationStats,
-}
-
-/// Memory pool for TPU tensors
-#[derive(Debug)]
-struct MemoryPool<A: Float> {
-    /// Pool size (bytes)
-    size: usize,
-
-    /// Free blocks
-    free_blocks: Vec<MemoryBlock>,
-
-    /// Allocated blocks
-    allocated_blocks: HashMap<usize, MemoryBlock>,
-
-    /// Pool usage statistics
-    usage_stats: PoolUsageStats,
 
     /// Phantom data
     _phantom: std::marker::PhantomData<A>,
-}
-
-/// Memory block descriptor
-#[derive(Debug, Clone)]
-struct MemoryBlock {
-    /// Block offset
-    offset: usize,
-
-    /// Block size
-    size: usize,
-
-    /// Allocation timestamp
-    timestamp: std::time::Instant,
-
-    /// Usage frequency
-    usage_count: usize,
 }
 
 /// Memory fragmentation statistics
@@ -333,118 +299,20 @@ struct MemoryBlock {
 struct FragmentationStats {
     /// External fragmentation ratio
     external_fragmentation: f64,
-
-    /// Internal fragmentation ratio
-    internal_fragmentation: f64,
-
-    /// Largest free block size
-    largest_free_block: usize,
-
-    /// Number of free blocks
-    num_free_blocks: usize,
 }
 
-/// Pool usage statistics
-#[derive(Debug, Clone)]
-struct PoolUsageStats {
-    /// Total allocations
-    total_allocations: usize,
-
-    /// Peak usage (bytes)
-    peak_usage: usize,
-
-    /// Average allocation size
-    avg_allocation_size: usize,
-
-    /// Allocation/deallocation rate
-    allocation_rate: f64,
-}
-
-/// TPU pod coordinator for multi-TPU training
+/// Replica count for the data-parallel path in [`TPUOptimizer::execute_distributed`].
+///
+/// Only the replica count is tracked here. Per-core placement, communication
+/// patterns, barriers and load balancing used to be declared alongside it and
+/// were never read; the real implementations of all four live in
+/// [`crate::coordination::PodCoordinator`] (device/channel topology, load
+/// balancing, fault detection) and [`crate::synchronization`] (barriers and ring
+/// collectives), which is where a caller that needs them should go.
 #[derive(Debug)]
 struct TPUPodCoordinator {
-    /// Pod topology
-    topology: PodTopology,
-
     /// Number of TPU cores
     num_cores: usize,
-
-    /// Core assignments
-    core_assignments: HashMap<usize, TPUCoreInfo>,
-
-    /// Communication patterns
-    comm_patterns: Vec<CommunicationPattern>,
-
-    /// Synchronization barriers
-    sync_barriers: Vec<SyncBarrier>,
-
-    /// Load balancing strategy
-    load_balancing: LoadBalancingStrategy,
-}
-
-/// TPU core information
-#[derive(Debug, Clone)]
-struct TPUCoreInfo {
-    /// Core ID
-    core_id: usize,
-
-    /// Core coordinates in pod
-    coordinates: (usize, usize),
-
-    /// Core utilization
-    utilization: f64,
-
-    /// Memory usage
-    memory_usage: usize,
-
-    /// Communication links
-    links: Vec<usize>,
-}
-
-/// Communication pattern for pod coordination
-#[derive(Debug, Clone)]
-enum CommunicationPattern {
-    AllReduce,
-    AllGather,
-    ReduceScatter,
-    Broadcast,
-    PointToPoint,
-    Ring,
-    Tree,
-    Mesh,
-}
-
-/// Synchronization barrier
-#[derive(Debug, Clone)]
-struct SyncBarrier {
-    /// Barrier ID
-    id: usize,
-
-    /// Participating cores
-    cores: Vec<usize>,
-
-    /// Barrier type
-    barrier_type: BarrierType,
-
-    /// Timeout (milliseconds)
-    timeout_ms: u64,
-}
-
-/// Barrier types
-#[derive(Debug, Clone, Copy)]
-enum BarrierType {
-    Global,
-    Local,
-    Hierarchical,
-}
-
-/// Load balancing strategies
-#[derive(Debug, Clone, Copy)]
-enum LoadBalancingStrategy {
-    RoundRobin,
-    LeastLoaded,
-    WorkStealing,
-    Adaptive,
 }
 
 /// TPU performance profiler
@@ -453,12 +321,6 @@ struct TPUProfiler {
     /// Execution timeline
     timeline: Vec<ProfileEvent>,
 
-    /// Performance counters
-    counters: HashMap<String, u64>,
-
-    /// Memory usage over time
-    memory_timeline: Vec<MemorySnapshot>,
-
     /// XLA compilation metrics
     compilation_metrics: CompilationMetrics,
 
@@ -466,116 +328,89 @@ struct TPUProfiler {
     utilization_metrics: UtilizationMetrics,
 }
 
-/// Profiling event
+/// One event recorded by the profiler, readable via
+/// [`TPUOptimizer::profile_timeline`].
 #[derive(Debug, Clone)]
-struct ProfileEvent {
+pub struct ProfileEvent {
     /// Event timestamp
-    timestamp: std::time::Instant,
+    pub timestamp: std::time::Instant,
 
     /// Event type
-    event_type: ProfileEventType,
+    pub event_type: ProfileEventType,
 
     /// Core ID
-    core_id: usize,
+    pub core_id: usize,
 
     /// Duration (microseconds)
-    duration_us: u64,
+    pub duration_us: u64,
 
     /// Metadata
-    metadata: HashMap<String, String>,
+    pub metadata: HashMap<String, String>,
 }
 
-/// Profile event types
-#[derive(Debug, Clone)]
-enum ProfileEventType {
+/// Profile event types.
+///
+/// Only the three kinds this optimizer genuinely emits are listed: it compiles,
+/// it computes, and on the data-parallel path it performs a collective. It never
+/// issues a standalone memory transfer or a standalone barrier, so no variant
+/// claims that it does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileEventType {
     Computation,
     Communication,
-    MemoryTransfer,
-    Synchronization,
     Compilation,
-}
-
-/// Memory usage snapshot
-#[derive(Debug, Clone)]
-struct MemorySnapshot {
-    /// Timestamp
-    timestamp: std::time::Instant,
-
-    /// Used memory (bytes)
-    used_memory: usize,
-
-    /// Peak memory (bytes)
-    peak_memory: usize,
-
-    /// Fragmentation ratio
-    fragmentation: f64,
 }
 
 /// XLA compilation metrics
 #[derive(Debug, Clone)]
 pub struct CompilationMetrics {
     /// Compilation time (milliseconds)
-    compilation_time_ms: u64,
+    pub compilation_time_ms: u64,
 
     /// Number of optimizations applied
-    optimizations_applied: usize,
+    pub optimizations_applied: usize,
 
     /// Generated code size (bytes)
-    code_size: usize,
-
-    /// Estimated performance improvement
-    perf_improvement_factor: f64,
+    pub code_size: usize,
 }
 
 /// TPU utilization metrics
 #[derive(Debug, Clone)]
 pub struct UtilizationMetrics {
     /// Compute utilization (0.0 to 1.0)
-    compute_utilization: f64,
+    pub compute_utilization: f64,
 
     /// Memory bandwidth utilization
-    memory_bandwidth_utilization: f64,
+    pub memory_bandwidth_utilization: f64,
 
     /// Inter-core communication utilization
-    communication_utilization: f64,
+    pub communication_utilization: f64,
 
     /// Matrix unit utilization
-    matrix_unit_utilization: f64,
+    pub matrix_unit_utilization: f64,
 
     /// Vector unit utilization
-    vector_unit_utilization: f64,
+    pub vector_unit_utilization: f64,
 }
 
-/// Compiled XLA computation
+/// Compiled XLA computation.
+///
+/// The input/output shape table that used to be carried alongside
+/// (`IOSpecification`) was computed on every compile and never read by anything;
+/// the shapes are already recoverable from the encoded program in `code`.
 #[derive(Debug)]
 struct CompiledComputation {
-    /// Compilation ID
+    /// Compilation ID: a content hash of `code`
     id: String,
 
     /// Compiled code
     code: Vec<u8>,
-
-    /// Input/output specifications
-    io_spec: IOSpecification,
 
     /// Performance characteristics
     perf_characteristics: PerformanceCharacteristics,
 
     /// Memory requirements
     memory_requirements: MemoryRequirements,
-}
-
-/// Input/output specification
-#[derive(Debug, Clone)]
-struct IOSpecification {
-    /// Input shapes
-    inputshapes: Vec<XLAShape>,
-
-    /// Output shapes
-    outputshapes: Vec<XLAShape>,
-
-    /// Parameter shapes
-    parametershapes: Vec<XLAShape>,
 }
 
 /// Performance characteristics
@@ -710,6 +545,76 @@ where
         self.profiler.compilation_metrics.optimizations_applied = effective_passes;
         self.profiler.compilation_metrics.code_size = generated_code_size;
 
+        // Update utilization from the compiled program's own derived
+        // characteristics. Previously these were reported as zeros forever even
+        // though `compile_to_tpu` had already computed them.
+        let peak_bandwidth_gbs = self.get_interconnect_bandwidth();
+        self.profiler.utilization_metrics.compute_utilization = compiled
+            .perf_characteristics
+            .utilization_estimate
+            .clamp(0.0, 1.0);
+        self.profiler
+            .utilization_metrics
+            .memory_bandwidth_utilization = if peak_bandwidth_gbs > 0.0 {
+            (compiled.perf_characteristics.memory_bandwidth_gbs / peak_bandwidth_gbs)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        // Communication only happens on the data-parallel path; a single-device
+        // configuration honestly reports none.
+        self.profiler.utilization_metrics.communication_utilization =
+            if self.pod_coordinator.is_some() {
+                self.profiler.utilization_metrics.compute_utilization
+            } else {
+                0.0
+            };
+        // The reference update is elementwise, so it runs on the vector units;
+        // no matrix-unit work is emitted, and claiming otherwise would be a
+        // fabricated number.
+        self.profiler.utilization_metrics.vector_unit_utilization =
+            self.profiler.utilization_metrics.compute_utilization;
+        self.profiler.utilization_metrics.matrix_unit_utilization = 0.0;
+
+        // Record the compilation itself as a real profiler event, tagged with
+        // the program's content hash and its derived memory footprint.
+        let mut metadata = HashMap::new();
+        metadata.insert("program".to_string(), compiled.id.clone());
+        metadata.insert(
+            "total_memory".to_string(),
+            compiled.memory_requirements.total_memory.to_string(),
+        );
+        metadata.insert(
+            "working_memory".to_string(),
+            compiled.memory_requirements.working_memory.to_string(),
+        );
+        metadata.insert(
+            "parameter_memory".to_string(),
+            compiled.memory_requirements.parameter_memory.to_string(),
+        );
+        metadata.insert(
+            "temp_memory".to_string(),
+            compiled.memory_requirements.temp_memory.to_string(),
+        );
+        metadata.insert(
+            "flops".to_string(),
+            compiled.perf_characteristics.flops.to_string(),
+        );
+        metadata.insert(
+            "estimated_execution_time_us".to_string(),
+            compiled
+                .perf_characteristics
+                .estimated_execution_time_us
+                .to_string(),
+        );
+        self.profiler.timeline.push(ProfileEvent {
+            timestamp: start_time,
+            event_type: ProfileEventType::Compilation,
+            core_id: 0,
+            duration_us: compilation_time.as_micros() as u64,
+            metadata,
+        });
+
         // Cache compiled computation
         self.computation_cache
             .insert(compilation_id.clone(), compiled);
@@ -760,6 +665,15 @@ where
         Ok(result)
     }
 
+    /// Build the computation graph for one optimizer step.
+    ///
+    /// The graph carries the real update as operations, not just placeholders:
+    /// `scaled = gradient * learning_rate` followed by `updated = parameter +
+    /// scaled` (the wrapped optimizer applies the sign; the graph describes the
+    /// elementwise shape of the work). Before this the node list was always
+    /// empty, so every compiled program encoded zero operations and
+    /// `compile_to_tpu` summed zero node FLOPs no matter how large the tensors
+    /// were.
     fn build_optimizer_computation(&self, inputshapes: &[XLAShape]) -> Result<XLAComputationGraph> {
         // Start from the initialized graph if present, otherwise from a fresh default graph
         // derived from the current configuration (no panic when uninitialized).
@@ -769,9 +683,51 @@ where
         };
 
         // Add input placeholders for the parameter/gradient tensors.
+        let mut operands = Vec::with_capacity(inputshapes.len());
         for (i, &shape) in inputshapes.iter().enumerate() {
             let operand = XLAOperand { id: i, shape };
             graph.inputs.insert(format!("input_{}", i), operand);
+            operands.push(operand);
+        }
+
+        // The update is defined for the (parameter, gradient) pair; anything
+        // else is just a placeholder set with no operations to emit.
+        if let [parameter, gradient] = operands.as_slice() {
+            let elements = shape_element_count(&gradient.shape);
+            let bytes = shape_byte_count(&gradient.shape);
+            let next_id = graph.inputs.len();
+
+            // scaled = gradient * learning_rate
+            let scaled = XLAOperand {
+                id: next_id,
+                shape: gradient.shape,
+            };
+            graph.nodes.push(XLANode {
+                operation: XLAOperation::Multiply,
+                inputs: vec![*gradient],
+                outputshape: gradient.shape,
+                metadata: XLANodeMetadata {
+                    flops: elements,
+                    memory_bytes: bytes,
+                },
+            });
+
+            // updated = parameter + scaled
+            let updated = XLAOperand {
+                id: next_id + 1,
+                shape: parameter.shape,
+            };
+            graph.nodes.push(XLANode {
+                operation: XLAOperation::Add,
+                inputs: vec![*parameter, scaled],
+                outputshape: parameter.shape,
+                metadata: XLANodeMetadata {
+                    flops: shape_element_count(&parameter.shape),
+                    memory_bytes: shape_byte_count(&parameter.shape),
+                },
+            });
+
+            graph.outputs = vec![updated];
         }
 
         Ok(graph)
@@ -834,12 +790,6 @@ where
         // to identical code and the compilation id is a content hash of that code.
         let code = encode_program(&computation);
         let compilation_id = format!("tpu_comp_{:016x}", fnv1a_64(&code));
-
-        let io_spec = IOSpecification {
-            inputshapes: computation.inputs.values().map(|op| op.shape).collect(),
-            outputshapes: computation.outputs.iter().map(|op| op.shape).collect(),
-            parametershapes: computation.inputs.values().map(|op| op.shape).collect(),
-        };
 
         // ---- Derive performance characteristics from the actual computation ----
 
@@ -933,7 +883,6 @@ where
         Ok(CompiledComputation {
             id: compilation_id,
             code,
-            io_spec,
             perf_characteristics,
             memory_requirements,
         })
@@ -1066,7 +1015,14 @@ where
         Ok(XLAShape {
             dimensions,
             rank: dims.len().min(4),
-            element_type: XLAElementType::F32, // Simplified
+            // Mixed precision means the graph carries bf16 tensors, which is
+            // what the byte-size and encoding helpers key off; without this the
+            // shape claimed f32 regardless of configuration.
+            element_type: if self.config.mixed_precision {
+                XLAElementType::BF16
+            } else {
+                XLAElementType::F32
+            },
         })
     }
 
@@ -1079,6 +1035,14 @@ where
             step_count: self.step_count,
             cache_hit_rate: self.get_cache_hit_rate(),
         }
+    }
+
+    /// Events recorded by the profiler, oldest first.
+    ///
+    /// Compilations, computations and (on the data-parallel path) collectives
+    /// are all recorded here with their real measured durations.
+    pub fn profile_timeline(&self) -> &[ProfileEvent] {
+        &self.profiler.timeline
     }
 
     fn get_cache_hit_rate(&self) -> f64 {
@@ -1244,14 +1208,10 @@ impl<A: Float + Send + Sync> TPUMemoryAllocator<A> {
         Ok(Self {
             total_memory,
             allocated_memory: 0,
-            memory_pools: HashMap::new(),
-            strategy: config.memory_optimization,
             fragmentation_stats: FragmentationStats {
                 external_fragmentation: 0.0,
-                internal_fragmentation: 0.0,
-                largest_free_block: total_memory,
-                num_free_blocks: 1,
             },
+            _phantom: std::marker::PhantomData,
         })
     }
 
@@ -1285,41 +1245,7 @@ impl TPUPodCoordinator {
             PodTopology::Pod32x32 => 1024,
         };
 
-        let mut core_assignments = HashMap::new();
-        for i in 0..num_cores {
-            let (x, y) = match config.pod_topology {
-                PodTopology::Single => (0, 0),
-                PodTopology::Pod2x2 => (i % 2, i / 2),
-                PodTopology::Pod4x4 => (i % 4, i / 4),
-                PodTopology::Pod8x8 => (i % 8, i / 8),
-                PodTopology::Pod16x16 => (i % 16, i / 16),
-                PodTopology::Pod32x32 => (i % 32, i / 32),
-            };
-
-            core_assignments.insert(
-                i,
-                TPUCoreInfo {
-                    core_id: i,
-                    coordinates: (x, y),
-                    utilization: 0.0,
-                    memory_usage: 0,
-                    links: vec![], // Would be populated based on topology
-                },
-            );
-        }
-
-        Ok(Self {
-            topology: config.pod_topology,
-            num_cores,
-            core_assignments,
-            comm_patterns: vec![
-                CommunicationPattern::AllReduce,
-                CommunicationPattern::AllGather,
-                CommunicationPattern::Broadcast,
-            ],
-            sync_barriers: Vec::new(),
-            load_balancing: LoadBalancingStrategy::RoundRobin,
-        })
+        Ok(Self { num_cores })
     }
 }
 
@@ -1327,13 +1253,10 @@ impl TPUProfiler {
     fn new() -> Self {
         Self {
             timeline: Vec::new(),
-            counters: HashMap::new(),
-            memory_timeline: Vec::new(),
             compilation_metrics: CompilationMetrics {
                 compilation_time_ms: 0,
                 optimizations_applied: 0,
                 code_size: 0,
-                perf_improvement_factor: 1.0,
             },
             utilization_metrics: UtilizationMetrics {
                 compute_utilization: 0.0,
@@ -1349,7 +1272,6 @@ impl TPUProfiler {
 impl XLAComputationBuilder {
     fn new(optimization_level: XLAOptimizationLevel, target_config: TPUConfig) -> Self {
         Self {
-            instruction_count: 0,
             optimization_level,
             target_config,
         }
@@ -1397,8 +1319,8 @@ fn shape_element_count(shape: &XLAShape) -> u64 {
 /// Byte size of a single element of the given XLA element type.
 fn element_type_bytes(element_type: XLAElementType) -> usize {
     match element_type {
-        XLAElementType::F16 | XLAElementType::BF16 => 2,
-        XLAElementType::F32 | XLAElementType::S32 | XLAElementType::U32 => 4,
+        XLAElementType::BF16 => 2,
+        XLAElementType::F32 => 4,
     }
 }
 
@@ -1410,40 +1332,18 @@ fn shape_byte_count(shape: &XLAShape) -> usize {
 /// Stable byte code for an XLA element type.
 fn element_type_code(element_type: XLAElementType) -> u8 {
     match element_type {
-        XLAElementType::F16 => 0,
         XLAElementType::F32 => 1,
         XLAElementType::BF16 => 2,
-        XLAElementType::S32 => 3,
-        XLAElementType::U32 => 4,
     }
 }
 
 /// Stable byte code for an XLA operation.
 fn operation_code(operation: &XLAOperation) -> u8 {
+    // The codes are the historical ones, so an encoded program keeps the same
+    // bytes it had before the unused operations were removed.
     match operation {
         XLAOperation::Add => 0,
         XLAOperation::Multiply => 1,
-        XLAOperation::Divide => 2,
-        XLAOperation::MatMul => 3,
-        XLAOperation::Reduce => 4,
-        XLAOperation::Broadcast => 5,
-        XLAOperation::Reshape => 6,
-        XLAOperation::Transpose => 7,
-        XLAOperation::Convolution => 8,
-        XLAOperation::BatchNorm => 9,
-        XLAOperation::Activation(_) => 10,
-        XLAOperation::Custom(_) => 11,
-    }
-}
-
-/// Stable byte code for an activation type.
-fn activation_code(activation: ActivationType) -> u8 {
-    match activation {
-        ActivationType::ReLU => 0,
-        ActivationType::Tanh => 1,
-        ActivationType::Sigmoid => 2,
-        ActivationType::Gelu => 3,
-        ActivationType::Swish => 4,
     }
 }
 
@@ -1502,14 +1402,6 @@ fn encode_program(graph: &XLAComputationGraph) -> Vec<u8> {
     bytes.extend_from_slice(&(graph.nodes.len() as u32).to_le_bytes());
     for node in &graph.nodes {
         bytes.push(operation_code(&node.operation));
-        match &node.operation {
-            XLAOperation::Activation(activation) => bytes.push(activation_code(*activation)),
-            XLAOperation::Custom(name) => {
-                bytes.extend_from_slice(&(name.len() as u32).to_le_bytes());
-                bytes.extend_from_slice(name.as_bytes());
-            }
-            _ => {}
-        }
         bytes.extend_from_slice(&(node.inputs.len() as u32).to_le_bytes());
         for operand in &node.inputs {
             encode_operand(&mut bytes, operand);
@@ -1838,8 +1730,13 @@ mod tests {
             "code must not be all zero"
         );
 
-        // FLOPs derived from element count: 2 inputs * 4 elements * 2 flops/element = 16.
-        assert_eq!(compiled.perf_characteristics.flops, 16);
+        // FLOPs derived from element count, now including the graph's own
+        // operations: 2 inputs * 4 elements * 2 flops/element = 16 from the
+        // elementwise update, plus the two emitted nodes (multiply by the
+        // learning rate, add to the parameters) at 4 elements each = 8.
+        // Before `build_optimizer_computation` emitted real nodes the graph
+        // contributed nothing here, so this used to be 16.
+        assert_eq!(compiled.perf_characteristics.flops, 24);
 
         // Utilization derived from element count; strictly within (0, 1).
         let util = compiled.perf_characteristics.utilization_estimate;

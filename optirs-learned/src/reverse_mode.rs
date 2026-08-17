@@ -1326,16 +1326,13 @@ impl<T: ReverseScalar> ReverseModeEngine<T> {
 }
 
 /// Row-major matrix product of a flat `m x k` buffer with a flat `k x n` buffer.
-fn matmul_flat<T: Float>(
+fn matmul_flat<T: Float + Clone>(
     lhs: &Array1<T>,
     m: usize,
     k: usize,
     rhs: &Array1<T>,
     n: usize,
-) -> Array1<T>
-where
-    T: Clone,
-{
+) -> Array1<T> {
     let mut out = Array1::zeros(m * n);
     for i in 0..m {
         for j in 0..n {
@@ -1578,10 +1575,10 @@ mod tests {
             let mut engine = ReverseModeEngine::<f64>::new();
             let a_id = engine
                 .create_variable_with_shape("a", Array1::from_vec(a.to_vec()), &[2, 3], true)
-                .expect("a");
+                .expect("2x3 variable `a` registers");
             let b_id = engine
                 .create_variable_with_shape("b", Array1::from_vec(b.to_vec()), &[3, 2], true)
-                .expect("b");
+                .expect("3x2 variable `b` registers");
             let mm = engine.matmul(a_id, b_id).expect("matmul");
             let loss = engine.sum(mm, None).expect("sum");
             (engine, a_id, b_id, loss)
@@ -1593,11 +1590,7 @@ mod tests {
             .value(engine.tape_len() - 2)
             .expect("product")
             .clone();
-        approx::assert_abs_diff_eq!(
-            product[0],
-            0.5 * 1.5 + (-1.5) * 0.25 + 2.0 * (-1.0),
-            epsilon = 1e-12
-        );
+        approx::assert_abs_diff_eq!(product[0], 0.5 * 1.5 + (-1.5) * 0.25 - 2.0, epsilon = 1e-12);
 
         engine.backward(loss_id, None).expect("backward");
         let grad_a = engine.get_gradient(a_id).expect("grad a").clone();
@@ -1638,7 +1631,7 @@ mod tests {
                 &[2, 3],
                 true,
             )
-            .expect("w");
+            .expect("2x3 variable `w` registers");
         let x = engine.create_variable("x", Array1::from_vec(vec![1.0, 0.0, -1.0]), false);
         let y = engine.matmul(w, x).expect("matmul");
 

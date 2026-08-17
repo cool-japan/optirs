@@ -4,9 +4,7 @@ use std::fmt::Debug;
 // This module implements comprehensive evaluation strategies for assessing
 // the performance of transformer-based learned optimizers across various metrics.
 
-#[allow(dead_code)]
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng as _;
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::{OptimError, Result};
@@ -50,8 +48,13 @@ pub struct TransformerEvaluator<T: Float + Debug + Send + Sync + 'static> {
     /// Baseline comparisons
     baseline_comparisons: HashMap<String, BaselineComparison<T>>,
 
-    /// Statistical analyzers
-    statistical_analyzers: Vec<StatisticalAnalyzer<T>>,
+    /// Robustness scores per task, keyed by task id then by score name.
+    ///
+    /// [`TransformerEvaluator::evaluate_robustness`] used to compute these and
+    /// hand them straight back to the caller, discarding the `task_id` it was
+    /// given, so the evaluator itself retained no robustness record and
+    /// [`TransformerEvaluator::robustness_results`] had nothing to report.
+    robustness_results: HashMap<String, HashMap<String, T>>,
 }
 
 /// Evaluation parameters
@@ -316,12 +319,6 @@ pub struct StatisticalSignificance<T: Float + Debug + Send + Sync + 'static> {
 /// Metric calculator for specific metrics
 #[derive(Debug, Clone)]
 pub struct MetricCalculator<T: Float + Debug + Send + Sync + 'static> {
-    /// Metric name
-    metric_name: String,
-
-    /// Calculation function parameters
-    calculation_params: HashMap<String, T>,
-
     /// Historical values for trend analysis
     historical_values: VecDeque<T>,
 
@@ -332,33 +329,8 @@ pub struct MetricCalculator<T: Float + Debug + Send + Sync + 'static> {
 /// Baseline comparison data
 #[derive(Debug, Clone)]
 pub struct BaselineComparison<T: Float + Debug + Send + Sync + 'static> {
-    /// Baseline name
-    baseline_name: String,
-
     /// Baseline performance
     baseline_performance: HashMap<String, T>,
-
-    /// Improvement over baseline
-    improvement: HashMap<String, T>,
-
-    /// Relative performance
-    relative_performance: HashMap<String, T>,
-
-    /// Win rate against baseline
-    win_rate: T,
-}
-
-/// Statistical analyzer for performance data
-#[derive(Debug, Clone)]
-pub struct StatisticalAnalyzer<T: Float + Debug + Send + Sync + 'static> {
-    /// Analyzer name
-    analyzer_name: String,
-
-    /// Analysis parameters
-    analysis_params: HashMap<String, T>,
-
-    /// Results cache
-    results_cache: HashMap<String, T>,
 }
 
 /// Robustness test suite
@@ -453,15 +425,15 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         // Initialize standard metric calculators
         metric_calculators.insert(
             "convergence_speed".to_string(),
-            MetricCalculator::new("convergence_speed".to_string(), AggregationMethod::Mean)?,
+            MetricCalculator::new(AggregationMethod::Mean)?,
         );
         metric_calculators.insert(
             "final_performance".to_string(),
-            MetricCalculator::new("final_performance".to_string(), AggregationMethod::Mean)?,
+            MetricCalculator::new(AggregationMethod::Mean)?,
         );
         metric_calculators.insert(
             "sample_efficiency".to_string(),
-            MetricCalculator::new("sample_efficiency".to_string(), AggregationMethod::Mean)?,
+            MetricCalculator::new(AggregationMethod::Mean)?,
         );
 
         Ok(Self {
@@ -470,7 +442,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
             metric_calculators,
             performance_history: VecDeque::new(),
             baseline_comparisons: HashMap::new(),
-            statistical_analyzers: Vec::new(),
+            robustness_results: HashMap::new(),
         })
     }
 
@@ -1025,9 +997,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
             -3.969_683_028_665_376e1,
             2.209_460_984_245_205e2,
             -2.759_285_104_469_687e2,
-            1.383_577_518_672_690e2,
+            1.383_577_518_672_69e2,
             -3.066_479_806_614_716e1,
-            2.506_628_277_459_239e0,
+            2.506_628_277_459_239,
         ];
         const B: [f64; 5] = [
             -5.447_609_879_822_406e1,
@@ -1074,11 +1046,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         baseline_performance: HashMap<String, T>,
     ) -> Result<()> {
         let comparison = BaselineComparison {
-            baseline_name: baseline_name.clone(),
             baseline_performance: baseline_performance.clone(),
-            improvement: HashMap::new(),
-            relative_performance: HashMap::new(),
-            win_rate: T::zero(),
         };
 
         self.baseline_comparisons.insert(baseline_name, comparison);
@@ -1134,7 +1102,42 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
         }
         robustness_scores.insert("hyperparameter_robustness".to_string(), sensitivity_score);
 
+        // Retain the scores under the task they were measured for; a later call
+        // for the same task replaces its entry rather than accumulating stale
+        // suites.
+        self.robustness_results
+            .insert(task_id.to_string(), robustness_scores.clone());
+
         Ok(robustness_scores)
+    }
+
+    /// Aggregated value of a tracked metric, under that calculator's
+    /// [`AggregationMethod`].
+    ///
+    /// Every [`Self::evaluate`] call feeds the per-metric calculators, but
+    /// nothing could read the aggregate back: `MetricCalculator` was written to
+    /// and never queried.
+    pub fn aggregated_metric(&self, metric_name: &str) -> Option<Result<T>> {
+        self.metric_calculators
+            .get(metric_name)
+            .map(|c| c.get_aggregated_value())
+    }
+
+    /// Names of the metrics this evaluator aggregates.
+    pub fn tracked_metrics(&self) -> impl Iterator<Item = &str> {
+        self.metric_calculators.keys().map(String::as_str)
+    }
+
+    /// Robustness scores recorded for `task_id` by a previous
+    /// [`Self::evaluate_robustness`] call, or `None` if that task has not been
+    /// evaluated for robustness.
+    pub fn robustness_results(&self, task_id: &str) -> Option<&HashMap<String, T>> {
+        self.robustness_results.get(task_id)
+    }
+
+    /// Task ids that have a recorded robustness evaluation.
+    pub fn robustness_evaluated_tasks(&self) -> impl Iterator<Item = &str> {
+        self.robustness_results.keys().map(String::as_str)
     }
 
     /// Get comprehensive evaluation summary
@@ -1188,7 +1191,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
     pub fn reset(&mut self) {
         self.performance_history.clear();
         self.baseline_comparisons.clear();
-        self.statistical_analyzers.clear();
+        self.robustness_results.clear();
 
         for calculator in self.metric_calculators.values_mut() {
             calculator.reset();
@@ -1217,10 +1220,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> TransformerEval
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricCalculator<T> {
-    fn new(metric_name: String, aggregation_method: AggregationMethod) -> Result<Self> {
+    /// A calculator that aggregates its history with `aggregation_method`.
+    ///
+    /// The metric's name is the key it is stored under in
+    /// `TransformerEvaluator::metric_calculators`; it used to be duplicated into
+    /// a `metric_name` field that nothing ever read, so the two could disagree.
+    fn new(aggregation_method: AggregationMethod) -> Result<Self> {
         Ok(Self {
-            metric_name,
-            calculation_params: HashMap::new(),
             historical_values: VecDeque::new(),
             aggregation_method,
         })
@@ -1234,7 +1240,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricCalculato
         Ok(())
     }
 
-    fn get_aggregated_value(&self) -> Result<T> {
+    /// Aggregate the recorded history under this calculator's
+    /// [`AggregationMethod`].
+    pub fn get_aggregated_value(&self) -> Result<T> {
         if self.historical_values.is_empty() {
             return Ok(T::zero());
         }

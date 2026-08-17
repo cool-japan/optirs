@@ -1,8 +1,5 @@
 //! Auto-generated test module (consolidated from inline `#[cfg(test)] mod` blocks)
 
-use scirs2_core::ndarray::Array1;
-use std::collections::HashMap;
-
 use super::*;
 
 #[cfg(test)]

@@ -47,7 +47,7 @@ use std::fmt::Debug;
 /// let params = Array1::zeros(10);
 /// let gradients = Array1::ones(10);
 ///
-/// let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let updated_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// // Parameters are automatically updated
 /// ```
 #[derive(Debug, Clone)]
@@ -67,10 +67,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LARS<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            momentum: A::from(0.9).expect("unwrap failed"),
-            weight_decay: A::from(0.0001).expect("unwrap failed"),
-            trust_coefficient: A::from(0.001).expect("unwrap failed"),
-            eps: A::from(1e-8).expect("unwrap failed"),
+            momentum: A::from(0.9).expect("LARS: default momentum (0.9) must fit in A"),
+            weight_decay: A::from(0.0001)
+                .expect("LARS: default weight_decay (0.0001) must fit in A"),
+            trust_coefficient: A::from(0.001)
+                .expect("LARS: default trust_coefficient (0.001) must fit in A"),
+            eps: A::from(1e-8).expect("LARS: default eps (1e-8) must fit in A"),
             exclude_bias_and_norm: true,
             velocity: None,
         }
@@ -276,7 +278,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // First update
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lars_update");
 
         // LARS scaling factor with trust_coefficient=1.0 should be:
         // weight_norm / grad_norm = sqrt(14) / sqrt(0.14) ≈ 10
@@ -293,7 +297,7 @@ mod tests {
         // Second update should include momentum
         let updated_params2 = optimizer
             .step(&updated_params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_lars_update");
 
         // For the second update, the velocity will be updated with momentum
         // Just check that parameters continue to change in the expected direction
@@ -313,7 +317,9 @@ mod tests {
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lars_weight_decay");
 
         // Gradients with weight decay: [0.1, 0.2, 0.3] + 0.1*[1.0, 2.0, 3.0] = [0.2, 0.4, 0.6]
         // LARS scaling factor includes weight decay in denominator
@@ -341,7 +347,7 @@ mod tests {
 
         let updated_params = optimizer
             .step(&params, &zero_gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_zero_gradients");
 
         // With zero gradients, only weight decay should contribute to the update
         // With small weight decay (0.0001), changes should be very small
@@ -368,10 +374,10 @@ mod tests {
 
         let updated_excluded = optimizer_excluded
             .step(&bias_params, &bias_grads)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_exclude_bias_and_norm");
         let updated_included = optimizer_included
             .step(&bias_params, &bias_grads)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_exclude_bias_and_norm");
 
         // When excluded, should use base learning rate (but still include momentum calculation)
         assert_abs_diff_eq!(updated_excluded[0], 0.1 - 0.01 * 0.01, epsilon = 1e-4);

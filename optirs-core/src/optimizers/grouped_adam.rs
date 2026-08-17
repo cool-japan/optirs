@@ -28,18 +28,18 @@ use std::fmt::Debug;
 /// // Add parameter groups with different learning rates
 /// let params_fast = vec![Array1::zeros(5)];
 /// let config_fast = ParameterGroupConfig::new().with_learning_rate(0.01);
-/// let group_fast = optimizer.add_group(params_fast, config_fast).expect("unwrap failed");
+/// let group_fast = optimizer.add_group(params_fast, config_fast).expect("optimizer.add_group succeeds");
 ///
 /// let params_slow = vec![Array1::zeros(3)];
 /// let config_slow = ParameterGroupConfig::new().with_learning_rate(0.0001);
-/// let group_slow = optimizer.add_group(params_slow, config_slow).expect("unwrap failed");
+/// let group_slow = optimizer.add_group(params_slow, config_slow).expect("optimizer.add_group succeeds");
 ///
 /// // Optimize each group separately
 /// let grads_fast = vec![Array1::ones(5)];
-/// let updated_fast = optimizer.step_group(group_fast, &grads_fast).expect("unwrap failed");
+/// let updated_fast = optimizer.step_group(group_fast, &grads_fast).expect("optimizer.step_group succeeds");
 ///
 /// let grads_slow = vec![Array1::ones(3)];
-/// let updated_slow = optimizer.step_group(group_slow, &grads_slow).expect("unwrap failed");
+/// let updated_slow = optimizer.step_group(group_slow, &grads_slow).expect("optimizer.step_group succeeds");
 /// ```
 #[derive(Debug)]
 pub struct GroupedAdam<A: Float + Send + Sync, D: Dimension> {
@@ -73,10 +73,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     pub fn new(defaultlr: A) -> Self {
         Self {
             defaultlr,
-            default_beta1: A::from(0.9).expect("unwrap failed"),
-            default_beta2: A::from(0.999).expect("unwrap failed"),
+            default_beta1: A::from(0.9).expect("GroupedAdam: default beta1 (0.9) must fit in A"),
+            default_beta2: A::from(0.999)
+                .expect("GroupedAdam: default beta2 (0.999) must fit in A"),
             default_weight_decay: A::zero(),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
+            epsilon: A::from(1e-8).expect("GroupedAdam: default epsilon (1e-8) must fit in A"),
             amsgrad: false,
             group_manager: GroupManager::new(),
             step: 0,
@@ -368,26 +369,26 @@ mod tests {
         let config1 = ParameterGroupConfig::new().with_learning_rate(0.01);
         let group1 = optimizer
             .add_group(params1, config1)
-            .expect("unwrap failed");
+            .expect("add_group succeeds in test_grouped_adam_multiple_groups");
 
         // Add second group with low learning rate
         let params2 = vec![Array1::from_vec(vec![3.0, 4.0, 5.0])];
         let config2 = ParameterGroupConfig::new().with_learning_rate(0.0001);
         let group2 = optimizer
             .add_group(params2, config2)
-            .expect("unwrap failed");
+            .expect("add_group succeeds in test_grouped_adam_multiple_groups");
 
         // Update first group
         let grads1 = vec![Array1::from_vec(vec![0.1, 0.2])];
         let updated1 = optimizer
             .step_group(group1, &grads1)
-            .expect("unwrap failed");
+            .expect("step_group succeeds in test_grouped_adam_multiple_groups");
 
         // Update second group
         let grads2 = vec![Array1::from_vec(vec![0.3, 0.4, 0.5])];
         let updated2 = optimizer
             .step_group(group2, &grads2)
-            .expect("unwrap failed");
+            .expect("step_group succeeds in test_grouped_adam_multiple_groups");
 
         // Verify different updates due to different learning rates
         assert!(updated1[0][0] < 1.0); // Should decrease more
@@ -403,10 +404,14 @@ mod tests {
         let config = ParameterGroupConfig::new()
             .with_custom_param("beta1".to_string(), 0.8)
             .with_custom_param("beta2".to_string(), 0.99);
-        let group = optimizer.add_group(params, config).expect("unwrap failed");
+        let group = optimizer
+            .add_group(params, config)
+            .expect("optimizer.add_group succeeds in test_grouped_adam_custom_betas");
 
         // Verify custom parameters are used
-        let group_ref = optimizer.get_group(group).expect("unwrap failed");
+        let group_ref = optimizer
+            .get_group(group)
+            .expect("optimizer.get_group succeeds in test_grouped_adam_custom_betas");
         assert_eq!(group_ref.get_custom_param("beta1", 0.0), 0.8);
         assert_eq!(group_ref.get_custom_param("beta2", 0.0), 0.99);
     }
@@ -420,7 +425,7 @@ mod tests {
         let config1 = ParameterGroupConfig::new();
         optimizer
             .add_group(params1, config1)
-            .expect("unwrap failed");
+            .expect("add_group succeeds in test_grouped_adam_clear");
 
         assert_eq!(optimizer.groups().len(), 1);
 

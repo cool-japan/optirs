@@ -36,10 +36,7 @@ mod types;
 pub use backend::TPUBackend;
 pub use buffer::TPUBuffer;
 pub use device_manager::DeviceManager;
-pub use execution::{
-    DependencyResolver, ExecutionContext, ExecutionEngine, ExecutionScheduler,
-    PerformanceOptimizer, PriorityManager, ResultCollector, RuntimeExecutor,
-};
+pub use execution::{ExecutionEngine, ExecutionScheduler};
 pub use memory::{MemoryGarbageCollector, MemoryPool, TPUMemoryManager};
-pub use profiling::{PerformanceMonitor, RuntimeProfiler, TPUErrorHandler};
+pub use profiling::{PerformanceMonitor, TPUErrorHandler};
 pub use types::*;

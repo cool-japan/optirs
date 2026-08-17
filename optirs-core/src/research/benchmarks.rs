@@ -5,13 +5,11 @@
 
 #[allow(unused_imports)]
 use crate::error::Result;
-use crate::optimizers::*;
-use crate::research::experiments::{Experiment, ExperimentResult};
 use crate::unified_api::{OptimizerConfig, Parameter, UnifiedAdam, UnifiedOptimizer, UnifiedSGD};
 use chrono::{DateTime, Utc};
-use scirs2_core::ndarray::{Array1, Array2, Ix1, ScalarOperand};
+use scirs2_core::ndarray::{Array1, Ix1, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{Random, Rng};
+use scirs2_core::random::Random;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

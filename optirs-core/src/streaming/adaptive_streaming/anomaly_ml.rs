@@ -26,7 +26,7 @@ use super::optimizer::StreamingDataPoint;
 use super::statistics as stats;
 
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{seeded_rng, CoreRandom, Rng};
+use scirs2_core::random::{seeded_rng, CoreRandom};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 

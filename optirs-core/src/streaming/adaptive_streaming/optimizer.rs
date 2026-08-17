@@ -4,31 +4,29 @@
 // all streaming optimization components including drift detection, performance
 // tracking, resource management, and adaptive learning rate control.
 
-use super::anomaly_detection::{
-    AnomalyDetector, AnomalyDiagnostics, EnsembleAnomalyDetector, MLAnomalyDetector,
-    StatisticalAnomalyDetector,
-};
+use super::anomaly_detection::{AnomalyDetector, AnomalyDiagnostics};
 use super::buffering::{AdaptiveBuffer, BufferDiagnostics};
 use super::config::*;
 use super::drift_detection::{DriftDiagnostics, EnhancedDriftDetector};
-use super::meta_learning::{
-    ExperienceReplay, MetaAction, MetaLearner, MetaLearningDiagnostics, MetaState, StrategySelector,
-};
+use super::meta_learning::{MetaAction, MetaLearner, MetaLearningDiagnostics, MetaState};
 use super::performance::{
     DataStatistics, PerformanceDiagnostics, PerformanceSnapshot, PerformanceTracker,
 };
 use super::resource_management::{ResourceDiagnostics, ResourceManager, ResourceUsage};
 
-use crate::adaptive_selection::OptimizerType;
-// Removed dependency on learned_optimizers - using stub implementation
-use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, IxDyn};
+use crate::optimizers::Optimizer;
+use crate::utils::try_scalar_str;
+use scirs2_core::ndarray::{Array, Array1, Dimension};
 use scirs2_core::numeric::Float;
 use scirs2_core::ScientificNumber;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Window used by [`AdaptiveStreamingStats::recent_adaptations`]: adaptations
+/// older than this no longer count as "recent" activity.
+pub const RECENT_ADAPTATION_WINDOW: Duration = Duration::from_secs(300);
 
 /// Adaptive learning-rate controller.
 ///
@@ -65,8 +63,96 @@ pub struct AdaptiveLearningRateController<A: Float> {
     trend_step: A,
     /// Change applied by the most recent update, if any.
     last_change: Option<A>,
-    /// Number of updates applied.
+    /// Number of updates applied. Doubles as the iteration counter the
+    /// cyclical schedule is evaluated against.
     updates: usize,
+    /// Cyclical-schedule state, present only when
+    /// `LearningRateConfig::enable_cyclical_rates` is set.
+    cyclical: Option<CyclicalSchedule<A>>,
+}
+
+/// Cyclical learning-rate schedule (Smith, "Cyclical Learning Rates for
+/// Training Neural Networks", WACV 2017), driven entirely by
+/// `CyclicalRateConfig` (CF1).
+///
+/// Every field of `CyclicalRateConfig` — `base_rate`, `max_rate`,
+/// `cycle_length`, `cycle_mode` and `scale_function` — previously had no reader
+/// anywhere in the crate, and `enable_cyclical_rates` was never consulted, so
+/// configuring a cyclical schedule did nothing at all.
+#[derive(Debug, Clone)]
+struct CyclicalSchedule<A: Float> {
+    /// Lower bound of the cycle.
+    base_rate: A,
+    /// Upper bound of the cycle.
+    max_rate: A,
+    /// Half-cycle length in iterations (`cycle_length / 2`, at least 1).
+    step_size: A,
+    /// Amplitude policy across successive cycles.
+    cycle_mode: CycleMode,
+    /// Within-cycle ramp shape.
+    scale_function: ScaleFunction,
+}
+
+impl<A: Float> CyclicalSchedule<A> {
+    /// Learning rate for iteration `iteration` (0-based).
+    ///
+    /// `lr = base + (max - base) * ramp(x) * amplitude(cycle)` where `x` is the
+    /// normalised distance from the current half-cycle boundary, exactly as in
+    /// the reference formulation.
+    fn rate_at(&self, iteration: usize) -> A {
+        let Some(step) = A::from(iteration) else {
+            return self.base_rate;
+        };
+        let two = match A::from(2.0) {
+            Some(two) => two,
+            None => return self.base_rate,
+        };
+
+        // cycle = floor(1 + step / (2 * step_size)); x = |step/step_size - 2*cycle + 1|
+        let cycle = (A::one() + step / (two * self.step_size)).floor();
+        let x = (step / self.step_size - two * cycle + A::one()).abs();
+        let position = (A::one() - x).max(A::zero()).min(A::one());
+
+        let ramp = match &self.scale_function {
+            ScaleFunction::Linear => position,
+            ScaleFunction::Polynomial { power } => match A::from(*power) {
+                Some(power) => position.powf(power),
+                None => position,
+            },
+            // `factor^x`: 1 at the cycle peak, `factor` at the trough.
+            ScaleFunction::Exponential { factor } => match A::from(*factor) {
+                Some(factor) if factor > A::zero() => factor.powf(A::one() - position),
+                _ => position,
+            },
+            // Rejected at construction time.
+            ScaleFunction::Custom(_) => position,
+        };
+
+        let amplitude = match &self.cycle_mode {
+            CycleMode::Triangular => A::one(),
+            // Halve the amplitude on each successive cycle.
+            CycleMode::Triangular2 => {
+                let exponent = (cycle - A::one()).max(A::zero());
+                A::one() / two.powf(exponent)
+            }
+            // `gamma^iteration`, with gamma supplied by the exponential scale
+            // function (guaranteed present by the constructor's validation).
+            CycleMode::ExponentialRange => match &self.scale_function {
+                ScaleFunction::Exponential { factor } => match A::from(*factor) {
+                    Some(gamma) if gamma > A::zero() => gamma.powf(step),
+                    _ => A::one(),
+                },
+                _ => A::one(),
+            },
+            // Rejected at construction time.
+            CycleMode::Custom(_) => A::one(),
+        };
+
+        let span = self.max_rate - self.base_rate;
+        (self.base_rate + span * ramp * amplitude)
+            .max(self.base_rate.min(self.max_rate))
+            .min(self.base_rate.max(self.max_rate))
+    }
 }
 
 impl<A: Float> AdaptiveLearningRateController<A> {
@@ -95,8 +181,67 @@ impl<A: Float> AdaptiveLearningRateController<A> {
             "performance_sensitivity",
         )?;
 
+        let cyclical = if lr_config.enable_cyclical_rates {
+            let cycle = &lr_config.cycle_config;
+            if let ScaleFunction::Custom(name) = &cycle.scale_function {
+                return Err(crate::error::OptimError::InvalidConfig(format!(
+                    "cyclical learning-rate scale_function Custom(\"{name}\") has no \
+                     registered implementation; use Linear, Exponential or Polynomial"
+                )));
+            }
+            if let CycleMode::Custom(name) = &cycle.cycle_mode {
+                return Err(crate::error::OptimError::InvalidConfig(format!(
+                    "cyclical learning-rate cycle_mode Custom(\"{name}\") has no \
+                     registered implementation; use Triangular, Triangular2 or \
+                     ExponentialRange"
+                )));
+            }
+            if matches!(cycle.cycle_mode, CycleMode::ExponentialRange)
+                && !matches!(cycle.scale_function, ScaleFunction::Exponential { .. })
+            {
+                return Err(crate::error::OptimError::InvalidConfig(
+                    "cyclical cycle_mode ExponentialRange needs its decay factor from \
+                     scale_function = Exponential { factor }"
+                        .to_string(),
+                ));
+            }
+            if cycle.cycle_length == 0 {
+                return Err(crate::error::OptimError::InvalidConfig(
+                    "cyclical learning-rate cycle_length must be greater than zero".to_string(),
+                ));
+            }
+            let base_rate = convert(cycle.base_rate, "cycle_config.base_rate")?;
+            let cycle_max_rate = convert(cycle.max_rate, "cycle_config.max_rate")?;
+            if base_rate > cycle_max_rate {
+                return Err(crate::error::OptimError::InvalidConfig(format!(
+                    "cyclical base_rate ({}) exceeds cycle max_rate ({})",
+                    cycle.base_rate, cycle.max_rate
+                )));
+            }
+            let step_size = convert(
+                ((cycle.cycle_length as f64) / 2.0).max(1.0),
+                "cycle_config.cycle_length",
+            )?;
+            Some(CyclicalSchedule {
+                base_rate,
+                max_rate: cycle_max_rate,
+                step_size,
+                cycle_mode: cycle.cycle_mode.clone(),
+                scale_function: cycle.scale_function.clone(),
+            })
+        } else {
+            None
+        };
+
+        let initial_current = match cyclical.as_ref() {
+            // A cyclical schedule owns the rate outright, so start on the
+            // schedule rather than at `initial_rate`.
+            Some(schedule) => schedule.rate_at(0).max(min_lr).min(max_lr),
+            None => initial_lr.max(min_lr).min(max_lr),
+        };
+
         Ok(Self {
-            current_lr: initial_lr.max(min_lr).min(max_lr),
+            current_lr: initial_current,
             initial_lr,
             min_lr,
             max_lr,
@@ -104,6 +249,7 @@ impl<A: Float> AdaptiveLearningRateController<A> {
             trend_step,
             last_change: None,
             updates: 0,
+            cyclical,
         })
     }
 
@@ -118,10 +264,33 @@ impl<A: Float> AdaptiveLearningRateController<A> {
             self.squared_gradient_norm_sum = self.squared_gradient_norm_sum + squared_norm;
         }
 
-        let scale = A::one() / (A::one() + self.squared_gradient_norm_sum.sqrt());
-        let proposed = (self.initial_lr * scale).max(self.min_lr).min(self.max_lr);
+        // A configured cyclical schedule owns the rate: its whole purpose is to
+        // sweep between bounds on a fixed cadence, which an AdaGrad decay would
+        // flatten out. The gradient accumulator is still maintained above so
+        // `accumulated_squared_gradient_norm` stays meaningful either way.
+        let proposed = match self.cyclical.as_ref() {
+            Some(schedule) => schedule.rate_at(self.updates),
+            None => {
+                self.initial_lr * (A::one() / (A::one() + self.squared_gradient_norm_sum.sqrt()))
+            }
+        };
+        let proposed = proposed.max(self.min_lr).min(self.max_lr);
         self.set_rate(proposed);
         self.current_lr
+    }
+
+    /// Test-only view of the cyclical schedule's rate at a given iteration.
+    #[cfg(test)]
+    pub(crate) fn rate_at_for_test(&self, iteration: usize) -> A {
+        match self.cyclical.as_ref() {
+            Some(schedule) => schedule.rate_at(iteration),
+            None => self.current_lr,
+        }
+    }
+
+    /// Whether a cyclical schedule is driving this controller.
+    pub fn is_cyclical(&self) -> bool {
+        self.cyclical.is_some()
     }
 
     /// Current learning rate.
@@ -149,6 +318,14 @@ impl<A: Float> AdaptiveLearningRateController<A> {
     /// samples there is no trend to read and the current rate is returned
     /// unchanged.
     pub fn compute_adaptation(&self, performance_metrics: &[A]) -> A {
+        // Under a cyclical schedule the next rate is a function of the iteration
+        // counter, not of the performance trend.
+        if let Some(schedule) = self.cyclical.as_ref() {
+            return schedule
+                .rate_at(self.updates.saturating_add(1))
+                .max(self.min_lr)
+                .min(self.max_lr);
+        }
         if performance_metrics.len() < 2 {
             return self.current_lr;
         }
@@ -306,8 +483,12 @@ pub struct AdaptiveStreamingStats {
     pub drift_events: usize,
     /// Number of anomalies detected
     pub anomalies_detected: usize,
-    /// Number of adaptations applied
+    /// Number of adaptations applied over the optimizer's whole lifetime
     pub adaptations_applied: usize,
+    /// Number of adaptations applied within the last
+    /// [`RECENT_ADAPTATION_WINDOW`], recomputed on each
+    /// `get_adaptive_stats()` call
+    pub recent_adaptations: usize,
     /// Current buffer size
     pub current_buffer_size: usize,
     /// Current learning rate
@@ -393,7 +574,7 @@ where
         + scirs2_core::ndarray::ScalarOperand
         + 'static,
     D: Dimension,
-    O: Clone,
+    O: Optimizer<A, D> + Clone,
 {
     /// Creates a new adaptive streaming optimizer
     pub fn new(base_optimizer: O, config: StreamingConfig) -> Result<Self, String> {
@@ -415,6 +596,7 @@ where
             drift_events: 0,
             anomalies_detected: 0,
             adaptations_applied: 0,
+            recent_adaptations: 0,
             current_buffer_size: config.buffer_config.initial_size,
             current_learning_rate: config.learning_rate_config.initial_rate,
             avg_processing_time_ms: 0.0,
@@ -481,8 +663,17 @@ where
         // Compute necessary adaptations
         let adaptations = self.compute_adaptations(&processing_batch, drift_detected)?;
 
-        // Apply adaptations to system components
+        // Apply adaptations to system components.
+        //
+        // The lifetime counter is bumped here rather than with the rest of the
+        // statistics further down: `apply_adaptations` is what records them
+        // into `adaptation_history`, and the statistics block sits behind four
+        // `?` operators. A step that failed after adapting therefore left the
+        // adaptations in the history but uncounted, so `adaptations_applied`
+        // drifted permanently below the number of adaptations really applied
+        // (and below the recent-window count derived from the history).
         self.apply_adaptations(&adaptations)?;
+        self.stats.adaptations_applied += adaptations.len();
 
         // Perform actual optimization step
         let updated_parameters = self.perform_optimization_step(&processing_batch)?;
@@ -501,11 +692,10 @@ where
             .add_performance(performance.clone())?;
 
         // Update meta-learner with experience
-        self.update_meta_learner(&processing_batch, &adaptations, &performance)?;
+        self.update_meta_learner(&adaptations, &performance)?;
 
         // Update statistics
         self.stats.optimization_steps += 1;
-        self.stats.adaptations_applied += adaptations.len();
         self.stats.current_buffer_size = self.buffer.current_size();
         self.stats.current_learning_rate = self
             .learning_rate_controller
@@ -650,7 +840,7 @@ where
         for (i, value) in data_point.features.iter_mut().enumerate() {
             let diff = (*value - median[i]).abs();
             let threshold =
-                median[i] * A::from(self.config.anomaly_config.threshold).expect("unwrap failed");
+                median[i] * try_scalar_str::<A, _>(self.config.anomaly_config.threshold)?;
 
             if diff > threshold {
                 // Clip the value to be within the threshold
@@ -664,7 +854,7 @@ where
         }
 
         // Reduce quality score for adapted anomalous data
-        data_point.quality_score = data_point.quality_score * A::from(0.5).expect("unwrap failed");
+        data_point.quality_score = data_point.quality_score * try_scalar_str::<A, _>(0.5)?;
 
         Ok(data_point)
     }
@@ -730,7 +920,7 @@ where
 
         // Check quality threshold
         let quality_ready = buffer_quality.average_quality
-            >= A::from(self.config.buffer_config.quality_threshold).expect("unwrap failed");
+            >= try_scalar_str::<A, _>(self.config.buffer_config.quality_threshold)?;
 
         // Check timeout
         let timeout_ready = self.buffer.time_since_last_processing()
@@ -925,21 +1115,46 @@ where
             .learning_rate_controller
             .update_learning_rate(&gradients);
 
-        // Apply optimization step (simplified implementation)
-        let mut updated_parameters = if let Some(params) = self.parameters.clone() {
+        let parameters = if let Some(params) = self.parameters.clone() {
             params
         } else {
             // Cannot initialize parameters without proper dimension info
             return Err("Parameters not initialized".to_string());
         };
 
-        // Simple gradient descent update (in practice would use the base optimizer)
-        let mut squared_update = A::zero();
-        for (param, &grad) in updated_parameters.iter_mut().zip(gradients.iter()) {
-            let delta = learning_rate * grad;
-            squared_update = squared_update + delta * delta;
-            *param = *param - delta;
+        // Hand the step to the base optimizer the caller supplied.
+        //
+        // This used to be an inline `param -= lr * grad` loop with the comment
+        // "in practice would use the base optimizer": the `O` type parameter
+        // and the `base_optimizer` constructor argument were accepted and then
+        // ignored, so an `AdaptiveStreamingOptimizer<Adam<_>, ..>` silently ran
+        // plain SGD and none of Adam's moments existed. The adaptive
+        // learning-rate controller drives the base optimizer's rate, exactly as
+        // the streaming optimizer in `streaming::types` does.
+        if parameters.len() != gradients.len() {
+            return Err(format!(
+                "parameter/gradient dimensionality mismatch: {} parameters but {} gradients",
+                parameters.len(),
+                gradients.len()
+            ));
         }
+        let gradients_d = gradients
+            .clone()
+            .into_dimensionality::<D>()
+            .map_err(|e| format!("gradient does not fit the parameter dimensionality: {e}"))?;
+        self.base_optimizer.set_learning_rate(learning_rate);
+        let updated_parameters = self
+            .base_optimizer
+            .step(&parameters, &gradients_d)
+            .map_err(|e| format!("base optimizer step failed: {e}"))?;
+
+        let squared_update = parameters.iter().zip(updated_parameters.iter()).fold(
+            A::zero(),
+            |acc, (&before, &after)| {
+                let delta = after - before;
+                acc + delta * delta
+            },
+        );
 
         // Record the real magnitudes so `evaluate_performance` reports
         // measurements instead of the fixed 1.0 / 0.1 placeholders.
@@ -971,7 +1186,7 @@ where
         }
 
         // Normalize by batch size
-        let batch_size = A::from(batch.len()).expect("unwrap failed");
+        let batch_size = try_scalar_str::<A, _>(batch.len())?;
         gradients /= batch_size;
 
         Ok(gradients)
@@ -1156,18 +1371,18 @@ where
             feature_means = feature_means + &data_point.features;
             quality_scores.push(data_point.quality_score);
         }
-        feature_means /= A::from(batch.len()).expect("unwrap failed");
+        feature_means /= try_scalar_str::<A, _>(batch.len())?;
 
         // Compute standard deviations
         for data_point in batch {
             let diff = &data_point.features - &feature_means;
             feature_stds = feature_stds + &diff.mapv(|x| x * x);
         }
-        feature_stds /= A::from(batch.len()).expect("unwrap failed");
+        feature_stds /= try_scalar_str::<A, _>(batch.len())?;
         feature_stds = feature_stds.mapv(|x| x.sqrt());
 
         let avg_quality = quality_scores.iter().copied().sum::<A>()
-            / A::from(quality_scores.len()).expect("unwrap failed");
+            / try_scalar_str::<A, _>(quality_scores.len())?;
 
         Ok(DataStatistics {
             sample_count: batch.len(),
@@ -1178,10 +1393,14 @@ where
         })
     }
 
-    /// Updates meta-learner with experience from this optimization step
+    /// Updates meta-learner with experience from this optimization step.
+    ///
+    /// Deliberately takes no data batch: `MetaState` has no slot for per-batch
+    /// data characteristics (its features are performance, resource and drift
+    /// signals, whose layout the bandit's feature scaler depends on), so a batch
+    /// argument could only be discarded — which is what it used to be.
     fn update_meta_learner(
         &mut self,
-        batch: &[StreamingDataPoint<A>],
         adaptations: &[Adaptation<A>],
         performance: &PerformanceSnapshot<A>,
     ) -> Result<(), String> {
@@ -1217,15 +1436,16 @@ where
                 performance.convergence_rate.unwrap_or(A::zero()),
             ],
             resource_state: vec![
-                A::from(performance.resource_usage.memory_usage_mb as f64).expect("unwrap failed"),
-                A::from(performance.resource_usage.cpu_usage_percent).expect("unwrap failed"),
+                try_scalar_str::<A, _>(performance.resource_usage.memory_usage_mb as f64)?,
+                try_scalar_str::<A, _>(performance.resource_usage.cpu_usage_percent)?,
             ],
-            drift_indicators: vec![A::from(if self.drift_detector.is_drift_detected() {
-                1.0
-            } else {
-                0.0
-            })
-            .expect("unwrap failed")],
+            drift_indicators: vec![try_scalar_str::<A, _>(
+                if self.drift_detector.is_drift_detected() {
+                    1.0
+                } else {
+                    0.0
+                },
+            )?],
             adaptation_history: self.adaptation_history.len(),
             timestamp: Instant::now(),
         };
@@ -1273,15 +1493,23 @@ where
     pub fn get_adaptive_stats(&self) -> AdaptiveStreamingStats {
         let mut stats = self.stats.clone();
         stats.resource_utilization = self.resource_manager.current_usage().unwrap_or_default();
+        // `adaptations_applied` is a lifetime counter; the recent-window count
+        // is derived live from `adaptation_history` so callers can tell a
+        // currently-thrashing optimizer from one that adapted long ago.
+        stats.recent_adaptations = self.count_adaptations_applied(RECENT_ADAPTATION_WINDOW);
         stats
     }
 
-    /// Counts the number of adaptations applied in recent history
-    fn count_adaptations_applied(&self) -> usize {
-        let recent_threshold = Instant::now() - Duration::from_secs(300); // Last 5 minutes
+    /// Counts the adaptations recorded within `window` of now.
+    ///
+    /// Uses a forward `duration_since` comparison rather than materialising an
+    /// `Instant::now() - window` cutoff: subtracting a `Duration` from an
+    /// `Instant` panics when the process has been up for less than `window`.
+    fn count_adaptations_applied(&self, window: Duration) -> usize {
+        let now = Instant::now();
         self.adaptation_history
             .iter()
-            .filter(|adaptation| adaptation.timestamp > recent_threshold)
+            .filter(|adaptation| now.duration_since(adaptation.timestamp) <= window)
             .count()
     }
 
@@ -1335,6 +1563,7 @@ where
             drift_events: 0,
             anomalies_detected: 0,
             adaptations_applied: 0,
+            recent_adaptations: 0,
             current_buffer_size: self.config.buffer_config.initial_size,
             current_learning_rate: self.config.learning_rate_config.initial_rate,
             avg_processing_time_ms: 0.0,
@@ -1404,8 +1633,14 @@ mod o5_convergence_rate_tests {
         }
     }
 
-    fn make_optimizer() -> AdaptiveStreamingOptimizer<(), f64, Ix1> {
-        AdaptiveStreamingOptimizer::new((), StreamingConfig::default()).expect("construct")
+    fn make_optimizer() -> AdaptiveStreamingOptimizer<crate::optimizers::SGD<f64>, f64, Ix1> {
+        // Previously `()` was passed as the "base optimizer" -- which compiled
+        // only because nothing ever used it. A real optimizer is now required.
+        AdaptiveStreamingOptimizer::new(
+            crate::optimizers::SGD::new(0.01),
+            StreamingConfig::default(),
+        )
+        .expect("construct")
     }
 
     /// O5: `compute_convergence_rate` must report a *positive* rate when
@@ -1760,3 +1995,7 @@ mod o5_convergence_rate_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "optimizer_regression_tests.rs"]
+mod regression_tests;

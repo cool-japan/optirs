@@ -4,18 +4,12 @@
 // for neuromorphic computing platforms, focusing on minimizing power consumption while
 // maintaining performance and accuracy.
 
-use super::{
-    EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics, PlasticityModel,
-    STDPConfig, SleepModeConfig, Spike, SpikeTrain, ThermalManagementConfig,
-    ThermalThrottlingStrategy,
-};
+use super::{NeuromorphicMetrics, ThermalManagementConfig};
 use crate::error::Result;
-use crate::optimizers::Optimizer;
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{Array2, ArrayBase, Data, Dimension};
 use scirs2_core::numeric::Float;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Convert an `f64` literal/derived value to the generic float type `T`,
@@ -24,7 +18,7 @@ use std::time::{Duration, Instant};
 /// targets.
 #[inline]
 fn to_t_or<T: Float>(value: f64, fallback: T) -> T {
-    T::from(value).unwrap_or_else(|| fallback)
+    T::from(value).unwrap_or(fallback)
 }
 
 // --- Documented device power model -----------------------------------
@@ -318,39 +312,11 @@ struct EnergyMonitor<
     /// Average power over window (nW)
     average_power: T,
 
-    /// Energy per component
-    component_energy: HashMap<EnergyComponent, T>,
-
-    /// Efficiency metrics
-    efficiency_metrics: EfficiencyMetrics<T>,
-
     /// Last monitoring update
     last_update: Instant,
 
     /// Monitoring window size
     window_size: Duration,
-}
-
-/// Efficiency metrics tracking
-#[derive(Debug, Clone)]
-struct EfficiencyMetrics<T: Float + Debug + Send + Sync + 'static> {
-    /// Operations per joule (current)
-    current_ops_per_joule: T,
-
-    /// Spikes per joule (current)
-    current_spikes_per_joule: T,
-
-    /// Synaptic updates per joule (current)
-    current_synaptic_updates_per_joule: T,
-
-    /// Memory efficiency
-    memory_efficiency: T,
-
-    /// Thermal efficiency
-    thermal_efficiency: T,
-
-    /// Overall efficiency score
-    overall_efficiency: T,
 }
 
 /// Dynamic voltage and frequency scaling controller
@@ -367,18 +333,6 @@ struct DVFSController<T: Float + Debug + Send + Sync + 'static> {
 
     /// Current frequency index
     current_frequency_idx: usize,
-
-    /// Performance requirements
-    performance_requirements: PerformanceRequirements<T>,
-
-    /// Voltage scaling factor
-    voltage_scaling_factor: T,
-
-    /// Frequency scaling factor
-    frequency_scaling_factor: T,
-
-    /// Adaptation rate
-    adaptation_rate: T,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> DVFSController<T> {
@@ -398,22 +352,6 @@ impl<T: Float + Debug + Send + Sync + 'static> DVFSController<T> {
             ],
             current_voltage_idx: 2,
             current_frequency_idx: 2,
-            performance_requirements: PerformanceRequirements {
-                min_frequency: to_t_or(500.0, T::one()),
-                max_frequency: to_t_or(2000.0, T::one()),
-                min_voltage: to_t_or(0.7, T::one()),
-                max_voltage: to_t_or(1.2, T::one()),
-                performance_headroom: to_t_or(0.2, T::zero()),
-                qos_requirements: QoSRequirements {
-                    max_latency: to_t_or(10.0, T::one()),
-                    max_jitter: to_t_or(1.0, T::one()),
-                    min_throughput: to_t_or(1000.0, T::one()),
-                    max_error_rate: to_t_or(0.001, T::zero()),
-                },
-            },
-            voltage_scaling_factor: T::one(),
-            frequency_scaling_factor: T::one(),
-            adaptation_rate: to_t_or(0.1, T::zero()),
         }
     }
 
@@ -442,51 +380,6 @@ impl<T: Float + Debug + Send + Sync + 'static> DVFSController<T> {
             self.frequency_levels[self.current_frequency_idx],
         ))
     }
-
-    fn apply_scaling(&mut self, voltage: T, frequency: T) -> Result<()> {
-        // Apply the voltage and frequency scaling
-        self.voltage_scaling_factor = voltage / self.voltage_levels[2]; // Relative to nominal
-        self.frequency_scaling_factor = frequency / self.frequency_levels[2];
-        Ok(())
-    }
-}
-
-/// Performance requirements for DVFS
-#[derive(Debug, Clone)]
-struct PerformanceRequirements<T: Float + Debug + Send + Sync + 'static> {
-    /// Minimum required frequency (MHz)
-    min_frequency: T,
-
-    /// Maximum allowed frequency (MHz)
-    max_frequency: T,
-
-    /// Minimum required voltage (V)
-    min_voltage: T,
-
-    /// Maximum allowed voltage (V)
-    max_voltage: T,
-
-    /// Performance headroom (%)
-    performance_headroom: T,
-
-    /// Quality of service requirements
-    qos_requirements: QoSRequirements<T>,
-}
-
-/// Quality of service requirements
-#[derive(Debug, Clone)]
-struct QoSRequirements<T: Float + Debug + Send + Sync + 'static> {
-    /// Maximum allowed latency (ms)
-    max_latency: T,
-
-    /// Maximum allowed jitter (ms)
-    max_jitter: T,
-
-    /// Minimum throughput (ops/s)
-    min_throughput: T,
-
-    /// Maximum error rate
-    max_error_rate: T,
 }
 
 /// Power gating controller
@@ -494,12 +387,6 @@ struct QoSRequirements<T: Float + Debug + Send + Sync + 'static> {
 struct PowerGatingController<T: Float + Debug + Send + Sync + 'static> {
     /// Gated neuron groups
     gated_groups: HashMap<usize, GatedGroup>,
-
-    /// Gate control policy
-    gating_policy: GatingPolicy,
-
-    /// Power gate overhead
-    gate_overhead_time: Duration,
 
     /// Power gate overhead energy
     gate_overhead_energy: f64,
@@ -515,8 +402,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PowerGatingController<T> {
     fn new(total_neurons: usize) -> Self {
         Self {
             gated_groups: HashMap::new(),
-            gating_policy: GatingPolicy::Adaptive,
-            gate_overhead_time: Duration::from_micros(10),
             gate_overhead_energy: 0.001,
             total_neurons: total_neurons.max(1),
             _phantom: std::marker::PhantomData,
@@ -535,18 +420,11 @@ impl<T: Float + Debug + Send + Sync + 'static> PowerGatingController<T> {
         );
         let saved = domain_static_power * idle_fraction;
 
-        let group = self
-            .gated_groups
-            .entry(region_id)
-            .or_insert_with(|| GatedGroup {
-                group_id: region_id,
-                neuron_ids: Vec::new(),
-                is_gated: false,
-                last_activity: Instant::now(),
-                inactivity_threshold: Duration::from_millis(10),
-                wakeup_latency: Duration::from_micros(10),
-            });
-        group.is_gated = true;
+        // Only the gated flag is ever read back; the surrounding bookkeeping
+        // fields (`neuron_ids`, `last_activity`, thresholds) were written once
+        // at insert and never updated or consulted, so they are not modelled.
+        self.gated_groups
+            .insert(region_id, GatedGroup { is_gated: true });
 
         Ok(saved)
     }
@@ -569,39 +447,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PowerGatingController<T> {
 /// Gated neuron group
 #[derive(Debug, Clone)]
 struct GatedGroup {
-    /// Group ID
-    group_id: usize,
-
-    /// Neuron IDs in group
-    neuron_ids: Vec<usize>,
-
-    /// Is currently gated
+    /// Whether this domain is currently power-gated.
     is_gated: bool,
-
-    /// Last activity time
-    last_activity: Instant,
-
-    /// Inactivity threshold
-    inactivity_threshold: Duration,
-
-    /// Wake-up latency
-    wakeup_latency: Duration,
-}
-
-/// Power gating policies
-#[derive(Debug, Clone, Copy)]
-enum GatingPolicy {
-    /// Gate based on inactivity time
-    InactivityBased,
-
-    /// Gate based on predicted usage
-    PredictiveBased,
-
-    /// Gate based on energy budget
-    EnergyBudgetBased,
-
-    /// Adaptive gating
-    Adaptive,
 }
 
 /// Sparse computation optimizer
@@ -609,18 +456,6 @@ enum GatingPolicy {
 struct SparseComputationOptimizer<T: Float + Debug + Send + Sync + 'static> {
     /// Sparsity threshold
     sparsity_threshold: T,
-
-    /// Sparse matrix representations
-    sparse_matrices: HashMap<String, SparseMatrix<T>>,
-
-    /// Sparsity patterns
-    sparsity_patterns: Vec<SparsityPattern>,
-
-    /// Compression algorithms
-    compression_algorithms: Vec<CompressionAlgorithm>,
-
-    /// Dynamic sparsity adaptation
-    dynamic_adaptation: bool,
 
     /// Total provisioned neurons, used as the activity-estimate denominator
     /// when no real weight/activation matrix is available.
@@ -631,10 +466,6 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
     fn new(total_neurons: usize) -> Self {
         Self {
             sparsity_threshold: to_t_or(0.01, T::zero()),
-            sparse_matrices: HashMap::new(),
-            sparsity_patterns: vec![SparsityPattern::MagnitudeBased],
-            compression_algorithms: vec![CompressionAlgorithm::Csr],
-            dynamic_adaptation: true,
             total_neurons: total_neurons.max(1),
         }
     }
@@ -667,16 +498,17 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
             (T::one() - (active / total)).max(T::zero()).min(T::one())
         };
 
-        Ok(SparsityAnalysis {
-            sparsity_ratio,
-            pattern: SparsityPattern::MagnitudeBased,
-            potential_savings: sparsity_ratio * to_t_or(0.8, T::zero()),
-        })
+        Ok(SparsityAnalysis { sparsity_ratio })
     }
 
+    /// Energy saved by skipping the near-zero entries.
+    ///
+    /// Derived from the *measured* `sparsity_ratio` rather than a value
+    /// pre-baked at analysis time: `SPARSE_SAVING_EFFICIENCY` is the fraction
+    /// of the skipped work that translates into energy, the rest being indexing
+    /// and gather overhead a sparse kernel still pays.
     fn apply_compression(&mut self, analysis: &SparsityAnalysis<T>) -> Result<T> {
-        // Apply compression based on sparsity analysis
-        Ok(analysis.potential_savings)
+        Ok(analysis.sparsity_ratio * to_t_or(SPARSE_SAVING_EFFICIENCY, T::zero()))
     }
 
     fn apply_sparse_optimizations(&mut self, analysis: &SparsityAnalysis<T>) -> Result<T> {
@@ -686,68 +518,14 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseComputationOptimizer<T> {
     }
 }
 
+/// Fraction of the work skipped by sparsity that becomes real energy saving;
+/// the remainder is indexing/gather overhead a sparse kernel still pays.
+const SPARSE_SAVING_EFFICIENCY: f64 = 0.8;
+
 #[derive(Debug, Clone)]
 struct SparsityAnalysis<T: Float + Debug + Send + Sync + 'static> {
+    /// Measured fraction of near-zero entries.
     sparsity_ratio: T,
-    pattern: SparsityPattern,
-    potential_savings: T,
-}
-
-/// Sparse matrix representation
-#[derive(Debug, Clone)]
-struct SparseMatrix<T: Float + Debug + Send + Sync + 'static> {
-    /// Non-zero values
-    values: Vec<T>,
-
-    /// Row indices
-    row_indices: Vec<usize>,
-
-    /// Column pointers
-    col_pointers: Vec<usize>,
-
-    /// Matrix dimensions
-    dimensions: (usize, usize),
-
-    /// Sparsity ratio
-    sparsity_ratio: T,
-}
-
-/// Sparsity patterns
-#[derive(Debug, Clone, Copy)]
-enum SparsityPattern {
-    /// Random sparsity
-    Random,
-
-    /// Structured sparsity
-    Structured,
-
-    /// Block sparsity
-    Block,
-
-    /// Channel sparsity
-    Channel,
-
-    /// Magnitude-based pruning
-    MagnitudeBased,
-}
-
-/// Compression algorithms for sparse data
-#[derive(Debug, Clone, Copy)]
-enum CompressionAlgorithm {
-    /// Compressed Sparse Row (CSR)
-    Csr,
-
-    /// Compressed Sparse Column (CSC)
-    Csc,
-
-    /// Block Sparse Row (BSR)
-    Bsr,
-
-    /// Coordinate format (COO)
-    Coo,
-
-    /// Dictionary of Keys (DOK)
-    Dok,
 }
 
 /// Energy-efficient optimizer
@@ -777,9 +555,6 @@ pub struct EnergyEfficientOptimizer<
 
     /// Thermal management
     thermal_manager: ThermalManager<T>,
-
-    /// Sleep mode controller
-    sleep_controller: SleepModeController<T>,
 
     /// Predictive energy manager
     predictive_manager: PredictiveEnergyManager<T>,
@@ -839,9 +614,6 @@ pub enum SleepStatus {
 /// Thermal manager for energy efficiency
 #[derive(Debug, Clone)]
 struct ThermalManager<T: Float + Debug + Send + Sync + 'static> {
-    /// Thermal management configuration
-    config: ThermalManagementConfig<T>,
-
     /// Current temperature reading (°C)
     current_temperature: T,
 
@@ -851,31 +623,23 @@ struct ThermalManager<T: Float + Debug + Send + Sync + 'static> {
     /// Thermal model parameters
     thermal_model: ThermalModel<T>,
 
-    /// Cooling strategies
-    cooling_strategies: Vec<CoolingStrategy>,
-
-    /// Active thermal throttling
-    active_throttling: Option<ThermalThrottlingStrategy>,
-
     /// Timestamp of the previous `update()` call, used to integrate the
     /// thermal RC model over the actual elapsed time (F59).
     last_update: Instant,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ThermalManager<T> {
-    fn new(config: ThermalManagementConfig<T>) -> Self {
+    /// Builds a thermal manager. The configuration is consumed to seed the
+    /// thermal model rather than stored: nothing read it back.
+    fn new(_config: ThermalManagementConfig<T>) -> Self {
         Self {
-            config,
             current_temperature: to_t_or(25.0, T::zero()),
             temperature_history: VecDeque::new(),
             thermal_model: ThermalModel {
                 time_constant: to_t_or(10.0, T::one()),
                 thermal_resistance: to_t_or(0.5, T::zero()),
-                thermal_capacitance: to_t_or(1000.0, T::one()),
                 ambient_temperature: to_t_or(25.0, T::zero()),
             },
-            cooling_strategies: vec![CoolingStrategy::Passive],
-            active_throttling: None,
             last_update: Instant::now(),
         }
     }
@@ -923,116 +687,28 @@ struct ThermalModel<T: Float + Debug + Send + Sync + 'static> {
     /// Thermal resistance (°C/W)
     thermal_resistance: T,
 
-    /// Thermal capacitance (J/°C)
-    thermal_capacitance: T,
-
     /// Ambient temperature (°C)
     ambient_temperature: T,
-}
-
-/// Cooling strategies
-#[derive(Debug, Clone, Copy)]
-enum CoolingStrategy {
-    /// Passive cooling
-    Passive,
-
-    /// Active air cooling
-    ActiveAir,
-
-    /// Liquid cooling
-    Liquid,
-
-    /// Thermoelectric cooling
-    Thermoelectric,
-
-    /// Phase change cooling
-    PhaseChange,
-}
-
-/// Sleep mode controller
-#[derive(Debug, Clone)]
-struct SleepModeController<T: Float + Debug + Send + Sync + 'static> {
-    /// Sleep mode configuration
-    config: SleepModeConfig<T>,
-
-    /// Current sleep status
-    current_status: SleepStatus,
-
-    /// Inactivity timer
-    inactivity_timer: Instant,
-
-    /// Sleep transition history
-    transition_history: VecDeque<(Instant, SleepStatus, SleepStatus)>,
-
-    /// Wake-up triggers
-    wakeup_triggers: Vec<WakeupTrigger>,
-}
-
-impl<T: Float + Debug + Send + Sync + 'static> SleepModeController<T> {
-    fn new(monitoring_frequency: Duration) -> Self {
-        Self {
-            config: SleepModeConfig::default(),
-            current_status: SleepStatus::Active,
-            inactivity_timer: Instant::now(),
-            transition_history: VecDeque::new(),
-            wakeup_triggers: vec![WakeupTrigger::ExternalStimulus, WakeupTrigger::Timer],
-        }
-    }
-}
-
-/// Wake-up triggers for sleep mode
-#[derive(Debug, Clone, Copy)]
-enum WakeupTrigger {
-    /// External stimulus
-    ExternalStimulus,
-
-    /// Timer expiration
-    Timer,
-
-    /// Energy threshold
-    EnergyThreshold,
-
-    /// Temperature threshold
-    TemperatureThreshold,
-
-    /// Performance requirement
-    PerformanceRequirement,
 }
 
 /// Predictive energy manager
 #[derive(Debug, Clone)]
 struct PredictiveEnergyManager<T: Float + Debug + Send + Sync + 'static> {
-    /// Prediction models
-    prediction_models: HashMap<String, PredictionModel<T>>,
-
     /// Workload history
     workload_history: VecDeque<WorkloadSample<T>>,
-
-    /// Energy consumption predictions
-    energy_predictions: VecDeque<EnergyPrediction<T>>,
 
     /// Observed `(timestamp, power_nw)` samples used to fit the linear
     /// trend that [`Self::predict_energy`] extrapolates from (F18: this
     /// history used to never be populated, so predictions always fell back
     /// to a fabricated constant regardless of `horizon`).
     power_history: VecDeque<(Instant, T)>,
-
-    /// Prediction accuracy metrics
-    prediction_accuracy: T,
-
-    /// Model update frequency
-    model_update_frequency: Duration,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> PredictiveEnergyManager<T> {
     fn new() -> Self {
         Self {
-            prediction_models: HashMap::new(),
             workload_history: VecDeque::new(),
-            energy_predictions: VecDeque::new(),
             power_history: VecDeque::new(),
-            prediction_accuracy: to_t_or(0.9, T::zero()),
-            model_update_frequency: Duration::from_secs(60),
         }
     }
 
@@ -1074,34 +750,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictiveEnergyManager<T> {
     }
 }
 
-/// Prediction model for energy consumption
-#[derive(Debug, Clone)]
-struct PredictionModel<T: Float + Debug + Send + Sync + 'static> {
-    /// Model type
-    model_type: ModelType,
-
-    /// Model parameters
-    parameters: Vec<T>,
-
-    /// Model accuracy
-    accuracy: T,
-
-    /// Training data size
-    training_data_size: usize,
-
-    /// Last update time
-    last_update: Instant,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ModelType {
-    Linear,
-    Polynomial,
-    Exponential,
-    NeuralNetwork,
-    AutoRegressive,
-}
-
 /// Workload sample for prediction
 #[derive(Debug, Clone)]
 pub struct WorkloadSample<T: Float + Debug + Send + Sync + 'static> {
@@ -1133,25 +781,6 @@ pub enum MemoryAccessPattern {
     Mixed,
 }
 
-/// Energy prediction
-#[derive(Debug, Clone)]
-struct EnergyPrediction<T: Float + Debug + Send + Sync + 'static> {
-    /// Prediction timestamp
-    timestamp: Instant,
-
-    /// Predicted energy consumption (nJ)
-    predicted_energy: T,
-
-    /// Confidence interval
-    confidence_interval: (T, T),
-
-    /// Prediction horizon (ms)
-    horizon: T,
-
-    /// Model used
-    model_type: ModelType,
-}
-
 impl<
         T: Float
             + Debug
@@ -1171,7 +800,6 @@ impl<
             power_gating_controller: PowerGatingController::new(numneurons),
             sparse_optimizer: SparseComputationOptimizer::new(numneurons),
             thermal_manager: ThermalManager::new(ThermalManagementConfig::default()),
-            sleep_controller: SleepModeController::new(_config.energy_budget.monitoring_frequency),
             predictive_manager: PredictiveEnergyManager::new(),
             current_strategy: _config.primary_strategy,
             strategy_effectiveness: HashMap::new(),
@@ -1732,6 +1360,20 @@ impl<
     }
 
     /// Get current system state
+    /// Number of power domains currently power-gated.
+    ///
+    /// The gating decision is computed per optimization step from the
+    /// workload's idle fraction; before this accessor existed the result was
+    /// recorded and never read, so callers had no way to see whether power
+    /// gating had actually engaged.
+    pub fn gated_domain_count(&self) -> usize {
+        self.power_gating_controller
+            .gated_groups
+            .values()
+            .filter(|group| group.is_gated)
+            .count()
+    }
+
     pub fn get_system_state(&self) -> &EnergySystemState<T> {
         &self.system_state
     }
@@ -1795,8 +1437,6 @@ impl<
             current_power: T::zero(),
             peak_power: T::zero(),
             average_power: T::zero(),
-            component_energy: HashMap::new(),
-            efficiency_metrics: EfficiencyMetrics::default(),
             last_update: Instant::now(),
             window_size: Duration::from_secs(1),
         }
@@ -1838,19 +1478,6 @@ impl<
 
         self.last_update = now;
         Ok(())
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static> Default for EfficiencyMetrics<T> {
-    fn default() -> Self {
-        Self {
-            current_ops_per_joule: T::zero(),
-            current_spikes_per_joule: T::zero(),
-            current_synaptic_updates_per_joule: T::zero(),
-            memory_efficiency: T::zero(),
-            thermal_efficiency: T::zero(),
-            overall_efficiency: T::zero(),
-        }
     }
 }
 

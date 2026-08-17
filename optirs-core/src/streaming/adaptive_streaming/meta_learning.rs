@@ -6,12 +6,17 @@
 
 use super::config::*;
 use super::meta_bandit::{arm_index_for, arm_table, state_features, BanditArm, FeatureScaler};
+use super::meta_transfer::TransferLearning;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
-use super::performance::{PerformanceSnapshot, PerformanceTracker};
+use super::performance::PerformanceTracker;
 
+pub use super::meta_transfer::{
+    DomainAdaptation, TransferMetrics, TransferStrategy, MIN_TRANSFER_SIMILARITY,
+};
+
+use crate::utils::{scalar_or, try_scalar_str};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
-use serde::{Deserialize, Serialize};
+use scirs2_core::random::thread_rng;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -67,8 +72,9 @@ pub struct ExperienceBuffer<A: Float + Send + Sync> {
     priority_queue: VecDeque<(MetaExperience<A>, A)>,
     /// Experience importance sampling
     importance_weights: HashMap<usize, A>,
-    /// Experience diversity tracker
-    diversity_tracker: ExperienceDiversityTracker<A>,
+    /// Maximum retained experiences, from
+    /// `MetaLearningConfig::experience_buffer_size`.
+    capacity: usize,
 }
 
 /// Meta-learning experience representation
@@ -158,73 +164,8 @@ pub enum EpisodeOutcome {
     CriticalFailure,
 }
 
-/// Experience diversity tracking
-pub struct ExperienceDiversityTracker<A: Float + Send + Sync> {
-    /// State space clustering
-    state_clusters: Vec<StateCluster<A>>,
-    /// Action space clustering
-    action_clusters: Vec<ActionCluster<A>>,
-    /// Diversity metrics
-    diversity_metrics: DiversityMetrics<A>,
-    /// Novelty detection
-    novelty_detector: NoveltyDetector<A>,
-}
-
-/// State clustering for diversity
-#[derive(Debug, Clone)]
-pub struct StateCluster<A: Float + Send + Sync> {
-    /// Cluster center
-    pub center: MetaState<A>,
-    /// Cluster members
-    pub members: Vec<usize>,
-    /// Cluster radius
-    pub radius: A,
-    /// Last update time
-    pub last_update: Instant,
-}
-
-/// Action clustering for diversity
-#[derive(Debug, Clone)]
-pub struct ActionCluster<A: Float + Send + Sync> {
-    /// Cluster center
-    pub center: MetaAction<A>,
-    /// Cluster members
-    pub members: Vec<usize>,
-    /// Cluster effectiveness
-    pub effectiveness: A,
-    /// Usage frequency
-    pub usage_frequency: usize,
-}
-
-/// Diversity metrics for experience management
-#[derive(Debug, Clone)]
-pub struct DiversityMetrics<A: Float + Send + Sync> {
-    /// State space coverage
-    pub state_coverage: A,
-    /// Action space coverage
-    pub action_coverage: A,
-    /// Experience entropy
-    pub experience_entropy: A,
-    /// Temporal diversity
-    pub temporal_diversity: A,
-    /// Outcome diversity
-    pub outcome_diversity: A,
-}
-
-/// Novelty detection for new experiences
-pub struct NoveltyDetector<A: Float + Send + Sync> {
-    /// Reference experiences for comparison
-    reference_experiences: VecDeque<MetaExperience<A>>,
-    /// Novelty threshold
-    novelty_threshold: A,
-    /// Feature importance weights
-    feature_weights: Vec<A>,
-}
-
 /// Meta-model for decision making
 pub struct MetaModel<A: Float + Send + Sync> {
-    /// Model type
-    model_type: MetaModelType,
     /// Model parameters
     parameters: MetaModelParameters<A>,
     /// Training history
@@ -329,8 +270,6 @@ pub struct StrategySelector<A: Float + Send + Sync> {
     selection_policy: SelectionPolicy,
     /// Exploration parameters
     exploration_params: ExplorationParams<A>,
-    /// Context-based selection
-    context_selector: ContextBasedSelector<A>,
 }
 
 /// Adaptation strategy representation
@@ -474,120 +413,12 @@ pub struct ExplorationParams<A: Float + Send + Sync> {
     pub novelty_weight: A,
 }
 
-/// Context-based strategy selector
-pub struct ContextBasedSelector<A: Float + Send + Sync> {
-    /// Context features
-    context_features: Vec<ContextFeature<A>>,
-    /// Context clustering
-    context_clusters: Vec<ContextCluster<A>>,
-    /// Strategy mappings per context
-    context_strategies: HashMap<String, Vec<String>>,
-    /// Context recognition model
-    context_model: ContextModel<A>,
-}
-
-/// Context feature for strategy selection
-#[derive(Debug, Clone)]
-pub struct ContextFeature<A: Float + Send + Sync> {
-    /// Feature name
-    pub name: String,
-    /// Feature value
-    pub value: A,
-    /// Feature importance
-    pub importance: A,
-    /// Feature stability
-    pub stability: A,
-}
-
-/// Context clustering for similar situations
-#[derive(Debug, Clone)]
-pub struct ContextCluster<A: Float + Send + Sync> {
-    /// Cluster ID
-    pub id: String,
-    /// Cluster center features
-    pub center: Vec<A>,
-    /// Cluster radius
-    pub radius: A,
-    /// Associated strategies
-    pub strategies: Vec<String>,
-    /// Cluster performance
-    pub performance: A,
-}
-
-/// Context recognition model
-pub struct ContextModel<A: Float + Send + Sync> {
-    /// Model parameters
-    parameters: Vec<A>,
-    /// Feature weights
-    feature_weights: Vec<A>,
-    /// Classification threshold
-    threshold: A,
-    /// Model accuracy
-    accuracy: A,
-}
-
-/// Transfer learning system
-pub struct TransferLearning<A: Float + Send + Sync> {
-    /// Source domain experiences
-    source_experiences: HashMap<String, Vec<MetaExperience<A>>>,
-    /// Transfer learning strategies
-    transfer_strategies: Vec<TransferStrategy>,
-    /// Domain adaptation methods
-    domain_adaptation: DomainAdaptation<A>,
-    /// Transfer learning metrics
-    transfer_metrics: TransferMetrics<A>,
-}
-
-/// Transfer learning strategies
-#[derive(Debug, Clone)]
-pub enum TransferStrategy {
-    /// Direct parameter transfer
-    ParameterTransfer,
-    /// Feature transfer
-    FeatureTransfer,
-    /// Instance transfer
-    InstanceTransfer,
-    /// Relational transfer
-    RelationalTransfer,
-    /// Meta-transfer learning
-    MetaTransfer,
-}
-
-/// Domain adaptation methods
-pub struct DomainAdaptation<A: Float + Send + Sync> {
-    /// Source domain characteristics
-    source_characteristics: Vec<A>,
-    /// Target domain characteristics
-    target_characteristics: Vec<A>,
-    /// Adaptation weights
-    adaptation_weights: Vec<A>,
-    /// Domain similarity measure
-    domain_similarity: A,
-}
-
-/// Transfer learning metrics
-#[derive(Debug, Clone)]
-pub struct TransferMetrics<A: Float + Send + Sync> {
-    /// Transfer success rate
-    pub success_rate: A,
-    /// Improvement from transfer
-    pub improvement: A,
-    /// Transfer efficiency
-    pub efficiency: A,
-    /// Negative transfer incidents
-    pub negative_transfer_count: usize,
-}
-
 /// Learning rate adaptation system
 pub struct LearningRateAdapter<A: Float + Send + Sync> {
     /// Current learning rate
     current_rate: A,
     /// Learning rate history
     rate_history: VecDeque<A>,
-    /// Performance feedback
-    performance_feedback: VecDeque<A>,
-    /// Adaptation strategy
-    adaptation_strategy: LearningRateStrategy,
     /// Rate bounds
     min_rate: A,
     max_rate: A,
@@ -640,7 +471,10 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     pub fn new(config: &StreamingConfig) -> Result<Self, String> {
         let meta_config = config.meta_learning_config.clone();
 
-        let experience_buffer = ExperienceBuffer::new(&meta_config.replay_config);
+        let experience_buffer = ExperienceBuffer::new(
+            &meta_config.replay_config,
+            meta_config.experience_buffer_size,
+        );
         let meta_model = MetaModel::new(meta_config.model_complexity.clone())?;
         let strategy_selector = StrategySelector::new();
         let transfer_learning = TransferLearning::new();
@@ -692,6 +526,9 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         action: MetaAction<A>,
         reward: A,
     ) -> Result<(), String> {
+        // `state`/`action` are moved into the experience below, so the priority
+        // is computed first.
+        let priority = self.calculate_experience_priority(&state, &action, reward);
         let experience = MetaExperience {
             id: self.generate_experience_id(),
             state,
@@ -700,7 +537,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
             next_state: None, // Will be filled in next update
             timestamp: Instant::now(),
             episode_context: self.create_episode_context(reward)?,
-            priority: self.calculate_experience_priority(reward),
+            priority,
             replay_count: 0,
         };
 
@@ -716,12 +553,17 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         // Update statistics
         self.statistics.total_experiences += 1;
 
-        // Trigger learning if enough experiences collected
-        if self
-            .statistics
-            .total_experiences
-            .is_multiple_of(self.config.update_frequency)
-        {
+        // Trigger learning if enough experiences collected. Two independent
+        // cadences apply (CF1): `update_frequency` is the meta-model's own
+        // training interval, and `ExperienceReplayConfig::replay_frequency` is
+        // how often stored experience is replayed. `replay_frequency` had no
+        // reader at all, so replay silently inherited `update_frequency`.
+        let experiences = self.statistics.total_experiences;
+        let update_due = self.config.update_frequency > 0
+            && experiences.is_multiple_of(self.config.update_frequency);
+        let replay_due = self.config.replay_config.replay_frequency > 0
+            && experiences.is_multiple_of(self.config.replay_config.replay_frequency);
+        if update_due || replay_due {
             self.trigger_learning()?;
         }
 
@@ -774,25 +616,168 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     }
 
     /// Calculates priority for experience replay
-    fn calculate_experience_priority(&self, reward: A) -> A {
-        // Higher priority for experiences with extreme rewards (positive or negative)
-        let abs_reward = reward.abs();
-        if abs_reward > A::from(0.8).expect("unwrap failed") {
-            A::from(1.0).expect("unwrap failed")
-        } else {
-            abs_reward
+    fn calculate_experience_priority(
+        &self,
+        state: &MetaState<A>,
+        action: &MetaAction<A>,
+        reward: A,
+    ) -> A {
+        // Every branch returns a strictly positive priority: a zero priority
+        // would make the experience unsamplable under prioritized replay and
+        // would break the importance-sampling normalisation.
+        let floor = scalar_or(1e-6, A::zero());
+        let priority = match self.config.replay_config.priority_method {
+            // Temporal-difference error: how wrong the meta-model's current
+            // value estimate for this state/action was. This is the canonical
+            // PER priority and is only available because the model can score
+            // the pair it just acted on.
+            PriorityMethod::TDError => {
+                match self.meta_model.estimate_reward(state, action) {
+                    Some(predicted) => (reward - predicted).abs(),
+                    // No estimate yet (untrained arm): treat it as maximally
+                    // surprising so it gets replayed, which is what PER does
+                    // for unvisited transitions.
+                    None => A::one(),
+                }
+            }
+            // Surprise relative to the rewards seen so far: |r - mean| in units
+            // of the running average magnitude.
+            PriorityMethod::Surprise => {
+                let mean = self.statistics.avg_reward_per_episode;
+                let scale = mean.abs().max(A::one());
+                (reward - mean).abs() / scale
+            }
+            // Magnitude of the adaptation that was actually applied.
+            PriorityMethod::GradientMagnitude => action
+                .adaptation_magnitudes
+                .iter()
+                .fold(A::zero(), |acc, m| acc + m.abs()),
+            // Improvement over the best episode reward observed so far.
+            PriorityMethod::LossImprovement => {
+                (reward - self.statistics.best_episode_reward).max(A::zero())
+            }
+            // Uniform random priority: the PER ablation baseline.
+            PriorityMethod::Random => scalar_or(thread_rng().gen_range(0.0..1.0), A::one()),
+        };
+        priority.max(floor)
+    }
+
+    /// Test-only: records one synthetic experience so buffer bounds can be
+    /// exercised without standing up a whole optimizer.
+    #[cfg(test)]
+    pub(crate) fn record_probe_experience_for_test(&mut self, reward: A) -> Result<(), String> {
+        let state = MetaState {
+            performance_metrics: vec![reward],
+            resource_state: vec![A::one()],
+            drift_indicators: vec![A::zero()],
+            adaptation_history: 0,
+            timestamp: Instant::now(),
+        };
+        let action = MetaAction {
+            adaptation_magnitudes: vec![reward],
+            adaptation_types: vec![AdaptationType::LearningRate],
+            learning_rate_change: reward,
+            buffer_size_change: A::zero(),
+            timestamp: Instant::now(),
+        };
+        self.update_experience(state, action, reward)
+    }
+
+    /// Test-only count of retained experiences.
+    #[cfg(test)]
+    pub(crate) fn experience_count_for_test(&self) -> usize {
+        self.experience_buffer.experiences.len()
+    }
+
+    /// Characteristic vector describing the domain this learner is currently
+    /// training on: the reported resource state followed by the drift
+    /// indicators, i.e. exactly the context signals the owning optimizer
+    /// publishes through [`Self::update_context_signals`].
+    fn target_domain_characteristics(&self) -> Vec<A> {
+        let mut characteristics = self.context_resource_state.clone();
+        characteristics.extend(self.context_drift_indicators.iter().copied());
+        characteristics
+    }
+
+    /// Registers a source domain whose experiences may be replayed into this
+    /// learner when transfer learning is enabled.
+    ///
+    /// Returns an error when `MetaLearningConfig::enable_transfer_learning` is
+    /// off, rather than accepting the source and never using it (CF1: that flag
+    /// previously had no reader at all, so transfer learning was neither on nor
+    /// off — it simply did not exist).
+    pub fn register_transfer_source(
+        &mut self,
+        source_id: String,
+        experiences: Vec<MetaExperience<A>>,
+        source_characteristics: Vec<A>,
+    ) -> Result<(), String> {
+        if !self.config.enable_transfer_learning {
+            return Err(
+                "MetaLearningConfig::enable_transfer_learning is disabled, so no transfer \
+                 source can be registered"
+                    .to_string(),
+            );
         }
+        self.transfer_learning
+            .register_source(source_id, experiences, source_characteristics);
+        Ok(())
+    }
+
+    /// Measured transfer-learning outcomes, or `None` when transfer learning is
+    /// disabled.
+    pub fn transfer_metrics(&self) -> Option<&TransferMetrics<A>> {
+        self.config
+            .enable_transfer_learning
+            .then(|| self.transfer_learning.metrics())
     }
 
     /// Triggers meta-learning update
     fn trigger_learning(&mut self) -> Result<(), String> {
         // Sample experiences for training
-        let training_batch = self
+        let mut training_batch = self
             .experience_buffer
             .sample_batch(self.config.replay_config.batch_size)?;
 
-        // Train meta-model
-        self.meta_model.train_on_batch(&training_batch)?;
+        // Augment with similarity-weighted source-domain experiences when
+        // transfer learning is enabled and a source has been registered (CF1).
+        if self.config.enable_transfer_learning && self.transfer_learning.source_domain_count() > 0
+        {
+            let reward_before = self.meta_model.performance_metrics.prediction_accuracy;
+            let target_characteristics = self.target_domain_characteristics();
+            let transferred = self.transfer_learning.select_transfer_batch(
+                target_characteristics,
+                self.config.replay_config.batch_size,
+            );
+            if !transferred.is_empty() {
+                training_batch.extend(transferred);
+                self.meta_model.train_on_batch(&training_batch)?;
+                // fall through to the weighted pass below for the local batch
+                let reward_after = self.meta_model.performance_metrics.prediction_accuracy;
+                self.transfer_learning
+                    .record_transfer_outcome(reward_before, reward_after);
+                self.statistics.transfer_success_rate = self
+                    .transfer_learning
+                    .metrics()
+                    .success_rate
+                    .unwrap_or_else(A::zero);
+            }
+        }
+
+        // Train meta-model, applying the importance-sampling weights recorded by
+        // the sampling step above when the correction is enabled.
+        let weights: HashMap<u64, A> = training_batch
+            .iter()
+            .filter_map(|experience| {
+                self.experience_buffer
+                    .importance_weight(experience.id)
+                    .map(|weight| (experience.id, weight))
+            })
+            .collect();
+        self.meta_model
+            .train_on_weighted_batch(&training_batch, |id| {
+                weights.get(&id).copied().unwrap_or_else(A::one)
+            })?;
 
         // Update strategy selection
         self.strategy_selector
@@ -832,14 +817,24 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         Ok(())
     }
 
-    /// Recommends adaptations based on current state
+    /// Recommends adaptations based on current state.
+    ///
+    /// `_current_data` is accepted for signature stability but is not read: the
+    /// meta-state the bandit consumes is `[performance, resource, drift]` with a
+    /// layout the feature scaler in [`super::meta_bandit`] is fitted against,
+    /// and per-batch data characteristics have no slot in it. The owning
+    /// optimizer already derives its data statistics separately
+    /// (`compute_data_statistics`), and resource/drift signals reach the
+    /// meta-learner through [`Self::update_context_signals`]. Feeding data
+    /// characteristics into the bandit would require widening `MetaState` and
+    /// refitting the scaler, which is a design change rather than a wiring fix.
     pub fn recommend_adaptations(
         &mut self,
-        current_data: &[StreamingDataPoint<A>],
+        _current_data: &[StreamingDataPoint<A>],
         performance_tracker: &PerformanceTracker<A>,
     ) -> Result<Vec<Adaptation<A>>, String> {
         // Extract current meta-state
-        let current_state = self.extract_meta_state(current_data, performance_tracker)?;
+        let current_state = self.extract_meta_state(performance_tracker)?;
 
         // Use meta-model to predict best action
         let predicted_action = self.meta_model.predict_action(&current_state)?;
@@ -855,9 +850,12 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     }
 
     /// Extracts meta-state from current situation
+    /// Deliberately takes no data batch: `MetaState`'s feature layout
+    /// (performance, resource and drift signals) is what the bandit's feature
+    /// scaler is fitted against and has no slot for per-batch data
+    /// characteristics, so a batch argument could only be discarded.
     fn extract_meta_state(
         &self,
-        current_data: &[StreamingDataPoint<A>],
         performance_tracker: &PerformanceTracker<A>,
     ) -> Result<MetaState<A>, String> {
         // Get recent performance
@@ -897,7 +895,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
 
         // Generate adaptations based on predicted action
         for (i, &magnitude) in predicted_action.adaptation_magnitudes.iter().enumerate() {
-            if magnitude.abs() > A::from(0.05).expect("unwrap failed") {
+            if magnitude.abs() > try_scalar_str::<A, _>(0.05)? {
                 // Minimum threshold
                 let adaptation_type = if i < predicted_action.adaptation_types.len() {
                     predicted_action.adaptation_types[i].clone()
@@ -910,7 +908,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
                     magnitude,
                     target_component: "meta_learner".to_string(),
                     parameters: std::collections::HashMap::new(),
-                    priority: if magnitude.abs() > A::from(0.3).expect("unwrap failed") {
+                    priority: if magnitude.abs() > try_scalar_str::<A, _>(0.3)? {
                         AdaptationPriority::High
                     } else {
                         AdaptationPriority::Normal
@@ -972,21 +970,36 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     }
 }
 
+/// Exponent `beta` of the prioritized-replay importance-sampling correction
+/// (Schaul et al., "Prioritized Experience Replay", ICLR 2016). A full
+/// annealing schedule needs a training-progress signal the buffer does not
+/// have, so the fully-corrected value is used.
+const IMPORTANCE_SAMPLING_BETA: f64 = 1.0;
+
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer<A> {
-    fn new(config: &ExperienceReplayConfig) -> Self {
+    /// `capacity` comes from `MetaLearningConfig::experience_buffer_size` (CF1).
+    /// Both the main buffer and the priority queue used to be hardcoded to
+    /// 10 000 / 1 000 entries, so configuring a 1 000-experience buffer had no
+    /// effect whatsoever.
+    fn new(config: &ExperienceReplayConfig, capacity: usize) -> Self {
+        let capacity = capacity.max(1);
         Self {
             config: config.clone(),
-            experiences: VecDeque::with_capacity(10000),
+            experiences: VecDeque::with_capacity(capacity.min(64 * 1024)),
             priority_queue: VecDeque::new(),
             importance_weights: HashMap::new(),
-            diversity_tracker: ExperienceDiversityTracker::new(),
+            capacity,
         }
     }
 
     fn add_experience(&mut self, experience: MetaExperience<A>) -> Result<(), String> {
-        // Add to main buffer
-        if self.experiences.len() >= 10000 {
-            self.experiences.pop_front();
+        // Add to main buffer, bounded by the configured capacity (CF1).
+        while self.experiences.len() >= self.capacity {
+            if let Some(evicted) = self.experiences.pop_front() {
+                self.importance_weights.remove(&(evicted.id as usize));
+            } else {
+                break;
+            }
         }
         self.experiences.push_back(experience.clone());
 
@@ -995,18 +1008,71 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer
             let priority = experience.priority;
             self.priority_queue.push_back((experience, priority));
 
-            // Sort by priority
+            // Highest priority first.
             self.priority_queue
                 .make_contiguous()
-                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                .sort_by(|a, b| crate::utils::total_order(&b.1, &a.1));
 
-            // Limit priority queue size
-            if self.priority_queue.len() > 1000 {
-                self.priority_queue.pop_front();
+            // The priority queue is a view over the buffer, so it is bounded by
+            // the same configured capacity rather than a separate constant.
+            while self.priority_queue.len() > self.capacity {
+                self.priority_queue.pop_back();
             }
         }
 
         Ok(())
+    }
+
+    /// Importance-sampling weight for a sampled experience under prioritized
+    /// replay: `w_i = (1 / (N * P(i)))^beta`, normalised by the largest weight
+    /// in the batch so the maximum is 1 and the correction only ever scales
+    /// updates down.
+    ///
+    /// Only computed when `ExperienceReplayConfig::importance_sampling` is set
+    /// (CF1); that field previously had no reader, and `importance_weights` was
+    /// a `#[allow(dead_code)]`-adjacent field nothing ever wrote, so
+    /// prioritized replay ran with its sampling bias entirely uncorrected.
+    fn record_importance_weights(&mut self, batch: &[MetaExperience<A>], total_priority: A) {
+        self.importance_weights.clear();
+        if !self.config.importance_sampling || batch.is_empty() || total_priority <= A::zero() {
+            return;
+        }
+        let n = match A::from(self.experiences.len().max(1)) {
+            Some(n) => n,
+            None => return,
+        };
+        let beta = match A::from(IMPORTANCE_SAMPLING_BETA) {
+            Some(beta) => beta,
+            None => return,
+        };
+
+        let mut raw: Vec<(usize, A)> = Vec::with_capacity(batch.len());
+        let mut max_weight = A::zero();
+        for experience in batch {
+            let probability = experience.priority / total_priority;
+            if probability <= A::zero() {
+                continue;
+            }
+            let weight = (A::one() / (n * probability)).powf(beta);
+            if weight > max_weight {
+                max_weight = weight;
+            }
+            raw.push((experience.id as usize, weight));
+        }
+        if max_weight <= A::zero() {
+            return;
+        }
+        for (id, weight) in raw {
+            self.importance_weights.insert(id, weight / max_weight);
+        }
+    }
+
+    /// Normalised importance-sampling weight recorded for `experience_id` by the
+    /// most recent [`Self::sample_batch`] call, if importance sampling is on.
+    fn importance_weight(&self, experience_id: u64) -> Option<A> {
+        self.importance_weights
+            .get(&(experience_id as usize))
+            .copied()
     }
 
     fn sample_batch(&mut self, batch_size: usize) -> Result<Vec<MetaExperience<A>>, String> {
@@ -1015,6 +1081,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer
         }
 
         let mut batch = Vec::with_capacity(batch_size);
+        let total_priority: A = self.experiences.iter().map(|e| e.priority).sum();
 
         if self.config.enable_prioritized_replay && !self.priority_queue.is_empty() {
             // Sample from priority queue
@@ -1033,34 +1100,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceBuffer
             }
         }
 
+        self.record_importance_weights(&batch, total_priority);
         Ok(batch)
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ExperienceDiversityTracker<A> {
-    fn new() -> Self {
-        Self {
-            state_clusters: Vec::new(),
-            action_clusters: Vec::new(),
-            diversity_metrics: DiversityMetrics {
-                state_coverage: A::zero(),
-                action_coverage: A::zero(),
-                experience_entropy: A::zero(),
-                temporal_diversity: A::zero(),
-                outcome_diversity: A::zero(),
-            },
-            novelty_detector: NoveltyDetector::new(),
-        }
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> NoveltyDetector<A> {
-    fn new() -> Self {
-        Self {
-            reference_experiences: VecDeque::with_capacity(1000),
-            novelty_threshold: A::from(0.5).expect("unwrap failed"),
-            feature_weights: Vec::new(),
-        }
     }
 }
 
@@ -1068,42 +1109,42 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
     fn new(complexity: MetaModelComplexity) -> Result<Self, String> {
         let parameters = match complexity {
             MetaModelComplexity::Low => MetaModelParameters {
-                weights: vec![vec![A::from(0.1).expect("unwrap failed"); 10]; 2],
+                weights: vec![vec![try_scalar_str::<A, _>(0.1)?; 10]; 2],
                 biases: vec![A::zero(); 10],
                 // Normalised-LMS step size (stable for 0 < mu < 2), not an
                 // unnormalised SGD rate.
                 learning_rate: A::from(0.5).unwrap_or_else(A::one),
                 regularization: RegularizationParams {
-                    l1_lambda: A::from(0.001).expect("unwrap failed"),
-                    l2_lambda: A::from(0.001).expect("unwrap failed"),
-                    dropout_rate: A::from(0.1).expect("unwrap failed"),
+                    l1_lambda: try_scalar_str::<A, _>(0.001)?,
+                    l2_lambda: try_scalar_str::<A, _>(0.001)?,
+                    dropout_rate: try_scalar_str::<A, _>(0.1)?,
                     early_stopping_patience: 10,
                 },
                 optimization: OptimizationParams {
-                    momentum: A::from(0.9).expect("unwrap failed"),
-                    beta1: A::from(0.9).expect("unwrap failed"),
-                    beta2: A::from(0.999).expect("unwrap failed"),
-                    epsilon: A::from(1e-8).expect("unwrap failed"),
-                    grad_clip_threshold: A::from(1.0).expect("unwrap failed"),
+                    momentum: try_scalar_str::<A, _>(0.9)?,
+                    beta1: try_scalar_str::<A, _>(0.9)?,
+                    beta2: try_scalar_str::<A, _>(0.999)?,
+                    epsilon: try_scalar_str::<A, _>(1e-8)?,
+                    grad_clip_threshold: try_scalar_str::<A, _>(1.0)?,
                 },
             },
             _ => MetaModelParameters {
-                weights: vec![vec![A::from(0.1).expect("unwrap failed"); 50]; 3],
+                weights: vec![vec![try_scalar_str::<A, _>(0.1)?; 50]; 3],
                 biases: vec![A::zero(); 50],
                 // A larger model gets a more conservative NLMS step size.
                 learning_rate: A::from(0.3).unwrap_or_else(A::one),
                 regularization: RegularizationParams {
-                    l1_lambda: A::from(0.0001).expect("unwrap failed"),
-                    l2_lambda: A::from(0.0001).expect("unwrap failed"),
-                    dropout_rate: A::from(0.2).expect("unwrap failed"),
+                    l1_lambda: try_scalar_str::<A, _>(0.0001)?,
+                    l2_lambda: try_scalar_str::<A, _>(0.0001)?,
+                    dropout_rate: try_scalar_str::<A, _>(0.2)?,
                     early_stopping_patience: 20,
                 },
                 optimization: OptimizationParams {
-                    momentum: A::from(0.9).expect("unwrap failed"),
-                    beta1: A::from(0.9).expect("unwrap failed"),
-                    beta2: A::from(0.999).expect("unwrap failed"),
-                    epsilon: A::from(1e-8).expect("unwrap failed"),
-                    grad_clip_threshold: A::from(1.0).expect("unwrap failed"),
+                    momentum: try_scalar_str::<A, _>(0.9)?,
+                    beta1: try_scalar_str::<A, _>(0.9)?,
+                    beta2: try_scalar_str::<A, _>(0.999)?,
+                    epsilon: try_scalar_str::<A, _>(1e-8)?,
+                    grad_clip_threshold: try_scalar_str::<A, _>(1.0)?,
                 },
             },
         };
@@ -1116,9 +1157,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
             .collect();
 
         Ok(Self {
-            // The model is a linear contextual bandit, so name it honestly
-            // instead of claiming to be a neural network.
-            model_type: MetaModelType::LinearRegression,
             parameters,
             training_history: VecDeque::with_capacity(1000),
             performance_metrics: ModelPerformanceMetrics {
@@ -1150,6 +1188,24 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
     /// reward, and `prediction_accuracy` is measured from the *pre-update*
     /// prediction error — a genuine held-out-by-one-step accuracy.
     fn train_on_batch(&mut self, batch: &[MetaExperience<A>]) -> Result<(), String> {
+        self.train_on_weighted_batch(batch, |_| A::one())
+    }
+
+    /// Train on `batch`, scaling each experience's update by
+    /// `weight_of(experience_id)`.
+    ///
+    /// This is what makes `ExperienceReplayConfig::importance_sampling` real:
+    /// prioritized replay deliberately over-samples high-priority transitions,
+    /// which biases the gradient, and the importance-sampling weight
+    /// `w_i = (1/(N*P(i)))^beta` corrects for exactly that over-sampling
+    /// (Schaul et al., "Prioritized Experience Replay", ICLR 2016). Computing
+    /// the weight without applying it to the update would leave the bias in
+    /// place.
+    fn train_on_weighted_batch(
+        &mut self,
+        batch: &[MetaExperience<A>],
+        weight_of: impl Fn(u64) -> A,
+    ) -> Result<(), String> {
         if batch.is_empty() {
             return Ok(());
         }
@@ -1183,7 +1239,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
             squared_error_total = squared_error_total + error * error;
             scale_total = scale_total + experience.reward.abs();
 
-            let learning_rate = self.parameters.learning_rate;
+            // Importance-sampling correction: scale this transition's step by its
+            // weight (1.0 when the correction is disabled).
+            let learning_rate = self.parameters.learning_rate * weight_of(experience.id);
             let l2 = self.parameters.regularization.l2_lambda;
             self.arms[arm].sgd_step(&features, error, learning_rate, l2);
             self.arms[arm].observe(experience.reward);
@@ -1299,6 +1357,23 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
         })
     }
 
+    /// The model's current value estimate for taking `action` in `state`.
+    ///
+    /// Returns `None` when the action does not map to a known arm or that arm
+    /// has never been trained, so callers can distinguish "no estimate yet" from
+    /// "estimated zero" — the difference matters for the temporal-difference
+    /// replay priority, where an untrained arm must count as maximally
+    /// surprising rather than perfectly predicted.
+    fn estimate_reward(&self, state: &MetaState<A>, action: &MetaAction<A>) -> Option<A> {
+        let index = arm_index_for(action)?;
+        let arm = self.arms.get(index)?;
+        if arm.pulls == 0 {
+            return None;
+        }
+        let features = self.feature_scaler.standardize(&state_features(state));
+        Some(arm.predict(&features))
+    }
+
     /// Mean reward observed across every arm, or zero before any observation.
     fn average_observed_reward(&self) -> A {
         let total_pulls: usize = self.arms.iter().map(|arm| arm.pulls).sum();
@@ -1364,7 +1439,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
                 parameters: HashMap::new(),
                 strategy_type: StrategyType::Conservative,
                 conditions: Vec::new(),
-                expected_outcomes: vec![A::from(0.05).expect("unwrap failed")],
+                expected_outcomes: vec![scalar_or(0.05, A::zero())],
             },
         );
 
@@ -1386,13 +1461,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
             strategy_performance: HashMap::new(),
             selection_policy: SelectionPolicy::EpsilonGreedy { epsilon: 0.1 },
             exploration_params: ExplorationParams {
-                exploration_rate: A::from(0.1).expect("unwrap failed"),
-                exploration_decay: A::from(0.99).expect("unwrap failed"),
-                min_exploration_rate: A::from(0.01).expect("unwrap failed"),
-                curiosity_weight: A::from(0.1).expect("unwrap failed"),
-                novelty_weight: A::from(0.1).expect("unwrap failed"),
+                exploration_rate: scalar_or(0.1, A::zero()),
+                exploration_decay: scalar_or(0.99, A::zero()),
+                min_exploration_rate: scalar_or(0.01, A::zero()),
+                curiosity_weight: scalar_or(0.1, A::zero()),
+                novelty_weight: scalar_or(0.1, A::zero()),
             },
-            context_selector: ContextBasedSelector::new(),
         }
     }
 
@@ -1745,52 +1819,13 @@ const AGGRESSIVE_MAGNITUDE_THRESHOLD: f64 = 0.15;
 /// annealing schedule cannot decay learning to a standstill.
 const NLMS_STEP_FLOOR: f64 = 0.01;
 
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ContextBasedSelector<A> {
-    fn new() -> Self {
-        Self {
-            context_features: Vec::new(),
-            context_clusters: Vec::new(),
-            context_strategies: HashMap::new(),
-            context_model: ContextModel {
-                parameters: Vec::new(),
-                feature_weights: Vec::new(),
-                threshold: A::from(0.5).expect("unwrap failed"),
-                accuracy: A::from(0.5).expect("unwrap failed"),
-            },
-        }
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> TransferLearning<A> {
-    fn new() -> Self {
-        Self {
-            source_experiences: HashMap::new(),
-            transfer_strategies: vec![TransferStrategy::ParameterTransfer],
-            domain_adaptation: DomainAdaptation {
-                source_characteristics: Vec::new(),
-                target_characteristics: Vec::new(),
-                adaptation_weights: Vec::new(),
-                domain_similarity: A::from(0.5).expect("unwrap failed"),
-            },
-            transfer_metrics: TransferMetrics {
-                success_rate: A::from(0.5).expect("unwrap failed"),
-                improvement: A::from(0.1).expect("unwrap failed"),
-                efficiency: A::from(0.7).expect("unwrap failed"),
-                negative_transfer_count: 0,
-            },
-        }
-    }
-}
-
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> LearningRateAdapter<A> {
     fn new(initial_rate: f64) -> Self {
         Self {
-            current_rate: A::from(initial_rate).expect("unwrap failed"),
+            current_rate: scalar_or(initial_rate, A::zero()),
             rate_history: VecDeque::with_capacity(100),
-            performance_feedback: VecDeque::with_capacity(100),
-            adaptation_strategy: LearningRateStrategy::PerformanceBased,
-            min_rate: A::from(1e-6).expect("unwrap failed"),
-            max_rate: A::from(0.1).expect("unwrap failed"),
+            min_rate: scalar_or(1e-6, A::zero()),
+            max_rate: scalar_or(0.1, A::zero()),
         }
     }
 

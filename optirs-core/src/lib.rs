@@ -249,14 +249,6 @@
 //!
 //! licensed under Apache-2.0
 
-#![allow(deprecated)]
-#![allow(unreachable_code)]
-#![allow(unused_mut)]
-#![allow(unused_parens)]
-#![allow(for_loops_over_fallibles)]
-#![allow(unused_attributes)]
-#![allow(missing_docs)]
-
 pub mod adaptive_selection;
 pub mod benchmarking;
 #[cfg(not(target_arch = "wasm32"))]
@@ -374,7 +366,7 @@ pub use plugin::core::{
     PluginInfo,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use plugin::sdk::{BaseOptimizerPlugin, PluginTester};
+pub use plugin::sdk::BaseOptimizerPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub use plugin::{
     OptimizerPlugin, PluginCapabilities, PluginLoader, PluginRegistry, PluginValidationFramework,

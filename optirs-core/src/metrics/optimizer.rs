@@ -2,7 +2,7 @@
 //
 // This module provides the MetricOptimizer which uses metrics to guide optimization.
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 use crate::optimizers::Optimizer;
 #[cfg(feature = "metrics-integration")]
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};

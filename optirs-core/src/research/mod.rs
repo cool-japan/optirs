@@ -712,11 +712,39 @@ impl ResearchProjectManager {
             )));
         }
 
-        let project = ResearchProject::new(name);
+        let mut project = ResearchProject::new(name);
+        // The manager's settings are the defaults every new project inherits.
+        // Until 0.3.2 `settings` was constructed and never read, so
+        // `default_template` selected nothing and there was no way to inspect
+        // or change the manager's configuration at all.
+        if let Some(template) = self.settings.default_template.as_deref() {
+            project.description = format!("Created from template '{template}'");
+        }
+        // Cloud backup at the manager level implies per-project backups, and the
+        // manager's auto-save cadence is the project's backup cadence.
+        if self.settings.enable_cloud_backup {
+            project.settings.enable_backups = true;
+            project.settings.backup_frequency_hours =
+                (self.settings.auto_save_frequency.max(1) / 60).max(1);
+        }
         self.projects.insert(name.to_string(), project);
         self.save_project(name)?;
 
-        Ok(self.projects.get_mut(name).expect("unwrap failed"))
+        self.projects.get_mut(name).ok_or_else(|| {
+            OptimError::InvalidState(format!(
+                "project '{name}' vanished between insertion and lookup"
+            ))
+        })
+    }
+
+    /// The manager's settings.
+    pub fn settings(&self) -> &ManagerSettings {
+        &self.settings
+    }
+
+    /// Replace the manager's settings. Newly created projects inherit them.
+    pub fn set_settings(&mut self, settings: ManagerSettings) {
+        self.settings = settings;
     }
 
     /// Load an existing project
@@ -735,7 +763,11 @@ impl ResearchProjectManager {
             }
         }
 
-        Ok(self.projects.get_mut(name).expect("unwrap failed"))
+        self.projects.get_mut(name).ok_or_else(|| {
+            OptimError::InvalidState(format!(
+                "project '{name}' was loaded but is not present in the project map"
+            ))
+        })
     }
 
     /// Save a project to disk

@@ -8,9 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
-use super::functions::{
-    AggregationFunction, MetricFilter, NotificationChannel, PerformanceAnalyzer, StorageBackend,
-};
+use super::functions::{MetricFilter, NotificationChannel, PerformanceAnalyzer, StorageBackend};
 
 /// Adaptation constraints
 #[derive(Debug, Clone)]
@@ -194,37 +192,6 @@ pub struct StorageStatistics<T: Float + Debug + Send + Sync + 'static> {
     /// Query errors
     pub query_errors: usize,
 }
-/// Performance dashboard for visualization
-#[derive(Debug)]
-pub struct PerformanceDashboard<T: Float + Debug + Send + Sync + 'static> {
-    /// Dashboard widgets
-    widgets: Vec<DashboardWidget<T>>,
-    /// Dashboard layout
-    layout: DashboardLayout,
-    /// Update frequency
-    update_frequency: Duration,
-    /// Dashboard configuration
-    config: DashboardConfiguration<T>,
-}
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceDashboard<T> {
-    pub fn new(_config: DashboardConfiguration<T>) -> Result<Self> {
-        Ok(Self {
-            widgets: Vec::new(),
-            layout: DashboardLayout {
-                layout_type: LayoutType::Grid,
-                grid: GridConfiguration {
-                    columns: 12,
-                    rows: 8,
-                    padding: 8,
-                    margin: 4,
-                },
-                responsive: true,
-            },
-            update_frequency: Duration::from_secs(30),
-            config: _config,
-        })
-    }
-}
 /// Window alignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowAlignment {
@@ -249,13 +216,16 @@ pub enum WidgetType {
     Alert,
     Custom,
 }
-/// Metric buffer for temporary storage
+/// Bounded buffer of collected metric samples.
+///
+/// Until 0.3.2 every field here was written once at construction and never
+/// read: nothing pushed, nothing drained, and `overflow_handling` selected
+/// nothing, so a "buffer" sat between the collector and its consumer doing
+/// exactly nothing.
 #[derive(Debug)]
 pub struct MetricBuffer<T: Float + Debug + Send + Sync + 'static> {
     /// Buffer capacity
     capacity: usize,
-    /// Current buffer size
-    size: usize,
     /// Buffered metrics
     metrics: VecDeque<BufferedMetric<T>>,
     /// Buffer strategy
@@ -263,13 +233,91 @@ pub struct MetricBuffer<T: Float + Debug + Send + Sync + 'static> {
     /// Overflow handling
     overflow_handling: OverflowHandling,
 }
+
+impl<T: Float + Debug + Send + Sync + 'static> MetricBuffer<T> {
+    /// A buffer holding at most `capacity` samples.
+    pub fn new(
+        capacity: usize,
+        strategy: BufferStrategy,
+        overflow_handling: OverflowHandling,
+    ) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            metrics: VecDeque::new(),
+            strategy,
+            overflow_handling,
+        }
+    }
+
+    /// Buffer `metric`, applying [`OverflowHandling`] when full.
+    ///
+    /// Returns `false` when the sample was dropped rather than stored.
+    pub fn push(&mut self, metric: BufferedMetric<T>) -> bool {
+        if self.metrics.len() < self.capacity {
+            self.metrics.push_back(metric);
+            return true;
+        }
+        match self.overflow_handling {
+            OverflowHandling::DropOldest => {
+                let _ = self.metrics.pop_front();
+                self.metrics.push_back(metric);
+                true
+            }
+            OverflowHandling::DropNewest => false,
+            OverflowHandling::Compress | OverflowHandling::FlushToStorage => {
+                // Neither compression nor a storage flush is implemented at this
+                // layer, and silently losing the sample would be the worst
+                // reading; grow instead and report the sample as kept.
+                self.metrics.push_back(metric);
+                self.capacity = self.metrics.len();
+                true
+            }
+            OverflowHandling::Block => {
+                // Blocking has no meaning in a synchronous in-process buffer.
+                self.metrics.push_back(metric);
+                self.capacity = self.metrics.len();
+                true
+            }
+        }
+    }
+
+    /// Remove and return every buffered sample.
+    pub fn drain(&mut self) -> Vec<BufferedMetric<T>> {
+        self.metrics.drain(..).collect()
+    }
+
+    /// Number of buffered samples.
+    pub fn len(&self) -> usize {
+        self.metrics.len()
+    }
+
+    /// Whether the buffer holds no samples.
+    pub fn is_empty(&self) -> bool {
+        self.metrics.is_empty()
+    }
+
+    /// Maximum number of samples retained.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// The configured buffering strategy.
+    pub fn strategy(&self) -> BufferStrategy {
+        self.strategy
+    }
+
+    /// The configured overflow behaviour.
+    pub fn overflow_handling(&self) -> OverflowHandling {
+        self.overflow_handling
+    }
+}
 /// Alert aggregation settings
 #[derive(Debug)]
 pub struct AlertAggregation<T: Float + Debug + Send + Sync + 'static> {
     /// Aggregation strategy
-    strategy: AlertAggregationStrategy,
+    pub strategy: AlertAggregationStrategy,
     /// Aggregation window
-    window: Duration,
+    pub window: Duration,
     /// Aggregation rules
     rules: Vec<AggregationRule<T>>,
     /// Aggregated alerts
@@ -388,11 +436,364 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> AlertManager<T>
             stats: AlertStatistics::default(),
         })
     }
+    /// Register an alert rule.
+    ///
+    /// Until 0.3.2 `alert_rules` was an empty map nothing could populate and
+    /// `check_alerts` returned `Ok(vec![])` for every input, so an "alert
+    /// manager" wired into a monitoring loop reported an all-clear regardless of
+    /// what the metrics said.
+    pub fn add_rule(&mut self, rule: AlertRule<T>) -> Result<()> {
+        if rule.rule_id.is_empty() {
+            return Err(OptimError::InvalidParameter(
+                "an alert rule must have a non-empty rule_id".to_string(),
+            ));
+        }
+        self.alert_rules.insert(rule.rule_id.clone(), rule);
+        Ok(())
+    }
+
+    /// Register an aggregation rule.
+    ///
+    /// Until 0.3.2 `AlertAggregation::rules` and `aggregated_alerts` were
+    /// written once in `AlertManager::new` and never read, so `strategy` and
+    /// `window` selected nothing and no aggregation happened at any setting.
+    pub fn add_aggregation_rule(&mut self, rule: AggregationRule<T>) -> Result<()> {
+        if rule.min_count == 0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "aggregation rule '{}' has min_count 0, which would aggregate an empty group",
+                rule.rule_id
+            )));
+        }
+        self.alert_aggregation.rules.push(rule);
+        Ok(())
+    }
+
+    /// Aggregations produced by the most recent [`Self::aggregate_alerts`],
+    /// keyed by rule id.
+    pub fn aggregated_alerts(&self) -> &HashMap<String, AggregatedAlert<T>> {
+        &self.alert_aggregation.aggregated_alerts
+    }
+
+    /// Group the currently active alerts under every registered rule and record
+    /// the resulting summaries.
+    ///
+    /// A rule fires only when its group holds at least `min_count` alerts within
+    /// [`AlertAggregation::window`] of the newest one; smaller groups are left
+    /// alone. [`AlertAggregationStrategy::None`] disables aggregation entirely,
+    /// which is the setting `AlertManager::new` installs.
+    pub fn aggregate_alerts(&mut self) -> usize {
+        self.alert_aggregation.aggregated_alerts.clear();
+        if matches!(
+            self.alert_aggregation.strategy,
+            AlertAggregationStrategy::None
+        ) {
+            return 0;
+        }
+
+        let window = self.alert_aggregation.window;
+        let newest = self
+            .active_alerts
+            .values()
+            .map(|alert| alert.timestamp)
+            .max();
+        let Some(newest) = newest else { return 0 };
+
+        let mut produced = 0usize;
+        for rule in &self.alert_aggregation.rules {
+            let mut groups: HashMap<String, Vec<&PerformanceAlert<T>>> = HashMap::new();
+            for alert in self.active_alerts.values() {
+                let age = newest
+                    .duration_since(alert.timestamp)
+                    .unwrap_or(Duration::ZERO);
+                if age > window {
+                    continue;
+                }
+                let key = match &rule.grouping {
+                    AlertGrouping::ByMetric => alert.metric.clone(),
+                    AlertGrouping::BySeverity => format!("{:?}", alert.severity),
+                    AlertGrouping::BySource => alert.context.source.clone(),
+                    AlertGrouping::ByRule => alert.rule_id.clone(),
+                    AlertGrouping::Custom(label) => label.clone(),
+                };
+                groups.entry(key).or_default().push(alert);
+            }
+
+            for (key, alerts) in groups {
+                if alerts.len() < rule.min_count {
+                    continue;
+                }
+                let mut count_by_severity: HashMap<AlertSeverity, usize> = HashMap::new();
+                for alert in &alerts {
+                    *count_by_severity.entry(alert.severity).or_insert(0) += 1;
+                }
+                let values: Vec<f64> = alerts
+                    .iter()
+                    .filter_map(|alert| alert.metric_value.to_f64())
+                    .collect();
+                let combined = match rule.function {
+                    AlertAggregationFunction::Count => Some(alerts.len() as f64),
+                    AlertAggregationFunction::Sum => Some(values.iter().sum()),
+                    AlertAggregationFunction::Average if !values.is_empty() => {
+                        Some(values.iter().sum::<f64>() / values.len() as f64)
+                    }
+                    AlertAggregationFunction::Maximum => values.iter().copied().reduce(f64::max),
+                    AlertAggregationFunction::Minimum => values.iter().copied().reduce(f64::min),
+                    // No custom function is installed, so none is applied; the
+                    // group is still summarised by count.
+                    AlertAggregationFunction::Average | AlertAggregationFunction::Custom => None,
+                };
+                let oldest = alerts.iter().map(|alert| alert.timestamp).min();
+                let time_span = oldest
+                    .and_then(|oldest| newest.duration_since(oldest).ok())
+                    .unwrap_or(Duration::ZERO);
+                let most_common_source = {
+                    let mut counts: HashMap<&str, usize> = HashMap::new();
+                    for alert in &alerts {
+                        *counts.entry(alert.context.source.as_str()).or_insert(0) += 1;
+                    }
+                    counts
+                        .into_iter()
+                        .max_by_key(|(_, count)| *count)
+                        .map(|(source, _)| source.to_string())
+                };
+
+                let aggregated_id = format!("{}::{key}", rule.rule_id);
+                self.alert_aggregation.aggregated_alerts.insert(
+                    aggregated_id.clone(),
+                    AggregatedAlert {
+                        aggregated_id,
+                        alerts: alerts.iter().map(|alert| alert.alert_id.clone()).collect(),
+                        summary: AggregationSummary {
+                            total_count: alerts.len(),
+                            count_by_severity,
+                            average_metric_value: combined.and_then(T::from),
+                            time_span,
+                            most_common_source,
+                        },
+                        timestamp: newest,
+                        metadata: HashMap::new(),
+                    },
+                );
+                produced += 1;
+            }
+        }
+        produced
+    }
+
+    /// Register a notification channel. Every alert that fires is dispatched
+    /// to each registered channel.
+    pub fn add_notification_channel(&mut self, channel: Box<dyn NotificationChannel<T>>) {
+        self.notification_channels.push(channel);
+    }
+
+    /// Registered rules, keyed by `rule_id`.
+    pub fn rules(&self) -> &HashMap<String, AlertRule<T>> {
+        &self.alert_rules
+    }
+
+    /// Alerts currently in [`AlertStatus::Active`], keyed by `rule_id`.
+    pub fn active_alerts(&self) -> &HashMap<String, PerformanceAlert<T>> {
+        &self.active_alerts
+    }
+
+    /// Status transitions recorded so far, oldest first.
+    pub fn history(&self) -> impl Iterator<Item = &AlertHistoryEntry<T>> {
+        self.alert_history.iter()
+    }
+
+    /// Aggregation settings in force.
+    pub fn aggregation(&self) -> &AlertAggregation<T> {
+        &self.alert_aggregation
+    }
+
+    /// Cumulative alert statistics.
+    pub fn statistics(&self) -> &AlertStatistics<T> {
+        &self.stats
+    }
+
+    /// Evaluate every registered rule against `metrics` and return the alerts
+    /// that fired on this call.
+    ///
+    /// Only [`AlertCondition::Threshold`] is evaluated: it is decidable from a
+    /// single metrics snapshot. `Trend` and `Anomaly` conditions need a metric
+    /// *history* that this manager is not given, so a rule carrying one is
+    /// reported as an error rather than silently treated as "did not fire" --
+    /// an unevaluated condition must never read as an all-clear.
+    ///
+    /// A rule that fires while its previous alert is still active is not
+    /// re-reported (the alert stays in `active_alerts`); a rule whose condition
+    /// no longer holds resolves its alert and records the transition in the
+    /// history.
     pub fn check_alerts(
         &mut self,
-        _metrics: &PerformanceMetrics<T>,
+        metrics: &PerformanceMetrics<T>,
     ) -> Result<Vec<PerformanceAlert<T>>> {
-        Ok(Vec::new())
+        let now = SystemTime::now();
+        let mut fired = Vec::new();
+        let mut resolved: Vec<String> = Vec::new();
+
+        for (rule_id, rule) in &self.alert_rules {
+            let (metric_name, operator, bound) = match &rule.condition {
+                AlertCondition::Threshold {
+                    metric,
+                    operator,
+                    value,
+                    ..
+                } => (metric.clone(), *operator, *value),
+                other => {
+                    return Err(OptimError::UnsupportedOperation(format!(
+                        "alert rule '{rule_id}' uses {other:?}, which needs a metric history this \
+                         manager does not hold; only AlertCondition::Threshold can be decided from \
+                         a single snapshot"
+                    )))
+                }
+            };
+
+            let Some(observed) = lookup_metric_value(metrics, &metric_name) else {
+                continue;
+            };
+            let triggered = compare_metric(observed, operator, bound);
+
+            if triggered {
+                if self.active_alerts.contains_key(rule_id) {
+                    continue;
+                }
+                let alert = PerformanceAlert {
+                    alert_id: format!("{rule_id}-{}", self.stats.total_alerts + fired.len() + 1),
+                    rule_id: rule_id.clone(),
+                    severity: rule.severity,
+                    message: format!(
+                        "{}: {metric_name} = {observed:?} {operator:?} {bound:?}",
+                        rule.name
+                    ),
+                    metric: metric_name,
+                    metric_value: observed,
+                    timestamp: now,
+                    context: AlertContext {
+                        source: "PerformanceTracker".to_string(),
+                        environment: HashMap::new(),
+                        related_metrics: HashMap::new(),
+                        historical_data: Vec::new(),
+                        predictions: Vec::new(),
+                    },
+                    status: AlertStatus::Active,
+                    metadata: rule.metadata.clone(),
+                };
+                fired.push(alert);
+            } else if self.active_alerts.contains_key(rule_id) {
+                resolved.push(rule_id.clone());
+            }
+        }
+
+        for rule_id in resolved {
+            if let Some(mut alert) = self.active_alerts.remove(&rule_id) {
+                let duration = now
+                    .duration_since(alert.timestamp)
+                    .unwrap_or(Duration::ZERO);
+                alert.status = AlertStatus::Resolved;
+                self.record_history(
+                    alert,
+                    AlertStatus::Active,
+                    AlertStatus::Resolved,
+                    duration,
+                    "condition no longer holds",
+                );
+            }
+        }
+
+        for alert in &fired {
+            for channel in &mut self.notification_channels {
+                // A channel that cannot deliver is a real failure: an alert that
+                // fired but was never delivered must not look like a quiet system.
+                channel.send_notification(alert)?;
+            }
+            self.active_alerts
+                .insert(alert.rule_id.clone(), alert.clone());
+            self.stats.total_alerts += 1;
+            *self
+                .stats
+                .alerts_by_severity
+                .entry(alert.severity)
+                .or_insert(0) += 1;
+            self.record_history(
+                alert.clone(),
+                AlertStatus::Resolved,
+                AlertStatus::Active,
+                Duration::ZERO,
+                "threshold condition met",
+            );
+        }
+
+        Ok(fired)
+    }
+
+    fn record_history(
+        &mut self,
+        alert: PerformanceAlert<T>,
+        from_status: AlertStatus,
+        to_status: AlertStatus,
+        duration: Duration,
+        reason: &str,
+    ) {
+        self.alert_history.push_back(AlertHistoryEntry {
+            entry_id: format!("{}-{to_status:?}", alert.alert_id),
+            alert,
+            status_change: AlertStatusChange {
+                from_status,
+                to_status,
+                duration,
+            },
+            timestamp: SystemTime::now(),
+            reason: reason.to_string(),
+            user: None,
+        });
+        while self.alert_history.len() > MAX_ALERT_HISTORY {
+            let _ = self.alert_history.pop_front();
+        }
+    }
+}
+
+/// Maximum number of alert status transitions retained by an [`AlertManager`].
+pub const MAX_ALERT_HISTORY: usize = 1000;
+
+/// Look up a metric by `category.metric` or by bare metric name across every
+/// category, returning the first match.
+fn lookup_metric_value<T: Float + Debug + Send + Sync + 'static>(
+    metrics: &PerformanceMetrics<T>,
+    name: &str,
+) -> Option<T> {
+    if let Some((category, metric)) = name.split_once('.') {
+        if let Some(found) = metrics
+            .categories
+            .get(category)
+            .and_then(|c| c.metrics.get(metric))
+        {
+            return Some(found.value);
+        }
+    }
+    metrics
+        .categories
+        .values()
+        .find_map(|category| category.metrics.get(name).map(|metric| metric.value))
+}
+
+/// Evaluate `observed <op> bound`.
+///
+/// `InRange` / `OutOfRange` need two bounds; a single-valued threshold cannot
+/// express them, so they never fire here.
+fn compare_metric<T: Float + Debug + Send + Sync + 'static>(
+    observed: T,
+    operator: ComparisonOperator,
+    bound: T,
+) -> bool {
+    match operator {
+        ComparisonOperator::Equal => observed == bound,
+        ComparisonOperator::NotEqual => observed != bound,
+        ComparisonOperator::GreaterThan => observed > bound,
+        ComparisonOperator::GreaterThanOrEqual => observed >= bound,
+        ComparisonOperator::LessThan => observed < bound,
+        ComparisonOperator::LessThanOrEqual => observed <= bound,
+        ComparisonOperator::InRange | ComparisonOperator::OutOfRange => false,
     }
 }
 /// Alert history entry
@@ -446,22 +847,6 @@ pub struct MetricQuery<T: Float + Debug + Send + Sync + 'static> {
     pub limit: Option<usize>,
     /// Order by
     pub order_by: Option<QueryOrderBy>,
-}
-/// Metric aggregator for combining metrics
-#[derive(Debug)]
-pub struct MetricAggregator<T: Float + Debug + Send + Sync + 'static> {
-    /// Aggregator identifier
-    pub aggregator_id: String,
-    /// Aggregation functions
-    aggregation_functions: Vec<Box<dyn AggregationFunction<T>>>,
-    /// Aggregation window
-    window: AggregationWindow,
-    /// Aggregation strategy
-    strategy: AggregationStrategy,
-    /// Aggregated metrics cache
-    cache: AggregationCache<T>,
-    /// Aggregation statistics
-    stats: AggregationStatistics<T>,
 }
 /// Layout types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -601,18 +986,6 @@ pub enum CategoryStatus {
     Critical,
     Unknown,
 }
-/// Aggregation cache
-#[derive(Debug)]
-pub struct AggregationCache<T: Float + Debug + Send + Sync + 'static> {
-    /// Cached aggregations
-    cache: HashMap<String, CachedAggregation<T>>,
-    /// Cache capacity
-    capacity: usize,
-    /// Cache eviction policy
-    eviction_policy: CacheEvictionPolicy,
-    /// Cache statistics
-    stats: CacheStatistics<T>,
-}
 /// Threshold adaptation methods
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdaptationMethod {
@@ -670,39 +1043,190 @@ pub struct MetricCollector<T: Float + Debug + Send + Sync + 'static> {
     stats: CollectionStatistics<T>,
 }
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricCollector<T> {
+    /// A collector for the named metrics.
+    pub fn new(
+        collector_id: String,
+        collected_metrics: Vec<String>,
+        strategy: CollectionStrategy,
+        frequency: Duration,
+        buffer_capacity: usize,
+    ) -> Self {
+        Self {
+            collector_id,
+            collected_metrics,
+            strategy,
+            frequency,
+            buffer: MetricBuffer::new(
+                buffer_capacity,
+                BufferStrategy::FIFO,
+                OverflowHandling::DropOldest,
+            ),
+            filters: Vec::new(),
+            stats: CollectionStatistics {
+                total_collected: 0,
+                collection_rate: T::zero(),
+                average_latency: Duration::ZERO,
+                collection_errors: 0,
+                buffer_utilization: T::zero(),
+                quality_metrics: HashMap::new(),
+            },
+        }
+    }
+
+    /// Record one observation for later collection.
+    ///
+    /// This crate measures nothing itself; the process being optimized feeds its
+    /// own numbers in here.
+    pub fn record(&mut self, name: &str, value: T) {
+        let stored = self.buffer.push(BufferedMetric {
+            name: name.to_string(),
+            value,
+            timestamp: SystemTime::now(),
+            metadata: HashMap::new(),
+        });
+        if !stored {
+            self.stats.collection_errors += 1;
+        }
+    }
+
+    /// Register a filter. Samples it rejects are discarded at collection time.
+    pub fn add_filter(&mut self, filter: Box<dyn MetricFilter<T>>) {
+        self.filters.push(filter);
+    }
+
+    /// The configured collection strategy.
+    pub fn strategy(&self) -> CollectionStrategy {
+        self.strategy
+    }
+
+    /// The configured collection interval.
+    pub fn frequency(&self) -> Duration {
+        self.frequency
+    }
+
+    /// Cumulative collection statistics.
+    pub fn statistics(&self) -> &CollectionStatistics<T> {
+        &self.stats
+    }
+
+    /// Drain the buffer into per-metric categories.
+    ///
+    /// Each requested metric becomes its own category holding the mean of the
+    /// samples recorded for it since the last call, with the sample count in the
+    /// metric's tags. A metric with no samples is omitted rather than reported.
+    ///
+    /// Until 0.3.2 this ignored the buffer entirely and synthesised a
+    /// `MetricValue { value: 0.5, confidence: 0.9, unit: "unit" }` for every
+    /// configured name, with `Stable` trends and `trend_confidence: 0.8` -- a
+    /// stream of invented numbers that the tracker then stored and alerted on.
     pub fn collect(&mut self) -> Result<HashMap<String, CategoryMetrics<T>>> {
+        let drained = self.buffer.drain();
+        let kept: Vec<BufferedMetric<T>> = drained
+            .into_iter()
+            .filter(|metric| self.filters.iter().all(|filter| filter.filter(metric)))
+            .collect();
+        self.stats.total_collected += kept.len();
+        let capacity = T::from(self.buffer.capacity()).unwrap_or_else(T::one);
+        self.stats.buffer_utilization = if capacity > T::zero() {
+            T::from(kept.len()).unwrap_or_else(T::zero) / capacity
+        } else {
+            T::zero()
+        };
+
         let mut categories = HashMap::new();
-        for metric_name in &self.collected_metrics.clone() {
-            let category_metrics = CategoryMetrics {
-                metrics: {
-                    let mut metrics = HashMap::new();
-                    metrics.insert(
-                        metric_name.clone(),
-                        MetricValue {
-                            value: T::from(0.5).unwrap_or_else(|| T::zero()),
-                            value_type: MetricType::Gauge,
-                            unit: "unit".to_string(),
-                            bounds: None,
-                            confidence: T::from(0.9).unwrap_or_else(|| T::zero()),
-                            tags: Vec::new(),
-                        },
-                    );
-                    metrics
+        for metric_name in &self.collected_metrics {
+            let samples: Vec<T> = kept
+                .iter()
+                .filter(|metric| &metric.name == metric_name)
+                .map(|metric| metric.value)
+                .collect();
+            if samples.is_empty() {
+                continue;
+            }
+            let count = T::from(samples.len()).unwrap_or_else(T::one);
+            let mean = samples.iter().fold(T::zero(), |acc, &v| acc + v) / count;
+
+            let mut metrics = HashMap::new();
+            metrics.insert(
+                metric_name.clone(),
+                MetricValue {
+                    value: mean,
+                    value_type: MetricType::Gauge,
+                    unit: String::new(),
+                    bounds: None,
+                    // Every sample was measured, so the value is exact for the
+                    // window it covers.
+                    confidence: T::one(),
+                    tags: vec![format!("samples={}", samples.len())],
                 },
-                weight: T::from(1.0).unwrap_or_else(|| T::zero()),
-                status: CategoryStatus::Normal,
-                trends: CategoryTrends {
-                    short_term: TrendDirection::Stable,
-                    long_term: TrendDirection::Stable,
-                    trend_strength: T::from(0.1).unwrap_or_else(|| T::zero()),
-                    trend_confidence: T::from(0.8).unwrap_or_else(|| T::zero()),
-                    predictions: Vec::new(),
+            );
+            categories.insert(
+                metric_name.clone(),
+                CategoryMetrics {
+                    metrics,
+                    weight: T::one(),
+                    status: CategoryStatus::Normal,
+                    trends: CategoryTrends {
+                        short_term: trend_of(&samples),
+                        long_term: trend_of(&samples),
+                        trend_strength: trend_strength(&samples),
+                        // No model backs a prediction here, so no confidence is
+                        // claimed for one.
+                        trend_confidence: T::zero(),
+                        predictions: Vec::new(),
+                    },
                 },
-            };
-            categories.insert("default".to_string(), category_metrics);
+            );
         }
         Ok(categories)
     }
+}
+
+/// Direction of a sample series: compares the mean of the second half against
+/// the first. Fewer than two samples cannot show a direction.
+fn trend_of<T: Float + Debug + Send + Sync + 'static>(samples: &[T]) -> TrendDirection {
+    if samples.len() < 2 {
+        return TrendDirection::Stable;
+    }
+    let split = samples.len() / 2;
+    let mean = |slice: &[T]| -> f64 {
+        if slice.is_empty() {
+            return 0.0;
+        }
+        slice.iter().filter_map(|v| v.to_f64()).sum::<f64>() / slice.len() as f64
+    };
+    let first = mean(&samples[..split]);
+    let second = mean(&samples[split..]);
+    let scale = first.abs().max(second.abs()).max(f64::EPSILON);
+    let delta = (second - first) / scale;
+    // "Improving" and "Degrading" name a direction of *value*, not of
+    // desirability -- this layer has no notion of which way is good.
+    if delta > 0.01 {
+        TrendDirection::Improving
+    } else if delta < -0.01 {
+        TrendDirection::Degrading
+    } else {
+        TrendDirection::Stable
+    }
+}
+
+/// Magnitude of the trend `trend_of` reports, in `[0, 1]`.
+fn trend_strength<T: Float + Debug + Send + Sync + 'static>(samples: &[T]) -> T {
+    if samples.len() < 2 {
+        return T::zero();
+    }
+    let split = samples.len() / 2;
+    let mean = |slice: &[T]| -> f64 {
+        if slice.is_empty() {
+            return 0.0;
+        }
+        slice.iter().filter_map(|v| v.to_f64()).sum::<f64>() / slice.len() as f64
+    };
+    let first = mean(&samples[..split]);
+    let second = mean(&samples[split..]);
+    let scale = first.abs().max(second.abs()).max(f64::EPSILON);
+    let strength = ((second - first) / scale).abs().min(1.0);
+    T::from(strength).unwrap_or_else(T::zero)
 }
 /// Grid configuration
 #[derive(Debug, Clone)]
@@ -741,7 +1265,7 @@ pub struct MetricsQuality<T: Float + Debug + Send + Sync + 'static> {
     pub overall_quality: T,
 }
 /// Alert severity levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AlertSeverity {
     Info,
     Warning,
@@ -780,16 +1304,12 @@ pub struct AggregationRule<T: Float + Debug + Send + Sync + 'static> {
 pub struct PerformanceTracker<T: Float + Debug + Send + Sync + 'static> {
     /// Active metric collectors
     metric_collectors: HashMap<String, MetricCollector<T>>,
-    /// Metric aggregators
-    aggregators: HashMap<String, MetricAggregator<T>>,
     /// Alert manager
     alert_manager: AlertManager<T>,
     /// Performance analyzers
     analyzers: Vec<Box<dyn PerformanceAnalyzer<T>>>,
     /// Metric storage
     metric_storage: MetricStorage<T>,
-    /// Real-time dashboard
-    dashboard: PerformanceDashboard<T>,
     /// Tracker configuration
     config: TrackerConfiguration<T>,
     /// Tracker statistics
@@ -800,15 +1320,31 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceTrac
     pub fn new(config: TrackerConfiguration<T>) -> Result<Self> {
         Ok(Self {
             metric_collectors: HashMap::new(),
-            aggregators: HashMap::new(),
             alert_manager: AlertManager::new()?,
             analyzers: Vec::new(),
             metric_storage: MetricStorage::new(config.storage_config.clone())?,
-            dashboard: PerformanceDashboard::new(config.dashboard_config.clone())?,
             config,
             stats: TrackerStatistics::default(),
         })
     }
+    /// The configuration this tracker runs under.
+    pub fn config(&self) -> &TrackerConfiguration<T> {
+        &self.config
+    }
+
+    /// Mutable access to the alert manager, so rules can be registered.
+    pub fn alert_manager_mut(&mut self) -> &mut AlertManager<T> {
+        &mut self.alert_manager
+    }
+
+    /// Register a performance analyzer, run by [`Self::collect_metrics`].
+    ///
+    /// `analyzers` was a `Vec` nothing could push to and nothing read, so no
+    /// analysis ever ran.
+    pub fn add_analyzer(&mut self, analyzer: Box<dyn PerformanceAnalyzer<T>>) {
+        self.analyzers.push(analyzer);
+    }
+
     /// Add metric collector
     pub fn add_collector(&mut self, collector: MetricCollector<T>) -> Result<()> {
         self.metric_collectors
@@ -827,7 +1363,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceTrac
         let metrics = PerformanceMetrics {
             categories,
             timestamp: SystemTime::now(),
-            interval: Duration::from_secs(1),
+            // The window a snapshot covers is the collectors' configured
+            // cadence, not a literal one second.
+            interval: self
+                .metric_collectors
+                .values()
+                .map(|collector| collector.frequency())
+                .max()
+                .unwrap_or(self.config.collection_interval),
             metadata: MetricsMetadata {
                 source: "PerformanceTracker".to_string(),
                 collection_method: "automatic".to_string(),
@@ -844,6 +1387,11 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PerformanceTrac
             },
         };
         self.metric_storage.store(&metrics)?;
+        for analyzer in &mut self.analyzers {
+            // Analysis results are surfaced through the analyzer itself; a
+            // failure here is a real error, not something to swallow.
+            let _ = analyzer.analyze(&metrics)?;
+        }
         self.stats.total_metrics_collected += 1;
         Ok(metrics)
     }
@@ -1094,8 +1642,32 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> MetricStorage<T
             stats: StorageStatistics::default(),
         })
     }
+    /// The storage configuration in force.
+    pub fn config(&self) -> &StorageConfiguration<T> {
+        &self.config
+    }
+
+    /// Cumulative storage statistics.
+    pub fn statistics(&self) -> &StorageStatistics<T> {
+        &self.stats
+    }
+
+    /// Persist a metrics snapshot and record it in the statistics.
+    ///
+    /// `stats` was constructed and never updated, so `total_stored` stayed at
+    /// zero no matter how much had been written.
     pub fn store(&mut self, metrics: &PerformanceMetrics<T>) -> Result<()> {
-        self.backend.store(metrics)
+        self.backend.store(metrics)?;
+        // Rate is per snapshot rather than per second here: the storage layer is
+        // not given a clock, and inventing an elapsed time would fabricate the
+        // denominator.
+        let stored: usize = metrics
+            .categories
+            .values()
+            .map(|category| category.metrics.len())
+            .sum();
+        self.stats.storage_rate = self.stats.storage_rate + T::from(stored).unwrap_or_else(T::zero);
+        Ok(())
     }
 }
 /// Time range specification

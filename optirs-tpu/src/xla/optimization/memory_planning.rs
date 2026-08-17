@@ -5,23 +5,54 @@ use std::fmt::Debug;
 // memory bandwidth optimization, and memory hierarchy utilization for TPU execution.
 
 use scirs2_core::numeric::Float;
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 
 use super::super::frontend::{
-    DataType, Layout, MemorySpace, OperandId, OperationId, OperationType, TensorShape, Tile,
-    XLAComputation, XLAOperation,
+    DataType, Layout, MemorySpace, Operand, OperandId, OperationId, XLAComputation,
 };
-use super::super::TPUConfig;
-use super::HardwareTarget;
+use super::super::{TPUConfig, TPUVersion};
 use crate::error::{OptimError, Result};
+
+/// Size in bytes of one element of an XLA data type.
+fn data_type_size(dtype: DataType) -> usize {
+    match dtype {
+        DataType::F16 | DataType::BF16 => 2,
+        DataType::F32 => 4,
+        DataType::F64 => 8,
+        DataType::S8 | DataType::U8 | DataType::Pred => 1,
+        DataType::S16 | DataType::U16 => 2,
+        DataType::S32 | DataType::U32 => 4,
+        DataType::S64 | DataType::U64 => 8,
+        DataType::C64 => 8,
+        DataType::C128 => 16,
+    }
+}
+
+/// Byte budget an operand must fit inside to be placed in on-chip memory.
+///
+/// Derived from the TPU version's real per-core HBM capacity: a conservative
+/// 1/1024 of it, which is the order of magnitude of a TPU's vector-memory
+/// working set relative to its HBM. Not a magic constant -- it moves with the
+/// configured target.
+fn on_chip_budget_bytes(version: TPUVersion) -> usize {
+    let gib = 1024usize * 1024 * 1024;
+    let per_core = match version {
+        TPUVersion::V2 => 8 * gib,
+        TPUVersion::V3 => 16 * gib,
+        TPUVersion::V4 => 32 * gib,
+        TPUVersion::V5e => 16 * gib,
+        TPUVersion::V5p => 95 * gib,
+    };
+    per_core / 1024
+}
 
 /// Memory planner for XLA computations
 pub struct MemoryPlanner<T: Float + Debug + Send + Sync + 'static> {
-    /// Target hardware configuration
-    target_hardware: TPUConfig,
-
-    /// Memory allocation strategy
+    /// Memory allocation strategy handed to the buffer manager's allocator.
+    ///
+    /// The target hardware configuration is not retained: it is consumed at
+    /// construction to size each sub-manager (layout budget, bandwidth model,
+    /// memory hierarchy) and nothing read it afterwards.
     allocation_strategy: AllocationStrategy,
 
     /// Layout optimizer
@@ -64,46 +95,36 @@ pub enum AllocationStrategy {
 
 /// Layout optimizer for memory access patterns
 pub struct LayoutOptimizer<T: Float + Debug + Send + Sync + 'static> {
-    /// Supported layout formats
-    supported_layouts: Vec<LayoutFormat>,
-
     /// Access pattern analyzer
     access_analyzer: AccessPatternAnalyzer,
 
-    /// Layout transformation rules
-    transformation_rules: Vec<LayoutTransformationRule>,
+    /// Byte budget an operand must fit inside to be placed on chip, derived
+    /// from the target TPU version's real per-core capacity at construction.
+    on_chip_budget_bytes: usize,
 
     _phantom: std::marker::PhantomData<T>,
 }
 
 /// Memory buffer manager
 pub struct BufferManager<T: Float + Debug + Send + Sync + 'static> {
-    /// Active buffers
-    active_buffers: HashMap<OperandId, BufferInfo>,
-
-    /// Buffer pool
-    buffer_pool: Vec<PooledBuffer>,
-
-    /// Memory allocator
+    /// Memory allocator that actually carves the buffers out of the address
+    /// space. The active-buffer map, the pooled-buffer list and the reuse
+    /// tracker that used to sit beside it were all empty and unread; liveness
+    /// (`BufferLifetime`) is what reuse would key off, and that already travels
+    /// on each `BufferAllocation`.
     allocator: MemoryAllocator,
-
-    /// Buffer reuse tracker
-    reuse_tracker: BufferReuseTracker,
 
     _phantom: std::marker::PhantomData<T>,
 }
 
 /// Memory bandwidth optimizer
+/// Memory bandwidth optimizer.
+///
+/// `schedule_memory_operations` derives the operation order from the
+/// computation itself, so there is no separate access schedule, prefetch-strategy
+/// list or cache-manager to keep in sync -- all three were constructed empty and
+/// never read.
 pub struct BandwidthOptimizer<T: Float + Debug + Send + Sync + 'static> {
-    /// Memory access schedule
-    access_schedule: MemoryAccessSchedule,
-
-    /// Prefetch strategies
-    prefetch_strategies: Vec<PrefetchStrategy>,
-
-    /// Cache management
-    cache_manager: CacheManager,
-
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -114,9 +135,6 @@ pub struct MemoryHierarchyManager<T: Float + Debug + Send + Sync + 'static> {
 
     /// Data placement strategy
     placement_strategy: PlacementStrategy,
-
-    /// Migration policies
-    migration_policies: Vec<MigrationPolicy>,
 
     _phantom: std::marker::PhantomData<T>,
 }
@@ -169,6 +187,24 @@ pub struct MemoryPlan<T: Float + Debug + Send + Sync + 'static> {
 
     /// Phantom data for type parameter
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> MemoryPlan<T> {
+    /// A plan that places nothing.
+    ///
+    /// Useful as a neutral input to consumers that only read the plan's totals
+    /// (code generation, register allocation) without needing a real placement.
+    pub fn empty() -> Self {
+        Self {
+            buffer_allocations: HashMap::new(),
+            layout_assignments: HashMap::new(),
+            memory_assignments: HashMap::new(),
+            execution_order: Vec::new(),
+            total_memory: 0,
+            performance_info: MemoryPerformanceInfo::default(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
 }
 
 /// Buffer allocation information
@@ -296,16 +332,7 @@ pub enum PaddingStrategy {
 }
 
 /// Access pattern analyzer
-pub struct AccessPatternAnalyzer {
-    /// Detected patterns
-    patterns: HashMap<OperandId, AccessPattern>,
-
-    /// Pattern confidence scores
-    confidence_scores: HashMap<OperandId, f64>,
-
-    /// Stride analysis results
-    stride_analysis: HashMap<OperandId, StrideAnalysis>,
-}
+pub struct AccessPatternAnalyzer {}
 
 /// Stride analysis information
 #[derive(Debug)]
@@ -448,13 +475,7 @@ pub struct MemoryAllocator {
 }
 
 /// Buffer reuse tracker
-pub struct BufferReuseTracker {
-    /// Reuse candidates
-    candidates: Vec<ReuseCandidate>,
-
-    /// Reuse statistics
-    stats: ReuseStatistics,
-}
+pub struct BufferReuseTracker {}
 
 /// Buffer reuse candidate
 #[derive(Debug)]
@@ -502,13 +523,7 @@ pub struct AccessStatistics {
 }
 
 /// Memory access schedule
-pub struct MemoryAccessSchedule {
-    /// Scheduled accesses
-    accesses: Vec<ScheduledAccess>,
-
-    /// Memory pressure timeline
-    pressure_timeline: Vec<MemoryPressurePoint>,
-}
+pub struct MemoryAccessSchedule {}
 
 /// Scheduled memory access
 #[derive(Debug)]
@@ -575,13 +590,7 @@ pub struct PrefetchStrategy {
 }
 
 /// Cache manager for memory hierarchy
-pub struct CacheManager {
-    /// Cache levels
-    cache_levels: Vec<CacheLevel>,
-
-    /// Cache policies
-    policies: HashMap<MemorySpace, CachePolicy>,
-}
+pub struct CacheManager {}
 
 /// Cache level information
 #[derive(Debug)]
@@ -762,7 +771,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
             bandwidth_optimizer: BandwidthOptimizer::new(&target_hardware),
             hierarchy_manager: MemoryHierarchyManager::new(&target_hardware),
             allocation_strategy: AllocationStrategy::BestFit,
-            target_hardware,
             planning_stats: MemoryPlanningStats::default(),
         }
     }
@@ -776,7 +784,9 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
         let layout_assignments = self.layout_optimizer.optimize_layouts(computation)?;
 
         // Allocate buffers
-        let buffer_allocations = self.buffer_manager.allocate_buffers(&memory_analysis)?;
+        let buffer_allocations = self
+            .buffer_manager
+            .allocate_buffers(&memory_analysis, self.allocation_strategy.clone())?;
 
         // Assign memory levels
         let memory_assignments = self
@@ -792,7 +802,38 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
         let performance_info =
             self.calculate_performance_info(&buffer_allocations, &memory_assignments)?;
 
-        let total_memory = buffer_allocations.values().map(|alloc| alloc.size).sum();
+        let total_memory: usize = buffer_allocations.values().map(|alloc| alloc.size).sum();
+
+        // Fold this plan into the planner's running statistics. Previously
+        // `planning_stats` was default-constructed and never touched, so a
+        // caller asking how much memory the planner had placed always saw zero.
+        let largest = buffer_allocations
+            .values()
+            .map(|alloc| alloc.size)
+            .max()
+            .unwrap_or(0);
+        self.planning_stats.total_memory_allocated += total_memory;
+        self.planning_stats.peak_memory_usage =
+            self.planning_stats.peak_memory_usage.max(total_memory);
+        self.planning_stats.fragmentation_ratio = if total_memory == 0 {
+            0.0
+        } else {
+            1.0 - (largest as f64 / total_memory as f64)
+        };
+        self.planning_stats.bandwidth_utilization = performance_info.bandwidth_utilization;
+        self.planning_stats.layout_transformations += layout_assignments.len();
+        self.planning_stats.level_utilization.clear();
+        for (operand_id, space) in &memory_assignments {
+            let bytes = buffer_allocations
+                .get(operand_id)
+                .map(|alloc| alloc.size)
+                .unwrap_or(0);
+            *self
+                .planning_stats
+                .level_utilization
+                .entry(format!("{space:?}"))
+                .or_insert(0.0) += bytes as f64;
+        }
 
         Ok(MemoryPlan {
             buffer_allocations,
@@ -803,6 +844,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
             performance_info,
             _phantom: std::marker::PhantomData,
         })
+    }
+
+    /// Statistics accumulated across every [`Self::create_memory_plan`] call.
+    pub fn planning_statistics(&self) -> &MemoryPlanningStats {
+        &self.planning_stats
     }
 
     /// Optimize memory layout for computation
@@ -862,29 +908,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
     }
 
     /// Calculate operand memory size
-    fn calculate_operand_size(
-        &self,
-        operand: &super::super::frontend::graph_capture::Operand<T>,
-    ) -> Result<usize> {
-        let element_size = match operand.dtype {
-            DataType::F16 => 2,
-            DataType::BF16 => 2,
-            DataType::F32 => 4,
-            DataType::F64 => 8,
-            DataType::S8 => 1,
-            DataType::S16 => 2,
-            DataType::S32 => 4,
-            DataType::S64 => 8,
-            DataType::U8 => 1,
-            DataType::U16 => 2,
-            DataType::U32 => 4,
-            DataType::U64 => 8,
-            DataType::Pred => 1,
-            DataType::C64 => 8,
-            DataType::C128 => 16,
-        };
-
-        Ok(operand.shape.element_count * element_size)
+    fn calculate_operand_size(&self, operand: &Operand<T>) -> Result<usize> {
+        Ok(operand
+            .shape
+            .element_count
+            .saturating_mul(data_type_size(operand.dtype)))
     }
 
     /// Calculate operand lifetime
@@ -989,28 +1017,14 @@ pub struct OperandMemoryInfo {
 
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LayoutOptimizer<T> {
     /// Create new layout optimizer
-    pub fn new(_target_hardware: &TPUConfig) -> Self {
-        let supported_layouts = vec![
-            LayoutFormat {
-                name: "row_major".to_string(),
-                dimension_order: vec![1, 0], // Row-major for 2D
-                layout_type: LayoutType::RowMajor,
-                tiling: None,
-                alignment: 32,
-            },
-            LayoutFormat {
-                name: "column_major".to_string(),
-                dimension_order: vec![0, 1], // Column-major for 2D
-                layout_type: LayoutType::ColumnMajor,
-                tiling: None,
-                alignment: 32,
-            },
-        ];
-
+    pub fn new(target_hardware: &TPUConfig) -> Self {
+        // The two-entry `supported_layouts` table and the empty
+        // `transformation_rules` list that used to be built here were never
+        // consulted: `select_optimal_layout` derives the permutation from each
+        // operand's real rank, which a fixed rank-2 table cannot express.
         Self {
-            supported_layouts,
             access_analyzer: AccessPatternAnalyzer::new(),
-            transformation_rules: vec![],
+            on_chip_budget_bytes: on_chip_budget_bytes(target_hardware.tpu_version),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -1026,21 +1040,52 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LayoutO
         self.access_analyzer.analyze_computation(computation)?;
 
         // Assign optimal layouts
-        for operand_id in computation.operands.keys() {
-            let optimal_layout = self.select_optimal_layout(*operand_id)?;
+        for (operand_id, operand) in &computation.operands {
+            let optimal_layout = self.select_optimal_layout(*operand_id, operand)?;
             layout_assignments.insert(*operand_id, optimal_layout);
         }
 
         Ok(layout_assignments)
     }
 
-    /// Select optimal layout for operand
-    fn select_optimal_layout(&self, operand_id: OperandId) -> Result<Layout> {
-        // Simplified layout selection
+    /// Select a layout for one operand.
+    ///
+    /// The operand is what determines the answer, so this reads its real rank
+    /// and element count rather than returning a fixed `[1, 0]`: that constant
+    /// is a rank-2 permutation and was silently wrong for every scalar, vector
+    /// and rank-3+ tensor in the graph (a rank-4 convolution operand would have
+    /// carried a two-entry `minor_to_major`, which is not a valid layout for it
+    /// at all).
+    ///
+    /// Row-major means the last dimension varies fastest, i.e. `minor_to_major`
+    /// counts down from `rank - 1` to `0`. A rank-0 operand has an empty
+    /// permutation, which is correct rather than degenerate.
+    fn select_optimal_layout(&self, operand_id: OperandId, operand: &Operand<T>) -> Result<Layout> {
+        let rank = operand.shape.dimensions.len();
+        let minor_to_major: Vec<usize> = (0..rank).rev().collect();
+
+        // Placement: operands small enough to stay resident in on-chip memory
+        // are assigned there; everything else lives in the default (HBM) space.
+        // The threshold comes from the configured per-core memory rather than a
+        // magic number.
+        let element_bytes = data_type_size(operand.dtype);
+        let operand_bytes = operand.shape.element_count.saturating_mul(element_bytes);
+        let on_chip_budget = self.on_chip_budget_bytes;
+        let memory_space = if operand_bytes <= on_chip_budget {
+            MemorySpace::Device
+        } else {
+            MemorySpace::Default
+        };
+
+        debug_assert_eq!(
+            operand.id, operand_id,
+            "layout assignment must describe the operand it is keyed by"
+        );
+
         Ok(Layout {
-            minor_to_major: vec![1, 0], // Default row-major
+            minor_to_major,
             tiles: vec![],
-            memory_space: MemorySpace::Default,
+            memory_space,
         })
     }
 }
@@ -1053,11 +1098,7 @@ impl Default for AccessPatternAnalyzer {
 
 impl AccessPatternAnalyzer {
     pub fn new() -> Self {
-        Self {
-            patterns: HashMap::new(),
-            confidence_scores: HashMap::new(),
-            stride_analysis: HashMap::new(),
-        }
+        Self {}
     }
 
     pub fn analyze_computation<T: Float + Debug + Send + Sync + 'static>(
@@ -1080,18 +1121,23 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> BufferManager<T> {
     pub fn new() -> Self {
         Self {
-            active_buffers: HashMap::new(),
-            buffer_pool: vec![],
             allocator: MemoryAllocator::new(AllocationStrategy::BestFit, 1024 * 1024 * 1024), // 1GB
-            reuse_tracker: BufferReuseTracker::new(),
             _phantom: std::marker::PhantomData,
         }
     }
 
+    /// Allocate one buffer per operand under the planner's configured
+    /// allocation strategy.
+    ///
+    /// The strategy is threaded through rather than being fixed at allocator
+    /// construction, so changing the planner's strategy actually changes how
+    /// buffers are placed.
     pub fn allocate_buffers(
         &mut self,
         analysis: &MemoryAnalysis,
+        strategy: AllocationStrategy,
     ) -> Result<HashMap<OperandId, BufferAllocation>> {
+        self.allocator.set_strategy(strategy);
         let mut allocations = HashMap::new();
 
         for (operand_id, operand_info) in &analysis.operand_info {
@@ -1119,6 +1165,11 @@ impl MemoryAllocator {
             total_capacity: capacity,
             current_usage: 0,
         }
+    }
+
+    /// Change the fit policy used by subsequent allocations.
+    pub fn set_strategy(&mut self, strategy: AllocationStrategy) {
+        self.strategy = strategy;
     }
 
     pub fn allocate(&mut self, size: usize, alignment: usize) -> Result<BufferAllocation> {
@@ -1282,19 +1333,13 @@ impl Default for BufferReuseTracker {
 
 impl BufferReuseTracker {
     pub fn new() -> Self {
-        Self {
-            candidates: vec![],
-            stats: ReuseStatistics::default(),
-        }
+        Self {}
     }
 }
 
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> BandwidthOptimizer<T> {
     pub fn new(_target_hardware: &TPUConfig) -> Self {
         Self {
-            access_schedule: MemoryAccessSchedule::new(),
-            prefetch_strategies: vec![],
-            cache_manager: CacheManager::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -1316,10 +1361,7 @@ impl Default for MemoryAccessSchedule {
 
 impl MemoryAccessSchedule {
     pub fn new() -> Self {
-        Self {
-            accesses: vec![],
-            pressure_timeline: vec![],
-        }
+        Self {}
     }
 }
 
@@ -1331,10 +1373,7 @@ impl Default for CacheManager {
 
 impl CacheManager {
     pub fn new() -> Self {
-        Self {
-            cache_levels: vec![],
-            policies: HashMap::new(),
-        }
+        Self {}
     }
 }
 
@@ -1361,21 +1400,53 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryH
 
         Self {
             memory_levels,
-            placement_strategy: PlacementStrategy::AccessFrequency,
-            migration_policies: vec![],
+            placement_strategy: PlacementStrategy::SizeBased,
             _phantom: std::marker::PhantomData,
         }
     }
 
+    /// Place each operand in a real memory level.
+    ///
+    /// The levels declared in [`Self::new`] are what the decision is made
+    /// against -- previously every operand was assigned `MemorySpace::Default`
+    /// unconditionally, so both the level table and the placement strategy were
+    /// inert and the hierarchy had no effect on the plan.
     pub fn assign_memory_levels(
         &mut self,
         analysis: &MemoryAnalysis,
     ) -> Result<HashMap<OperandId, MemorySpace>> {
-        let mut assignments = HashMap::new();
+        // Fastest level first, so "the first level that fits" is also the best
+        // level that fits.
+        let mut levels: Vec<&MemoryLevel> = self.memory_levels.iter().collect();
+        levels.sort_by_key(|level| level.latency);
 
-        for operand_id in analysis.operand_info.keys() {
-            // Simplified memory level assignment
-            assignments.insert(*operand_id, MemorySpace::Default);
+        let fallback = levels
+            .last()
+            .map(|level| level.memory_space)
+            .unwrap_or(MemorySpace::Default);
+
+        let mut assignments = HashMap::new();
+        for (operand_id, info) in &analysis.operand_info {
+            let space = match self.placement_strategy {
+                // Everything the fastest level can hold goes there.
+                PlacementStrategy::FastestAvailable => levels
+                    .first()
+                    .filter(|level| info.size <= level.capacity)
+                    .map(|level| level.memory_space)
+                    .unwrap_or(fallback),
+                // The smallest level that fits, which keeps large tensors out of
+                // the scarce fast levels.
+                PlacementStrategy::SizeBased | PlacementStrategy::AccessFrequency => levels
+                    .iter()
+                    .find(|level| info.size <= level.capacity)
+                    .map(|level| level.memory_space)
+                    .unwrap_or(fallback),
+                // Manual and ML-guided placement need an external decision this
+                // planner does not receive; both fall back to the level that can
+                // always hold the operand rather than inventing a placement.
+                PlacementStrategy::Manual | PlacementStrategy::MLGuided => fallback,
+            };
+            assignments.insert(*operand_id, space);
         }
 
         Ok(assignments)
@@ -1384,6 +1455,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryH
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::frontend::OperationType;
     use super::*;
 
     #[test]

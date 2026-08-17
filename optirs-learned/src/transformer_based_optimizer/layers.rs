@@ -4,7 +4,6 @@ use super::config::ActivationFunction;
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{Random, Rng as SCRRng};
 use std::fmt::Debug;
 
 /// Draw a Xavier/Glorot uniform matrix with limit `sqrt(6 / (fan_in + fan_out))`.
@@ -543,12 +542,30 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         }
     }
 
-    /// Add residual connection
+    /// The model dimension this residual path was built for.
+    pub fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    /// Add residual connection.
+    ///
+    /// Both operands must be `(rows, dimension)`. Checking only that the two
+    /// shapes matched each other let a pair that agreed with each other but not
+    /// with the model dimension pass silently — the residual would then be added
+    /// to activations from a differently-sized layer without complaint.
     pub fn add(&self, input: &Array2<T>, residual: &Array2<T>) -> Result<Array2<T>> {
         if input.shape() != residual.shape() {
             return Err(crate::error::OptimError::Other(
                 "Shape mismatch in residual connection".to_string(),
             ));
+        }
+        if input.ncols() != self.dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "Residual connection was built for model dimension {} but received \
+                 {} features",
+                self.dimension,
+                input.ncols()
+            )));
         }
 
         let mut output = input + residual;

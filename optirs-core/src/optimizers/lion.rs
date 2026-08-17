@@ -35,7 +35,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = Lion::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lion<A: Float + ScalarOperand + Debug> {
@@ -60,8 +60,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Lion<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.99).expect("unwrap failed"),
+            beta1: A::from(0.9).expect("Lion: default beta1 (0.9) must fit in A"),
+            beta2: A::from(0.99).expect("Lion: default beta2 (0.99) must fit in A"),
             weight_decay: A::zero(),
             m: None,
         }
@@ -299,7 +299,9 @@ mod tests {
             // Fewer iterations with higher learning rate
             // Gradient of x^2 is 2x
             let gradients = Array1::from_vec(vec![2.0 * params[0]]);
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_lion_convergence");
         }
 
         // With learning rate 0.1 and 40 iterations, should reach close to 1.0
@@ -313,19 +315,23 @@ mod tests {
         // Perform a step to initialize state
         let params = Array1::from_vec(vec![1.0]);
         let gradients = Array1::from_vec(vec![0.1]);
-        let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let _ = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lion_reset");
 
         // Reset optimizer
         optimizer.reset();
 
         // Next step should behave like the first
-        let next_step = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let next_step = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lion_reset");
 
         // Create fresh optimizer for comparison
         let mut fresh_optimizer: Lion<f64> = Lion::new(0.1);
         let fresh_step = fresh_optimizer
             .step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_lion_reset");
 
         assert_abs_diff_eq!(next_step[0], fresh_step[0], epsilon = 1e-10);
     }

@@ -1,7 +1,7 @@
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
 use std::fmt::Debug;
 
 /// Gradient compression strategies for communication optimization

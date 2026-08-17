@@ -7,8 +7,6 @@ use crate::error::{OptimError, Result};
 use crate::plugin::core::*;
 use crate::plugin::registry::*;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "crypto")]
-use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
@@ -359,12 +357,6 @@ impl PluginLoader {
         parse_manifest_toml(content, path)
     }
 }
-impl PluginLoader {
-    /// Load plugin from file path (internal helper)
-    pub(super) fn load_from_file(&mut self, path: &Path) -> Result<PluginLoadResult> {
-        self.load_plugin_from_file(path)
-    }
-}
 /// Security manager for plugin validation
 #[derive(Debug)]
 pub struct SecurityManager {
@@ -473,15 +465,6 @@ impl SecurityManager {
             integrity_valid,
         })
     }
-    pub(super) fn calculate_security_score(
-        &self,
-        threats: &[SecurityThreat],
-        violations: &[String],
-    ) -> f64 {
-        let threat_penalty = threats.len() as f64 * 0.1;
-        let violation_penalty = violations.len() as f64 * 0.2;
-        (1.0 - threat_penalty - violation_penalty).max(0.0)
-    }
     pub(super) fn calculate_comprehensive_security_score(
         &self,
         threats: &[SecurityThreat],
@@ -537,11 +520,31 @@ impl SecurityManager {
     }
 }
 impl SecurityManager {
-    /// Scan individual file for security issues
+    /// Scan an individual file for security issues.
+    ///
+    /// Delegates to the configured [`CodeScanner`]. Until 0.3.2 this returned
+    /// `SecurityFileScanResult { safe: true, issues: vec![] }` for every input
+    /// without reading the file at all -- a scanner that unconditionally
+    /// certifies its input as safe is worse than no scanner, because callers
+    /// act on the certificate.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`CodeScanner::scan_code`], which refuses to report a clean
+    /// result when it has no rules or signatures to check against.
     pub fn scan_file(&self, path: &Path) -> Result<SecurityFileScanResult> {
+        let threats = self.code_scanner.scan_code(path)?;
         Ok(SecurityFileScanResult {
-            safe: true,
-            issues: Vec::new(),
+            safe: threats.is_empty(),
+            issues: threats
+                .iter()
+                .map(|threat| match &threat.location {
+                    Some(location) => {
+                        format!("{:?}: {} ({location})", threat.severity, threat.description)
+                    }
+                    None => format!("{:?}: {}", threat.severity, threat.description),
+                })
+                .collect(),
         })
     }
 }
@@ -656,14 +659,146 @@ pub struct CodeScanner {
     pub(super) signatures: Vec<MalwareSignature>,
 }
 impl CodeScanner {
+    /// An empty scanner. Configure it with [`Self::add_rule`] and
+    /// [`Self::add_signature`] before scanning; an unconfigured scanner refuses
+    /// to scan rather than reporting a clean result it cannot justify.
     pub(super) fn new() -> Self {
         Self {
             rules: Vec::new(),
             signatures: Vec::new(),
         }
     }
+
+    /// Register a byte-pattern rule. An empty pattern is refused: it matches
+    /// every file at offset zero.
+    pub fn add_rule(&mut self, rule: ScanningRule) -> Result<()> {
+        if rule.pattern.is_empty() {
+            return Err(OptimError::InvalidParameter(format!(
+                "scanning rule '{}' has an empty pattern, which matches everything",
+                rule.name
+            )));
+        }
+        self.rules.push(rule);
+        Ok(())
+    }
+
+    /// Register a known-bad file digest, as lowercase hex.
+    pub fn add_signature(&mut self, signature: MalwareSignature) -> Result<()> {
+        let hash = signature.hash.trim().to_ascii_lowercase();
+        if hash.is_empty() || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(OptimError::InvalidParameter(format!(
+                "malware signature '{}' must carry a non-empty hex digest, got '{}'",
+                signature.name, signature.hash
+            )));
+        }
+        self.signatures.push(MalwareSignature { hash, ..signature });
+        Ok(())
+    }
+
+    /// Configured pattern rules.
+    pub fn rules(&self) -> &[ScanningRule] {
+        &self.rules
+    }
+
+    /// Configured malware digests.
+    pub fn signatures(&self) -> &[MalwareSignature] {
+        &self.signatures
+    }
+
+    /// Scan `path` against every configured rule and signature.
+    ///
+    /// * **Rules** are literal byte patterns searched over the file's contents;
+    ///   a hit yields a [`ThreatType::SuspiciousFunction`] threat carrying the
+    ///   byte offset.
+    /// * **Signatures** are whole-file digests; a match yields a
+    ///   [`ThreatType::IntegrityViolation`] threat at
+    ///   [`ScanSeverity::Critical`].
+    ///
+    /// Until 0.3.2 this returned `Ok(Vec::new())` unconditionally, so
+    /// `rules` and `signatures` were written at construction and never read and
+    /// every plugin passed the scan.
+    ///
+    /// # Errors
+    ///
+    /// * [`OptimError::InvalidState`] -- the scanner has neither rules nor
+    ///   signatures, so "no threats found" would assert something it never
+    ///   checked.
+    /// * An I/O error if `path` cannot be read.
     pub(super) fn scan_code(&self, path: &Path) -> Result<Vec<SecurityThreat>> {
-        Ok(Vec::new())
+        if self.rules.is_empty() && self.signatures.is_empty() {
+            return Err(OptimError::InvalidState(format!(
+                "the code scanner has no rules and no malware signatures configured, so it cannot \
+                 certify {} as clean; register them with CodeScanner::add_rule / add_signature",
+                path.display()
+            )));
+        }
+
+        let contents = std::fs::read(path)?;
+        let mut threats = Vec::new();
+
+        for rule in &self.rules {
+            let pattern = rule.pattern.as_bytes();
+            if let Some(offset) = contents
+                .windows(pattern.len())
+                .position(|window| window == pattern)
+            {
+                threats.push(SecurityThreat {
+                    threat_type: ThreatType::SuspiciousFunction,
+                    description: format!(
+                        "rule '{}' matched the pattern {:?}",
+                        rule.name, rule.pattern
+                    ),
+                    severity: rule.severity.clone(),
+                    location: Some(format!("{}:+{offset}", path.display())),
+                });
+            }
+        }
+
+        if !self.signatures.is_empty() {
+            let digest = file_digest_hex(&contents);
+            for signature in &self.signatures {
+                if signature.hash == digest {
+                    threats.push(SecurityThreat {
+                        threat_type: ThreatType::IntegrityViolation,
+                        description: format!(
+                            "file digest matches malware signature '{}': {}",
+                            signature.name, signature.description
+                        ),
+                        severity: ScanSeverity::Critical,
+                        location: Some(path.display().to_string()),
+                    });
+                }
+            }
+        }
+
+        Ok(threats)
+    }
+}
+
+/// Lowercase hex digest of `contents`.
+///
+/// SHA-256 under the `crypto` feature; a non-cryptographic 64-bit hash
+/// otherwise, matching what [`SecurityManager::calculate_plugin_hash`] does so
+/// digests recorded by one are comparable with the other in the same build.
+fn file_digest_hex(contents: &[u8]) -> String {
+    #[cfg(feature = "crypto")]
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(contents);
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+    #[cfg(not(feature = "crypto"))]
+    {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        contents.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
     }
 }
 /// Security scan result for individual files

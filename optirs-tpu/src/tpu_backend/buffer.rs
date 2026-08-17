@@ -57,6 +57,16 @@ impl<T: Float + Debug + Send + Sync + 'static> TPUBuffer<T> {
         }
     }
 
+    /// The memory layout the buffer was created with.
+    ///
+    /// Note that the reference tensor codec used by this module's private
+    /// `serialization` submodule carries shape and data only, so a buffer that
+    /// has been round-tripped through a computation comes back row-major
+    /// regardless of the layout the original was created with.
+    pub fn layout(&self) -> MemoryLayout {
+        self.layout
+    }
+
     /// Get buffer size in bytes
     pub fn size_bytes(&self) -> usize {
         self.data.len() * std::mem::size_of::<T>()

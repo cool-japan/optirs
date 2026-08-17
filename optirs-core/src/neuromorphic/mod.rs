@@ -4,13 +4,9 @@
 // computing platforms, including spike-based optimization, event-driven parameter updates,
 // and energy-efficient optimization strategies for neuromorphic chips.
 
-use crate::error::Result;
-use crate::optimizers::Optimizer;
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub mod energy_efficient;
 pub mod event_driven;
@@ -22,7 +18,7 @@ pub mod spike_based;
 /// targets. Shared by the neuromorphic submodules so none of them need a
 /// bare `.expect(...)` on a numeric-literal conversion.
 pub(crate) fn to_generic_or<F: Float>(value: f64, fallback: F) -> F {
-    F::from(value).unwrap_or_else(|| fallback)
+    F::from(value).unwrap_or(fallback)
 }
 
 // Re-export key types
@@ -32,7 +28,6 @@ pub use spike_based::{SpikeTrainOptimizer, SpikingConfig, SpikingOptimizer};
 
 /// Neuromorphic computing platform types
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum NeuromorphicPlatform {
     /// Intel Loihi neuromorphic chip
     IntelLoihi,
@@ -55,7 +50,6 @@ pub enum NeuromorphicPlatform {
 
 /// Neuromorphic optimization configuration
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct NeuromorphicConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Target neuromorphic platform
     pub platform: NeuromorphicPlatform,
@@ -155,7 +149,6 @@ pub struct MembraneDynamicsConfig<T: Float + Debug + Send + Sync + 'static> {
 
 /// Synaptic plasticity models
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum PlasticityModel {
     /// Hebbian plasticity
     Hebbian,
@@ -209,7 +202,6 @@ pub struct PopulationConfig {
 
 /// Population coding strategies
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum PopulationCodingStrategy {
     /// Distributed coding
     Distributed,
@@ -229,7 +221,6 @@ pub enum PopulationCodingStrategy {
 
 /// Synchronization mechanisms
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum SynchronizationMechanism {
     /// No synchronization
     None,
@@ -249,7 +240,6 @@ pub enum SynchronizationMechanism {
 
 /// Energy optimization configuration
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct EnergyOptimizationConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Energy budget (nJ per operation)
     pub energy_budget: T,
@@ -278,7 +268,6 @@ pub struct EnergyOptimizationConfig<T: Float + Debug + Send + Sync + 'static> {
 
 /// Sleep mode configuration for energy efficiency
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SleepModeConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Enable sleep mode
     pub enable_sleep_mode: bool,
@@ -298,7 +287,6 @@ pub struct SleepModeConfig<T: Float + Debug + Send + Sync + 'static> {
 
 /// Thermal management configuration
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ThermalManagementConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Enable thermal management
     pub enable_thermal_management: bool,
@@ -318,7 +306,6 @@ pub struct ThermalManagementConfig<T: Float + Debug + Send + Sync + 'static> {
 
 /// Thermal throttling strategies
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum ThermalThrottlingStrategy {
     /// Frequency scaling
     FrequencyScaling,
@@ -338,7 +325,6 @@ pub enum ThermalThrottlingStrategy {
 
 /// Spike representation for neuromorphic optimization
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Spike<T: Float + Debug + Send + Sync + 'static> {
     /// Neuron ID
     pub neuron_id: usize,
@@ -494,7 +480,6 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
 
 /// Event-driven update representation
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct NeuromorphicEvent<T: Float + Debug + Send + Sync + 'static> {
     /// Event type
     pub event_type: EventType,
@@ -520,7 +505,6 @@ pub struct NeuromorphicEvent<T: Float + Debug + Send + Sync + 'static> {
 
 /// Event priority levels for neuromorphic processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[allow(dead_code)]
 pub enum EventPriority {
     Low,
     Normal,

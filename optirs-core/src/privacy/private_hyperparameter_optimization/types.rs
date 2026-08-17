@@ -3,12 +3,10 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use crate::error::{OptimError, Result};
-use crate::privacy::moment_accountant::MomentsAccountant;
 use crate::privacy::{DifferentialPrivacyConfig, PrivacyBudget};
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::rngs::StdRng;
-use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -45,7 +43,64 @@ pub fn unix_timestamp() -> Result<u64> {
         })
 }
 
-/// Result validator
+/// Outcome of running a [`ResultValidator`] over a batch of evaluations.
+///
+/// This is a *sanity* report on the optimizer's own bookkeeping, not a privacy
+/// statement: it is computed from values the optimizer already holds, so it
+/// spends no epsilon. Do not publish it alongside a private release without
+/// accounting for it separately.
+#[derive(Debug, Clone)]
+pub struct ValidationReport {
+    /// Number of results inspected.
+    pub inspected: usize,
+    /// Results whose objective was not finite (NaN or infinity).
+    pub non_finite: usize,
+    /// Results whose status was not [`EvaluationStatus::Success`].
+    pub incomplete: usize,
+    /// Names of the [`ValidationRule`]s that at least one result failed, each
+    /// with the number of failures and the rule's weight.
+    pub rule_failures: Vec<(String, usize, f64)>,
+    /// Weighted failure score: `sum(weight * failures) / sum(weight *
+    /// inspected)` over the configured rules, in `[0, 1]`. `0.0` when no rules
+    /// are configured.
+    pub weighted_failure_rate: f64,
+    /// One entry per configured [`StatisticalTest`], paired with whether its
+    /// p-value fell below the test's `alpha`.
+    pub test_results: Vec<(String, StatisticalTestResult, bool)>,
+    /// Indices of results the [`AnomalyDetector`] flagged.
+    pub anomalies: Vec<usize>,
+}
+
+impl ValidationReport {
+    /// Whether anything at all was flagged.
+    pub fn is_clean(&self) -> bool {
+        self.non_finite == 0
+            && self.incomplete == 0
+            && self.rule_failures.is_empty()
+            && self.anomalies.is_empty()
+            && self.test_results.iter().all(|(_, _, rejected)| !rejected)
+    }
+}
+
+/// Validator for a batch of hyperparameter-optimization results.
+///
+/// # What it checks
+///
+/// 1. **Structural checks**, always applied: a non-finite objective (the usual
+///    symptom of a diverged trial) and a status other than
+///    [`EvaluationStatus::Success`].
+/// 2. **Configured rules** ([`Self::add_rule`]): arbitrary per-result
+///    predicates, each with a weight, aggregated into
+///    [`ValidationReport::weighted_failure_rate`].
+/// 3. **Configured tests** ([`Self::add_test`]): batch-level statistics, each
+///    with its own `alpha`; the report records whether each rejected.
+/// 4. **Anomaly detection** ([`AnomalyDetector`]): objective values far from
+///    the batch's own robust centre.
+///
+/// Before 0.3.2 this type had `new()` and nothing else: `validation_rules` and
+/// `statistical_tests` were empty vectors that no code path could populate or
+/// read, and the anomaly detector was constructed and never consulted, so the
+/// aggregator's "validation" step validated nothing.
 pub struct ResultValidator<T: Float + Debug + Send + Sync + 'static> {
     /// Validation rules
     validation_rules: Vec<ValidationRule<T>>,
@@ -54,12 +109,120 @@ pub struct ResultValidator<T: Float + Debug + Send + Sync + 'static> {
     /// Anomaly detection
     anomaly_detector: AnomalyDetector<T>,
 }
+
 impl<T: Float + Debug + Send + Sync + 'static> ResultValidator<T> {
+    /// A validator with the structural checks and the default z-score anomaly
+    /// detector, and no user rules or tests.
     pub fn new() -> Self {
         Self {
             validation_rules: Vec::new(),
             statistical_tests: Vec::new(),
             anomaly_detector: AnomalyDetector::new(),
+        }
+    }
+
+    /// Register a per-result rule. `weight` must be positive and finite.
+    pub fn add_rule(&mut self, rule: ValidationRule<T>) -> Result<()> {
+        if !rule.weight.is_finite() || rule.weight <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "validation rule '{}' has weight {}, which must be positive and finite",
+                rule.name, rule.weight
+            )));
+        }
+        self.validation_rules.push(rule);
+        Ok(())
+    }
+
+    /// Register a batch-level statistical test. `alpha` must lie in `(0, 1)`.
+    pub fn add_test(&mut self, test: StatisticalTest<T>) -> Result<()> {
+        if !(0.0..1.0).contains(&test.alpha) || test.alpha <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "statistical test '{}' has alpha {}, which must lie in (0, 1)",
+                test.name, test.alpha
+            )));
+        }
+        self.statistical_tests.push(test);
+        Ok(())
+    }
+
+    /// The registered rules.
+    pub fn rules(&self) -> &[ValidationRule<T>] {
+        &self.validation_rules
+    }
+
+    /// The registered tests.
+    pub fn tests(&self) -> &[StatisticalTest<T>] {
+        &self.statistical_tests
+    }
+
+    /// Mutable access to the anomaly detector, so its threshold, method and
+    /// baseline can be configured.
+    pub fn anomaly_detector_mut(&mut self) -> &mut AnomalyDetector<T> {
+        &mut self.anomaly_detector
+    }
+
+    /// The anomaly detector.
+    pub fn anomaly_detector(&self) -> &AnomalyDetector<T> {
+        &self.anomaly_detector
+    }
+
+    /// Run every configured check over `results`.
+    ///
+    /// An empty batch yields an empty report rather than an error: there is
+    /// nothing wrong with having produced no results yet.
+    pub fn validate(&self, results: &[HPOResult<T>]) -> ValidationReport {
+        let mut non_finite = 0usize;
+        let mut incomplete = 0usize;
+        for result in results {
+            if result
+                .objective_value
+                .to_f64()
+                .is_none_or(|v| !v.is_finite())
+            {
+                non_finite += 1;
+            }
+            if !matches!(result.status, EvaluationStatus::Success) {
+                incomplete += 1;
+            }
+        }
+
+        let mut rule_failures = Vec::new();
+        let mut weighted_failures = 0.0_f64;
+        let mut weighted_total = 0.0_f64;
+        for rule in &self.validation_rules {
+            let failures = results.iter().filter(|r| !(rule.rule_fn)(r)).count();
+            weighted_failures += rule.weight * failures as f64;
+            weighted_total += rule.weight * results.len() as f64;
+            if failures > 0 {
+                rule_failures.push((rule.name.clone(), failures, rule.weight));
+            }
+        }
+        let weighted_failure_rate = if weighted_total > 0.0 {
+            weighted_failures / weighted_total
+        } else {
+            0.0
+        };
+
+        let test_results = self
+            .statistical_tests
+            .iter()
+            .map(|test| {
+                let outcome = (test.test_fn)(results);
+                let rejected = outcome.p_value < test.alpha;
+                (test.name.clone(), outcome, rejected)
+            })
+            .collect();
+
+        let anomalies = self.anomaly_detector.flag(results);
+
+        ValidationReport {
+            inspected: results.len(),
+            non_finite,
+            incomplete,
+            rule_failures,
+            weighted_failure_rate,
+            test_results,
+            anomalies,
         }
     }
 }
@@ -120,32 +283,6 @@ pub enum SearchAlgorithm {
     SimulatedAnnealing,
     /// Tree-structured Parzen estimator with differential privacy
     TPE,
-}
-/// Search strategy for hyperparameter optimization
-pub struct SearchStrategy<T: Float + Debug + Send + Sync + 'static> {
-    /// Search algorithm
-    algorithm: SearchAlgorithm,
-    /// Algorithm-specific parameters
-    algorithm_params: HashMap<String, f64>,
-    /// Exploration-exploitation balance
-    exploration_factor: f64,
-    /// Convergence criteria
-    convergence_criteria: ConvergenceCriteria<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> SearchStrategy<T> {
-    pub fn new() -> Self {
-        Self {
-            algorithm: SearchAlgorithm::RandomSearch,
-            algorithm_params: HashMap::new(),
-            exploration_factor: 0.1,
-            convergence_criteria: ConvergenceCriteria {
-                max_iterations: 100,
-                tolerance: T::from(1e-6).unwrap_or_else(|| T::zero()),
-                patience: 10,
-                min_change: T::from(1e-4).unwrap_or_else(|| T::zero()),
-            },
-        }
-    }
 }
 /// Fold assignment strategies
 #[derive(Debug, Clone, Copy)]
@@ -264,47 +401,6 @@ impl<T: Float + Debug + Send + Sync + 'static> SelectionParameters<T> {
             epsilon,
             delta: None,
             threshold: None,
-        }
-    }
-}
-/// Private aggregation of cross-validation results
-pub struct PrivateFoldAggregation<T: Float + Debug + Send + Sync + 'static> {
-    /// Aggregation method
-    aggregation_method: AggregationMethod,
-    /// Noise parameters for aggregation
-    noise_params: NoiseParameters<T>,
-    /// Confidence interval estimation
-    confidence_estimation: ConfidenceEstimation<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PrivateFoldAggregation<T> {
-    pub fn new() -> Self {
-        Self {
-            aggregation_method: AggregationMethod::NoisyMean,
-            noise_params: NoiseParameters {
-                scale: T::one(),
-                sensitivity: T::one(),
-                epsilon: 1.0,
-                delta: Some(1e-5),
-            },
-            confidence_estimation: ConfidenceEstimation::new(),
-        }
-    }
-}
-/// Acquisition function for Bayesian optimization
-pub struct AcquisitionFunction<T: Float + Debug + Send + Sync + 'static> {
-    /// Function type
-    function_type: AcquisitionFunctionType,
-    /// Function parameters
-    parameters: Vec<T>,
-    /// Exploration-exploitation balance
-    exploration_weight: T,
-}
-impl<T: Float + Debug + Send + Sync + 'static> AcquisitionFunction<T> {
-    pub fn new() -> Self {
-        Self {
-            function_type: AcquisitionFunctionType::ExpectedImprovement,
-            parameters: Vec::new(),
-            exploration_weight: T::from(0.1).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -618,24 +714,6 @@ pub struct PrivateHPOConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Validation strategy
     pub validation_strategy: ValidationStrategy,
 }
-/// Objective sensitivity analyzer
-pub struct ObjectiveSensitivityAnalyzer<T: Float + Debug + Send + Sync + 'static> {
-    /// Sensitivity estimation method
-    estimation_method: SensitivityEstimationMethod,
-    /// Sensitivity cache
-    sensitivity_cache: HashMap<String, T>,
-    /// Sample-based sensitivity estimator
-    sample_estimator: SampleBasedSensitivityEstimator<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ObjectiveSensitivityAnalyzer<T> {
-    pub fn new() -> Self {
-        Self {
-            estimation_method: SensitivityEstimationMethod::Global,
-            sensitivity_cache: HashMap::new(),
-            sample_estimator: SampleBasedSensitivityEstimator::new(),
-        }
-    }
-}
 /// Parameter value types
 #[derive(Debug, Clone)]
 pub enum ParameterValue<T: Float + Debug + Send + Sync + 'static> {
@@ -865,27 +943,6 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
         Ok(value + noise)
     }
 }
-/// Private cross-validation evaluator
-pub struct PrivateCrossValidation<T: Float + Debug + Send + Sync + 'static> {
-    /// Number of folds
-    num_folds: usize,
-    /// Privacy budget per fold
-    fold_budgets: Vec<PrivacyBudget>,
-    /// Fold assignment strategy
-    fold_strategy: FoldStrategy,
-    /// Result aggregation with privacy
-    private_aggregation: PrivateFoldAggregation<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PrivateCrossValidation<T> {
-    pub fn new() -> Self {
-        Self {
-            num_folds: 5,
-            fold_budgets: Vec::new(),
-            fold_strategy: FoldStrategy::Random,
-            private_aggregation: PrivateFoldAggregation::new(),
-        }
-    }
-}
 /// Types of hyperparameters
 #[derive(Debug, Clone)]
 pub enum ParameterType<T: Float + Debug + Send + Sync + 'static> {
@@ -950,10 +1007,6 @@ pub struct PrivateObjective<T: Float + Debug + Send + Sync + 'static> {
     objective_fn: ObjectiveFn<T>,
     /// Noise mechanism for objective evaluation
     noise_mechanism: ObjectiveNoiseMechanism<T>,
-    /// Sensitivity analysis
-    sensitivity_analyzer: ObjectiveSensitivityAnalyzer<T>,
-    /// Cross-validation with privacy
-    cv_evaluator: PrivateCrossValidation<T>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
     /// A private objective with no function set yet.
@@ -976,8 +1029,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
                 ))
             }),
             noise_mechanism,
-            sensitivity_analyzer: ObjectiveSensitivityAnalyzer::new(),
-            cv_evaluator: PrivateCrossValidation::new(),
         })
     }
 
@@ -995,16 +1046,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
     /// The noise mechanism used for the objective release.
     pub fn noise_mechanism(&self) -> &ObjectiveNoiseMechanism<T> {
         &self.noise_mechanism
-    }
-
-    /// The sensitivity analyzer.
-    pub fn sensitivity_analyzer(&self) -> &ObjectiveSensitivityAnalyzer<T> {
-        &self.sensitivity_analyzer
-    }
-
-    /// The cross-validation evaluator.
-    pub fn cv_evaluator(&self) -> &PrivateCrossValidation<T> {
-        &self.cv_evaluator
     }
 
     /// Evaluate the objective and release a noisy value.
@@ -1168,8 +1209,6 @@ pub struct PrivateBayesianOptimization<T: Float + Debug + Send + Sync + 'static>
     config: PrivateHPOConfig<T>,
     /// Fitted Gaussian-process surrogate, once there is history to fit it to
     gp_model: Option<super::gaussian_process::GaussianProcessFit>,
-    /// Acquisition function
-    acquisition_fn: AcquisitionFunction<T>,
     /// Evaluation history
     history: Vec<HPOEvaluation<T>>,
     /// Generator used to draw the initial (history-free) configuration
@@ -1185,7 +1224,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateBayesianOptimization<T> {
         Ok(Self {
             config,
             gp_model: None,
-            acquisition_fn: AcquisitionFunction::new(),
             history: Vec::new(),
             rng: os_seeded_hpo_rng(),
         })
@@ -1198,7 +1236,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateBayesianOptimization<T> {
         Ok(Self {
             config,
             gp_model: None,
-            acquisition_fn: AcquisitionFunction::new(),
             history: Vec::new(),
             rng: scirs2_core::random::Random::seed(seed),
         })
@@ -1207,11 +1244,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateBayesianOptimization<T> {
     /// The configuration this optimizer was built with.
     pub fn config(&self) -> &PrivateHPOConfig<T> {
         &self.config
-    }
-
-    /// The acquisition function description.
-    pub fn acquisition_fn(&self) -> &AcquisitionFunction<T> {
-        &self.acquisition_fn
     }
 
     /// Recorded evaluations.
@@ -1272,30 +1304,6 @@ pub enum UtilityFunctionType {
     /// Custom utility function
     Custom,
 }
-/// Sample-based sensitivity estimator
-pub struct SampleBasedSensitivityEstimator<T: Float + Debug + Send + Sync + 'static> {
-    /// Number of samples for estimation
-    num_samples: usize,
-    /// Sampling strategy
-    sampling_strategy: SamplingStrategy,
-    /// Confidence level for bounds
-    confidence_level: f64,
-    /// Bootstrap estimator
-    bootstrap_estimator: BootstrapEstimator<T>,
-    /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> SampleBasedSensitivityEstimator<T> {
-    pub fn new() -> Self {
-        Self {
-            num_samples: 1000,
-            sampling_strategy: SamplingStrategy::Uniform,
-            confidence_level: 0.95,
-            bootstrap_estimator: BootstrapEstimator::new(),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
 /// Statistical test result
 #[derive(Debug, Clone)]
 pub struct StatisticalTestResult {
@@ -1318,11 +1326,162 @@ pub struct AnomalyDetector<T: Float + Debug + Send + Sync + 'static> {
     baseline: Option<T>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
+    /// A z-score detector with a 3-sigma threshold and no fixed baseline.
     pub fn new() -> Self {
         Self {
             threshold: T::from(3.0).unwrap_or_else(|| T::zero()),
             detection_method: AnomalyDetectionMethod::ZScore,
             baseline: None,
+        }
+    }
+
+    /// The cutoff: z-scores (or IQR multiples) above this are flagged.
+    pub fn threshold(&self) -> T {
+        self.threshold
+    }
+
+    /// Replace the cutoff. Must be positive and finite.
+    pub fn set_threshold(&mut self, threshold: T) -> Result<()> {
+        let value = threshold.to_f64().unwrap_or(f64::NAN);
+        if !value.is_finite() || value <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the anomaly threshold must be positive and finite, got {value}"
+            )));
+        }
+        self.threshold = threshold;
+        Ok(())
+    }
+
+    /// The configured detection method.
+    pub fn detection_method(&self) -> AnomalyDetectionMethod {
+        self.detection_method
+    }
+
+    /// Select the detection method.
+    ///
+    /// [`AnomalyDetectionMethod::IsolationForest`] and
+    /// [`AnomalyDetectionMethod::LocalOutlierFactor`] are multivariate methods
+    /// that need a feature matrix; a scalar objective series cannot support
+    /// them, so selecting one is refused rather than silently behaving like the
+    /// z-score rule.
+    pub fn set_detection_method(&mut self, method: AnomalyDetectionMethod) -> Result<()> {
+        match method {
+            AnomalyDetectionMethod::ZScore | AnomalyDetectionMethod::IQR => {
+                self.detection_method = method;
+                Ok(())
+            }
+            other => Err(OptimError::UnsupportedOperation(format!(
+                "{other:?} is a multivariate detector and cannot be applied to a scalar objective \
+                 series; use AnomalyDetectionMethod::ZScore or ::IQR here, or run the multivariate \
+                 detector in coordination::monitoring::anomaly_detection over a feature matrix"
+            ))),
+        }
+    }
+
+    /// A fixed centre to measure deviation from, if one has been set.
+    ///
+    /// With no baseline the batch's own mean (z-score) or median (IQR) is used,
+    /// which is what makes the detector usable on a single batch.
+    pub fn baseline(&self) -> Option<T> {
+        self.baseline
+    }
+
+    /// Pin the centre to a value observed on earlier, trusted runs.
+    pub fn set_baseline(&mut self, baseline: Option<T>) {
+        self.baseline = baseline;
+    }
+
+    /// Indices of `results` whose objective value is anomalous.
+    ///
+    /// * [`AnomalyDetectionMethod::ZScore`]: `|x - centre| > threshold * sigma`,
+    ///   where `sigma` is the batch's sample standard deviation. A batch of
+    ///   fewer than two usable values, or one with zero spread, flags nothing --
+    ///   there is no scale to measure against.
+    /// * [`AnomalyDetectionMethod::IQR`]: `x` outside
+    ///   `[Q1 - threshold*IQR, Q3 + threshold*IQR]`. Robust to the outliers it
+    ///   is looking for, unlike the z-score, whose sigma the outliers inflate.
+    ///
+    /// Non-finite objectives are never flagged here; they are counted separately
+    /// by [`ResultValidator::validate`] as structural failures.
+    pub fn flag(&self, results: &[HPOResult<T>]) -> Vec<usize> {
+        let values: Vec<(usize, f64)> = results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, result)| {
+                result
+                    .objective_value
+                    .to_f64()
+                    .filter(|v| v.is_finite())
+                    .map(|v| (index, v))
+            })
+            .collect();
+        if values.len() < 2 {
+            return Vec::new();
+        }
+        let threshold = match self.threshold.to_f64() {
+            Some(t) if t.is_finite() && t > 0.0 => t,
+            _ => return Vec::new(),
+        };
+        let baseline = self
+            .baseline
+            .and_then(|b| b.to_f64())
+            .filter(|b| b.is_finite());
+
+        match self.detection_method {
+            AnomalyDetectionMethod::ZScore => {
+                let centre = baseline.unwrap_or_else(|| {
+                    values.iter().map(|(_, v)| *v).sum::<f64>() / values.len() as f64
+                });
+                let mean = values.iter().map(|(_, v)| *v).sum::<f64>() / values.len() as f64;
+                let variance = values
+                    .iter()
+                    .map(|(_, v)| (v - mean) * (v - mean))
+                    .sum::<f64>()
+                    / (values.len() - 1) as f64;
+                let sigma = variance.sqrt();
+                if !sigma.is_finite() || sigma <= 0.0 {
+                    return Vec::new();
+                }
+                values
+                    .into_iter()
+                    .filter(|(_, v)| (v - centre).abs() > threshold * sigma)
+                    .map(|(index, _)| index)
+                    .collect()
+            }
+            AnomalyDetectionMethod::IQR => {
+                let mut sorted: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
+                sorted.sort_by(|a, b| a.total_cmp(b));
+                let quantile = |q: f64| -> f64 {
+                    let position = q * (sorted.len() - 1) as f64;
+                    let lower = position.floor() as usize;
+                    let upper = position.ceil() as usize;
+                    if lower == upper {
+                        sorted[lower]
+                    } else {
+                        let weight = position - lower as f64;
+                        sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+                    }
+                };
+                let q1 = quantile(0.25);
+                let q3 = quantile(0.75);
+                let iqr = q3 - q1;
+                if !iqr.is_finite() || iqr <= 0.0 {
+                    return Vec::new();
+                }
+                let shift = baseline.map(|b| b - (q1 + q3) / 2.0).unwrap_or(0.0);
+                let low = q1 + shift - threshold * iqr;
+                let high = q3 + shift + threshold * iqr;
+                values
+                    .into_iter()
+                    .filter(|(_, v)| *v < low || *v > high)
+                    .map(|(index, _)| index)
+                    .collect()
+            }
+            // Refused by `set_detection_method`; unreachable for a detector built
+            // through the public API, and flagging nothing is the safe reading if
+            // one is ever constructed another way.
+            AnomalyDetectionMethod::IsolationForest
+            | AnomalyDetectionMethod::LocalOutlierFactor => Vec::new(),
         }
     }
 }
@@ -1335,48 +1494,6 @@ pub struct ParameterConfiguration<T: Float + Debug + Send + Sync + 'static> {
     pub id: String,
     /// Configuration metadata
     pub metadata: HashMap<String, String>,
-}
-/// Confidence interval estimation
-pub struct ConfidenceEstimation<T: Float + Debug + Send + Sync + 'static> {
-    /// Confidence level
-    confidence_level: f64,
-    /// Estimation method
-    estimation_method: ConfidenceEstimationMethod,
-    /// Bootstrap parameters
-    bootstrap_params: Option<BootstrapParams>,
-    /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ConfidenceEstimation<T> {
-    pub fn new() -> Self {
-        Self {
-            confidence_level: 0.95,
-            estimation_method: ConfidenceEstimationMethod::Normal,
-            bootstrap_params: None,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-/// Bootstrap estimator for sensitivity
-pub struct BootstrapEstimator<T: Float + Debug + Send + Sync + 'static> {
-    /// Number of bootstrap samples
-    num_bootstrap: usize,
-    /// Bootstrap confidence interval
-    confidence_interval: (f64, f64),
-    /// Bias correction
-    bias_correction: bool,
-    /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> BootstrapEstimator<T> {
-    pub fn new() -> Self {
-        Self {
-            num_bootstrap: 1000,
-            confidence_interval: (0.025, 0.975),
-            bias_correction: true,
-            _phantom: std::marker::PhantomData,
-        }
-    }
 }
 /// Validation strategies for private hyperparameter optimization
 #[derive(Debug, Clone, Copy)]
@@ -1577,6 +1694,15 @@ pub struct PrivateRandomSearch<T: Float + Debug + Send + Sync + 'static> {
     pub(super) history: Vec<HPOEvaluation<T>>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> PrivateRandomSearch<T> {
+    /// The configuration this search was built with.
+    ///
+    /// Mirrors [`PrivateBayesianOptimization::config`]; without it the stored
+    /// configuration was unreachable, so a caller could not check which privacy
+    /// parameters the search was actually running under.
+    pub fn config(&self) -> &PrivateHPOConfig<T> {
+        &self.config
+    }
+
     /// Create a random search seeded from OS entropy.
     ///
     /// The generator must not be seeded from a constant: a fixed seed makes

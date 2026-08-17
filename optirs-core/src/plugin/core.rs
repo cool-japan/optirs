@@ -456,16 +456,16 @@ pub trait PluginLifecycle {
 /// implementor to satisfy the same bound.
 pub trait PluginEventHandler: Send + Sync {
     /// Handle optimization step event
-    fn on_step(&mut self, _step: usize, _params: &Array1<f64>, gradients: &Array1<f64>) {}
+    fn on_step(&mut self, _step: usize, _params: &Array1<f64>, _gradients: &Array1<f64>) {}
 
     /// Handle convergence event
     fn on_convergence(&mut self, _finalparams: &Array1<f64>) {}
 
     /// Handle error event
-    fn on_error(&mut self, error: &OptimError) {}
+    fn on_error(&mut self, _error: &OptimError) {}
 
     /// Handle custom event
-    fn on_custom_event(&mut self, _event_name: &str, data: &dyn Any) {}
+    fn on_custom_event(&mut self, _event_name: &str, _data: &dyn Any) {}
 }
 
 /// Plugin metadata provider
@@ -708,14 +708,14 @@ mod tests {
             },
         );
 
-        let mut config = OptimizerConfig {
+        let config = OptimizerConfig {
             learning_rate: 0.001,
             ..Default::default()
         };
 
         assert!(validate_config_against_schema(&config, &schema).is_ok());
 
-        let mut config = OptimizerConfig {
+        let config = OptimizerConfig {
             learning_rate: -0.001,
             ..Default::default()
         };

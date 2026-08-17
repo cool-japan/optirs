@@ -31,7 +31,7 @@
 //! comment "Real implementation would use proper forward-over-reverse mode" —
 //! five advertised differentiation modes for one algorithm.
 
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
@@ -335,7 +335,7 @@ pub fn recommended_step<T: Float + 'static>(order: usize) -> T {
 mod tests {
     use super::*;
     use crate::higher_order::{HigherOrderConfig, HigherOrderEngine};
-    use scirs2_core::ndarray::{arr1, arr2};
+    use scirs2_core::ndarray::{arr1, arr2, Array2};
 
     /// `f(x) = ½ xᵀ A x + bᵀ x` with `A = [[4, 1], [1, 3]]`, `b = [1, -2]`.
     /// The Hessian is exactly `A`, independent of `x`.

@@ -93,7 +93,7 @@ fn deterministic_start_vector<A: Float>(len: usize, salt: u64) -> Array1<A> {
 
     let scale = 1.0f64 / (u64::MAX as f64);
     for (i, slot) in v.iter_mut().enumerate() {
-        let bits = splitmix64(salt.wrapping_mul(0x1000_0000_1B3).wrapping_add(i as u64));
+        let bits = splitmix64(salt.wrapping_mul(0x0100_0000_01B3).wrapping_add(i as u64));
         let unit = (bits >> 11) as f64 * (scale * 2048.0); // in [0, 1)
         let magnitude = 0.5 + unit;
         let signed = if bits & 1 == 0 { magnitude } else { -magnitude };

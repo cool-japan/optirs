@@ -8,9 +8,6 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
 // SciRS2 Integration - ESSENTIAL for benchmarking
-#[cfg(feature = "cross-platform-testing")]
-use scirs2_datasets;
-use scirs2_stats::distributions;
 
 use crate::error::{OptimError, Result};
 

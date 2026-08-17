@@ -981,21 +981,30 @@ mod tests {
 
     #[test]
     fn invalid_configurations_are_rejected() {
-        let mut config = TransformerOptimizerConfig::default();
-        config.numheads = 5; // 32 is not divisible by 5
+        // 32 is not divisible by 5
+        let config = TransformerOptimizerConfig {
+            numheads: 5,
+            ..TransformerOptimizerConfig::default()
+        };
         assert!(config.validate().is_err());
         assert!(TransformerOptimizer::<f64>::new(config).is_err());
 
-        let mut config = TransformerOptimizerConfig::default();
-        config.modeldim = 0;
+        let config = TransformerOptimizerConfig {
+            modeldim: 0,
+            ..TransformerOptimizerConfig::default()
+        };
         assert!(TransformerOptimizer::<f64>::new(config).is_err());
 
-        let mut config = TransformerOptimizerConfig::default();
-        config.ff_dropout = 1.5;
+        let config = TransformerOptimizerConfig {
+            ff_dropout: 1.5,
+            ..TransformerOptimizerConfig::default()
+        };
         assert!(TransformerOptimizer::<f64>::new(config).is_err());
 
-        let mut config = TransformerOptimizerConfig::default();
-        config.num_layers = 0;
+        let config = TransformerOptimizerConfig {
+            num_layers: 0,
+            ..TransformerOptimizerConfig::default()
+        };
         assert!(TransformerOptimizer::<f64>::new(config).is_err());
     }
 

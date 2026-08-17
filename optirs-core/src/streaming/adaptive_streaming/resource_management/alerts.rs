@@ -21,6 +21,10 @@ const MAX_ALERT_HISTORY: usize = 1000;
 
 impl ResourceAlertSystem {
     /// Thresholds derived from the default configuration.
+    ///
+    /// Test-only: production builds always have a real `ResourceConfig` and
+    /// budget to hand, and construct through [`Self::from_config`].
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         let config = ResourceConfig::default();
         let budget = default_budget(&config);
@@ -198,6 +202,10 @@ impl ResourceAlertSystem {
 
     /// Threshold evaluation kept as a pure query for callers that only want to
     /// know what *would* fire.
+    /// Test-only: returns the alerts the current usage *would* raise without
+    /// mutating the active/​historical alert state. Production code calls
+    /// [`Self::update`], which raises and clears alerts for real.
+    #[cfg(test)]
     pub(crate) fn check_thresholds(
         &mut self,
         usage: &ResourceUsage,
@@ -212,6 +220,7 @@ impl ResourceAlertSystem {
         Ok(alerts)
     }
 
+    #[cfg(test)]
     fn check_threshold(
         &mut self,
         resource_type: &str,
@@ -331,6 +340,7 @@ fn threshold_for(severity: AlertSeverity, thresholds: &ThresholdSet) -> f64 {
 /// The budget the manager would build from `config`, used by
 /// [`ResourceAlertSystem::new`] so the standalone constructor derives the same
 /// thresholds as the configured one.
+#[cfg(test)]
 fn default_budget(config: &ResourceConfig) -> ResourceBudget {
     use super::{
         BudgetEnforcementStrategy, CpuBudget, DeadlineEnforcement, MemoryBudget, MemoryPriority,

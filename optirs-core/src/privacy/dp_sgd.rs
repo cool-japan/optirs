@@ -117,9 +117,6 @@ struct AdaptiveClippingState {
 /// P-squared quantile estimator (Jain & Chlamtac, 1985).
 #[derive(Debug, Clone)]
 struct QuantileEstimator {
-    /// Quantile being estimated, in (0, 1)
-    quantile: f64,
-
     /// P-squared marker state
     p2_state: P2AlgorithmState,
 
@@ -1067,8 +1064,9 @@ impl AdaptiveClippingState {
 
 impl QuantileEstimator {
     fn new(quantile: f64) -> Self {
+        // The quantile itself lives in `p2_state`; a second copy here was never
+        // read and could drift from the one the estimator actually uses.
         Self {
-            quantile,
             p2_state: P2AlgorithmState::new(quantile),
             ema: 0.0,
             ema_decay: 0.99,

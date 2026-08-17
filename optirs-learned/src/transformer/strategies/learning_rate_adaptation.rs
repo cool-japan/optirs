@@ -4,12 +4,11 @@ use std::fmt::Debug;
 // This module implements various learning rate adaptation strategies that the
 // transformer optimizer can use to dynamically adjust learning rates during training.
 
-#[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 
 /// Learning rate adaptation strategies
 #[derive(Debug, Clone, Copy)]
@@ -98,25 +97,6 @@ pub struct LRAdaptationParams<T: Float + Debug + Send + Sync + 'static> {
 
     /// Threshold for loss improvement
     pub improvement_threshold: T,
-}
-
-/// Learning rate schedule state
-#[derive(Debug, Clone)]
-pub struct ScheduleState<T: Float + Debug + Send + Sync + 'static> {
-    /// Current cycle in warm restart
-    current_cycle: usize,
-
-    /// Steps in current cycle
-    cycle_steps: usize,
-
-    /// Whether in warmup phase
-    in_warmup: bool,
-
-    /// Last schedule update step
-    last_update_step: usize,
-
-    /// Schedule-specific state
-    state: T,
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAdapter<T> {
@@ -426,9 +406,11 @@ mod tests {
     fn exponential_decay_actually_decays() {
         let mut adapter =
             LearningRateAdapter::<f64>::new(LearningRateAdaptationStrategy::ExponentialDecay, 1e-2);
-        let mut params = LRAdaptationParams::<f64>::default();
-        params.warmup_steps = 0;
-        params.min_lr = 0.0;
+        let params = LRAdaptationParams::<f64> {
+            warmup_steps: 0,
+            min_lr: 0.0,
+            ..LRAdaptationParams::default()
+        };
         adapter.set_parameters(params);
 
         let lr_first = adapter
@@ -459,10 +441,12 @@ mod tests {
 
     #[test]
     fn zero_valued_schedule_parameters_do_not_panic() {
-        let mut params = LRAdaptationParams::<f64>::default();
-        params.decay_steps = 0;
-        params.restart_period = 0;
-        params.warmup_steps = 0;
+        let params = LRAdaptationParams::<f64> {
+            decay_steps: 0,
+            restart_period: 0,
+            warmup_steps: 0,
+            ..LRAdaptationParams::default()
+        };
         for strategy in [
             LearningRateAdaptationStrategy::ExponentialDecay,
             LearningRateAdaptationStrategy::PolynomialDecay,

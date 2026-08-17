@@ -280,6 +280,12 @@ pub struct CommunicationChannel {
     pub messages: Vec<Message>,
     /// Channel settings
     pub settings: ChannelSettings,
+    /// Member id that created the channel.
+    ///
+    /// Added in 0.3.2: `create_channel` took a `creatorid` and threw it away,
+    /// so a channel carried no record of who had opened it and the creator was
+    /// not even guaranteed to be a member.
+    pub created_by: String,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 }
@@ -1059,14 +1065,19 @@ impl CollaborativeWorkspace {
         creatorid: &str,
     ) -> Result<String> {
         let channel_id = uuid::Uuid::new_v4().to_string();
+        let mut members: Vec<String> = self.members.iter().map(|m| m.id.clone()).collect();
+        if !members.iter().any(|id| id == creatorid) {
+            members.push(creatorid.to_string());
+        }
         let channel = CommunicationChannel {
             id: channel_id.clone(),
             name: name.to_string(),
             description: String::new(),
             channel_type,
-            members: self.members.iter().map(|m| m.id.clone()).collect(),
+            members,
             messages: Vec::new(),
             settings: ChannelSettings::default(),
+            created_by: creatorid.to_string(),
             created_at: Utc::now(),
         };
 
@@ -1549,9 +1560,10 @@ mod tests {
 
         let doc_id = workspace
             .create_document("Test Document", DocumentType::Manuscript, &owner_id)
-            .expect("unwrap failed");
+            .expect("create_document");
 
         assert_eq!(workspace.documents.len(), 1);
+        assert_eq!(workspace.documents[0].id, doc_id);
         assert_eq!(workspace.documents[0].name, "Test Document");
         assert_eq!(
             workspace.documents[0].document_type,
@@ -1643,8 +1655,10 @@ mod tests {
     fn test_collaboration_manager_enforces_workspace_limit() {
         let dir =
             std::env::temp_dir().join(format!("optirs_collab_limit_test_{}", uuid::Uuid::new_v4()));
-        let mut settings = CollaborationManagerSettings::default();
-        settings.max_workspaces_per_user = 1;
+        let settings = CollaborationManagerSettings {
+            max_workspaces_per_user: 1,
+            ..CollaborationManagerSettings::default()
+        };
 
         let mut manager =
             CollaborationManager::new(dir.clone(), settings).expect("manager creation");

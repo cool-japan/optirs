@@ -2,7 +2,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(dead_code)]
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 use scirs2_core::ndarray::{Array1, ScalarOperand};
@@ -107,13 +106,23 @@ where
 {
     /// Create a new streaming optimizer
     pub fn new(baseoptimizer: O, config: StreamingConfig) -> Result<Self> {
+        // Seed the adaptation state from the base optimizer's *own* learning
+        // rate. This used to be a hard-coded 0.01, so turning
+        // `adaptive_learning_rate` on silently discarded the rate the caller
+        // configured on the optimizer they passed in.
+        let base_lr = baseoptimizer.get_learning_rate();
         let lr_adaptation_state = LearningRateAdaptationState {
-            current_lr: to_a_or(0.01, A::one()),
+            current_lr: base_lr,
+            base_lr,
+            per_coordinate_scale: None,
             accumulated_gradients: None,
             ema_squared_gradients: None,
             performance_history: VecDeque::with_capacity(PERFORMANCE_HISTORY_CAPACITY),
             last_adaptation: Instant::now(),
-            adaptation_frequency: Duration::from_millis(1000),
+            // Zero means "adapt on every batch", which is what this optimizer
+            // has always actually done: the interval was stored but never
+            // consulted. `set_lr_adaptation_interval` turns the throttle on.
+            adaptation_frequency: Duration::ZERO,
         };
         let drift_detector = StreamingDriftDetector {
             loss_window: VecDeque::with_capacity(config.drift_window_size),
@@ -207,7 +216,6 @@ where
         })
     }
     /// Process a single streaming data point
-    #[allow(clippy::too_many_arguments)]
     pub fn process_sample(
         &mut self,
         data_point: StreamingDataPoint<A>,
@@ -307,9 +315,22 @@ where
             gradient
         };
         self.adapt_learning_rate(&compressed_gradient)?;
+        // T6: a per-coordinate rate is applied by preconditioning the gradient,
+        // because `Optimizer::set_learning_rate` can only carry one scalar.
+        // `base_lr * (scale_i * g_i)` is exactly a per-coordinate rate of
+        // `base_lr * scale_i`, so the scalar pushed to the base optimizer is
+        // the *unscaled* `base_lr` whenever a preconditioner is active.
+        let compressed_gradient = match self.lr_adaptation_state.per_coordinate_scale.as_ref() {
+            Some(scale) if scale.len() == compressed_gradient.len() => &compressed_gradient * scale,
+            _ => compressed_gradient,
+        };
         if self.config.adaptive_learning_rate {
-            self.baseoptimizer
-                .set_learning_rate(self.lr_adaptation_state.current_lr);
+            let applied_lr = if self.lr_adaptation_state.per_coordinate_scale.is_some() {
+                self.lr_adaptation_state.base_lr
+            } else {
+                self.lr_adaptation_state.current_lr
+            };
+            self.baseoptimizer.set_learning_rate(applied_lr);
         }
         let updated_params = if self.config.async_updates {
             self.async_update(&current_params, &compressed_gradient)?
@@ -404,6 +425,20 @@ where
         if !self.config.adaptive_learning_rate {
             return Ok(());
         }
+        // Honour the configured adaptation interval. Both `last_adaptation`
+        // and `adaptation_frequency` were recorded and never read, so the rate
+        // adapted on every single batch regardless of the interval.
+        if !self.lr_adaptation_state.adaptation_frequency.is_zero()
+            && self.lr_adaptation_state.last_adaptation.elapsed()
+                < self.lr_adaptation_state.adaptation_frequency
+        {
+            return Ok(());
+        }
+        self.lr_adaptation_state.last_adaptation = Instant::now();
+        // Only the per-coordinate strategies below re-install a preconditioner;
+        // clearing it first means a strategy switch at runtime cannot leave a
+        // stale one silently scaling every future gradient.
+        self.lr_adaptation_state.per_coordinate_scale = None;
         match self.config.lr_adaptation {
             LearningRateAdaptation::Fixed => {}
             LearningRateAdaptation::Adagrad => {
@@ -430,6 +465,16 @@ where
         }
         Ok(())
     }
+    /// AdaGrad (Duchi et al. 2011): each coordinate gets its own rate
+    /// `base_lr / (sqrt(sum_t g_{t,i}^2) + eps)`.
+    ///
+    /// T6: this previously collapsed the per-coordinate accumulator to a single
+    /// scalar with `sum()` over *all* coordinates, which scales every
+    /// coordinate identically and is not AdaGrad at all -- a coordinate with a
+    /// tiny gradient history was damped just as hard as a coordinate with a
+    /// huge one, and adding parameters shrank the rate for every existing one.
+    /// The per-coordinate rate is realised as a gradient preconditioner; see
+    /// [`LearningRateAdaptationState::per_coordinate_scale`].
     pub(super) fn adapt_adagrad(&mut self, gradient: &Array1<A>) -> Result<()> {
         let acc_grads = self
             .lr_adaptation_state
@@ -438,13 +483,16 @@ where
         for i in 0..gradient.len() {
             acc_grads[i] = acc_grads[i] + gradient[i] * gradient[i];
         }
-        let base_lr = to_a_or(0.01, A::one());
         let eps = to_a_or(1e-8, A::one());
-        let norm_sum = acc_grads.iter().copied().sum::<A>();
-        let adaptive_factor = (norm_sum + eps).sqrt();
-        self.lr_adaptation_state.current_lr = base_lr / adaptive_factor;
+        let scale = acc_grads.mapv(|acc| A::one() / (acc.sqrt() + eps));
+        self.set_per_coordinate_scale(scale);
         Ok(())
     }
+    /// RMSprop (Tieleman & Hinton 2012): per-coordinate rate
+    /// `base_lr / (sqrt(EMA[g_i^2]) + eps)`.
+    ///
+    /// T6: as with [`Self::adapt_adagrad`], the EMA was already tracked per
+    /// coordinate but then collapsed by `sum()` into one scalar rate.
     pub(super) fn adapt_rmsprop(&mut self, gradient: &Array1<A>) -> Result<()> {
         let ema_grads = self
             .lr_adaptation_state
@@ -455,11 +503,22 @@ where
         for i in 0..gradient.len() {
             ema_grads[i] = decay * ema_grads[i] + one_minus_decay * gradient[i] * gradient[i];
         }
-        let base_lr = to_a_or(0.01, A::one());
         let eps = to_a_or(1e-8, A::one());
-        let rms = ema_grads.iter().copied().sum::<A>().sqrt();
-        self.lr_adaptation_state.current_lr = base_lr / (rms + eps);
+        let scale = ema_grads.mapv(|ema| A::one() / (ema.sqrt() + eps));
+        self.set_per_coordinate_scale(scale);
         Ok(())
+    }
+    /// Install a per-coordinate preconditioner and update the reported scalar
+    /// `current_lr` to the mean of the per-coordinate rates it represents.
+    fn set_per_coordinate_scale(&mut self, scale: Array1<A>) {
+        let base_lr = self.lr_adaptation_state.base_lr;
+        let n = scale.len();
+        self.lr_adaptation_state.current_lr = if n == 0 {
+            base_lr
+        } else {
+            base_lr * scale.iter().copied().sum::<A>() / to_a_or(n as f64, A::one())
+        };
+        self.lr_adaptation_state.per_coordinate_scale = Some(scale);
     }
     pub(super) fn adapt_performance_based(&mut self) -> Result<()> {
         let n = self.lr_adaptation_state.performance_history.len();
@@ -724,6 +783,18 @@ where
         self.metrics.current_learning_rate =
             self.lr_adaptation_state.current_lr.to_f64().unwrap_or(0.0);
     }
+    /// Throttle learning-rate adaptation to at most once per `interval`.
+    ///
+    /// [`Duration::ZERO`] (the default) adapts on every processed batch.
+    pub fn set_lr_adaptation_interval(&mut self, interval: Duration) {
+        self.lr_adaptation_state.adaptation_frequency = interval;
+    }
+
+    /// The configured learning-rate adaptation interval.
+    pub fn lr_adaptation_interval(&self) -> Duration {
+        self.lr_adaptation_state.adaptation_frequency
+    }
+
     /// Get current streaming metrics
     pub fn get_metrics(&self) -> &StreamingMetrics {
         &self.metrics
@@ -772,6 +843,7 @@ where
     }
     /// Adaptive momentum-based learning rate adaptation
     pub(super) fn adapt_momentum_based(&mut self, gradient: &Array1<A>) -> Result<()> {
+        let base_lr = self.lr_adaptation_state.base_lr;
         let momentum = self
             .lr_adaptation_state
             .ema_squared_gradients
@@ -782,13 +854,13 @@ where
             momentum[i] = beta * momentum[i] + one_minus_beta * gradient[i];
         }
         let momentum_norm = momentum.iter().map(|&m| m * m).sum::<A>().sqrt();
-        let base_lr = to_a_or(0.01, A::one());
         let adaptation_factor = A::one() + momentum_norm * to_a_or(0.1, A::one());
         self.lr_adaptation_state.current_lr = base_lr / adaptation_factor;
         Ok(())
     }
     /// Gradient variance-based learning rate adaptation
     pub(super) fn adapt_gradient_variance(&mut self, gradient: &Array1<A>) -> Result<()> {
+        let base_lr = self.lr_adaptation_state.base_lr;
         let mean_grad = self
             .lr_adaptation_state
             .accumulated_gradients
@@ -810,7 +882,10 @@ where
             .map(|(&sq, &m)| sq - m * m)
             .sum::<A>()
             / to_a_or(gradient.len() as f64, A::one());
-        let base_lr = to_a_or(0.01, A::one());
+        // `E[g^2] - E[g]^2` from two independently-decayed EMAs can land
+        // slightly below zero on a near-constant gradient; `sqrt` of that is
+        // NaN, which would poison `current_lr` permanently.
+        let variance = variance.max(A::zero());
         let var_factor = A::one() + variance.sqrt() * to_a_or(10.0, A::one());
         self.lr_adaptation_state.current_lr = base_lr / var_factor;
         Ok(())

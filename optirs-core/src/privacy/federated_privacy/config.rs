@@ -13,6 +13,19 @@
 //   `AmplificationConfig::multi_round_amplification` likewise. Setting any of
 //   them explicitly is refused by `validate()` with an error naming what is
 //   missing, rather than being ignored.
+// * **`FederatedPrivacyConfig::default()` raises `noise_multiplier` from the
+//   DP-SGD default of 1.1 to 4.0.** A federated round is one subsampled-Gaussian
+//   release over 10% of the federation, not one minibatch step: at sigma = 1.1
+//   the moments accountant charges 2.25 epsilon for the *first* round against a
+//   default budget of 1.0, so `FederatedPrivacyCoordinator::start_federated_round`
+//   failed closed before it had run once. This is a real behaviour change for
+//   anyone relying on the default -- rounds now succeed, and each costs about
+//   0.22 epsilon instead of being rejected. Callers who want the old multiplier
+//   must set `base_config.noise_multiplier` explicitly and accept that the
+//   default epsilon budget will not cover a single round.
+// * Duplicated configuration types were removed in favour of the ones the audited
+//   implementations in `privacy::federated` actually consume; see the `pub use`
+//   re-exports below.
 
 use super::super::DifferentialPrivacyConfig;
 use std::time::Duration;
@@ -70,35 +83,32 @@ pub enum ClientSamplingStrategy {
     FairSampling,
 }
 
-/// Secure aggregation configuration
-#[derive(Debug, Clone)]
-pub struct SecureAggregationConfig {
-    /// Enable secure aggregation
-    pub enabled: bool,
+/// Secure aggregation configuration.
+///
+/// This is a re-export of [`crate::privacy::federated::secure_aggregation::SecureAggregationConfig`],
+/// the configuration consumed by the audited Bonawitz implementation. Until
+/// 0.3.2 this module declared its own near-identical copy (same seven fields,
+/// minus `quantization_scale` and `max_update_magnitude`, plus a
+/// `SeedSharingMethod` that lacked the one variant that is actually
+/// implemented). Two configuration types for one protocol meant a federation
+/// could be configured through the copy and then be rejected -- or worse,
+/// silently reinterpreted -- by the real aggregator. There is now exactly one.
+pub use super::super::federated::secure_aggregation::{SecureAggregationConfig, SeedSharingMethod};
 
-    /// Minimum number of clients for aggregation
-    pub min_clients: usize,
-
-    /// Maximum number of dropouts tolerated
-    pub max_dropouts: usize,
-
-    /// Masking vector dimension
-    pub masking_dimension: usize,
-
-    /// Random seed sharing method
-    pub seed_sharing: SeedSharingMethod,
-
-    /// Quantization bits for compressed aggregation
-    pub quantization_bits: Option<u8>,
-
-    /// Add differential privacy noise to the aggregated result.
-    ///
-    /// **Not implemented**: the coordinator's aggregation is a plain mean.
-    /// `validate()` refuses a configuration that sets this rather than ignoring
-    /// it. Defaults to `false` since 0.3.2 (it previously defaulted to `true`
-    /// and was never read).
-    pub aggregate_dp: bool,
-}
+/// Configuration types re-exported from the audited implementations in
+/// [`crate::privacy::federated`].
+///
+/// Until 0.3.2 this module declared its own copy of each of these. Every copy
+/// was either field-identical to the real one or a strict subset of it, so the
+/// only thing the duplication bought was two configuration surfaces that could
+/// drift -- and one of them (`StatisticalTestConfig`) had already drifted, using
+/// `significance_level` where the implementation reads `significancelevel`.
+pub use super::super::federated::byzantine_aggregation::{
+    ByzantineRobustConfig, ByzantineRobustMethod, ReputationSystemConfig, StatisticalTestConfig,
+    StatisticalTestType,
+};
+pub use super::super::federated::composition_analyzer::FederatedCompositionMethod;
+pub use super::super::federated::cross_device_manager::CrossDeviceConfig;
 
 /// Privacy amplification configuration
 ///
@@ -130,45 +140,6 @@ pub struct AmplificationConfig {
 
     /// Heterogeneous client amplification
     pub heterogeneous_amplification: bool,
-}
-
-/// Cross-device privacy configuration
-#[derive(Debug, Clone, Default)]
-pub struct CrossDeviceConfig {
-    /// User-level privacy guarantees
-    pub user_level_privacy: bool,
-
-    /// Device clustering for privacy
-    pub device_clustering: bool,
-
-    /// Temporal privacy across rounds
-    pub temporal_privacy: bool,
-
-    /// Geographic privacy considerations
-    pub geographic_privacy: bool,
-
-    /// Demographic privacy protection
-    pub demographic_privacy: bool,
-}
-
-/// Federated composition methods
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum FederatedCompositionMethod {
-    /// Basic composition
-    Basic,
-
-    /// Advanced composition with amplification
-    AdvancedComposition,
-
-    /// Moments accountant for federated setting
-    #[default]
-    FederatedMomentsAccountant,
-
-    /// Renyi differential privacy
-    RenyiDP,
-
-    /// Zero-concentrated differential privacy
-    ZCDP,
 }
 
 /// Trust models for federated learning
@@ -494,50 +465,6 @@ pub struct PrivacyAgreementConfig {
     pub enforcement_mechanisms: Vec<String>,
     /// Compliance monitoring
     pub compliance_monitoring: bool,
-}
-
-/// Data classification configuration
-#[derive(Debug, Clone)]
-pub struct DataClassificationConfig {
-    /// Classification schemes
-    pub schemes: Vec<String>,
-    /// Sensitivity levels
-    pub sensitivity_levels: Vec<String>,
-    /// Labeling rules
-    pub labeling_rules: Vec<String>,
-}
-
-/// Data lineage configuration
-#[derive(Debug, Clone)]
-pub struct DataLineageConfig {
-    /// Tracking methods
-    pub tracking_methods: Vec<String>,
-    /// Provenance recording
-    pub provenance_recording: bool,
-    /// Audit trails
-    pub audit_trails: bool,
-}
-
-/// Data quality assurance configuration
-#[derive(Debug, Clone)]
-pub struct DataQualityAssuranceConfig {
-    /// Quality metrics
-    pub metrics: Vec<String>,
-    /// Validation rules
-    pub validation_rules: Vec<String>,
-    /// Monitoring frequency
-    pub monitoring_frequency: String,
-}
-
-/// Data retention policies
-#[derive(Debug, Clone)]
-pub struct DataRetentionPolicies {
-    /// Retention periods
-    pub retention_periods: Vec<String>,
-    /// Disposal methods
-    pub disposal_methods: Vec<String>,
-    /// Archive policies
-    pub archive_policies: Vec<String>,
 }
 
 /// Cross-silo federated learning configuration for enterprise scenarios
@@ -910,47 +837,6 @@ pub struct RiskMitigationStrategies {
     pub acceptance_criteria: Vec<String>,
 }
 
-/// Seed sharing methods for secure aggregation
-#[derive(Debug, Clone, Copy)]
-pub enum SeedSharingMethod {
-    /// Shamir secret sharing
-    ShamirSecretSharing,
-
-    /// Threshold encryption
-    ThresholdEncryption,
-
-    /// Distributed key generation
-    DistributedKeyGeneration,
-}
-
-/// Byzantine-robust aggregation algorithms
-#[derive(Debug, Clone, Copy)]
-pub enum ByzantineRobustMethod {
-    /// Trimmed mean aggregation
-    TrimmedMean { trim_ratio: f64 },
-
-    /// Coordinate-wise median
-    CoordinateWiseMedian,
-
-    /// Krum aggregation
-    Krum { f: usize },
-
-    /// Multi-Krum aggregation
-    MultiKrum { f: usize, m: usize },
-
-    /// Bulyan aggregation
-    Bulyan { f: usize },
-
-    /// Centered clipping
-    CenteredClipping { tau: f64 },
-
-    /// FedAvg with outlier detection
-    FedAvgOutlierDetection { threshold: f64 },
-
-    /// Robust aggregation with reputation
-    ReputationWeighted { reputation_decay: f64 },
-}
-
 /// Personalization strategies for federated learning
 #[derive(Debug, Clone)]
 pub enum PersonalizationStrategy {
@@ -1041,47 +927,6 @@ pub enum ContinualLearningStrategy {
     TaskAgnostic,
 }
 
-/// Advanced federated learning configuration
-#[derive(Debug, Clone)]
-pub struct AdvancedFederatedConfig {
-    /// Byzantine robustness settings
-    pub byzantine_config: ByzantineRobustConfig,
-
-    /// Personalization settings
-    pub personalization_config: PersonalizationConfig,
-
-    /// Adaptive privacy budgeting
-    pub adaptive_budget_config: AdaptiveBudgetConfig,
-
-    /// Communication efficiency settings
-    pub communication_config: CommunicationConfig,
-
-    /// Continual learning settings
-    pub continual_learning_config: ContinualLearningConfig,
-
-    /// Multi-level privacy settings
-    pub multi_level_privacy: MultiLevelPrivacyConfig,
-}
-
-/// Byzantine robustness configuration
-#[derive(Debug, Clone)]
-pub struct ByzantineRobustConfig {
-    /// Aggregation method
-    pub method: ByzantineRobustMethod,
-
-    /// Expected number of Byzantine clients
-    pub expected_byzantine_ratio: f64,
-
-    /// Enable dynamic Byzantine detection
-    pub dynamic_detection: bool,
-
-    /// Reputation system settings
-    pub reputation_system: ReputationSystemConfig,
-
-    /// Statistical tests for outlier detection
-    pub statistical_tests: StatisticalTestConfig,
-}
-
 /// Personalization configuration
 #[derive(Debug, Clone)]
 pub struct PersonalizationConfig {
@@ -1158,56 +1003,7 @@ pub struct ContinualLearningConfig {
     pub forgetting_prevention: ForgettingPreventionConfig,
 }
 
-/// Multi-level privacy configuration
-#[derive(Debug, Clone)]
-pub struct MultiLevelPrivacyConfig {
-    /// Local differential privacy
-    pub local_dp: LocalDPConfig,
-
-    /// Global differential privacy
-    pub global_dp: GlobalDPConfig,
-
-    /// User-level privacy
-    pub user_level: UserLevelPrivacyConfig,
-
-    /// Hierarchical privacy
-    pub hierarchical: HierarchicalPrivacyConfig,
-
-    /// Context-aware privacy
-    pub context_aware: ContextAwarePrivacyConfig,
-}
-
 // Supporting configuration structures
-
-/// Reputation system configuration
-#[derive(Debug, Clone)]
-pub struct ReputationSystemConfig {
-    pub enabled: bool,
-    pub initial_reputation: f64,
-    pub reputation_decay: f64,
-    pub min_reputation: f64,
-    pub outlier_penalty: f64,
-    pub contribution_bonus: f64,
-}
-
-/// Statistical test configuration for outlier detection
-#[derive(Debug, Clone)]
-pub struct StatisticalTestConfig {
-    pub enabled: bool,
-    pub test_type: StatisticalTestType,
-    pub significance_level: f64,
-    pub window_size: usize,
-    pub adaptive_threshold: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum StatisticalTestType {
-    ZScore,
-    ModifiedZScore,
-    IQRTest,
-    GrubbsTest,
-    ChauventCriterion,
-}
 
 /// Local adaptation configuration
 #[derive(Debug, Clone)]
@@ -1446,60 +1242,6 @@ pub enum ImportanceEstimationMethod {
     AttentionWeights,
 }
 
-/// Local differential privacy configuration
-#[derive(Debug, Clone)]
-pub struct LocalDPConfig {
-    pub enabled: bool,
-    pub epsilon: f64,
-    pub mechanism: LocalDPMechanism,
-    pub data_preprocessing: DataPreprocessingConfig,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum LocalDPMechanism {
-    Randomized,
-    Duchi,
-    RAPPOR,
-    PrivUnit,
-    Harmony,
-}
-
-/// Global differential privacy configuration
-#[derive(Debug, Clone)]
-pub struct GlobalDPConfig {
-    pub epsilon: f64,
-    pub delta: f64,
-    pub composition_method: CompositionMethod,
-    pub amplification_analysis: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum CompositionMethod {
-    Basic,
-    Advanced,
-    RDP,
-    ZCDP,
-    Moments,
-}
-
-/// User-level privacy configuration
-#[derive(Debug, Clone)]
-pub struct UserLevelPrivacyConfig {
-    pub enabled: bool,
-    pub user_epsilon: f64,
-    pub user_delta: f64,
-    pub cross_device_correlation: bool,
-    pub temporal_correlation: bool,
-}
-
-/// Hierarchical privacy configuration
-#[derive(Debug, Clone)]
-pub struct HierarchicalPrivacyConfig {
-    pub levels: Vec<PrivacyLevel>,
-    pub level_allocation: LevelAllocationStrategy,
-    pub inter_level_composition: bool,
-}
-
 #[derive(Debug, Clone)]
 pub struct PrivacyLevel {
     pub name: String,
@@ -1516,70 +1258,39 @@ pub enum PrivacyScope {
     Global,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum LevelAllocationStrategy {
-    Uniform,
-    ProportionalToSensitivity,
-    OptimalAllocation,
-    AdaptiveAllocation,
-}
-
-/// Context-aware privacy configuration
-#[derive(Debug, Clone)]
-pub struct ContextAwarePrivacyConfig {
-    pub enabled: bool,
-    pub context_sensitivity: f64,
-    pub dynamic_adjustment: bool,
-    pub privacy_preferences: PrivacyPreferencesConfig,
-}
-
-/// Privacy preferences configuration
-#[derive(Debug, Clone)]
-pub struct PrivacyPreferencesConfig {
-    pub user_controlled: bool,
-    pub preference_learning: bool,
-    pub default_privacy_level: PrivacyLevel,
-    pub granular_control: bool,
-}
-
-/// Data preprocessing configuration for local DP
-#[derive(Debug, Clone)]
-pub struct DataPreprocessingConfig {
-    pub normalization: bool,
-    pub discretization: bool,
-    pub dimensionality_reduction: bool,
-    pub feature_selection: bool,
-}
-
 // Default implementations for configurations
 
 impl Default for FederatedPrivacyConfig {
     fn default() -> Self {
         Self {
-            base_config: DifferentialPrivacyConfig::default(),
+            // A federated round is one subsampled-Gaussian release over a cohort
+            // of `clients_per_round / total_clients` = 10% of the federation, not
+            // one DP-SGD minibatch step. At the DP-SGD default noise multiplier
+            // of 1.1 the moments accountant charges 2.25 epsilon for the *first*
+            // round -- more than the whole default budget of 1.0 -- so
+            // `FederatedPrivacyCoordinator::start_federated_round` failed closed
+            // before it had run once. 4.0 leaves headroom for a realistic number
+            // of rounds (roughly 0.22 epsilon for round one, 0.35 after five) at
+            // the same 10% sampling rate.
+            base_config: DifferentialPrivacyConfig {
+                noise_multiplier: 4.0,
+                ..DifferentialPrivacyConfig::default()
+            },
             clients_per_round: 100,
             total_clients: 1000,
             sampling_strategy: ClientSamplingStrategy::UniformRandom,
-            secure_aggregation: SecureAggregationConfig::default(),
+            // The protocol defaults to `enabled: true`; a federation that has
+            // not wired up per-client key registration must not silently claim
+            // masked aggregation, so the federated default keeps it off.
+            secure_aggregation: SecureAggregationConfig {
+                enabled: false,
+                ..SecureAggregationConfig::default()
+            },
             amplification_config: AmplificationConfig::default(),
             cross_device_config: CrossDeviceConfig::default(),
             composition_method: FederatedCompositionMethod::FederatedMomentsAccountant,
             trust_model: TrustModel::HonestButCurious,
             communication_privacy: CommunicationPrivacyConfig::default(),
-        }
-    }
-}
-
-impl Default for SecureAggregationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            min_clients: 10,
-            max_dropouts: 5,
-            masking_dimension: 1000,
-            seed_sharing: SeedSharingMethod::ShamirSecretSharing,
-            quantization_bits: None,
-            aggregate_dp: false,
         }
     }
 }
@@ -1691,31 +1402,6 @@ impl Default for LikelihoodEstimationMethods {
             expert_judgment: true,
             threat_modeling: false,
             simulation_based: false,
-        }
-    }
-}
-
-impl Default for ReputationSystemConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            initial_reputation: 1.0,
-            reputation_decay: 0.95,
-            min_reputation: 0.1,
-            outlier_penalty: 0.1,
-            contribution_bonus: 0.05,
-        }
-    }
-}
-
-impl Default for StatisticalTestConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            test_type: StatisticalTestType::ZScore,
-            significance_level: 0.05,
-            window_size: 10,
-            adaptive_threshold: false,
         }
     }
 }

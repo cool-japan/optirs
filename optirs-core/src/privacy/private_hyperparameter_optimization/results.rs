@@ -9,8 +9,9 @@ use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
 use super::types::{
-    AggregatedResults, HPOEvaluation, HyperparameterNoiseMechanism, ModelSelectionResults,
-    ResultAggregationStrategy, ResultValidator, SelectionMechanism, SelectionParameters,
+    AggregatedResults, HPOEvaluation, HPOResult, HyperparameterNoiseMechanism,
+    ModelSelectionResults, ResultAggregationStrategy, ResultValidator, SelectionMechanism,
+    SelectionParameters, ValidationReport,
 };
 
 /// Number of configurations reported in the private top-k.
@@ -170,6 +171,24 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
         &self.result_validator
     }
 
+    /// Mutable access to the result validator, so rules, tests and the anomaly
+    /// detector can be configured before aggregation.
+    pub fn result_validator_mut(&mut self) -> &mut ResultValidator<T> {
+        &mut self.result_validator
+    }
+
+    /// Run the validator over a batch of evaluations without aggregating them.
+    ///
+    /// Costs no epsilon: every input is already held by the caller. See
+    /// [`ResultValidator::validate`].
+    pub fn validate_evaluations(&self, evaluations: &[HPOEvaluation<T>]) -> ValidationReport {
+        let results: Vec<HPOResult<T>> = evaluations
+            .iter()
+            .map(|evaluation| evaluation.result.clone())
+            .collect();
+        self.result_validator.validate(&results)
+    }
+
     /// Aggregate the evaluations, selecting the reported configurations with a
     /// differentially private mechanism.
     ///
@@ -184,6 +203,17 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
             return Err(OptimError::InvalidParameter(
                 "there are no evaluations to aggregate".to_string(),
             ));
+        }
+
+        // Structural validation before any epsilon is spent. A batch in which
+        // every objective is non-finite cannot support a meaningful selection,
+        // and paying for one would spend budget on noise. Refuse instead.
+        let validation = self.validate_evaluations(evaluations);
+        if validation.non_finite == validation.inspected {
+            return Err(OptimError::InvalidParameter(format!(
+                "all {} evaluations have a non-finite objective, so no selection is meaningful;                  aggregating would spend privacy budget on nothing",
+                validation.inspected
+            )));
         }
 
         let objective_values: Vec<T> = evaluations
@@ -364,7 +394,8 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
 mod tests {
     use super::*;
     use crate::privacy::private_hyperparameter_optimization::types::{
-        EvaluationStatus, HPOResult, ParameterConfiguration, ParameterValue,
+        AnomalyDetectionMethod, EvaluationStatus, HPOResult, ParameterConfiguration,
+        ParameterValue, StatisticalTest, StatisticalTestResult, TestConclusion, ValidationRule,
     };
     use std::collections::HashMap;
 
@@ -702,5 +733,164 @@ mod tests {
             Err(err) => panic!("aggregation failed: {err}"),
         };
         assert_eq!(results.topconfigurations.len(), 2);
+    }
+
+    fn hpo_result(objective: f64, status: EvaluationStatus) -> HPOResult<f64> {
+        HPOResult {
+            objective_value: objective,
+            standard_error: None,
+            cv_scores: None,
+            training_time: None,
+            complexity_metrics: HashMap::new(),
+            additional_metrics: HashMap::new(),
+            status,
+        }
+    }
+
+    /// F-series regression: `ResultValidator` used to be a constructor with three
+    /// fields nothing could populate or read. It must now actually detect the
+    /// three failure classes it advertises.
+    #[test]
+    fn the_result_validator_detects_structural_failures() {
+        let validator = ResultValidator::<f64>::new();
+        let results = vec![
+            hpo_result(0.5, EvaluationStatus::Success),
+            hpo_result(f64::NAN, EvaluationStatus::Success),
+            hpo_result(f64::INFINITY, EvaluationStatus::Success),
+            hpo_result(0.6, EvaluationStatus::Failed),
+            hpo_result(0.7, EvaluationStatus::Timeout),
+        ];
+        let report = validator.validate(&results);
+        assert_eq!(report.inspected, 5);
+        assert_eq!(report.non_finite, 2);
+        assert_eq!(report.incomplete, 2);
+        assert!(!report.is_clean());
+
+        let clean = validator.validate(&[hpo_result(0.5, EvaluationStatus::Success)]);
+        assert!(clean.is_clean(), "{clean:?}");
+        assert!(validator.validate(&[]).is_clean());
+    }
+
+    #[test]
+    fn the_result_validator_applies_configured_rules_and_tests() {
+        let mut validator = ResultValidator::<f64>::new();
+        validator
+            .add_rule(ValidationRule {
+                name: "objective_in_unit_interval".to_string(),
+                rule_fn: Box::new(|result: &HPOResult<f64>| {
+                    (0.0..=1.0).contains(&result.objective_value)
+                }),
+                weight: 2.0,
+            })
+            .expect("rule accepted");
+        validator
+            .add_test(StatisticalTest {
+                name: "batch_is_non_empty".to_string(),
+                test_fn: Box::new(|results: &[HPOResult<f64>]| StatisticalTestResult {
+                    statistic: results.len() as f64,
+                    p_value: if results.is_empty() { 0.0 } else { 1.0 },
+                    conclusion: TestConclusion::FailToReject,
+                    confidence_interval: None,
+                }),
+                alpha: 0.05,
+            })
+            .expect("test accepted");
+
+        // A weight or alpha that cannot produce a usable score is refused.
+        assert!(validator
+            .add_rule(ValidationRule {
+                name: "bad".to_string(),
+                rule_fn: Box::new(|_| true),
+                weight: 0.0,
+            })
+            .is_err());
+        assert!(validator
+            .add_test(StatisticalTest {
+                name: "bad".to_string(),
+                test_fn: Box::new(|_| StatisticalTestResult {
+                    statistic: 0.0,
+                    p_value: 1.0,
+                    conclusion: TestConclusion::FailToReject,
+                    confidence_interval: None,
+                }),
+                alpha: 1.0,
+            })
+            .is_err());
+
+        let results = vec![
+            hpo_result(0.5, EvaluationStatus::Success),
+            hpo_result(2.5, EvaluationStatus::Success),
+            hpo_result(-1.0, EvaluationStatus::Success),
+            hpo_result(0.9, EvaluationStatus::Success),
+        ];
+        let report = validator.validate(&results);
+        assert_eq!(report.rule_failures.len(), 1);
+        assert_eq!(report.rule_failures[0].0, "objective_in_unit_interval");
+        assert_eq!(report.rule_failures[0].1, 2);
+        // 2 failures out of 4 at weight 2.0 => 4 / 8.
+        assert!((report.weighted_failure_rate - 0.5).abs() < 1e-12);
+        assert_eq!(report.test_results.len(), 1);
+        assert!(!report.test_results[0].2, "the test must not have rejected");
+        assert!(!report.is_clean());
+    }
+
+    #[test]
+    fn the_anomaly_detector_flags_outliers_by_z_score_and_iqr() {
+        let mut validator = ResultValidator::<f64>::new();
+        let mut results: Vec<HPOResult<f64>> = (0..20)
+            .map(|i| hpo_result(0.5 + (i as f64) * 0.001, EvaluationStatus::Success))
+            .collect();
+        results.push(hpo_result(50.0, EvaluationStatus::Success));
+
+        let z_flagged = validator.validate(&results).anomalies;
+        assert_eq!(
+            z_flagged,
+            vec![20],
+            "the z-score rule must flag the outlier"
+        );
+
+        validator
+            .anomaly_detector_mut()
+            .set_detection_method(AnomalyDetectionMethod::IQR)
+            .expect("IQR is supported");
+        let iqr_flagged = validator.validate(&results).anomalies;
+        assert!(
+            iqr_flagged.contains(&20),
+            "the IQR rule must flag the outlier, got {iqr_flagged:?}"
+        );
+
+        // A batch with no spread has no scale to measure against.
+        let flat: Vec<HPOResult<f64>> = (0..5)
+            .map(|_| hpo_result(1.0, EvaluationStatus::Success))
+            .collect();
+        assert!(validator.validate(&flat).anomalies.is_empty());
+
+        // Multivariate detectors cannot run on a scalar series and are refused
+        // rather than silently behaving like the z-score rule.
+        assert!(validator
+            .anomaly_detector_mut()
+            .set_detection_method(AnomalyDetectionMethod::IsolationForest)
+            .is_err());
+        assert!(validator.anomaly_detector_mut().set_threshold(0.0).is_err());
+        assert!(validator.anomaly_detector_mut().set_threshold(2.5).is_ok());
+        assert!((validator.anomaly_detector().threshold() - 2.5).abs() < 1e-12);
+    }
+
+    /// Aggregation must refuse a batch it cannot select from rather than paying
+    /// epsilon for a meaningless answer.
+    #[test]
+    fn aggregation_refuses_an_entirely_non_finite_batch() {
+        let mut aggregator = match PrivateResultsAggregator::<f64>::new() {
+            Ok(aggregator) => aggregator,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        let evaluations: Vec<HPOEvaluation<f64>> =
+            (0..3).map(|i| evaluation(i, f64::NAN)).collect();
+        assert!(matches!(
+            aggregator.aggregate_results(&evaluations),
+            Err(OptimError::InvalidParameter(_))
+        ));
+        let report = aggregator.validate_evaluations(&evaluations);
+        assert_eq!(report.non_finite, 3);
     }
 }

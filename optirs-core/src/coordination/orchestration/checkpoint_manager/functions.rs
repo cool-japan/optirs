@@ -6,18 +6,12 @@ use crate::error::Result;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
 
 use super::types::{
-    Checkpoint, CheckpointData, CheckpointManager, CheckpointType, CompressionAlgorithmStats,
-    CompressorConfig, CreatorInfo, InMemoryCheckpointStorage, IndexerConfig, RecoveryConfig,
-    RecoveryManager, RecoveryResult, RecoveryTarget, StateType, StorageConfig, StorageStatistics,
+    Checkpoint, CheckpointData, CompressionAlgorithmStats, RecoveryResult, RecoveryTarget,
+    StorageStatistics,
 };
-use super::types_15::{
-    AccessPermissions, CheckpointConfiguration, CheckpointMetadata, CheckpointValidator,
-    CompressionInfo, RecoveryCapabilities, RecoveryOptions, RngState, SchedulerConfig,
-    ValidationResult, ValidationStatus, ValidatorConfig,
-};
+use super::types_15::{CheckpointMetadata, RecoveryCapabilities, ValidationResult};
 
 /// Checkpoint storage trait
 pub trait CheckpointStorage<T: Float + Debug + Send + Sync + 'static>:
@@ -115,7 +109,17 @@ pub(super) fn empty_checkpoint_data<T: Float + Debug + Send + Sync + 'static>() 
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::super::types::{
+        CheckpointManager, CheckpointType, CompressorConfig, CreatorInfo,
+        InMemoryCheckpointStorage, IndexerConfig, RecoveryConfig, RecoveryManager, StateType,
+        StorageConfig,
+    };
+    use super::super::types_15::{
+        AccessPermissions, CheckpointConfiguration, CheckpointValidator, CompressionInfo,
+        RecoveryOptions, RngState, SchedulerConfig, ValidationStatus, ValidatorConfig,
+    };
     use super::*;
+    use std::time::{Duration, SystemTime};
 
     fn empty_checkpoint(id: &str, workflow_id: &str) -> Checkpoint<f64> {
         Checkpoint {

@@ -1,7 +1,6 @@
 //! Auto-generated test module (consolidated from inline `#[cfg(test)] mod` blocks)
 
 use crate::error::OptimError;
-use scirs2_core::ndarray::Array1;
 use std::collections::HashMap;
 
 use super::helpers::{add_mod, field_to_value, inv_mod, mul_mod, neg_mod, sub_mod, value_to_field};

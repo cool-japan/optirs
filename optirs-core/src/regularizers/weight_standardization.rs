@@ -28,7 +28,7 @@ use crate::regularizers::Regularizer;
 /// let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
 ///
 /// // Get standardized weights
-/// let standardized = weight_std.standardize(&weights).expect("unwrap failed");
+/// let standardized = weight_std.standardize(&weights).expect("weight_std.standardize succeeds");
 ///
 /// // Apply during training (modifies gradients)
 /// let _ = weight_std.apply(&weights, &mut gradients);
@@ -47,7 +47,9 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
     /// * `eps` - Small constant for numerical stability (typically 1e-5)
     pub fn new(eps: f64) -> Self {
         Self {
-            eps: A::from_f64(eps).expect("unwrap failed"),
+            eps: A::from_f64(eps).expect(
+                "WeightStandardization: eps must fit in A (f32/f64 never rejects a finite f64)",
+            ),
         }
     }
 
@@ -65,7 +67,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
     pub fn standardize(&self, weights: &Array2<A>) -> Result<Array2<A>> {
         // Calculate mean for each row (output channel)
         let n_cols = weights.ncols();
-        let n_cols_f = A::from_usize(n_cols).expect("unwrap failed");
+        let n_cols_f: A = crate::regularizers::cast_scalar(n_cols)?;
 
         // Calculate mean, subtract from weights, then calculate variance and normalize
         let means = weights.sum_axis(scirs2_core::ndarray::Axis(1)) / n_cols_f;
@@ -122,7 +124,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
         let kernel_h = shape[2];
         let kernel_w = shape[3];
         let n_elements = in_channels * kernel_h * kernel_w;
-        let n_elements_f = A::from_usize(n_elements).expect("unwrap failed");
+        let n_elements_f: A = crate::regularizers::cast_scalar(n_elements)?;
 
         // Calculate mean for each output channel
         let mut means = Array::zeros(out_channels);
@@ -213,7 +215,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> WeightStand
 
         let n_rows = weights.nrows();
         let n_cols = weights.ncols();
-        let epsilon = A::from_f64(1e-6).expect("unwrap failed");
+        let epsilon: A = crate::regularizers::cast_scalar(1e-6)?;
 
         let mut gradients = Array2::zeros((n_rows, n_cols));
         let standardized = self.standardize(&weights)?;
@@ -284,7 +286,7 @@ impl<
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // Weight standardization doesn't add a penalty term
         Ok(A::zero())
     }
@@ -309,7 +311,9 @@ mod tests {
         // Create a simple 2D weight matrix
         let weights = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
 
-        let standardized = ws.standardize(&weights).expect("unwrap failed");
+        let standardized = ws
+            .standardize(&weights)
+            .expect("ws.standardize succeeds in test_standardize_2d");
 
         // Check shape is preserved
         assert_eq!(standardized.shape(), weights.shape());
@@ -342,7 +346,9 @@ mod tests {
             (a * 8 + b * 4 + c * 2 + d) as f64
         });
 
-        let standardized = ws.standardize_conv4d(&weights).expect("unwrap failed");
+        let standardized = ws
+            .standardize_conv4d(&weights)
+            .expect("ws.standardize_conv4d succeeds in test_standardize_conv4d");
 
         // Check shape is preserved
         assert_eq!(standardized.shape(), weights.shape());
@@ -393,7 +399,9 @@ mod tests {
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let orig_gradients = gradients.clone();
 
-        let penalty = ws.apply(&params, &mut gradients).expect("unwrap failed");
+        let penalty = ws
+            .apply(&params, &mut gradients)
+            .expect("ws.apply succeeds in test_regularizer_trait");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);

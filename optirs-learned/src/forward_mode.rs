@@ -925,7 +925,7 @@ mod tests {
         let y_val = Array1::from_vec(vec![3.0]);
         let y_id = engine.create_variable("y", y_val.clone());
 
-        let sum_id = engine.add(x_id, y_id).expect("unwrap failed");
+        let sum_id = engine.add(x_id, y_id).expect("add should succeed");
 
         let mut inputs = HashMap::new();
         inputs.insert("x".to_string(), x_val);
@@ -934,7 +934,7 @@ mod tests {
         let direction = Array1::from_vec(vec![1.0, 0.0]);
         let results = engine
             .forward_pass(&inputs, &direction)
-            .expect("unwrap failed");
+            .expect("forward_pass should succeed");
 
         assert!(results.len() > sum_id);
         assert_eq!(results[sum_id].value[0], 5.0);

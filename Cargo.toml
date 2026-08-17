@@ -11,13 +11,9 @@ members = [
 ]
 resolver = "2"
 
+# Intentionally empty: every crate opts in via `[lints] workspace = true`, and
+# production builds must surface every rustc warning (no blanket allows).
 [workspace.lints.rust]
-unused_variables = "allow"
-unused_imports = "allow"
-mismatched_lifetime_syntaxes = "allow"
-dead_code = "allow"
-unpredictable_function_pointer_comparisons = "allow"
-unknown_lints = "allow"
 
 [workspace.package]
 version = "0.3.2"

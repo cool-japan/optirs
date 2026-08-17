@@ -6,17 +6,15 @@ use crate::error::Result;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use super::types::{
     AdjustmentContext, AdjustmentLearningDataPoint, AdjustmentModel, AlgorithmComplexity,
-    AnalysisResult, AnalyticsConfig, AnalyticsResult, CompressionStrategy, FeedbackRecord,
-    HistoryRetentionPolicy, IntegrationResult, LearnedPattern, LearningDataPoint, PatternTemplate,
-    PriorityAnalyticsData, PriorityItem, PriorityLevel, PriorityManagerConfig, PriorityTrend,
-    PriorityUpdateContext, PriorityWeights, RecognizedPattern, StaticPriorityStrategy,
-    StrategySelection, TaskContext, UpdateTrigger, WeightedSumPriorityCalculator,
+    AnalysisResult, AnalyticsResult, FeedbackRecord, IntegrationResult, LearnedPattern,
+    LearningDataPoint, PatternTemplate, PriorityAnalyticsData, PriorityItem, PriorityLevel,
+    PriorityTrend, PriorityUpdateContext, PriorityWeights, RecognizedPattern, TaskContext,
 };
-use super::types_14::{PatternMatch, PriorityManager};
+use super::types_14::PatternMatch;
 
 /// Priority update strategy trait
 pub trait PriorityUpdateStrategy<T: Float + Debug + Send + Sync + 'static>:
@@ -222,7 +220,13 @@ pub trait PriorityAnalyticsAlgorithm<T: Float + Debug + Send + Sync + 'static>:
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::super::types::{
+        AnalyticsConfig, CompressionStrategy, HistoryRetentionPolicy, PriorityManagerConfig,
+        StaticPriorityStrategy, StrategySelection, UpdateTrigger, WeightedSumPriorityCalculator,
+    };
+    use super::super::types_14::PriorityManager;
     use super::*;
+    use std::time::Duration;
 
     fn make_config() -> PriorityManagerConfig<f64> {
         PriorityManagerConfig {

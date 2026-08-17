@@ -11,6 +11,7 @@
 //! - **Gradient accumulation**: Accumulate gradients over multiple micro-batches
 //! - **Gradient clipping**: Max-norm gradient clipping for training stability
 
+use crate::common::{cast_positive, cast_scalar};
 use crate::domain_optimizers::{clip_grad_norm, l2_norm, AdvancedOptimizer, OptimizerStateInfo};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
@@ -63,8 +64,8 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
     ///
     /// Defaults: no layer-wise decay, no warmup, no accumulation,
     /// max_grad_norm=1.0, momentum=0.9.
-    pub fn new(base_lr: T) -> Self {
-        Self {
+    pub fn new(base_lr: T) -> Result<Self> {
+        Ok(Self {
             base_lr,
             current_lr: base_lr,
             layer_wise_decay: T::one(),
@@ -78,10 +79,10 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
             accumulation_count: 0,
             max_grad_norm: T::one(),
             velocity: None,
-            momentum: T::from(0.9).expect("0.9 should convert"),
+            momentum: cast_scalar(0.9)?,
             grad_norm_ema: T::zero(),
-            ema_decay: T::from(0.999).expect("0.999 should convert"),
-        }
+            ema_decay: cast_scalar(0.999)?,
+        })
     }
 
     /// Set layer-wise learning rate decay (builder pattern).
@@ -147,19 +148,20 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
     }
 
     /// Compute the LR schedule multiplier (warmup + cosine annealing).
-    fn schedule_factor(&self) -> T {
+    fn schedule_factor(&self) -> Result<T> {
         // During warmup: linear ramp
         if self.warmup_steps > 0 && self.step_count < self.warmup_steps {
-            let step_t = T::from(self.step_count + 1).expect("step convert");
-            let warmup_t = T::from(self.warmup_steps).expect("warmup convert");
-            return step_t / warmup_t;
+            let step_t: T = cast_scalar(self.step_count + 1)?;
+            let warmup_t: T = cast_positive(self.warmup_steps, "warmup_steps")?;
+            return Ok(step_t / warmup_t);
         }
         // After warmup: cosine annealing (if total_steps specified)
         if self.total_steps > self.warmup_steps {
             let progress_steps = self.step_count.saturating_sub(self.warmup_steps);
             let decay_steps = self.total_steps - self.warmup_steps;
-            let progress = T::from(progress_steps).expect("progress convert")
-                / T::from(decay_steps).expect("decay convert");
+            let progress_t: T = cast_scalar(progress_steps)?;
+            let decay_t: T = cast_positive(decay_steps, "decay steps")?;
+            let progress = progress_t / decay_t;
             // Clamp to [0, 1]
             let progress = if progress > T::one() {
                 T::one()
@@ -167,21 +169,21 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
                 progress
             };
             // Cosine annealing: 0.5 * (1 + cos(pi * progress))
-            let pi = T::from(std::f64::consts::PI).expect("pi convert");
-            let half = T::from(0.5).expect("0.5 convert");
+            let pi: T = cast_scalar(std::f64::consts::PI)?;
+            let half: T = cast_scalar(0.5)?;
             let cosine = (pi * progress).cos();
-            return half * (T::one() + cosine);
+            return Ok(half * (T::one() + cosine));
         }
-        T::one()
+        Ok(T::one())
     }
 
     /// Apply token-aware scaling.
     ///
     /// Simulates inverse-frequency scaling: parameter groups are scaled
     /// based on their position (proxy for embedding vs attention vs FFN).
-    fn apply_token_scaling(&self, gradients: &Array1<T>) -> Array1<T> {
+    fn apply_token_scaling(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
         if !self.token_aware_scaling {
-            return gradients.clone();
+            return Ok(gradients.clone());
         }
         let len = gradients.len();
         let mut scaled = gradients.clone();
@@ -189,29 +191,30 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
         // Middle 1/3: attention - keep as-is
         // Last 1/3: FFN - slight scale up
         let third = len / 3;
-        let embed_scale = T::from(0.5).expect("0.5 convert");
-        let ffn_scale = T::from(1.2).expect("1.2 convert");
+        let embed_scale: T = cast_scalar(0.5)?;
+        let ffn_scale: T = cast_scalar(1.2)?;
         for i in 0..third {
             scaled[i] = scaled[i] * embed_scale;
         }
         for i in (len - third)..len {
             scaled[i] = scaled[i] * ffn_scale;
         }
-        scaled
+        Ok(scaled)
     }
 
     /// Apply layer-wise learning rate decay to gradients.
     ///
     /// Splits the gradient vector evenly across `num_layers` and applies
     /// progressively smaller scaling to deeper layers.
-    fn apply_layer_wise_decay(&self, gradients: &Array1<T>) -> Array1<T> {
-        if (self.layer_wise_decay - T::one()).abs() < T::from(1e-12).expect("eps") {
-            return gradients.clone();
+    fn apply_layer_wise_decay(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
+        let epsilon: T = cast_scalar(1e-12)?;
+        if (self.layer_wise_decay - T::one()).abs() < epsilon {
+            return Ok(gradients.clone());
         }
         let len = gradients.len();
         let chunk = len / self.num_layers;
         if chunk == 0 {
-            return gradients.clone();
+            return Ok(gradients.clone());
         }
         let mut scaled = gradients.clone();
         for layer in 0..self.num_layers {
@@ -231,7 +234,7 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
                 scaled[i] = scaled[i] * factor;
             }
         }
-        scaled
+        Ok(scaled)
     }
 }
 
@@ -264,7 +267,10 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for NLPOptim
         }
 
         // Average accumulated gradients
-        let accum_steps_t = T::from(self.gradient_accumulation_steps).expect("accum steps convert");
+        let accum_steps_t: T = cast_positive(
+            self.gradient_accumulation_steps,
+            "gradient_accumulation_steps",
+        )?;
         let grad = acc.mapv(|g| g / accum_steps_t);
         self.accumulation_count = 0;
 
@@ -272,10 +278,10 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for NLPOptim
         let grad = clip_grad_norm(&grad, self.max_grad_norm);
 
         // 3. Token-aware scaling
-        let grad = self.apply_token_scaling(&grad);
+        let grad = self.apply_token_scaling(&grad)?;
 
         // 4. Layer-wise decay
-        let grad = self.apply_layer_wise_decay(&grad);
+        let grad = self.apply_layer_wise_decay(&grad)?;
 
         // 5. Update gradient norm EMA
         let norm = l2_norm(&grad);
@@ -283,7 +289,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for NLPOptim
             self.ema_decay * self.grad_norm_ema + (T::one() - self.ema_decay) * norm;
 
         // 6. Schedule
-        let schedule = self.schedule_factor();
+        let schedule = self.schedule_factor()?;
         let effective_lr = self.base_lr * schedule;
         self.current_lr = effective_lr;
 
@@ -331,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_nlp_optimizer_basic_step() {
-        let mut opt = NLPOptimizer::new(0.01_f64);
+        let mut opt = NLPOptimizer::new(0.01_f64).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3, 0.1, 0.2, 0.3]);
         let updated = opt.step(&params, &grads).expect("step should succeed");
@@ -343,7 +349,9 @@ mod tests {
 
     #[test]
     fn test_nlp_optimizer_warmup_and_cosine() {
-        let mut opt = NLPOptimizer::new(0.1_f64).with_warmup_and_schedule(10, 100);
+        let mut opt = NLPOptimizer::new(0.1_f64)
+            .expect("optimizer")
+            .with_warmup_and_schedule(10, 100);
         let params = Array1::ones(6);
         let grads = Array1::ones(6);
 
@@ -361,7 +369,9 @@ mod tests {
 
     #[test]
     fn test_nlp_optimizer_layer_wise_decay() {
-        let opt = NLPOptimizer::new(0.01_f64).with_layer_wise_decay(0.8, 4);
+        let opt = NLPOptimizer::new(0.01_f64)
+            .expect("optimizer")
+            .with_layer_wise_decay(0.8, 4);
         // Discriminative fine-tuning: layer 0 (top/output) keeps the full LR,
         // deeper layers are damped by decay^i.
         // lr(0) = 0.01 * 0.8^0 = 0.01; lr(3) = 0.01 * 0.8^3 = 0.005120.
@@ -379,7 +389,9 @@ mod tests {
 
     #[test]
     fn test_nlp_optimizer_gradient_accumulation() {
-        let mut opt = NLPOptimizer::new(0.01_f64).with_gradient_accumulation(4);
+        let mut opt = NLPOptimizer::new(0.01_f64)
+            .expect("optimizer")
+            .with_gradient_accumulation(4);
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
@@ -401,6 +413,7 @@ mod tests {
     #[test]
     fn test_nlp_optimizer_gradient_clipping() {
         let mut opt = NLPOptimizer::new(0.01_f64)
+            .expect("optimizer")
             .with_max_grad_norm(0.5)
             .with_momentum(0.0);
         let params = Array1::from_vec(vec![1.0, 1.0, 1.0]);
@@ -421,10 +434,12 @@ mod tests {
     #[test]
     fn test_nlp_optimizer_token_aware_scaling() {
         let mut opt_token = NLPOptimizer::new(0.01_f64)
+            .expect("optimizer")
             .with_token_aware_scaling(true)
             .with_max_grad_norm(100.0)
             .with_momentum(0.0);
         let mut opt_base = NLPOptimizer::new(0.01_f64)
+            .expect("optimizer")
             .with_max_grad_norm(100.0)
             .with_momentum(0.0);
 
@@ -445,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_nlp_optimizer_dimension_mismatch() {
-        let mut opt = NLPOptimizer::new(0.01_f64);
+        let mut opt = NLPOptimizer::new(0.01_f64).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0]);
         let grads = Array1::from_vec(vec![0.1]);
         let result = opt.step(&params, &grads);
@@ -454,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_nlp_optimizer_state_info() {
-        let mut opt = NLPOptimizer::new(0.05_f64);
+        let mut opt = NLPOptimizer::new(0.05_f64).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3]);
         let _ = opt.step(&params, &grads).expect("step ok");

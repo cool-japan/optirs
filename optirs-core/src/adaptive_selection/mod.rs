@@ -6,7 +6,7 @@
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
@@ -992,7 +992,9 @@ mod tests {
         };
 
         selector.set_problem(large_problem);
-        let optimizer = selector.select_optimizer().expect("unwrap failed");
+        let optimizer = selector
+            .select_optimizer()
+            .expect("selector.select_optimizer succeeds in test_rule_based_selection");
         assert_eq!(optimizer, OptimizerType::AdamW);
     }
 
@@ -1001,7 +1003,9 @@ mod tests {
         let network = SelectionNetwork::<f64>::new(5, 10, 3);
         let features = Array1::from_vec(vec![1.0, 0.5, 2.0, 0.8, 1.5]);
 
-        let probabilities = network.forward(&features).expect("unwrap failed");
+        let probabilities = network
+            .forward(&features)
+            .expect("network.forward succeeds in test_selection_network");
         assert_eq!(probabilities.len(), 3);
 
         // Probabilities should sum to 1
@@ -1039,7 +1043,9 @@ mod tests {
         selector.set_problem(problem);
 
         // Should select an optimizer (any is valid initially)
-        let optimizer = selector.select_optimizer().expect("unwrap failed");
+        let optimizer = selector
+            .select_optimizer()
+            .expect("selector.select_optimizer succeeds in test_bandit_selection");
         assert!(selector.available_optimizers.contains(&optimizer));
     }
 
@@ -1059,11 +1065,11 @@ mod tests {
 
         selector
             .update_performance(OptimizerType::Adam, metrics)
-            .expect("unwrap failed");
+            .expect("update_performance succeeds in test_performance_update");
 
         let stats = selector
             .get_optimizer_statistics(OptimizerType::Adam)
-            .expect("unwrap failed");
+            .expect("get_optimizer_statistics succeeds in test_performance_update");
         assert_eq!(stats.num_trials, 1);
         assert_relative_eq!(stats.mean_performance, 0.95, epsilon = 1e-6);
     }

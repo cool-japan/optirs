@@ -5,7 +5,7 @@
 // to the code under test.
 
 use super::*;
-use scirs2_core::ndarray::Array1;
+use crate::streaming::adaptive_streaming::performance::PerformanceSnapshot;
 
 fn learner() -> MetaLearner<f64> {
     MetaLearner::new(&StreamingConfig::default()).expect("meta learner")
@@ -379,7 +379,7 @@ fn meta_state_carries_published_context_signals() {
     let tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
 
     let cold = learner
-        .extract_meta_state(&[], &tracker)
+        .extract_meta_state(&tracker)
         .expect("extract_meta_state");
     assert!(
         cold.resource_state.is_empty(),
@@ -394,7 +394,7 @@ fn meta_state_carries_published_context_signals() {
 
     learner.update_context_signals(vec![1234.0, 56.0], vec![2.0, 0.125]);
     let warm = learner
-        .extract_meta_state(&[], &tracker)
+        .extract_meta_state(&tracker)
         .expect("extract_meta_state");
     assert_eq!(warm.resource_state, vec![1234.0, 56.0]);
     assert_eq!(warm.drift_indicators, vec![2.0, 0.125]);
@@ -426,12 +426,12 @@ fn recommended_adaptations_vary_with_the_published_context() {
 
     learner.update_context_signals(vec![100.0, 10.0], vec![0.0]);
     let calm = learner
-        .extract_meta_state(&[], &tracker)
+        .extract_meta_state(&tracker)
         .expect("extract_meta_state");
 
     learner.update_context_signals(vec![8000.0, 95.0], vec![2.0]);
     let stressed = learner
-        .extract_meta_state(&[], &tracker)
+        .extract_meta_state(&tracker)
         .expect("extract_meta_state");
 
     // The two contexts must produce different feature vectors, which is what

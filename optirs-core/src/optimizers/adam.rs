@@ -4,10 +4,6 @@ use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-// SciRS2 Integration
-// Note: OptiRS receives pre-computed gradients, so scirs2-autograd is not needed
-use scirs2_optimize::stochastic::{minimize_adam, AdamOptions};
-
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
@@ -37,7 +33,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = Adam::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct Adam<A: Float + ScalarOperand + Debug> {
@@ -71,9 +67,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Adam<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.999).expect("unwrap failed"),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
+            beta1: A::from(0.9)
+                .expect("Adam: default beta1 (0.9) must be representable in A (f32/f64)"),
+            beta2: A::from(0.999)
+                .expect("Adam: default beta2 (0.999) must be representable in A (f32/f64)"),
+            epsilon: A::from(1e-8)
+                .expect("Adam: default epsilon (1e-8) must be representable in A (f32/f64)"),
             weight_decay: A::zero(),
             m: None,
             v: None,

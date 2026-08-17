@@ -33,7 +33,7 @@ use std::collections::{HashMap, VecDeque};
 
 use super::hashing::{
     digests_equal, event_leaf_digest, genesis_link, hash_leaf, hash_link, hash_node, hmac_sha256,
-    random_key, Digest32, DIGEST_LEN,
+    random_key, Digest32,
 };
 use super::types::{AuditEvent, AuditEventType, AuditQueryCriteria};
 
@@ -578,6 +578,7 @@ impl Default for AuditTrail {
 
 #[cfg(test)]
 mod tests {
+    use super::super::hashing::DIGEST_LEN;
     use super::*;
     use crate::privacy::enhanced_audit::types::{AuditEventData, PrivacyContext};
 

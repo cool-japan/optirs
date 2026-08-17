@@ -228,10 +228,8 @@ pub enum ConsistencyLevel {
 
 /// Type aliases for managers
 type HeartbeatManager = HashMap<DeviceId, Instant>;
-type RedundancyManager = HashMap<String, f64>;
 /// Index of persisted checkpoints, keyed by checkpoint id.
 type CheckpointingSystem = HashMap<String, CheckpointRecord>;
-type RollbackManager = HashMap<String, Vec<u8>>;
 
 /// Fault tolerance statistics
 pub type FaultToleranceStatistics = HashMap<String, f64>;
@@ -421,14 +419,14 @@ pub struct FaultToleranceManager {
     /// Recovery strategies
     recovery_strategies: HashMap<FailureType, RecoveryStrategy>,
 
-    /// Redundancy manager
-    redundancy_manager: RedundancyManager,
-
-    /// Checkpointing system
+    /// Checkpointing system: checkpoint id -> on-disk record
+    ///
+    /// There is no separate redundancy or rollback map beside it. Both used to
+    /// be declared here as empty `HashMap` aliases that nothing ever wrote to or
+    /// read from, while replication and rollback both actually go through this
+    /// same SHA-256-verified checkpoint path (see
+    /// [`Self::replicate_checkpoint`] and [`Self::rollback_to_checkpoint`]).
     checkpointing_system: CheckpointingSystem,
-
-    /// Rollback manager
-    rollback_manager: RollbackManager,
 
     /// Active recovery actions
     active_recoveries: HashMap<DeviceId, RecoveryAction>,
@@ -483,9 +481,7 @@ impl FaultToleranceManager {
         Ok(Self {
             failure_detector,
             recovery_strategies,
-            redundancy_manager: HashMap::new(),
             checkpointing_system: HashMap::new(),
-            rollback_manager: HashMap::new(),
             active_recoveries: HashMap::new(),
             redundancy_config,
             checkpoint_config,
@@ -866,6 +862,17 @@ impl FaultToleranceManager {
                 record.path.display()
             )))
         })?;
+
+        // Cheap length check before the hash: a truncated or grown payload is
+        // already known-bad from the size recorded at creation time, and saying
+        // so names the actual problem rather than reporting a hash mismatch.
+        if bytes.len() != record.size_bytes {
+            return Err(OptimError::ComputationError(ErrorContext::new(format!(
+                "checkpoint {checkpoint_id} is {} bytes on disk but {} were recorded at creation",
+                bytes.len(),
+                record.size_bytes
+            ))));
+        }
 
         // Integrity check against the recorded hash.
         let actual = sha256_hex(&bytes);

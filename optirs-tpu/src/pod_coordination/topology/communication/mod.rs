@@ -3,8 +3,6 @@
 // This module handles communication patterns, interfaces, routing, and
 // quality of service for TPU pod topology.
 
-use crate::pod_coordination::types::*;
-
 // Re-export communication types
 #[derive(Debug, Clone, Default)]
 pub struct CommunicationChannel;

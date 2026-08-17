@@ -6,7 +6,6 @@
 
 use scirs2_core::ndarray::{Array, Array2, Array4, Dimension, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
-use scirs2_core::random::Rng;
 use scirs2_core::Random;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -175,13 +174,13 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> SpectralNor
 impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Sync> Regularizer<A, D>
     for SpectralNorm<A>
 {
-    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
-        // For spectral normalization, we don't modify _gradients directly
+    fn apply(&self, _params: &Array<A, D>, _gradients: &mut Array<A, D>) -> Result<A> {
+        // For spectral normalization, we don't modify gradients directly
         // Instead, the normalization is typically applied during the forward pass
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // Spectral normalization doesn't add a penalty term
         Ok(A::zero())
     }

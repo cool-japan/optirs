@@ -4,14 +4,15 @@ use std::fmt::Debug;
 // This module provides comprehensive shape inference capabilities for XLA computations,
 // including static and dynamic shape analysis, constraint validation, and shape optimization.
 
-use scirs2_core::ndarray::{Array1, Array2, Dimension};
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::graph_capture::{
     AttributeValue, ConvolutionConfig, DataType, OperandId, OperationType, PaddingConfig,
     ReduceOperation, TensorShape, XLAComputation, XLAOperation,
 };
+use scirs2_core::error::ErrorContext;
+
 use crate::error::{OptimError, Result};
 
 /// Attribute key holding a reshape's target dimensions (an `IntList`, where a
@@ -25,12 +26,6 @@ pub struct ShapeInference {
 
     /// Broadcasting rules
     broadcasting_rules: Vec<BroadcastingRule>,
-
-    /// Shape constraints
-    constraints: Vec<ShapeConstraint>,
-
-    /// Dynamic shape tracker
-    dynamic_shapes: HashMap<OperandId, DynamicShapeInfo>,
 }
 
 /// Shape inference rule for operations
@@ -274,8 +269,6 @@ impl ShapeInference {
         let mut inference = Self {
             inference_rules: HashMap::new(),
             broadcasting_rules: Vec::new(),
-            constraints: Vec::new(),
-            dynamic_shapes: HashMap::new(),
         };
 
         inference.initialize_builtin_rules();
@@ -366,8 +359,15 @@ impl ShapeInference {
         // Initialize with input shapes
         self.initialize_input_shapes(context)?;
 
-        // Iterative shape inference
+        // Iterative shape inference. The loop must reach a fixed point: if it
+        // is still discovering new shapes when the iteration budget runs out,
+        // the shapes it holds are provisional, and finalizing them would hand
+        // the caller a graph whose shapes were never validated. That is an
+        // honest error, not a silent truncation.
+        let mut converged = false;
+        let mut iterations_run = 0usize;
         for iteration in 0..context.options.max_iterations {
+            iterations_run = iteration + 1;
             let mut changed = false;
 
             // Collect operations to avoid borrow conflict
@@ -379,11 +379,34 @@ impl ShapeInference {
             }
 
             if !changed {
+                converged = true;
                 break;
             }
 
             // Validate constraints
             self.validate_constraints(context)?;
+        }
+
+        if !converged && context.options.max_iterations > 0 {
+            // The budget ran out on an iteration that still made progress. That
+            // does not necessarily mean the graph diverges -- the very last
+            // iteration may have completed it -- so verify once before failing.
+            let operations = context.computation.operations.clone();
+            let mut still_changing = false;
+            for operation in &operations {
+                if self.infer_operation_shape(operation, context)? {
+                    still_changing = true;
+                }
+            }
+            if still_changing {
+                return Err(OptimError::ComputationError(ErrorContext::new(format!(
+                    "shape inference did not reach a fixed point after {iterations_run} iteration(s) \
+                     (max_iterations = {}); {} operand shape(s) are inferred so far and more are \
+                     still being discovered",
+                    context.options.max_iterations,
+                    context.inferred_shapes.len()
+                ))));
+            }
         }
 
         // Finalize shapes
@@ -406,15 +429,11 @@ impl ShapeInference {
                 alternatives: vec![],
             };
 
-            // Find corresponding operand
-            for (operand_id, operand) in &context.computation.operands {
-                if operand.shape == input_spec.shape {
-                    context
-                        .inferred_shapes
-                        .insert(*operand_id, inferred.clone());
-                    break;
-                }
-            }
+            // Bind to the exact operand the parameter defines. Matching by
+            // shape equality (as this used to) picks an arbitrary operand as
+            // soon as two operands share a shape, so a two-parameter graph
+            // could seed the same operand twice and leave the other unseeded.
+            context.inferred_shapes.insert(input_spec.operand, inferred);
         }
 
         Ok(())
@@ -944,30 +963,10 @@ impl ShapeInference {
         })
     }
 
-    /// Infer shape for constant operations
-    fn infer_constant_shape<
-        T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
-    >(
-        &self,
-        _value: &T,
-        _context: &ShapeInferenceContext<T>,
-    ) -> Result<InferredShape> {
-        // Constants are scalars
-        let result_shape = TensorShape {
-            dimensions: vec![],
-            dynamic_dimensions: vec![],
-            element_count: 1,
-            tuple_shapes: vec![],
-        };
-
-        Ok(InferredShape {
-            static_shape: Some(result_shape),
-            dynamic_shape: None,
-            confidence: 1.0,
-            inference_method: "constant".to_string(),
-            alternatives: vec![],
-        })
-    }
+    // NOTE: there is no `infer_constant_shape` helper any more. It assumed every
+    // constant was a rank-0 scalar, which stopped being true once `ConstantValue`
+    // started carrying its own materialized dimensions; `infer_operation_shape`
+    // reads `value.tensor_shape()` directly instead, which is exact.
 
     /// Broadcast two shapes
     fn broadcast_shapes(&self, shape1: &TensorShape, shape2: &TensorShape) -> Result<TensorShape> {

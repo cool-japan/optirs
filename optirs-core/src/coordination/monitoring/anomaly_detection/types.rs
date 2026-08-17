@@ -328,13 +328,17 @@ impl<T: Float + Debug + Send + Sync + 'static> TimeSeriesAnalyzer<T> {
         if residuals.is_empty() {
             return T::zero();
         }
-        let mean = residuals.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(residuals.len()).expect("unwrap failed");
+        // A count is representable in every real float type; `scalar_or`
+        // keeps this infallible function panic-free rather than aborting the
+        // process on an exotic `T`. A divisor of 1 degrades the statistic, it
+        // does not corrupt it.
+        let count = crate::utils::scalar_or(residuals.len(), T::one());
+        let mean = residuals.iter().fold(T::zero(), |acc, &x| acc + x) / count;
         let variance = residuals
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(residuals.len()).expect("unwrap failed");
+            / count;
         variance.sqrt() * self.config.statistical_threshold
     }
     pub(super) fn determine_severity(&self, score: T, threshold: T) -> AnomalySeverity {
@@ -799,10 +803,13 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
         let is_anomaly = combined_confidence > self.config.confidence_threshold;
         let anomaly_type = results
             .iter()
+            // A NaN confidence must order deterministically rather than
+            // panicking the comparator: treat it as the smallest value, so a
+            // result whose confidence could not be computed never wins.
             .max_by(|a, b| {
                 a.confidence
                     .partial_cmp(&b.confidence)
-                    .expect("unwrap failed")
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|r| r.anomaly_type.clone())
             .unwrap_or(AnomalyType::StatisticalOutlier);
@@ -855,15 +862,18 @@ impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
         if values.len() < 2 {
             return T::zero();
         }
-        let n = T::from(values.len()).expect("unwrap failed");
-        let sum_x =
-            (0..values.len()).fold(T::zero(), |acc, i| acc + T::from(i).expect("unwrap failed"));
+        // Indices and counts are representable in every real float type; the
+        // fallbacks keep this infallible function panic-free.
+        let n = crate::utils::scalar_or(values.len(), T::one());
+        let sum_x = (0..values.len()).fold(T::zero(), |acc, i| {
+            acc + crate::utils::scalar_or(i, T::zero())
+        });
         let sum_y = values.iter().fold(T::zero(), |acc, &y| acc + y);
         let sum_xy = values.iter().enumerate().fold(T::zero(), |acc, (i, &y)| {
-            acc + T::from(i).expect("unwrap failed") * y
+            acc + crate::utils::scalar_or(i, T::zero()) * y
         });
         let sum_x2 = (0..values.len()).fold(T::zero(), |acc, i| {
-            let i_t = T::from(i).expect("unwrap failed");
+            let i_t = crate::utils::scalar_or(i, T::zero());
             acc + i_t * i_t
         });
         let denominator = n * sum_x2 - sum_x * sum_x;

@@ -4,6 +4,7 @@
 // including generic parameter optimization, lazy registration, and architecture-aware optimizations.
 
 use crate::error::{OptimError, Result};
+use crate::utils::{scalar_opt, scalar_or, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
@@ -379,7 +380,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 impl<A: Float + Send + Sync> Default for OptimizationConfig<A> {
     fn default() -> Self {
         Self {
-            base_learning_rate: A::from(0.001).expect("unwrap failed"),
+            base_learning_rate: scalar_or(0.001, A::zero()),
             weight_decay: A::zero(),
             gradient_clip: None,
             mixed_precision: false,
@@ -612,7 +613,7 @@ pub mod forward_backward {
                         "sigmoid" => input.mapv(|x| A::one() / (A::one() + (-x).exp())),
                         "tanh" => input.mapv(|x| x.tanh()),
                         "leaky_relu" => {
-                            let alpha = A::from(0.01).expect("unwrap failed");
+                            let alpha = scalar_or(0.01, A::zero());
                             input.mapv(|x| if x > A::zero() { x } else { alpha * x })
                         }
                         _ => input.clone(), // Unknown activation, pass through
@@ -640,7 +641,7 @@ pub mod forward_backward {
                         .mean()
                         .unwrap_or(A::one());
                     let std_dev = variance.sqrt();
-                    let epsilon = A::from(1e-5).expect("unwrap failed");
+                    let epsilon = scalar_or(1e-5, A::one());
 
                     input.mapv(|x| (x - mean) / (std_dev + epsilon))
                 })
@@ -660,10 +661,10 @@ pub mod forward_backward {
                 .config
                 .get("dropout_rate")
                 .and_then(|v| match v {
-                    LayerConfig::Float(f) => Some(A::from(*f).expect("unwrap failed")),
+                    LayerConfig::Float(f) => scalar_opt(*f),
                     _ => None,
                 })
-                .unwrap_or(A::from(0.5).expect("unwrap failed"));
+                .unwrap_or(try_scalar::<A, _>(0.5)?);
 
             // During training, we would apply dropout mask
             // For now, scale by (1 - dropout_rate) to maintain expected value
@@ -827,17 +828,17 @@ pub mod forward_backward {
                         "sigmoid" => {
                             // Sigmoid gradient: sigmoid(x) * (1 - sigmoid(x))
                             // Approximation without original input
-                            let factor = A::from(0.25).expect("unwrap failed"); // Max gradient of sigmoid
+                            let factor = scalar_or(0.25, A::one()); // Max gradient of sigmoid
                             grad.mapv(|g| g * factor)
                         }
                         "tanh" => {
                             // Tanh gradient: 1 - tanh(x)^2
                             // Approximation without original input
-                            let factor = A::from(0.5).expect("unwrap failed");
+                            let factor = scalar_or(0.5, A::one());
                             grad.mapv(|g| g * factor)
                         }
                         "leaky_relu" => {
-                            let alpha = A::from(0.01).expect("unwrap failed");
+                            let alpha = scalar_or(0.01, A::zero());
                             grad.mapv(|g| if g > A::zero() { g } else { alpha * g })
                         }
                         _ => grad.clone(), // Unknown activation, pass through
@@ -856,7 +857,7 @@ pub mod forward_backward {
         ) -> Result<Vec<Array<A, D>>> {
             // Simplified normalization backward
             // Real implementation would compute gradients considering mean and variance
-            let scale_factor = A::from(0.9).expect("unwrap failed");
+            let scale_factor = try_scalar::<A, _>(0.9)?;
             let grad_inputs: Vec<Array<A, D>> = grad_outputs
                 .iter()
                 .map(|grad| grad.mapv(|g| g * scale_factor))
@@ -876,10 +877,10 @@ pub mod forward_backward {
                 .config
                 .get("dropout_rate")
                 .and_then(|v| match v {
-                    LayerConfig::Float(f) => Some(A::from(*f).expect("unwrap failed")),
+                    LayerConfig::Float(f) => scalar_opt(*f),
                     _ => None,
                 })
-                .unwrap_or(A::from(0.5).expect("unwrap failed"));
+                .unwrap_or(try_scalar::<A, _>(0.5)?);
 
             // Scale gradients by (1 - dropout_rate) to match forward pass
             let scale = A::one() - dropout_rate;
@@ -1185,13 +1186,13 @@ pub mod architecture_aware {
 
                     // Determine learning rate multiplier based on parameter tags
                     if metadata.tags.contains(&"attention".to_string()) {
-                        rule.lr_multiplier = A::from(1.2).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(1.2, A::one());
                     // Higher LR for attention
                     } else if metadata.tags.contains(&"ffn".to_string()) {
-                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(1.0, A::one());
                     // Standard LR for FFN
                     } else if metadata.tags.contains(&"normalization".to_string()) {
-                        rule.lr_multiplier = A::from(0.8).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(0.8, A::one());
                         // Lower LR for normalization
                     }
 
@@ -1211,8 +1212,7 @@ pub mod architecture_aware {
             // Extract layer numbers from layer names and apply decay
             for (layerid, _) in self.param_manager.layer_architectures.clone() {
                 if let Some(layer_num) = self.extract_layer_number(&layerid) {
-                    let decay_factor =
-                        A::from(0.95_f64.powi(layer_num as i32)).expect("unwrap failed");
+                    let decay_factor = try_scalar::<A, _>(0.95_f64.powi(layer_num as i32))?;
                     let mut rule = self
                         .param_manager
                         .layer_rules
@@ -1228,8 +1228,7 @@ pub mod architecture_aware {
 
         /// Apply attention parameter warmup
         fn apply_attention_warmup(&mut self, warmupsteps: usize) -> Result<()> {
-            let warmup_factor =
-                A::from(self.step_count as f64 / warmupsteps as f64).expect("unwrap failed");
+            let warmup_factor = try_scalar::<A, _>(self.step_count as f64 / warmupsteps as f64)?;
 
             // Collect attention layers first
             let attention_layers: Vec<LayerId> = self
@@ -1266,15 +1265,15 @@ pub mod architecture_aware {
 
                 match architecture.layer_type.as_str() {
                     "conv" | "conv2d" | "conv3d" => {
-                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(1.0, A::one());
                         // Standard LR for conv
                     }
                     "linear" | "dense" | "fc" => {
-                        rule.lr_multiplier = A::from(0.8).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(0.8, A::one());
                         // Lower LR for FC
                     }
                     _ => {
-                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(1.0, A::one());
                         // Default
                     }
                 }
@@ -1297,7 +1296,7 @@ pub mod architecture_aware {
                 .enumerate()
             {
                 let depth_factor =
-                    A::from(1.0 - 0.1 * (i as f64 / total_layers as f64)).expect("unwrap failed");
+                    try_scalar::<A, _>(1.0 - 0.1 * (i as f64 / total_layers as f64))?;
                 let mut rule = self
                     .param_manager
                     .layer_rules
@@ -1335,7 +1334,7 @@ pub mod architecture_aware {
                     .cloned()
                     .unwrap_or_default();
                 // Higher learning rate and no weight decay for BN parameters
-                rule.lr_multiplier = A::from(2.0).expect("unwrap failed");
+                rule.lr_multiplier = try_scalar::<A, _>(2.0)?;
                 rule.weight_decay_multiplier = A::zero();
                 self.param_manager.set_layer_rule(layername, rule);
             }
@@ -1361,10 +1360,10 @@ pub mod architecture_aware {
                     let mut rule = LayerOptimizationRule::default();
 
                     if metadata.tags.contains(&"recurrent".to_string()) {
-                        rule.lr_multiplier = A::from(0.5).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(0.5, A::one());
                     // Lower LR for recurrent weights
                     } else if metadata.tags.contains(&"linear".to_string()) {
-                        rule.lr_multiplier = A::from(1.0).expect("unwrap failed");
+                        rule.lr_multiplier = scalar_or(1.0, A::one());
                         // Standard LR for linear weights
                     }
 
@@ -1379,10 +1378,106 @@ pub mod architecture_aware {
             Ok(())
         }
 
-        /// Apply custom optimization rule
-        fn apply_custom_rule(&mut self, _rule_name: &str, config: &LayerConfig) -> Result<()> {
-            // Custom rule implementation would depend on the specific rule
-            // This is a placeholder for extensibility
+        /// Apply a single custom optimization rule from
+        /// [`ArchitectureStrategy::Custom`].
+        ///
+        /// A rule name is either a bare setting, applied to every registered
+        /// layer, or `"<layer>.<setting>"`, applied only to that layer. The
+        /// recognised settings map onto [`LayerOptimizationRule`]:
+        ///
+        /// | setting                     | expected value            |
+        /// |-----------------------------|---------------------------|
+        /// | `lr_multiplier`             | [`LayerConfig::Float`]/[`LayerConfig::Int`] |
+        /// | `weight_decay_multiplier`   | [`LayerConfig::Float`]/[`LayerConfig::Int`] |
+        /// | `frozen`                    | [`LayerConfig::Bool`]     |
+        ///
+        /// An unrecognised setting, an unknown layer, or a value of the wrong
+        /// variant is an honest `Err`: this used to be a no-op that ignored
+        /// both arguments and returned `Ok(())`, so a misspelled or
+        /// unsupported rule silently did nothing while reporting success.
+        fn apply_custom_rule(&mut self, rule_name: &str, config: &LayerConfig) -> Result<()> {
+            let (target_layer, setting) = match rule_name.rsplit_once('.') {
+                Some((layer, setting)) => (Some(layer.to_string()), setting),
+                None => (None, rule_name),
+            };
+
+            // Resolve the layers this rule applies to before mutating, so the
+            // borrow of `param_manager` ends first.
+            let layers: Vec<LayerId> = {
+                let all: Vec<LayerId> = self
+                    .param_manager
+                    .get_all_parameters()
+                    .values()
+                    .map(|metadata| metadata.layername.clone())
+                    .collect();
+                match &target_layer {
+                    Some(name) => {
+                        if !all.iter().any(|layer| layer == name) {
+                            return Err(OptimError::InvalidConfig(format!(
+                                "custom rule `{rule_name}` targets layer `{name}`, \
+                                 which has no registered parameters"
+                            )));
+                        }
+                        vec![name.clone()]
+                    }
+                    None => {
+                        let mut unique = all;
+                        unique.sort();
+                        unique.dedup();
+                        unique
+                    }
+                }
+            };
+
+            let as_float = |config: &LayerConfig| -> Result<A> {
+                let raw = match config {
+                    LayerConfig::Float(value) => *value,
+                    LayerConfig::Int(value) => *value as f64,
+                    other => {
+                        return Err(OptimError::InvalidConfig(format!(
+                            "custom rule `{rule_name}` expects a numeric value, got {other:?}"
+                        )))
+                    }
+                };
+                A::from(raw).ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "custom rule `{rule_name}` value {raw} is not representable \
+                         in the optimizer's float type"
+                    ))
+                })
+            };
+
+            for layer in layers {
+                let mut rule = self
+                    .param_manager
+                    .layer_rules
+                    .get(&layer)
+                    .cloned()
+                    .unwrap_or_default();
+                match setting {
+                    "lr_multiplier" => rule.lr_multiplier = as_float(config)?,
+                    "weight_decay_multiplier" => rule.weight_decay_multiplier = as_float(config)?,
+                    "frozen" => match config {
+                        LayerConfig::Bool(value) => rule.frozen = *value,
+                        other => {
+                            return Err(OptimError::InvalidConfig(format!(
+                                "custom rule `{rule_name}` expects a boolean value, got {other:?}"
+                            )))
+                        }
+                    },
+                    unknown => {
+                        return Err(OptimError::InvalidConfig(format!(
+                            "unknown custom optimization rule `{unknown}`; supported \
+                             settings are `lr_multiplier`, `weight_decay_multiplier` \
+                             and `frozen`, optionally prefixed with `<layer>.`"
+                        )))
+                    }
+                }
+                rule.custom_settings
+                    .insert(rule_name.to_string(), config.clone());
+                self.param_manager.set_layer_rule(layer, rule);
+            }
+
             Ok(())
         }
 

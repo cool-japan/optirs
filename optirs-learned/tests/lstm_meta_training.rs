@@ -174,10 +174,21 @@ fn bptt_gradient_matches_finite_differences_with_attention() {
 // Meta-training actually learns
 // ---------------------------------------------------------------------------
 
+/// Seed for the two learning-performance tests below.
+///
+/// The gradient-correctness tests above hold for *any* initialization, so they
+/// draw fresh entropy on every run. These two instead assert a training
+/// *outcome* ("the meta-loss drops by ≥25% within 60 steps"), which genuinely
+/// varies with the initial weights — an unlucky draw once failed this suite in
+/// CI while the very same code passed on re-run. Pinning the seed via
+/// [`LSTMNetwork::new_seeded`] turns them into deterministic regression tests
+/// of the training loop rather than a lottery over initializations.
+const TRAINING_SEED: u64 = 20260817;
+
 #[test]
 fn meta_training_reduces_the_meta_loss() {
     let config = controller_config(false);
-    let mut network = LSTMNetwork::<f64>::new(&config).expect("controller");
+    let mut network = LSTMNetwork::<f64>::new_seeded(&config, TRAINING_SEED).expect("controller");
     let tasks = task_family(6);
     let weights = vec![1.0_f64; tasks.len()];
 
@@ -225,7 +236,7 @@ fn meta_training_reduces_the_meta_loss() {
 #[test]
 fn trained_controller_beats_its_untrained_self_on_a_held_out_quadratic() {
     let config = controller_config(false);
-    let mut trained = LSTMNetwork::<f64>::new(&config).expect("controller");
+    let mut trained = LSTMNetwork::<f64>::new_seeded(&config, TRAINING_SEED).expect("controller");
     let mut untrained = trained.clone();
 
     let train_tasks = task_family(6);
@@ -270,6 +281,28 @@ fn trained_controller_beats_its_untrained_self_on_a_held_out_quadratic() {
         trained_loss < start_loss,
         "the trained controller failed to make progress at all: \
          {start_loss} -> {trained_loss}"
+    );
+}
+
+/// `new_seeded` must be a pure function of (config, seed): equal seeds give
+/// bit-identical parameters, different seeds give different ones. Without this,
+/// the two seeded tests above could silently degrade back into a lottery.
+#[test]
+fn seeded_construction_is_deterministic() {
+    let config = controller_config(true);
+    let a = LSTMNetwork::<f64>::new_seeded(&config, TRAINING_SEED).expect("controller a");
+    let b = LSTMNetwork::<f64>::new_seeded(&config, TRAINING_SEED).expect("controller b");
+    assert_eq!(
+        bptt::flatten_parameters(&a),
+        bptt::flatten_parameters(&b),
+        "the same seed must reproduce the same initialization exactly"
+    );
+
+    let c = LSTMNetwork::<f64>::new_seeded(&config, TRAINING_SEED + 1).expect("controller c");
+    assert_ne!(
+        bptt::flatten_parameters(&a),
+        bptt::flatten_parameters(&c),
+        "a different seed must produce a different initialization"
     );
 }
 

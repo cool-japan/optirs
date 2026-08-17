@@ -3,14 +3,12 @@
 // This module implements meta-learning strategies that allow the transformer
 // optimizer to quickly adapt to new tasks and optimization landscapes.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
-use crate::transformer::TransformerNetwork;
 
 /// Meta-learning strategies
 #[derive(Debug, Clone, Copy)]
@@ -47,17 +45,11 @@ pub struct TransformerMetaLearner<
     /// Meta-learning strategy
     strategy: MetaLearningStrategy,
 
-    /// Meta-transformer for higher-level learning
-    meta_transformer: Option<TransformerNetwork<T>>,
-
     /// Task embeddings
     task_embeddings: HashMap<String, Array1<T>>,
 
     /// Meta-training history
     meta_history: VecDeque<MetaTrainingEvent<T>>,
-
-    /// Domain adaptation module
-    domain_adapter: DomainAdapter<T>,
 
     /// Few-shot learning capabilities
     few_shot_learner: FewShotLearner<T>,
@@ -93,6 +85,33 @@ pub struct MetaTrainingEvent<T: Float + Debug + Send + Sync + 'static> {
 
     /// Timestamp
     timestamp: usize,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> MetaTrainingEvent<T> {
+    /// Which meta-learning phase produced this event.
+    pub fn event_type(&self) -> MetaEventType {
+        self.event_type
+    }
+
+    /// The task the event was recorded for.
+    pub fn task_info(&self) -> &TaskInfo<T> {
+        &self.task_info
+    }
+
+    /// Measured performance of the adaptation.
+    pub fn performance(&self) -> &MetaPerformanceMetrics<T> {
+        &self.performance
+    }
+
+    /// Number of inner-loop steps the adaptation ran.
+    pub fn adaptation_steps(&self) -> usize {
+        self.adaptation_steps
+    }
+
+    /// Position of this event in the meta-training history.
+    pub fn timestamp(&self) -> usize {
+        self.timestamp
+    }
 }
 
 /// Meta-event types
@@ -237,36 +256,36 @@ pub struct MetaPerformanceMetrics<T: Float + Debug + Send + Sync + 'static> {
     resource_usage: T,
 }
 
-/// Domain adapter for cross-domain transfer
-#[derive(Debug, Clone)]
-pub struct DomainAdapter<T: Float + Debug + Send + Sync + 'static> {
-    /// Domain-specific adapters
-    adapters: HashMap<String, DomainSpecificAdapter<T>>,
+impl<T: Float + Debug + Send + Sync + 'static> MetaPerformanceMetrics<T> {
+    /// Query loss after adaptation (lower is better).
+    pub fn final_performance(&self) -> T {
+        self.final_performance
+    }
 
-    /// Domain similarity estimator
-    similarity_estimator: DomainSimilarityEstimator<T>,
+    /// Relative loss reduction achieved by the inner loop.
+    pub fn convergence_speed(&self) -> T {
+        self.convergence_speed
+    }
 
-    /// Adaptation strategies
-    adaptation_strategies: Vec<AdaptationStrategy>,
+    /// Performance achieved per support sample.
+    pub fn sample_efficiency(&self) -> T {
+        self.sample_efficiency
+    }
 
-    /// Transfer efficiency tracker
-    transfer_tracker: TransferEfficiencyTracker<T>,
-}
+    /// `1 / (1 + query_loss)`: bounded generalization score.
+    pub fn generalization(&self) -> T {
+        self.generalization
+    }
 
-/// Domain-specific adapter
-#[derive(Debug, Clone)]
-pub struct DomainSpecificAdapter<T: Float + Debug + Send + Sync + 'static> {
-    /// Adapter parameters
-    parameters: HashMap<String, Array1<T>>,
+    /// `1 / (1 + |query_loss - support_loss|)`: bounded support/query agreement.
+    pub fn stability(&self) -> T {
+        self.stability
+    }
 
-    /// Domain features
-    domain_features: Array1<T>,
-
-    /// Adaptation history
-    adaptation_history: Vec<AdaptationEvent<T>>,
-
-    /// Performance on domain
-    domain_performance: T,
+    /// Inner-loop steps spent, as a resource proxy.
+    pub fn resource_usage(&self) -> T {
+        self.resource_usage
+    }
 }
 
 /// Few-shot learner component
@@ -277,12 +296,6 @@ pub struct FewShotLearner<T: Float + Debug + Send + Sync + 'static> {
 
     /// Prototype vectors
     prototypes: HashMap<String, Array1<T>>,
-
-    /// Distance metric learner
-    distance_learner: DistanceMetricLearner<T>,
-
-    /// Few-shot adaptation parameters
-    adaptation_params: FewShotParams<T>,
 }
 
 /// Continual learning state
@@ -296,12 +309,6 @@ pub struct ContinualLearningState<T: Float + Debug + Send + Sync + 'static> {
 
     /// Previous task importance scores
     task_importance: HashMap<String, T>,
-
-    /// Memory replay buffer
-    replay_buffer: Vec<ContinualLearningEvent<T>>,
-
-    /// Catastrophic forgetting prevention strategy
-    forgetting_prevention: ForgettingPreventionStrategy,
 }
 
 /// Meta-learning parameters
@@ -329,73 +336,6 @@ pub struct MetaLearningParams<T: Float + Debug + Send + Sync + 'static> {
     pub memory_retention: T,
 }
 
-// Additional supporting types
-#[derive(Debug, Clone, Copy)]
-pub enum AdaptationStrategy {
-    FineTuning,
-    ParameterSharing,
-    ModularAdaptation,
-    AttentionAdaptation,
-}
-
-#[derive(Debug, Clone)]
-pub struct DomainSimilarityEstimator<T: Float + Debug + Send + Sync + 'static> {
-    similarity_matrix: HashMap<(String, String), T>,
-    feature_extractors: HashMap<String, Array2<T>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TransferEfficiencyTracker<T: Float + Debug + Send + Sync + 'static> {
-    transfer_history: Vec<TransferEvent<T>>,
-    efficiency_metrics: HashMap<String, T>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AdaptationEvent<T: Float + Debug + Send + Sync + 'static> {
-    timestamp: usize,
-    adaptation_loss: T,
-    performance_gain: T,
-    adaptation_steps: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct DistanceMetricLearner<T: Float + Debug + Send + Sync + 'static> {
-    metric_parameters: Array2<T>,
-    learned_similarities: HashMap<String, T>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FewShotParams<T: Float + Debug + Send + Sync + 'static> {
-    support_size: usize,
-    query_size: usize,
-    adaptation_lr: T,
-    temperature: T,
-}
-
-#[derive(Debug, Clone)]
-pub struct ContinualLearningEvent<T: Float + Debug + Send + Sync + 'static> {
-    task_id: String,
-    gradients: Array1<T>,
-    performance: T,
-    timestamp: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ForgettingPreventionStrategy {
-    EWC,
-    PackNet,
-    ProgressiveNetworks,
-    GEM,
-}
-
-#[derive(Debug, Clone)]
-pub struct TransferEvent<T: Float + Debug + Send + Sync + 'static> {
-    source_domain: String,
-    target_domain: String,
-    transfer_performance: T,
-    adaptation_time: usize,
-}
-
 impl<
         T: Float
             + Debug
@@ -412,10 +352,8 @@ impl<
     pub fn new(strategy: MetaLearningStrategy) -> Result<Self> {
         Ok(Self {
             strategy,
-            meta_transformer: None,
             task_embeddings: HashMap::new(),
             meta_history: VecDeque::new(),
-            domain_adapter: DomainAdapter::new()?,
             few_shot_learner: FewShotLearner::new()?,
             continual_learning: ContinualLearningState::new()?,
             meta_params: MetaLearningParams::default(),
@@ -787,14 +725,24 @@ impl<
         self.meta_params = params;
     }
 
-    /// Get domain adapter
-    pub fn domain_adapter(&self) -> &DomainAdapter<T> {
-        &self.domain_adapter
-    }
-
     /// Prototype learned for a task by the few-shot component.
     pub fn few_shot_prototype(&self, task_id: &str) -> Option<&Array1<T>> {
         self.few_shot_learner.prototype(task_id)
+    }
+
+    /// Recorded meta-training events, oldest first (capped at 1000).
+    ///
+    /// [`Self::adapt_to_task`] fills every field of each event with a measured
+    /// quantity, but nothing could read them: the events went into a private
+    /// deque whose only observable property was its length (via
+    /// [`Self::get_meta_statistics`]'s `meta_events_count`).
+    pub fn meta_history(&self) -> impl ExactSizeIterator<Item = &MetaTrainingEvent<T>> {
+        self.meta_history.iter()
+    }
+
+    /// The most recently recorded meta-training event, if any.
+    pub fn last_meta_event(&self) -> Option<&MetaTrainingEvent<T>> {
+        self.meta_history.back()
     }
 
     /// Reset meta-learner state
@@ -803,36 +751,8 @@ impl<
         self.previous_task_parameters = None;
         self.task_embeddings.clear();
         self.meta_history.clear();
-        self.domain_adapter.reset();
         self.few_shot_learner.reset();
         self.continual_learning.reset();
-    }
-}
-
-// Implementation for supporting types
-impl<
-        T: Float
-            + Debug
-            + Send
-            + Sync
-            + 'static
-            + Default
-            + Clone
-            + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
-    > DomainAdapter<T>
-{
-    fn new() -> Result<Self> {
-        Ok(Self {
-            adapters: HashMap::new(),
-            similarity_estimator: DomainSimilarityEstimator::new()?,
-            adaptation_strategies: vec![AdaptationStrategy::FineTuning],
-            transfer_tracker: TransferEfficiencyTracker::new()?,
-        })
-    }
-
-    fn reset(&mut self) {
-        self.adapters.clear();
     }
 }
 
@@ -852,8 +772,6 @@ impl<
         Ok(Self {
             support_memory: HashMap::new(),
             prototypes: HashMap::new(),
-            distance_learner: DistanceMetricLearner::new()?,
-            adaptation_params: FewShotParams::default(),
         })
     }
 
@@ -892,8 +810,6 @@ impl<
             ewc_params: HashMap::new(),
             fisher_information: HashMap::new(),
             task_importance: HashMap::new(),
-            replay_buffer: Vec::new(),
-            forgetting_prevention: ForgettingPreventionStrategy::EWC,
         })
     }
 
@@ -907,76 +823,10 @@ impl<
         Ok(())
     }
 
-    fn compute_forgetting_penalty(&self) -> Result<T> {
-        // Simplified forgetting penalty
-        Ok(scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()))
-    }
-
     fn reset(&mut self) {
         self.ewc_params.clear();
         self.fisher_information.clear();
         self.task_importance.clear();
-        self.replay_buffer.clear();
-    }
-}
-
-impl<
-        T: Float
-            + Debug
-            + Send
-            + Sync
-            + 'static
-            + Default
-            + Clone
-            + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
-    > DomainSimilarityEstimator<T>
-{
-    fn new() -> Result<Self> {
-        Ok(Self {
-            similarity_matrix: HashMap::new(),
-            feature_extractors: HashMap::new(),
-        })
-    }
-}
-
-impl<
-        T: Float
-            + Debug
-            + Send
-            + Sync
-            + 'static
-            + Default
-            + Clone
-            + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
-    > TransferEfficiencyTracker<T>
-{
-    fn new() -> Result<Self> {
-        Ok(Self {
-            transfer_history: Vec::new(),
-            efficiency_metrics: HashMap::new(),
-        })
-    }
-}
-
-impl<
-        T: Float
-            + Debug
-            + Send
-            + Sync
-            + 'static
-            + Default
-            + Clone
-            + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
-    > DistanceMetricLearner<T>
-{
-    fn new() -> Result<Self> {
-        Ok(Self {
-            metric_parameters: Array2::eye(10), // Default 10x10 identity matrix
-            learned_similarities: HashMap::new(),
-        })
     }
 }
 
@@ -1005,28 +855,6 @@ impl<
                 .unwrap_or_else(|| T::zero()),
             memory_retention: scirs2_core::numeric::NumCast::from(0.95)
                 .unwrap_or_else(|| T::zero()),
-        }
-    }
-}
-
-impl<
-        T: Float
-            + Debug
-            + Send
-            + Sync
-            + 'static
-            + Default
-            + Clone
-            + std::iter::Sum
-            + scirs2_core::ndarray::ScalarOperand,
-    > Default for FewShotParams<T>
-{
-    fn default() -> Self {
-        Self {
-            support_size: 5,
-            query_size: 15,
-            adaptation_lr: scirs2_core::numeric::NumCast::from(0.01).unwrap_or_else(|| T::zero()),
-            temperature: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()),
         }
     }
 }
@@ -1081,6 +909,51 @@ mod tests {
             let stats = learner.get_meta_statistics();
             assert!(stats.contains_key("meta_events_count"));
         }
+    }
+
+    /// Every field of a `MetaTrainingEvent` is filled with a measured quantity,
+    /// but they were all private with no accessor: the recorded history was
+    /// write-only and only its *length* was observable.
+    #[test]
+    fn the_recorded_meta_history_is_readable_and_measured() {
+        let support = samples(&[[1.0, 2.0], [1.2, 1.8], [0.8, 2.2]]);
+        let query = samples(&[[1.1, 2.1], [0.9, 1.9]]);
+        let mut learner =
+            TransformerMetaLearner::<f64>::new(MetaLearningStrategy::MAML).expect("learner");
+
+        assert_eq!(learner.meta_history().len(), 0);
+        assert!(learner.last_meta_event().is_none());
+
+        for i in 0..3 {
+            let task = TaskInfo::new(format!("task_{i}"), 2, 0.5);
+            learner
+                .adapt_to_task(&task, &support, &query)
+                .expect("adaptation");
+        }
+
+        assert_eq!(learner.meta_history().len(), 3);
+        for (i, event) in learner.meta_history().enumerate() {
+            assert_eq!(event.timestamp(), i, "events must be in recording order");
+            assert_eq!(event.task_info().task_id, format!("task_{i}"));
+            assert!(event.adaptation_steps() > 0);
+            assert!(matches!(event.event_type(), MetaEventType::TaskAdaptation));
+
+            let perf = event.performance();
+            assert!(perf.final_performance().is_finite());
+            assert!(perf.convergence_speed().is_finite());
+            assert!(perf.sample_efficiency().is_finite());
+            // Both scores are `1/(1+x)` for a non-negative `x`, so they live in
+            // `(0, 1]` — a constant 0 would mean nothing was measured.
+            assert!(perf.generalization() > 0.0 && perf.generalization() <= 1.0);
+            assert!(perf.stability() > 0.0 && perf.stability() <= 1.0);
+            assert!(perf.resource_usage() > 0.0);
+        }
+
+        let last = learner.last_meta_event().expect("a last event");
+        assert_eq!(last.timestamp(), 2);
+
+        learner.reset();
+        assert_eq!(learner.meta_history().len(), 0);
     }
 
     #[test]

@@ -19,7 +19,7 @@ use crate::privacy::{DifferentialPrivacyConfig, NoiseMechanism};
 use scirs2_core::ndarray::{ArrayBase, Data, DataOwned, Dimension};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::rngs::StdRng;
-use scirs2_core::random::{thread_rng, Random, Rng};
+use scirs2_core::random::{thread_rng, Random};
 use std::collections::HashMap;
 use std::fmt::Debug;
 

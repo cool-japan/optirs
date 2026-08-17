@@ -35,22 +35,12 @@ pub use state::{OptimizerStateSnapshot, TransformerOptimizerState};
 // Re-export for backward compatibility - create alias for the old name
 pub use TransformerBasedOptimizerConfig as TransformerOptimizerConfig;
 
-use scirs2_core::ndarray::{Array1, Array2, Array3, ArrayBase, Axis, Data, Dimension};
-use scirs2_core::numeric::{Float, ToPrimitive};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::numeric::Float;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::{
-    LearnedOptimizerConfig, MetaOptimizationStrategy, NeuralOptimizerMetrics, NeuralOptimizerType,
-    OptimizerState, TaskContext, TaskPerformance,
-};
 use crate::error::{OptimError, Result};
-use optirs_core::adaptive_selection::OptimizerType;
-
-// Import for external compatibility
 
 /// Transformer-based meta-learning optimizer
 pub struct TransformerOptimizer<

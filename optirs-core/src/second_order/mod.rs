@@ -77,8 +77,12 @@ pub mod hessian_approximation {
             let grad_minus = gradient_fn(&param_minus)?;
 
             // Hessian diagonal: derivative of gradient using central difference
-            let second_deriv =
-                (grad_plus[i] - grad_minus[i]) / (A::from(2.0).expect("unwrap failed") * epsilon);
+            let two = A::from(2.0).ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "diagonal_finite_difference: integer literal 2.0 must fit in A".to_string(),
+                )
+            })?;
+            let second_deriv = (grad_plus[i] - grad_minus[i]) / (two * epsilon);
             hessian_diag[i] = second_deriv;
         }
 
@@ -551,7 +555,7 @@ mod tests {
 
         let hessian_diag =
             hessian_approximation::diagonal_finite_difference(&params, gradient_fn, 1e-5)
-                .expect("unwrap failed");
+                .expect("hessian_approximation::diagonal_finite_difference succeeds in test_diagonal_hessian_approximation");
 
         // For quadratic function f(x) = x^2, second derivative should be 2.0
         assert_relative_eq!(hessian_diag[0], 2.0, epsilon = 1e-1);
@@ -569,7 +573,7 @@ mod tests {
 
         let result =
             hessian_approximation::lbfgs_two_loop_recursion(&gradient, &s_history, &y_history, 1.0)
-                .expect("unwrap failed");
+                .expect("hessian_approximation::lbfgs_two_loop_recursion succeeds in test_lbfgs_two_loop_recursion");
 
         // Result should be different from original gradient due to curvature information
         assert_ne!(result, gradient);
@@ -586,7 +590,7 @@ mod tests {
         let hessian_info = HessianInfo::Diagonal(hessian_diag);
         let new_params = optimizer
             .step_second_order(&params, &gradients, &hessian_info)
-            .expect("unwrap failed");
+            .expect("step_second_order succeeds in test_newton_method");
 
         // Verify parameters were updated
         assert!(new_params[0] < params[0]);
@@ -601,10 +605,14 @@ mod tests {
         let gradients2 = Array1::from_vec(vec![0.05, 0.15, 0.25]);
 
         // First step
-        params = optimizer.step(&params, &gradients1).expect("unwrap failed");
+        params = optimizer
+            .step(&params, &gradients1)
+            .expect("optimizer.step succeeds in test_lbfgs_optimizer");
 
         // Second step (should use history)
-        let new_params = optimizer.step(&params, &gradients2).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients2)
+            .expect("optimizer.step succeeds in test_lbfgs_optimizer");
 
         // Verify parameters were updated
         assert_ne!(new_params, params);
@@ -615,9 +623,9 @@ mod tests {
     #[test]
     fn test_gauss_newton_approximation() {
         let jacobian = Array2::from_shape_vec((3, 2), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-            .expect("unwrap failed");
+            .expect("Array2::from_shape_vec succeeds in test_gauss_newton_approximation");
         let hessian_approx =
-            hessian_approximation::gauss_newton_approximation(&jacobian).expect("unwrap failed");
+            hessian_approximation::gauss_newton_approximation(&jacobian).expect("hessian_approximation::gauss_newton_approximation succeeds in test_gauss_newton_approximation");
 
         // Should be a 2x2 matrix (J^T * J)
         assert_eq!(hessian_approx.dim(), (2, 2));

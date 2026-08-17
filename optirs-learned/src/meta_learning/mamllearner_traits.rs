@@ -18,7 +18,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(unused_imports)]
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Dimension};
 use scirs2_core::numeric::Float;
@@ -343,6 +342,17 @@ impl<
         };
         let regression_r2 = linear_model::r_squared(&predictions, &task.query_set.targets);
 
+        // Full-curve AUC-ROC over the retained predictions, which double as the
+        // ranking scores. `roc_auc` returns `None` unless the targets really are
+        // binary labels with both classes present, so a regression task keeps
+        // reporting no AUC instead of a meaningless number.
+        let auc = match task.task_type {
+            TaskType::Classification => {
+                linear_model::roc_auc(&predictions, &task.query_set.targets)
+            }
+            _ => None,
+        };
+
         // `accuracy` is the task-appropriate goodness score: label accuracy for
         // classification, R^2 clamped to [0, 1] for regression, 0 when neither
         // is defined.
@@ -361,9 +371,7 @@ impl<
             metrics: QueryEvaluationMetrics {
                 mse: Some(query_loss),
                 classification_accuracy,
-                // AUC needs ranked binary labels and score thresholds, which
-                // this scalar-target model does not carry.
-                auc: None,
+                auc,
                 uncertainty_quality,
             },
         })

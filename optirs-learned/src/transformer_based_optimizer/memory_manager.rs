@@ -2,12 +2,10 @@
 
 use super::config::{CacheEvictionStrategy, MemoryConfig, TransformerBasedOptimizerConfig};
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::Array2;
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Memory management strategy types
@@ -55,7 +53,7 @@ pub struct TransformerMemoryManager<
     /// Memory pressure monitor
     pressure_monitor: MemoryPressureMonitor,
 
-    /// Model dimension
+    /// Model dimension every stored tensor must be `model_dimension` wide.
     model_dimension: usize,
 }
 
@@ -88,7 +86,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         };
 
         let compression_manager = if memory_config.enable_compression {
-            Some(CompressionManager::new(0.5)?) // 50% compression ratio target
+            Some(CompressionManager::new()?)
         } else {
             None
         };
@@ -111,7 +109,22 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     }
 
     /// Store tensor in memory with key
+    /// Store `tensor` under `key`.
+    ///
+    /// # Errors
+    /// Returns `Err` when the tensor's feature width differs from the model
+    /// dimension this manager was built for. The manager records the dimension
+    /// at construction but never checked it, so a caller could fill the cache
+    /// with tensors the transformer cannot consume and only find out at the
+    /// point of use.
     pub fn store(&mut self, key: String, tensor: Array2<T>) -> Result<()> {
+        if tensor.ncols() != self.model_dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "TransformerMemoryManager holds {}-wide tensors but was given {} columns",
+                self.model_dimension,
+                tensor.ncols()
+            )));
+        }
         let start_time = Instant::now();
 
         // Check memory pressure and evict if necessary
@@ -661,9 +674,6 @@ pub struct CompressionManager<
     /// Compressed storage
     compressed_storage: HashMap<String, CompressedData<T>>,
 
-    /// Compression ratio target
-    compression_ratio: f64,
-
     /// Memory usage
     memory_usage: usize,
 
@@ -674,10 +684,17 @@ pub struct CompressionManager<
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     CompressionManager<T>
 {
-    pub fn new(compression_ratio: f64) -> Result<Self> {
+    /// A quantizing compression manager.
+    ///
+    /// There is no configurable target ratio: [`Self::compress`] always
+    /// quantizes to 8-bit codes, so the achieved ratio is fixed by
+    /// `size_of::<T>()` and reported per payload by
+    /// [`CompressedData::compression_ratio`]. The `compression_ratio` this used
+    /// to accept was stored and never consulted by the quantizer, which made it
+    /// a knob that silently did nothing.
+    pub fn new() -> Result<Self> {
         Ok(Self {
             compressed_storage: HashMap::new(),
-            compression_ratio,
             memory_usage: 0,
             _phantom: std::marker::PhantomData,
         })
@@ -1140,7 +1157,7 @@ mod tests {
         let cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
         assert!(cache.is_ok());
 
-        let mut c = cache.expect("unwrap failed");
+        let mut c = cache.expect("MemoryCache::new should succeed");
         let tensor = Array2::<f32>::ones((10, 10));
         assert!(c.store("test".to_string(), tensor).is_ok());
         assert!(c.contains("test"));
@@ -1244,7 +1261,7 @@ mod tests {
     /// and the round trip must reconstruct within the quantization step.
     #[test]
     fn compression_reports_a_real_measured_ratio() {
-        let comp = CompressionManager::<f64>::new(0.5).expect("manager");
+        let comp = CompressionManager::<f64>::new().expect("manager");
         let tensor = Array2::from_shape_fn((8, 8), |(i, j)| (i as f64) - 0.5 * (j as f64));
         let compressed = comp.compress(&tensor).expect("compress");
 
@@ -1283,7 +1300,7 @@ mod tests {
 
     #[test]
     fn a_constant_tensor_round_trips_exactly() {
-        let comp = CompressionManager::<f64>::new(0.5).expect("manager");
+        let comp = CompressionManager::<f64>::new().expect("manager");
         let tensor = Array2::<f64>::from_elem((3, 4), 2.5);
         let compressed = comp.compress(&tensor).expect("compress");
         assert_eq!(compressed.quantization_step, 0.0);
@@ -1294,7 +1311,7 @@ mod tests {
 
     #[test]
     fn compression_rejects_degenerate_input() {
-        let comp = CompressionManager::<f64>::new(0.5).expect("manager");
+        let comp = CompressionManager::<f64>::new().expect("manager");
         assert!(comp.compress(&Array2::<f64>::zeros((0, 3))).is_err());
         let mut nan = Array2::<f64>::zeros((2, 2));
         nan[[0, 0]] = f64::NAN;
@@ -1303,15 +1320,15 @@ mod tests {
 
     #[test]
     fn test_compression_manager() {
-        let compression = CompressionManager::<f32>::new(0.5);
+        let compression = CompressionManager::<f32>::new();
         assert!(compression.is_ok());
 
-        let comp = compression.expect("unwrap failed");
+        let comp = compression.expect("CompressionManager::new should succeed");
         let tensor = Array2::<f32>::ones((5, 5));
         let compressed = comp.compress(&tensor);
         assert!(compressed.is_ok());
 
-        let decompressed = comp.decompress(&compressed.expect("unwrap failed"));
+        let decompressed = comp.decompress(&compressed.expect("decompress should succeed"));
         assert!(decompressed.is_ok());
     }
 

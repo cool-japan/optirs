@@ -5,10 +5,10 @@
 // ensemble approaches, and adaptive threshold management.
 
 use super::config::*;
-use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
+use super::optimizer::{Adaptation, AdaptationType, StreamingDataPoint};
 
+use crate::utils::{scalar_or, try_scalar_str};
 use scirs2_core::numeric::Float;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,11 @@ pub struct AnomalyDetector<A: Float + Send + Sync> {
     context_performance_metrics: Vec<A>,
     context_resource_usage: Vec<A>,
     context_drift_indicators: Vec<A>,
+    /// Bounded window of recent ensemble anomaly scores, used to recalibrate
+    /// detector thresholds against `AnomalyConfig::contamination_rate`.
+    recent_scores: VecDeque<A>,
+    /// Points scored since the last threshold recalibration.
+    points_since_recalibration: usize,
 }
 
 /// Anomaly event record
@@ -364,14 +369,13 @@ pub struct MLModelMetrics<A: Float + Send + Sync> {
 
 /// Ensemble anomaly detector combining multiple methods
 pub struct EnsembleAnomalyDetector<A: Float + Send + Sync> {
-    /// Individual detector results
-    detector_results: HashMap<String, AnomalyDetectionResult<A>>,
     /// Ensemble voting strategy
     voting_strategy: EnsembleVotingStrategy,
-    /// Detector weights for weighted voting
+    /// Per-detector weights used by
+    /// [`EnsembleVotingStrategy::Weighted`]. Detectors with no explicit weight
+    /// count as `1`, so an unconfigured ensemble weights every detector
+    /// equally rather than ignoring them.
     detector_weights: HashMap<String, A>,
-    /// Performance tracking for adaptive weighting
-    detector_performance: HashMap<String, DetectorPerformance<A>>,
     /// Ensemble configuration
     ensemble_config: EnsembleConfig<A>,
 }
@@ -431,14 +435,8 @@ pub struct EnsembleConfig<A: Float + Send + Sync> {
 pub struct AdaptiveThresholdManager<A: Float + Send + Sync> {
     /// Current thresholds for different detectors
     thresholds: HashMap<String, A>,
-    /// Threshold adaptation strategy
-    adaptation_strategy: ThresholdAdaptationStrategy,
-    /// Performance feedback for threshold adjustment
-    performance_feedback: VecDeque<ThresholdPerformanceFeedback<A>>,
     /// Threshold bounds
     threshold_bounds: HashMap<String, (A, A)>,
-    /// Adaptation parameters
-    adaptation_params: ThresholdAdaptationParams<A>,
 }
 
 /// Threshold adaptation strategies
@@ -500,10 +498,6 @@ pub struct FalsePositiveTracker<A: Float + Send + Sync> {
     false_positives: VecDeque<FalsePositiveEvent<A>>,
     /// False positive rate calculation
     fp_rate_calculator: FPRateCalculator<A>,
-    /// Patterns in false positives
-    fp_patterns: FalsePositivePatterns<A>,
-    /// Mitigation strategies
-    mitigation_strategies: Vec<FPMitigationStrategy>,
 }
 
 /// False positive event
@@ -529,8 +523,6 @@ pub struct FPRateCalculator<A: Float + Send + Sync> {
     window_size: usize,
     /// Current false positive rate
     current_fp_rate: A,
-    /// Target false positive rate
-    target_fp_rate: A,
 }
 
 /// Detection result for FP rate calculation
@@ -619,10 +611,6 @@ pub struct AnomalyResponseSystem<A: Float + Send + Sync> {
     response_strategies: HashMap<AnomalyType, Vec<ResponseAction>>,
     /// Response execution engine
     response_executor: ResponseExecutor<A>,
-    /// Response effectiveness tracking
-    effectiveness_tracker: ResponseEffectivenessTracker<A>,
-    /// Escalation rules
-    escalation_rules: Vec<EscalationRule<A>>,
     /// Monotonically increasing response identifier.
     next_response_id: u64,
     /// Messages written by executed `Log` actions.
@@ -736,16 +724,6 @@ pub struct ResponseResourceLimits {
     pub max_memory_usage: usize,
     /// Maximum response execution time
     pub max_execution_time: Duration,
-}
-
-/// Response effectiveness tracking
-pub struct ResponseEffectivenessTracker<A: Float + Send + Sync> {
-    /// Effectiveness metrics per response type
-    effectiveness_metrics: HashMap<ResponseAction, EffectivenessMetrics<A>>,
-    /// Response outcome tracking
-    outcome_tracking: VecDeque<ResponseOutcome<A>>,
-    /// Effectiveness trends
-    effectiveness_trends: HashMap<ResponseAction, TrendAnalysis<A>>,
 }
 
 /// Effectiveness metrics for responses
@@ -931,8 +909,13 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         }
 
         let ensemble_detector = EnsembleAnomalyDetector::new(EnsembleVotingStrategy::Weighted)?;
-        let threshold_manager =
-            AdaptiveThresholdManager::new(ThresholdAdaptationStrategy::PerformanceBased)?;
+        // `AnomalyConfig::enable_adaptive_threshold` and `contamination_rate`
+        // are honoured by `recalibrate_thresholds` below, which is the code
+        // that actually moves thresholds. A `ThresholdAdaptationStrategy` was
+        // also derived here and handed to the manager, but the manager never
+        // read it -- two parallel spellings of the same setting, one of them
+        // inert. Only the working one remains.
+        let threshold_manager = AdaptiveThresholdManager::new()?;
         let false_positive_tracker = FalsePositiveTracker::new();
         let response_system = AnomalyResponseSystem::new(&anomaly_config.response_strategy)?;
 
@@ -951,7 +934,82 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
             context_performance_metrics: Vec::new(),
             context_resource_usage: Vec::new(),
             context_drift_indicators: Vec::new(),
+            recent_scores: VecDeque::with_capacity(recent_capacity),
+            points_since_recalibration: 0,
         })
+    }
+
+    /// Recalibrates every statistical detector's threshold to the empirical
+    /// `1 - contamination_rate` quantile of the recent ensemble anomaly scores
+    /// (CF1).
+    ///
+    /// `AnomalyConfig::contamination_rate` — the assumed fraction of the stream
+    /// that is anomalous — previously had no reader at all, so the "assumption"
+    /// influenced nothing: thresholds stayed wherever they were initialised no
+    /// matter how the stream was actually distributed. Calibrating to that
+    /// quantile is the standard use of a contamination parameter: it makes the
+    /// detector flag approximately that fraction of points.
+    ///
+    /// Runs only when `enable_adaptive_threshold` is set, and only once every
+    /// `window_size` scored points. A `contamination_rate` outside `(0, 1)` is
+    /// an honest error rather than a silently clamped guess.
+    fn recalibrate_thresholds(&mut self) -> Result<(), String> {
+        if !self.config.enable_adaptive_threshold {
+            return Ok(());
+        }
+        let window = self.config.window_size.max(1);
+        if self.points_since_recalibration < window || self.recent_scores.len() < window {
+            return Ok(());
+        }
+        self.points_since_recalibration = 0;
+
+        let contamination = self.config.contamination_rate;
+        if !(contamination > 0.0 && contamination < 1.0) {
+            return Err(format!(
+                "AnomalyConfig::contamination_rate must be in (0, 1), got {contamination}"
+            ));
+        }
+
+        let mut scores: Vec<A> = self.recent_scores.iter().copied().collect();
+        scores.sort_by(crate::utils::total_order);
+        // Nearest-rank quantile: index of the first score at or above the
+        // (1 - contamination) quantile of the window.
+        let rank = ((1.0 - contamination) * scores.len() as f64).floor() as usize;
+        let index = rank.min(scores.len().saturating_sub(1));
+        let Some(&target) = scores.get(index) else {
+            return Ok(());
+        };
+
+        for (name, detector) in &mut self.statistical_detectors {
+            let bounded = match self.threshold_manager.threshold_bounds.get(name) {
+                Some(&(low, high)) => target.max(low).min(high),
+                None => target,
+            };
+            detector.set_threshold(bounded);
+            self.threshold_manager
+                .thresholds
+                .insert(name.clone(), bounded);
+        }
+        Ok(())
+    }
+
+    /// Test-only list of thresholds the contamination calibration has applied.
+    #[cfg(test)]
+    pub(crate) fn calibrated_threshold_names_for_test(&self) -> Vec<A> {
+        self.threshold_manager
+            .thresholds
+            .values()
+            .copied()
+            .collect()
+    }
+
+    /// Threshold currently applied to `detector_name` by the contamination-rate
+    /// calibration, if it has run.
+    pub fn calibrated_threshold(&self, detector_name: &str) -> Option<A> {
+        self.threshold_manager
+            .thresholds
+            .get(detector_name)
+            .copied()
     }
 
     /// Supplies the context signals that the detector cannot observe itself.
@@ -1080,6 +1138,14 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         // anomalies in it.
         self.remember_point(data_point);
 
+        // Feed the contamination-rate calibration window (CF1).
+        if self.recent_scores.len() >= self.recent_capacity {
+            self.recent_scores.pop_front();
+        }
+        self.recent_scores.push_back(ensemble_result.anomaly_score);
+        self.points_since_recalibration = self.points_since_recalibration.saturating_add(1);
+        self.recalibrate_thresholds()?;
+
         // Check if anomaly was detected
         if ensemble_result.is_anomaly {
             // Create anomaly event
@@ -1108,7 +1174,13 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
 
             // Any threshold adjustment the responses asked for is applied for
             // real, not merely logged.
-            if let Some(adjustment) = self.response_system.take_pending_threshold_adjustment() {
+            let pending_adjustment = self
+                .response_system
+                .take_pending_threshold_adjustment()
+                // CF1: with adaptive thresholding switched off, a response may
+                // still be recorded but must not move any threshold.
+                .filter(|_| self.config.enable_adaptive_threshold);
+            if let Some(adjustment) = pending_adjustment {
                 let magnitude = A::from(adjustment).ok_or_else(|| {
                     format!("threshold adjustment {adjustment} is not representable")
                 })?;
@@ -1377,13 +1449,11 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyDetector<A> {
     fn new(voting_strategy: EnsembleVotingStrategy) -> Result<Self, String> {
         Ok(Self {
-            detector_results: HashMap::new(),
             voting_strategy,
             detector_weights: HashMap::new(),
-            detector_performance: HashMap::new(),
             ensemble_config: EnsembleConfig {
                 min_consensus: 2,
-                ensemble_threshold: A::from(0.5).expect("unwrap failed"),
+                ensemble_threshold: try_scalar_str::<A, _>(0.5)?,
                 dynamic_weighting: true,
                 evaluation_window: 100,
                 context_based_selection: false,
@@ -1410,15 +1480,70 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
         let total_count = results.len();
 
         let avg_score = results.values().map(|r| r.anomaly_score).sum::<A>()
-            / A::from(total_count).expect("unwrap failed");
+            / try_scalar_str::<A, _>(total_count)?;
         let avg_confidence = results.values().map(|r| r.confidence).sum::<A>()
-            / A::from(total_count).expect("unwrap failed");
+            / try_scalar_str::<A, _>(total_count)?;
 
-        let is_anomaly = match self.voting_strategy {
-            EnsembleVotingStrategy::Majority => anomaly_count > total_count / 2,
-            EnsembleVotingStrategy::MaxScore => avg_score > self.ensemble_config.ensemble_threshold,
-            _ => anomaly_count >= self.ensemble_config.min_consensus,
+        // The ensemble the detector actually builds is `Weighted`, which used
+        // to fall through to the `_` arm and behave as plain min-consensus
+        // voting -- the weights were never consulted at all. Each strategy now
+        // computes the quantity it names, and the two that have no
+        // implementation behind them say so instead of silently pretending to
+        // be a different strategy.
+        let threshold = self.ensemble_config.ensemble_threshold;
+        let (is_anomaly, ensemble_score) = match self.voting_strategy {
+            EnsembleVotingStrategy::Majority => (anomaly_count > total_count / 2, avg_score),
+            EnsembleVotingStrategy::MaxScore => {
+                let max_score = results
+                    .values()
+                    .map(|r| r.anomaly_score)
+                    .fold(A::zero(), |acc, s| if s > acc { s } else { acc });
+                (max_score > threshold, max_score)
+            }
+            EnsembleVotingStrategy::AverageScore => (avg_score > threshold, avg_score),
+            EnsembleVotingStrategy::MedianScore => {
+                let mut scores: Vec<A> = results.values().map(|r| r.anomaly_score).collect();
+                scores.sort_by(crate::utils::total_order);
+                let median = if scores.len().is_multiple_of(2) {
+                    (scores[scores.len() / 2 - 1] + scores[scores.len() / 2])
+                        / try_scalar_str::<A, _>(2.0)?
+                } else {
+                    scores[scores.len() / 2]
+                };
+                (median > threshold, median)
+            }
+            EnsembleVotingStrategy::Weighted => {
+                let one = A::one();
+                let mut weight_sum = A::zero();
+                let mut weighted_score = A::zero();
+                let mut weighted_votes = A::zero();
+                for (name, result) in &results {
+                    let weight = *self.detector_weights.get(name).unwrap_or(&one);
+                    weight_sum = weight_sum + weight;
+                    weighted_score = weighted_score + weight * result.anomaly_score;
+                    if result.is_anomaly {
+                        weighted_votes = weighted_votes + weight;
+                    }
+                }
+                if weight_sum <= A::zero() {
+                    return Err(
+                        "weighted ensemble voting needs a positive total detector weight"
+                            .to_string(),
+                    );
+                }
+                let score = weighted_score / weight_sum;
+                let vote_share = weighted_votes / weight_sum;
+                (vote_share > try_scalar_str::<A, _>(0.5)?, score)
+            }
+            EnsembleVotingStrategy::Adaptive | EnsembleVotingStrategy::Stacking => {
+                return Err(format!(
+                    "ensemble voting strategy {:?} is not implemented: it needs a \
+                     context model / meta-learner that this detector does not carry",
+                    self.voting_strategy
+                ));
+            }
         };
+        let avg_score = ensemble_score;
 
         Ok(AnomalyDetectionResult {
             is_anomaly,
@@ -1429,9 +1554,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
             } else {
                 None
             },
-            severity: if avg_score > A::from(0.8).expect("unwrap failed") {
+            severity: if avg_score > try_scalar_str::<A, _>(0.8)? {
                 AnomalySeverity::High
-            } else if avg_score > A::from(0.5).expect("unwrap failed") {
+            } else if avg_score > try_scalar_str::<A, _>(0.5)? {
                 AnomalySeverity::Medium
             } else {
                 AnomalySeverity::Low
@@ -1443,26 +1568,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyD
     fn adjust_sensitivity(&mut self, adjustment: A) -> Result<(), String> {
         self.ensemble_config.ensemble_threshold = (self.ensemble_config.ensemble_threshold
             + adjustment)
-            .max(A::from(0.1).expect("unwrap failed"))
-            .min(A::from(0.9).expect("unwrap failed"));
+            .max(try_scalar_str::<A, _>(0.1)?)
+            .min(try_scalar_str::<A, _>(0.9)?);
         Ok(())
     }
 }
 
 impl<A: Float + Default + Clone + Send + Sync + Send + Sync> AdaptiveThresholdManager<A> {
-    fn new(strategy: ThresholdAdaptationStrategy) -> Result<Self, String> {
+    fn new() -> Result<Self, String> {
         Ok(Self {
             thresholds: HashMap::new(),
-            adaptation_strategy: strategy,
-            performance_feedback: VecDeque::with_capacity(1000),
             threshold_bounds: HashMap::new(),
-            adaptation_params: ThresholdAdaptationParams {
-                learning_rate: A::from(0.01).expect("unwrap failed"),
-                momentum: A::from(0.9).expect("unwrap failed"),
-                min_change: A::from(0.001).expect("unwrap failed"),
-                max_change: A::from(0.1).expect("unwrap failed"),
-                adaptation_frequency: 100,
-            },
         })
     }
 }
@@ -1474,19 +1590,8 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> FalsePositiveTracke
             fp_rate_calculator: FPRateCalculator {
                 recent_results: VecDeque::with_capacity(1000),
                 window_size: 1000,
-                current_fp_rate: A::from(0.05).expect("unwrap failed"),
-                target_fp_rate: A::from(0.05).expect("unwrap failed"),
+                current_fp_rate: scalar_or(0.05, A::zero()),
             },
-            fp_patterns: FalsePositivePatterns {
-                temporal_patterns: Vec::new(),
-                feature_patterns: HashMap::new(),
-                context_patterns: Vec::new(),
-                detector_patterns: HashMap::new(),
-            },
-            mitigation_strategies: vec![
-                FPMitigationStrategy::ThresholdAdjustment,
-                FPMitigationStrategy::ContextFiltering,
-            ],
         }
     }
 
@@ -1596,12 +1701,6 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> AnomalyResponseSyst
                     max_execution_time: Duration::from_secs(60),
                 },
             },
-            effectiveness_tracker: ResponseEffectivenessTracker {
-                effectiveness_metrics: HashMap::new(),
-                outcome_tracking: VecDeque::with_capacity(1000),
-                effectiveness_trends: HashMap::new(),
-            },
-            escalation_rules: Vec::new(),
             next_response_id: 0,
             log_entries: VecDeque::with_capacity(RESPONSE_HISTORY_CAPACITY),
             alert_entries: VecDeque::with_capacity(RESPONSE_HISTORY_CAPACITY),

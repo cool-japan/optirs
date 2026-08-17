@@ -1,10 +1,12 @@
 //! CPU reference executor support: a small tensor codec used to give
 //! [`super::execution::ExecutionEngine::execute_task`] real (de)serialized
-//! input/output data, plus the deterministic compiled-program-binary codec
-//! used by [`super::backend::TPUBackend`].
+//! argument and result data.
 //!
-//! These make the backend evaluate real (if simple) tensor math on the CPU
-//! instead of returning fabricated placeholder state.
+//! There is no program-binary codec here any more. The compiled binary now
+//! comes from the real code generator behind [`crate::xla::XLACompiler`]; the
+//! descriptor encoding that used to stand in for it (a header plus the
+//! computation id and target codes) has been deleted along with the
+//! `TPUBackend` compile path that produced it.
 
 use std::fmt::Debug;
 
@@ -13,10 +15,9 @@ use scirs2_core::numeric::{Float, NumCast};
 use scirs2_core::error::ErrorContext;
 
 use crate::error::{OptimError, Result};
-use crate::{TPUVersion, XLAOptimizationLevel};
 
 use super::buffer::TPUBuffer;
-use super::types::{ComputationId, MemoryLayout};
+use super::types::MemoryLayout;
 
 /// Deterministic per-byte energy estimate (nanojoules) used by the CPU
 /// reference executor to derive `energy_consumed` from real byte counts.
@@ -34,23 +35,6 @@ pub(super) const ENERGY_PER_BYTE_NANOJOULE: f64 = 0.05;
 pub(super) struct RefTensor {
     pub(super) shape: Vec<usize>,
     pub(super) data: Vec<f64>,
-}
-
-/// Reference (CPU) evaluation of an opaque computation: an identity op applied
-/// to each input tensor. A bare `ComputationId` exposes no XLA op-list here, so
-/// the faithful reference semantics are to reproduce each input tensor exactly.
-/// Deterministic, shape-preserving, and fully defined without TPU hardware.
-///
-/// `pub(super)`: called from [`super::execution::ExecutionEngine::execute_task`],
-/// a sibling submodule.
-pub(super) fn evaluate_reference(inputs: Vec<RefTensor>) -> Vec<RefTensor> {
-    inputs
-        .into_iter()
-        .map(|tensor| RefTensor {
-            shape: tensor.shape,
-            data: tensor.data.to_vec(),
-        })
-        .collect()
 }
 
 /// Encode reference tensors into a self-describing little-endian byte stream.
@@ -210,60 +194,4 @@ pub(super) fn deserialize_tpu_buffers<T: Float + Debug + Send + Sync + 'static>(
         buffers.push(TPUBuffer::new(data, tensor.shape, MemoryLayout::RowMajor));
     }
     Ok(buffers)
-}
-
-/// FNV-1a 64-bit hash. Small, dependency-free, and deterministic; used to give
-/// the compiled program binary a stable trailing digest.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
-/// Stable numeric code for a TPU version (used inside the program binary).
-fn tpu_version_code(version: TPUVersion) -> u8 {
-    match version {
-        TPUVersion::V2 => 2,
-        TPUVersion::V3 => 3,
-        TPUVersion::V4 => 4,
-        TPUVersion::V5e => 5,
-        TPUVersion::V5p => 6,
-    }
-}
-
-/// Stable numeric code for an optimization level (used inside the program
-/// binary and to key utilization estimates).
-fn optimization_level_code(level: XLAOptimizationLevel) -> u8 {
-    match level {
-        XLAOptimizationLevel::None => 0,
-        XLAOptimizationLevel::Basic => 1,
-        XLAOptimizationLevel::Standard => 2,
-        XLAOptimizationLevel::Aggressive => 3,
-        XLAOptimizationLevel::Experimental => 4,
-    }
-}
-
-/// Produce a deterministic, non-trivial program binary from the program
-/// descriptor: a magic header, the descriptor fields, and a trailing FNV-1a
-/// digest. Identical programs yield identical binaries; different programs
-/// differ.
-///
-/// `pub(super)`: called from [`super::backend::TPUBackend`] and the
-/// `tpu_backend` test module, both sibling submodules.
-pub(super) fn encode_program_binary(
-    computation_id: ComputationId,
-    version: TPUVersion,
-    opt_level: XLAOptimizationLevel,
-) -> Vec<u8> {
-    let mut binary = Vec::new();
-    binary.extend_from_slice(b"OPTIRS-TPU-XLA\0");
-    binary.extend_from_slice(&computation_id.0.to_le_bytes());
-    binary.push(tpu_version_code(version));
-    binary.push(optimization_level_code(opt_level));
-    let digest = fnv1a_64(&binary);
-    binary.extend_from_slice(&digest.to_le_bytes());
-    binary
 }

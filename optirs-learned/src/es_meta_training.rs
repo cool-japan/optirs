@@ -19,7 +19,8 @@
 //! [`AdvancedOptimizer::step`](crate::domain_optimizers::AdvancedOptimizer::step),
 //! each of which contains a recurrent cell, a nonlinear addressing or aggregation
 //! stage and a nonlinear readout. That is the truncated-BPTT machinery
-//! [`crate::lstm::bptt`] implements for the LSTM controller, and doing it here
+//! `lstm::bptt` (behind the `lstm` feature) implements for the LSTM controller,
+//! and doing it here
 //! would mean hand-deriving and maintaining a separate adjoint for each of two
 //! quite different architectures.
 //!

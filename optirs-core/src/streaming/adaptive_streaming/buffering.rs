@@ -6,10 +6,10 @@
 
 use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
-use super::performance::{PerformanceSnapshot, PerformanceTracker};
+use super::performance::PerformanceTracker;
 
+use crate::utils::{scalar_or, try_scalar_str};
 use scirs2_core::numeric::Float;
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -26,8 +26,6 @@ pub struct AdaptiveBuffer<A: Float + Send + Sync> {
     quality_metrics: BufferQualityMetrics<A>,
     /// Buffer sizing strategy
     sizing_strategy: BufferSizingStrategy<A>,
-    /// Data retention policy
-    retention_policy: DataRetentionPolicy<A>,
     /// Buffer statistics
     statistics: BufferStatistics<A>,
     /// Last processing timestamp
@@ -130,16 +128,15 @@ pub enum TrendDirection {
 
 /// Buffer sizing strategy implementation
 pub struct BufferSizingStrategy<A: Float + Send + Sync> {
-    /// Current strategy type
+    /// The configured sizing strategy, which decides *how* `target_size`
+    /// moves (and, for `Fixed`, that it does not move at all).
     strategy_type: BufferSizeStrategy,
+    /// Initial size, the base for `Linear` steps.
+    initial_size: usize,
     /// Target size
     target_size: usize,
     /// Size adjustment parameters
     adjustment_params: SizeAdjustmentParams<A>,
-    /// Performance feedback
-    performance_feedback: VecDeque<SizingPerformanceFeedback<A>>,
-    /// Sizing history
-    sizing_history: VecDeque<SizingEvent>,
 }
 
 /// Parameters for size adjustment
@@ -208,20 +205,6 @@ pub enum SizingReason {
     Manual,
     /// Configuration change
     Configuration,
-}
-
-/// Data retention policy for buffer management
-pub struct DataRetentionPolicy<A: Float + Send + Sync> {
-    /// Retention strategy
-    strategy: RetentionStrategy,
-    /// Age-based retention parameters
-    age_policy: AgeBasedRetention,
-    /// Quality-based retention parameters
-    quality_policy: QualityBasedRetention<A>,
-    /// Relevance-based retention parameters
-    relevance_policy: RelevanceBasedRetention<A>,
-    /// Combined retention scoring
-    retention_scorer: RetentionScorer<A>,
 }
 
 /// Data retention strategies
@@ -313,16 +296,6 @@ pub enum RelevanceMethod {
     Diversity,
     /// Custom relevance function
     Custom(String),
-}
-
-/// Retention scoring system
-pub struct RetentionScorer<A: Float + Send + Sync> {
-    /// Scoring weights
-    weights: RetentionWeights<A>,
-    /// Scoring history for adaptation
-    scoring_history: VecDeque<RetentionScore<A>>,
-    /// Performance feedback
-    performance_feedback: VecDeque<RetentionPerformanceFeedback<A>>,
 }
 
 /// Weights for different retention factors
@@ -482,8 +455,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             buffer_config.initial_size,
         );
 
-        let retention_policy = DataRetentionPolicy::new(RetentionStrategy::Hybrid);
-
         let statistics = BufferStatistics {
             total_items_processed: 0,
             total_items_discarded: 0,
@@ -519,7 +490,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             secondary_buffer: VecDeque::new(),
             quality_metrics,
             sizing_strategy,
-            retention_policy,
             statistics,
             last_processing: Instant::now(),
             size_change_log: VecDeque::with_capacity(100),
@@ -572,7 +542,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         };
 
         // Add to appropriate buffer based on quality
-        if priority_score >= A::from(self.config.quality_threshold).expect("unwrap failed") {
+        if priority_score >= try_scalar_str::<A, _>(self.config.quality_threshold)? {
             self.buffer.push(prioritized_point);
         } else {
             // Add to secondary buffer for potential later processing
@@ -592,12 +562,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
 
         // Adjust score based on recency
         let age = data_point.timestamp.elapsed().as_secs_f64();
-        let recency_bonus = A::from(1.0 / (1.0 + age / 3600.0)).expect("unwrap failed"); // Hour-based decay
-        score = score + recency_bonus * A::from(0.1).expect("unwrap failed");
+        let recency_bonus = try_scalar_str::<A, _>(1.0 / (1.0 + age / 3600.0))?; // Hour-based decay
+        score = score + recency_bonus * try_scalar_str::<A, _>(0.1)?;
 
         // Adjust score based on feature variance (novelty)
         let novelty_score = self.calculate_novelty_score(data_point)?;
-        score = score + novelty_score * A::from(0.2).expect("unwrap failed");
+        score = score + novelty_score * try_scalar_str::<A, _>(0.2)?;
 
         Ok(score)
     }
@@ -606,13 +576,13 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
     fn calculate_novelty_score(&self, data_point: &StreamingDataPoint<A>) -> Result<A, String> {
         // Simple novelty calculation based on distance from recent data
         if self.buffer.is_empty() {
-            return Ok(A::from(0.5).expect("unwrap failed")); // Medium novelty for first data
+            return try_scalar_str::<A, _>(0.5); // Medium novelty for first data
         }
 
         // Calculate average distance from recent buffer content
         let recent_points: Vec<_> = self.buffer.iter().take(10).collect();
         if recent_points.is_empty() {
-            return Ok(A::from(0.5).expect("unwrap failed"));
+            return try_scalar_str::<A, _>(0.5);
         }
 
         let mut total_distance = A::zero();
@@ -624,7 +594,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             total_distance = total_distance + distance;
         }
 
-        let avg_distance = total_distance / A::from(recent_points.len()).expect("unwrap failed");
+        let avg_distance = total_distance / try_scalar_str::<A, _>(recent_points.len())?;
 
         // Normalize to 0-1 range
         let normalized_novelty = avg_distance / (avg_distance + A::one());
@@ -656,7 +626,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let max_age = 3600.0; // 1 hour maximum age
 
         let freshness = (max_age - age_seconds.min(max_age)) / max_age;
-        A::from(freshness.max(0.0)).expect("unwrap failed")
+        scalar_or(freshness.max(0.0), A::zero())
     }
 
     /// Calculates how relevant a data point is to what the buffer currently
@@ -879,7 +849,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         }
 
         if !quality_values.is_empty() {
-            let count = A::from(quality_values.len()).expect("unwrap failed");
+            let count = try_scalar_str::<A, _>(quality_values.len())?;
             self.quality_metrics.average_quality = quality_sum / count;
 
             // Update min/max quality
@@ -1010,34 +980,67 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
     /// Resizes the buffer based on current conditions
     fn resize_buffer(&mut self, reason: SizingReason) -> Result<(), String> {
         let old_size = self.sizing_strategy.target_size;
-        let new_size = match reason {
-            SizingReason::ThroughputOptimization => {
-                // Grow buffer
-                let growth_factor = 1.0
-                    + self
-                        .sizing_strategy
-                        .adjustment_params
-                        .growth_rate
-                        .to_f64()
-                        .unwrap_or(0.2);
-                ((old_size as f64) * growth_factor) as usize
+
+        // `BufferConfig::size_strategy` used to be accepted, stored and never
+        // consulted: every strategy resized by the same `adjustment_params`
+        // multipliers, so a buffer configured `Fixed` still grew and shrank.
+        let growing = matches!(reason, SizingReason::ThroughputOptimization);
+        let shrinking = matches!(reason, SizingReason::MemoryPressure);
+        if !growing && !shrinking {
+            return Ok(()); // no sizing signal
+        }
+
+        let new_size = match &self.sizing_strategy.strategy_type {
+            // A fixed buffer is fixed.
+            BufferSizeStrategy::Fixed => return Ok(()),
+            // Additive steps of `growth_rate * initial_size`.
+            BufferSizeStrategy::Linear { growth_rate } => {
+                let step = ((self.sizing_strategy.initial_size as f64) * growth_rate.abs())
+                    .round()
+                    .max(1.0) as usize;
+                if growing {
+                    old_size.saturating_add(step)
+                } else {
+                    old_size.saturating_sub(step)
+                }
             }
-            SizingReason::MemoryPressure => {
-                // Shrink buffer
-                let shrink_factor = 1.0
-                    - self
-                        .sizing_strategy
-                        .adjustment_params
-                        .shrinkage_rate
-                        .to_f64()
-                        .unwrap_or(0.2);
-                ((old_size as f64) * shrink_factor) as usize
+            // Multiplicative steps of the configured base.
+            BufferSizeStrategy::Exponential { base } => {
+                let base = if *base > 1.0 { *base } else { 2.0 };
+                if growing {
+                    ((old_size as f64) * base) as usize
+                } else {
+                    ((old_size as f64) / base) as usize
+                }
             }
-            _ => old_size, // No change for other reasons
+            // Performance- and resource-driven sizing both use the tuned
+            // sensitivity parameters; `bound_target_size` then applies the
+            // configured memory budget on top.
+            BufferSizeStrategy::Adaptive | BufferSizeStrategy::ResourceBased => {
+                if growing {
+                    let growth_factor = 1.0
+                        + self
+                            .sizing_strategy
+                            .adjustment_params
+                            .growth_rate
+                            .to_f64()
+                            .unwrap_or(0.2);
+                    ((old_size as f64) * growth_factor) as usize
+                } else {
+                    let shrink_factor = 1.0
+                        - self
+                            .sizing_strategy
+                            .adjustment_params
+                            .shrinkage_rate
+                            .to_f64()
+                            .unwrap_or(0.2);
+                    ((old_size as f64) * shrink_factor) as usize
+                }
+            }
         };
 
-        // Apply size bounds
-        let bounded_size = new_size.max(self.config.min_size).min(self.config.max_size);
+        // Apply size bounds, including the configured memory budget (CF1).
+        let bounded_size = self.bound_target_size(new_size);
 
         if bounded_size != old_size {
             self.sizing_strategy.target_size = bounded_size;
@@ -1127,9 +1130,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let freshness_score = self.calculate_freshness_score(data_point);
 
         // Weighted combination
-        let retention_score = quality_score * A::from(0.5).expect("unwrap failed")
-            + freshness_score * A::from(0.3).expect("unwrap failed")
-            + age_score * A::from(0.2).expect("unwrap failed");
+        let retention_score = quality_score * try_scalar_str::<A, _>(0.5)?
+            + freshness_score * try_scalar_str::<A, _>(0.3)?
+            + age_score * try_scalar_str::<A, _>(0.2)?;
 
         Ok(retention_score)
     }
@@ -1140,7 +1143,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let max_age = 7200.0; // 2 hours
 
         let age_score = (max_age - age_seconds.min(max_age)) / max_age;
-        A::from(age_score.max(0.0)).expect("unwrap failed")
+        scalar_or(age_score.max(0.0), A::zero())
     }
 
     /// Updates throughput statistics
@@ -1148,12 +1151,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         let time_since_last = self.last_processing.elapsed().as_secs_f64();
         if time_since_last > 0.0 {
             let current_throughput = items_processed as f64 / time_since_last;
-            let throughput_value = A::from(current_throughput).expect("unwrap failed");
+            let throughput_value = try_scalar_str::<A, _>(current_throughput)?;
 
             self.statistics.throughput_stats.current_throughput = throughput_value;
 
             // Update average throughput (simple moving average)
-            let alpha = A::from(0.1).expect("unwrap failed"); // Smoothing factor
+            let alpha = try_scalar_str::<A, _>(0.1)?; // Smoothing factor
             self.statistics.throughput_stats.avg_throughput = alpha * throughput_value
                 + (A::one() - alpha) * self.statistics.throughput_stats.avg_throughput;
 
@@ -1213,7 +1216,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             // More than 1 second
             let adaptation = Adaptation {
                 adaptation_type: AdaptationType::BufferSize,
-                magnitude: A::from(-0.2).expect("unwrap failed"), // Reduce by 20%
+                magnitude: try_scalar_str::<A, _>(-0.2)?, // Reduce by 20%
                 target_component: "adaptive_buffer".to_string(),
                 parameters: std::collections::HashMap::new(),
                 priority: AdaptationPriority::Normal,
@@ -1227,7 +1230,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         if avg_processing_time < 100.0 && avg_utilization < 0.3 {
             let adaptation = Adaptation {
                 adaptation_type: AdaptationType::BufferSize,
-                magnitude: A::from(0.3).expect("unwrap failed"), // Increase by 30%
+                magnitude: try_scalar_str::<A, _>(0.3)?, // Increase by 30%
                 target_component: "adaptive_buffer".to_string(),
                 parameters: std::collections::HashMap::new(),
                 priority: AdaptationPriority::Low,
@@ -1239,6 +1242,55 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         Ok(None)
     }
 
+    /// Maximum number of buffered items that fit inside
+    /// `BufferConfig::memory_limit_mb` (CF1).
+    ///
+    /// The per-item footprint is *measured*, not assumed: it is the size of a
+    /// `PrioritizedDataPoint<A>` plus the heap held by its feature (and target)
+    /// vectors, whose dimensionality is known from the running per-feature
+    /// statistics. Returns `None` until at least one data point has been
+    /// observed, since there is no measurement to bound against before then.
+    ///
+    /// `memory_limit_mb` used to be a config field nothing read, so a buffer
+    /// configured with a 128 MB budget would still grow to `max_size` items
+    /// regardless of how wide each sample was.
+    fn memory_bounded_capacity(&self) -> Option<usize> {
+        let feature_dim = self.feature_statistics.means.len();
+        if feature_dim == 0 {
+            return None;
+        }
+        // `features` plus a possible `target` of the same width.
+        let per_item = std::mem::size_of::<PrioritizedDataPoint<A>>()
+            + 2 * feature_dim * std::mem::size_of::<A>();
+        if per_item == 0 {
+            return None;
+        }
+        let budget_bytes = self.config.memory_limit_mb.saturating_mul(1024 * 1024);
+        Some((budget_bytes / per_item).max(1))
+    }
+
+    /// Clamps a proposed target size to the configured item bounds *and* the
+    /// memory budget.
+    fn bound_target_size(&self, proposed: usize) -> usize {
+        let bounded = proposed.max(self.config.min_size).min(self.config.max_size);
+        match self.memory_bounded_capacity() {
+            Some(capacity) => bounded.min(capacity).max(1),
+            None => bounded,
+        }
+    }
+
+    /// Test-only view of [`Self::memory_bounded_capacity`].
+    #[cfg(test)]
+    pub(crate) fn memory_bounded_capacity_for_test(&self) -> Option<usize> {
+        self.memory_bounded_capacity()
+    }
+
+    /// Test-only view of [`Self::bound_target_size`].
+    #[cfg(test)]
+    pub(crate) fn bound_target_size_for_test(&self, proposed: usize) -> usize {
+        self.bound_target_size(proposed)
+    }
+
     /// Applies size adaptation to the buffer
     pub fn apply_size_adaptation(&mut self, adaptation: &Adaptation<A>) -> Result<(), String> {
         if adaptation.adaptation_type == AdaptationType::BufferSize {
@@ -1247,10 +1299,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             let new_target =
                 (current_target as f64 * change_factor.to_f64().unwrap_or(1.0)) as usize;
 
-            // Apply bounds
-            let bounded_target = new_target
-                .max(self.config.min_size)
-                .min(self.config.max_size);
+            // Apply bounds, including the configured memory budget (CF1).
+            let bounded_target = self.bound_target_size(new_target);
 
             if bounded_target != current_target {
                 self.sizing_strategy.target_size = bounded_target;
@@ -1352,67 +1402,16 @@ impl<A: Float + Send + Sync + Send + Sync> BufferSizingStrategy<A> {
     fn new(strategy_type: BufferSizeStrategy, initial_size: usize) -> Self {
         Self {
             strategy_type,
+            initial_size,
             target_size: initial_size,
             adjustment_params: SizeAdjustmentParams {
-                growth_rate: A::from(0.2).expect("unwrap failed"),
-                shrinkage_rate: A::from(0.15).expect("unwrap failed"),
-                stability_threshold: A::from(0.05).expect("unwrap failed"),
-                performance_sensitivity: A::from(0.1).expect("unwrap failed"),
-                quality_sensitivity: A::from(0.1).expect("unwrap failed"),
-                memory_sensitivity: A::from(0.2).expect("unwrap failed"),
+                growth_rate: scalar_or(0.2, A::zero()),
+                shrinkage_rate: scalar_or(0.15, A::zero()),
+                stability_threshold: scalar_or(0.05, A::zero()),
+                performance_sensitivity: scalar_or(0.1, A::zero()),
+                quality_sensitivity: scalar_or(0.1, A::zero()),
+                memory_sensitivity: scalar_or(0.2, A::zero()),
             },
-            performance_feedback: VecDeque::with_capacity(100),
-            sizing_history: VecDeque::with_capacity(100),
-        }
-    }
-}
-
-impl<A: Float + Send + Sync + Send + Sync> DataRetentionPolicy<A> {
-    fn new(strategy: RetentionStrategy) -> Self {
-        Self {
-            strategy,
-            age_policy: AgeBasedRetention {
-                max_age: Duration::from_secs(7200),        // 2 hours
-                soft_age_limit: Duration::from_secs(3600), // 1 hour
-                age_weight: 0.3,
-                adaptive_limits: true,
-            },
-            quality_policy: QualityBasedRetention {
-                min_quality_threshold: A::from(0.3).expect("unwrap failed"),
-                quality_weight: A::from(0.5).expect("unwrap failed"),
-                adaptive_thresholds: true,
-                quality_targets: QualityDistributionTargets {
-                    high_quality_target: A::from(0.3).expect("unwrap failed"),
-                    medium_quality_target: A::from(0.5).expect("unwrap failed"),
-                    low_quality_target: A::from(0.2).expect("unwrap failed"),
-                    high_quality_threshold: A::from(0.8).expect("unwrap failed"),
-                    medium_quality_threshold: A::from(0.5).expect("unwrap failed"),
-                },
-            },
-            relevance_policy: RelevanceBasedRetention {
-                relevance_method: RelevanceMethod::Similarity,
-                relevance_weight: A::from(0.2).expect("unwrap failed"),
-                temporal_decay: true,
-                decay_rate: A::from(0.1).expect("unwrap failed"),
-            },
-            retention_scorer: RetentionScorer::new(),
-        }
-    }
-}
-
-impl<A: Float + Send + Sync + Send + Sync> RetentionScorer<A> {
-    fn new() -> Self {
-        Self {
-            weights: RetentionWeights {
-                age_weight: A::from(0.2).expect("unwrap failed"),
-                quality_weight: A::from(0.3).expect("unwrap failed"),
-                relevance_weight: A::from(0.2).expect("unwrap failed"),
-                priority_weight: A::from(0.15).expect("unwrap failed"),
-                freshness_weight: A::from(0.1).expect("unwrap failed"),
-                diversity_weight: A::from(0.05).expect("unwrap failed"),
-            },
-            scoring_history: VecDeque::with_capacity(1000),
-            performance_feedback: VecDeque::with_capacity(100),
         }
     }
 }
@@ -1431,7 +1430,7 @@ pub struct BufferDiagnostics {
 
 #[cfg(test)]
 mod buffering_regression_tests {
-    use super::super::performance::DataStatistics;
+    use super::super::performance::{DataStatistics, PerformanceSnapshot};
     use super::super::resource_management::ResourceUsage;
     use super::*;
     use scirs2_core::ndarray::Array1;

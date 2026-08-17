@@ -1,10 +1,7 @@
 use super::*;
 use approx::assert_relative_eq;
-use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
-use std::collections::HashMap;
-use std::fmt::Debug;
 
 #[test]
 fn test_arithmetic_averaging() {

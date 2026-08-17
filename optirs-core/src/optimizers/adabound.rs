@@ -15,7 +15,7 @@ use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 use scirs2_core::ndarray::{Ix1, ScalarOperand};
 use scirs2_core::ndarray_ext::{Array1, ArrayView1};
-use scirs2_core::numeric::{Float, Zero};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -76,16 +76,16 @@ pub struct AdaBound<T: Float> {
 impl<T: Float + ScalarOperand> Default for AdaBound<T> {
     fn default() -> Self {
         Self::new(
-            T::from(0.001).expect("unwrap failed"), // learning_rate
-            T::from(0.1).expect("unwrap failed"),   // final_lr
-            T::from(0.9).expect("unwrap failed"),   // beta1
-            T::from(0.999).expect("unwrap failed"), // beta2
-            T::from(1e-8).expect("unwrap failed"),  // epsilon
-            T::from(1e-3).expect("unwrap failed"),  // gamma
-            T::zero(),                              // weight_decay
-            false,                                  // amsbound
+            T::from(0.001).expect("AdaBound: default learning_rate (0.001) must fit in T"),
+            T::from(0.1).expect("AdaBound: default final_lr (0.1) must fit in T"),
+            T::from(0.9).expect("AdaBound: default beta1 (0.9) must fit in T"),
+            T::from(0.999).expect("AdaBound: default beta2 (0.999) must fit in T"),
+            T::from(1e-8).expect("AdaBound: default epsilon (1e-8) must fit in T"),
+            T::from(1e-3).expect("AdaBound: default gamma (1e-3) must fit in T"),
+            T::zero(),
+            false,
         )
-        .expect("unwrap failed")
+        .expect("AdaBound: default hyperparameters always satisfy validation")
     }
 }
 
@@ -115,8 +115,12 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
     ///     1e-3,   // gamma
     ///     0.0,    // weight_decay
     ///     false   // amsbound
-    /// ).expect("unwrap failed");
+    /// ).expect("AdaBound::new succeeds for finite, in-range default hyperparameters");
     /// ```
+    // AdaBound's full-configuration constructor mirrors the paper's 8 named
+    // hyperparameters (Luo et al., 2019); grouping them into a config struct
+    // would be a breaking change to this crate's public API for no gain in
+    // clarity at the (single, non-hot-path) call site.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         learning_rate: T,
@@ -128,13 +132,13 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
         weight_decay: T,
         amsbound: bool,
     ) -> Result<Self> {
-        let lr_f64 = learning_rate.to_f64().expect("unwrap failed");
-        let final_f64 = final_lr.to_f64().expect("unwrap failed");
-        let beta1_f64 = beta1.to_f64().expect("unwrap failed");
-        let beta2_f64 = beta2.to_f64().expect("unwrap failed");
-        let eps_f64 = epsilon.to_f64().expect("unwrap failed");
-        let gamma_f64 = gamma.to_f64().expect("unwrap failed");
-        let wd_f64 = weight_decay.to_f64().expect("unwrap failed");
+        let lr_f64 = crate::optimizers::scalar_to_f64(learning_rate)?;
+        let final_f64 = crate::optimizers::scalar_to_f64(final_lr)?;
+        let beta1_f64 = crate::optimizers::scalar_to_f64(beta1)?;
+        let beta2_f64 = crate::optimizers::scalar_to_f64(beta2)?;
+        let eps_f64 = crate::optimizers::scalar_to_f64(epsilon)?;
+        let gamma_f64 = crate::optimizers::scalar_to_f64(gamma)?;
+        let wd_f64 = crate::optimizers::scalar_to_f64(weight_decay)?;
 
         if lr_f64 <= 0.0 {
             return Err(OptimError::InvalidParameter(format!(
@@ -223,7 +227,7 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
     /// let params = array![1.0, 2.0, 3.0];
     /// let grads = array![0.1, 0.2, 0.3];
     ///
-    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
+    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("optimizer.step succeeds");
     /// ```
     pub fn step<'a, P, G>(&mut self, params: P, grads: G) -> Result<Array1<T>>
     where
@@ -249,22 +253,17 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
         }
 
         // Initialize moments on first step
-        if self.momentum.is_none() {
-            self.momentum = Some(Array1::zeros(n));
-            self.velocity = Some(Array1::zeros(n));
-            if self.amsbound {
-                self.max_velocity = Some(Array1::zeros(n));
-            }
+        if self.amsbound && self.max_velocity.is_none() {
+            self.max_velocity = Some(Array1::zeros(n));
         }
 
         self.step_count += 1;
-        let t = T::from(self.step_count).expect("unwrap failed");
+        let t: T = crate::optimizers::cast_scalar(self.step_count)?;
 
-        let momentum = self.momentum.as_mut().expect("unwrap failed");
-        let velocity = self.velocity.as_mut().expect("unwrap failed");
+        let momentum = self.momentum.get_or_insert_with(|| Array1::zeros(n));
+        let velocity = self.velocity.get_or_insert_with(|| Array1::zeros(n));
 
         let one = T::one();
-        let two = T::from(2).expect("unwrap failed");
 
         // Apply weight decay if configured
         let effective_grads = if self.weight_decay > T::zero() {
@@ -286,7 +285,7 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
 
         // For AMSBound: v̂_t = max(v̂_{t-1}, v_t)
         if self.amsbound {
-            let max_vel = self.max_velocity.as_mut().expect("unwrap failed");
+            let max_vel = self.max_velocity.get_or_insert_with(|| Array1::zeros(n));
             for i in 0..n {
                 if velocity[i] > max_vel[i] {
                     max_vel[i] = velocity[i];
@@ -314,7 +313,13 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
 
             // Bias-corrected second moment (or max for AMSBound)
             let v_hat = if self.amsbound {
-                self.max_velocity.as_ref().expect("unwrap failed")[i] / bias_correction2
+                // Structural invariant: `max_velocity` is initialized to `Some` at the
+                // top of this function whenever `self.amsbound` is true, so this can
+                // never actually be `None`.
+                self.max_velocity
+                    .as_ref()
+                    .expect("AdaBound: max_velocity is Some whenever amsbound is enabled")[i]
+                    / bias_correction2
             } else {
                 velocity[i] / bias_correction2
             };
@@ -357,7 +362,8 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
             return (self.final_lr, self.final_lr);
         }
 
-        let t = T::from(self.step_count).expect("unwrap failed");
+        let t = T::from(self.step_count)
+            .expect("AdaBound: step_count must be representable in T (f32/f64)");
         let one = T::one();
 
         let lower_bound = self.final_lr * (one - one / (self.gamma * t + one));
@@ -404,7 +410,7 @@ mod tests {
 
         let updated_params = optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adabound_single_step");
 
         assert_eq!(updated_params.len(), 3);
         assert_eq!(optimizer.step_count(), 1);
@@ -424,7 +430,7 @@ mod tests {
             let grads = array![0.1, 0.2, 0.3];
             params = optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_adabound_multiple_steps");
         }
 
         assert_eq!(optimizer.step_count(), 10);
@@ -444,7 +450,7 @@ mod tests {
         // After first step, bounds should widen
         optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adabound_dynamic_bounds");
         let (lower1, upper1) = optimizer.current_bounds();
         assert!(lower1 < upper1);
         assert!(lower1 >= 0.0);
@@ -454,7 +460,7 @@ mod tests {
             // Need many more steps for bound convergence
             optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_adabound_dynamic_bounds");
         }
         let (lower_final, upper_final) = optimizer.current_bounds();
         assert_relative_eq!(lower_final, 0.1, epsilon = 0.01);
@@ -464,14 +470,14 @@ mod tests {
     #[test]
     fn test_amsbound() {
         let mut optimizer = AdaBound::<f32>::new(0.001, 0.1, 0.9, 0.999, 1e-8, 1e-3, 0.0, true)
-            .expect("unwrap failed");
+            .expect("AdaBound::<f32>::new succeeds in test_amsbound");
 
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
         let updated_params = optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_amsbound");
         assert_eq!(updated_params.len(), 3);
         assert!(optimizer.max_velocity.is_some());
     }
@@ -479,14 +485,14 @@ mod tests {
     #[test]
     fn test_adabound_weight_decay() {
         let mut optimizer = AdaBound::<f32>::new(0.001, 0.1, 0.9, 0.999, 1e-8, 1e-3, 0.01, false)
-            .expect("unwrap failed");
+            .expect("AdaBound::<f32>::new succeeds in test_adabound_weight_decay");
 
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
         let updated_params = optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adabound_weight_decay");
 
         // With weight decay, updates should be larger
         for i in 0..3 {
@@ -505,7 +511,7 @@ mod tests {
             let grads = params.mapv(|x| 2.0 * x);
             params = optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_adabound_convergence");
         }
 
         // Should converge close to zero
@@ -524,7 +530,7 @@ mod tests {
 
         optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adabound_reset");
         assert_eq!(optimizer.step_count(), 1);
 
         optimizer.reset();
@@ -536,8 +542,6 @@ mod tests {
     /// AdaBound must be usable through the generic `Optimizer` trait.
     #[test]
     fn test_adabound_optimizer_trait() {
-        use crate::optimizers::Optimizer as _;
-
         let mut optimizer = AdaBound::<f64>::default();
         let params = scirs2_core::ndarray_ext::array![1.0f64, 2.0, 3.0];
         let grads = scirs2_core::ndarray_ext::array![0.1f64, 0.2, 0.3];

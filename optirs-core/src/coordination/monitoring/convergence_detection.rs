@@ -8,7 +8,6 @@ use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Result of convergence analysis
@@ -145,7 +144,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
 
         let trend_analysis = self.analyzer.compute_trend_analysis(&self.state);
 
-        ConvergenceResult {
+        let result = ConvergenceResult {
             converged,
             confidence: combined_confidence,
             iterations_to_convergence: self.state.convergence_start,
@@ -153,7 +152,32 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
             stagnation_count: self.state.stagnation_count,
             trend_analysis,
             statistical_significance: statistical_result.confidence,
-        }
+        };
+
+        // Feed the monitor and the indicator engine. Until 0.3.2 both were
+        // constructed in `new` and never touched again, so the detector produced
+        // no stagnation/premature-convergence alerts and no indicator history at
+        // all -- the `monitor` and `indicator` fields were pure decoration.
+        self.monitor.monitor(result.clone());
+        let _ = self.indicator.compute_indicators(&result, &self.state);
+
+        result
+    }
+
+    /// Convergence alerts raised so far (stagnation, premature convergence).
+    pub fn alerts(&self) -> &[ConvergenceAlert<T>] {
+        self.monitor.get_alerts()
+    }
+
+    /// Per-iteration indicator history: convergence score, trend strength,
+    /// stability index, confidence and progress ratio.
+    pub fn indicator_history(&self) -> &VecDeque<IndicatorValues<T>> {
+        self.indicator.get_indicator_history()
+    }
+
+    /// The criteria this detector was built with.
+    pub fn criteria(&self) -> &ConvergenceCriteria<T> {
+        &self.criteria
     }
 
     fn update_state(&mut self, value: T) {
@@ -222,12 +246,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
         }
 
         let mean = data.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(data.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len(), T::one());
         let variance = data
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(data.len() - 1).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len() - 1, T::one());
 
         variance
     }
@@ -258,7 +282,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
         let avg_improvement = recent_improvements
             .iter()
             .fold(T::zero(), |acc, &x| acc + x)
-            / T::from(recent_improvements.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(recent_improvements.len(), T::one());
 
         Some(avg_improvement)
     }
@@ -377,11 +401,32 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             };
         }
 
-        let current_value = state.history.back().expect("unwrap failed");
-        let previous_value = state.history[state.history.len() - 2];
+        // `state.history.len() >= 2` is checked by the guard above, but reading
+        // it out fallibly keeps this function panic-free if that guard is ever
+        // relaxed.
+        let (Some(&current_value), Some(&previous_value)) = (
+            state.history.back(),
+            state.history.get(state.history.len().wrapping_sub(2)),
+        ) else {
+            return ConvergenceResult {
+                converged: false,
+                confidence: T::zero(),
+                iterations_to_convergence: None,
+                convergence_rate: None,
+                stagnation_count: state.stagnation_count,
+                trend_analysis: TrendAnalysis {
+                    slope: T::zero(),
+                    r_squared: T::zero(),
+                    acceleration: T::zero(),
+                    volatility: T::zero(),
+                    momentum: T::zero(),
+                },
+                statistical_significance: T::zero(),
+            };
+        };
 
         // Adaptive tolerance check
-        let absolute_improvement = (previous_value - *current_value).abs();
+        let absolute_improvement = (previous_value - current_value).abs();
         let relative_improvement = if previous_value.abs() > T::epsilon() {
             absolute_improvement / previous_value.abs()
         } else {
@@ -625,15 +670,16 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             return (T::zero(), T::zero());
         }
 
-        let n = T::from(data.len()).expect("unwrap failed");
-        let sum_x =
-            (0..data.len()).fold(T::zero(), |acc, i| acc + T::from(i).expect("unwrap failed"));
+        let n = crate::utils::scalar_or(data.len(), T::one());
+        let sum_x = (0..data.len()).fold(T::zero(), |acc, i| {
+            acc + crate::utils::scalar_or(i, T::zero())
+        });
         let sum_y = data.iter().fold(T::zero(), |acc, &y| acc + y);
         let sum_xy = data.iter().enumerate().fold(T::zero(), |acc, (i, &y)| {
             acc + T::from(i).unwrap_or_else(|| T::zero()) * y
         });
         let sum_x2 = (0..data.len()).fold(T::zero(), |acc, i| {
-            let i_f = T::from(i).expect("unwrap failed");
+            let i_f = crate::utils::scalar_or(i, T::zero());
             acc + i_f * i_f
         });
 
@@ -679,7 +725,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         accelerations
             .iter()
             .fold(T::zero(), |acc, &a| acc + a.abs())
-            / T::from(accelerations.len()).expect("unwrap failed")
+            / crate::utils::scalar_or(accelerations.len(), T::one())
     }
 
     fn compute_volatility(&self, data: &VecDeque<T>) -> T {
@@ -688,12 +734,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
 
         let mean = data.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(data.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len(), T::one());
         let variance = data
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(data.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len(), T::one());
 
         variance.sqrt()
     }
@@ -926,12 +972,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
             .collect();
 
         let mean = recent_values.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(recent_values.len()).expect("unwrap failed");
+            / T::from(recent_values.len()).unwrap_or_else(T::one);
         let variance = recent_values
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(recent_values.len()).expect("unwrap failed");
+            / T::from(recent_values.len()).unwrap_or_else(T::one);
 
         (-variance.sqrt()).exp()
     }
@@ -942,7 +988,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
         }
 
         let initial_value = state.history[0];
-        let current_value = *state.history.back().expect("unwrap failed");
+        let Some(&current_value) = state.history.back() else {
+            return T::zero();
+        };
         let best_value = state.best_value;
 
         if (initial_value - best_value).abs() < T::epsilon() {
@@ -950,7 +998,19 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
         }
 
         let progress = (initial_value - current_value) / (initial_value - best_value);
-        progress.max(T::zero()).min(T::one())
+        let progress = progress.clamp(T::zero(), T::one());
+
+        // A run that has not yet reached `min_iterations` cannot report full
+        // progress no matter how flat the curve looks: the criteria say the
+        // question is not settled yet. `criteria` was previously stored and
+        // never read.
+        if state.current_iteration < self.criteria.min_iterations {
+            let ceiling = T::from(state.current_iteration).unwrap_or_else(T::zero)
+                / T::from(self.criteria.min_iterations.max(1)).unwrap_or_else(T::one);
+            progress.min(ceiling)
+        } else {
+            progress
+        }
     }
 
     pub fn get_indicator_history(&self) -> &VecDeque<IndicatorValues<T>> {

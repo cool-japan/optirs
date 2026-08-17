@@ -3,10 +3,8 @@
 // This module provides comprehensive visualization capabilities for tracking
 // optimization progress, comparing optimizers, and analyzing training dynamics.
 
-#[allow(dead_code)]
 use crate::error::{OptimError, Result};
 use std::collections::{HashMap, VecDeque};
-use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -117,9 +115,12 @@ impl OptimizationMetric {
 
     /// Add a new value
     pub fn add_value(&mut self, value: f64, step: usize) {
+        // A system clock set before the epoch is not a reason to panic a
+        // metrics recorder: such a reading is clamped to the epoch, matching
+        // `streaming_metrics::unix_timestamp_*`.
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("unwrap failed")
+            .unwrap_or_default()
             .as_secs();
 
         self.values.push_back(value);
@@ -255,34 +256,16 @@ pub struct OptimizationVisualizer {
     last_update_step: usize,
 }
 
-/// Dashboard state for real-time visualization
+/// Dashboard state for real-time visualization.
+///
+/// `update_dashboard` regenerates the whole static dashboard from `metrics` on
+/// every refresh; it never consulted the per-plot `active_plots` map or the
+/// stored `DashboardLayout`, so those were removed rather than left as a
+/// second, never-read description of the same dashboard.
 #[derive(Debug)]
 struct DashboardState {
-    /// Active plots
-    active_plots: HashMap<String, PlotState>,
-
-    /// Layout configuration
-    layout: DashboardLayout,
-
     /// Update timestamps
     last_update: SystemTime,
-}
-
-/// Individual plot state
-#[derive(Debug)]
-struct PlotState {
-    /// Plot type
-    plot_type: PlotType,
-
-    /// Data series
-    series: Vec<DataSeries>,
-
-    /// Axis configuration
-    x_axis: AxisConfig,
-    y_axis: AxisConfig,
-
-    /// Plot title
-    title: String,
 }
 
 /// Types of plots available
@@ -404,12 +387,6 @@ impl OptimizationVisualizer {
         })?;
 
         let dashboard_state = DashboardState {
-            active_plots: HashMap::new(),
-            layout: DashboardLayout {
-                rows: 2,
-                cols: 2,
-                plot_positions: HashMap::new(),
-            },
             last_update: SystemTime::now(),
         };
 
@@ -444,7 +421,13 @@ impl OptimizationVisualizer {
     pub fn step(&mut self) {
         self.current_step += 1;
 
-        if self.current_step - self.last_update_step >= self.config.update_frequency {
+        // `saturating_sub` rather than `-`: `current_step` is only ever
+        // incremented here and `last_update_step` only ever assigned from it,
+        // so today the difference cannot go negative -- but a plain `-` makes
+        // that invariant load-bearing for panic-freedom, and any future
+        // rewind of the counter would turn this into a debug panic /
+        // release wrap-around. Saturating keeps it total.
+        if self.current_step.saturating_sub(self.last_update_step) >= self.config.update_frequency {
             if let Err(e) = self.update_dashboard() {
                 eprintln!("Failed to update dashboard: {e}");
             }
@@ -512,20 +495,18 @@ impl OptimizationVisualizer {
             plotdata.push_str("<script>\n");
             plotdata.push_str("const traces = [];\n");
 
-            for comparison in &self.comparisons {
+            for (series_index, comparison) in self.comparisons.iter().enumerate() {
                 if let Some(values) = comparison.metrics.get(metricname) {
                     let x_values: Vec<String> = (0..values.len()).map(|i| i.to_string()).collect();
-                    writeln!(&mut plotdata,
-                        "traces.push({{x: {:?}, y: {:?}, name: '{}', type: 'scatter', mode: 'lines'}});",
-                        x_values, values, comparison.name
-                    ).expect("unwrap failed");
+                    plotdata.push_str(&format!("traces.push({{x: {:?}, y: {:?}, name: '{}', type: 'scatter', mode: 'lines', line: {{color: '{}'}}}});\n",
+                        x_values, values, comparison.name, self.get_color(series_index)));
                 }
             }
 
             plotdata.push_str("Plotly.newPlot('comparison-plot', traces, {\n");
             plotdata.push_str("  title: 'Optimizer Comparison',\n");
             plotdata.push_str("  xaxis: {title: 'Training Steps'},\n");
-            writeln!(&mut plotdata, "  yaxis: {{title: '{metricname}'}}").expect("unwrap failed");
+            plotdata.push_str(&format!("  yaxis: {{title: '{metricname}'}}\n"));
             plotdata.push_str("});\n");
             plotdata.push_str("</script>\n");
             plotdata.push_str("</body></html>\n");
@@ -692,12 +673,10 @@ impl OptimizationVisualizer {
 
             for (name, metric) in &self.metrics {
                 if let Some(&latest_value) = metric.values.back() {
-                    writeln!(
-                        &mut dashboard,
-                        "<div><strong>{}:</strong> {:.4} {}</div>",
+                    dashboard.push_str(&format!(
+                        "<div><strong>{}:</strong> {:.4} {}</div>\n",
                         name, latest_value, metric.units
-                    )
-                    .expect("unwrap failed");
+                    ));
                 }
             }
 
@@ -712,12 +691,10 @@ impl OptimizationVisualizer {
                     break;
                 } // Limit to 4 plots in 2x2 grid
 
-                writeln!(
-                    &mut dashboard,
-                    "<div class='plot-container'><div id='plot-{}'></div></div>",
+                dashboard.push_str(&format!(
+                    "<div class='plot-container'><div id='plot-{}'></div></div>\n",
                     plot_id
-                )
-                .expect("unwrap failed");
+                ));
 
                 plot_id += 1;
             }
@@ -736,10 +713,8 @@ impl OptimizationVisualizer {
                 let steps: Vec<String> = metric.steps.iter().map(|&s| s.to_string()).collect();
                 let values: Vec<f64> = metric.values.iter().copied().collect();
 
-                writeln!(&mut dashboard,
-                    "Plotly.newPlot('plot-{}', [{{x: {:?}, y: {:?}, type: 'scatter', mode: 'lines', name: '{}'}}], {{title: '{}', xaxis: {{title: 'Steps'}}, yaxis: {{title: '{}'}}}});",
-                    plot_id, steps, values, name, name, metric.units
-                ).expect("unwrap failed");
+                dashboard.push_str(&format!("Plotly.newPlot('plot-{}', [{{x: {:?}, y: {:?}, type: 'scatter', mode: 'lines', name: '{}', line: {{color: '{}'}}}}], {{title: '{}', xaxis: {{title: 'Steps'}}, yaxis: {{title: '{}'}}}});\n",
+                    plot_id, steps, values, name, self.get_color(plot_id), name, metric.units));
 
                 plot_id += 1;
             }
@@ -824,17 +799,11 @@ impl OptimizationVisualizer {
         plot.push_str("<div id='plot'></div>\n");
         plot.push_str("<script>\n");
 
-        writeln!(
-            &mut plot,
-            "const trace = {{x: {:?}, y: {:?}, type: 'scatter', mode: 'lines', name: '{}'}};",
-            x_values, y_values, title
-        )
-        .expect("unwrap failed");
+        plot.push_str(&format!("const trace = {{x: {:?}, y: {:?}, type: 'scatter', mode: 'lines', name: '{}', line: {{color: '{}'}}}};\n",
+            x_values, y_values, title, self.get_color(0)));
 
-        writeln!(&mut plot,
-            "Plotly.newPlot('plot', [trace], {{title: '{}', xaxis: {{title: '{}'}}, yaxis: {{title: '{}'}}}});",
-            title, x_label, y_label
-        ).expect("unwrap failed");
+        plot.push_str(&format!("Plotly.newPlot('plot', [trace], {{title: '{}', xaxis: {{title: '{}'}}, yaxis: {{title: '{}'}}}});\n",
+            title, x_label, y_label));
 
         plot.push_str("</script></body></html>");
 
@@ -859,17 +828,11 @@ impl OptimizationVisualizer {
         plot.push_str("<div id='plot'></div>\n");
         plot.push_str("<script>\n");
 
-        writeln!(
-            &mut plot,
-            "const trace = {{x: {:?}, y: {:?}, type: 'scatter', mode: 'markers', name: '{}'}};",
-            x_values, y_values, title
-        )
-        .expect("unwrap failed");
+        plot.push_str(&format!("const trace = {{x: {:?}, y: {:?}, type: 'scatter', mode: 'markers', name: '{}', marker: {{color: '{}'}}}};\n",
+            x_values, y_values, title, self.get_color(0)));
 
-        writeln!(&mut plot,
-            "Plotly.newPlot('plot', [trace], {{title: '{}', xaxis: {{title: '{}'}}, yaxis: {{title: '{}'}}}});",
-            title, x_label, y_label
-        ).expect("unwrap failed");
+        plot.push_str(&format!("Plotly.newPlot('plot', [trace], {{title: '{}', xaxis: {{title: '{}'}}, yaxis: {{title: '{}'}}}});\n",
+            title, x_label, y_label));
 
         plot.push_str("</script></body></html>");
 

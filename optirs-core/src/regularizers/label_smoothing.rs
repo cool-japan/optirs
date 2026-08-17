@@ -23,11 +23,11 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::LabelSmoothing;
 ///
-/// let label_smooth = LabelSmoothing::new(0.1, 3).expect("unwrap failed");
+/// let label_smooth = LabelSmoothing::new(0.1, 3).expect("LabelSmoothing::new succeeds");
 /// let one_hot_target = array![0.0, 1.0, 0.0];
 ///
 /// // Apply label smoothing to one-hot targets
-/// let smoothed_target = label_smooth.smooth_labels(&one_hot_target).expect("unwrap failed");
+/// let smoothed_target = label_smooth.smooth_labels(&one_hot_target).expect("label_smooth.smooth_labels succeeds");
 /// // Result will be [0.033..., 0.933..., 0.033...]
 /// ```
 #[derive(Debug, Clone)]
@@ -85,7 +85,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> LabelSmooth
             )));
         }
 
-        let uniform_val = A::one() / A::from_usize(self.num_classes).expect("unwrap failed");
+        let num_classes: A = crate::regularizers::cast_scalar(self.num_classes)?;
+        let uniform_val = A::one() / num_classes;
         let smooth_coef = self.alpha;
         let one_minus_alpha = A::one() - smooth_coef;
 
@@ -116,7 +117,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> LabelSmooth
         }
 
         // Apply smoothing to each label vector
-        let uniform_val = A::one() / A::from_usize(self.num_classes).expect("unwrap failed");
+        let num_classes: A = crate::regularizers::cast_scalar(self.num_classes)?;
+        let uniform_val = A::one() / num_classes;
         let smooth_coef = self.alpha;
         let one_minus_alpha = A::one() - smooth_coef;
 
@@ -167,13 +169,13 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> LabelSmooth
 impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Sync> Regularizer<A, D>
     for LabelSmoothing<A>
 {
-    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
+    fn apply(&self, _params: &Array<A, D>, _gradients: &mut Array<A, D>) -> Result<A> {
         // Label smoothing is not applied to model parameters directly
         // It's applied to the target labels during loss computation
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // Label smoothing doesn't add a parameter penalty term
         Ok(A::zero())
     }
@@ -187,7 +189,8 @@ mod tests {
 
     #[test]
     fn test_label_smoothing_creation() {
-        let ls = LabelSmoothing::<f64>::new(0.1, 3).expect("unwrap failed");
+        let ls = LabelSmoothing::<f64>::new(0.1, 3)
+            .expect("LabelSmoothing::<f64>::new succeeds in test_label_smoothing_creation");
         assert_eq!(ls.alpha, 0.1);
         assert_eq!(ls.num_classes, 3);
 
@@ -198,10 +201,13 @@ mod tests {
 
     #[test]
     fn test_smooth_labels() {
-        let ls = LabelSmoothing::new(0.1, 3).expect("unwrap failed");
+        let ls = LabelSmoothing::new(0.1, 3)
+            .expect("LabelSmoothing::new succeeds in test_smooth_labels");
         let one_hot = array![0.0, 1.0, 0.0];
 
-        let smoothed = ls.smooth_labels(&one_hot).expect("unwrap failed");
+        let smoothed = ls
+            .smooth_labels(&one_hot)
+            .expect("ls.smooth_labels succeeds in test_smooth_labels");
 
         // Expected: [0.033..., 0.933..., 0.033...]
         let uniform_val = 1.0 / 3.0;
@@ -218,10 +224,13 @@ mod tests {
 
     #[test]
     fn test_full_smoothing() {
-        let ls = LabelSmoothing::new(1.0, 4).expect("unwrap failed");
+        let ls = LabelSmoothing::new(1.0, 4)
+            .expect("LabelSmoothing::new succeeds in test_full_smoothing");
         let one_hot = array![0.0, 0.0, 1.0, 0.0];
 
-        let smoothed = ls.smooth_labels(&one_hot).expect("unwrap failed");
+        let smoothed = ls
+            .smooth_labels(&one_hot)
+            .expect("ls.smooth_labels succeeds in test_full_smoothing");
 
         // With alpha=1, should be uniform distribution [0.25, 0.25, 0.25, 0.25]
         for i in 0..4 {
@@ -231,10 +240,13 @@ mod tests {
 
     #[test]
     fn test_no_smoothing() {
-        let ls = LabelSmoothing::new(0.0, 3).expect("unwrap failed");
+        let ls =
+            LabelSmoothing::new(0.0, 3).expect("LabelSmoothing::new succeeds in test_no_smoothing");
         let one_hot = array![0.0, 1.0, 0.0];
 
-        let smoothed = ls.smooth_labels(&one_hot).expect("unwrap failed");
+        let smoothed = ls
+            .smooth_labels(&one_hot)
+            .expect("ls.smooth_labels succeeds in test_no_smoothing");
 
         // With alpha=0, should be identical to input
         for i in 0..3 {
@@ -244,10 +256,13 @@ mod tests {
 
     #[test]
     fn test_smooth_batch() {
-        let ls = LabelSmoothing::new(0.2, 2).expect("unwrap failed");
+        let ls =
+            LabelSmoothing::new(0.2, 2).expect("LabelSmoothing::new succeeds in test_smooth_batch");
         let batch = array![[1.0, 0.0], [0.0, 1.0]];
 
-        let smoothed = ls.smooth_batch(&batch).expect("unwrap failed");
+        let smoothed = ls
+            .smooth_batch(&batch)
+            .expect("ls.smooth_batch succeeds in test_smooth_batch");
 
         // With alpha=0.2 and 2 classes, uniform_val = 0.5
         // For label 1.0: (1 - 0.2) * 1.0 + 0.2 * 0.5 = 0.8 + 0.1 = 0.9
@@ -260,13 +275,14 @@ mod tests {
 
     #[test]
     fn test_cross_entropy_loss() {
-        let ls = LabelSmoothing::new(0.1, 3).expect("unwrap failed");
+        let ls = LabelSmoothing::new(0.1, 3)
+            .expect("LabelSmoothing::new succeeds in test_cross_entropy_loss");
         let labels = array![0.0, 1.0, 0.0];
         let logits = array![1.0, 2.0, 0.5];
 
         let loss = ls
             .cross_entropy_loss(&logits, &labels, 1e-8)
-            .expect("unwrap failed");
+            .expect("cross_entropy_loss succeeds in test_cross_entropy_loss");
 
         // Loss should be positive and finite
         assert!(loss > 0.0 && loss.is_finite());
@@ -274,12 +290,15 @@ mod tests {
 
     #[test]
     fn test_regularizer_trait() {
-        let ls = LabelSmoothing::new(0.1, 3).expect("unwrap failed");
+        let ls = LabelSmoothing::new(0.1, 3)
+            .expect("LabelSmoothing::new succeeds in test_regularizer_trait");
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradients = gradients.clone();
 
-        let penalty = ls.apply(&params, &mut gradients).expect("unwrap failed");
+        let penalty = ls
+            .apply(&params, &mut gradients)
+            .expect("ls.apply succeeds in test_regularizer_trait");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);

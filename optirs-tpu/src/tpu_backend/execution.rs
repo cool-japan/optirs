@@ -1,64 +1,22 @@
 //! Execution engine: the scheduler and CPU-reference task executor that
 //! [`super::backend::TPUBackend`] drives to run a compiled program.
 
-use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use scirs2_core::error::ErrorContext;
+use scirs2_core::ndarray::{ArrayD, IxDyn};
 use scirs2_core::numeric::Float;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
+use crate::xla::execution::{ReferenceExecutor, ValueMap};
+use crate::xla::frontend::XLAComputation;
 
 use super::serialization::{
-    decode_ref_tensors, encode_ref_tensors, evaluate_reference, ENERGY_PER_BYTE_NANOJOULE,
+    decode_ref_tensors, encode_ref_tensors, RefTensor, ENERGY_PER_BYTE_NANOJOULE,
 };
-use super::types::{
-    ComputationTask, ExecutionTask, MemoryAllocation, SchedulingPolicy, TPUBackendConfig,
-    TaskExecutionResult,
-};
+use super::types::{ComputationTask, MemoryAllocation, TPUBackendConfig, TaskExecutionResult};
 use super::DeviceId;
-
-/// Runtime executor for TPU operations
-#[derive(Debug)]
-pub struct RuntimeExecutor<T: Float + Debug + Send + Sync + 'static> {
-    /// Execution state
-    state: T,
-}
-
-/// Result collector for TPU computations
-#[derive(Debug)]
-pub struct ResultCollector<T: Float + Debug + Send + Sync + 'static> {
-    /// Collected results
-    results: Vec<T>,
-}
-
-/// Execution context for TPU operations
-#[derive(Debug)]
-pub struct ExecutionContext {
-    /// Context id
-    id: usize,
-}
-
-/// Performance optimizer for TPU operations
-#[derive(Debug)]
-pub struct PerformanceOptimizer<T: Float + Debug + Send + Sync + 'static> {
-    /// Optimization level
-    level: T,
-}
-
-/// Priority manager for TPU task scheduling
-#[derive(Debug)]
-pub struct PriorityManager {
-    /// Priority level
-    level: usize,
-}
-
-/// Dependency resolver for TPU operations
-#[derive(Debug)]
-pub struct DependencyResolver {
-    /// Resolved dependencies
-    dependencies: Vec<String>,
-}
 
 /// Execution engine for TPU computations
 #[derive(Debug)]
@@ -71,36 +29,19 @@ pub struct ExecutionEngine<T: Float + Debug + Send + Sync + 'static> {
     /// than file-private access.
     pub(super) scheduler: ExecutionScheduler<T>,
 
-    /// Runtime executor
-    executor: RuntimeExecutor<T>,
-
-    /// Result collector
-    result_collector: ResultCollector<T>,
-
-    /// Execution context
-    context: ExecutionContext,
-
-    /// Performance optimizer
-    performance_optimizer: PerformanceOptimizer<T>,
+    /// Wall-clock budget for a single task, from
+    /// [`TPUBackendConfig::execution_timeout_ms`]. `Duration::ZERO` disables the
+    /// check.
+    execution_timeout: Duration,
 }
 
 /// Execution scheduler
 #[derive(Debug)]
 pub struct ExecutionScheduler<T: Float + Debug + Send + Sync + 'static> {
-    /// Execution queue
-    execution_queue: VecDeque<ExecutionTask<T>>,
-
-    /// Scheduling policy
-    scheduling_policy: SchedulingPolicy,
-
-    /// Priority manager
-    priority_manager: PriorityManager,
-
-    /// Dependency resolver
-    dependency_resolver: DependencyResolver,
-
     /// Monotonic counter backing `next_task_id`
     next_task_id_counter: u64,
+
+    _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ExecutionScheduler<T> {
@@ -116,40 +57,97 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionEngine<T> {
     pub fn new(config: &TPUBackendConfig) -> Result<Self> {
         Ok(Self {
             scheduler: ExecutionScheduler {
-                execution_queue: VecDeque::new(),
-                scheduling_policy: SchedulingPolicy::FIFO,
-                priority_manager: PriorityManager { level: 0 },
-                dependency_resolver: DependencyResolver {
-                    dependencies: Vec::new(),
-                },
                 next_task_id_counter: 0,
+                _phantom: std::marker::PhantomData,
             },
-            executor: RuntimeExecutor { state: T::zero() },
-            result_collector: ResultCollector {
-                results: Vec::new(),
-            },
-            context: ExecutionContext { id: 0 },
-            performance_optimizer: PerformanceOptimizer { level: T::zero() },
+            execution_timeout: Duration::from_millis(config.execution_timeout_ms),
         })
     }
 
+    /// The configured per-task wall-clock budget.
+    pub fn execution_timeout(&self) -> Duration {
+        self.execution_timeout
+    }
+
+    /// Evaluate one task's `computation` against its serialized arguments.
+    ///
+    /// `computation` is the graph the caller registered with
+    /// [`super::backend::TPUBackend::register_computation`]; the arguments are
+    /// bound to the parameters that graph declares and every operation is then
+    /// evaluated by [`ReferenceExecutor`]. This used to be an identity
+    /// evaluation over the input tensors, because a bare `ComputationId`
+    /// reached this far with no operation list attached -- it now runs the real
+    /// program.
     pub fn execute_task(
         &self,
         task: ComputationTask,
+        computation: &XLAComputation<T>,
         _devices: &[DeviceId],
         memory_allocation: &MemoryAllocation,
-    ) -> Result<TaskExecutionResult> {
+    ) -> Result<TaskExecutionResult>
+    where
+        T: Default + Clone,
+    {
         let start = Instant::now();
 
-        // CPU-reference execution. A bare `ComputationId` carries no XLA op-list
-        // reachable from this backend, so the reference semantics are a faithful
-        // identity evaluation over the serialized input tensors: decode the input
-        // payload, evaluate every tensor on the CPU, and re-encode the result.
-        // This is fully defined without TPU silicon and produces real,
-        // deterministic `output_data` (never an empty placeholder).
+        // CPU-reference execution of the real graph: decode the argument
+        // tensors, bind them to the declared parameters, evaluate, and
+        // re-encode the declared outputs. Fully defined without TPU silicon and
+        // deterministic.
         let input_tensors = decode_ref_tensors(&task.input_data)?;
-        let output_tensors = evaluate_reference(input_tensors);
+        if input_tensors.len() != computation.inputs.len() {
+            return Err(OptimError::InvalidInput(ErrorContext::new(format!(
+                "computation '{}' declares {} parameter(s) but {} argument tensor(s) were supplied",
+                computation.metadata.name,
+                computation.inputs.len(),
+                input_tensors.len()
+            ))));
+        }
+
+        let mut values = ValueMap::with_capacity(input_tensors.len());
+        for (spec, tensor) in computation.inputs.iter().zip(&input_tensors) {
+            let array = ArrayD::from_shape_vec(IxDyn(&tensor.shape), tensor.data.clone()).map_err(
+                |error| {
+                    OptimError::InvalidInput(ErrorContext::new(format!(
+                        "argument {} of computation '{}' declares shape {:?}, which does not \
+                         describe its {} element(s): {error}",
+                        spec.index,
+                        computation.metadata.name,
+                        tensor.shape,
+                        tensor.data.len()
+                    )))
+                },
+            )?;
+            values.insert(spec.operand, array);
+        }
+
+        let outputs = ReferenceExecutor::new().execute(computation, values)?;
+        let output_tensors: Vec<RefTensor> = outputs
+            .iter()
+            .map(|array| RefTensor {
+                shape: array.shape().to_vec(),
+                data: array.iter().copied().collect(),
+            })
+            .collect();
         let output_data = encode_ref_tensors(&output_tensors);
+
+        // Enforce the configured budget. The reference executor is synchronous
+        // and cannot be pre-empted mid-evaluation, so the budget is checked once
+        // the work has finished: an over-budget task is reported as a real
+        // timeout instead of quietly returning a result the caller has already
+        // stopped waiting for. `execution_timeout_ms == 0` means "no budget".
+        let execution_time = start.elapsed();
+        if !self.execution_timeout.is_zero() && execution_time > self.execution_timeout {
+            // `TimeoutError`, not `ComputationError`: this is the class
+            // `TPUErrorHandler`'s recovery policy marks retryable, so the
+            // backend's retry path has a real producer.
+            return Err(OptimError::TimeoutError(ErrorContext::new(format!(
+                "task {} exceeded the configured execution budget ({} ms) after {} ms",
+                task.task_id.0,
+                self.execution_timeout.as_millis(),
+                execution_time.as_millis()
+            ))));
+        }
 
         // Real, derived accounting rather than magic constants.
         let bytes_touched = task.input_data.len() + output_data.len();
@@ -160,7 +158,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionEngine<T> {
 
         Ok(TaskExecutionResult {
             task_id: task.task_id,
-            execution_time: start.elapsed(),
+            execution_time,
             memory_used,
             energy_consumed,
             output_data,

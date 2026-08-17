@@ -35,7 +35,8 @@ pub struct OptimizerConfig<A: Float> {
 impl<A: Float + Send + Sync> Default for OptimizerConfig<A> {
     fn default() -> Self {
         Self {
-            lr: A::from(0.001).expect("unwrap failed"),
+            lr: A::from(0.001)
+                .expect("OptimizerConfig: default learning rate (0.001) must fit in A"),
             weight_decay: A::zero(),
             grad_clip: None,
             params: HashMap::new(),
@@ -443,8 +444,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> UnifiedOptimizer<A> for Uni
                 .mapv_inplace(|x| x * (A::one() - self.config.weight_decay * self.config.lr));
         }
 
-        // Get gradient safely
-        let grad = param.grad.as_ref().expect("unwrap failed");
+        // Get gradient safely (guaranteed `Some` by the `is_none()` guard above)
+        let grad = param
+            .grad
+            .as_ref()
+            .ok_or_else(|| OptimError::InvalidConfig("Parameter has no gradient".to_string()))?;
 
         // Get momentum factor
         let momentum = self
@@ -530,15 +534,15 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> UnifiedAdam<A> {
     /// Create a new Adam optimizer
     pub fn new(config: OptimizerConfig<A>) -> Self {
         let mut params = config.params.clone();
-        params
-            .entry("beta1".to_string())
-            .or_insert_with(|| A::from(0.9).expect("unwrap failed"));
-        params
-            .entry("beta2".to_string())
-            .or_insert_with(|| A::from(0.999).expect("unwrap failed"));
-        params
-            .entry("eps".to_string())
-            .or_insert_with(|| A::from(1e-8).expect("unwrap failed"));
+        params.entry("beta1".to_string()).or_insert_with(|| {
+            A::from(0.9).expect("UnifiedAdam: default beta1 (0.9) must fit in A")
+        });
+        params.entry("beta2".to_string()).or_insert_with(|| {
+            A::from(0.999).expect("UnifiedAdam: default beta2 (0.999) must fit in A")
+        });
+        params.entry("eps".to_string()).or_insert_with(|| {
+            A::from(1e-8).expect("UnifiedAdam: default eps (1e-8) must fit in A")
+        });
 
         Self {
             config: OptimizerConfig { params, ..config },
@@ -828,7 +832,9 @@ mod tests {
         let mut param = Parameter::new(Array1::from_vec(vec![1.0, 2.0, 3.0]), "test_param");
         param.set_grad(Array1::from_vec(vec![0.1, 0.2, 0.3]));
 
-        optimizer.step_param(&mut param).expect("unwrap failed");
+        optimizer
+            .step_param(&mut param)
+            .expect("optimizer.step_param succeeds in test_unified_sgd");
 
         // Check that parameters were updated correctly
         assert!((param.data[0] - 0.99).abs() < 1e-10);
@@ -844,7 +850,9 @@ mod tests {
         let mut param = Parameter::new(Array1::from_vec(vec![1.0, 2.0, 3.0]), "test_param");
         param.set_grad(Array1::from_vec(vec![0.1, 0.2, 0.3]));
 
-        optimizer.step_param(&mut param).expect("unwrap failed");
+        optimizer
+            .step_param(&mut param)
+            .expect("optimizer.step_param succeeds in test_unified_adam");
 
         // Parameters should have been updated (exact values depend on Adam's internal state)
         assert!(param.data[0] < 1.0);
@@ -868,8 +876,12 @@ mod tests {
         assert!(param.grad().is_some());
 
         // Test gradient clipping
-        param.clip_grad(0.1).expect("unwrap failed");
-        let grad = param.grad().expect("unwrap failed");
+        param
+            .clip_grad(0.1)
+            .expect("param.clip_grad succeeds in test_parameter_operations");
+        let grad = param
+            .grad()
+            .expect("param.grad succeeds in test_parameter_operations");
         let norm: f64 = grad.iter().map(|x| x * x).sum::<f64>().sqrt();
         assert!((norm - 0.1).abs() < 1e-10);
 

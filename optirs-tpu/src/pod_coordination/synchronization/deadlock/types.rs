@@ -4,10 +4,7 @@
 // used throughout the deadlock detection system.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
-
-use crate::tpu_backend::DeviceId;
 
 /// Deadlock detector for resource management
 #[derive(Debug)]

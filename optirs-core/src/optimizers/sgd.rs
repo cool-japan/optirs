@@ -4,10 +4,6 @@ use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-// SciRS2 Integration - CRITICAL for OptiRS functionality
-use scirs2_core::ScientificNumber;
-use scirs2_optimize::stochastic::{minimize_sgd, SGDOptions};
-
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
@@ -33,7 +29,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = SGD::new_with_config(0.01, 0.9, 0.0);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct SGD<A: Float + ScalarOperand + Debug> {

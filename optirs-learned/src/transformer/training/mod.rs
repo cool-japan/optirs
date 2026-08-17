@@ -10,14 +10,14 @@ pub mod meta_learning;
 // Re-export key types for convenience
 pub use curriculum::{
     CurriculumLearner, CurriculumParams, CurriculumState, CurriculumStrategy, LearningPhase,
-    LearningProgressTracker, TaskDifficultyEstimator, TaskScheduler,
+    LearningProgressTracker, TaskScheduler,
 };
 pub use evaluation::{
     AggregationMethod, ConvergenceInfo, EfficiencyMetrics, EvaluationResult, EvaluationStrategy,
     RobustnessTestSuite, StatisticalSignificance, TransformerEvaluator,
 };
 pub use meta_learning::{
-    ContinualLearningState, DomainAdapter, DomainInfo, DomainType, FewShotLearner, MetaEventType,
+    ContinualLearningState, DomainInfo, DomainType, FewShotLearner, MetaEventType,
     MetaLearningStrategy, MetaPerformanceMetrics, MetaTrainingEvent, TaskCharacteristics, TaskInfo,
     TransformerMetaLearner,
 };

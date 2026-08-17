@@ -182,6 +182,48 @@ fn kfac_rejects_mismatched_per_layer_slices_instead_of_panicking() {
     // Empty layer list.
     assert!(eng.kfac_hessian_approximation(&[], &[], &[]).is_err());
 
+    // Right *count*, wrong *width*: the activation must be `input_size` long and
+    // the gradient `output_size` long, because K-FAC factors the block as
+    // `E[a aᵀ] ⊗ E[g gᵀ]`. Before this check the factor builders squared
+    // whatever length they were handed, so a swapped pair still produced a
+    // plausible matrix instead of an error.
+    let err = eng
+        .kfac_hessian_approximation(
+            &layers,
+            &[
+                Array1::from_vec(vec![1.0, 2.0]), // input_size is 3, not 2
+                Array1::from_vec(vec![1.0, 2.0, 3.0]),
+            ],
+            &[
+                Array1::from_vec(vec![0.1, 0.2]),
+                Array1::from_vec(vec![0.3, 0.4]),
+            ],
+        )
+        .expect_err("activation shorter than input_size must be an error");
+    let text = err.to_string();
+    assert!(
+        text.contains("input_size") && text.contains("Linear"),
+        "error should name the offending dimension and layer type: {text}"
+    );
+
+    let err = eng
+        .kfac_hessian_approximation(
+            &layers,
+            &[
+                Array1::from_vec(vec![1.0, 2.0, 3.0]),
+                Array1::from_vec(vec![1.0, 2.0, 3.0]),
+            ],
+            &[
+                Array1::from_vec(vec![0.1, 0.2]),
+                Array1::from_vec(vec![0.3, 0.4, 0.5]), // output_size is 2, not 3
+            ],
+        )
+        .expect_err("gradient longer than output_size must be an error");
+    assert!(
+        err.to_string().contains("output_size"),
+        "error should name output_size: {err}"
+    );
+
     // The well-formed call must still succeed.
     assert!(eng
         .kfac_hessian_approximation(
@@ -357,4 +399,85 @@ fn availability_flags_match_dispatch() {
             "{method:?}: is_available() disagrees with the dispatch result"
         );
     }
+}
+
+/// `HigherOrderEngine`'s profiler was constructed but never fed: nothing called
+/// `record_*`, so the public `get_derivative_stats().performance_profile`
+/// reported `avg_hvp_time_us = 0`, `avg_jacobian_time_us = 0` and a hard-coded
+/// `sparsity_benefit = 1.2` no matter what the engine had computed.
+#[test]
+fn derivative_stats_report_measured_work_not_placeholders() {
+    let mut eng = engine::<f64>();
+
+    // Nothing recorded yet.
+    let before = eng.get_derivative_stats();
+    assert_eq!(before.performance_profile.recorded_computations, 0);
+    assert_eq!(before.performance_profile.avg_hessian_time_us, 0.0);
+    assert_eq!(before.performance_profile.avg_hvp_time_us, 0.0);
+    assert_eq!(before.performance_profile.avg_jacobian_time_us, 0.0);
+    // With no observations at all, the two ratios are reported as the neutral
+    // 1.0 rather than an invented speedup.
+    assert_eq!(before.performance_profile.sparsity_benefit, 1.0);
+    assert_eq!(before.performance_profile.parallel_efficiency, 1.0);
+
+    let quadratic = |x: &Array1<f64>| 0.5 * (4.0 * x[0] * x[0] + 3.0 * x[1] * x[1]);
+    let point = arr1(&[0.4, -0.9]);
+    let vector = arr1(&[1.0, -2.0]);
+
+    eng.hessian_forward_over_reverse(&quadratic, &point, &HessianConfig::default())
+        .expect("hessian");
+    eng.hessian_vector_product_advanced(
+        &quadratic,
+        &point,
+        &vector,
+        Some(HvpMode::CentralDifference),
+    )
+    .expect("hvp");
+    eng.jacobian_efficient(
+        |x: &Array1<f64>| arr1(&[x[0] * x[0], x[1], x[0] + x[1]]),
+        &point,
+        3,
+    )
+    .expect("jacobian");
+
+    let after = eng.get_derivative_stats();
+    assert_eq!(
+        after.performance_profile.recorded_computations, 3,
+        "one Hessian, one HVP and one Jacobian must each be recorded"
+    );
+    assert_eq!(
+        after.performance_profile.largest_hessian_problem, 2,
+        "the recorded Hessian problem size must be the parameter count"
+    );
+    // Durations are wall-clock and can round to zero microseconds on a fast
+    // machine, so assert they are defined and non-negative rather than positive.
+    for value in [
+        after.performance_profile.avg_hessian_time_us,
+        after.performance_profile.avg_hvp_time_us,
+        after.performance_profile.avg_jacobian_time_us,
+    ] {
+        assert!(value.is_finite() && value >= 0.0, "bad duration {value}");
+    }
+    // Memory estimate must grow once timing records exist.
+    assert!(after.memory_usage_estimate > 0);
+}
+
+/// An unavailable HVP mode must stay an error and must not be counted as work
+/// the engine performed.
+#[test]
+fn an_unavailable_hvp_mode_is_not_recorded_as_a_computation() {
+    let mut eng = engine::<f64>();
+    let quadratic = |x: &Array1<f64>| x[0] * x[0] + x[1] * x[1];
+    let point = arr1(&[1.0, 1.0]);
+    let vector = arr1(&[1.0, 0.0]);
+
+    assert!(eng
+        .hessian_vector_product_advanced(&quadratic, &point, &vector, Some(HvpMode::NestedAutodiff))
+        .is_err());
+    assert_eq!(
+        eng.get_derivative_stats()
+            .performance_profile
+            .recorded_computations,
+        0
+    );
 }

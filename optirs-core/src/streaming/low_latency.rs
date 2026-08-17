@@ -157,6 +157,16 @@ struct PrecomputationEngine<A: Float + Send + Sync> {
 
     /// Number of steps that had to fall back to a full update
     misses: usize,
+
+    /// Minimum recorded prediction confidence a pre-computed update must carry
+    /// to be served.
+    ///
+    /// The predictor's measured confidence was stored on every entry and then
+    /// never consulted, so a wild guess was served as readily as a well
+    /// -supported prediction. Zero (the default) preserves that behaviour;
+    /// raising it makes the engine fall back to a full update when the
+    /// predictor is unsure.
+    min_confidence: A,
 }
 
 /// Pre-computed update entry
@@ -271,6 +281,12 @@ struct LatencyMonitor {
     total_operations: usize,
 }
 
+/// Maximum age of a retained latency/accuracy measurement.
+const PERFORMANCE_WINDOW_AGE: Duration = Duration::from_secs(30);
+
+/// Maximum number of retained latency/accuracy measurements.
+const PERFORMANCE_WINDOW_LEN: usize = 100;
+
 /// Approximation controller for trading accuracy for speed
 struct ApproximationController<A: Float + Send + Sync> {
     /// Current approximation level (0.0 = exact, 1.0 = maximum approximation)
@@ -291,9 +307,6 @@ struct ApproximationController<A: Float + Send + Sync> {
 struct PerformancePoint<A: Float + Send + Sync> {
     /// Latency measurement
     latency: Duration,
-
-    /// Approximation level used
-    approximation_level: A,
 
     /// Accuracy achieved
     accuracy: A,
@@ -381,6 +394,17 @@ where
     }
 
     /// Current parameter vector, if any step has been taken or seeded.
+    /// Require a minimum predictor confidence before a pre-computed update is
+    /// served, falling back to a full update below it.
+    ///
+    /// No-op when pre-computation is disabled. Defaults to zero, which accepts
+    /// any prediction that matches the arriving gradient.
+    pub fn set_precomputation_min_confidence(&mut self, min_confidence: A) {
+        if let Some(precomp) = self.precomputation_engine.as_mut() {
+            precomp.set_min_confidence(min_confidence);
+        }
+    }
+
     pub fn parameters(&self) -> Option<&Array1<A>> {
         self.parameters.as_ref()
     }
@@ -677,7 +701,13 @@ impl<A: Float + Send + Sync + std::iter::Sum> PrecomputationEngine<A> {
             max_buffer_size: capacity,
             hits: 0,
             misses: 0,
+            min_confidence: A::zero(),
         }
+    }
+
+    /// Require at least `min_confidence` before a pre-computed update is used.
+    fn set_min_confidence(&mut self, min_confidence: A) {
+        self.min_confidence = min_confidence;
     }
 
     /// Serve a pre-computed update only when it was computed for a gradient
@@ -702,7 +732,8 @@ impl<A: Float + Send + Sync + std::iter::Sum> PrecomputationEngine<A> {
 
         match candidate {
             Some(candidate)
-                if gradient_matches(&candidate.gradient, actual_gradient, tolerance) =>
+                if candidate.confidence >= self.min_confidence
+                    && gradient_matches(&candidate.gradient, actual_gradient, tolerance) =>
             {
                 self.hits += 1;
                 Some(candidate)
@@ -1087,23 +1118,53 @@ impl<A: Float + Send + Sync> ApproximationController<A> {
         self.approximation_level
     }
 
-    fn record_performance(&mut self, latency: Duration, approximation_level: A, accuracy: A) {
+    fn record_performance(&mut self, latency: Duration, _approximation_level: A, accuracy: A) {
+        let now = Instant::now();
         let point = PerformancePoint {
             latency,
-            approximation_level,
             accuracy,
-            timestamp: Instant::now(),
+            timestamp: now,
         };
 
         self.performance_history.push_back(point);
-        if self.performance_history.len() > 100 {
+        // Bound the window by age as well as by count: a controller that reacts
+        // to latencies measured minutes ago is chasing a workload that no
+        // longer exists. `timestamp` was recorded for exactly this and never
+        // read.
+        while self
+            .performance_history
+            .front()
+            .is_some_and(|p| now.duration_since(p.timestamp) > PERFORMANCE_WINDOW_AGE)
+        {
+            self.performance_history.pop_front();
+        }
+        if self.performance_history.len() > PERFORMANCE_WINDOW_LEN {
             self.performance_history.pop_front();
         }
 
-        self.adapt_approximation_level(latency);
+        self.adapt_approximation_level();
     }
 
-    fn adapt_approximation_level(&mut self, latency: Duration) {
+    /// Mean latency over the retained window, or `None` when it is empty.
+    fn mean_latency(&self) -> Option<Duration> {
+        let count = self.performance_history.len();
+        if count == 0 {
+            return None;
+        }
+        let total: Duration = self.performance_history.iter().map(|p| p.latency).sum();
+        Some(total / count as u32)
+    }
+
+    /// Move the approximation level towards the latency target.
+    ///
+    /// Driven by the *mean* latency of the retained window rather than the
+    /// single latest sample: every latency was already being recorded but only
+    /// the newest one was ever looked at, so one unlucky slow step swung the
+    /// approximation level as hard as a sustained regression.
+    fn adapt_approximation_level(&mut self) {
+        let Some(latency) = self.mean_latency() else {
+            return;
+        };
         let target = self.targetlatency.as_micros().max(1) as f64;
         let latency_ratio = latency.as_micros() as f64 / target;
 

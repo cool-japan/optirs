@@ -19,7 +19,6 @@
 
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 use std::fmt::Debug;
 
 use super::{ActivationFunction, EncoderLayer, EncoderNetwork, LayerType};
@@ -235,10 +234,10 @@ mod tests {
         let net = network(&[(4, 3)]);
         let a = net
             .forward(&Array1::from_vec(vec![1.0, 0.0, 0.0, 0.0]))
-            .expect("a");
+            .expect("forward on the first one-hot input");
         let b = net
             .forward(&Array1::from_vec(vec![0.0, 1.0, 0.0, 0.0]))
-            .expect("b");
+            .expect("forward on the second one-hot input");
         let delta = a
             .iter()
             .zip(b.iter())

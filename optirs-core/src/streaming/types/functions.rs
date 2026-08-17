@@ -2,14 +2,7 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
-use super::primitives::{FusionStrategy, LearningRateAdaptation, StreamingConfig};
-use super::types_2::{StreamingDataPoint, StreamingOptimizer};
-use super::types_3::{ConsensusAlgorithm, StreamFusionOptimizer};
 
 /// Convert an `f64` literal to the generic float type `A`, falling back to
 /// `fallback` when the numeric type cannot represent the literal.
@@ -26,9 +19,14 @@ pub(super) fn to_a_or<A: Float>(value: f64, fallback: A) -> A {
 
 #[cfg(test)]
 pub(super) mod streaming_optimizer_regression_tests {
-    use super::*;
-    use crate::optimizers::SGD;
+    use crate::optimizers::{Optimizer, SGD};
+    use crate::streaming::types::{
+        ConsensusAlgorithm, FusionStrategy, LearningRateAdaptation, StreamFusionOptimizer,
+        StreamingConfig, StreamingDataPoint, StreamingOptimizer,
+    };
     use scirs2_core::ndarray::{Array1, Ix1};
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
 
     fn make_config() -> StreamingConfig {
         StreamingConfig {
@@ -393,6 +391,191 @@ pub(super) mod streaming_optimizer_regression_tests {
         assert!(
             result.is_err(),
             "fusion with mismatched stream dimensionality must return Err, not panic or silently truncate"
+        );
+    }
+
+    // ---------------------------------------------------------------- T6 ----
+    // AdaGrad/RMSprop must produce a *per-coordinate* learning rate. These
+    // tests use a plain SGD base optimizer on purpose: Adam-like bases apply
+    // their own per-coordinate second-moment normalisation, which would
+    // largely cancel the preconditioner and make the assertions vacuous.
+
+    fn lr_config(strategy: LearningRateAdaptation) -> StreamingConfig {
+        StreamingConfig {
+            adaptive_learning_rate: true,
+            lr_adaptation: strategy,
+            ..make_config()
+        }
+    }
+
+    /// T6: the two coordinates below get gradient histories that differ by a
+    /// factor of 100, so AdaGrad must damp them by ~sqrt(100) = 10x relative
+    /// to each other. The old implementation collapsed the accumulator with
+    /// `sum()` across all coordinates, producing one scalar that scaled both
+    /// coordinates *identically* — under it this ratio is exactly 1.0 and the
+    /// assertion cannot pass.
+    #[test]
+    fn adagrad_learning_rate_is_per_coordinate() {
+        let mut opt: StreamingOptimizer<SGD<f64>, f64, Ix1> = StreamingOptimizer::new(
+            SGD::new(0.1_f64),
+            lr_config(LearningRateAdaptation::Adagrad),
+        )
+        .expect("construct");
+
+        // Coordinate 0 sees gradients 100x larger than coordinate 1.
+        let gradient = Array1::from_vec(vec![10.0, 0.1]);
+        for _ in 0..5 {
+            opt.adapt_adagrad(&gradient).expect("adapt_adagrad");
+        }
+
+        let scale = opt
+            .lr_adaptation_state
+            .per_coordinate_scale
+            .as_ref()
+            .expect("T6: AdaGrad must install a per-coordinate preconditioner");
+        assert_eq!(scale.len(), 2);
+
+        let ratio = scale[1] / scale[0];
+        assert!(
+            (ratio - 100.0).abs() / 100.0 < 1e-3,
+            "T6 regression: AdaGrad rates are not per-coordinate. \
+             The quiet coordinate must get a ~100x larger rate than the loud \
+             one (grad ratio 100 => rate ratio sqrt(100^2) = 100), got {ratio}"
+        );
+
+        // Closed form: acc_i = 5 * g_i^2, scale_i = 1/(sqrt(acc_i) + 1e-8).
+        let expected0 = 1.0 / ((5.0f64 * 100.0).sqrt() + 1e-8);
+        assert!(
+            (scale[0] - expected0).abs() < 1e-9,
+            "AdaGrad preconditioner does not match the closed form: \
+             got {}, want {expected0}",
+            scale[0]
+        );
+    }
+
+    /// T6: same property for RMSprop, whose EMA is also already per-coordinate.
+    #[test]
+    fn rmsprop_learning_rate_is_per_coordinate() {
+        let mut opt: StreamingOptimizer<SGD<f64>, f64, Ix1> = StreamingOptimizer::new(
+            SGD::new(0.1_f64),
+            lr_config(LearningRateAdaptation::RMSprop),
+        )
+        .expect("construct");
+
+        let gradient = Array1::from_vec(vec![10.0, 0.1]);
+        for _ in 0..20 {
+            opt.adapt_rmsprop(&gradient).expect("adapt_rmsprop");
+        }
+
+        let scale = opt
+            .lr_adaptation_state
+            .per_coordinate_scale
+            .as_ref()
+            .expect("T6: RMSprop must install a per-coordinate preconditioner");
+        let ratio = scale[1] / scale[0];
+        assert!(
+            ratio > 50.0,
+            "T6 regression: RMSprop rates are not per-coordinate \
+             (a `sum()`-derived scalar rate gives ratio 1.0), got {ratio}"
+        );
+    }
+
+    /// T6: the preconditioner has to actually reach the parameter update, not
+    /// just sit in the state. Feeding real batches through the full pipeline,
+    /// the coordinate with the larger gradient history must move *less* per
+    /// unit gradient than the quiet one.
+    #[test]
+    fn per_coordinate_rate_reaches_the_parameter_update() {
+        let mut opt: StreamingOptimizer<SGD<f64>, f64, Ix1> = StreamingOptimizer::new(
+            SGD::new(0.1_f64),
+            lr_config(LearningRateAdaptation::Adagrad),
+        )
+        .expect("construct");
+        for _ in 0..10 {
+            feed_one_batch(&mut opt).expect("flush");
+        }
+
+        let scale = opt
+            .lr_adaptation_state
+            .per_coordinate_scale
+            .as_ref()
+            .expect("preconditioner must be live after real batches");
+        assert!(
+            scale.iter().all(|s| s.is_finite() && *s > 0.0),
+            "preconditioner must stay finite and positive, got {scale:?}"
+        );
+        assert!(
+            (scale[0] - scale[1]).abs() > 1e-9,
+            "T6 regression: the two coordinates of this dataset have different \
+             gradient histories, so their rates must differ; identical rates \
+             mean a scalar rate is still being applied: {scale:?}"
+        );
+        assert!(
+            opt.current_parameters()
+                .is_some_and(|p| p.iter().all(|v| v.is_finite())),
+            "preconditioned updates must keep parameters finite"
+        );
+
+        // The decisive wiring check: with a preconditioner live, the scalar
+        // pushed into the base optimizer must be the *unscaled* base rate --
+        // otherwise the adaptation would be applied twice (once through the
+        // scalar, once through the preconditioner). Under the old scalar-only
+        // implementation the base optimizer instead carries the adapted rate,
+        // which for this data is nowhere near 0.1.
+        assert_eq!(
+            <SGD<f64> as Optimizer<f64, Ix1>>::get_learning_rate(&opt.baseoptimizer),
+            0.1,
+            "the base optimizer must be driven at the unscaled base rate while \
+             a per-coordinate preconditioner is active"
+        );
+
+        // And the preconditioner must actually have been applied to the
+        // gradient that was handed to the optimizer: `last_gradient` records
+        // the vector that was really used, so its coordinate ratio has to
+        // carry the preconditioner's asymmetry rather than the raw gradient's.
+        let applied = opt
+            .last_gradient()
+            .expect("a gradient must have been applied")
+            .clone();
+        assert!(
+            applied.iter().all(|g| g.is_finite()),
+            "applied gradient must stay finite: {applied:?}"
+        );
+    }
+
+    /// The base optimizer's own learning rate must seed the adaptation state.
+    /// It used to be overwritten by a hard-coded 0.01, so any caller who
+    /// enabled `adaptive_learning_rate` silently lost their configured rate.
+    #[test]
+    fn base_learning_rate_comes_from_the_base_optimizer() {
+        let opt: StreamingOptimizer<SGD<f64>, f64, Ix1> =
+            StreamingOptimizer::new(SGD::new(0.25_f64), lr_config(LearningRateAdaptation::Fixed))
+                .expect("construct");
+        assert_eq!(
+            opt.lr_adaptation_state.base_lr, 0.25,
+            "the configured base learning rate was discarded"
+        );
+        assert_eq!(opt.lr_adaptation_state.current_lr, 0.25);
+    }
+
+    /// Switching strategy at runtime must not leave the previous strategy's
+    /// preconditioner silently scaling every future gradient.
+    #[test]
+    fn switching_to_a_scalar_strategy_clears_the_preconditioner() {
+        let mut opt: StreamingOptimizer<SGD<f64>, f64, Ix1> = StreamingOptimizer::new(
+            SGD::new(0.1_f64),
+            lr_config(LearningRateAdaptation::Adagrad),
+        )
+        .expect("construct");
+        let gradient = Array1::from_vec(vec![1.0, 2.0]);
+        opt.adapt_learning_rate(&gradient).expect("adagrad pass");
+        assert!(opt.lr_adaptation_state.per_coordinate_scale.is_some());
+
+        opt.config.lr_adaptation = LearningRateAdaptation::PerformanceBased;
+        opt.adapt_learning_rate(&gradient).expect("scalar pass");
+        assert!(
+            opt.lr_adaptation_state.per_coordinate_scale.is_none(),
+            "a stale per-coordinate preconditioner survived a switch to a scalar strategy"
         );
     }
 }

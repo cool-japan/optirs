@@ -1,6 +1,5 @@
 // Deadlock Graph Module
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -514,7 +513,11 @@ mod tests {
     /// All three configured methods must agree on every graph.
     #[test]
     fn all_detection_methods_agree() {
-        let cases: Vec<(Vec<u64>, Vec<(u64, u64)>, bool)> = vec![
+        /// One detection case: node ids, directed edges, and whether the
+        /// graph is expected to contain a cycle.
+        type DetectionCase = (Vec<u64>, Vec<(u64, u64)>, bool);
+
+        let cases: Vec<DetectionCase> = vec![
             (vec![1, 2, 3], vec![(1, 2), (2, 3), (3, 1)], true),
             (vec![1, 2, 3], vec![(1, 2), (2, 3)], false),
             (vec![1, 2, 3, 4], vec![(1, 2), (2, 3), (3, 4), (4, 2)], true),

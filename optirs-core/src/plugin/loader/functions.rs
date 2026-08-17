@@ -4,18 +4,9 @@
 
 use crate::error::{OptimError, Result};
 #[allow(dead_code)]
-use crate::plugin::core::*;
-use crate::plugin::registry::*;
 #[cfg(feature = "crypto")]
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-use super::types::{
-    CryptographicValidator, DependencyGraph, LoaderConfig, PluginConfig, SecurityScanResult,
-    SignatureVerificationConfig, TrustedCA,
-};
-use super::types_7::{KeyUsage, PluginLoader, PluginMetadata, PluginSourceConfig};
 
 /// Compute the SHA-256 digest of a file's full contents. `crypto`-gated
 /// alongside the signature verification that consumes it.
@@ -102,7 +93,11 @@ pub(super) fn system_library_exists(name: &str) -> bool {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::super::types::{DependencyGraph, LoaderConfig, PluginConfig, SecurityScanResult};
+    use super::super::types_7::{PluginLoader, PluginSourceConfig};
     use super::*;
+    use crate::plugin::core::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_plugin_loader_creation() {
@@ -419,7 +414,8 @@ value = "cache/data"
 
 #[cfg(all(test, feature = "crypto"))]
 pub(super) mod crypto_signature_tests {
-    use super::*;
+    use super::super::types::{CryptographicValidator, SignatureVerificationConfig, TrustedCA};
+    use super::super::types_7::{KeyUsage, PluginMetadata};
     use std::time::{Duration, SystemTime};
 
     /// Exact bytes that were signed offline. Must not change without

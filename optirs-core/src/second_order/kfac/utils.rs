@@ -4,7 +4,7 @@
 // the K-FAC implementation, including layer-specific operations and
 // mathematical utilities.
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
@@ -235,8 +235,10 @@ impl KFACUtils {
         // `in_channels` — i.e. a positive multiple of `patch_size` — optionally
         // plus one trailing bias column (`homogeneous_input`'s convention
         // elsewhere in this module; see `KFACLayerState::homogeneous_input`).
-        let without_bias_ok = patch_size > 0 && input_dim > 0 && input_dim % patch_size == 0;
-        let with_bias_ok = patch_size > 0 && input_dim > 0 && (input_dim - 1) % patch_size == 0;
+        let without_bias_ok =
+            patch_size > 0 && input_dim > 0 && input_dim.is_multiple_of(patch_size);
+        let with_bias_ok =
+            patch_size > 0 && input_dim > 0 && (input_dim - 1).is_multiple_of(patch_size);
         if !(without_bias_ok || with_bias_ok) {
             return Err(crate::error::OptimError::InvalidParameter(format!(
                 "conv_kfac_update: input_patches has {input_dim} columns, which is not \
@@ -271,10 +273,15 @@ impl KFACUtils {
 
         let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
 
-        // Compute mean
+        // Compute mean (guaranteed Some: batch_size > 0 was checked above)
         let mean = input
             .mean_axis(scirs2_core::ndarray::Axis(0))
-            .expect("unwrap failed");
+            .ok_or_else(|| {
+                OptimError::ComputationError(
+                    "batchnorm_statistics: mean_axis returned None for a non-empty batch"
+                        .to_string(),
+                )
+            })?;
 
         // Compute variance
         let mut var = Array1::zeros(num_features);
@@ -609,15 +616,15 @@ mod tests {
     fn test_trace_computation() {
         let matrix =
             Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
-                .expect("unwrap failed");
+                .expect("Array2::from_shape_vec succeeds in test_trace_computation");
         let trace = KFACUtils::trace(&matrix);
         assert!((trace - 15.0).abs() < 1e-10); // 1 + 5 + 9 = 15
     }
 
     #[test]
     fn test_frobenius_norm() {
-        let matrix =
-            Array2::from_shape_vec((2, 2), vec![3.0, 4.0, 0.0, 0.0]).expect("unwrap failed");
+        let matrix = Array2::from_shape_vec((2, 2), vec![3.0, 4.0, 0.0, 0.0])
+            .expect("Array2::from_shape_vec succeeds in test_frobenius_norm");
         let norm = KFACUtils::frobenius_norm(&matrix);
         assert!((norm - 5.0).abs() < 1e-10); // sqrt(9 + 16) = 5
     }
@@ -635,9 +642,10 @@ mod tests {
 
     #[test]
     fn test_matrices_approx_equal() {
-        let a = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("unwrap failed");
+        let a = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0])
+            .expect("Array2::from_shape_vec succeeds in test_matrices_approx_equal");
         let b = Array2::from_shape_vec((2, 2), vec![1.001, 2.001, 3.001, 4.001])
-            .expect("unwrap failed");
+            .expect("Array2::from_shape_vec succeeds in test_matrices_approx_equal");
 
         assert!(KFACUtils::matrices_approx_equal(&a, &b, 0.01));
         assert!(!KFACUtils::matrices_approx_equal(&a, &b, 0.0001));
@@ -645,8 +653,8 @@ mod tests {
 
     #[test]
     fn test_symmetrize() {
-        let matrix =
-            Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("unwrap failed");
+        let matrix = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0])
+            .expect("Array2::from_shape_vec succeeds in test_symmetrize");
         let symmetric = KFACUtils::symmetrize(&matrix);
 
         assert!((symmetric[[0, 0]] - 1.0).abs() < 1e-10);
@@ -681,9 +689,10 @@ mod tests {
     #[test]
     fn test_batchnorm_statistics() {
         let input = Array2::from_shape_vec((4, 2), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
-            .expect("unwrap failed");
+            .expect("Array2::from_shape_vec succeeds in test_batchnorm_statistics");
 
-        let (mean, var) = KFACUtils::batchnorm_statistics(&input, 1e-8).expect("unwrap failed");
+        let (mean, var) = KFACUtils::batchnorm_statistics(&input, 1e-8)
+            .expect("KFACUtils::batchnorm_statistics succeeds in test_batchnorm_statistics");
 
         // Expected mean: [4.0, 5.0] (column-wise average)
         assert!((mean[0] - 4.0).abs() < 1e-6);

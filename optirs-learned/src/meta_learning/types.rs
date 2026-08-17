@@ -2,17 +2,12 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(unused_imports)]
 use crate::error::{OptimError, Result};
-use optirs_core::optimizers::Optimizer;
-#[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2, Dimension};
+use scirs2_core::ndarray::{Array1, Dimension};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
-
-use super::functions::MetaLearner;
 
 /// Adaptation step
 #[derive(Debug, Clone)]
@@ -570,14 +565,6 @@ pub struct MetaValidationResult<T: Float + Debug + Send + Sync + 'static> {
     pub adaptation_speed: T,
     pub generalization_gap: T,
     pub task_specific_metrics: HashMap<String, T>,
-}
-/// Loss functions
-#[derive(Debug, Clone, Copy)]
-pub enum LossFunction {
-    MeanSquaredError,
-    CrossEntropy,
-    Hinge,
-    Huber,
 }
 /// Continual learning settings
 #[derive(Debug, Clone)]

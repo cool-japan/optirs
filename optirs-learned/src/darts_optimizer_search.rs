@@ -112,13 +112,6 @@ pub(crate) fn softmax<T: Float>(logits: &Array1<T>) -> Array1<T> {
     exps.mapv(|x| x / sum)
 }
 
-/// Inner product of two equally-sized vectors.
-fn dot<T: Float>(a: &Array1<T>, b: &Array1<T>) -> T {
-    a.iter()
-        .zip(b.iter())
-        .fold(T::zero(), |acc, (&x, &y)| acc + x * y)
-}
-
 /// Convex combination `Σ_i weights_i · ops_i`.
 fn mixed_update<T: Float>(weights: &Array1<T>, ops: &[Array1<T>]) -> Array1<T> {
     let dim = ops.first().map_or(0, Array1::len);
@@ -919,7 +912,13 @@ impl<T: Float + Debug + Send + Sync + 'static> DartsOptimizerSearch<T> {
     }
 
     /// Look-ahead validation loss `φ(α) = L_val(w - lr · mixed(softmax(α)))` for a fixed
-    /// set of primitive directions. Used to finite-difference-check the analytic gradient.
+    /// set of primitive directions.
+    ///
+    /// Test-only: the search itself never needs φ evaluated at a perturbed α —
+    /// this exists so
+    /// `test_analytic_alpha_gradient_matches_finite_difference` can central-
+    /// difference it against [`Self::analytic_architecture_gradient`].
+    #[cfg(test)]
     fn lookahead_validation_loss<O: DifferentiableObjective<T>>(
         &self,
         alpha: &Array1<T>,
@@ -935,6 +934,11 @@ impl<T: Float + Debug + Send + Sync + 'static> DartsOptimizerSearch<T> {
     }
 
     /// Analytic architecture gradient `∂φ/∂α` for a fixed set of primitive directions.
+    ///
+    /// Test-only: the search computes this inline inside its alternation loop; the
+    /// standalone form exists purely so the finite-difference check has a
+    /// side-effect-free entry point.
+    #[cfg(test)]
     fn analytic_architecture_gradient<O: DifferentiableObjective<T>>(
         &self,
         alpha: &Array1<T>,
@@ -1335,9 +1339,11 @@ mod tests {
             ..DartsConfig::default()
         };
 
-        let mut search_a = DartsOptimizerSearch::<f64>::new(config.clone()).expect("a");
+        let mut search_a =
+            DartsOptimizerSearch::<f64>::new(config.clone()).expect("first search constructs");
         let outcome_a = search_a.search(&objective).expect("a runs");
-        let mut search_b = DartsOptimizerSearch::<f64>::new(config).expect("b");
+        let mut search_b =
+            DartsOptimizerSearch::<f64>::new(config).expect("second search constructs");
         let outcome_b = search_b.search(&objective).expect("b runs");
 
         for (a, b) in outcome_a.alpha.iter().zip(outcome_b.alpha.iter()) {

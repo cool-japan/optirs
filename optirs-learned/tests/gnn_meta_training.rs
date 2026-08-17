@@ -14,7 +14,7 @@
 
 use optirs_learned::domain_objectives::{MetaObjective, QuadraticObjective};
 use optirs_learned::domain_optimizers::AdvancedOptimizer;
-use optirs_learned::es_meta_training::{EsMetaTrainer, MetaTrainable, MetaTrainingConfig};
+use optirs_learned::es_meta_training::{EsMetaTrainer, MetaTrainingConfig};
 use optirs_learned::gnn_optimizer::{GnnOptimizer, GnnOptimizerConfig, GraphTopology};
 use scirs2_core::ndarray::Array1;
 

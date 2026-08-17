@@ -67,7 +67,7 @@ use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Debug;
 
 /// Default width, in bits, of the additive group used for masking.
@@ -756,6 +756,20 @@ impl<T: Float + Debug + Send + Sync + 'static> SecureAggregator<T> {
                 "no aggregation round is open; call prepare_round first".to_string(),
             )
         })
+    }
+}
+
+impl SecureAggregationConfig {
+    /// Validate the protocol parameters and return the modulus they select.
+    ///
+    /// This is the single source of truth for "is this secure-aggregation
+    /// configuration deliverable?". [`SecureAggregator::new`] calls it, and so
+    /// does the federated-privacy configuration validator
+    /// (`SecureAggregationConfig::validate_for_federation`), so a federation
+    /// cannot be accepted at the configuration layer and then rejected when the
+    /// aggregator is built.
+    pub fn validate_protocol(&self) -> Result<i64> {
+        validate_config(self)
     }
 }
 

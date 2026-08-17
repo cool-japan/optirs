@@ -5,7 +5,7 @@
 // Fisher information matrix approximation.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array2;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -382,7 +382,15 @@ impl<
 
     // Private helper methods
 
-    fn get_adaptive_damping(&self, layer_name: &str) -> Result<T> {
+    // NOTE: `layer_name` is accepted (and threaded through by the sole caller,
+    // `update_inverse_matrices`, which already operates per-layer) but this
+    // heuristic is intentionally a single *global* schedule driven by
+    // `self.acceptance_ratio`, not a per-layer one. Making it genuinely
+    // per-layer would mean tracking `acceptance_ratio` in a
+    // `HashMap<String, T>` keyed by layer and reworking the public
+    // `acceptance_ratio()` getter and `update_damping` signature, which is
+    // more than this warning-cleanup pass should take on silently.
+    fn get_adaptive_damping(&self, _layer_name: &str) -> Result<T> {
         if !self.config.auto_damping {
             return Ok(self.config.damping);
         }
@@ -474,13 +482,14 @@ mod tests {
             has_bias: false,
         };
 
-        kfac.register_layer(layer_info).expect("unwrap failed");
+        kfac.register_layer(layer_info)
+            .expect("kfac.register_layer succeeds in test_covariance_update");
 
         let activations =
             Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
-                .expect("unwrap failed");
-        let gradients =
-            Array2::from_shape_vec((2, 2), vec![0.1, 0.2, 0.3, 0.4]).expect("unwrap failed");
+                .expect("Array2::from_shape_vec succeeds in test_covariance_update");
+        let gradients = Array2::from_shape_vec((2, 2), vec![0.1, 0.2, 0.3, 0.4])
+            .expect("Array2::from_shape_vec succeeds in test_covariance_update");
 
         // Call step to increment step_count
         let mut layer_gradients = HashMap::new();
@@ -504,7 +513,8 @@ mod tests {
             has_bias: true,
         };
 
-        kfac.register_layer(layer_info).expect("unwrap failed");
+        kfac.register_layer(layer_info)
+            .expect("kfac.register_layer succeeds in test_memory_usage_estimation");
         let memory_usage = kfac.estimate_memory_usage();
 
         assert!(memory_usage > 0);

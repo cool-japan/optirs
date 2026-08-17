@@ -13,7 +13,7 @@ mod timeline;
 pub use timeline::*;
 
 use scirs2_core::numeric::Float;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Write;
@@ -38,14 +38,8 @@ pub struct ProfilingIntegration<T> {
     /// Memory profiler
     memory_profiler: MemoryProfiler,
 
-    /// Power profiler
-    power_profiler: PowerProfiler,
-
     /// Timeline profiler
     timeline_profiler: TimelineProfiler<T>,
-
-    /// Profiling data aggregator
-    data_aggregator: ProfilingDataAggregator,
 
     /// Export manager
     export_manager: ProfileExportManager,
@@ -139,9 +133,6 @@ pub struct PerformanceCounterManager {
 
     /// Counter data storage
     counter_data: Arc<RwLock<HashMap<String, CounterTimeSeries>>>,
-
-    /// Counter configuration
-    counter_config: CounterConfig,
 }
 
 /// Performance counter information
@@ -323,12 +314,6 @@ pub struct TraceCollector {
 
     /// Trace sessions
     trace_sessions: HashMap<String, TraceSession>,
-
-    /// Event filters
-    event_filters: Vec<EventFilter>,
-
-    /// Trace configuration
-    trace_config: TraceConfig,
 }
 
 /// Trace buffer for storing events
@@ -527,9 +512,6 @@ pub struct MemoryProfiler {
 
     /// Memory usage snapshots
     usage_snapshots: Vec<MemorySnapshot>,
-
-    /// Memory configuration
-    memory_config: MemoryProfilingConfig,
 }
 
 /// Memory tracking session
@@ -615,9 +597,6 @@ pub struct AllocationTracker {
 
     /// Allocation history
     allocation_history: Vec<AllocationEvent>,
-
-    /// Tracker configuration
-    tracker_config: TrackerConfig,
 }
 
 /// Allocation event
@@ -761,21 +740,6 @@ pub struct MemoryProfilingConfig {
     pub enable_heap_profiling: bool,
 }
 
-/// Power profiler
-pub struct PowerProfiler {
-    /// Power monitoring sessions
-    monitoring_sessions: HashMap<String, PowerMonitoringSession>,
-
-    /// Power samples
-    power_samples: Vec<PowerSample>,
-
-    /// Power configuration
-    power_config: PowerProfilingConfig,
-
-    /// Power model
-    power_model: PowerModel,
-}
-
 /// Power monitoring session
 #[derive(Debug)]
 pub struct PowerMonitoringSession {
@@ -862,15 +826,6 @@ pub enum PowerModelAccuracy {
     High,
 }
 
-/// Power model
-pub struct PowerModel {
-    /// Model parameters
-    parameters: HashMap<String, f64>,
-
-    /// Component models
-    component_models: HashMap<PowerComponent, ComponentPowerModel>,
-}
-
 /// Component power model
 #[derive(Debug)]
 pub struct ComponentPowerModel {
@@ -882,15 +837,6 @@ pub struct ComponentPowerModel {
 
     /// Thermal coefficients
     pub thermal_coefficients: Vec<f64>,
-}
-
-/// Profiling data aggregator
-pub struct ProfilingDataAggregator {
-    /// Aggregated data
-    aggregated_data: HashMap<String, AggregatedMetrics>,
-
-    /// Aggregation configuration
-    aggregation_config: AggregationConfig,
 }
 
 /// Aggregated metrics
@@ -1050,9 +996,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ProfilingIntegration<T> {
             counter_manager: PerformanceCounterManager::new(),
             trace_collector: TraceCollector::new(&profiling_config),
             memory_profiler: MemoryProfiler::new(&profiling_config),
-            power_profiler: PowerProfiler::new(&profiling_config),
             timeline_profiler: TimelineProfiler::new(&profiling_config),
-            data_aggregator: ProfilingDataAggregator::new(),
             export_manager: ProfileExportManager::new(&profiling_config),
             config: profiling_config,
             profiling_stats: ProfilingStatistics::default(),
@@ -1173,6 +1117,53 @@ impl<T: Float + Debug + Send + Sync + 'static> ProfilingIntegration<T> {
         Ok(exported_files)
     }
 
+    /// Record a device-memory reservation made while running a compiled
+    /// program, so the exported memory profile reflects real allocator
+    /// activity. A no-op when memory profiling is disabled.
+    pub fn record_memory_allocation(
+        &mut self,
+        session_id: &str,
+        address: usize,
+        size: usize,
+        context: Option<String>,
+    ) {
+        if !self.config.enable_memory_profiling {
+            return;
+        }
+        self.memory_profiler.record_allocation(
+            session_id,
+            address,
+            size,
+            AllocationSource::Runtime,
+            context,
+        );
+    }
+
+    /// Companion to [`Self::record_memory_allocation`] for the release side,
+    /// followed by a usage snapshot carrying the allocator's real
+    /// fragmentation. A no-op when memory profiling is disabled.
+    pub fn record_memory_release(
+        &mut self,
+        session_id: &str,
+        addresses: &[usize],
+        fragmentation: FragmentationInfo,
+        context: Option<String>,
+    ) {
+        if !self.config.enable_memory_profiling {
+            return;
+        }
+        for &address in addresses {
+            self.memory_profiler
+                .record_deallocation(session_id, address, context.clone());
+        }
+        self.memory_profiler.capture_snapshot(fragmentation);
+    }
+
+    /// The memory profiler backing [`Self::record_memory_allocation`].
+    pub fn memory_profiler(&self) -> &MemoryProfiler {
+        &self.memory_profiler
+    }
+
     /// Reset profiling state
     pub fn reset(&mut self) {
         self.profiling_stats = ProfilingStatistics::default();
@@ -1223,11 +1214,6 @@ impl PerformanceCounterManager {
             available_counters,
             active_sessions: HashMap::new(),
             counter_data: Arc::new(RwLock::new(HashMap::new())),
-            counter_config: CounterConfig {
-                default_sampling_rate: 1000,
-                counter_groups: HashMap::new(),
-                aliases: HashMap::new(),
-            },
         }
     }
 
@@ -1370,13 +1356,6 @@ impl TraceCollector {
                 stats: BufferStats::default(),
             })),
             trace_sessions: HashMap::new(),
-            event_filters: Vec::new(),
-            trace_config: TraceConfig {
-                buffer_size: 100000,
-                include_stack_traces: config.detailed_mode,
-                max_stack_depth: 32,
-                enable_compression: true,
-            },
         }
     }
 
@@ -1454,12 +1433,6 @@ impl MemoryProfiler {
             tracking_sessions: HashMap::new(),
             allocation_tracker: AllocationTracker::new(),
             usage_snapshots: Vec::new(),
-            memory_config: MemoryProfilingConfig {
-                snapshot_interval_ms: 100,
-                track_allocations: true,
-                max_snapshots: 1000,
-                enable_heap_profiling: true,
-            },
         }
     }
 
@@ -1475,6 +1448,136 @@ impl MemoryProfiler {
         self.tracking_sessions
             .insert(session_id.to_string(), session);
         Ok(())
+    }
+
+    /// Record a real device-memory reservation.
+    ///
+    /// `address` and `size` are the allocator's own figures (see
+    /// [`crate::tpu_backend::TPUMemoryManager`], which calls this as it
+    /// reserves and releases blocks). The session is created on demand, so a
+    /// caller that never called [`Self::start_tracking`] still gets tracked
+    /// rather than silently dropped.
+    pub fn record_allocation(
+        &mut self,
+        session_id: &str,
+        address: usize,
+        size: usize,
+        source: AllocationSource,
+        context: Option<String>,
+    ) {
+        let session = self.session_mut(session_id);
+        session.allocations.insert(
+            address,
+            AllocationInfo {
+                address,
+                size,
+                timestamp: Instant::now(),
+                source,
+                stack_trace: None,
+                tags: Vec::new(),
+            },
+        );
+        session.stats.total_allocations += 1;
+        session.stats.current_allocations = session.allocations.len();
+        session.stats.current_memory_usage =
+            session.stats.current_memory_usage.saturating_add(size);
+        session.stats.peak_memory_usage = session
+            .stats
+            .peak_memory_usage
+            .max(session.stats.current_memory_usage);
+
+        self.allocation_tracker.record(AllocationEvent {
+            timestamp: Instant::now(),
+            event_type: AllocationEventType::Allocate,
+            address,
+            size,
+            context,
+        });
+    }
+
+    /// Record the release of a block previously passed to
+    /// [`Self::record_allocation`]. Releasing an address the profiler never saw
+    /// is ignored rather than counted, so the statistics cannot go negative.
+    pub fn record_deallocation(
+        &mut self,
+        session_id: &str,
+        address: usize,
+        context: Option<String>,
+    ) {
+        let session = self.session_mut(session_id);
+        let Some(info) = session.allocations.remove(&address) else {
+            return;
+        };
+        session.stats.total_deallocations += 1;
+        session.stats.current_allocations = session.allocations.len();
+        session.stats.current_memory_usage =
+            session.stats.current_memory_usage.saturating_sub(info.size);
+
+        self.allocation_tracker.record(AllocationEvent {
+            timestamp: Instant::now(),
+            event_type: AllocationEventType::Deallocate,
+            address,
+            size: info.size,
+            context,
+        });
+    }
+
+    /// Capture a usage snapshot of everything currently live.
+    ///
+    /// `fragmentation` is supplied by the allocator rather than inferred here:
+    /// this profiler observes allocation events and has no view of the free
+    /// list, so computing external fragmentation from the live set would be a
+    /// guess dressed up as a measurement.
+    pub fn capture_snapshot(&mut self, fragmentation: FragmentationInfo) {
+        let regions: Vec<MemoryRegion> = self
+            .allocation_tracker
+            .active_allocations
+            .values()
+            .map(|info| MemoryRegion {
+                start_address: info.address,
+                size: info.size,
+                region_type: MemoryRegionType::Data,
+                usage: RegionUsage {
+                    // A live reservation is fully used by definition: the
+                    // region *is* the allocated block, so there is no free
+                    // remainder inside it and nothing to fragment.
+                    used_bytes: info.size,
+                    free_bytes: 0,
+                    fragmentation: 0.0,
+                },
+            })
+            .collect();
+        let total_usage = regions.iter().map(|region| region.size).sum();
+
+        self.usage_snapshots.push(MemorySnapshot {
+            timestamp: Instant::now(),
+            regions,
+            total_usage,
+            fragmentation,
+        });
+    }
+
+    /// Tracking statistics for `session_id`, if that session exists.
+    pub fn tracking_stats(&self, session_id: &str) -> Option<&MemoryTrackingStats> {
+        self.tracking_sessions
+            .get(session_id)
+            .map(|session| &session.stats)
+    }
+
+    /// Number of allocation events recorded so far.
+    pub fn recorded_events(&self) -> usize {
+        self.allocation_tracker.allocation_history.len()
+    }
+
+    fn session_mut(&mut self, session_id: &str) -> &mut MemoryTrackingSession {
+        self.tracking_sessions
+            .entry(session_id.to_string())
+            .or_insert_with(|| MemoryTrackingSession {
+                id: session_id.to_string(),
+                start_time: Instant::now(),
+                allocations: HashMap::new(),
+                stats: MemoryTrackingStats::default(),
+            })
     }
 
     /// Reset memory profiler
@@ -1497,58 +1600,36 @@ impl AllocationTracker {
         Self {
             active_allocations: HashMap::new(),
             allocation_history: Vec::new(),
-            tracker_config: TrackerConfig {
-                track_stack_traces: false,
-                max_history_size: 100000,
-                enable_leak_detection: true,
-            },
         }
+    }
+
+    /// Append `event` to the history and keep the live set in step with it.
+    fn record(&mut self, event: AllocationEvent) {
+        match event.event_type {
+            AllocationEventType::Allocate | AllocationEventType::Reallocate => {
+                self.active_allocations.insert(
+                    event.address,
+                    AllocationInfo {
+                        address: event.address,
+                        size: event.size,
+                        timestamp: event.timestamp,
+                        source: AllocationSource::Runtime,
+                        stack_trace: None,
+                        tags: Vec::new(),
+                    },
+                );
+            }
+            AllocationEventType::Deallocate => {
+                self.active_allocations.remove(&event.address);
+            }
+        }
+        self.allocation_history.push(event);
     }
 
     /// Reset allocation tracker
     pub fn reset(&mut self) {
         self.active_allocations.clear();
         self.allocation_history.clear();
-    }
-}
-
-impl PowerProfiler {
-    /// Create new power profiler
-    pub fn new(_config: &ProfilingConfig) -> Self {
-        Self {
-            monitoring_sessions: HashMap::new(),
-            power_samples: Vec::new(),
-            power_config: PowerProfilingConfig {
-                sampling_rate: 10, // 10Hz
-                component_level_monitoring: true,
-                include_thermal: true,
-                model_accuracy: PowerModelAccuracy::Medium,
-            },
-            power_model: PowerModel {
-                parameters: HashMap::new(),
-                component_models: HashMap::new(),
-            },
-        }
-    }
-}
-
-impl Default for ProfilingDataAggregator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ProfilingDataAggregator {
-    /// Create new data aggregator
-    pub fn new() -> Self {
-        Self {
-            aggregated_data: HashMap::new(),
-            aggregation_config: AggregationConfig {
-                interval_seconds: 1,
-                real_time: true,
-                retention_hours: 24,
-            },
-        }
     }
 }
 
@@ -1718,14 +1799,15 @@ impl ProfileExportManager {
 
     /// Export memory data.
     ///
-    /// Serializes whatever is *actually* in `memory_profiler` (real usage
-    /// snapshots and real allocation-history events) instead of a
-    /// hardcoded empty body. Nothing in this crate currently records real
-    /// TPU memory-allocation events into `memory_profiler` (that would mean
-    /// bridging into the separate, unrelated `tpu_backend` memory manager),
-    /// so today this honestly exports empty arrays -- genuinely absent data,
-    /// not a fabricated non-empty result -- and will pick up real entries
-    /// automatically once something does record them.
+    /// Serializes whatever is *actually* in `memory_profiler`: real usage
+    /// snapshots and real allocation-history events, never a hardcoded body.
+    ///
+    /// Those entries come from [`crate::tpu_backend::TPUBackend`], which
+    /// reports every device-memory reservation and release it makes through
+    /// [`ProfilingIntegration::record_memory_allocation`]/
+    /// [`ProfilingIntegration::record_memory_release`] while running a
+    /// compiled program. Compiling without executing therefore still exports
+    /// honestly empty arrays -- genuinely absent data, not a fabrication.
     pub fn export_memory_data(&mut self, memory_profiler: &MemoryProfiler) -> Result<String> {
         let export_start = Instant::now();
         let filename = format!(

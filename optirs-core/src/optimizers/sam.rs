@@ -45,12 +45,12 @@ use std::marker::PhantomData;
 /// // First step to compute perturbed parameters and store perturbed gradients
 /// let params = Array1::zeros(10);
 /// let gradients = Array1::ones(10);
-/// let (perturbed_params_) = optimizer.first_step(&params, &gradients).expect("unwrap failed");
+/// let (perturbed_params_) = optimizer.first_step(&params, &gradients).expect("optimizer.first_step succeeds");
 ///
 /// // Second step to update original parameters using gradients at perturbed parameters
 /// // Normally, you would compute new gradients at perturbed_params
 /// let new_gradients = Array1::ones(10) * 0.5; // Example new gradients
-/// let updated_params = optimizer.second_step(&params, &new_gradients).expect("unwrap failed");
+/// let updated_params = optimizer.second_step(&params, &new_gradients).expect("optimizer.second_step succeeds");
 /// ```
 pub struct SAM<A, O, D>
 where
@@ -84,8 +84,8 @@ where
     pub fn new(inner_optimizer: O) -> Self {
         Self {
             inner_optimizer,
-            rho: A::from(0.05).expect("unwrap failed"),
-            epsilon: A::from(1e-12).expect("unwrap failed"),
+            rho: A::from(0.05).expect("SAM: default rho (0.05) must fit in A"),
+            epsilon: A::from(1e-12).expect("SAM: default epsilon (1e-12) must fit in A"),
             adaptive: false,
             perturbed_params: None,
             original_params: None,
@@ -98,7 +98,7 @@ where
         Self {
             inner_optimizer,
             rho,
-            epsilon: A::from(1e-12).expect("unwrap failed"),
+            epsilon: A::from(1e-12).expect("SAM: default epsilon (1e-12) must fit in A"),
             adaptive,
             perturbed_params: None,
             original_params: None,
@@ -328,7 +328,6 @@ where
 }
 
 /// Calculate the L2 norm of an array
-#[allow(dead_code)]
 fn calculate_norm<A, D>(array: &Array<A, D>) -> Result<A>
 where
     A: Float + ScalarOperand + Debug,
@@ -389,7 +388,7 @@ mod tests {
 
         let (perturbed_params, perturb_size) = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_first_step");
 
         // Verify perturbed parameters
         assert_abs_diff_eq!(perturbed_params[0], expected_params[0], epsilon = 1e-6);
@@ -412,7 +411,7 @@ mod tests {
         // With the more stable implementation, we'll just verify the behavior makes sense
         let (perturbed_params, perturb_size) = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_adaptive");
 
         // Verify perturbed parameters make sense
         assert!(perturb_size > 0.0 && perturb_size < 1.0); // Perturbation size should be reasonable
@@ -439,7 +438,7 @@ mod tests {
         // First step to set up perturbed parameters
         let _ = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_second_step");
 
         // Simulate computing new gradients at perturbed point
         let new_gradients = Array1::from_vec(vec![0.15, 0.25, 0.35]);
@@ -447,7 +446,7 @@ mod tests {
         // Second step should update original parameters with new gradients
         let updated_params = optimizer
             .second_step(&params, &new_gradients)
-            .expect("unwrap failed");
+            .expect("second_step succeeds in test_sam_second_step");
 
         // Expected update: params - lr * new_gradients
         let expected_params =
@@ -469,7 +468,7 @@ mod tests {
         // First step
         let _ = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_reset");
 
         // Reset
         optimizer.reset();
@@ -499,8 +498,6 @@ mod tests {
     /// optimizer `O` while claiming to be sharpness-aware.
     #[test]
     fn test_sam_optimizer_step_is_rejected() {
-        use crate::optimizers::Optimizer as _;
-
         let sgd = SGD::new(0.1);
         let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
 

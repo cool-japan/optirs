@@ -4,7 +4,6 @@ use crate::error::{OptimError, Result};
 use crate::privacy::PrivacyBudget;
 use scirs2_core::ndarray::{ArrayBase, Data, Dimension};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
 

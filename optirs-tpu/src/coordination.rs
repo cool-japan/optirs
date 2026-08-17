@@ -275,33 +275,30 @@ pub struct Message {
     pub priority: MessagePriority,
 }
 
-/// Load balancer for distributing work across devices
+/// Load balancer for distributing work across devices.
+///
+/// Selection reads utilization straight off each candidate's own
+/// [`DeviceMetrics`], so there is no separate `utilization_tracker` mirror to
+/// drift out of date, and no `work_queue`: this balancer answers "which device
+/// should take this workload" rather than owning the work.
 #[derive(Debug)]
 pub struct LoadBalancer {
     /// Balancing strategy
     strategy: LoadBalancingStrategy,
-
-    /// Device utilization tracking
-    utilization_tracker: HashMap<TpuDeviceId, f64>,
-
-    /// Work queue
-    work_queue: Arc<Mutex<Vec<WorkItem>>>,
 }
 
 /// Fault tolerance manager
 #[derive(Debug)]
 pub struct FaultToleranceManager {
-    /// Configuration
-    config: FaultToleranceConfig,
-
-    /// Failed device tracking
-    failed_devices: HashMap<TpuDeviceId, FailureInfo>,
-
-    /// Recovery strategies
+    /// Recovery strategies, derived from the configuration at construction.
+    ///
+    /// The configuration itself is not retained: it is consumed by
+    /// [`Self::build_recovery_strategies`] and nothing else read it. Neither is
+    /// a failed-device table or a checkpoint manager -- recording failures and
+    /// writing/verifying checkpoints is [`crate::fault_tolerance`]'s job, and it
+    /// does both for real (SHA-256-verified checkpoints on disk); a second inert
+    /// copy here only looked like it did.
     recovery_strategies: Vec<RecoveryStrategy>,
-
-    /// Checkpointing system
-    checkpoint_manager: CheckpointManager,
 
     /// Whether fault detection has been activated.
     detection_active: bool,
@@ -316,16 +313,14 @@ pub struct FaultToleranceManager {
 /// Performance monitoring system
 #[derive(Debug)]
 pub struct PerformanceMonitor {
-    /// Configuration
-    config: MonitoringConfig,
-
-    /// Metrics collection
-    metrics_collector: MetricsCollector,
-
-    /// Performance history
-    performance_history: Vec<PerformanceSnapshot>,
-
-    /// Alerting system
+    /// Alerting thresholds, derived from the configuration at construction.
+    ///
+    /// The configuration, a metrics collector and a performance history buffer
+    /// used to sit alongside this and were never read. Real per-execution
+    /// sampling with a bounded history lives in
+    /// [`crate::tpu_backend::PerformanceMonitor`]; this monitor answers
+    /// "is monitoring active, over which devices, and at what alert
+    /// thresholds".
     alerting: AlertingSystem,
 
     /// Whether monitoring has been activated.
@@ -1043,11 +1038,7 @@ impl PodCoordinator {
 
 impl LoadBalancer {
     fn new(strategy: LoadBalancingStrategy) -> Self {
-        Self {
-            strategy,
-            utilization_tracker: HashMap::new(),
-            work_queue: Arc::new(Mutex::new(Vec::new())),
-        }
+        Self { strategy }
     }
 
     fn select_device(
@@ -1108,14 +1099,7 @@ impl FaultToleranceManager {
     fn new(config: FaultToleranceConfig) -> Self {
         let recovery_strategies = Self::build_recovery_strategies(&config);
         Self {
-            config,
-            failed_devices: HashMap::new(),
             recovery_strategies,
-            checkpoint_manager: CheckpointManager {
-                checkpoint_interval: Duration::from_secs(300),
-                checkpoint_storage: "/tmp/checkpoints".to_string(),
-                compression_enabled: true,
-            },
             detection_active: false,
             detection_started_at: None,
             monitored_devices: Vec::new(),
@@ -1215,12 +1199,6 @@ impl PerformanceMonitor {
     fn new(config: MonitoringConfig) -> Self {
         let thresholds = Self::build_alert_thresholds(&config);
         Self {
-            metrics_collector: MetricsCollector {
-                collection_interval: config.collection_interval,
-                metrics_buffer: Arc::new(Mutex::new(Vec::new())),
-            },
-            config,
-            performance_history: Vec::new(),
             alerting: AlertingSystem {
                 thresholds,
                 alert_handlers: Vec::new(),

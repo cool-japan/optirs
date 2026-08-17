@@ -2,14 +2,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
-
-use super::types::{
-    AnomalyContext, AnomalyDetector, AnomalyReporter, AnomalyResult, AnomalySeverity, AnomalyType,
-};
-use super::types_3::{AnomalyAnalyzer, AnomalyConfig, OutlierDetector};
-
 /// Expected path length of an unsuccessful search in a binary search tree
 /// built from `n` points (Liu, Ting & Zhou, "Isolation Forest", 2008,
 /// eq. 2): `c(n) = 2*H(n-1) - 2*(n-1)/n`, where `H(i)` is the `i`-th
@@ -29,7 +21,14 @@ pub(super) fn isolation_forest_path_normalizer(n: usize) -> f64 {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::super::types::{
+        AnomalyContext, AnomalyDetector, AnomalyReporter, AnomalyResult, AnomalySeverity,
+        AnomalyType,
+    };
+    use super::super::types_3::{AnomalyAnalyzer, AnomalyConfig, OutlierDetector};
     use super::*;
+    use std::collections::VecDeque;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn test_anomaly_detector_basic() {
@@ -163,7 +162,7 @@ pub(super) mod tests {
 
         let mut history = VecDeque::new();
         let normal_values = [1.0, 2.0, 1.5, 2.5, 1.8, 2.2, 1.7, 2.1, 1.9, 2.3];
-        for (i, value) in normal_values.iter().enumerate() {
+        for value in normal_values.iter() {
             history.push_back((Instant::now(), *value));
         }
 

@@ -163,3 +163,104 @@ fn lstm_step_handles_parameter_counts_other_than_output_features() {
         .expect("second lstm_step at the same shape must also succeed");
     assert_eq!(updated2.shape(), params.shape());
 }
+
+/// `AttentionStats::head_diversity` used to be computed from the softmax
+/// weights, which at sequence length 1 are all exactly `1.0` — so the figure was
+/// the constant `1.0` for every input and every head count, and
+/// `temporal_patterns` was a hard-coded `vec![0.0; 10]`. Diversity is now the
+/// spread of the pre-softmax per-head logits, which do vary.
+#[test]
+fn attention_head_diversity_reflects_the_real_per_head_logits() {
+    let config = LearnedOptimizerConfig {
+        hidden_size: 16,
+        attention_heads: 4,
+        input_features: 16,
+        num_layers: 1,
+        use_attention: true,
+        ..LearnedOptimizerConfig::default()
+    };
+    let mut optimizer = LSTMOptimizer::<f64>::new(config).expect("optimizer should construct");
+
+    let params = Array1::<f64>::from_elem(12, 1.0);
+    let grads = Array1::<f64>::from_vec((0..12).map(|i| 0.05 * (i as f64 + 1.0)).collect());
+    optimizer
+        .lstm_step(&params, &grads, Some(1.0))
+        .expect("step should succeed");
+
+    let stats = optimizer
+        .get_metrics()
+        .attention_stats
+        .as_ref()
+        .expect("attention statistics must be recorded when attention is enabled");
+
+    // One recorded logit per head, not a fixed-length placeholder.
+    assert_eq!(
+        stats.temporal_patterns.len(),
+        4,
+        "temporal_patterns must hold one real logit per head, got {:?}",
+        stats.temporal_patterns
+    );
+    assert!(
+        stats.temporal_patterns.iter().all(|v| v.is_finite()),
+        "logits must be finite: {:?}",
+        stats.temporal_patterns
+    );
+    // Xavier-initialized, independent Q/K projections make an exactly-equal
+    // logit across all four heads a measure-zero event, so a genuine spread is
+    // observable. The old weights-based formula returned exactly 1.0 here.
+    assert!(
+        stats.head_diversity > 0.0,
+        "head diversity must be a real spread, got {}",
+        stats.head_diversity
+    );
+    assert_ne!(
+        stats.head_diversity, 1.0,
+        "head diversity of exactly 1.0 is the signature of the old \
+         constant-weights formula"
+    );
+}
+
+/// `adaptation_efficiency` used to be `‖Δθ‖ / ‖g‖`, which simply tracked
+/// whatever learning rate the controller had picked. It is now the step-size
+/// ratio against the SGD step of the same learning rate, `‖Δθ‖ / (lr · ‖g‖)`.
+#[test]
+fn adaptation_efficiency_is_normalized_by_the_learning_rate() {
+    let config = LearnedOptimizerConfig {
+        hidden_size: 16,
+        input_features: 16,
+        num_layers: 1,
+        ..LearnedOptimizerConfig::default()
+    };
+    let mut optimizer = LSTMOptimizer::<f64>::new(config).expect("optimizer should construct");
+
+    let params = Array1::<f64>::from_elem(8, 1.0);
+    let grads = Array1::<f64>::from_elem(8, 0.25);
+    let updated = optimizer
+        .lstm_step(&params, &grads, Some(1.0))
+        .expect("step should succeed");
+
+    let lr = optimizer.current_learning_rate();
+    let grad_norm = grads.iter().map(|g| g * g).sum::<f64>().sqrt();
+    let update_norm = params
+        .iter()
+        .zip(updated.iter())
+        .map(|(p, u)| (p - u) * (p - u))
+        .sum::<f64>()
+        .sqrt();
+
+    let reported = optimizer.get_metrics().adaptation_efficiency;
+    assert!(reported.is_finite() && reported > 0.0, "got {reported}");
+    let expected = update_norm / (lr.abs() * grad_norm);
+    assert!(
+        (reported - expected).abs() < 1e-9,
+        "adaptation_efficiency {reported} should be ‖Δθ‖/(lr·‖g‖) = {expected}"
+    );
+
+    // A zero gradient makes the ratio undefined; it must report the neutral
+    // 1.0 rather than a NaN or an infinity.
+    let zeros = Array1::<f64>::zeros(8);
+    optimizer
+        .lstm_step(&params, &zeros, Some(1.0))
+        .expect("zero-gradient step should succeed");
+    assert_eq!(optimizer.get_metrics().adaptation_efficiency, 1.0);
+}

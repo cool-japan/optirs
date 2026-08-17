@@ -4,11 +4,9 @@
 // machine learning optimization experiments with full reproducibility support.
 
 use crate::error::{OptimError, Result};
-use crate::optimizers::*;
 use crate::unified_api::OptimizerConfig;
 use chrono::{DateTime, Utc};
-use scirs2_core::ndarray::{Array1, Array2};
-use scirs2_core::numeric::Float;
+use scirs2_core::ndarray::Array2;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -882,10 +880,42 @@ impl ResourceMonitor {
         }
     }
 
-    /// Start monitoring resources
+    /// Discard any samples collected so far and begin a fresh window.
+    ///
+    /// This crate takes no measurements of its own: reading CPU and memory
+    /// counters requires platform-specific system interfaces, and the project's
+    /// pure-Rust policy rules out the FFI they need. Until 0.3.2 this method
+    /// had an empty body with the comment "Implementation would use system
+    /// monitoring libraries", so `stop_monitoring` reported a summary over an
+    /// empty sample set as though it had measured something. Feed measurements
+    /// in with [`Self::record_sample`]; the summary then describes real data or
+    /// honestly reports none.
     pub fn start_monitoring(&mut self) {
-        // Implementation would use system monitoring libraries
-        // This is a placeholder for the actual monitoring logic
+        self.cpu_usage.clear();
+        self.memory_usage.clear();
+        self.gpu_memory_usage.clear();
+    }
+
+    /// Record one observation. `gpu_memory_mb` is `None` when no GPU is in use.
+    pub fn record_sample(
+        &mut self,
+        cpu_percent: f64,
+        memory_mb: usize,
+        gpu_memory_mb: Option<usize>,
+    ) {
+        self.cpu_usage.push(cpu_percent);
+        self.memory_usage.push(memory_mb);
+        self.gpu_memory_usage.push(gpu_memory_mb);
+    }
+
+    /// Number of samples recorded in the current window.
+    pub fn sample_count(&self) -> usize {
+        self.cpu_usage.len()
+    }
+
+    /// The sampling interval the monitor was configured with, in seconds.
+    pub fn interval_seconds(&self) -> u64 {
+        self.interval_seconds
     }
 
     /// Stop monitoring and return resource usage summary
@@ -909,8 +939,14 @@ impl ResourceMonitor {
             avg_cpu_usage: avg_cpu,
             peak_memory_mb: peak_memory,
             avg_memory_mb: avg_memory,
-            peak_gpu_memory_mb: None, // Would be calculated from gpu_memory_usage
-            total_time_seconds: 0.0,  // Would be calculated from monitoring duration
+            // Real values derived from the recorded samples: the peak of the
+            // GPU series, and the wall-clock span the samples cover at the
+            // configured interval. Both were hardcoded to `None` / `0.0` with a
+            // "would be calculated" comment.
+            peak_gpu_memory_mb: self.gpu_memory_usage.iter().flatten().copied().max(),
+            total_time_seconds: self.cpu_usage.len().saturating_sub(1) as f64
+                * self.interval_seconds as f64,
+            // Energy draw needs a hardware power counter this crate cannot read.
             energy_consumption_joules: None,
         }
     }

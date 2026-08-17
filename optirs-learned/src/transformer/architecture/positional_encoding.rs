@@ -4,10 +4,8 @@ use std::fmt::Debug;
 // This module implements various positional encoding strategies used in the
 // transformer optimizer to provide position information to the attention mechanisms.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{s, Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;
 use crate::error::{OptimError, Result};

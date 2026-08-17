@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use super::frontend::XLAComputation;
 use super::optimization::MemoryPlan;
-use super::{GeneratedCode, TPUConfig};
-use crate::error::{OptimError, Result};
+use super::TPUConfig;
+use crate::error::Result;
 
 pub use code_generation::*;
 pub use profiling_integration::*;
@@ -133,6 +133,18 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLABack
     /// Get backend statistics
     pub fn get_statistics(&self) -> &BackendStatistics {
         &self.stats
+    }
+
+    /// The profiling integration this backend set up for the compiled program.
+    pub fn profiling(&self) -> &ProfilingIntegration<T> {
+        &self.profiling_manager
+    }
+
+    /// Mutable access to the profiling integration, so the *runtime* side can
+    /// report the memory and timing events it observes into the same profile
+    /// the compile side started.
+    pub fn profiling_mut(&mut self) -> &mut ProfilingIntegration<T> {
+        &mut self.profiling_manager
     }
 
     /// Reset backend state

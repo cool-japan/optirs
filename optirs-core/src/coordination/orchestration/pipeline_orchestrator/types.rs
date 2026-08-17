@@ -6,7 +6,7 @@ use crate::error::{OptimError, Result};
 #[allow(dead_code)]
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
@@ -247,17 +247,6 @@ pub enum AuditDestination {
     /// Custom audit destination
     Custom(String),
 }
-#[derive(Debug)]
-pub struct PipelineMonitor<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PipelineMonitor<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorHandlingPolicy {
     FailFast,
@@ -420,16 +409,6 @@ pub struct PipelineOrchestrator<T: Float + Debug + Send + Sync + 'static> {
     active_pipelines: HashMap<String, PipelineExecution<T>>,
     /// Pipeline templates
     pipeline_templates: HashMap<String, OptimizationPipeline<T>>,
-    /// Execution scheduler
-    scheduler: PipelineScheduler<T>,
-    /// Dependency resolver
-    dependency_resolver: DependencyResolver<T>,
-    /// Resource coordinator
-    resource_coordinator: PipelineResourceCoordinator<T>,
-    /// Pipeline monitor
-    monitor: PipelineMonitor<T>,
-    /// Error handler
-    error_handler: PipelineErrorHandler<T>,
     /// Orchestrator configuration
     config: OrchestratorConfiguration<T>,
     /// Execution statistics
@@ -441,15 +420,43 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PipelineOrchest
         Ok(Self {
             active_pipelines: HashMap::new(),
             pipeline_templates: HashMap::new(),
-            scheduler: PipelineScheduler::new()?,
-            dependency_resolver: DependencyResolver::new()?,
-            resource_coordinator: PipelineResourceCoordinator::new()?,
-            monitor: PipelineMonitor::new()?,
-            error_handler: PipelineErrorHandler::new()?,
             config,
             stats: PipelineStatistics::default(),
         })
     }
+    /// Register a reusable pipeline template.
+    ///
+    /// `pipeline_templates` was an empty map nothing could populate and nothing
+    /// read.
+    pub fn register_template(&mut self, name: String, pipeline: OptimizationPipeline<T>) {
+        self.pipeline_templates.insert(name, pipeline);
+    }
+
+    /// The template registered under `name`, if any.
+    pub fn template(&self, name: &str) -> Option<&OptimizationPipeline<T>> {
+        self.pipeline_templates.get(name)
+    }
+
+    /// The configuration this orchestrator runs under.
+    pub fn config(&self) -> &OrchestratorConfiguration<T> {
+        &self.config
+    }
+
+    /// Start a pipeline from a registered template.
+    ///
+    /// # Errors
+    ///
+    /// [`OptimError::InvalidConfig`] when no template is registered under
+    /// `name`.
+    pub fn execute_template(&mut self, name: &str) -> Result<String> {
+        let pipeline = self.pipeline_templates.get(name).cloned().ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "no pipeline template is registered under '{name}'; call register_template first"
+            ))
+        })?;
+        self.execute_pipeline(pipeline)
+    }
+
     /// Execute a pipeline
     pub fn execute_pipeline(&mut self, pipeline: OptimizationPipeline<T>) -> Result<String> {
         let execution_id = format!(
@@ -459,12 +466,21 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PipelineOrchest
                 .unwrap_or_default()
                 .as_secs()
         );
+        if self.active_pipelines.len() >= self.config.max_concurrent_pipelines {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "{} pipelines are already running and max_concurrent_pipelines is {}",
+                self.active_pipelines.len(),
+                self.config.max_concurrent_pipelines
+            )));
+        }
+        let mut timeline = ExecutionTimeline::new();
+        timeline.start();
         let execution = PipelineExecution {
             execution_id: execution_id.clone(),
             pipeline,
             state: ExecutionState::Pending,
             stage_executions: HashMap::new(),
-            timeline: ExecutionTimeline::new(),
+            timeline,
             resource_allocations: HashMap::new(),
             context: ExecutionContext::new(),
             results: ExecutionResults::new(),
@@ -472,6 +488,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> PipelineOrchest
         };
         self.active_pipelines
             .insert(execution_id.clone(), execution);
+        self.stats.total_executed += 1;
         Ok(execution_id)
     }
     /// Get pipeline execution status
@@ -942,28 +959,6 @@ pub struct PipelineExecution<T: Float + Debug + Send + Sync + 'static> {
     /// Error tracker
     pub errors: ErrorTracker<T>,
 }
-#[derive(Debug)]
-pub struct PipelineResourceCoordinator<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PipelineResourceCoordinator<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
-#[derive(Debug)]
-pub struct PipelineErrorHandler<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PipelineErrorHandler<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 /// Data field types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
@@ -1031,6 +1026,31 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionContext<T> {
             metadata: HashMap::new(),
         }
     }
+
+    /// Set a numeric variable visible to the pipeline's stages.
+    pub fn set_variable(&mut self, name: String, value: T) {
+        self.variables.insert(name, value);
+    }
+
+    /// Read a numeric variable.
+    pub fn variable(&self, name: &str) -> Option<T> {
+        self.variables.get(name).copied()
+    }
+
+    /// Every numeric variable in the context.
+    pub fn variables(&self) -> &HashMap<String, T> {
+        &self.variables
+    }
+
+    /// Attach a metadata string.
+    pub fn set_metadata(&mut self, key: String, value: String) {
+        self.metadata.insert(key, value);
+    }
+
+    /// Read a metadata string.
+    pub fn metadata(&self, key: &str) -> Option<&str> {
+        self.metadata.get(key).map(String::as_str)
+    }
 }
 /// Schema field definition
 #[derive(Debug, Clone)]
@@ -1090,6 +1110,43 @@ impl ExecutionTimeline {
             end_time: None,
             milestones: Vec::new(),
         }
+    }
+
+    /// Mark the execution as started, if it has not been already.
+    pub fn start(&mut self) {
+        self.start_time.get_or_insert_with(SystemTime::now);
+    }
+
+    /// Mark the execution as finished.
+    pub fn finish(&mut self) {
+        self.end_time = Some(SystemTime::now());
+    }
+
+    /// Record a named milestone at the current instant.
+    pub fn record_milestone(&mut self, name: String) {
+        self.milestones.push((name, SystemTime::now()));
+    }
+
+    /// When the execution started, if it has.
+    pub fn start_time(&self) -> Option<SystemTime> {
+        self.start_time
+    }
+
+    /// When the execution finished, if it has.
+    pub fn end_time(&self) -> Option<SystemTime> {
+        self.end_time
+    }
+
+    /// Recorded milestones, oldest first.
+    pub fn milestones(&self) -> &[(String, SystemTime)] {
+        &self.milestones
+    }
+
+    /// Wall-clock duration between start and finish, once both are known.
+    pub fn elapsed(&self) -> Option<Duration> {
+        let start = self.start_time?;
+        let end = self.end_time?;
+        end.duration_since(start).ok()
     }
 }
 /// Types of artifacts
@@ -1225,17 +1282,6 @@ pub struct OrchestratorConfiguration<T: Float + Debug + Send + Sync + 'static> {
     /// Monitoring configuration
     pub monitoring: MonitoringConfiguration<T>,
 }
-#[derive(Debug)]
-pub struct PipelineScheduler<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PipelineScheduler<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 /// Audit settings
 #[derive(Debug, Clone)]
 pub struct AuditSettings {
@@ -1338,17 +1384,6 @@ pub enum ExportFormat {
     Avro,
     Custom,
 }
-#[derive(Debug)]
-pub struct DependencyResolver<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> DependencyResolver<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 #[derive(Debug, Clone)]
 pub struct StageResourceUsage<T: Float + Debug + Send + Sync + 'static> {
     pub cpu_utilization: T,
@@ -1369,6 +1404,31 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionResults<T> {
             final_result: None,
         }
     }
+
+    /// Record the outcome of one pipeline stage.
+    pub fn record_stage(&mut self, stage_id: String, result: StageResult<T>) {
+        self.stage_results.insert(stage_id, result);
+    }
+
+    /// The outcome recorded for `stage_id`, if any.
+    pub fn stage_result(&self, stage_id: &str) -> Option<&StageResult<T>> {
+        self.stage_results.get(stage_id)
+    }
+
+    /// Every recorded stage outcome.
+    pub fn stage_results(&self) -> &HashMap<String, StageResult<T>> {
+        &self.stage_results
+    }
+
+    /// Record the pipeline's final result.
+    pub fn set_final_result(&mut self, result: PipelineResult<T>) {
+        self.final_result = Some(result);
+    }
+
+    /// The pipeline's final result, once the run has produced one.
+    pub fn final_result(&self) -> Option<&PipelineResult<T>> {
+        self.final_result.as_ref()
+    }
 }
 #[derive(Debug)]
 pub struct ErrorTracker<T: Float + Debug + Send + Sync + 'static> {
@@ -1383,6 +1443,31 @@ impl<T: Float + Debug + Send + Sync + 'static> ErrorTracker<T> {
             warnings: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
+    }
+
+    /// Record a pipeline error.
+    pub fn record_error(&mut self, error: PipelineError) {
+        self.errors.push(error);
+    }
+
+    /// Record a non-fatal warning.
+    pub fn record_warning(&mut self, warning: String) {
+        self.warnings.push(warning);
+    }
+
+    /// Errors recorded so far, oldest first.
+    pub fn errors(&self) -> &[PipelineError] {
+        &self.errors
+    }
+
+    /// Warnings recorded so far, oldest first.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    /// Whether any error has been recorded.
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
     }
 }
 #[derive(Debug, Clone)]

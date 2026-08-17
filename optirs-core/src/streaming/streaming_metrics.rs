@@ -35,6 +35,26 @@ pub(crate) fn unix_timestamp(time: SystemTime) -> u64 {
         .as_secs()
 }
 
+/// Microseconds per second, for converting between the second-resolution
+/// `MetricsSnapshot::timestamp` and the microsecond-resolution key
+/// `HistoricalMetrics::time_series` is indexed by.
+pub(crate) const MICROS_PER_SEC: u64 = 1_000_000;
+
+/// Microseconds since the Unix epoch, saturating at zero for pre-epoch times.
+///
+/// This is the resolution `HistoricalMetrics` keys its time series by. Keying by
+/// whole seconds (as it used to) silently dropped every sample but the last
+/// within each second, which is most of them under sub-second streaming rates —
+/// exactly the regime the retention and compression logic is there to bound.
+/// `u64` microseconds spans ~584 000 years, so it cannot overflow in practice.
+pub(crate) fn unix_timestamp_micros(time: SystemTime) -> u64 {
+    let elapsed = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+    elapsed
+        .as_secs()
+        .saturating_mul(MICROS_PER_SEC)
+        .saturating_add(u64::from(elapsed.subsec_micros()))
+}
+
 /// Elapsed time between two instants, saturating at zero when `later`
 /// precedes `earlier` (clocks can and do step backwards).
 pub(crate) fn saturating_elapsed(later: SystemTime, earlier: SystemTime) -> Duration {
@@ -472,19 +492,17 @@ pub struct CostMetrics<A: Float + Send + Sync> {
 }
 
 /// Historical metrics storage.
-///
-/// Pre-existing limitation, unchanged here: `time_series` is keyed by whole
-/// seconds since the epoch, so two samples inside the same second overwrite
-/// each other. That bounds what the retention work below can actually retain
-/// under sub-second streaming rates; changing the key is an API change for
-/// every consumer of `MetricsSnapshot::timestamp`.
 #[derive(Debug)]
 pub struct HistoricalMetrics<A: Float + Send + Sync> {
-    /// Time-series data storage
+    /// Time-series data storage, keyed by **microseconds** since the Unix epoch
+    /// (`MetricsSnapshot::timestamp_micros`).
+    ///
+    /// This key used to be whole seconds, so two samples taken inside the same
+    /// second silently overwrote each other and the retention/compression logic
+    /// could only ever retain one sample per second no matter how it was
+    /// configured. Microsecond resolution matches what the source
+    /// `SystemTime` actually carries.
     pub(crate) time_series: BTreeMap<u64, MetricsSnapshot<A>>,
-
-    /// Aggregated historical data
-    pub(crate) aggregated_data: HashMap<AggregationPeriod, Vec<AggregatedMetrics>>,
 
     /// Retention policy
     pub(crate) retention_policy: RetentionPolicy,
@@ -496,8 +514,17 @@ pub struct HistoricalMetrics<A: Float + Send + Sync> {
 /// Point-in-time metrics snapshot
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot<A: Float + Send + Sync> {
-    /// Timestamp
+    /// Whole seconds since the Unix epoch.
+    ///
+    /// Kept at second resolution because that is the granularity the
+    /// aggregation buckets (`Minute`/`Hour`/`Day`) are defined over. Use
+    /// [`Self::timestamp_micros`] when full resolution matters.
     pub timestamp: u64,
+
+    /// Microseconds since the Unix epoch: the full resolution of the sample
+    /// this snapshot was taken from, and the key it is stored under in
+    /// [`HistoricalMetrics::time_series`].
+    pub timestamp_micros: u64,
 
     /// Performance metrics at this time
     pub performance: PerformanceMetrics<A>,
@@ -987,9 +1014,11 @@ impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync> StreamingMetric
 
         // Store historical data (M4: saturating, never panicking).
         let timestamp = unix_timestamp(sample.timestamp);
+        let timestamp_micros = unix_timestamp_micros(sample.timestamp);
 
         let snapshot = MetricsSnapshot {
             timestamp,
+            timestamp_micros,
             performance: self.performance_metrics.clone(),
             resource: self.resource_metrics.clone(),
             quality: self.quality_metrics.clone(),
@@ -1341,7 +1370,6 @@ impl<A: Float + Send + Sync> HistoricalMetrics<A> {
     fn new() -> Self {
         Self {
             time_series: BTreeMap::new(),
-            aggregated_data: HashMap::new(),
             retention_policy: RetentionPolicy::default(),
             compression_config: CompressionConfig::default(),
         }

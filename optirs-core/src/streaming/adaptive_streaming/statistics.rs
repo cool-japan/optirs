@@ -21,18 +21,7 @@ use std::cmp::Ordering;
 /// on data that may contain `NaN`, instead of the `partial_cmp(..).expect(..)`
 /// pattern which panics the moment a `NaN` reaches the comparator.
 pub fn total_order<A: Float>(a: &A, b: &A) -> Ordering {
-    match a.partial_cmp(b) {
-        Some(ordering) => ordering,
-        None => match (a.is_nan(), b.is_nan()) {
-            (true, true) => Ordering::Equal,
-            (true, false) => Ordering::Greater,
-            (false, true) => Ordering::Less,
-            // `partial_cmp` only returns `None` when at least one side is
-            // `NaN`, so this arm is genuinely unreachable; treating it as
-            // `Equal` keeps the comparator total regardless.
-            (false, false) => Ordering::Equal,
-        },
-    }
+    crate::utils::total_order(a, b)
 }
 
 /// Sorts a slice ascending using the `NaN`-safe total order.

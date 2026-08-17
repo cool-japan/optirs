@@ -54,8 +54,7 @@ impl FederatedPrivacyConfig {
     pub fn validate(&self) -> Result<()> {
         self.validate_base()?;
         self.validate_federation()?;
-        self.secure_aggregation
-            .validate(self.total_clients, self.base_config.target_epsilon)?;
+        validate_secure_aggregation(&self.secure_aggregation, self.total_clients)?;
         self.amplification_config.validate()?;
         self.cross_device_config.validate()?;
         self.communication_privacy.validate()?;
@@ -159,53 +158,38 @@ impl FederatedPrivacyConfig {
     }
 }
 
-impl SecureAggregationConfig {
-    /// Validate the secure-aggregation settings.
-    pub fn validate(&self, total_clients: usize, target_epsilon: f64) -> Result<()> {
-        if self.min_clients < 2 {
-            return Err(OptimError::InvalidConfig(format!(
-                "secure_aggregation.min_clients must be at least 2, got {}; the \"aggregate\" of a \
-                 single client is that client's own update",
-                self.min_clients
-            )));
-        }
-        if self.min_clients > total_clients {
-            return Err(OptimError::InvalidConfig(format!(
-                "secure_aggregation.min_clients ({}) exceeds total_clients ({total_clients}), so \
-                 no round could ever aggregate",
-                self.min_clients
-            )));
-        }
-        if self.max_dropouts >= self.min_clients {
-            return Err(OptimError::InvalidConfig(format!(
-                "secure_aggregation.max_dropouts ({}) must be below min_clients ({}), otherwise \
-                 every client could drop out and the threshold would still be reported as met",
-                self.max_dropouts, self.min_clients
-            )));
-        }
-        if self.masking_dimension == 0 {
-            return Err(OptimError::InvalidConfig(
-                "secure_aggregation.masking_dimension must be positive".to_string(),
-            ));
-        }
-        if let Some(bits) = self.quantization_bits {
-            if !(1..=32).contains(&bits) {
-                return Err(OptimError::InvalidConfig(format!(
-                    "secure_aggregation.quantization_bits must lie in 1..=32, got {bits}"
-                )));
-            }
-        }
-        if self.aggregate_dp {
-            return Err(OptimError::UnsupportedOperation(format!(
-                "secure_aggregation.aggregate_dp was requested, but no code path adds noise to the \
-                 aggregate: the coordinator's aggregation is a plain mean. Apply differential \
-                 privacy on the client side (target_epsilon = {target_epsilon}) or use \
-                 privacy::secure_aggregation::SecureAggregator, which implements the masked \
-                 protocol"
-            )));
-        }
-        Ok(())
+/// Federation-level validation of the secure-aggregation settings.
+///
+/// The protocol-level rules (seed-sharing method, group width, quantisation
+/// scale, no-wraparound bound, `aggregate_dp`) live on the configuration type
+/// itself as
+/// [`SecureAggregationConfig::validate_protocol`](crate::privacy::federated::secure_aggregation::SecureAggregationConfig::validate_protocol),
+/// so there is exactly one implementation of each rule. Only the checks that
+/// need federation context -- the client counts -- are added here.
+pub(super) fn validate_secure_aggregation(
+    config: &SecureAggregationConfig,
+    total_clients: usize,
+) -> Result<()> {
+    // Protocol-level rules first: min_clients >= 2, masking_dimension > 0,
+    // quantisation width, scale/magnitude finiteness, aggregate_dp refusal and
+    // the no-wraparound capacity bound.
+    config.validate_protocol()?;
+
+    if config.min_clients > total_clients {
+        return Err(OptimError::InvalidConfig(format!(
+            "secure_aggregation.min_clients ({}) exceeds total_clients ({total_clients}), so \
+             no round could ever aggregate",
+            config.min_clients
+        )));
     }
+    if config.max_dropouts >= config.min_clients {
+        return Err(OptimError::InvalidConfig(format!(
+            "secure_aggregation.max_dropouts ({}) must be below min_clients ({}), otherwise \
+             every client could drop out and the threshold would still be reported as met",
+            config.max_dropouts, config.min_clients
+        )));
+    }
+    Ok(())
 }
 
 impl AmplificationConfig {
@@ -513,15 +497,32 @@ mod tests {
         let mut config = FederatedPrivacyConfig::default();
         config.secure_aggregation.masking_dimension = 0;
         assert!(config.validate().is_err());
-        let mut config = FederatedPrivacyConfig::default();
-        config.secure_aggregation.quantization_bits = Some(0);
-        assert!(config.validate().is_err());
-        let mut config = FederatedPrivacyConfig::default();
-        config.secure_aggregation.quantization_bits = Some(64);
-        assert!(config.validate().is_err());
+        // The group width is now bounded by the protocol's own
+        // [`MIN_MODULUS_BITS`, `MAX_MODULUS_BITS`] = [8, 62] rather than the
+        // copy's invented 1..=32, because that is the range in which the
+        // modular arithmetic actually stays inside `i64`.
+        for bits in [0u8, 1, 7, 63, 64] {
+            let mut config = FederatedPrivacyConfig::default();
+            config.secure_aggregation.quantization_bits = Some(bits);
+            assert!(
+                config.validate().is_err(),
+                "quantization_bits = {bits} must be refused"
+            );
+        }
+        for bits in [32u8, 48, 62] {
+            let mut config = FederatedPrivacyConfig::default();
+            config.secure_aggregation.quantization_bits = Some(bits);
+            assert!(
+                config.validate().is_ok(),
+                "quantization_bits = {bits} must be accepted"
+            );
+        }
+        // A width that is legal on its own but too narrow for the cohort's
+        // worst-case fixed-point sum is still refused: 2^16 / 2 = 32768 cannot
+        // hold 10 clients * scale 1e4 * magnitude 1.0 = 1e5.
         let mut config = FederatedPrivacyConfig::default();
         config.secure_aggregation.quantization_bits = Some(16);
-        assert!(config.validate().is_ok());
+        assert!(config.validate().is_err(), "wraparound must be refused");
     }
 
     #[test]
@@ -532,7 +533,11 @@ mod tests {
             Err(err) => err.to_string(),
             Ok(()) => panic!("an unimplemented guarantee must not be granted"),
         };
-        assert!(message.contains("plain mean"), "got: {message}");
+        assert!(message.contains("aggregate_dp"), "got: {message}");
+        assert!(
+            message.contains("no differential privacy noise"),
+            "got: {message}"
+        );
     }
 
     #[test]

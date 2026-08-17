@@ -18,6 +18,14 @@ fn workload(active_neurons: usize, spike_rate: f64, synaptic_activity: f64) -> W
     }
 }
 
+/// Config with a chosen primary strategy, built in one initializer.
+fn config_with(strategy: EnergyOptimizationStrategy) -> EnergyEfficientConfig<f64> {
+    EnergyEfficientConfig::<f64> {
+        primary_strategy: strategy,
+        ..EnergyEfficientConfig::<f64>::default()
+    }
+}
+
 /// F17: the DVFS power-reduction ratio must not be arithmetically
 /// forced to 1.0 by reading back state that was already overwritten.
 /// A low-utilization workload should trigger a real voltage/frequency
@@ -25,8 +33,7 @@ fn workload(active_neurons: usize, spike_rate: f64, synaptic_activity: f64) -> W
 /// resulting `power_reduction` in the result must be nonzero.
 #[test]
 fn dvfs_transition_yields_nonzero_power_reduction() {
-    let mut config = EnergyEfficientConfig::<f64>::default();
-    config.primary_strategy = EnergyOptimizationStrategy::DynamicVoltageScaling;
+    let config = config_with(EnergyOptimizationStrategy::DynamicVoltageScaling);
     let mut optimizer = EnergyEfficientOptimizer::new(config, 1000);
 
     let low_util = workload(10, 5.0, 2.0);
@@ -50,8 +57,7 @@ fn dvfs_transition_yields_nonzero_power_reduction() {
 #[test]
 fn clock_gating_scales_with_idle_fraction() {
     let make = |active: usize| {
-        let mut config = EnergyEfficientConfig::<f64>::default();
-        config.primary_strategy = EnergyOptimizationStrategy::ClockGating;
+        let config = config_with(EnergyOptimizationStrategy::ClockGating);
         let mut optimizer = EnergyEfficientOptimizer::new(config, 1000);
         optimizer
             .optimize_energy(&workload(active, 5.0, 2.0))
@@ -71,8 +77,7 @@ fn clock_gating_scales_with_idle_fraction() {
 /// positive number of domains when it is.
 #[test]
 fn power_gating_respects_idle_threshold() {
-    let mut config = EnergyEfficientConfig::<f64>::default();
-    config.primary_strategy = EnergyOptimizationStrategy::PowerGating;
+    let config = config_with(EnergyOptimizationStrategy::PowerGating);
 
     let mut busy_optimizer = EnergyEfficientOptimizer::new(config.clone(), 1000);
     let busy_result = busy_optimizer
@@ -91,8 +96,7 @@ fn power_gating_respects_idle_threshold() {
 /// workload becomes more idle.
 #[test]
 fn sleep_mode_escalates_with_idleness() {
-    let mut config = EnergyEfficientConfig::<f64>::default();
-    config.primary_strategy = EnergyOptimizationStrategy::SleepModeOptimization;
+    let config = config_with(EnergyOptimizationStrategy::SleepModeOptimization);
 
     let mut light = EnergyEfficientOptimizer::new(config.clone(), 1000);
     light
@@ -117,8 +121,7 @@ fn sleep_mode_escalates_with_idleness() {
 /// between two hardcoded steps.
 #[test]
 fn thermal_aware_reduction_is_proportional_to_temperature() {
-    let mut config = EnergyEfficientConfig::<f64>::default();
-    config.primary_strategy = EnergyOptimizationStrategy::ThermalAwareOptimization;
+    let config = config_with(EnergyOptimizationStrategy::ThermalAwareOptimization);
 
     let mut cool = EnergyEfficientOptimizer::new(config.clone(), 1000);
     cool.system_state.temperature = 60.0; // at the safe boundary
@@ -147,8 +150,7 @@ fn thermal_aware_reduction_is_proportional_to_temperature() {
 /// activity-derived estimate.
 #[test]
 fn sparse_strategy_uses_real_matrix_zero_fraction() {
-    let mut config = EnergyEfficientConfig::<f64>::default();
-    config.primary_strategy = EnergyOptimizationStrategy::SparseComputation;
+    let config = config_with(EnergyOptimizationStrategy::SparseComputation);
     let mut optimizer = EnergyEfficientOptimizer::new(config, 1000);
 
     // 80% zero entries: a much higher sparsity than the workload
@@ -167,11 +169,7 @@ fn sparse_strategy_uses_real_matrix_zero_fraction() {
         .expect("optimize_energy_with_matrix failed");
 
     let mut baseline_optimizer = EnergyEfficientOptimizer::new(
-        {
-            let mut c = EnergyEfficientConfig::<f64>::default();
-            c.primary_strategy = EnergyOptimizationStrategy::SparseComputation;
-            c
-        },
+        config_with(EnergyOptimizationStrategy::SparseComputation),
         1000,
     );
     let without_matrix = baseline_optimizer

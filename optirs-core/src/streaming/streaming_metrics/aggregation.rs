@@ -71,7 +71,9 @@ impl<A: Float + Send + Sync> HistoricalMetrics<A> {
     /// Store a snapshot, then enforce retention, storage and compression
     /// limits so the series stays bounded (M3).
     pub(crate) fn store_snapshot(&mut self, snapshot: MetricsSnapshot<A>) -> Result<()> {
-        self.time_series.insert(snapshot.timestamp, snapshot);
+        // Keyed at microsecond resolution: a second-resolution key collapsed
+        // every sample within a second onto one entry.
+        self.time_series.insert(snapshot.timestamp_micros, snapshot);
         self.prune();
         Ok(())
     }
@@ -92,7 +94,12 @@ impl<A: Float + Send + Sync> HistoricalMetrics<A> {
         }
 
         if let Some(&newest) = self.time_series.keys().next_back() {
-            let cutoff = newest.saturating_sub(self.retention_policy.raw_data_retention);
+            // `raw_data_retention` is expressed in seconds; the keys are micros.
+            let window_micros = self
+                .retention_policy
+                .raw_data_retention
+                .saturating_mul(MICROS_PER_SEC);
+            let cutoff = newest.saturating_sub(window_micros);
             let expired: Vec<u64> = self
                 .time_series
                 .range(..cutoff)
@@ -199,8 +206,9 @@ impl<A: Float + Send + Sync> HistoricalMetrics<A> {
         end_time: SystemTime,
     ) -> Result<Vec<MetricsSnapshot<A>>> {
         // M4: saturating conversion; a pre-epoch `SystemTime` used to panic.
-        let start_ts = unix_timestamp(start_time);
-        let end_ts = unix_timestamp(end_time);
+        // Micros, to match the time-series key resolution.
+        let start_ts = unix_timestamp_micros(start_time);
+        let end_ts = unix_timestamp_micros(end_time);
         if end_ts < start_ts {
             return Err(OptimError::InvalidParameter(
                 "metrics range end precedes its start".to_string(),

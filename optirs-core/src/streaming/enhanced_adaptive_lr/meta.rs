@@ -31,14 +31,11 @@ impl<A: Float + Default + Clone + Send + Sync> MetaOptimizer<A> {
         // E6: the exploration rate follows the configured sensitivity.
         let sensitivity = from_scalar(config.adaptation_sensitivity).clamp(0.0, 1.0);
         let exploration_strategy = ExplorationStrategy {
-            strategy_type: ExplorationStrategyType::UCB1,
             exploration_rate: to_scalar(sensitivity.max(0.01)),
-            exploitation_rate: to_scalar(1.0 - sensitivity.max(0.01)),
             ..ExplorationStrategy::default()
         };
 
         Ok(Self {
-            lr_predictor: LearningRatePredictorNetwork::default(),
             optimization_history: VecDeque::with_capacity(MAX_HISTORY),
             exploration_strategy,
             transfer_learner: TransferLearner::default(),
@@ -146,9 +143,6 @@ impl<A: Float + Default + Clone + Send + Sync> MetaOptimizer<A> {
         // Remember which arm produced this proposal so the reward can be
         // attributed when the caller reports the outcome.
         self.optimization_history.push_back(HyperparameterUpdate {
-            timestamp: Instant::now(),
-            old_lr: decision.new_lr,
-            new_lr: to_scalar(proposal),
             features: Array1::from_vec(vec![
                 decision.lr_multiplier,
                 decision.confidence,
@@ -156,7 +150,6 @@ impl<A: Float + Default + Clone + Send + Sync> MetaOptimizer<A> {
                 to_scalar(arm as f64),
             ]),
             reward: A::zero(), // filled in by `record_reward`
-            exploration_bonus: to_scalar(from_scalar(self.exploration_strategy.exploration_rate)),
         });
         while self.optimization_history.len() > MAX_HISTORY {
             self.optimization_history.pop_front();

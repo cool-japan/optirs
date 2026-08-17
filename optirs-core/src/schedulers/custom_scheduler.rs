@@ -51,7 +51,7 @@ where
     /// assert_eq!(scheduler.get_learning_rate(), 0.1);
     /// scheduler.step();
     /// ```
-    pub fn new(initial_lr: A, lrfunc: F) -> Self {
+    pub fn new(_initial_lr: A, lrfunc: F) -> Self {
         Self {
             lr_func: Rc::new(RefCell::new(lrfunc)),
             step_count: 0,
@@ -243,9 +243,10 @@ where
         final_lr: A,
     ) -> CustomScheduler<A, impl FnMut(usize) -> A> {
         let initial_lr = self.initial_lr;
-        let total_steps = A::from(total_steps).expect("unwrap failed");
+        let total_steps =
+            A::from(total_steps).expect("CustomScheduler: total_steps must fit in A (f32/f64)");
         CustomScheduler::new(initial_lr, move |step| {
-            let step = A::from(step).expect("unwrap failed");
+            let step = A::from(step).expect("CustomScheduler: step must fit in A (f32/f64)");
             if step >= total_steps {
                 final_lr
             } else {
@@ -267,10 +268,12 @@ where
         min_lr: A,
     ) -> CustomScheduler<A, impl FnMut(usize) -> A> {
         let initial_lr = self.initial_lr;
-        let total_steps = A::from(total_steps).expect("unwrap failed");
-        let pi = A::from(std::f64::consts::PI).expect("unwrap failed");
+        let total_steps =
+            A::from(total_steps).expect("CustomScheduler: total_steps must fit in A (f32/f64)");
+        let pi = A::from(std::f64::consts::PI)
+            .expect("CustomScheduler: pi constant must fit in A (f32/f64)");
         CustomScheduler::new(initial_lr, move |step| {
-            let step = A::from(step).expect("unwrap failed");
+            let step = A::from(step).expect("CustomScheduler: step must fit in A (f32/f64)");
             if step >= total_steps {
                 min_lr
             } else {
@@ -294,14 +297,15 @@ where
         mode: CyclicMode<A>,
     ) -> CustomScheduler<A, impl FnMut(usize) -> A> {
         let min_lr = self.initial_lr;
-        let step_size = A::from(step_size).expect("unwrap failed");
+        let step_size =
+            A::from(step_size).expect("CustomScheduler: step_size must fit in A (f32/f64)");
         let two = A::one() + A::one();
 
         // Move mode into the closure
         let mode_inner = mode;
 
         CustomScheduler::new(min_lr, move |step| {
-            let step = A::from(step).expect("unwrap failed");
+            let step = A::from(step).expect("CustomScheduler: step must fit in A (f32/f64)");
             let cycle = (step / (two * step_size)).floor();
             let x = (step / step_size - two * cycle).abs();
 

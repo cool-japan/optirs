@@ -38,7 +38,7 @@ use std::fmt::Debug;
 /// // Use the sequential optimizer
 /// let params = Array1::zeros(5);
 /// let gradients = Array1::ones(5);
-/// let updated_params = seq_optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let updated_params = seq_optimizer.step(&params, &gradients).expect("seq_optimizer.step succeeds");
 /// ```
 pub struct SequentialOptimizer<A, D>
 where
@@ -430,7 +430,7 @@ where
     A: Float + ScalarOperand + Debug,
     D: Dimension,
 {
-    fn step(&mut self, _params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
+    fn step(&mut self, _params: &Array<A, D>, _gradients: &Array<A, D>) -> Result<Array<A, D>> {
         // This implementation is a bit tricky since we have multiple parameter groups
         // We'll return an error message directing users to use update_all_parameters instead
         Err(OptimError::InvalidConfig(
@@ -505,7 +505,8 @@ where
         if let Some(optimizer) = self.optimizers.first() {
             optimizer.get_learning_rate()
         } else {
-            A::from(0.01).expect("unwrap failed") // Default learning rate
+            // Default learning rate: 0.01 always fits in A (f32/f64)
+            A::from(0.01).expect("SequentialOptimizer: default learning rate (0.01) must fit in A")
         }
     }
 
@@ -540,7 +541,7 @@ where
 /// // Use the chained optimizer
 /// let params = Array1::zeros(5);
 /// let gradients = Array1::ones(5);
-/// let updated_params = chained_optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let updated_params = chained_optimizer.step(&params, &gradients).expect("chained_optimizer.step succeeds");
 /// ```
 pub struct ChainedOptimizer<A, D>
 where
@@ -798,7 +799,7 @@ mod tests {
         // Apply the sequential optimizer
         let updated_params = seq_optimizer
             .step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_sequential_optimizer");
 
         // Verify the result
         // First SGD updates: params - 0.1 * gradients = [0, 0, 0] - 0.1 * [1, 2, 3] = [-0.1, -0.2, -0.3]
@@ -830,7 +831,7 @@ mod tests {
         // Update the parameters
         let updated_params = parallel_optimizer
             .update_all_parameters(&[gradients1, gradients2])
-            .expect("unwrap failed");
+            .expect("update_all_parameters succeeds in test_parallel_optimizer");
 
         // Verify the results
         // Group 1 (SGD): params - 0.1 * gradients = [0, 0] - 0.1 * [1, 2] = [-0.1, -0.2]
@@ -860,7 +861,7 @@ mod tests {
         // Apply the chained optimizer
         let updated_params = chained_optimizer
             .step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_chained_optimizer");
 
         // Verify the result
         // Inner (SGD): params - 0.1 * gradients = [0, 0, 0] - 0.1 * [1, 2, 3] = [-0.1, -0.2, -0.3]
@@ -890,14 +891,14 @@ mod tests {
         assert_abs_diff_eq!(
             seq_optimizer
                 .get_optimizer(0)
-                .expect("unwrap failed")
+                .expect("get_optimizer succeeds in test_sequential_learning_rate")
                 .get_learning_rate(),
             0.05
         );
         assert_abs_diff_eq!(
             seq_optimizer
                 .get_optimizer(1)
-                .expect("unwrap failed")
+                .expect("get_optimizer succeeds in test_sequential_learning_rate")
                 .get_learning_rate(),
             0.05
         );
@@ -927,7 +928,7 @@ mod tests {
 
         let updated_params = parallel_optimizer
             .step_list(&params_refs, &gradients_refs)
-            .expect("unwrap failed");
+            .expect("step_list succeeds in test_parallel_optimizer_step_list");
 
         // Verify the results
         // Group 1 (SGD): params - 0.1 * gradients = [0, 0] - 0.1 * [1, 2] = [-0.1, -0.2]

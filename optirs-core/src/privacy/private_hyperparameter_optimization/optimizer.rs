@@ -13,9 +13,8 @@ use super::functions::{NoisyOptimizer, ObjectiveFn};
 use super::results::{PrivateResultsAggregator, SelectionReport, PRIVATE_TOP_K};
 use super::types::{
     unix_timestamp, EvaluationStatus, HPOEvaluation, HyperparameterNoiseMechanism, NoiseParameters,
-    ObjectiveNoiseMechanism, OptimizationStats, ParameterConfiguration, ParameterSpace,
-    PrivateBayesianOptimization, PrivateHPOConfig, PrivateHPOResults, PrivateObjective,
-    PrivateRandomSearch, SearchAlgorithm, SearchStrategy,
+    ObjectiveNoiseMechanism, OptimizationStats, ParameterSpace, PrivateBayesianOptimization,
+    PrivateHPOConfig, PrivateHPOResults, PrivateObjective, PrivateRandomSearch, SearchAlgorithm,
 };
 
 /// The registry key of the private optimizer that implements `algorithm`.
@@ -48,8 +47,6 @@ pub struct PrivateHyperparameterOptimizer<T: Float + Debug + Send + Sync + 'stat
     parameterspace: ParameterSpace<T>,
     /// Objective function with privacy guarantees
     private_objective: PrivateObjective<T>,
-    /// Search strategy
-    search_strategy: SearchStrategy<T>,
     /// Results aggregator with privacy
     results_aggregator: PrivateResultsAggregator<T>,
 }
@@ -220,7 +217,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             noisy_optimizers,
             parameterspace,
             private_objective,
-            search_strategy: SearchStrategy::new(),
             results_aggregator,
         })
     }
@@ -263,11 +259,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
     /// The budget manager.
     pub fn budget_manager(&self) -> &HPOBudgetManager {
         &self.budget_manager
-    }
-
-    /// The search strategy.
-    pub fn search_strategy(&self) -> &SearchStrategy<T> {
-        &self.search_strategy
     }
 
     /// The private objective, including the noise mechanism and the scale it
@@ -505,6 +496,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::ParameterConfiguration;
     use super::*;
     use crate::privacy::private_hyperparameter_optimization::selection::OBJECTIVE_SENSITIVITY_KEY;
     use crate::privacy::private_hyperparameter_optimization::types::{

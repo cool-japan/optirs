@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// Mechanism-specific accountants (moments / RDP) that need the noise multiplier
 /// `σ` and the sampling rate `q` cannot be reconstructed from `(ε, δ)` alone; for
 /// tight per-step RDP accounting use [`crate::privacy::accountant`] instead.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FederatedCompositionMethod {
     /// Basic (linear) composition: `ε' = k·ε`. Always a valid upper bound.
     Basic,

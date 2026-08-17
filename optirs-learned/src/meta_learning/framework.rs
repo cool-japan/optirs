@@ -6,7 +6,6 @@
 //! its reported numbers from data it actually saw; see the individual doc
 //! comments for what each figure means.
 
-#[allow(unused_imports)]
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
@@ -1576,14 +1575,18 @@ mod tests {
     fn test_sampling_strategies_differ() {
         let pool = task_pool(6);
 
-        let mut easiest = MetaLearningConfig::default();
-        easiest.task_sampling_strategy = TaskSamplingStrategy::Curriculum;
+        let easiest = MetaLearningConfig {
+            task_sampling_strategy: TaskSamplingStrategy::Curriculum,
+            ..MetaLearningConfig::default()
+        };
         let mut curriculum =
             TaskDistributionManager::<f64>::new(&easiest).expect("curriculum manager");
         let first = curriculum.sample_task_batch(&pool, 2).expect("batch");
 
-        let mut hardest = MetaLearningConfig::default();
-        hardest.task_sampling_strategy = TaskSamplingStrategy::Adversarial;
+        let hardest = MetaLearningConfig {
+            task_sampling_strategy: TaskSamplingStrategy::Adversarial,
+            ..MetaLearningConfig::default()
+        };
         let mut adversarial =
             TaskDistributionManager::<f64>::new(&hardest).expect("adversarial manager");
         let hard = adversarial.sample_task_batch(&pool, 2).expect("batch");
@@ -1610,8 +1613,10 @@ mod tests {
             ),
         ];
         for (requested, expected) in cases {
-            let mut config = MetaLearningConfig::default();
-            config.algorithm = requested;
+            let config = MetaLearningConfig {
+                algorithm: requested,
+                ..MetaLearningConfig::default()
+            };
             let framework = MetaLearningFramework::<f64>::new(config).expect("framework");
             assert_eq!(
                 format!("{:?}", framework.algorithm()),
@@ -1621,8 +1626,10 @@ mod tests {
         }
 
         // Second-order MAML reports MAML.
-        let mut config = MetaLearningConfig::default();
-        config.second_order = true;
+        let config = MetaLearningConfig {
+            second_order: true,
+            ..MetaLearningConfig::default()
+        };
         let framework = MetaLearningFramework::<f64>::new(config).expect("framework");
         assert!(matches!(framework.algorithm(), MetaLearningAlgorithm::MAML));
 
@@ -1632,8 +1639,10 @@ mod tests {
             MetaLearningAlgorithm::IMaml,
             MetaLearningAlgorithm::L2L,
         ] {
-            let mut config = MetaLearningConfig::default();
-            config.algorithm = unimplemented;
+            let config = MetaLearningConfig {
+                algorithm: unimplemented,
+                ..MetaLearningConfig::default()
+            };
             assert!(
                 MetaLearningFramework::<f64>::new(config).is_err(),
                 "{unimplemented:?} must be refused, not silently replaced by MAML"

@@ -3,11 +3,7 @@
 pub mod adaptiveconfig_traits;
 pub mod architecture_adapter;
 pub mod architecturesearchspace_traits;
-pub mod compressionparams_traits;
-pub mod compressionqualitymetrics_traits;
-pub mod curvatureinfo_traits;
 pub mod functions;
-pub mod gradientcharacteristics_traits;
 pub mod landscape;
 pub mod landscapefeatures_traits;
 pub mod performance_predictor;
@@ -15,18 +11,13 @@ pub mod predictor;
 pub mod resourceconstraints_traits;
 pub mod types;
 
-// Re-export all types
-pub use adaptiveconfig_traits::*;
+// Re-export all types.
+//
+// The `*_traits` submodules and `functions` hold only trait `impl`s (and tests)
+// for types declared in `types`, so they export no names of their own; glob
+// re-exporting them was a no-op. The `impl`s stay active through `pub mod`.
 pub use architecture_adapter::*;
-pub use architecturesearchspace_traits::*;
-pub use compressionparams_traits::*;
-pub use compressionqualitymetrics_traits::*;
-pub use curvatureinfo_traits::*;
-pub use functions::*;
-pub use gradientcharacteristics_traits::*;
 pub use landscape::*;
-pub use landscapefeatures_traits::*;
 pub use performance_predictor::*;
 pub use predictor::*;
-pub use resourceconstraints_traits::*;
 pub use types::*;

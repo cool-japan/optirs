@@ -6,7 +6,7 @@ use crate::error::{OptimError, Result};
 #[allow(dead_code)]
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
@@ -85,16 +85,8 @@ pub struct ExperimentManager<T: Float + Debug + Send + Sync + 'static> {
     active_experiments: HashMap<String, ExperimentExecution<T>>,
     /// Experiment templates
     experiment_templates: HashMap<String, ExperimentTemplate<T>>,
-    /// Experiment scheduler
-    scheduler: ExperimentScheduler<T>,
-    /// Resource manager
-    resource_manager: ExperimentResourceManager<T>,
-    /// Result analyzer
-    result_analyzer: ExperimentResultAnalyzer<T>,
     /// Reproducibility manager
     reproducibility_manager: ReproducibilityManager<T>,
-    /// Experiment tracker
-    tracker: ExperimentTracker<T>,
     /// Manager configuration
     config: ExperimentManagerConfiguration<T>,
     /// Manager statistics
@@ -106,17 +98,51 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ExperimentManag
         Ok(Self {
             active_experiments: HashMap::new(),
             experiment_templates: HashMap::new(),
-            scheduler: ExperimentScheduler::new()?,
-            resource_manager: ExperimentResourceManager::new()?,
-            result_analyzer: ExperimentResultAnalyzer::new()?,
             reproducibility_manager: ReproducibilityManager::new()?,
-            tracker: ExperimentTracker::new()?,
             config,
             stats: ExperimentManagerStatistics::default(),
         })
     }
-    /// Start a new experiment
+    /// Register a reusable experiment template.
+    ///
+    /// `experiment_templates` was an empty map nothing could populate and
+    /// nothing read.
+    pub fn register_template(&mut self, name: String, template: ExperimentTemplate<T>) {
+        self.experiment_templates.insert(name, template);
+    }
+
+    /// The template registered under `name`, if any.
+    pub fn template(&self, name: &str) -> Option<&ExperimentTemplate<T>> {
+        self.experiment_templates.get(name)
+    }
+
+    /// The configuration this manager runs under.
+    pub fn config(&self) -> &ExperimentManagerConfiguration<T> {
+        &self.config
+    }
+
+    /// The reproducibility manager, which records the environment an experiment
+    /// ran in.
+    pub fn reproducibility_manager(&self) -> &ReproducibilityManager<T> {
+        &self.reproducibility_manager
+    }
+
+    /// Start a new experiment.
+    ///
+    /// # Errors
+    ///
+    /// [`OptimError::ResourceUnavailable`] when `max_concurrent_experiments` is
+    /// already reached. That limit was previously stored and never read, so the
+    /// manager accepted unbounded concurrent experiments regardless of what the
+    /// configuration said.
     pub fn start_experiment(&mut self, experiment: Experiment<T>) -> Result<String> {
+        if self.active_experiments.len() >= self.config.max_concurrent_experiments {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "{} experiments are already running and max_concurrent_experiments is {}",
+                self.active_experiments.len(),
+                self.config.max_concurrent_experiments
+            )));
+        }
         let execution_id = format!(
             "exp_{}",
             std::time::SystemTime::now()
@@ -716,17 +742,6 @@ pub struct EnvironmentTracking {
     /// Custom tracking
     pub custom_tracking: Vec<String>,
 }
-#[derive(Debug)]
-pub struct ExperimentScheduler<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ExperimentScheduler<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 /// Experiment design specification
 #[derive(Debug, Clone)]
 pub struct ExperimentDesign<T: Float + Debug + Send + Sync + 'static> {
@@ -1110,17 +1125,6 @@ pub struct ExploratoryAnalysis {
     /// Hypothesis generation
     pub hypothesis_generation: bool,
 }
-#[derive(Debug)]
-pub struct ExperimentResultAnalyzer<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ExperimentResultAnalyzer<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 /// Execution strategies
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionStrategy {
@@ -1223,17 +1227,6 @@ pub enum FactorConstraint<T: Float + Debug + Send + Sync + 'static> {
     },
     /// Custom constraint
     Custom { name: String, expression: String },
-}
-#[derive(Debug)]
-pub struct ExperimentTracker<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ExperimentTracker<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
 }
 /// Experiment status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1467,17 +1460,6 @@ pub struct StatisticalResults<T: Float + Debug + Send + Sync + 'static> {
     pub confidence_intervals: HashMap<String, (T, T)>,
     /// Test statistics
     pub test_statistics: HashMap<String, T>,
-}
-#[derive(Debug)]
-pub struct ExperimentResourceManager<T: Float + Debug + Send + Sync + 'static> {
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ExperimentResourceManager<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-        })
-    }
 }
 /// Code versioning settings
 #[derive(Debug, Clone)]

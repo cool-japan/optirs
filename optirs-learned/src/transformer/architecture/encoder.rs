@@ -6,7 +6,7 @@ use std::fmt::Debug;
 
 use scirs2_core::ndarray::{s, Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{CoreRandom as Random, Rng as SCRRng};
+use scirs2_core::random::CoreRandom as Random;
 
 use super::super::TransformerOptimizerConfig;
 use super::attention::MultiHeadAttention;
@@ -358,7 +358,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> FeedForwardNetw
             )));
         }
 
-        Ok(input.dot(weights) + &*bias)
+        Ok(input.dot(weights) + bias)
     }
 
     /// Numerically stable GELU (tanh approximation).

@@ -41,7 +41,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = LAMB::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct LAMB<A: Float + ScalarOperand + Debug> {
@@ -74,9 +74,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMB<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.999).expect("unwrap failed"),
-            epsilon: A::from(1e-6).expect("unwrap failed"),
+            beta1: A::from(0.9).expect("LAMB: default beta1 (0.9) must fit in A"),
+            beta2: A::from(0.999).expect("LAMB: default beta2 (0.999) must fit in A"),
+            epsilon: A::from(1e-6).expect("LAMB: default epsilon (1e-6) must fit in A"),
             weight_decay: A::zero(),
             bias_correction: true,
             m: None,
@@ -376,7 +376,9 @@ mod tests {
         for _ in 0..50 {
             // Gradient of x^2 + y^2 is (2x, 2y)
             let gradients = Array1::from_vec(vec![2.0 * params[0], 2.0 * params[1]]);
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_lamb_convergence");
         }
 
         // Should converge towards (0, 0)
@@ -401,7 +403,9 @@ mod tests {
         // Run optimization with small gradients
         for _ in 0..20 {
             let gradients = Array1::from_vec(vec![0.1, 0.1]);
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_lamb_with_weight_decay");
         }
 
         // With weight decay, parameters should decrease
@@ -416,7 +420,9 @@ mod tests {
         // Perform a step to initialize state
         let params = Array1::from_vec(vec![1.0]);
         let gradients = Array1::from_vec(vec![0.5]);
-        let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let _ = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lamb_reset");
 
         // State should exist
         assert!(optimizer.m.is_some());
@@ -439,7 +445,9 @@ mod tests {
         let params = Array1::from_vec(vec![2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.4, 0.6]);
 
-        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lamb_trust_ratio");
 
         // Parameters should be updated
         assert_ne!(new_params[0], params[0]);

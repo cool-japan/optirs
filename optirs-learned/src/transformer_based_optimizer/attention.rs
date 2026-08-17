@@ -1,11 +1,10 @@
 use std::fmt::Debug;
 // Multi-head attention mechanisms for transformer architecture
 
+use crate::common::cast_scalar;
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array2, Array3};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
-use std::f64::consts::PI;
 
 /// Multi-head attention mechanism
 pub struct MultiHeadAttention<
@@ -53,7 +52,12 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
             ));
         }
 
-        let scale_factor = T::from(1.0 / (head_dimension as f64).sqrt()).expect("unwrap failed");
+        if head_dimension == 0 {
+            return Err(crate::error::OptimError::InvalidConfig(
+                "head_dimension must be greater than 0".to_string(),
+            ));
+        }
+        let scale_factor: T = cast_scalar(1.0 / (head_dimension as f64).sqrt())?;
 
         // Xavier/Glorot uniform limit for the four square `model_dimension ×
         // model_dimension` projections.
@@ -129,6 +133,33 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
         // Input shape is (batch_size * seq_length, model_dim)
         let total_seq_len = query.shape()[0];
         let model_dim = query.shape()[1];
+
+        // The four projections are `model_dimension × model_dimension`, so a
+        // caller whose feature width differs used to hit an ndarray shape panic
+        // inside `dot` rather than getting a typed error back. Q/K/V must also
+        // agree with each other, since they are reshaped with the same
+        // `seq_length`.
+        if model_dim != self.model_dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "MultiHeadAttention was built for model dimension {} but the query \
+                 has {model_dim} features",
+                self.model_dimension
+            )));
+        }
+        if key.shape() != query.shape() || value.shape() != query.shape() {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "MultiHeadAttention needs query, key and value of equal shape: \
+                 query {:?}, key {:?}, value {:?}",
+                query.shape(),
+                key.shape(),
+                value.shape()
+            )));
+        }
+        if total_seq_len == 0 {
+            return Err(crate::error::OptimError::InvalidConfig(
+                "MultiHeadAttention cannot attend over an empty sequence".to_string(),
+            ));
+        }
 
         // NOTE: For v1.0.0, batch_size=1 is intentional (single optimization task per forward pass)
         //
@@ -345,16 +376,21 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
             let mut exp_scores = vec![T::zero(); seq_length];
 
             for j in 0..seq_length {
-                let exp_val = (scores[[i, j]] - max_score)
-                    .to_f64()
-                    .expect("unwrap failed")
-                    .exp();
-                exp_scores[j] =
-                    scirs2_core::numeric::NumCast::from(exp_val).unwrap_or_else(|| T::zero());
+                // `Float::exp` stays in `T`; the old f64 round-trip needed an
+                // `expect` that panicked for any element type without a
+                // lossless `to_f64`.
+                exp_scores[j] = (scores[[i, j]] - max_score).exp();
                 exp_sum = exp_sum + exp_scores[j];
             }
 
-            // Normalize
+            // Normalize. `exp(0) == 1` for the max entry, so `exp_sum` is at
+            // least 1 for any finite row; a non-positive sum means the row was
+            // all -inf or NaN, which cannot be normalized.
+            if exp_sum <= T::zero() || !exp_sum.is_finite() {
+                return Err(crate::error::OptimError::ComputationError(format!(
+                    "attention row {i} has no finite scores to normalize"
+                )));
+            }
             for j in 0..seq_length {
                 probs[[i, j]] = exp_scores[j] / exp_sum;
             }
@@ -532,7 +568,12 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
         }
     }
 
-    /// Extract attention patterns for analysis
+    /// Extract attention patterns for analysis.
+    ///
+    /// Per-head entropy is the mean of `-Σ p log p` over **every** batch element,
+    /// not just batch 0: reading only the first slice threw away all but one
+    /// task's attention distribution while still reporting the result as the
+    /// head's entropy.
     pub fn extract_attention_patterns(
         &self,
         attention_weights: &Array3<T>,
@@ -543,33 +584,46 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
         let seq_length = (seq_length_squared as f64).sqrt() as usize;
 
         let mut head_entropies = vec![T::zero(); num_heads];
+
+        // An empty batch or head axis leaves every mean undefined; report zeros
+        // rather than dividing by zero.
+        if batch_size == 0 || num_heads == 0 {
+            return AttentionPatterns {
+                head_entropies,
+                attention_diversity: T::zero(),
+                sequence_length: seq_length,
+                num_heads,
+            };
+        }
+
+        let batch_count: T =
+            scirs2_core::numeric::NumCast::from(batch_size).unwrap_or_else(|| T::one());
+        let head_count: T =
+            scirs2_core::numeric::NumCast::from(num_heads).unwrap_or_else(|| T::one());
+        let span = (seq_length * seq_length).min(seq_length_squared);
         let mut attention_diversity = T::zero();
 
         for head in 0..num_heads {
             let mut entropy = T::zero();
-            for i in 0..seq_length {
-                for j in 0..seq_length {
-                    let idx = i * seq_length + j;
-                    if idx < seq_length_squared {
-                        let prob = attention_weights[[0, head, idx]]; // Use first batch
-                        if prob > T::zero() {
-                            let log_prob = prob.to_f64().expect("unwrap failed").ln();
-                            entropy = entropy
-                                - prob
-                                    * scirs2_core::numeric::NumCast::from(log_prob)
-                                        .unwrap_or_else(|| T::zero());
-                        }
+            for batch in 0..batch_size {
+                for idx in 0..span {
+                    let prob = attention_weights[[batch, head, idx]];
+                    if prob > T::zero() {
+                        // `Float::ln` keeps the whole term in `T`; the previous
+                        // f64 round-trip needed an `expect` that could panic for
+                        // an element type without a lossless `to_f64`.
+                        entropy = entropy - prob * prob.ln();
                     }
                 }
             }
-            head_entropies[head] = entropy;
-            attention_diversity = attention_diversity + entropy;
+            let mean_entropy = entropy / batch_count;
+            head_entropies[head] = mean_entropy;
+            attention_diversity = attention_diversity + mean_entropy;
         }
 
         AttentionPatterns {
             head_entropies,
-            attention_diversity: attention_diversity
-                / scirs2_core::numeric::NumCast::from(num_heads).unwrap_or_else(|| T::zero()),
+            attention_diversity: attention_diversity / head_count,
             sequence_length: seq_length,
             num_heads,
         }
@@ -596,7 +650,7 @@ mod tests {
         let attention = MultiHeadAttention::<f32>::new(8, 512, 64);
         assert!(attention.is_ok());
 
-        let mha = attention.expect("unwrap failed");
+        let mha = attention.expect("MultiHeadAttention::new should succeed");
         assert_eq!(mha.num_heads, 8);
         assert_eq!(mha.model_dimension, 512);
         assert_eq!(mha.head_dimension, 64);
@@ -604,7 +658,8 @@ mod tests {
 
     #[test]
     fn test_attention_forward_pass() {
-        let mut attention = MultiHeadAttention::<f32>::new(4, 128, 32).expect("unwrap failed");
+        let mut attention = MultiHeadAttention::<f32>::new(4, 128, 32)
+            .expect("MultiHeadAttention::new should succeed");
 
         let seq_length = 10;
         let batch_size = 2;
@@ -613,25 +668,27 @@ mod tests {
         let result = attention.forward(&input, &input, &input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[batch_size * seq_length, 128]);
     }
 
     #[test]
     fn test_self_attention() {
-        let mut self_attention = SelfAttention::<f32>::new(4, 128, 32).expect("unwrap failed");
+        let mut self_attention =
+            SelfAttention::<f32>::new(4, 128, 32).expect("SelfAttention::new should succeed");
 
         let input = Array2::<f32>::zeros((20, 128)); // batch_size * seq_length = 20
         let result = self_attention.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), input.shape());
     }
 
     #[test]
     fn test_parameter_count() {
-        let attention = MultiHeadAttention::<f32>::new(8, 512, 64).expect("unwrap failed");
+        let attention = MultiHeadAttention::<f32>::new(8, 512, 64)
+            .expect("MultiHeadAttention::new should succeed");
         let param_count = attention.parameter_count();
 
         // 4 weight matrices of size 512x512

@@ -5,13 +5,12 @@
 // dynamic load balancing.
 
 #[allow(dead_code)]
-use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 
 /// Parse a `usize` value out of a task's metadata map, if present and valid.
 fn parse_metadata_usize(metadata: &HashMap<String, String>, key: &str) -> Option<usize> {
@@ -111,9 +110,6 @@ pub struct TaskScheduler<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource requirements estimator
     resource_estimator: ResourceRequirementEstimator<T>,
-
-    /// Load balancer
-    load_balancer: TaskLoadBalancer<T>,
 
     /// Scheduler configuration
     config: SchedulerConfig<T>,
@@ -413,12 +409,6 @@ pub struct ResourceUtilization<T: Float + Debug + Send + Sync + 'static> {
 pub struct PriorityCalculator<T: Float + Debug + Send + Sync + 'static> {
     /// Priority weights
     weights: PriorityWeights<T>,
-
-    /// Historical priority performance
-    priority_performance: HashMap<String, T>,
-
-    /// Dynamic adjustment algorithm
-    adjustment_algorithm: PriorityAdjustmentAlgorithm,
 }
 
 /// Priority calculation weights
@@ -464,12 +454,6 @@ pub enum PriorityAdjustmentAlgorithm {
 pub struct ResourceRequirementEstimator<T: Float + Debug + Send + Sync + 'static> {
     /// Historical resource usage data
     resource_history: HashMap<TaskType, VecDeque<ResourceUsageRecord<T>>>,
-
-    /// Estimation models
-    estimation_models: HashMap<TaskType, EstimationModel<T>>,
-
-    /// Estimation accuracy tracker
-    accuracy_tracker: EstimationAccuracyTracker<T>,
 }
 
 /// Resource usage record for learning
@@ -491,22 +475,6 @@ pub struct ResourceUsageRecord<T: Float + Debug + Send + Sync + 'static> {
     pub timestamp: SystemTime,
 }
 
-/// Estimation model for resource requirements
-#[derive(Debug)]
-pub struct EstimationModel<T: Float + Debug + Send + Sync + 'static> {
-    /// Model type
-    model_type: EstimationModelType,
-
-    /// Model parameters
-    parameters: HashMap<String, Array1<T>>,
-
-    /// Model accuracy
-    accuracy: T,
-
-    /// Training data size
-    training_size: usize,
-}
-
 /// Types of estimation models
 #[derive(Debug, Clone, Copy)]
 pub enum EstimationModelType {
@@ -524,38 +492,6 @@ pub enum EstimationModelType {
 
     /// Historical average
     HistoricalAverage,
-}
-
-/// Estimation accuracy tracker
-#[derive(Debug)]
-pub struct EstimationAccuracyTracker<T: Float + Debug + Send + Sync + 'static> {
-    /// Accuracy per task type
-    task_accuracies: HashMap<TaskType, T>,
-
-    /// Overall accuracy
-    overall_accuracy: T,
-
-    /// Accuracy trend
-    accuracy_trend: VecDeque<T>,
-
-    /// Accuracy improvement rate
-    improvement_rate: T,
-}
-
-/// Task load balancer
-#[derive(Debug)]
-pub struct TaskLoadBalancer<T: Float + Debug + Send + Sync + 'static> {
-    /// Load balancing strategy
-    strategy: LoadBalancingStrategy,
-
-    /// Current load per resource
-    resource_loads: HashMap<String, T>,
-
-    /// Load history
-    load_history: VecDeque<LoadSnapshot<T>>,
-
-    /// Load prediction model
-    prediction_model: LoadPredictionModel<T>,
 }
 
 /// Load balancing strategies
@@ -600,22 +536,6 @@ pub struct LoadSnapshot<T: Float + Debug + Send + Sync + 'static> {
 
     /// Overall system load
     pub overall_load: T,
-}
-
-/// Load prediction model
-#[derive(Debug)]
-pub struct LoadPredictionModel<T: Float + Debug + Send + Sync + 'static> {
-    /// Prediction horizon
-    horizon: Duration,
-
-    /// Model parameters
-    parameters: HashMap<String, Array1<T>>,
-
-    /// Prediction accuracy
-    accuracy: T,
-
-    /// Update frequency
-    update_frequency: Duration,
 }
 
 /// Scheduler configuration
@@ -684,7 +604,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskScheduler<T
             strategy: SchedulingStrategy::PriorityBased,
             priority_calculator: PriorityCalculator::new()?,
             resource_estimator: ResourceRequirementEstimator::new()?,
-            load_balancer: TaskLoadBalancer::new()?,
             config,
             stats: SchedulerStatistics::default(),
         })
@@ -867,7 +786,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskScheduler<T
             return None;
         }
 
-        let now = SystemTime::now();
         let most_urgent_idx = self
             .pending_tasks
             .iter()
@@ -890,8 +808,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityCalcula
     pub fn new() -> Result<Self> {
         Ok(Self {
             weights: PriorityWeights::default(),
-            priority_performance: HashMap::new(),
-            adjustment_algorithm: PriorityAdjustmentAlgorithm::LearningBased,
         })
     }
 
@@ -1013,8 +929,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceRequire
     pub fn new() -> Result<Self> {
         Ok(Self {
             resource_history: HashMap::new(),
-            estimation_models: HashMap::new(),
-            accuracy_tracker: EstimationAccuracyTracker::default(),
         })
     }
 
@@ -1085,17 +999,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceRequire
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskLoadBalancer<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            strategy: LoadBalancingStrategy::LeastLoaded,
-            resource_loads: HashMap::new(),
-            load_history: VecDeque::new(),
-            prediction_model: LoadPredictionModel::default(),
-        })
-    }
-}
-
 // Default implementations
 
 impl<T: Float + Debug + Default + Send + Sync> Default for PriorityWeights<T> {
@@ -1131,28 +1034,6 @@ impl<T: Float + Debug + Default + Send + Sync> Default for ResourceUtilization<T
             gpu_usage: T::zero(),
             network_usage: T::zero(),
             efficiency_score: T::zero(),
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + Send + Sync> Default for EstimationAccuracyTracker<T> {
-    fn default() -> Self {
-        Self {
-            task_accuracies: HashMap::new(),
-            overall_accuracy: T::from(0.5).unwrap_or_else(|| T::zero()),
-            accuracy_trend: VecDeque::new(),
-            improvement_rate: T::zero(),
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + Send + Sync> Default for LoadPredictionModel<T> {
-    fn default() -> Self {
-        Self {
-            horizon: Duration::from_secs(300), // 5 minutes
-            parameters: HashMap::new(),
-            accuracy: T::from(0.5).unwrap_or_else(|| T::zero()),
-            update_frequency: Duration::from_secs(60),
         }
     }
 }

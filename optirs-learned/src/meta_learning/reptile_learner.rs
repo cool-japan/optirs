@@ -346,6 +346,15 @@ impl<
             .unwrap_or_else(T::zero);
         let uncertainty_quality = mean_of(&confidence_scores).unwrap_or_else(T::zero);
 
+        // Full-curve AUC-ROC ranked on the retained predictions; `None` unless
+        // the targets are genuinely binary with both classes represented.
+        let auc = match task.task_type {
+            TaskType::Classification => {
+                linear_model::roc_auc(&predictions, &task.query_set.targets)
+            }
+            _ => None,
+        };
+
         Ok(QueryEvaluationResult {
             query_loss,
             accuracy,
@@ -354,8 +363,7 @@ impl<
             metrics: QueryEvaluationMetrics {
                 mse: Some(query_loss),
                 classification_accuracy,
-                // AUC needs ranked binary labels, which scalar targets do not carry.
-                auc: None,
+                auc,
                 uncertainty_quality,
             },
         })

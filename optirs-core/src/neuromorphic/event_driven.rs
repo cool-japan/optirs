@@ -6,16 +6,14 @@
 
 use super::{
     to_generic_or, EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics,
-    PlasticityModel, STDPConfig, Spike, SpikeTrain,
+    STDPConfig,
 };
 use crate::error::{OptimError, Result};
-use crate::optimizers::Optimizer;
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 // --- Pure-Rust varint helpers for event (de)serialization (F57) --------
@@ -420,7 +418,6 @@ trait EventHandler<T: Float + Debug + Send + Sync + 'static>: Send + Sync {
         event: &NeuromorphicEvent<T>,
         state: &mut SystemState<T>,
     ) -> Result<()>;
-    fn can_handle(&self, eventtype: EventType) -> bool;
 }
 
 /// Spike event handler
@@ -457,10 +454,6 @@ impl<T: Float + Debug + Send + Sync + 'static> EventHandler<T> for SpikeEventHan
         }
 
         Ok(())
-    }
-
-    fn can_handle(&self, event_type: EventType) -> bool {
-        event_type == EventType::Spike
     }
 }
 
@@ -551,10 +544,6 @@ impl<T: Float + Debug + Send + Sync + 'static> EventHandler<T> for WeightUpdateE
 
         Ok(())
     }
-
-    fn can_handle(&self, event_type: EventType) -> bool {
-        event_type == EventType::WeightUpdate
-    }
 }
 
 /// Temporal correlation tracker
@@ -605,7 +594,8 @@ impl<T: Float + Debug + Send + Sync + 'static + std::ops::AddAssign> TemporalCor
         }
     }
 
-    fn get_correlation(&self, event1: EventType, event2: EventType) -> T {
+    /// Measured co-occurrence strength between two event types.
+    pub(crate) fn get_correlation(&self, event1: EventType, event2: EventType) -> T {
         self.correlation_patterns
             .get(&(event1, event2))
             .copied()
@@ -1032,7 +1022,6 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressedEventChain<T> {
 
 /// Adaptive event handler
 struct AdaptiveEventHandler<T: Float + Debug + Send + Sync + 'static> {
-    adaptation_rate: T,
     performance_history: VecDeque<T>,
     current_strategy: AdaptationStrategy,
 }
@@ -1047,7 +1036,6 @@ enum AdaptationStrategy {
 impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveEventHandler<T> {
     fn new() -> Self {
         Self {
-            adaptation_rate: T::from(0.1).unwrap_or_else(|| T::zero()),
             performance_history: VecDeque::new(),
             current_strategy: AdaptationStrategy::Balanced,
         }
@@ -1147,6 +1135,22 @@ impl<T: Float + Debug + Send + Sync + 'static> DistributedEventCoordinator<T> {
 
     fn update_worker_load(&mut self, worker_id: usize, load: T) {
         self.worker_loads.insert(worker_id, load);
+    }
+
+    /// Load currently recorded for `worker_id`.
+    fn worker_load(&self, worker_id: usize) -> Option<T> {
+        self.worker_loads.get(&worker_id).copied()
+    }
+
+    /// All recorded worker loads, ascending by worker id.
+    fn loads(&self) -> Vec<(usize, T)> {
+        let mut loads: Vec<(usize, T)> = self
+            .worker_loads
+            .iter()
+            .map(|(&worker, &load)| (worker, load))
+            .collect();
+        loads.sort_by_key(|(worker, _)| *worker);
+        loads
     }
 }
 
@@ -1329,6 +1333,7 @@ impl<
                 }
                 processed_count += batch_processed;
             } else if let Some(event) = self.pop_next_event()? {
+                self.assign_event_to_worker(&event);
                 self.process_single_event(&event)?;
                 processed_count += 1;
             } else {
@@ -1367,6 +1372,7 @@ impl<
 
         // Process batch
         for event in &batch_events {
+            self.assign_event_to_worker(event);
             self.process_single_event(event)?;
         }
 
@@ -1562,6 +1568,38 @@ impl<
         } else {
             self.config.batch_size.max(1)
         }
+    }
+
+    /// Route an event to a worker under the configured load-balancing policy
+    /// and record the resulting load, when distributed processing is enabled.
+    ///
+    /// The coordinator used to be constructed from `distributed_processing` and
+    /// then never consulted, so `LoadBalancingStrategy` selected nothing and no
+    /// worker load was ever tracked.
+    fn assign_event_to_worker(&mut self, event: &NeuromorphicEvent<T>) {
+        let Some(coordinator) = self.distributed_coordinator.as_mut() else {
+            return;
+        };
+        let worker = coordinator.assign_worker(event);
+        let current = coordinator.worker_load(worker).unwrap_or_else(T::zero);
+        coordinator.update_worker_load(worker, current + T::one());
+    }
+
+    /// Measured temporal correlation between two event types, as accumulated by
+    /// the correlation tracker over the configured correlation window.
+    ///
+    /// The tracker genuinely computes and stores these strengths; before this
+    /// accessor existed there was no way to read any of them back.
+    pub fn event_correlation(&self, first: EventType, second: EventType) -> T {
+        self.correlation_tracker.get_correlation(first, second)
+    }
+
+    /// Per-worker event counts recorded by the distributed coordinator, or
+    /// `None` when distributed processing is disabled.
+    pub fn worker_loads(&self) -> Option<Vec<(usize, T)>> {
+        self.distributed_coordinator
+            .as_ref()
+            .map(|coordinator| coordinator.loads())
     }
 
     /// Enable distributed processing

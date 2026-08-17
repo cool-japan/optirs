@@ -4,6 +4,7 @@
 // sample importance weighting, and adversarial training support.
 
 use crate::error::{OptimError, Result};
+use crate::utils::{scalar_or, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
@@ -220,7 +221,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
                         .performance_history
                         .iter()
                         .fold(A::zero(), |acc, &perf| acc + perf)
-                        / A::from(self.performance_history.len()).expect("unwrap failed");
+                        / try_scalar::<A, _>(self.performance_history.len())?;
 
                     let avg_perf_f64 = avg_performance.to_f64().unwrap_or(0.0);
 
@@ -347,8 +348,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
         min_weight: f64,
     ) -> Result<()> {
         // Compute softmax weights based on losses
-        let temp = A::from(temperature).expect("unwrap failed");
-        let min_w = A::from(min_weight).expect("unwrap failed");
+        let temp = try_scalar::<A, _>(temperature)?;
+        let min_w = try_scalar::<A, _>(min_weight)?;
 
         // Find max loss for numerical stability
         let max_loss = losses.iter().fold(A::neg_infinity(), |a, &b| A::max(a, b));
@@ -381,8 +382,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
         temperature: f64,
         min_weight: f64,
     ) -> Result<()> {
-        let temp = A::from(temperature).expect("unwrap failed");
-        let min_w = A::from(min_weight).expect("unwrap failed");
+        let temp = try_scalar::<A, _>(temperature)?;
+        let min_w = try_scalar::<A, _>(min_weight)?;
 
         // Find max gradient norm for numerical stability
         let max_norm = gradient_norms
@@ -416,8 +417,8 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
         temperature: f64,
         min_weight: f64,
     ) -> Result<()> {
-        let temp = A::from(temperature).expect("unwrap failed");
-        let min_w = A::from(min_weight).expect("unwrap failed");
+        let temp = try_scalar::<A, _>(temperature)?;
+        let min_w = try_scalar::<A, _>(min_weight)?;
 
         // Find max uncertainty for numerical stability
         let max_uncertainty = uncertainties
@@ -445,11 +446,11 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
 
     /// Compute age-based weights
     fn compute_age_based_weights(&mut self, sampleids: &[usize], decayfactor: f64) -> Result<()> {
-        let decay = A::from(decayfactor).expect("unwrap failed");
+        let decay = try_scalar::<A, _>(decayfactor)?;
 
         for &sampleid in sampleids {
             // Simple age-based weighting (older samples get exponentially higher weight)
-            let age = A::from(self.step_count.saturating_sub(sampleid)).expect("unwrap failed");
+            let age = try_scalar::<A, _>(self.step_count.saturating_sub(sampleid))?;
             let weight = A::exp(decay * age);
             self.sample_weights.insert(sampleid, weight);
         }
@@ -548,8 +549,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
     ) -> Result<Array<A, D>> {
         // BIM is similar to PGD but with smaller steps
         let mut modified_config = config.clone();
-        modified_config.step_size =
-            config.epsilon / A::from(config.num_steps).expect("unwrap failed");
+        modified_config.step_size = config.epsilon / try_scalar::<A, _>(config.num_steps)?;
 
         self.pgd_attack(inputs, gradients, &modified_config)
     }
@@ -563,7 +563,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> CurriculumMan
     ) -> Result<Array<A, D>> {
         let mut adversarial = inputs.clone();
         let mut momentum = Array::zeros(inputs.raw_dim());
-        let decayfactor = A::from(1.0).expect("unwrap failed"); // Momentum decay factor
+        let decayfactor = try_scalar::<A, _>(1.0)?; // Momentum decay factor
 
         for _ in 0..config.num_steps {
             // Update momentum
@@ -750,7 +750,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> AdaptiveCurri
             A::zero()
         } else {
             let sum = perf_history.iter().fold(A::zero(), |acc, &perf| acc + perf);
-            sum / A::from(perf_history.len()).expect("unwrap failed")
+            sum / scalar_or(perf_history.len(), A::one())
         }
     }
 

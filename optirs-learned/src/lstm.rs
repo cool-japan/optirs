@@ -4,14 +4,14 @@
 // update optimization parameters. The LSTM learns optimization strategies through
 // meta-learning, enabling automatic discovery of effective optimization patterns.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
+use scirs2_core::random::{rngs::StdRng, seeded_rng, thread_rng, CoreRandom};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use super::{LearnedOptimizerConfig, MetaOptimizationStrategy};
+use super::LearnedOptimizerConfig;
+use crate::common::cast_scalar;
 use crate::error::{OptimError, Result};
 
 pub mod bptt;
@@ -52,9 +52,6 @@ pub struct LSTMOptimizer<T: Float + Debug + Send + Sync + 'static> {
 
     /// Current optimization step
     step_count: usize,
-
-    /// Random number generator for noise and initialization
-    rng: scirs2_core::random::CoreRandom,
 }
 
 /// LSTM network architecture for optimization
@@ -137,13 +134,29 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjectio
         output_size: usize,
         output_transform: OutputTransform,
     ) -> Result<Self> {
+        Self::new_with_rng(
+            input_size,
+            output_size,
+            output_transform,
+            &mut seeded_rng(thread_rng().random::<u64>()),
+        )
+    }
+
+    /// [`Self::new`] with the caller's generator, for reproducible construction
+    /// (see [`LSTMNetwork::new_seeded`]).
+    pub(crate) fn new_with_rng(
+        input_size: usize,
+        output_size: usize,
+        output_transform: OutputTransform,
+        rng: &mut CoreRandom<StdRng>,
+    ) -> Result<Self> {
         // Xavier/Glorot *uniform* limit is sqrt(6 / (fan_in + fan_out)); the
         // sqrt(2 / ...) that used to be here is the limit for a Xavier *normal*
         // draw, and `xavier_init` samples uniformly. Uniform[-b, b] has variance
         // b^2/3, so the old constant gave exactly one third of the intended
         // variance in every LSTM weight matrix in this file (finding F64).
         let limit = LSTMLayer::<T>::xavier_limit(input_size, output_size);
-        let weights = LSTMLayer::<T>::xavier_init(output_size, input_size, limit);
+        let weights = LSTMLayer::<T>::xavier_init(rng, output_size, input_size, limit);
         let bias = Array1::zeros(output_size);
 
         Ok(Self {
@@ -174,7 +187,10 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjectio
     /// meaningful way to reuse weights trained for a different output size.
     pub fn reset(&mut self, input_size: usize, output_size: usize) {
         let limit = LSTMLayer::<T>::xavier_limit(input_size, output_size);
-        self.weights = LSTMLayer::<T>::xavier_init(output_size, input_size, limit);
+        // A runtime reshape is inherently a fresh draw; entropy seeding is the
+        // honest choice here (reproducible runs should avoid triggering it).
+        let mut rng = seeded_rng(thread_rng().random::<u64>());
+        self.weights = LSTMLayer::<T>::xavier_init(&mut rng, output_size, input_size, limit);
         self.bias = Array1::zeros(output_size);
     }
 
@@ -226,11 +242,28 @@ pub struct AttentionMechanism<T: Float + Debug + Send + Sync + 'static> {
 
     /// Attention weights from last forward pass
     attentionweights: Option<Array2<T>>,
+
+    /// Raw pre-softmax logits from the last forward pass, one per head.
+    ///
+    /// At sequence length 1 the softmax weights are identically `1.0` for every
+    /// head, so they carry no information about how the heads differ. The scaled
+    /// dot products `qₕ·kₕ / √d` do, which is what
+    /// [`LSTMOptimizer::compute_attention_stats`] measures head diversity from.
+    head_logits: Option<Array1<T>>,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechanism<T> {
     /// Create a new attention mechanism with Xavier-initialized projections.
     pub fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
+        Self::new_with_rng(config, &mut seeded_rng(thread_rng().random::<u64>()))
+    }
+
+    /// [`Self::new`] with the caller's generator, for reproducible construction
+    /// (see [`LSTMNetwork::new_seeded`]).
+    pub(crate) fn new_with_rng(
+        config: &LearnedOptimizerConfig,
+        rng: &mut CoreRandom<StdRng>,
+    ) -> Result<Self> {
         let hiddensize = config.hidden_size;
         let num_heads = config.attention_heads.max(1);
         if !hiddensize.is_multiple_of(num_heads) {
@@ -243,13 +276,14 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechan
         let limit = LSTMLayer::<T>::xavier_limit(hiddensize, hiddensize);
 
         Ok(Self {
-            query_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
-            key_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
-            value_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
-            output_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, limit),
+            query_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
+            key_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
+            value_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
+            output_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
             num_heads,
             head_size,
             attentionweights: None,
+            head_logits: None,
         })
     }
 
@@ -259,10 +293,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechan
     /// hidden-state vector (there is no sequence axis at this call site), so
     /// per head the attention distribution is always over exactly one key and
     /// therefore softmaxes to the constant `1.0`: the attended value degenerates
-    /// to `V` itself. `Q` and `K` are still computed (and their trivial weights
-    /// recorded in `attentionweights` for diagnostics/consistency) so every
-    /// learned projection genuinely participates, and the formula is exactly
-    /// standard SDPA at sequence length 1 rather than an ad hoc shortcut.
+    /// to `V` itself. The formula is exactly standard SDPA at sequence length 1
+    /// rather than an ad hoc shortcut.
+    ///
+    /// The degenerate weights are recorded in the private `attentionweights`
+    /// field, and the *pre-softmax* scaled dot products — which, unlike the
+    /// weights, do vary with the input and between heads — in `head_logits`, so
+    /// the optimizer's attention statistics (surfaced through
+    /// [`LSTMOptimizer::get_metrics`]) have something informative to report for
+    /// head diversity.
     pub fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
         let dim = self.query_proj.nrows();
         if input.len() != dim {
@@ -281,6 +320,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechan
                 .unwrap_or_else(T::one)
                 .sqrt();
         let mut weights = Array2::zeros((self.num_heads, 1));
+        let mut logits = Array1::zeros(self.num_heads);
         for h in 0..self.num_heads {
             let start = h * self.head_size;
             let end = start + self.head_size;
@@ -290,14 +330,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechan
                 .zip(key.slice(s![start..end]).iter())
                 .fold(T::zero(), |acc, (&q, &k)| acc + q * k)
                 * head_scale;
+            logits[h] = score;
             // softmax over a single logit: exp(score) / exp(score) == 1,
-            // independent of `score`'s value, computed above only so the raw
-            // logit participates in what gets recorded (and so this reads as
-            // the genuine one-key specialisation of softmax, not a shortcut
-            // that skips the score entirely).
+            // independent of `score`'s value. The score itself is kept in
+            // `head_logits` because it is the only per-head quantity that
+            // survives the degenerate softmax.
             weights[[h, 0]] = T::one();
         }
         self.attentionweights = Some(weights);
+        self.head_logits = Some(logits);
 
         Ok(self.output_proj.dot(&value))
     }
@@ -369,12 +410,6 @@ pub struct HistoryBuffer<T: Float + Debug + Send + Sync + 'static> {
     /// Loss history
     losses: VecDeque<T>,
 
-    /// Learning rate history
-    learning_rates: VecDeque<T>,
-
-    /// Update magnitude history
-    update_magnitudes: VecDeque<T>,
-
     /// Maximum history length
     _maxlength: usize,
 
@@ -382,12 +417,16 @@ pub struct HistoryBuffer<T: Float + Debug + Send + Sync + 'static> {
     feature_cache: Option<Array2<T>>,
 }
 
-/// Meta-learning component for optimizer adaptation
+/// Meta-learning component for optimizer adaptation.
+///
+/// `MetaLearner::step` implements one fixed rule: a truncated-BPTT unroll of
+/// the controller over each task, i.e. the second-order / MAML-style inner loop.
+/// It carried a `strategy: MetaOptimizationStrategy` field that was hard-wired to
+/// `MAML` at construction and never consulted, which advertised a choice the
+/// implementation does not offer; the alternatives (Reptile, first-order,
+/// custom) are not implemented for this controller.
 #[derive(Debug, Clone)]
 pub struct MetaLearner<T: Float + Debug + Send + Sync + 'static> {
-    /// Meta-optimization strategy
-    strategy: MetaOptimizationStrategy,
-
     /// Meta-parameters (optimizer parameters)
     meta_parameters: HashMap<String, Array1<T>>,
 
@@ -627,9 +666,6 @@ pub struct AdaptiveLearningRateController<T: Float + Debug + Send + Sync + 'stat
 
     /// Performance-based adaptation
     performance_tracker: PerformanceTracker<T>,
-
-    /// Learned LR schedule parameters
-    schedule_params: Option<Array1<T>>,
 }
 
 /// Learning rate adaptation parameters
@@ -1073,9 +1109,6 @@ impl<
         // Initialize metrics
         let metrics = LSTMOptimizerMetrics::new();
 
-        // Initialize RNG
-        let rng = scirs2_core::random::thread_rng();
-
         Ok(Self {
             config,
             lstm_network,
@@ -1085,7 +1118,6 @@ impl<
             state_tracker,
             metrics,
             step_count: 0,
-            rng,
         })
     }
 
@@ -1280,7 +1312,15 @@ impl<
         Ok(updates)
     }
 
-    /// Update performance metrics
+    /// Update performance metrics.
+    ///
+    /// `adaptation_efficiency` is the *effective step-size ratio*
+    /// `‖Δθ‖ / (lr · ‖g‖)`: the learned optimizer's step measured against the
+    /// plain SGD step of the same learning rate that it replaces. `1.0` means
+    /// "the same size as SGD would have taken", above `1.0` means the learned
+    /// rule is more aggressive than its nominal learning rate, below `1.0` more
+    /// conservative. Without dividing by `lr` the figure just tracked the
+    /// learning rate itself and was not comparable across schedules.
     fn update_metrics(&mut self, gradients: &Array1<T>, updates: &Array1<T>, lr: T) {
         // Compute gradient statistics
         let grad_norm = gradients.iter().map(|&g| g * g).sum::<T>().sqrt();
@@ -1289,8 +1329,15 @@ impl<
         // Update LSTM statistics
         self.update_lstm_stats();
 
-        // Update efficiency metrics
-        self.metrics.adaptation_efficiency = (update_norm / grad_norm).to_f64().unwrap_or(1.0);
+        // Update efficiency metrics. A zero gradient (or a zero learning rate)
+        // makes the ratio undefined rather than 0/0-shaped, so report the
+        // neutral 1.0 instead of dividing.
+        let sgd_step_norm = lr.abs() * grad_norm;
+        self.metrics.adaptation_efficiency = if sgd_step_norm > T::zero() {
+            (update_norm / sgd_step_norm).to_f64().unwrap_or(1.0)
+        } else {
+            1.0
+        };
 
         // Update computational overhead
         self.metrics.computational_overhead = self.estimate_computational_overhead();
@@ -1314,7 +1361,9 @@ impl<
         // Update attention statistics if available
         if let Some(ref attention) = self.lstm_network.attention {
             if let Some(ref attentionweights) = attention.attentionweights {
-                self.metrics.attention_stats = Some(self.compute_attention_stats(attentionweights));
+                self.metrics.attention_stats = Some(
+                    self.compute_attention_stats(attentionweights, attention.head_logits.as_ref()),
+                );
             }
         }
     }
@@ -1342,8 +1391,23 @@ impl<
         }
     }
 
-    /// Compute attention statistics
-    fn compute_attention_stats(&self, attentionweights: &Array2<T>) -> AttentionStats {
+    /// Compute attention statistics.
+    ///
+    /// `head_logits`, when present, holds the pre-softmax scaled dot product per
+    /// head. Head diversity is the population standard deviation of those
+    /// logits: at sequence length 1 the softmax weights are all `1.0`, so any
+    /// diversity measure computed from the *weights* is a constant and tells the
+    /// caller nothing. The logits are the quantity that actually varies with the
+    /// input and between heads.
+    ///
+    /// `temporal_patterns` is the per-head logit sequence itself, which is the
+    /// full temporal record available from one forward pass; an empty vector when
+    /// no logits were recorded, rather than a zero-filled placeholder.
+    fn compute_attention_stats(
+        &self,
+        attentionweights: &Array2<T>,
+        head_logits: Option<&Array1<T>>,
+    ) -> AttentionStats {
         let weights: Vec<f64> = attentionweights
             .iter()
             .map(|&w| w.to_f64().unwrap_or(0.0))
@@ -1359,14 +1423,22 @@ impl<
         // Compute concentration (inverse of entropy)
         let concentration = 1.0 / (1.0 + entropy);
 
-        // Simplified diversity measure
-        let head_diversity = weights.iter().map(|&w| w.abs()).sum::<f64>() / weights.len() as f64;
+        let logits: Vec<f64> = head_logits
+            .map(|l| l.iter().map(|&x| x.to_f64().unwrap_or(0.0)).collect())
+            .unwrap_or_default();
+        let head_diversity = if logits.is_empty() {
+            0.0
+        } else {
+            let mean = logits.iter().sum::<f64>() / logits.len() as f64;
+            (logits.iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / logits.len() as f64)
+                .sqrt()
+        };
 
         AttentionStats {
             attention_entropy: entropy,
             attention_concentration: concentration,
             head_diversity,
-            temporal_patterns: vec![0.0; 10], // Placeholder
+            temporal_patterns: logits,
         }
     }
 
@@ -1447,11 +1519,25 @@ impl<
 // Implementation of major components
 
 impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> {
-    /// Create a new LSTM controller network from a configuration.
+    /// Create a new LSTM controller network from a configuration, with weights
+    /// drawn from thread-local entropy.
     ///
     /// Public because meta-training operates on a controller directly: see
-    /// [`trainer::MetaTrainer`] and [`LSTMOptimizer::network_mut`].
+    /// [`trainer::MetaTrainer`] and [`LSTMOptimizer::network_mut`]. For
+    /// reproducible construction (tests, checkpoint-comparable experiments) use
+    /// [`Self::new_seeded`].
     pub fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
+        Self::new_seeded(config, thread_rng().random::<u64>())
+    }
+
+    /// Create a controller whose initial weights are a deterministic function of
+    /// `seed` (and the configuration).
+    ///
+    /// Everything downstream of construction — rollout capture, truncated BPTT,
+    /// meta-training — is already deterministic with dropout off, so seeding the
+    /// initialization makes an entire meta-training run reproducible.
+    pub fn new_seeded(config: &LearnedOptimizerConfig, seed: u64) -> Result<Self> {
+        let mut rng = seeded_rng(seed);
         let mut layers = Vec::new();
 
         // Create LSTM layers
@@ -1461,20 +1547,21 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
             } else {
                 config.hidden_size
             };
-            let layer = LSTMLayer::new(input_size, config.hidden_size)?;
+            let layer = LSTMLayer::new(input_size, config.hidden_size, &mut rng)?;
             layers.push(layer);
         }
 
         // Create output projection
-        let output_projection = OutputProjection::new(
+        let output_projection = OutputProjection::new_with_rng(
             config.hidden_size,
             config.output_features,
             OutputTransform::ScaledTanh { scale: 0.1 },
+            &mut rng,
         )?;
 
         // Create attention mechanism if enabled
         let attention = if config.use_attention {
-            Some(AttentionMechanism::new(config)?)
+            Some(AttentionMechanism::new_with_rng(config, &mut rng)?)
         } else {
             None
         };
@@ -1556,27 +1643,45 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
         Ok(output)
     }
 
-    /// Apply dropout for regularization
+    /// Apply inverted dropout for regularization.
+    ///
+    /// Each element is zeroed with probability `dropout_rate` and the survivors
+    /// are divided by `1 - dropout_rate`, so the expected activation is
+    /// unchanged. A rate of `0` is a no-op; a rate of `1` would divide by zero
+    /// and is rejected.
+    ///
+    /// # Errors
+    /// Returns `Err` when `dropout_rate` is not in `[0, 1)` or when the drawn
+    /// uniform sample cannot be represented in `T`.
     fn apply_dropout(&self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified dropout implementation
-        Ok(input.mapv(|x| {
-            if T::from(scirs2_core::random::thread_rng().gen_range(0.0..1.0))
-                .expect("unwrap failed")
-                < scirs2_core::numeric::NumCast::from(self.dropout_rate)
-                    .unwrap_or_else(|| T::zero())
-            {
+        if !(0.0..1.0).contains(&self.dropout_rate) {
+            return Err(OptimError::InvalidConfig(format!(
+                "dropout_rate must be in [0, 1), got {}",
+                self.dropout_rate
+            )));
+        }
+        if self.dropout_rate == 0.0 {
+            return Ok(input.clone());
+        }
+        let threshold: T = cast_scalar(self.dropout_rate)?;
+        let keep_scale: T = cast_scalar(1.0 - self.dropout_rate)?;
+        let mut rng = scirs2_core::random::thread_rng();
+        let mut out = input.clone();
+        for value in out.iter_mut() {
+            let sample: T = cast_scalar(rng.gen_range(0.0..1.0))?;
+            *value = if sample < threshold {
                 T::zero()
             } else {
-                x / scirs2_core::numeric::NumCast::from(1.0 - self.dropout_rate)
-                    .unwrap_or_else(|| T::zero())
-            }
-        }))
+                *value / keep_scale
+            };
+        }
+        Ok(out)
     }
 }
 
 impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
     /// Create new LSTM layer
-    fn new(_input_size: usize, hiddensize: usize) -> Result<Self> {
+    fn new(_input_size: usize, hiddensize: usize, rng: &mut CoreRandom<StdRng>) -> Result<Self> {
         // Xavier/Glorot uniform, with the fan pair taken *per matrix*: the four
         // gates are independent maps stacked along the rows, so the fan-out of
         // each is `hiddensize`, not `4 * hiddensize`. The input-to-hidden and
@@ -1587,8 +1692,8 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
         let limit_hh = Self::xavier_limit(hiddensize, hiddensize);
 
         Ok(Self {
-            weight_ih: Self::xavier_init(4 * hiddensize, _input_size, limit_ih),
-            weight_hh: Self::xavier_init(4 * hiddensize, hiddensize, limit_hh),
+            weight_ih: Self::xavier_init(rng, 4 * hiddensize, _input_size, limit_ih),
+            weight_hh: Self::xavier_init(rng, 4 * hiddensize, hiddensize, limit_hh),
             bias_ih: Array1::zeros(4 * hiddensize),
             bias_hh: Array1::zeros(4 * hiddensize),
             hidden_state: Array1::zeros(hiddensize),
@@ -1644,13 +1749,18 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
         (6.0 / (fan_in + fan_out).max(1) as f64).sqrt()
     }
 
-    /// Draw a matrix from `Uniform[-limit, limit]`.
+    /// Draw a matrix from `Uniform[-limit, limit]` using the caller's generator.
     ///
     /// `limit` is the *uniform half-width*, not a standard deviation — use
-    /// [`Self::xavier_limit`] to compute it from the layer's fans. The generator
-    /// handle is taken once for the whole matrix rather than once per element.
-    fn xavier_init(rows: usize, cols: usize, limit: f64) -> Array2<T> {
-        let mut rng = scirs2_core::random::thread_rng();
+    /// [`Self::xavier_limit`] to compute it from the layer's fans. Threading the
+    /// generator through the constructors (rather than grabbing `thread_rng`
+    /// here) is what makes [`LSTMNetwork::new_seeded`] reproducible.
+    fn xavier_init(
+        rng: &mut CoreRandom<StdRng>,
+        rows: usize,
+        cols: usize,
+        limit: f64,
+    ) -> Array2<T> {
         Array2::from_shape_fn((rows, cols), |_| {
             let val = (rng.gen_range(0.0..1.0) - 0.5) * 2.0 * limit;
             scirs2_core::numeric::NumCast::from(val).unwrap_or_else(|| T::zero())
@@ -1675,8 +1785,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> HistoryBuffer<T
             gradients: VecDeque::with_capacity(_maxlength),
             parameters: VecDeque::with_capacity(_maxlength),
             losses: VecDeque::with_capacity(_maxlength),
-            learning_rates: VecDeque::with_capacity(_maxlength),
-            update_magnitudes: VecDeque::with_capacity(_maxlength),
             _maxlength,
             feature_cache: None,
         }
@@ -1722,8 +1830,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> HistoryBuffer<T
             return None;
         }
 
-        let current_loss = *self.losses.back().expect("unwrap failed");
-        let prev_loss = self.losses[self.losses.len() - 2];
+        // `len() >= 2` was checked above, so both reads are in range; using the
+        // fallible accessor keeps that fact local instead of relying on an
+        // `expect` five lines away from its guard.
+        let current_loss = *self.losses.back()?;
+        let prev_loss = *self.losses.get(self.losses.len() - 2)?;
 
         let loss_change = current_loss - prev_loss;
         let loss_ratio = if prev_loss.abs()
@@ -1822,10 +1933,10 @@ mod tests {
 
     #[test]
     fn test_lstm_layer_creation() {
-        let layer = LSTMLayer::<f64>::new(10, 20);
+        let layer = LSTMLayer::<f64>::new(10, 20, &mut seeded_rng(7));
         assert!(layer.is_ok());
 
-        let layer = layer.expect("unwrap failed");
+        let layer = layer.expect("LSTMLayer::new should succeed");
         assert_eq!(layer.hiddensize, 20);
         assert_eq!(layer.weight_ih.shape(), &[80, 10]); // 4 * hiddensize, input_size
         assert_eq!(layer.weight_hh.shape(), &[80, 20]); // 4 * hiddensize, hiddensize
@@ -1860,7 +1971,7 @@ mod tests {
         let network = LSTMNetwork::<f64>::new(&config);
         assert!(network.is_ok());
 
-        let network = network.expect("unwrap failed");
+        let network = network.expect("LSTMNetwork::new should succeed");
         assert_eq!(network.layers.len(), config.num_layers);
         assert!(network.attention.is_some()); // attention enabled by default
     }

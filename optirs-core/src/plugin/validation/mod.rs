@@ -12,12 +12,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
-/// Type alias for objective function
-type ObjectiveFn<A> = Box<dyn Fn(&Array1<A>) -> A + Send + Sync>;
-
-/// Type alias for gradient function
-type GradientFn<A> = Box<dyn Fn(&Array1<A>) -> Array1<A> + Send + Sync>;
-
 /// Comprehensive plugin validation framework
 #[derive(Debug)]
 pub struct PluginValidationFramework<A: Float> {
@@ -320,13 +314,22 @@ impl<A: Float + std::fmt::Debug + Send + Sync + 'static> ThreadSafetyTestSuite<A
 
         const NUM_THREADS: usize = 4;
         const STEPS_PER_THREAD: usize = 25;
-        const DIM: usize = 8;
+        // Dimension comes from the configured test data sizes rather than a
+        // literal, so a caller that asked for a different workload gets it.
+        let dim = self
+            .config
+            .test_data_sizes
+            .iter()
+            .copied()
+            .find(|size| *size > 0)
+            .unwrap_or(8);
+        let dim = dim.min(4096);
 
         let shared: Arc<Mutex<Box<dyn OptimizerPlugin<A>>>> =
             Arc::new(Mutex::new(plugin.clone_plugin()));
         {
             let mut guard = shared.lock().unwrap_or_else(|e| e.into_inner());
-            if let Err(e) = guard.initialize(&[DIM]) {
+            if let Err(e) = guard.initialize(&[dim]) {
                 return TestResult {
                     passed: false,
                     message: format!("initialize failed before concurrency test: {e}"),
@@ -337,9 +340,9 @@ impl<A: Float + std::fmt::Debug + Send + Sync + 'static> ThreadSafetyTestSuite<A
         }
 
         let params: Array1<A> =
-            Array1::from_iter((0..DIM).map(|i| A::from(1.0 + i as f64).unwrap_or_else(A::one)));
+            Array1::from_iter((0..dim).map(|i| A::from(1.0 + i as f64).unwrap_or_else(A::one)));
         let gradients: Array1<A> =
-            Array1::from_iter((0..DIM).map(|_| A::from(0.01).unwrap_or_else(A::zero)));
+            Array1::from_iter((0..dim).map(|_| A::from(0.01).unwrap_or_else(A::zero)));
         let saw_error = Arc::new(AtomicBool::new(false));
 
         let mut handles = Vec::with_capacity(NUM_THREADS);
@@ -456,10 +459,28 @@ impl<A: Float + std::fmt::Debug + Send + Sync> MemoryTestSuite<A> {
     /// growth observed".
     fn test_memory_growth(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
         let start_time = Instant::now();
-        const DIM: usize = 16;
         const SAMPLES: usize = 50;
+        // Dimension from the configured workload rather than a literal.
+        let dim = self
+            .config
+            .test_data_sizes
+            .iter()
+            .copied()
+            .find(|size| *size > 0)
+            .unwrap_or(16)
+            .min(4096);
 
-        if let Err(e) = plugin.initialize(&[DIM]) {
+        if !self.config.check_memory_leaks {
+            return TestResult {
+                passed: true,
+                message: "memory leak detection disabled by ValidationConfig::check_memory_leaks"
+                    .to_string(),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            };
+        }
+
+        if let Err(e) = plugin.initialize(&[dim]) {
             return TestResult {
                 passed: false,
                 message: format!("initialize failed before memory growth probe: {e}"),
@@ -468,8 +489,8 @@ impl<A: Float + std::fmt::Debug + Send + Sync> MemoryTestSuite<A> {
             };
         }
 
-        let mut params: Array1<A> = Array1::from_elem(DIM, A::one());
-        let gradients: Array1<A> = Array1::from_elem(DIM, A::from(0.01).unwrap_or_else(A::zero));
+        let mut params: Array1<A> = Array1::from_elem(dim, A::one());
+        let gradients: Array1<A> = Array1::from_elem(dim, A::from(0.01).unwrap_or_else(A::zero));
         let baseline = plugin.memory_usage().current_usage;
         let mut samples = Vec::with_capacity(SAMPLES);
 
@@ -552,152 +573,8 @@ impl<A: Float + std::fmt::Debug + Send + Sync> ValidationTestSuite<A> for Memory
     }
 }
 
-/// Convergence test suite
-#[derive(Debug)]
-pub struct ConvergenceTestSuite<A: Float + std::fmt::Debug + Send + Sync> {
-    config: ValidationConfig,
-    test_problems: Vec<TestProblem<A>>,
-}
-
-impl<A: Float + std::fmt::Debug + Send + Sync> ConvergenceTestSuite<A> {
-    /// Create a new convergence test suite
-    pub fn new(config: ValidationConfig) -> Self {
-        Self {
-            config,
-            test_problems: Vec::new(),
-        }
-    }
-}
-
-impl<A: Float + std::fmt::Debug + Send + Sync> ConvergenceTestSuite<A> {
-    /// Run the plugin on the convex quadratic `f(x) = sum(x_i^2)`
-    /// (gradient `2x`) and assert the loss actually decreases -- the one
-    /// property any optimizer claiming to optimize must satisfy.
-    fn test_quadratic_convergence(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
-        let start_time = Instant::now();
-        const DIM: usize = 4;
-        const ITERATIONS: usize = 200;
-
-        if let Err(e) = plugin.initialize(&[DIM]) {
-            return TestResult {
-                passed: false,
-                message: format!("initialize failed before convergence run: {e}"),
-                execution_time: start_time.elapsed(),
-                data: HashMap::new(),
-            };
-        }
-
-        let mut params: Array1<A> =
-            Array1::from_iter((0..DIM).map(|i| A::from(2.0 + i as f64).unwrap_or_else(A::one)));
-        let loss = |p: &Array1<A>| -> A { p.iter().fold(A::zero(), |acc, &v| acc + v * v) };
-        let initial_loss = loss(&params);
-
-        for step in 0..ITERATIONS {
-            let gradients = params.mapv(|v| v + v); // gradient of sum(x_i^2) is 2x
-            match plugin.step(&params, &gradients) {
-                Ok(next) => params = next,
-                Err(e) => {
-                    return TestResult {
-                        passed: false,
-                        message: format!(
-                            "step failed at iteration {step} during convergence run: {e}"
-                        ),
-                        execution_time: start_time.elapsed(),
-                        data: HashMap::new(),
-                    };
-                }
-            }
-            let current_loss = loss(&params);
-            if !current_loss.is_finite() {
-                return TestResult {
-                    passed: false,
-                    message: format!("loss diverged to a non-finite value by iteration {step}"),
-                    execution_time: start_time.elapsed(),
-                    data: HashMap::new(),
-                };
-            }
-        }
-
-        let final_loss = loss(&params);
-        let passed = final_loss < initial_loss;
-
-        TestResult {
-            passed,
-            message: format!(
-                "quadratic loss over {ITERATIONS} steps: initial={initial_loss:?} final={final_loss:?}"
-            ),
-            execution_time: start_time.elapsed(),
-            data: HashMap::new(),
-        }
-    }
-}
-
-impl<A: Float + std::fmt::Debug + Send + Sync> ValidationTestSuite<A> for ConvergenceTestSuite<A> {
-    fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
-        let start_time = Instant::now();
-        let result = self.test_quadratic_convergence(plugin);
-        let passed = result.passed;
-
-        SuiteResult {
-            suite_name: "Convergence".to_string(),
-            test_results: vec![result],
-            suite_passed: passed,
-            execution_time: start_time.elapsed(),
-            summary: TestSummary {
-                total_tests: 1,
-                passed_tests: passed as usize,
-                failed_tests: (!passed) as usize,
-                skipped_tests: 0,
-                success_rate: if passed { 1.0 } else { 0.0 },
-            },
-            verified: true,
-        }
-    }
-
-    fn name(&self) -> &str {
-        "Convergence Tests"
-    }
-
-    fn description(&self) -> &str {
-        "Tests for optimization convergence"
-    }
-
-    fn test_count(&self) -> usize {
-        1
-    }
-}
-
-/// Test problem for convergence testing
-pub struct TestProblem<A: Float + std::fmt::Debug> {
-    /// Problem name
-    pub name: String,
-    /// Initial parameters
-    pub initial_params: Array1<A>,
-    /// Objective function
-    pub objective_fn: ObjectiveFn<A>,
-    /// Gradient function
-    pub gradient_fn: GradientFn<A>,
-    /// Known optimal value
-    pub optimal_value: Option<A>,
-    /// Maximum iterations
-    pub max_iterations: usize,
-    /// Convergence tolerance
-    pub convergence_tolerance: A,
-}
-
-impl<A: Float + std::fmt::Debug + Send + Sync> std::fmt::Debug for TestProblem<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TestProblem")
-            .field("name", &self.name)
-            .field("initial_params", &self.initial_params)
-            .field("objective_fn", &"<function>")
-            .field("gradient_fn", &"<function>")
-            .field("optimal_value", &self.optimal_value)
-            .field("max_iterations", &self.max_iterations)
-            .field("convergence_tolerance", &self.convergence_tolerance)
-            .finish()
-    }
-}
+pub mod convergence;
+pub use convergence::{ConvergenceTestSuite, TestProblem};
 
 // Built-in compliance checkers
 
@@ -1097,7 +974,7 @@ impl<A: Float + Debug + Send + Sync + 'static> PluginValidationFramework<A> {
             None => false,
         };
 
-        ValidationResults {
+        let results = ValidationResults {
             validation_passed,
             suite_results,
             compliance_results,
@@ -1105,7 +982,20 @@ impl<A: Float + Debug + Send + Sync + 'static> PluginValidationFramework<A> {
             overall_score,
             timestamp: std::time::SystemTime::now(),
             total_time: start_time.elapsed(),
-        }
+        };
+        // Retain the run so a caller can re-read it without re-validating.
+        // Until 0.3.2 `results` was initialised in `new` and never written or
+        // read, so the framework's own record of what it had certified did not
+        // exist.
+        self.results = results.clone();
+        results
+    }
+
+    /// The most recent [`Self::validate_plugin`] run, or a
+    /// never-validated placeholder (`validation_passed: false`,
+    /// `overall_score: None`) if none has happened.
+    pub fn last_results(&self) -> &ValidationResults<A> {
+        &self.results
     }
 
     /// Add custom test suite
@@ -1304,22 +1194,48 @@ impl<A: Float + Debug + Send + Sync + 'static> FunctionalityTestSuite<A> {
     fn test_basic_step(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
         let start_time = Instant::now();
 
-        // Create test data
-        let params = Array1::from_vec(vec![
-            A::from(1.0).expect("unwrap failed"),
-            A::from(2.0).expect("unwrap failed"),
-        ]);
-        let gradients = Array1::from_vec(vec![
-            A::from(0.1).expect("unwrap failed"),
-            A::from(0.2).expect("unwrap failed"),
-        ]);
+        // Create test data. `A::from` cannot fail for these literals in any
+        // real float type, but a plugin generic over an exotic `A` must not
+        // abort the whole validation run, so a failed conversion reports a
+        // failed test instead of panicking.
+        let literal = |value: f64| A::from(value);
+        let (Some(p0), Some(p1), Some(g0), Some(g1)) =
+            (literal(1.0), literal(2.0), literal(0.1), literal(0.2))
+        else {
+            return TestResult {
+                passed: false,
+                message: "the element type cannot represent the test literals".to_string(),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            };
+        };
+        let params = Array1::from_vec(vec![p0, p1]);
+        let gradients = Array1::from_vec(vec![g0, g1]);
 
         match plugin.step(&params, &gradients) {
             Ok(result) => {
                 if result.len() == params.len() {
+                    // A step must actually move the parameters. "Moved" is
+                    // judged against the configured `numerical_tolerance` rather
+                    // than a hardcoded epsilon, which is what that setting is
+                    // for.
+                    let moved = result.iter().zip(params.iter()).any(|(&after, &before)| {
+                        (after - before)
+                            .abs()
+                            .to_f64()
+                            .is_some_and(|delta| delta > self.config.numerical_tolerance)
+                    });
                     TestResult {
-                        passed: true,
-                        message: "Basic step test passed".to_string(),
+                        passed: moved,
+                        message: if moved {
+                            "Basic step test passed".to_string()
+                        } else {
+                            format!(
+                                "step left every parameter within numerical_tolerance {:.3e}, so \
+                                 no optimization happened",
+                                self.config.numerical_tolerance
+                            )
+                        },
                         execution_time: start_time.elapsed(),
                         data: HashMap::new(),
                     }
@@ -1548,14 +1464,75 @@ impl<A: Float + Send + Sync> PerformanceBenchmarker<A> {
         self.benchmarks.push(benchmark);
     }
 
+    /// Register a baseline a benchmark's `execution_time` must stay within.
+    pub fn set_baseline(&mut self, benchmark_name: String, baseline: BenchmarkBaseline) {
+        self.baselines.insert(benchmark_name, baseline);
+    }
+
+    /// Registered baselines, keyed by benchmark name.
+    pub fn baselines(&self) -> &HashMap<String, BenchmarkBaseline> {
+        &self.baselines
+    }
+
+    /// The benchmark configuration in force.
+    pub fn config(&self) -> &BenchmarkConfig {
+        &self.config
+    }
+
+    /// Run every registered benchmark `config.runs` times after
+    /// `config.warmup_iterations` discarded warmup runs, keeping the best score
+    /// per benchmark, and check each against its registered baseline.
+    ///
+    /// Until 0.3.2 this ran each benchmark exactly once and ignored both
+    /// `config` and `baselines` entirely: `runs`, `warmup_iterations` and every
+    /// registered baseline were stored and never read, so a benchmark that blew
+    /// past its declared budget still reported whatever score it computed.
     fn run_all_benchmarks(
         &mut self,
         plugin: &mut dyn OptimizerPlugin<A>,
     ) -> Vec<BenchmarkResult<A>> {
-        self.benchmarks
-            .iter()
-            .map(|bench| bench.run(plugin))
-            .collect()
+        let runs = self.config.runs.max(1);
+        let warmup = self.config.warmup_iterations;
+        let mut results = Vec::with_capacity(self.benchmarks.len());
+
+        for bench in &self.benchmarks {
+            for _ in 0..warmup {
+                let _ = bench.run(plugin);
+            }
+            let mut best: Option<BenchmarkResult<A>> = None;
+            for _ in 0..runs {
+                let candidate = bench.run(plugin);
+                best = match best {
+                    Some(current) if current.score >= candidate.score => Some(current),
+                    _ => Some(candidate),
+                };
+            }
+            let Some(mut result) = best else { continue };
+
+            if let Some(baseline) = self.baselines.get(&result.name) {
+                let measured = result.execution_time.as_secs_f64();
+                let ceiling = baseline.expected_value * (1.0 + baseline.tolerance / 100.0);
+                let within = measured <= ceiling;
+                result
+                    .metrics
+                    .insert("baseline_expected".to_string(), baseline.expected_value);
+                result
+                    .metrics
+                    .insert("baseline_ceiling".to_string(), ceiling);
+                result.metrics.insert(
+                    "baseline_within_tolerance".to_string(),
+                    if within { 1.0 } else { 0.0 },
+                );
+                if !within {
+                    // A benchmark that misses its declared budget must not keep
+                    // a passing score.
+                    result.score = 0.0;
+                }
+            }
+            results.push(result);
+        }
+
+        results
     }
 }
 
@@ -1868,7 +1845,7 @@ mod tests {
     fn test_documentation_compliance_checker() {
         let checker = DocumentationComplianceChecker;
 
-        let mut info = PluginInfo {
+        let info = PluginInfo {
             description: "Short".to_string(),
             author: "".to_string(),
             ..Default::default()

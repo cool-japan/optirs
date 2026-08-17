@@ -5,7 +5,7 @@ use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// Simplified L-BFGS optimizer for testing
@@ -97,17 +97,30 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        let params_flat = params.to_owned().into_shape_with_order(params.len()).expect("unwrap failed");
-        let grad_flat = gradients.to_owned().into_shape_with_order(gradients.len()).expect("unwrap failed");
-        
+        let params_flat = params
+            .to_owned()
+            .into_shape_with_order(params.len())
+            .map_err(|e| {
+                OptimError::DimensionMismatch(format!("SimpleLBFGS: failed to flatten params: {e}"))
+            })?;
+        let grad_flat = gradients
+            .to_owned()
+            .into_shape_with_order(gradients.len())
+            .map_err(|e| {
+                OptimError::DimensionMismatch(format!(
+                    "SimpleLBFGS: failed to flatten gradients: {e}"
+                ))
+            })?;
+
         // Update history if we have previous values
         if let (Some(prev_p), Some(prev_g)) = (&self.prev_params, &self.prev_grad) {
             let s = &params_flat - prev_p;
             let y = &grad_flat - prev_g;
-            
+
             // Check if update is valid
             let sy = s.dot(&y);
-            if sy > A::from(1e-10).expect("unwrap failed") {
+            let sy_threshold: A = crate::optimizers::cast_scalar(1e-10)?;
+            if sy > sy_threshold {
                 if self.s_list.len() >= self.history_size {
                     self.s_list.pop_front();
                     self.y_list.pop_front();
@@ -128,7 +141,13 @@ where
         self.prev_grad = Some(grad_flat);
         
         // Reshape and return
-        Ok(new_params_flat.into_shape_with_order(params.raw_dim()).expect("unwrap failed"))
+        new_params_flat
+            .into_shape_with_order(params.raw_dim())
+            .map_err(|e| {
+                OptimError::DimensionMismatch(format!(
+                    "SimpleLBFGS: failed to restore parameter shape: {e}"
+                ))
+            })
     }
 
     fn get_learning_rate(&self) -> A {

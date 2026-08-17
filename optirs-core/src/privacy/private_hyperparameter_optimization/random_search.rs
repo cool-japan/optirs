@@ -6,9 +6,8 @@
 //! therefore named `config_0`; the results of each trial were discarded.
 
 use crate::error::{OptimError, Result};
-use crate::privacy::{DifferentialPrivacyConfig, PrivacyBudget};
+use crate::privacy::PrivacyBudget;
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -104,6 +103,7 @@ mod tests {
         ParameterBounds, ParameterDefinition, PrivateBayesianOptimization, PrivateHPOConfig,
         SearchAlgorithm, SensitivityBounds, ValidationStrategy,
     };
+    use crate::privacy::DifferentialPrivacyConfig;
 
     fn hpo_config() -> PrivateHPOConfig<f64> {
         PrivateHPOConfig {

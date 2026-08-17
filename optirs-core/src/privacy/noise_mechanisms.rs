@@ -24,7 +24,7 @@ use scirs2_core::ndarray::{
     Array, Array1, Array2, ArrayBase, ArrayViewMut, Data, DataMut, Dimension, IxDyn,
 };
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng, SeedableRng};
+use scirs2_core::random::{thread_rng, SeedableRng};
 use std::marker::PhantomData;
 
 use crate::error::{OptimError, Result};
@@ -314,6 +314,73 @@ where
             last_parameters: None,
             _phantom: PhantomData,
         }
+    }
+
+    /// Add `N(0, sigma^2)` noise with an externally chosen `sigma`.
+    ///
+    /// # When to use this instead of [`NoiseMechanism::add_noise_1d`]
+    ///
+    /// The trait entry point derives `sigma` from `(sensitivity, epsilon,
+    /// delta)` through the classic Dwork-Roth bound. That is the right call
+    /// when a *single* release is being calibrated to an epsilon directly.
+    ///
+    /// It is the wrong call whenever a moments/Renyi accountant is tracking the
+    /// spend, because those accountants are parameterised by the **noise
+    /// multiplier** `sigma / sensitivity` and report the epsilon that this
+    /// multiplier implies under composition. Re-deriving `sigma` from the
+    /// epsilon the accountant reports would add noise for a budget that has
+    /// already been charged, i.e. it would double-count. Callers in that
+    /// position compute `sigma = noise_multiplier * sensitivity` themselves,
+    /// pass it here, and let the accountant own the epsilon.
+    ///
+    /// This function therefore performs **no** accounting. The caller is
+    /// responsible for charging the release to an accountant; see
+    /// [`crate::privacy::MomentsAccountant`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::InvalidConfig`] if `sigma` is not positive and
+    /// finite, or if a sample cannot be represented in `T`.
+    pub fn add_noise_with_scale(
+        &mut self,
+        data: &mut Array<T, scirs2_core::ndarray::Ix1>,
+        sigma: T,
+    ) -> Result<()> {
+        let sigma_f64 = sigma.to_f64().unwrap_or(f64::NAN);
+        if !sigma_f64.is_finite() || sigma_f64 <= 0.0 {
+            return Err(OptimError::InvalidConfig(format!(
+                "the Gaussian noise scale must be positive and finite, got {sigma_f64}; a \
+                 non-positive scale adds no noise and provides no privacy"
+            )));
+        }
+
+        let mut failed = false;
+        data.mapv_inplace(|x| {
+            let sample = standard_normal(&mut self.rng) * sigma_f64;
+            match T::from(sample) {
+                Some(noise) => x + noise,
+                None => {
+                    failed = true;
+                    x
+                }
+            }
+        });
+        if failed {
+            return Err(OptimError::InvalidConfig(
+                "failed to convert a Gaussian noise sample into the array element type".to_string(),
+            ));
+        }
+
+        self.last_parameters = Some(NoiseParameters {
+            mechanism_type: "Gaussian".to_string(),
+            scale: sigma,
+            sensitivity: T::zero(),
+            epsilon: T::zero(),
+            delta: None,
+            shape: None,
+            rate: None,
+        });
+        Ok(())
     }
 
     /// Compute the noise scale for the classic Gaussian mechanism.
@@ -1524,7 +1591,7 @@ mod tests {
         let mut best_selected = 0;
         for _ in 0..200 {
             match mechanism.select_output(&candidates, 1.0, 10.0) {
-                Ok(value) if value == 1.0 => best_selected += 1,
+                Ok(1.0) => best_selected += 1,
                 Ok(_) => {}
                 Err(err) => panic!("selection failed: {err}"),
             }

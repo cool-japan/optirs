@@ -493,7 +493,10 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearGaussianPolicy<T> {
                 "LinearGaussianPolicy requires action_dim > 0 and n_features > 0".to_string(),
             ));
         }
-        if !(init_std > T::zero()) {
+        if !matches!(
+            init_std.partial_cmp(&T::zero()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Err(OptimError::InvalidConfig(
                 "LinearGaussianPolicy requires init_std > 0".to_string(),
             ));

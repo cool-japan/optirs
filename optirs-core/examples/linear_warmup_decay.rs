@@ -3,7 +3,6 @@ use optirs_core::schedulers::{DecayStrategy, LearningRateScheduler, LinearWarmup
 use optirs_core::Optimizer;
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 
 /// Generate synthetic data for linear regression
 #[allow(dead_code)]

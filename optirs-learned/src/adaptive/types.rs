@@ -2,7 +2,6 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(unused_imports)]
 use crate::error::Result;
 use crate::transformer_based_optimizer::{
     ArchitectureUpdate, TransformerOptimizer, TransformerOptimizerConfig,
@@ -12,13 +11,11 @@ use super::architecture_adapter::DynamicArchitectureAdapter;
 use super::landscape::LandscapeStatistics;
 use super::performance_predictor::TransformerPerformancePredictor;
 use super::predictor::{PredictorFitReport, PredictorSample};
-use crate::LearnedOptimizerConfig;
-#[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2, Array3};
+use crate::common::cast_scalar;
+use scirs2_core::ndarray::{Array1, Array3};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::Instant;
 
 /// Architecture adaptation result
 #[derive(Debug)]
@@ -41,12 +38,6 @@ pub struct MemoryEfficientAttentionManager<
 > {
     /// Attention pattern cache
     pattern_cache: AttentionPatternCache<T>,
-    /// Sparse attention mask
-    sparse_mask: Array2<bool>,
-    /// Local attention windows
-    local_windows: Vec<AttentionWindow>,
-    /// Global attention heads
-    global_heads: Vec<usize>,
     /// Memory usage tracker
     memory_tracker: MemoryUsageTracker,
     /// Minimum sparsity level, from `AdaptiveConfig::attention_sparsity_threshold`
@@ -83,9 +74,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         }
         Ok(Self {
             pattern_cache: AttentionPatternCache::new(),
-            sparse_mask: Array2::default((0, 0)),
-            local_windows: Vec::new(),
-            global_heads: Vec::new(),
             memory_tracker: MemoryUsageTracker::with_budget(config.memory_budget),
             sparsity_floor: config.attention_sparsity_threshold,
             allow_head_pruning: config.dynamic_head_pruning,
@@ -126,8 +114,10 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         let optimized_size = num_heads * seq_len * seq_len * std::mem::size_of::<f32>();
         let memory_savings = original_size.saturating_sub(optimized_size);
         let speedup_from_sparsity = T::one() / sparsitylevel;
-        let speedup_from_dimensions =
-            T::from(512.0 * 512.0 / (seq_len * seq_len) as f64).expect("unwrap failed");
+        // `seq_len` is `>= 1` (clamped to `min_span.max(1)` above), so the
+        // divisor is never zero.
+        let speedup_from_dimensions: T =
+            cast_scalar(512.0 * 512.0 / (seq_len.max(1) * seq_len.max(1)) as f64)?;
         let computational_speedup = (speedup_from_sparsity + speedup_from_dimensions)
             / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
         self.memory_tracker.current_usage += optimized_size;
@@ -229,10 +219,6 @@ pub struct AdaptiveSequenceProcessor<
     importance_scores: VecDeque<T>,
     /// Sequence compression ratio
     compression_ratio: T,
-    /// Information-preserving compressor
-    compressor: SequenceCompressor<T>,
-    /// Adaptive windowing strategy
-    windowing_strategy: WindowingStrategy,
     /// Lower bound, from `AdaptiveConfig::min_sequence_length`
     min_length: usize,
     /// Upper bound, from `AdaptiveConfig::max_sequence_length`
@@ -264,8 +250,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             importance_scores: VecDeque::new(),
             compression_ratio: scirs2_core::numeric::NumCast::from(0.8)
                 .unwrap_or_else(|| T::zero()),
-            compressor: SequenceCompressor::new()?,
-            windowing_strategy: WindowingStrategy::ImportanceBased,
             min_length: config.min_sequence_length,
             max_length: config.max_sequence_length,
             length_adaptation_enabled: config.adaptive_sequence_length,
@@ -328,20 +312,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Ok(())
     }
 }
-/// Windowing strategies for adaptive sequences
-#[derive(Debug, Clone, Copy)]
-pub enum WindowingStrategy {
-    /// Fixed size window
-    Fixed,
-    /// Sliding window
-    Sliding,
-    /// Importance-based window
-    ImportanceBased,
-    /// Hierarchical windowing
-    Hierarchical,
-    /// Attention-guided windowing
-    AttentionGuided,
-}
 /// Landscape features for optimization analysis
 #[derive(Debug, Clone)]
 pub struct LandscapeFeatures<
@@ -353,29 +323,6 @@ pub struct LandscapeFeatures<
     pub(super) multimodality: T,
     /// Noise level
     pub(super) noise_level: T,
-    /// Curvature information
-    pub(super) curvature: CurvatureInfo<T>,
-    /// Gradient characteristics
-    pub(super) gradient_characteristics: GradientCharacteristics<T>,
-}
-/// Symmetry types
-#[derive(Debug, Clone, Copy)]
-pub enum SymmetryType {
-    Rotational,
-    Reflectional,
-    Translational,
-    Scale,
-    Discrete,
-}
-/// Pattern applicability
-#[derive(Debug, Clone)]
-pub struct PatternApplicability {
-    /// Applicable regions
-    regions: Vec<Array1<f64>>,
-    /// Applicability score
-    score: f64,
-    /// Confidence level
-    confidence: f64,
 }
 /// Sequence adaptation result
 #[derive(Debug)]
@@ -419,10 +366,6 @@ pub struct ComplexityEstimator<
 > {
     /// Computational complexity
     computational_complexity: T,
-    /// Sample complexity
-    sample_complexity: T,
-    /// Model complexity
-    model_complexity: T,
     /// Generalization complexity
     generalization_complexity: T,
 }
@@ -433,50 +376,18 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Self {
             computational_complexity: scirs2_core::numeric::NumCast::from(0.5)
                 .unwrap_or_else(|| T::zero()),
-            sample_complexity: scirs2_core::numeric::NumCast::from(0.5)
-                .unwrap_or_else(|| T::zero()),
-            model_complexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
             generalization_complexity: scirs2_core::numeric::NumCast::from(0.5)
                 .unwrap_or_else(|| T::zero()),
         }
     }
-}
-/// Curvature information
-#[derive(Debug, Clone)]
-pub struct CurvatureInfo<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Mean curvature
-    pub(super) mean_curvature: T,
-    /// Gaussian curvature
-    pub(super) gaussian_curvature: T,
-    /// Principal curvatures
-    pub(super) principal_curvatures: Vec<T>,
-    /// Condition number
-    pub(super) condition_number: T,
-}
-#[derive(Debug, Clone, Copy)]
-pub enum SaddleDetectionAlgorithm {
-    EigenvalueBased,
-    NewtonBased,
-    PerturbationBased,
-    FlowBased,
 }
 /// Architecture performance metrics
 #[derive(Debug, Clone)]
 pub struct ArchitecturePerformance<
     T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
-    /// Convergence speed
-    convergence_speed: T,
     /// Final performance
     final_performance: T,
-    /// Memory efficiency
-    memory_efficiency: T,
-    /// Computational cost
-    computational_cost: T,
-    /// Adaptation time
-    adaptation_time: T,
 }
 /// Enhancement result
 #[derive(Debug)]
@@ -519,137 +430,6 @@ pub struct EnhancementStatistics<
     /// Success rate of adaptations
     pub adaptation_success_rate: T,
 }
-/// Sequence compressor for information-preserving compression
-#[derive(Debug)]
-pub struct SequenceCompressor<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Compression algorithm
-    algorithm: CompressionAlgorithm,
-    /// Compression parameters
-    params: CompressionParams<T>,
-    /// Quality metrics
-    quality_metrics: CompressionQualityMetrics<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    SequenceCompressor<T>
-{
-    fn new() -> Result<Self> {
-        Ok(Self {
-            algorithm: CompressionAlgorithm::PCA,
-            params: CompressionParams::default(),
-            quality_metrics: CompressionQualityMetrics::default(),
-        })
-    }
-}
-/// Prediction result
-#[derive(Debug, Clone)]
-pub struct PredictionResult<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Predicted performance
-    predicted_performance: T,
-    /// Confidence interval
-    confidence_interval: (T, T),
-    /// Prediction timestamp
-    timestamp: Instant,
-    /// Prediction features
-    features: Array1<T>,
-}
-/// Cache eviction policies
-#[derive(Debug, Clone, Copy)]
-pub enum CacheEvictionPolicy {
-    /// Least Recently Used
-    LRU,
-    /// Least Frequently Used
-    LFU,
-    /// First In First Out
-    FIFO,
-    /// Random eviction
-    Random,
-    /// Importance-based eviction
-    ImportanceBased,
-}
-/// Symmetry representation
-#[derive(Debug, Clone)]
-pub struct Symmetry<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-{
-    /// Symmetry type
-    symmetry_type: SymmetryType,
-    /// Symmetry parameters
-    parameters: Array1<T>,
-    /// Symmetry strength
-    strength: T,
-}
-// NOTE: `PerformanceFeatureExtractor` used to be declared here holding a
-// dimension, an empty cache and an all-ones importance vector, with no method
-// that extracted anything. Real feature extraction is
-// `TransformerPerformancePredictor::extract_features` above, producing the
-// documented [`PredictionFeatures`] vector.
-/// Compression algorithms
-#[derive(Debug, Clone, Copy)]
-pub enum CompressionAlgorithm {
-    /// Principal Component Analysis
-    PCA,
-    /// Autoencoder compression
-    Autoencoder,
-    /// Singular Value Decomposition
-    SVD,
-    /// Random projection
-    RandomProjection,
-    /// Learned compression
-    Learned,
-}
-/// Connectivity analyzer
-#[derive(Debug)]
-pub struct ConnectivityAnalyzer<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Connectivity graph
-    connectivity_graph: Array2<T>,
-    /// Path analysis results
-    path_analysis: PathAnalysisResults<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    ConnectivityAnalyzer<T>
-{
-    fn new() -> Self {
-        Self {
-            connectivity_graph: Array2::zeros((0, 0)),
-            path_analysis: PathAnalysisResults {
-                shortest_paths: Vec::new(),
-                path_difficulties: Vec::new(),
-                connectivity_measure: T::zero(),
-            },
-        }
-    }
-}
-/// Optimization path
-#[derive(Debug, Clone)]
-pub struct OptimizationPath<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Path points
-    points: Vec<Array1<T>>,
-    /// Path values
-    values: Vec<T>,
-    /// Path length
-    length: T,
-    /// Path difficulty
-    difficulty: T,
-}
-/// Pattern library
-#[derive(Debug)]
-pub struct PatternLibrary<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Pattern database
-    patterns: HashMap<String, OptimizationPattern<T>>,
-    /// Pattern index
-    pattern_index: HashMap<PatternType, Vec<String>>,
-    /// Usage statistics
-    usage_stats: HashMap<String, usize>,
-}
 /// Architecture change types
 #[derive(Debug, Clone)]
 pub enum ArchitectureChange {
@@ -659,103 +439,11 @@ pub enum ArchitectureChange {
     ActivationChange(ActivationType),
     DropoutChange(f64),
 }
-/// Attention window for local attention
-#[derive(Debug, Clone)]
-pub struct AttentionWindow {
-    /// Window start position
-    start: usize,
-    /// Window size
-    size: usize,
-    /// Window importance
-    importance: f64,
-    /// Window type
-    window_type: WindowType,
-}
-/// Window types for attention
-#[derive(Debug, Clone, Copy)]
-pub enum WindowType {
-    /// Local neighborhood
-    Local,
-    /// Strided window
-    Strided,
-    /// Dilated window
-    Dilated,
-    /// Hierarchical window
-    Hierarchical,
-}
 /// Resource constraints for adaptation
 #[derive(Debug, Clone)]
 pub struct ResourceConstraints {
     /// Maximum memory usage (MB)
     pub(super) max_memory: usize,
-    /// Maximum computation time (ms)
-    pub(super) max_computation_time: u64,
-    /// Maximum model parameters
-    pub(super) max_parameters: usize,
-    /// Energy budget (if applicable)
-    pub(super) energy_budget: Option<f64>,
-}
-#[derive(Debug, Clone, Copy)]
-pub enum BasinAnalysisMethod {
-    FloodFill,
-    GradientFlow,
-    MonteCarloSampling,
-    TopologicalAnalysis,
-}
-/// Global structure detector
-#[derive(Debug)]
-pub struct GlobalStructureDetector<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Connectivity analyzer
-    connectivity_analyzer: ConnectivityAnalyzer<T>,
-    /// Symmetry detector
-    symmetry_detector: SymmetryDetector<T>,
-    /// Pattern recognizer
-    pattern_recognizer: PatternRecognizer<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    GlobalStructureDetector<T>
-{
-    fn new() -> Self {
-        Self {
-            connectivity_analyzer: ConnectivityAnalyzer::new(),
-            symmetry_detector: SymmetryDetector::new(),
-            pattern_recognizer: PatternRecognizer::new(),
-        }
-    }
-}
-/// Basin representation
-#[derive(Debug, Clone)]
-pub struct Basin<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> {
-    /// Basin boundary
-    boundary: Vec<Array1<T>>,
-    /// Volume
-    volume: T,
-    /// Depth
-    depth: T,
-    /// Shape characteristics
-    shape: BasinShape,
-}
-/// Basin analyzer
-#[derive(Debug)]
-pub struct BasinAnalyzer<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Basin characteristics
-    basin_characteristics: Vec<Basin<T>>,
-    /// Analysis method
-    analysis_method: BasinAnalysisMethod,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    BasinAnalyzer<T>
-{
-    fn new() -> Self {
-        Self {
-            basin_characteristics: Vec::new(),
-            analysis_method: BasinAnalysisMethod::GradientFlow,
-        }
-    }
 }
 /// Attention pattern cache for efficiency
 #[derive(Debug)]
@@ -766,10 +454,6 @@ pub struct AttentionPatternCache<
     patterns: HashMap<String, Array3<T>>,
     /// Pattern usage frequency
     usage_frequency: HashMap<String, usize>,
-    /// Cache capacity
-    capacity: usize,
-    /// Eviction policy
-    eviction_policy: CacheEvictionPolicy,
 }
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     AttentionPatternCache<T>
@@ -778,8 +462,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Self {
             patterns: HashMap::new(),
             usage_frequency: HashMap::new(),
-            capacity: 1000,
-            eviction_policy: CacheEvictionPolicy::LRU,
         }
     }
 }
@@ -792,10 +474,6 @@ pub struct OptimizationLandscapeAnalyzer<
     landscape_features: LandscapeFeatures<T>,
     /// Complexity estimator
     complexity_estimator: ComplexityEstimator<T>,
-    /// Local geometry analyzer
-    local_geometry: LocalGeometryAnalyzer<T>,
-    /// Global structure detector
-    global_structure: GlobalStructureDetector<T>,
     /// Analysis cache
     analysis_cache: HashMap<String, AnalysisResult<T>>,
     /// Horizon (in history samples) at which the analysis confidence saturates.
@@ -811,8 +489,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Ok(Self {
             landscape_features: LandscapeFeatures::default(),
             complexity_estimator: ComplexityEstimator::new(),
-            local_geometry: LocalGeometryAnalyzer::new(),
-            global_structure: GlobalStructureDetector::new(),
             analysis_cache: HashMap::new(),
             confidence_horizon: config.prediction_horizon.max(2),
             last_statistics: LandscapeStatistics::empty(),
@@ -905,20 +581,8 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
 pub struct AnalysisResult<
     T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
-    /// Analysis timestamp
-    timestamp: Instant,
-    /// Analysis features
-    features: HashMap<String, T>,
-    /// Confidence score
-    confidence: T,
-    /// Analysis metadata
-    metadata: HashMap<String, String>,
     /// Complexity score
     complexity_score: T,
-    /// Difficulty score
-    difficulty_score: T,
-    /// Recommended adaptations
-    recommended_adaptations: Vec<OptimizationStrategy>,
 }
 /// Adaptation strategies
 #[derive(Debug, Clone, Copy)]
@@ -933,29 +597,6 @@ pub enum AdaptationStrategy {
     Aggressive,
     /// Learned adaptation
     Learned,
-}
-/// Local geometry analyzer
-#[derive(Debug)]
-pub struct LocalGeometryAnalyzer<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Local minima detector
-    local_minima_detector: LocalMinimaDetector<T>,
-    /// Saddle point detector
-    saddle_point_detector: SaddlePointDetector<T>,
-    /// Basin analyzer
-    basin_analyzer: BasinAnalyzer<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    LocalGeometryAnalyzer<T>
-{
-    fn new() -> Self {
-        Self {
-            local_minima_detector: LocalMinimaDetector::new(),
-            saddle_point_detector: SaddlePointDetector::new(),
-            basin_analyzer: BasinAnalyzer::new(),
-        }
-    }
 }
 /// Configuration for adaptive enhancements
 #[derive(Debug, Clone)]
@@ -1028,60 +669,6 @@ pub enum UncertaintyMethod {
     /// Variational inference
     VariationalInference,
 }
-// NOTE: `PredictorNetwork` used to be declared here with `Array2::zeros`
-// weights and no forward pass, and `UncertaintyEstimator` held three hardcoded
-// constants (0.1 / 0.05 / 0.15) that nothing computed. Both are replaced by
-// [`crate::adaptive::predictor::PredictorNetwork`], which is Xavier-initialized,
-// has a real forward pass, is fitted by closed-form ridge regression, and
-// derives its uncertainty from the ridge posterior.
-/// Optimization pattern
-#[derive(Debug, Clone)]
-pub struct OptimizationPattern<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Pattern type
-    pattern_type: PatternType,
-    /// Pattern parameters
-    parameters: HashMap<String, T>,
-    /// Pattern confidence
-    confidence: T,
-    /// Pattern applicability
-    applicability: PatternApplicability,
-}
-/// Compression quality metrics
-#[derive(Debug, Clone)]
-pub struct CompressionQualityMetrics<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Reconstruction error
-    pub(super) reconstruction_error: T,
-    /// Information loss
-    pub(super) information_loss: T,
-    /// Compression ratio achieved
-    pub(super) compression_ratio: T,
-    /// Compression time
-    pub(super) compression_time: u64,
-}
-/// Path analysis results
-#[derive(Debug, Clone)]
-pub struct PathAnalysisResults<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Shortest paths
-    shortest_paths: Vec<OptimizationPath<T>>,
-    /// Path difficulties
-    path_difficulties: Vec<T>,
-    /// Connectivity measure
-    connectivity_measure: T,
-}
-/// Detection algorithms
-#[derive(Debug, Clone, Copy)]
-pub enum MinimaDetectionAlgorithm {
-    GradientBased,
-    HessianBased,
-    TopologyBased,
-    SamplingBased,
-}
 /// Optimization strategies
 #[derive(Debug, Clone, Copy)]
 pub enum OptimizationStrategy {
@@ -1090,58 +677,6 @@ pub enum OptimizationStrategy {
     Adaptive,
     Exploratory,
     Exploitative,
-}
-/// Saddle point representation
-#[derive(Debug, Clone)]
-pub struct SaddlePoint<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Position
-    position: Array1<T>,
-    /// Value
-    value: T,
-    /// Escape directions
-    escape_directions: Vec<Array1<T>>,
-    /// Instability measure
-    instability: T,
-}
-/// Adaptive Transformer optimizer configuration
-#[derive(Debug, Clone)]
-pub struct AdaptiveTransformerOptimizerConfig {
-    /// Base learned optimizer config
-    pub base_config: LearnedOptimizerConfig,
-    /// Model dimension
-    pub model_dim: usize,
-    /// Number of attention heads
-    pub num_heads: usize,
-    /// Feed-forward dimension
-    pub ff_dim: usize,
-    /// Number of layers
-    pub num_layers: usize,
-    /// Maximum sequence length
-    pub max_sequence_length: usize,
-    /// Attention dropout rate
-    pub attention_dropout: f64,
-    /// Feed-forward dropout rate
-    pub ff_dropout: f64,
-    /// Layer normalization epsilon
-    pub layer_norm_eps: f64,
-    /// Pre-layer normalization flag
-    pub pre_layer_norm: bool,
-    /// Positional encoding type
-    pub pos_encoding_type: PositionalEncodingType,
-    /// Relative position bias flag
-    pub relative_position_bias: bool,
-    /// Use RoPE (Rotary Position Embedding)
-    pub use_rope: bool,
-    /// Gradient checkpointing flag
-    pub gradient_checkpointing: bool,
-    /// Attention optimization configuration
-    pub attention_optimization: AttentionOptimization<f64>,
-    /// Multi-scale attention flag
-    pub multi_scale_attention: bool,
-    /// Cross-attention flag
-    pub cross_attention: bool,
 }
 /// Memory usage tracker
 #[derive(Debug)]
@@ -1152,8 +687,6 @@ pub struct MemoryUsageTracker {
     peak_usage: usize,
     /// Memory budget
     budget: usize,
-    /// Usage history
-    usage_history: VecDeque<usize>,
 }
 impl MemoryUsageTracker {
     /// Tracker with a caller-supplied budget (from
@@ -1163,7 +696,6 @@ impl MemoryUsageTracker {
             current_usage: 0,
             peak_usage: 0,
             budget: if budget == 0 { 8192 } else { budget },
-            usage_history: VecDeque::new(),
         }
     }
 
@@ -1177,86 +709,13 @@ impl MemoryUsageTracker {
         self.peak_usage
     }
 }
-/// Local minimum representation
-#[derive(Debug, Clone)]
-pub struct LocalMinimum<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Position
-    position: Array1<T>,
-    /// Value
-    value: T,
-    /// Basin size
-    basin_size: T,
-    /// Escape difficulty
-    escape_difficulty: T,
-}
-/// Saddle point detector
-#[derive(Debug)]
-pub struct SaddlePointDetector<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Detection threshold
-    threshold: T,
-    /// Detected saddle points
-    detected_saddles: Vec<SaddlePoint<T>>,
-    /// Detection algorithm
-    algorithm: SaddleDetectionAlgorithm,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    SaddlePointDetector<T>
-{
-    fn new() -> Self {
-        Self {
-            threshold: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
-            detected_saddles: Vec::new(),
-            algorithm: SaddleDetectionAlgorithm::EigenvalueBased,
-        }
-    }
-}
 /// Architecture search space
 #[derive(Debug, Clone)]
 pub struct ArchitectureSearchSpace {
     /// Layer count range
     pub(super) layer_count_range: (usize, usize),
-    /// Hidden size options
-    pub(super) hidden_size_options: Vec<usize>,
     /// Attention head options
     pub(super) attention_head_options: Vec<usize>,
-    /// Feed-forward dimension options
-    pub(super) ff_dim_options: Vec<usize>,
-    /// Activation function options
-    pub(super) activation_options: Vec<ActivationType>,
-}
-/// Symmetry detector
-#[derive(Debug)]
-pub struct SymmetryDetector<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Detected symmetries
-    symmetries: Vec<Symmetry<T>>,
-    /// Symmetry types
-    symmetry_types: Vec<SymmetryType>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    SymmetryDetector<T>
-{
-    fn new() -> Self {
-        Self {
-            symmetries: Vec::new(),
-            symmetry_types: Vec::new(),
-        }
-    }
-}
-/// Pattern types
-#[derive(Debug, Clone, Copy)]
-pub enum PatternType {
-    ConvexRegion,
-    RavineLike,
-    PlateauLike,
-    Oscillatory,
-    Monotonic,
-    Chaotic,
 }
 /// Convergence metrics for tracking optimization progress
 #[derive(Debug, Clone)]
@@ -1607,8 +1066,10 @@ impl<
         } else {
             T::zero()
         };
-        let mean_loss = recent_losses.iter().cloned().sum::<T>()
-            / T::from(recent_losses.len()).expect("unwrap failed");
+        // `losshistory.len() >= 2` was checked above and `recent_losses` is a
+        // non-empty suffix of it, so the count is positive.
+        let sample_count: T = cast_scalar(recent_losses.len()).unwrap_or_else(|_| T::one());
+        let mean_loss = recent_losses.iter().cloned().sum::<T>() / sample_count;
         let variance = recent_losses
             .iter()
             .map(|&loss| {
@@ -1616,7 +1077,7 @@ impl<
                 diff * diff
             })
             .sum::<T>()
-            / T::from(recent_losses.len()).expect("unwrap failed");
+            / sample_count;
         let stability_measure = T::one() / (T::one() + variance);
         let plateau_threshold =
             scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero());
@@ -1625,10 +1086,9 @@ impl<
         for i in 1..recent_losses.len() {
             oscillation_sum = oscillation_sum + (recent_losses[i] - recent_losses[i - 1]).abs();
         }
-        let oscillation_measure = if recent_losses.len() > 1 {
-            oscillation_sum / T::from(recent_losses.len() - 1).expect("unwrap failed")
-        } else {
-            T::zero()
+        let oscillation_measure = match cast_scalar::<T, _>(recent_losses.len() - 1) {
+            Ok(gaps) if gaps > T::zero() => oscillation_sum / gaps,
+            _ => T::zero(),
         };
         ConvergenceMetrics {
             convergence_rate,
@@ -1653,39 +1113,11 @@ impl<
         self.landscape_analyzer.analysis_cache.insert(
             cache_key,
             AnalysisResult {
-                timestamp: Instant::now(),
-                features: {
-                    let mut features = HashMap::new();
-                    features.insert(
-                        "complexity".to_string(),
-                        enhancement_result.landscape_analysis.complexity,
-                    );
-                    features.insert(
-                        "difficulty".to_string(),
-                        enhancement_result.landscape_analysis.difficulty,
-                    );
-                    features
-                },
                 complexity_score: enhancement_result.landscape_analysis.complexity,
-                difficulty_score: enhancement_result.landscape_analysis.difficulty,
-                recommended_adaptations: enhancement_result
-                    .landscape_analysis
-                    .recommended_strategies
-                    .clone(),
-                confidence: enhancement_result.landscape_analysis.confidence,
-                metadata: HashMap::new(),
             },
         );
         let performance = ArchitecturePerformance {
-            convergence_speed: enhancement_result.convergence_metrics.convergence_rate,
             final_performance: T::one() - enhancement_result.performance_prediction.uncertainty,
-            memory_efficiency: T::from(enhancement_result.attention_optimization.memory_savings)
-                .expect("unwrap failed"),
-            computational_cost: T::one()
-                / enhancement_result
-                    .attention_optimization
-                    .computational_speedup,
-            adaptation_time: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
         };
         self.architecture_adapter
             .performance_history
@@ -1704,7 +1136,10 @@ impl<
                 .values()
                 .map(|result| result.complexity_score)
                 .sum();
-            sum / T::from(self.landscape_analyzer.analysis_cache.len()).expect("unwrap failed")
+            match cast_scalar::<T, _>(self.landscape_analyzer.analysis_cache.len()) {
+                Ok(count) if count > T::zero() => sum / count,
+                _ => T::zero(),
+            }
         } else {
             scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
         };
@@ -1715,8 +1150,10 @@ impl<
                 .iter()
                 .map(|perf| perf.final_performance)
                 .sum();
-            sum / T::from(self.architecture_adapter.performance_history.len())
-                .expect("unwrap failed")
+            match cast_scalar::<T, _>(self.architecture_adapter.performance_history.len()) {
+                Ok(count) if count > T::zero() => sum / count,
+                _ => T::zero(),
+            }
         } else {
             scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero())
         };
@@ -1730,90 +1167,6 @@ impl<
                 .unwrap_or_else(|| T::zero()),
         }
     }
-}
-/// Basin shapes
-#[derive(Debug, Clone, Copy)]
-pub enum BasinShape {
-    Spherical,
-    Ellipsoidal,
-    Irregular,
-    Narrow,
-    Wide,
-}
-/// Local minima detector
-#[derive(Debug)]
-pub struct LocalMinimaDetector<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Detection threshold
-    threshold: T,
-    /// Detected minima
-    detected_minima: Vec<LocalMinimum<T>>,
-    /// Detection algorithm
-    algorithm: MinimaDetectionAlgorithm,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    LocalMinimaDetector<T>
-{
-    fn new() -> Self {
-        Self {
-            threshold: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
-            detected_minima: Vec::new(),
-            algorithm: MinimaDetectionAlgorithm::GradientBased,
-        }
-    }
-}
-/// Compression parameters
-#[derive(Debug, Clone)]
-pub struct CompressionParams<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Target compression ratio
-    pub(super) target_ratio: T,
-    /// Quality threshold
-    pub(super) quality_threshold: T,
-    /// Maximum compression time
-    pub(super) max_time: u64,
-    /// Compression strength
-    pub(super) strength: T,
-}
-/// Pattern recognizer
-#[derive(Debug)]
-pub struct PatternRecognizer<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Recognized patterns
-    patterns: Vec<OptimizationPattern<T>>,
-    /// Pattern library
-    pattern_library: PatternLibrary<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    PatternRecognizer<T>
-{
-    fn new() -> Self {
-        Self {
-            patterns: Vec::new(),
-            pattern_library: PatternLibrary {
-                patterns: HashMap::new(),
-                pattern_index: HashMap::new(),
-                usage_stats: HashMap::new(),
-            },
-        }
-    }
-}
-/// Gradient characteristics
-#[derive(Debug, Clone)]
-pub struct GradientCharacteristics<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Gradient norm
-    pub(super) gradient_norm: T,
-    /// Gradient consistency
-    pub(super) consistency: T,
-    /// Gradient noise ratio
-    pub(super) noise_ratio: T,
-    /// Gradient correlation
-    pub(super) correlation: T,
 }
 /// Activation function types
 #[derive(Debug, Clone, Copy)]

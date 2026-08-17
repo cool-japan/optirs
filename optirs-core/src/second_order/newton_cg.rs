@@ -17,7 +17,7 @@
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::ScalarOperand;
 use scirs2_core::ndarray_ext::{Array1, ArrayView1};
-use scirs2_core::numeric::{Float, Zero};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 
 /// Newton-CG optimizer configuration
@@ -138,7 +138,10 @@ fn boundary_tau<T: Float>(d: &Array1<T>, p: &Array1<T>, delta: T) -> Option<T> {
     let d_view = d.view();
     let p_view = p.view();
     let pp = dot(&p_view, &p_view);
-    if !(pp > T::zero()) {
+    if !matches!(
+        pp.partial_cmp(&T::zero()),
+        Some(std::cmp::Ordering::Greater)
+    ) {
         return None;
     }
     let dp = dot(&d_view, &p_view);
@@ -193,7 +196,7 @@ impl<T: Float + ScalarOperand> NewtonCG<T> {
     /// ```
     /// use optirs_core::second_order::newton_cg::NewtonCG;
     ///
-    /// let optimizer = NewtonCG::<f32>::new(1.0, 1e-6, 100, 1e-6).expect("unwrap failed");
+    /// let optimizer = NewtonCG::<f32>::new(1.0, 1e-6, 100, 1e-6).expect("NewtonCG::<f32>::new succeeds");
     /// ```
     pub fn new(
         learning_rate: T,
@@ -201,12 +204,18 @@ impl<T: Float + ScalarOperand> NewtonCG<T> {
         cg_max_iters: usize,
         hessian_reg: T,
     ) -> Result<Self> {
-        if !(learning_rate > T::zero()) {
+        if !matches!(
+            learning_rate.partial_cmp(&T::zero()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Err(OptimError::InvalidParameter(
                 "learning_rate must be positive".to_string(),
             ));
         }
-        if !(cg_tolerance > T::zero()) {
+        if !matches!(
+            cg_tolerance.partial_cmp(&T::zero()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Err(OptimError::InvalidParameter(
                 "cg_tolerance must be positive".to_string(),
             ));
@@ -246,7 +255,10 @@ impl<T: Float + ScalarOperand> NewtonCG<T> {
     /// # Errors
     /// Returns [`OptimError::InvalidParameter`] if `radius` is not positive.
     pub fn with_trust_region(mut self, radius: T) -> Result<Self> {
-        if !(radius > T::zero()) {
+        if !matches!(
+            radius.partial_cmp(&T::zero()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Err(OptimError::InvalidParameter(
                 "trust region radius must be positive".to_string(),
             ));
@@ -263,7 +275,10 @@ impl<T: Float + ScalarOperand> NewtonCG<T> {
     /// # Errors
     /// Returns [`OptimError::InvalidParameter`] if `radius` is not positive.
     pub fn with_max_trust_region_radius(mut self, radius: T) -> Result<Self> {
-        if !(radius > T::zero()) {
+        if !matches!(
+            radius.partial_cmp(&T::zero()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Err(OptimError::InvalidParameter(
                 "max trust region radius must be positive".to_string(),
             ));
@@ -330,7 +345,7 @@ impl<T: Float + ScalarOperand> NewtonCG<T> {
     /// // Hessian-vector product function (identity for this example)
     /// let hvp_fn = |v: &[f32]| -> Vec<f32> { v.to_vec() };
     ///
-    /// let updated = optimizer.step(params.view(), grads.view(), hvp_fn).expect("unwrap failed");
+    /// let updated = optimizer.step(params.view(), grads.view(), hvp_fn).expect("optimizer.step succeeds");
     /// ```
     pub fn step<F>(
         &mut self,
@@ -694,7 +709,8 @@ mod tests {
 
     #[test]
     fn test_newton_cg_custom_creation() {
-        let optimizer = NewtonCG::<f32>::new(0.5, 1e-8, 50, 1e-5).expect("unwrap failed");
+        let optimizer = NewtonCG::<f32>::new(0.5, 1e-8, 50, 1e-5)
+            .expect("NewtonCG::<f32>::new succeeds in test_newton_cg_custom_creation");
         assert_eq!(optimizer.step_count(), 0);
         assert_relative_eq!(optimizer.get_learning_rate(), 0.5);
     }
@@ -714,7 +730,8 @@ mod tests {
         // Gradient: g = H*x - b
         // Optimal: x* = H^{-1}*b = 0.5*b
 
-        let mut optimizer = NewtonCG::<f64>::new(1.0, 1e-8, 50, 0.0).expect("unwrap failed");
+        let mut optimizer = NewtonCG::<f64>::new(1.0, 1e-8, 50, 0.0)
+            .expect("NewtonCG::<f64>::new succeeds in test_newton_cg_quadratic_function");
 
         // Start at x = [2.0, 2.0], b = [1.0, 1.0]
         // Optimal solution: x* = [0.5, 0.5]
@@ -732,7 +749,7 @@ mod tests {
 
         params = optimizer
             .step(params.view(), grads.view(), hvp_fn)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_newton_cg_quadratic_function");
 
         // Should be close to optimal [0.5, 0.5]
         assert_relative_eq!(params[0], 0.5, epsilon = 0.1);
@@ -746,7 +763,8 @@ mod tests {
         // Hessian: [[2, 0], [0, 2]]
         // Optimal: (0, 0)
 
-        let mut optimizer = NewtonCG::<f64>::new(1.0, 1e-8, 100, 0.0).expect("unwrap failed");
+        let mut optimizer = NewtonCG::<f64>::new(1.0, 1e-8, 100, 0.0)
+            .expect("NewtonCG::<f64>::new succeeds in test_newton_cg_convergence");
         let mut params = array![5.0, 5.0];
 
         // Hessian-vector product for H = [[2, 0], [0, 2]]
@@ -756,7 +774,7 @@ mod tests {
             let grads = array![2.0 * params[0], 2.0 * params[1]];
             params = optimizer
                 .step(params.view(), grads.view(), hvp_fn)
-                .expect("unwrap failed");
+                .expect("step succeeds in test_newton_cg_convergence");
         }
 
         // Should converge to near zero
@@ -782,7 +800,7 @@ mod tests {
 
         optimizer
             .step(params.view(), grads.view(), hvp_fn)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_newton_cg_reset");
         assert_eq!(optimizer.step_count(), 1);
 
         optimizer.reset();

@@ -4,12 +4,12 @@ use super::config::PerformanceConfig;
 use super::meta_learning::MetaLearningResult;
 use super::TrainingMetrics;
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// Performance metrics for transformer optimizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,8 +405,13 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             return 0.0;
         }
 
-        let initial_loss = self.loss_history[0];
-        let final_loss = *self.loss_history.back().expect("unwrap failed");
+        // `len() >= 2` was checked above, so both ends exist; reading through
+        // the fallible accessors keeps that reasoning local.
+        let (Some(&initial_loss), Some(&final_loss)) =
+            (self.loss_history.front(), self.loss_history.back())
+        else {
+            return 0.0;
+        };
 
         if initial_loss > 0.0 {
             (initial_loss - final_loss) / initial_loss
@@ -1329,7 +1334,7 @@ mod tests {
         });
 
         assert!(result.is_ok());
-        assert_eq!(result.expect("unwrap failed"), 42);
+        assert_eq!(result.expect("profile_operation should succeed"), 42);
     }
 
     /// F84: `cpu_usage_history` had no writers anywhere in the crate, so

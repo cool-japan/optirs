@@ -9,14 +9,14 @@ mod nuclear_norm;
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-use scirs2_core::ndarray::{Array, Array1, Array2, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::Path;
 
 use linalg::{
-    is_orthonormal, jacobi_eigen_symmetric, modified_gram_schmidt, power_iteration_spectral_norm,
+    is_orthonormal, modified_gram_schmidt, power_iteration_spectral_norm,
     project_positive_definite, to_matrix_2d, write_matrix_2d,
 };
 
@@ -1326,8 +1326,9 @@ pub mod checkpointing {
 
 #[cfg(test)]
 mod tests {
+    use super::linalg::jacobi_eigen_symmetric;
     use super::*;
-    use scirs2_core::ndarray::Array1;
+    use scirs2_core::ndarray::{Array1, Array2};
 
     #[test]
     fn test_parameter_group_config() {
@@ -1378,10 +1379,14 @@ mod tests {
         assert_eq!(manager.total_params(), 3);
 
         // Test group access
-        let group1 = manager.get_group(id1).expect("unwrap failed");
+        let group1 = manager
+            .get_group(id1)
+            .expect("manager.get_group succeeds in test_group_manager");
         assert_eq!(group1.learning_rate(0.0), 0.01);
 
-        let group2 = manager.get_group(id2).expect("unwrap failed");
+        let group2 = manager
+            .get_group(id2)
+            .expect("manager.get_group succeeds in test_group_manager");
         assert_eq!(group2.learning_rate(0.0), 0.001);
     }
 
@@ -1392,13 +1397,22 @@ mod tests {
         // Test value clipping
         let mut params = Array1::from_vec(vec![-2.0, 0.5, 3.0]);
         let clip_constraint = ParameterConstraint::ValueClip { min: 0.0, max: 1.0 };
-        clip_constraint.apply(&mut params).expect("unwrap failed");
-        assert_eq!(params.as_slice().expect("unwrap failed"), &[0.0, 0.5, 1.0]);
+        clip_constraint
+            .apply(&mut params)
+            .expect("clip_constraint.apply succeeds in test_parameter_constraints");
+        assert_eq!(
+            params
+                .as_slice()
+                .expect("params.as_slice succeeds in test_parameter_constraints"),
+            &[0.0, 0.5, 1.0]
+        );
 
         // Test L2 norm constraint
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // norm = 5
         let l2_constraint = ParameterConstraint::L2NormConstraint { maxnorm: 2.0 };
-        l2_constraint.apply(&mut params).expect("unwrap failed");
+        l2_constraint
+            .apply(&mut params)
+            .expect("l2_constraint.apply succeeds in test_parameter_constraints");
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 2.0, epsilon = 1e-6);
 
@@ -1407,15 +1421,20 @@ mod tests {
         let non_neg_constraint = ParameterConstraint::NonNegative;
         non_neg_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
-        assert_eq!(params.as_slice().expect("unwrap failed"), &[0.0, 2.0, 0.0]);
+            .expect("apply succeeds in test_parameter_constraints");
+        assert_eq!(
+            params
+                .as_slice()
+                .expect("params.as_slice succeeds in test_parameter_constraints"),
+            &[0.0, 2.0, 0.0]
+        );
 
         // Test unit sphere constraint
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // norm = 5
         let unit_sphere_constraint = ParameterConstraint::UnitSphere;
         unit_sphere_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_parameter_constraints");
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 1.0, epsilon = 1e-6);
     }
@@ -1430,11 +1449,15 @@ mod tests {
         let mut group = ParameterGroup::new(0, params, config);
 
         // Apply constraints
-        group.apply_constraints().expect("unwrap failed");
+        group
+            .apply_constraints()
+            .expect("group.apply_constraints succeeds in test_parameter_group_with_constraints");
 
         // Check that constraints were applied
         assert_eq!(
-            group.params[0].as_slice().expect("unwrap failed"),
+            group.params[0]
+                .as_slice()
+                .expect("as_slice succeeds in test_parameter_group_with_constraints"),
             &[0.0, 1.0]
         );
     }
@@ -1461,7 +1484,7 @@ mod tests {
         let simplex_constraint = ParameterConstraint::Simplex;
         simplex_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_simplex_constraint");
 
         // Check that values sum to 1 and are non-negative
         let sum: f64 = params.sum();
@@ -1483,7 +1506,7 @@ mod tests {
         let simplex_constraint = ParameterConstraint::Simplex;
         simplex_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_simplex_constraint_with_negatives");
 
         // Check that values sum to 1 and are non-negative
         let sum: f64 = params.sum();
@@ -1505,7 +1528,7 @@ mod tests {
         let simplex_constraint = ParameterConstraint::Simplex;
         simplex_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_simplex_constraint_all_zeros");
 
         // Should result in uniform distribution
         let sum: f64 = params.sum();
@@ -1525,7 +1548,7 @@ mod tests {
         let spectral_constraint = ParameterConstraint::SpectralNorm { maxnorm: 2.0 };
         spectral_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_spectral_norm_constraint");
 
         // After scaling by 2/5 the spectral norm equals the cap.
         let sigma = power_iteration_spectral_norm(&params);
@@ -1542,7 +1565,7 @@ mod tests {
         let nuclear_constraint = ParameterConstraint::NuclearNorm { maxnorm: 3.0 };
         nuclear_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_nuclear_norm_constraint");
 
         // Projection onto the L1 ball of the spectrum {4, 3, 2} with radius 3
         // uses θ = 2, leaving {2, 1, 0}. Entrywise L1 scaling would instead have
@@ -1630,7 +1653,9 @@ mod tests {
         let mut group = ParameterGroup::new(0, params, config);
 
         // Apply constraints
-        group.apply_constraints().expect("unwrap failed");
+        group
+            .apply_constraints()
+            .expect("group.apply_constraints succeeds in test_constraint_combination");
 
         // Check that both non-negative and simplex constraints were applied
         let result = &group.params[0];

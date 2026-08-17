@@ -19,7 +19,7 @@ use super::buffer::TPUBuffer;
 // `pub use types::*;` in `tpu_backend/mod.rs`, same as before the now-deleted
 // `xla_compilation` duplicate module was folded into `xla`.
 pub use crate::xla::ComputationId;
-use crate::{PodTopology, TPUConfig, TPUVersion, XLAOptimizationLevel};
+use crate::{TPUConfig, TPUVersion, XLAOptimizationLevel};
 
 /// TPU backend configuration
 #[derive(Debug, Clone)]
@@ -53,6 +53,10 @@ pub struct TPUBackendConfig {
 
     /// Memory allocation strategy
     pub memory_allocation_strategy: MemoryAllocationStrategy,
+
+    /// Strategy used by [`super::device_manager::DeviceManager::select_devices`]
+    /// to order eligible devices when placing a program.
+    pub load_balancing_strategy: LoadBalancingStrategy,
 }
 
 impl Default for TPUBackendConfig {
@@ -68,6 +72,7 @@ impl Default for TPUBackendConfig {
             max_retry_attempts: 3,
             prefetch_strategy: PrefetchStrategy::Adaptive,
             memory_allocation_strategy: MemoryAllocationStrategy::BestFit,
+            load_balancing_strategy: LoadBalancingStrategy::LeastLoaded,
         }
     }
 }
@@ -631,10 +636,36 @@ pub enum MemoryAllocationStrategy {
     Adaptive,
 }
 
+/// One block reserved on one device by
+/// [`super::memory::TPUMemoryManager::allocate_for_computation`].
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceReservation {
+    /// Device the block lives on
+    pub device: DeviceId,
+
+    /// Pool handle identifying exactly this block, so release frees the block
+    /// that was reserved rather than one of the same size.
+    pub handle: usize,
+
+    /// Base address of the block within the device's pool
+    pub address: usize,
+
+    /// Block size in bytes
+    pub size: usize,
+}
+
 /// Memory allocation tracking
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MemoryAllocation {
-    /// Per-device allocations
+    /// The individual blocks this allocation reserved.
+    ///
+    /// Release used to work from `device_allocations` alone, freeing whichever
+    /// recent blocks on a device happened to add up to the recorded byte count
+    /// -- which frees the wrong blocks as soon as two allocations of equal size
+    /// are live on one device. Carrying the handles makes release exact.
+    pub reservations: Vec<DeviceReservation>,
+
+    /// Per-device byte totals, derived from [`Self::reservations`]
     pub device_allocations: HashMap<DeviceId, usize>,
 
     /// Total allocated memory
@@ -851,11 +882,26 @@ pub enum RecoveryStrategy {
     Ignore,
 }
 
+/// Resource occupancy observed at the moment a task finished, as measured by
+/// [`super::backend::TPUBackend`] (device memory share and pool utilization).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExecutionUtilization {
+    /// Mean share of the selected devices' capacity the computation held.
+    pub device: f64,
+
+    /// Fraction of the managed memory pools that was allocated.
+    pub memory: f64,
+}
+
 /// Performance sample
 #[derive(Debug, Clone)]
 pub struct PerformanceSample {
     /// Timestamp
     pub timestamp: Instant,
+
+    /// Computation this sample belongs to, so samples can be attributed back to
+    /// the program that produced them.
+    pub computation: ComputationId,
 
     /// Execution time
     pub execution_time: Duration,

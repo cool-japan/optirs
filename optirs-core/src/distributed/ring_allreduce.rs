@@ -504,7 +504,6 @@ impl RingAllReduce {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq;
     use scirs2_core::ndarray::Array1;
 
     /// Independent, naive reference reduction used to validate the ring result.
@@ -528,8 +527,11 @@ mod tests {
     fn assert_all_ranks_eq(results: &[Array1<f64>], expected: &Array1<f64>) {
         for (rank, result) in results.iter().enumerate() {
             assert_eq!(result.len(), expected.len(), "rank {rank} length mismatch");
-            for (i, (&got, &want)) in result.iter().zip(expected.iter()).enumerate() {
-                assert_relative_eq!(got, want, epsilon = 1e-9);
+            for (index, (&got, &want)) in result.iter().zip(expected.iter()).enumerate() {
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "rank {rank} coordinate {index}: got {got}, want {want}"
+                );
             }
         }
     }

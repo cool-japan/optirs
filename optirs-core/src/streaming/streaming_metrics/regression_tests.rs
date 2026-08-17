@@ -770,3 +770,72 @@ fn inverted_ranges_are_an_error_not_a_panic() {
     let collector = collector_without_compression();
     assert!(collector.get_historical_metrics(at(100), at(10)).is_err());
 }
+
+/// The time series used to be keyed by whole seconds, so several samples taken
+/// inside the same second silently overwrote one another — under sub-second
+/// streaming rates that discarded almost everything and made the retention and
+/// compression work below it unobservable. Keying by microseconds keeps every
+/// distinct sample.
+#[test]
+fn sub_second_samples_are_all_retained() {
+    let mut collector = collector_without_compression();
+
+    // Five samples inside the same wall-clock second, 100 ms apart.
+    for step in 0..5u64 {
+        let timestamp =
+            SystemTime::UNIX_EPOCH + Duration::from_secs(10) + Duration::from_millis(100 * step);
+        let sample = MetricsSample::new(
+            timestamp,
+            1.0 - 0.1 * step as f64,
+            0.5,
+            Duration::from_millis(2),
+            1024,
+        );
+        collector.record_sample(sample).expect("record_sample");
+    }
+
+    assert_eq!(
+        collector.retained_snapshot_count(),
+        5,
+        "sub-second samples were collapsed onto one key (whole-second key regression)"
+    );
+
+    // All five must be retrievable, and all five must report the same *second*
+    // while carrying five distinct microsecond timestamps.
+    let range = collector
+        .get_historical_metrics(at(10), at(11))
+        .expect("range query");
+    assert_eq!(range.len(), 5);
+    assert!(
+        range.iter().all(|snapshot| snapshot.timestamp == 10),
+        "the second-resolution timestamp must be preserved for bucketing"
+    );
+    let mut micros: Vec<u64> = range.iter().map(|s| s.timestamp_micros).collect();
+    micros.sort_unstable();
+    micros.dedup();
+    assert_eq!(micros.len(), 5, "microsecond timestamps must be distinct");
+    assert_eq!(micros[0], 10 * 1_000_000);
+    assert_eq!(micros[4], 10 * 1_000_000 + 400_000);
+}
+
+/// Retention is configured in seconds; with a microsecond key the conversion
+/// must be applied, otherwise a 3600-second window would be read as 3600
+/// microseconds and prune essentially everything.
+#[test]
+fn retention_window_is_interpreted_in_seconds() {
+    let mut collector = collector_without_compression();
+
+    // Samples one second apart across two minutes, well inside the default
+    // raw-data retention window.
+    for second in 0..120u64 {
+        collector
+            .record_sample(sample_at(second, 1.0, 0.5, 2))
+            .expect("record_sample");
+    }
+
+    assert!(
+        collector.retained_snapshot_count() > 1,
+        "a seconds-vs-micros unit error pruned the whole series: {} snapshots left",
+        collector.retained_snapshot_count()
+    );
+}

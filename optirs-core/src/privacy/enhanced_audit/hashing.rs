@@ -54,7 +54,7 @@ pub fn genesis_link() -> Digest32 {
 /// proofs. A constant key would let anyone recompute every tag after
 /// rewriting the chain, which is the whole point of having one.
 pub fn random_key() -> Digest32 {
-    use scirs2_core::random::{thread_rng, Rng};
+    use scirs2_core::random::thread_rng;
     let mut rng = thread_rng();
     let mut key = [0u8; DIGEST_LEN];
     for chunk in key.chunks_mut(8) {

@@ -4,7 +4,6 @@ use super::layers::ActivationLayer;
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, Axis};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 use std::fmt::Debug;
 
 /// Activations cached by [`FeedForwardNetwork::forward_with_cache`] so the
@@ -36,12 +35,6 @@ pub struct FeedForwardNetwork<
     /// Activation function
     activation: ActivationFunction,
 
-    /// Input dimension
-    input_dimension: usize,
-
-    /// Hidden dimension (typically 4x input dimension)
-    hidden_dimension: usize,
-
     /// Dropout layer for regularization
     dropout: super::layers::DropoutLayer,
 }
@@ -63,8 +56,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             linear1,
             linear2,
             activation,
-            input_dimension,
-            hidden_dimension,
             dropout,
         })
     }
@@ -84,8 +75,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             linear1,
             linear2,
             activation,
-            input_dimension,
-            hidden_dimension,
             dropout,
         })
     }
@@ -366,12 +355,6 @@ pub struct GatedLinearUnit<
 
     /// Linear layer for values
     value_linear: LinearLayer<T>,
-
-    /// Input dimension
-    input_dimension: usize,
-
-    /// Hidden dimension
-    hidden_dimension: usize,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
@@ -385,8 +368,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Ok(Self {
             gate_linear,
             value_linear,
-            input_dimension,
-            hidden_dimension,
         })
     }
 
@@ -422,12 +403,6 @@ pub struct SwiGLU<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send 
 
     /// Linear layer for values
     value_linear: LinearLayer<T>,
-
-    /// Input dimension
-    input_dimension: usize,
-
-    /// Hidden dimension
-    hidden_dimension: usize,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> SwiGLU<T> {
@@ -439,8 +414,6 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Ok(Self {
             gate_linear,
             value_linear,
-            input_dimension,
-            hidden_dimension,
         })
     }
 
@@ -479,17 +452,11 @@ pub struct MixtureOfExperts<
     /// Gating network
     gate: LinearLayer<T>,
 
-    /// Number of experts
-    num_experts: usize,
-
     /// Number of experts to activate (top-k)
     top_k: usize,
 
     /// Input dimension
     input_dimension: usize,
-
-    /// Hidden dimension per expert
-    hidden_dimension: usize,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
@@ -517,10 +484,8 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         Ok(Self {
             experts,
             gate,
-            num_experts,
             top_k: top_k.min(num_experts),
             input_dimension,
-            hidden_dimension,
         })
     }
 
@@ -546,7 +511,13 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
                 .map(|(idx, &prob)| (idx, prob))
                 .collect();
 
-            prob_indices.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
+            // `total_cmp` is a total order over floats, so a NaN gate score
+            // sorts deterministically instead of panicking inside `sort_by`.
+            prob_indices.sort_by(|a, b| {
+                b.1.to_f64()
+                    .unwrap_or(f64::NAN)
+                    .total_cmp(&a.1.to_f64().unwrap_or(f64::NAN))
+            });
 
             let top_k_indices: Vec<usize> = prob_indices
                 .iter()
@@ -650,12 +621,12 @@ mod tests {
         );
         assert!(ffn.is_ok());
 
-        let mut network = ffn.expect("unwrap failed");
+        let mut network = ffn.expect("FeedForwardNetwork::new should succeed");
         let input = Array2::<f32>::ones((4, 128));
         let result = network.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[4, 128]);
     }
 
@@ -664,12 +635,12 @@ mod tests {
         let linear = LinearLayer::<f32>::new(64, 128);
         assert!(linear.is_ok());
 
-        let layer = linear.expect("unwrap failed");
+        let layer = linear.expect("LinearLayer::new should succeed");
         let input = Array2::<f32>::zeros((2, 64));
         let result = layer.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[2, 128]);
         assert_eq!(layer.parameter_count(), 64 * 128 + 128);
     }
@@ -679,12 +650,12 @@ mod tests {
         let glu = GatedLinearUnit::<f32>::new(128, 256);
         assert!(glu.is_ok());
 
-        let unit = glu.expect("unwrap failed");
+        let unit = glu.expect("GatedLinearUnit::new should succeed");
         let input = Array2::<f32>::ones((2, 128));
         let result = unit.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[2, 256]);
     }
 
@@ -693,12 +664,12 @@ mod tests {
         let swiglu = SwiGLU::<f32>::new(128, 256);
         assert!(swiglu.is_ok());
 
-        let unit = swiglu.expect("unwrap failed");
+        let unit = swiglu.expect("SwiGLU::new should succeed");
         let input = Array2::<f32>::ones((2, 128));
         let result = unit.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[2, 256]);
     }
 
@@ -707,19 +678,21 @@ mod tests {
         let moe = MixtureOfExperts::<f32>::new(128, 256, 4, 2, ActivationFunction::ReLU);
         assert!(moe.is_ok());
 
-        let mut mixture = moe.expect("unwrap failed");
+        let mut mixture = moe.expect("MixtureOfExperts::new should succeed");
         let input = Array2::<f32>::ones((3, 128));
         let result = mixture.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[3, 128]);
     }
 
     #[test]
     fn test_linear_layer_initialization() {
-        let xavier_layer = LinearLayer::<f32>::new(64, 128).expect("unwrap failed");
-        let he_layer = LinearLayer::<f32>::new_he_init(64, 128).expect("unwrap failed");
+        let xavier_layer =
+            LinearLayer::<f32>::new(64, 128).expect("LinearLayer::new should succeed");
+        let he_layer = LinearLayer::<f32>::new_he_init(64, 128)
+            .expect("LinearLayer::new_he_init should succeed");
 
         assert_eq!(xavier_layer.parameter_count(), he_layer.parameter_count());
         assert_eq!(

@@ -2,11 +2,11 @@
 
 use super::config::{ActivationFunction, MetaLearningConfig};
 use super::feedforward::FeedForwardNetwork;
-use super::layers::LayerNormalization;
+use crate::common::cast_positive;
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::time::Instant;
 
@@ -291,7 +291,7 @@ impl<
             }
         }
 
-        let num_tasks = T::from(tasks.len()).expect("unwrap failed");
+        let num_tasks: T = cast_positive(tasks.len(), "task batch size")?;
         for update in meta_update.iter_mut() {
             *update = *update / num_tasks;
         }
@@ -679,9 +679,13 @@ impl<
         }
 
         let recent_losses: Vec<_> = loss_history.iter().rev().take(5).cloned().collect();
-        let improvement = recent_losses.last().expect("unwrap failed")
-            - recent_losses.first().expect("unwrap failed");
-        Ok(improvement.clamp(0.0, 1.0))
+        // `loss_history.len() >= 2` was checked above, so `take(5)` yields at
+        // least two entries; reading through the fallible accessors keeps that
+        // reasoning local instead of an `expect` far from its guard.
+        let (Some(oldest), Some(newest)) = (recent_losses.last(), recent_losses.first()) else {
+            return Ok(0.0);
+        };
+        Ok((oldest - newest).clamp(0.0, 1.0))
     }
 
     fn apply_meta_scaling(&self, update: &Array1<T>) -> Result<Array1<T>> {
@@ -705,7 +709,7 @@ impl<
             }
         }
 
-        let num_experiences = T::from(experiences.len()).expect("unwrap failed");
+        let num_experiences: T = cast_positive(experiences.len(), "experience count")?;
         for param in averaged_params.iter_mut() {
             *param = *param / num_experiences;
         }
@@ -920,12 +924,27 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         })
     }
 
+    /// Record one task experience.
+    ///
+    /// # Errors
+    /// Returns `Err` when `parameters` is not `parameter_dimension` long.
+    /// [`Self::retrieve_similar_experiences`] compares stored parameter vectors
+    /// against each other, so a bank holding mixed widths silently produces
+    /// meaningless neighbours; the declared dimension used to be stored at
+    /// construction and checked against nothing.
     pub fn store_experience(
         &mut self,
         task: &TaskBatch<T>,
         parameters: &[T],
         performance: T,
     ) -> Result<()> {
+        if parameters.len() != self.parameter_dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "MemoryBank stores {}-dimensional parameter vectors but was given {}",
+                self.parameter_dimension,
+                parameters.len()
+            )));
+        }
         let experience = MemoryExperience {
             task_signature: self.compute_task_signature(task),
             parameters: parameters.to_vec(),
@@ -958,7 +977,9 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             })
             .collect();
 
-        scored_experiences.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("unwrap failed"));
+        // `total_cmp` is a total order, so a NaN similarity sorts
+        // deterministically rather than panicking inside `sort_by`.
+        scored_experiences.sort_by(|a, b| b.0.total_cmp(&a.0));
 
         Ok(scored_experiences
             .into_iter()
@@ -1431,7 +1452,7 @@ mod tests {
         let memory = MemoryBank::<f32>::new(100, 64);
         assert!(memory.is_ok());
 
-        let mut bank = memory.expect("unwrap failed");
+        let mut bank = memory.expect("MemoryBank::new should succeed");
         let task = TaskBatch {
             id: "test".to_string(),
             difficulty: 0.5,
@@ -1449,7 +1470,7 @@ mod tests {
         let network = AdaptationNetwork::<f32>::new(128, 256);
         assert!(network.is_ok());
 
-        let mut net = network.expect("unwrap failed");
+        let mut net = network.expect("AdaptationNetwork::new should succeed");
         let task = TaskBatch {
             id: "test".to_string(),
             difficulty: 0.5,

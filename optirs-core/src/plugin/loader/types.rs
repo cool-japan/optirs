@@ -397,15 +397,58 @@ pub struct PermissionValidator {
     pub(super) rules: Vec<ValidationRule>,
 }
 impl PermissionValidator {
+    /// A validator carrying only the built-in rules.
     pub(super) fn new() -> Self {
         Self { rules: Vec::new() }
     }
+
+    /// Register an additional rule.
+    ///
+    /// `permission_pattern` selects which permissions the rule applies to: it
+    /// is matched as a case-insensitive substring against the permission's
+    /// rendered form, and an empty pattern applies the rule to every
+    /// permission. Until 0.3.2 `rules` was an empty vector that nothing could
+    /// populate and `validate_permission` never consulted, so a deployment's
+    /// own policy had no way in.
+    pub fn add_rule(&mut self, rule: ValidationRule) -> Result<()> {
+        if rule.name.is_empty() {
+            return Err(OptimError::InvalidParameter(
+                "a permission validation rule must be named".to_string(),
+            ));
+        }
+        self.rules.push(rule);
+        Ok(())
+    }
+
+    /// Registered rules, in the order they will be applied.
+    pub fn rules(&self) -> &[ValidationRule] {
+        &self.rules
+    }
+
+    /// Whether `permission` is acceptable.
+    ///
+    /// The built-in checks run first (no path traversal, no absolute paths, no
+    /// empty network target); every registered rule whose `permission_pattern`
+    /// matches must then also accept. Rules can only *tighten* the policy --
+    /// a rule cannot re-permit something the built-in checks rejected.
     pub(super) fn validate_permission(&self, permission: &Permission) -> bool {
-        match permission {
+        let builtin_ok = match permission {
             Permission::FileSystem(path) => !path.contains("..") && !path.starts_with('/'),
             Permission::Network(addr) => !addr.is_empty(),
             _ => true,
+        };
+        if !builtin_ok {
+            return false;
         }
+
+        let rendered = format!("{permission:?}").to_ascii_lowercase();
+        self.rules.iter().all(|rule| {
+            let pattern = rule.permission_pattern.to_ascii_lowercase();
+            if !pattern.is_empty() && !rendered.contains(&pattern) {
+                return true;
+            }
+            (rule.validator)(permission)
+        })
     }
 }
 /// Trusted Certificate Authority

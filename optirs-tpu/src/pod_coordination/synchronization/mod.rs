@@ -1,8 +1,6 @@
 // Synchronization Module
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 pub mod clocks;
 pub mod consensus;

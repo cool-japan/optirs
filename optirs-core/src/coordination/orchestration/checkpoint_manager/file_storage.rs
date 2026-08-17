@@ -800,7 +800,7 @@ mod tests {
         // Survives a brand-new manager instance pointed at the same
         // directory -- i.e. actually persisted, not just held in memory.
         drop(manager);
-        let mut reopened_config_backend = FileCheckpointStorage::<f64>::new(&dir).expect("reopen");
+        let reopened_config_backend = FileCheckpointStorage::<f64>::new(&dir).expect("reopen");
         let reloaded = reopened_config_backend
             .retrieve(&checkpoint_id)
             .expect("retrieve after reopening backend fresh");

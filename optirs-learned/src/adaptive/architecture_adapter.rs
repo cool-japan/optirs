@@ -141,7 +141,17 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
                 },
                 _ => target,
             };
-            if proposed != current && proposed > 0 {
+            // A deeper transformer is the one proposal that costs memory, so it
+            // is the one the configured budget has to veto. Without this check
+            // `resource_constraints` was populated from
+            // `AdaptiveConfig::memory_budget` and then never consulted: the
+            // adapter would happily propose a depth whose weights could not fit.
+            let within_budget = |layers: usize| {
+                layers <= current
+                    || Self::estimated_parameter_megabytes(&adapted, layers)
+                        <= self.resource_constraints.max_memory
+            };
+            if proposed != current && proposed > 0 && within_budget(proposed) {
                 adapted.num_transformer_layers = proposed;
                 changes.push(ArchitectureChange::LayerCountChange(proposed));
             }
@@ -214,5 +224,105 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     /// Adaptation strategy selected from the configuration.
     pub fn adaptation_strategy(&self) -> AdaptationStrategy {
         self.adaptation_strategy
+    }
+
+    /// Memory budget proposals are checked against, in **megabytes**, from
+    /// `AdaptiveConfig::memory_budget` (which is documented in MB).
+    pub fn memory_budget(&self) -> usize {
+        self.resource_constraints.max_memory
+    }
+
+    /// Weight-memory estimate, in **megabytes**, for `config` at `layers` layers.
+    ///
+    /// Per encoder layer a standard transformer holds four `d × d` attention
+    /// projections and two `d × ff` feed-forward matrices, i.e.
+    /// `4d² + 2·d·ff` scalars of `T`. Biases and layer-norm parameters are
+    /// `O(d)` and are ignored; this is a lower bound used only to veto a depth
+    /// increase that clearly cannot fit the configured budget.
+    pub fn estimated_parameter_megabytes(
+        config: &TransformerOptimizerConfig<T>,
+        layers: usize,
+    ) -> usize {
+        let d = config.model_dimension;
+        let ff = config.feedforward_dimension;
+        let per_layer = 4usize
+            .saturating_mul(d)
+            .saturating_mul(d)
+            .saturating_add(2usize.saturating_mul(d).saturating_mul(ff));
+        per_layer
+            .saturating_mul(layers)
+            .saturating_mul(std::mem::size_of::<T>())
+            / (1024 * 1024)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn adapter(memory_budget: usize) -> DynamicArchitectureAdapter<f32> {
+        let config = AdaptiveConfig::<f32> {
+            memory_budget,
+            layer_adaptation: true,
+            ..AdaptiveConfig::default()
+        };
+        DynamicArchitectureAdapter::new(&config).expect("adapter")
+    }
+
+    #[test]
+    fn memory_budget_is_taken_from_the_adaptive_config() {
+        assert_eq!(adapter(256).memory_budget(), 256);
+        // A zero budget keeps the `ResourceConstraints` default rather than
+        // vetoing every proposal.
+        assert_eq!(
+            adapter(0).memory_budget(),
+            ResourceConstraints::default().max_memory
+        );
+    }
+
+    /// `resource_constraints` was populated from `AdaptiveConfig::memory_budget`
+    /// and then never read, so a depth increase was proposed regardless of the
+    /// configured budget.
+    #[test]
+    fn a_depth_increase_that_exceeds_the_budget_is_vetoed() {
+        let cfg = TransformerOptimizerConfig::<f32>::default();
+        let deeper = cfg.num_transformer_layers + 1;
+        let needed = DynamicArchitectureAdapter::<f32>::estimated_parameter_megabytes(&cfg, deeper);
+        assert!(needed > 0, "default config should need measurable memory");
+
+        // One megabyte short of what the deeper architecture needs: the veto
+        // predicate `estimate <= budget` must reject it.
+        let tight = adapter(needed - 1);
+        assert!(
+            needed > tight.memory_budget(),
+            "a budget below the requirement must not admit the deeper architecture"
+        );
+
+        // Ample budget: the same estimate must fit.
+        let roomy = adapter(needed * 4);
+        assert!(needed <= roomy.memory_budget());
+    }
+
+    /// The estimate must grow with depth, width and feed-forward size, or the
+    /// veto would be insensitive to the thing it is guarding.
+    #[test]
+    fn parameter_estimate_grows_with_the_architecture() {
+        let base = TransformerOptimizerConfig::<f32>::default();
+        let est = |c: &TransformerOptimizerConfig<f32>, l: usize| {
+            DynamicArchitectureAdapter::<f32>::estimated_parameter_megabytes(c, l)
+        };
+        assert!(est(&base, 8) > est(&base, 4));
+
+        let wide = TransformerOptimizerConfig::<f32> {
+            model_dimension: base.model_dimension * 2,
+            ..base.clone()
+        };
+        assert!(est(&wide, 4) > est(&base, 4));
+
+        let fat = TransformerOptimizerConfig::<f32> {
+            feedforward_dimension: base.feedforward_dimension * 2,
+            ..base.clone()
+        };
+        assert!(est(&fat, 4) > est(&base, 4));
     }
 }

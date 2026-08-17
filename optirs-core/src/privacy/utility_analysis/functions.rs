@@ -84,31 +84,38 @@ mod tests {
     #[test]
     fn test_inverted_range_is_rejected_instead_of_panicking() {
         // The old sampler called gen_range(min..max) directly and panicked.
-        let mut space = PrivacyParameterSpace::default();
-        space.epsilon_range = ParameterRange {
-            min: 10.0,
-            max: 0.1,
-            num_samples: 10,
-            sampling_strategy: SamplingStrategy::Random,
+        let space = PrivacyParameterSpace {
+            epsilon_range: ParameterRange {
+                min: 10.0,
+                max: 0.1,
+                num_samples: 10,
+                sampling_strategy: SamplingStrategy::Random,
+            },
+            ..PrivacyParameterSpace::default()
         };
         let config = AnalysisConfig {
             privacy_parameters: space,
             ..seeded_config()
         };
-        let error = PrivacyUtilityAnalyzer::<f64>::new(config)
-            .err()
-            .expect("an inverted range must be rejected");
+        // `PrivacyUtilityAnalyzer` is not `Debug` (it owns a boxed generator),
+        // so `expect_err` is unavailable here.
+        let error = match PrivacyUtilityAnalyzer::<f64>::new(config) {
+            Err(error) => error,
+            Ok(_) => panic!("an inverted range must be rejected"),
+        };
         assert!(matches!(error, OptimError::InvalidParameter(_)));
     }
 
     #[test]
     fn test_non_positive_logarithmic_range_is_rejected() {
-        let mut space = PrivacyParameterSpace::default();
-        space.delta_range = ParameterRange {
-            min: 0.0,
-            max: 1e-3,
-            num_samples: 10,
-            sampling_strategy: SamplingStrategy::Logarithmic,
+        let space = PrivacyParameterSpace {
+            delta_range: ParameterRange {
+                min: 0.0,
+                max: 1e-3,
+                num_samples: 10,
+                sampling_strategy: SamplingStrategy::Logarithmic,
+            },
+            ..PrivacyParameterSpace::default()
         };
         let config = AnalysisConfig {
             privacy_parameters: space,
@@ -119,12 +126,14 @@ mod tests {
 
     #[test]
     fn test_unimplemented_sampling_strategy_reports_error() {
-        let mut space = PrivacyParameterSpace::default();
-        space.epsilon_range = ParameterRange {
-            min: 0.1,
-            max: 10.0,
-            num_samples: 10,
-            sampling_strategy: SamplingStrategy::Sobol,
+        let space = PrivacyParameterSpace {
+            epsilon_range: ParameterRange {
+                min: 0.1,
+                max: 10.0,
+                num_samples: 10,
+                sampling_strategy: SamplingStrategy::Sobol,
+            },
+            ..PrivacyParameterSpace::default()
         };
         let analyzer = analyzer_with(AnalysisConfig {
             privacy_parameters: space,
@@ -132,8 +141,7 @@ mod tests {
         });
         let error = analyzer
             .generate_privacy_configurations()
-            .err()
-            .expect("Sobol sampling is not implemented and must not fall back to linear");
+            .expect_err("Sobol sampling is not implemented and must not fall back to linear");
         assert!(matches!(error, OptimError::UnsupportedOperation(_)));
     }
 
@@ -895,8 +903,7 @@ mod tests {
         let concave = |eps: f64| (1.0 + eps).ln();
         let error = analyzer
             .optimize_budget_allocation(&budget, 10, 10.0, &concave)
-            .err()
-            .expect("an unreachable threshold must be an error");
+            .expect_err("an unreachable threshold must be an error");
         assert!(matches!(error, OptimError::OptimizationError(_)));
     }
 
@@ -998,9 +1005,11 @@ mod tests {
 
     #[test]
     fn test_seeded_runs_are_reproducible() {
-        let mut space = PrivacyParameterSpace::default();
-        space.epsilon_range =
-            ParameterRange::new(0.1, 10.0, 20, SamplingStrategy::Random).expect("valid range");
+        let space = PrivacyParameterSpace {
+            epsilon_range: ParameterRange::new(0.1, 10.0, 20, SamplingStrategy::Random)
+                .expect("valid range"),
+            ..PrivacyParameterSpace::default()
+        };
         let config = AnalysisConfig {
             privacy_parameters: space,
             random_seed: Some(7),

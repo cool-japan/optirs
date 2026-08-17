@@ -3,7 +3,6 @@
 // This module implements trust region methods including TRPO (Trust Region Policy Optimization)
 // and other constrained optimization techniques for policy learning.
 
-#[allow(dead_code)]
 use super::{unflatten_named, PolicyNetwork, RLOptimizationMetrics};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
@@ -18,6 +17,11 @@ use std::fmt::Debug;
 fn tiny<T: Float>() -> T {
     T::from(1e-30).unwrap_or_else(T::epsilon)
 }
+
+/// A mutable closure that evaluates the policy's surrogate objective at the
+/// current parameters. `None` falls back to the quadratic model surrogate
+/// `m(x) = gᵀx − ½ xᵀFx` instead of calling into the policy/environment.
+type SurrogateFn<'a, P, T> = dyn FnMut(&P) -> Result<T> + 'a;
 
 /// Trust region methods
 #[derive(Debug, Clone, Copy)]
@@ -83,9 +87,6 @@ pub struct TrustRegionOptimizer<T: Float + Debug + Send + Sync + 'static, P: Pol
 
     /// Policy network
     policy: P,
-
-    /// Fisher information matrix
-    fisher_matrix: Option<Array2<T>>,
 
     /// Per-sample score vectors used for the empirical Fisher Information Matrix.
     ///
@@ -168,7 +169,6 @@ impl<
         Self {
             config,
             policy,
-            fisher_matrix: None,
             score_samples: None,
             cost_constraint: None,
             natural_grad_state: NaturalGradientState {
@@ -243,7 +243,7 @@ impl<
     /// surrogate (that is what
     /// [`super::policy_gradient::PolicyGradientOptimizer`] does).
     fn update_trpo(&mut self, gradients: &Array1<T>) -> Result<RLOptimizationMetrics<T>> {
-        let report = self.trpo_step(gradients, None::<&mut dyn FnMut(&P) -> Result<T>>)?;
+        let report = self.trpo_step(gradients, None::<&mut SurrogateFn<'_, P, T>>)?;
         self.update_count += 1;
         Ok(Self::metrics_from_report(&report))
     }
@@ -295,7 +295,7 @@ impl<
     fn trpo_step(
         &mut self,
         gradients: &Array1<T>,
-        surrogate: Option<&mut dyn FnMut(&P) -> Result<T>>,
+        surrogate: Option<&mut SurrogateFn<'_, P, T>>,
     ) -> Result<TrustRegionStepReport<T>> {
         // s ≈ F⁻¹g.
         let natural_grad = self.compute_natural_gradient(gradients)?;
@@ -304,7 +304,10 @@ impl<
 
         // A non-positive curvature means the quadratic model is useless here; the
         // only safe action is to take no step at all.
-        if !(shs > tiny::<T>()) {
+        if !matches!(
+            shs.partial_cmp(&tiny::<T>()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Ok(TrustRegionStepReport {
                 accepted: false,
                 step_scale: T::zero(),
@@ -380,8 +383,11 @@ impl<
         let s = self.dot(&cost_gradient, &hinv_b);
 
         // No usable cost curvature ⇒ the constraint carries no information here.
-        if !(s > tiny::<T>()) {
-            let report = self.trpo_step(gradients, None::<&mut dyn FnMut(&P) -> Result<T>>)?;
+        if !matches!(
+            s.partial_cmp(&tiny::<T>()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
+            let report = self.trpo_step(gradients, None::<&mut SurrogateFn<'_, P, T>>)?;
             self.update_count += 1;
             return Ok(Self::metrics_from_report(&report));
         }
@@ -389,7 +395,11 @@ impl<
         let c = cost_surplus;
         let b_coeff = two * delta - c * c / s;
 
-        let step = if c > T::zero() && !(b_coeff > T::zero()) {
+        let step = if c > T::zero()
+            && !matches!(
+                b_coeff.partial_cmp(&T::zero()),
+                Some(std::cmp::Ordering::Greater)
+            ) {
             // Infeasible: recovery step straight down the cost gradient.
             let scale = (two * delta / s).sqrt();
             &hinv_b * (-scale)
@@ -406,7 +416,11 @@ impl<
                 nu = T::zero();
                 lambda = (q / (two * delta)).sqrt();
             }
-            if !(lambda > tiny::<T>()) || !lambda.is_finite() {
+            if !matches!(
+                lambda.partial_cmp(&tiny::<T>()),
+                Some(std::cmp::Ordering::Greater)
+            ) || !lambda.is_finite()
+            {
                 return Ok(Self::metrics_from_report(&TrustRegionStepReport {
                     accepted: false,
                     step_scale: T::zero(),
@@ -421,7 +435,7 @@ impl<
         let report = self.line_search(
             gradients,
             &step,
-            None::<&mut dyn FnMut(&P) -> Result<T>>,
+            None::<&mut SurrogateFn<'_, P, T>>,
             Some((&cost_gradient, c)),
         )?;
         self.update_count += 1;
@@ -476,7 +490,10 @@ impl<
         let mut rsold = self.dot(&r, &r);
 
         // ‖b‖ = 0 (or non-finite): x = 0 already solves the system.
-        if !(rsold > tiny::<T>()) {
+        if !matches!(
+            rsold.partial_cmp(&tiny::<T>()),
+            Some(std::cmp::Ordering::Greater)
+        ) {
             return Ok(x);
         }
 
@@ -485,7 +502,11 @@ impl<
             let pap = self.dot(&p, &ap);
 
             // Zero / negative / non-finite curvature: stop with the current iterate.
-            if !(pap.abs() > tiny::<T>()) || !pap.is_finite() {
+            if !matches!(
+                pap.abs().partial_cmp(&tiny::<T>()),
+                Some(std::cmp::Ordering::Greater)
+            ) || !pap.is_finite()
+            {
                 break;
             }
 
@@ -499,7 +520,10 @@ impl<
             if rsnew.sqrt() < self.config.cg_tolerance {
                 break;
             }
-            if !(rsnew > tiny::<T>()) {
+            if !matches!(
+                rsnew.partial_cmp(&tiny::<T>()),
+                Some(std::cmp::Ordering::Greater)
+            ) {
                 break;
             }
 
@@ -592,11 +616,9 @@ impl<
         &mut self,
         gradients: &Array1<T>,
         full_step: &Array1<T>,
-        mut surrogate: Option<&mut dyn FnMut(&P) -> Result<T>>,
+        mut surrogate: Option<&mut SurrogateFn<'_, P, T>>,
         cost_constraint: Option<(&Array1<T>, T)>,
     ) -> Result<TrustRegionStepReport<T>> {
-        let half = T::from(0.5).unwrap_or_else(|| T::one() / (T::one() + T::one()));
-
         // Baseline surrogate value at the current parameters.
         let base = match surrogate {
             Some(ref mut f) => f(&self.policy)?,
@@ -607,9 +629,8 @@ impl<
         for attempt in 0..self.config.max_backtracks.max(1) {
             let step = full_step * scale;
 
-            // Quadratic-model KL of this candidate.
-            let fvp = self.fisher_vector_product(&step)?;
-            let kl = half * self.dot(&step, &fvp);
+            // Quadratic-model KL of this candidate (½ stepᵀ F step).
+            let kl = self.estimate_kl_divergence(&step, T::one())?;
             let expected = self.dot(gradients, &step);
 
             // Cost feasibility of the linearized safety constraint.
@@ -665,13 +686,6 @@ impl<
             surrogate_improvement: T::zero(),
             backtracks: self.config.max_backtracks.max(1),
         })
-    }
-
-    /// Check if a step of `stepsize` along `direction` satisfies the KL trust region.
-    fn check_trust_region_constraint(&self, direction: &Array1<T>, stepsize: T) -> Result<bool> {
-        // Compute expected KL divergence after update
-        let expected_kl = self.estimate_kl_divergence(direction, stepsize)?;
-        Ok(expected_kl <= self.config.max_kl)
     }
 
     /// Estimate KL divergence for proposed update

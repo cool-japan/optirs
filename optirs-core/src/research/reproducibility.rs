@@ -765,6 +765,19 @@ impl ReproducibilityManager {
         }
     }
 
+    /// Score a run's reproducibility, cross-checking every *claim* on the
+    /// checklist against the *evidence* in the environment snapshot.
+    ///
+    /// # Why the snapshot matters
+    ///
+    /// Until 0.3.2 this function ignored `environment` entirely and scored the
+    /// checklist alone -- a caller could tick "random seed documented",
+    /// "dependencies pinned" and "configuration hashed" and receive a perfect
+    /// 1.0 while the captured environment recorded no seeds, no pinned
+    /// versions and no hashes. A checklist is a claim; the snapshot is what
+    /// substantiates it. An unsubstantiated claim now scores nothing and raises
+    /// an issue naming the contradiction, so the score cannot exceed the
+    /// evidence.
     fn calculate_reproducibility_score(
         &self,
         checklist: &ReproducibilityChecklist,
@@ -773,6 +786,66 @@ impl ReproducibilityManager {
         let mut score = 0.0;
         let mut issues = Vec::new();
         let total_checks = 8.0;
+
+        // Evidence contradicting a ticked box. Each entry costs the point the
+        // checklist would otherwise have earned.
+        let contradictions: [(bool, IssueType, &str, &str); 5] = [
+            (
+                checklist.random_seed_documented && environment.random_seeds.is_empty(),
+                IssueType::MissingRandomSeed,
+                "the checklist claims the random seed is documented, but the environment snapshot \
+                 recorded no seeds",
+                "record every seed in EnvironmentSnapshot::random_seeds",
+            ),
+            (
+                checklist.dependencies_pinned
+                    && environment
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency.version.trim().is_empty()),
+                IssueType::UnpinnedDependencies,
+                "the checklist claims dependencies are pinned, but the snapshot contains a \
+                 dependency with no version",
+                "pin every dependency to an exact version",
+            ),
+            (
+                checklist.environment_captured
+                    && environment.dependencies.is_empty()
+                    && environment.environment_variables.is_empty(),
+                IssueType::MissingEnvironment,
+                "the checklist claims the environment is captured, but the snapshot records \
+                 neither dependencies nor environment variables",
+                "capture the dependency set and the relevant environment variables",
+            ),
+            (
+                checklist.data_versioned && environment.data_checksums.is_empty(),
+                IssueType::DataNotVersioned,
+                "the checklist claims the data is versioned, but the snapshot records no data \
+                 checksums",
+                "record a checksum per dataset in EnvironmentSnapshot::data_checksums",
+            ),
+            (
+                checklist.configuration_hashed && environment.config_hashes.is_empty(),
+                IssueType::ConfigurationNotHashed,
+                "the checklist claims the configuration is hashed, but the snapshot records no \
+                 configuration hashes",
+                "record a hash per configuration file in EnvironmentSnapshot::config_hashes",
+            ),
+        ];
+
+        let mut unsubstantiated = 0.0_f64;
+        for (contradicted, issue_type, description, fix) in contradictions {
+            if contradicted {
+                unsubstantiated += 1.0;
+                issues.push(ReproducibilityIssue {
+                    issue_type,
+                    severity: IssueSeverity::High,
+                    description: description.to_string(),
+                    component: format!("environment snapshot {}", environment.id),
+                    suggested_fix: Some(fix.to_string()),
+                });
+            }
+        }
 
         if checklist.random_seed_documented {
             score += 1.0;
@@ -846,7 +919,7 @@ impl ReproducibilityManager {
             score += 1.0;
         }
 
-        (score / total_checks, issues)
+        ((score - unsubstantiated).max(0.0) / total_checks, issues)
     }
 
     fn generate_recommendations(&self, issues: &[ReproducibilityIssue]) -> Vec<String> {

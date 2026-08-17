@@ -598,8 +598,10 @@ mod tests {
 
     #[test]
     fn zero_accumulation_steps_do_not_panic() {
-        let mut params = GradientProcessingParams::<f64>::default();
-        params.accumulation_steps = 0;
+        let params = GradientProcessingParams::<f64> {
+            accumulation_steps: 0,
+            ..GradientProcessingParams::default()
+        };
         let mut processor = GradientProcessor::<f64>::new_with_params(
             GradientProcessingStrategy::Accumulation,
             params,

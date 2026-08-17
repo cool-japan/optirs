@@ -15,7 +15,5 @@ pub mod types;
 pub mod types_3;
 
 // Re-export all types
-pub use functions::*;
-pub use trait_impls::*;
 pub use types::*;
 pub use types_3::*;

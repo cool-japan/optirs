@@ -50,7 +50,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = RAdam::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct RAdam<A: Float + ScalarOperand + Debug> {
@@ -81,17 +81,19 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RAdam<A> {
     ///
     /// * `learning_rate` - The learning rate for parameter updates
     pub fn new(learning_rate: A) -> Self {
-        let beta2 = A::from(0.999).expect("unwrap failed");
+        let beta2 = A::from(0.999).expect("RAdam: default beta2 (0.999) must fit in A");
         Self {
             learning_rate,
-            beta1: A::from(0.9).expect("unwrap failed"),
+            beta1: A::from(0.9).expect("RAdam: default beta1 (0.9) must fit in A"),
             beta2,
-            epsilon: A::from(1e-8).expect("unwrap failed"),
+            epsilon: A::from(1e-8).expect("RAdam: default epsilon (1e-8) must fit in A"),
             weight_decay: A::zero(),
             m: None,
             v: None,
             t: Vec::new(),
-            rho_inf: A::from(2.0).expect("unwrap failed") / (A::one() - beta2) - A::one(),
+            rho_inf: A::from(2.0).expect("RAdam: integer literal 2.0 must fit in A")
+                / (A::one() - beta2)
+                - A::one(),
         }
     }
 
@@ -120,7 +122,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RAdam<A> {
             m: None,
             v: None,
             t: Vec::new(),
-            rho_inf: A::from(2.0).expect("unwrap failed") / (A::one() - beta2) - A::one(),
+            rho_inf: A::from(2.0).expect("RAdam: integer literal 2.0 must fit in A")
+                / (A::one() - beta2)
+                - A::one(),
         }
     }
 
@@ -139,7 +143,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RAdam<A> {
     pub fn set_beta2(&mut self, beta2: A) -> &mut Self {
         self.beta2 = beta2;
         // Update rho_inf based on new beta2
-        self.rho_inf = A::from(2.0).expect("unwrap failed") / (A::one() - beta2) - A::one();
+        self.rho_inf = A::from(2.0).expect("RAdam: integer literal 2.0 must fit in A")
+            / (A::one() - beta2)
+            - A::one();
         self
     }
 
@@ -418,7 +424,9 @@ mod tests {
         let mut optimizer = RAdam::new(0.01);
 
         // Run one step
-        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_radam_step");
 
         // Check that parameters have been updated
         assert!(new_params.iter().all(|&x| x != 0.0));
@@ -441,7 +449,9 @@ mod tests {
 
         // Run multiple steps to move past the adaptive phase
         for _ in 0..100 {
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_radam_multiple_steps");
         }
 
         // Parameters should continue to move in the direction of the gradients
@@ -463,7 +473,9 @@ mod tests {
         );
 
         // Run one step
-        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_radam_weight_decay");
 
         // Weight decay should reduce parameter magnitudes
         for i in 0..3 {
@@ -499,7 +511,9 @@ mod tests {
         let mut optimizer = RAdam::new(0.01);
 
         // Run one step
-        optimizer.step(&params, &gradients).expect("unwrap failed");
+        optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_radam_reset");
         assert_eq!(optimizer.timestep(0), 1);
         assert!(optimizer.m.is_some());
         assert!(optimizer.v.is_some());

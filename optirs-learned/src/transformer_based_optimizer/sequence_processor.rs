@@ -2,9 +2,9 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 
 /// Type alias for sequence data tuple (gradients, parameters, losses)
@@ -41,9 +41,6 @@ pub struct OptimizationSequenceProcessor<
     /// Overlap between windows
     window_overlap: usize,
 
-    /// Model dimension
-    model_dimension: usize,
-
     /// Sequence history buffer
     sequence_buffer: SequenceBuffer<T>,
 
@@ -52,9 +49,6 @@ pub struct OptimizationSequenceProcessor<
 
     /// Preprocessing pipeline
     preprocessor: SequencePreprocessor<T>,
-
-    /// Chunking strategy
-    chunking: ChunkingStrategy<T>,
 }
 
 impl<
@@ -88,24 +82,18 @@ impl<
         let window_overlap = (window_size / 4).min(window_size - 1);
         let model_dimension = config.model_dimension;
 
-        let sequence_buffer = SequenceBuffer::new(1000, model_dimension)?;
+        let sequence_buffer = SequenceBuffer::new(1000)?;
         let statistics = SequenceStatistics::new();
         let preprocessor = SequencePreprocessor::new(model_dimension)?;
-        let chunking = ChunkingStrategy::new(
-            max_sequence_length,
-            window_size.min(max_sequence_length.saturating_sub(1)),
-        )?;
 
         Ok(Self {
             strategy,
             max_sequence_length,
             window_size,
             window_overlap,
-            model_dimension,
             sequence_buffer,
             statistics,
             preprocessor,
-            chunking,
         })
     }
 
@@ -206,8 +194,14 @@ impl<
             levels.push(current_level.clone());
         }
 
-        // Return the highest level that fits
-        Ok(levels.last().expect("unwrap failed").clone())
+        // Return the highest level that fits. `levels` is seeded with the
+        // combined sequence before the loop, so it is never empty; taking the
+        // fallible read keeps that local rather than asserting it from afar.
+        levels.pop().ok_or_else(|| {
+            crate::error::OptimError::ComputationError(
+                "hierarchical processing produced no levels".to_string(),
+            )
+        })
     }
 
     /// Process using attention-based selection
@@ -474,7 +468,13 @@ impl<
             .map(|(i, &score)| (i, score))
             .collect();
 
-        indexed_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
+        // `total_cmp` is a total order, so a NaN importance score sorts
+        // deterministically rather than panicking inside `sort_by`.
+        indexed_scores.sort_by(|a, b| {
+            b.1.to_f64()
+                .unwrap_or(f64::NAN)
+                .total_cmp(&a.1.to_f64().unwrap_or(f64::NAN))
+        });
 
         let mut selected_indices: Vec<usize> = indexed_scores
             .into_iter()
@@ -582,21 +582,23 @@ pub struct SequenceBuffer<
 
     /// Maximum buffer size
     max_size: usize,
-
-    /// Model dimension
-    model_dimension: usize,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     SequenceBuffer<T>
 {
-    pub fn new(max_size: usize, model_dimension: usize) -> Result<Self> {
+    /// A buffer holding at most `max_size` recorded sequences.
+    ///
+    /// The feature width is not a buffer concern: it belongs to
+    /// [`SequencePreprocessor`], which is the component that actually truncates
+    /// to it. The duplicate `model_dimension` this used to store was never read
+    /// and could silently disagree with the preprocessor's.
+    pub fn new(max_size: usize) -> Result<Self> {
         Ok(Self {
             gradient_buffer: VecDeque::new(),
             parameter_buffer: VecDeque::new(),
             loss_buffer: VecDeque::new(),
             max_size,
-            model_dimension,
         })
     }
 
@@ -701,7 +703,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         self.parameter_stats.update_from_array2(parameters);
         self.loss_stats.update_from_array1(losses);
         self.length_stats
-            .update(T::from(gradients.shape()[0]).expect("unwrap failed"));
+            .update(crate::common::cast_scalar(gradients.shape()[0])?);
 
         Ok(())
     }
@@ -726,15 +728,19 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     }
 }
 
-/// Sequence preprocessor
+/// Sequence preprocessor.
+///
+/// The per-feature normalization statistics this used to declare were never
+/// populated or consulted — `combine_sequences` normalizes a loss against the
+/// first observed loss instead — so the empty map has been removed rather than
+/// left as a permanently-empty cache.
 pub struct SequencePreprocessor<
     T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
 > {
     /// Model dimension
     model_dimension: usize,
 
-    /// Normalization statistics
-    normalization_stats: HashMap<String, (T, T)>, // (mean, std)
+    _element: std::marker::PhantomData<T>,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
@@ -743,7 +749,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     pub fn new(model_dimension: usize) -> Result<Self> {
         Ok(Self {
             model_dimension,
-            normalization_stats: HashMap::new(),
+            _element: std::marker::PhantomData,
         })
     }
 
@@ -841,11 +847,21 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         })
     }
 
+    /// Accumulated statistics over every element of every chunk this strategy
+    /// has produced.
+    ///
+    /// `create_chunks` used to build the chunks without ever feeding the
+    /// accumulator, so these statistics were permanently empty.
+    pub fn chunk_stats(&self) -> &StatisticsAccumulator<T> {
+        &self.chunk_stats
+    }
+
     pub fn create_chunks(&mut self, sequence: &Array2<T>) -> Result<Vec<Array2<T>>> {
         let sequence_length = sequence.shape()[0];
         let mut chunks = Vec::new();
 
         if sequence_length <= self.max_chunk_size {
+            self.chunk_stats.update_from_array2(sequence);
             chunks.push(sequence.clone());
             return Ok(chunks);
         }
@@ -855,6 +871,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         for start in (0..sequence_length).step_by(step_size) {
             let end = (start + self.max_chunk_size).min(sequence_length);
             let chunk = sequence.slice(s![start..end, ..]).to_owned();
+            self.chunk_stats.update_from_array2(&chunk);
             chunks.push(chunk);
 
             if end >= sequence_length {
@@ -985,10 +1002,10 @@ mod tests {
 
     #[test]
     fn test_sequence_buffer() {
-        let buffer = SequenceBuffer::<f32>::new(10, 64);
+        let buffer = SequenceBuffer::<f32>::new(10);
         assert!(buffer.is_ok());
 
-        let mut buf = buffer.expect("unwrap failed");
+        let mut buf = buffer.expect("SequenceBuffer::new should succeed");
         let gradients = Array2::<f32>::ones((5, 64));
         let parameters = Array2::<f32>::ones((5, 64));
         let losses = Array1::<f32>::ones(5);
@@ -1027,13 +1044,13 @@ mod tests {
         let chunking = ChunkingStrategy::<f32>::new(10, 2);
         assert!(chunking.is_ok());
 
-        let mut strategy = chunking.expect("unwrap failed");
+        let mut strategy = chunking.expect("ChunkingStrategy::new should succeed");
         let sequence = Array2::<f32>::ones((25, 5));
 
         let chunks = strategy.create_chunks(&sequence);
         assert!(chunks.is_ok());
 
-        let chunk_vec = chunks.expect("unwrap failed");
+        let chunk_vec = chunks.expect("create_chunks should succeed");
         assert!(chunk_vec.len() > 1);
     }
 }

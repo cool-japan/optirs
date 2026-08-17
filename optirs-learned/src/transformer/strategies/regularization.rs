@@ -4,7 +4,6 @@ use std::fmt::Debug;
 // This module implements transformer-specific regularization techniques that
 // work in conjunction with the attention mechanisms and optimization dynamics.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2, Array3};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
@@ -107,9 +106,6 @@ pub struct ParameterStatistics<
 
     /// Running variance of parameter magnitudes
     var_magnitude: T,
-
-    /// Parameter update frequency
-    update_frequency: T,
 
     /// Gradient-to-parameter ratio
     grad_param_ratio: T,
@@ -607,7 +603,15 @@ impl<
         stats.update_count += 1;
         let alpha = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
-        // Update running mean
+        // Update running mean and the matching EWMA variance. The variance uses
+        // the *pre-update* mean, which is the standard incremental exponentially
+        // weighted form `v <- (1-a)(v + a·d²)` with `d = x - mean_prev`; it used
+        // to be initialized to zero and never touched, so
+        // `compute_adaptive_strength` had no measure of how volatile a
+        // parameter's magnitude was.
+        let deviation = param_magnitude - stats.mean_magnitude;
+        stats.var_magnitude =
+            (T::one() - alpha) * (stats.var_magnitude + alpha * deviation * deviation);
         stats.mean_magnitude = stats.mean_magnitude * (T::one() - alpha) + param_magnitude * alpha;
 
         // Update gradient-to-parameter ratio if gradients available
@@ -642,8 +646,14 @@ impl<
             .adaptive_decay_rate
             .powf(progress);
 
+        // Scale down with the parameter's magnitude, and *up* with how volatile
+        // that magnitude has been: a parameter whose norm swings around needs
+        // more regularization than a settled one of the same size.
         let magnitude_factor = match self.parameter_stats.get(param_name) {
-            Some(stats) => T::one() / (T::one() + stats.mean_magnitude),
+            Some(stats) => {
+                let volatility = stats.var_magnitude.sqrt();
+                (T::one() + volatility) / (T::one() + stats.mean_magnitude)
+            }
             None => T::one(),
         };
 
@@ -801,7 +811,6 @@ impl<
         Self {
             mean_magnitude: T::zero(),
             var_magnitude: T::zero(),
-            update_frequency: T::zero(),
             grad_param_ratio: T::zero(),
             update_count: 0,
         }
@@ -958,8 +967,10 @@ mod tests {
     #[test]
     fn orthogonality_gradient_matches_closed_form() {
         let regularizer = TransformerRegularizer::<f64>::new(RegularizationStrategy::Orthogonality);
-        let mut params_cfg = RegularizationParams::<f64>::default();
-        params_cfg.orthogonality_weight = 1.0;
+        let params_cfg = RegularizationParams::<f64> {
+            orthogonality_weight: 1.0,
+            ..RegularizationParams::default()
+        };
         let mut regularizer = regularizer;
         regularizer.set_parameters(params_cfg);
 

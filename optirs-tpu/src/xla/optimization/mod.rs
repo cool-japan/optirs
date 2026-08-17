@@ -10,11 +10,11 @@ pub mod memory_planning;
 pub mod scheduling;
 
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use super::frontend::{OperandId, OperationId, XLAComputation};
-use super::{XLACompilerConfig, XLAOptimizationLevel};
+use super::frontend::{OperationType, XLAComputation, XLAOperation};
+use super::{TPUConfig, TPUVersion, XLACompilerConfig, XLAOptimizationLevel};
 use crate::error::{OptimError, Result};
 
 // Re-export main types selectively to avoid ambiguous glob re-exports
@@ -40,6 +40,158 @@ impl<T> PerformanceAnalyzer<T> {
             _phantom: std::marker::PhantomData,
         }
     }
+
+    /// The metrics recorded by the most recent [`Self::analyze`] call, keyed by
+    /// name (`"operations"`, `"flop_count"`, `"memory_bytes"`,
+    /// `"estimated_execution_time_us"`).
+    pub fn metrics(&self) -> &HashMap<String, f64> {
+        &self.metrics
+    }
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> PerformanceAnalyzer<T> {
+    /// Derive real performance information for a compiled computation.
+    ///
+    /// Everything returned here is computed from the graph and the memory plan
+    /// that were actually produced -- FLOPs from each operation's own count when
+    /// the frontend filled one in, otherwise from the operation's type and the
+    /// real operand shapes; memory from the plan's allocated total; bandwidth
+    /// utilization from the plan's own measurement. Nothing is a constant, and
+    /// an empty graph honestly reports zeros rather than a plausible-looking
+    /// guess.
+    pub fn analyze(
+        &mut self,
+        computation: &XLAComputation<T>,
+        memory_plan: &MemoryPlan<T>,
+        target: &TPUConfig,
+    ) -> super::PerformanceInfo {
+        let flop_count: u64 = computation
+            .operations
+            .iter()
+            .map(|operation| self.operation_flops(computation, operation))
+            .sum();
+
+        let peak_flops_per_us = peak_flops_per_microsecond(target.tpu_version);
+        let estimated_execution_time = if peak_flops_per_us == 0 {
+            0
+        } else {
+            flop_count.div_ceil(peak_flops_per_us)
+        };
+
+        // Compute utilization: how much of the machine's peak the graph would
+        // keep busy over the estimated span. By construction of the estimate
+        // this saturates at 1.0; it drops below 1.0 only when rounding the span
+        // up to whole microseconds leaves the machine idle, which is a real
+        // (if small) effect rather than an invented number.
+        let compute_utilization = if estimated_execution_time == 0 || peak_flops_per_us == 0 {
+            0.0
+        } else {
+            (flop_count as f64 / (estimated_execution_time * peak_flops_per_us) as f64).min(1.0)
+        };
+
+        self.metrics.clear();
+        self.metrics.insert(
+            "operations".to_string(),
+            computation.operations.len() as f64,
+        );
+        self.metrics
+            .insert("flop_count".to_string(), flop_count as f64);
+        self.metrics
+            .insert("memory_bytes".to_string(), memory_plan.total_memory as f64);
+        self.metrics.insert(
+            "estimated_execution_time_us".to_string(),
+            estimated_execution_time as f64,
+        );
+
+        super::PerformanceInfo {
+            estimated_execution_time,
+            memory_usage: memory_plan.total_memory,
+            flop_count,
+            memory_bandwidth_util: memory_plan.performance_info.bandwidth_utilization,
+            compute_utilization,
+        }
+    }
+
+    /// FLOPs attributable to one operation.
+    ///
+    /// A frontend-supplied count always wins; otherwise the count is derived
+    /// from the operation's semantics and its real operand shapes. Operations
+    /// that move data without arithmetic (reshape, transpose, slice, ...)
+    /// contribute zero, which is the truth rather than an omission.
+    fn operation_flops(&self, computation: &XLAComputation<T>, operation: &XLAOperation<T>) -> u64 {
+        if operation.performance.flop_count > 0 {
+            return operation.performance.flop_count;
+        }
+
+        let output_elements = computation
+            .operands
+            .get(&operation.output)
+            .map(|operand| operand.shape.element_count as u64)
+            .unwrap_or(0);
+
+        match &operation.op_type {
+            // A dot/matmul over lhs [.., M, K] x rhs [.., K, N] costs one
+            // multiply and one add per contracted element.
+            OperationType::Dot | OperationType::DotGeneral | OperationType::MatMul => {
+                let contraction = operation
+                    .inputs
+                    .first()
+                    .and_then(|id| computation.operands.get(id))
+                    .and_then(|operand| operand.shape.dimensions.last().copied())
+                    .unwrap_or(1) as u64;
+                2 * output_elements * contraction
+            }
+            // A convolution costs 2 FLOPs per (output element x kernel element x
+            // input channel); the kernel operand carries those dimensions.
+            OperationType::Convolution(_) => {
+                let kernel_elements = operation
+                    .inputs
+                    .get(1)
+                    .and_then(|id| computation.operands.get(id))
+                    .map(|operand| operand.shape.element_count as u64)
+                    .unwrap_or(1);
+                2 * output_elements * kernel_elements
+            }
+            // Reductions touch every input element once.
+            OperationType::Reduce(_) | OperationType::ReduceWindow => operation
+                .inputs
+                .first()
+                .and_then(|id| computation.operands.get(id))
+                .map(|operand| operand.shape.element_count as u64)
+                .unwrap_or(0),
+            // Pure data movement: no arithmetic at all.
+            OperationType::Reshape
+            | OperationType::Transpose
+            | OperationType::Slice
+            | OperationType::DynamicSlice
+            | OperationType::Pad
+            | OperationType::Reverse
+            | OperationType::Broadcast
+            | OperationType::Concatenate
+            | OperationType::Gather
+            | OperationType::Scatter
+            | OperationType::Parameter
+            | OperationType::Constant(_)
+            | OperationType::Tuple
+            | OperationType::GetTupleElement => 0,
+            // Everything else is elementwise over the output.
+            _ => output_elements,
+        }
+    }
+}
+
+/// Peak arithmetic throughput per microsecond for a TPU version, derived from
+/// the same peak-FLOPS figures the backend's device defaults use.
+fn peak_flops_per_microsecond(version: TPUVersion) -> u64 {
+    let tera = 1_000_000_000_000u64;
+    let peak_flops_per_second = match version {
+        TPUVersion::V2 => 45 * tera,
+        TPUVersion::V3 => 123 * tera,
+        TPUVersion::V4 => 275 * tera,
+        TPUVersion::V5e => 197 * tera,
+        TPUVersion::V5p => 459 * tera,
+    };
+    peak_flops_per_second / 1_000_000
 }
 
 impl<T> Default for PerformanceAnalyzer<T> {

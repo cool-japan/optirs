@@ -8,15 +8,14 @@ use std::collections::VecDeque;
 use std::iter::Sum;
 use std::time::{Duration, Instant};
 
-#[allow(unused_imports)]
 use crate::error::Result;
+use crate::utils::scalar_or;
 
 #[cfg(test)]
 mod drift_regression_tests;
 
 /// Types of concept drift detection algorithms
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub enum DriftDetectionMethod {
     /// Page-Hinkley test for change detection
     PageHinkley,
@@ -34,7 +33,6 @@ pub enum DriftDetectionMethod {
 
 /// Concept drift detector configuration
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct DriftDetectorConfig {
     /// Detection method to use
     pub method: DriftDetectionMethod,
@@ -542,9 +540,9 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
 
     /// Create a new concept drift detector
     pub fn new(config: DriftDetectorConfig) -> Self {
-        let threshold = A::from(config.threshold).expect("unwrap failed");
-        let warningthreshold = A::from(config.warningthreshold).expect("unwrap failed");
-        let delta = A::from(config.alpha).expect("unwrap failed");
+        let threshold = scalar_or(config.threshold, A::zero());
+        let warningthreshold = scalar_or(config.warningthreshold, A::zero());
+        let delta = scalar_or(config.alpha, A::zero());
 
         Self {
             ph_detector: PageHinkleyDetector::new(threshold, warningthreshold),
@@ -686,13 +684,13 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
     fn generate_adaptation_recommendation(&self) -> AdaptationRecommendation {
         let recent_performance = self.performance_tracker.get_recent_performance_change();
 
-        if recent_performance > A::from(0.5).expect("unwrap failed") {
+        if recent_performance > scalar_or(0.5, A::zero()) {
             // Significant performance degradation
             AdaptationRecommendation::Reset
-        } else if recent_performance > A::from(0.2).expect("unwrap failed") {
+        } else if recent_performance > scalar_or(0.2, A::zero()) {
             // Moderate degradation
             AdaptationRecommendation::IncreaseLearningRate { factor: 1.5 }
-        } else if recent_performance < A::from(-0.1).expect("unwrap failed") {
+        } else if recent_performance < scalar_or(-0.1, A::zero()) {
             // Performance improved (suspicious)
             AdaptationRecommendation::DecreaseLearningRate { factor: 0.8 }
         } else {
@@ -712,14 +710,20 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
     }
 
     fn calculate_recent_drift_rate(&self) -> f64 {
-        // Calculate drift rate in the last hour
-        let one_hour_ago = Instant::now() - Duration::from_secs(3600);
+        // Calculate drift rate in the last hour.
+        //
+        // `Instant::now() - Duration` panics when the process has been up for
+        // less than the window (the resulting instant is not representable), so
+        // the window is applied as a forward `duration_since` comparison
+        // instead of by materialising a cutoff instant.
+        let recent_window = Duration::from_secs(3600);
+        let now = Instant::now();
         let recent_drifts = self
             .drift_events
             .iter()
-            .filter(|event| event.timestamp > one_hour_ago)
+            .filter(|event| now.duration_since(event.timestamp) <= recent_window)
             .count();
-        recent_drifts as f64 / 3600.0 // Drifts per second
+        recent_drifts as f64 / recent_window.as_secs_f64() // Drifts per second
     }
 
     fn calculate_average_confidence(&self) -> Option<A> {
@@ -731,7 +735,7 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
                 .iter()
                 .map(|event| event.confidence)
                 .sum::<A>();
-            Some(sum / A::from(self.drift_events.len()).expect("unwrap failed"))
+            Some(sum / scalar_or(self.drift_events.len(), A::one()))
         }
     }
 
@@ -796,10 +800,10 @@ impl<A: Float + std::iter::Sum + Send + Sync + Send + Sync> PerformanceDriftTrac
             return A::zero();
         }
 
-        let recent_avg = recent.iter().map(|(p, _, _)| *p).sum::<A>()
-            / A::from(recent.len()).expect("unwrap failed");
-        let older_avg = older.iter().map(|(p, _, _)| *p).sum::<A>()
-            / A::from(older.len()).expect("unwrap failed");
+        let recent_avg =
+            recent.iter().map(|(p, _, _)| *p).sum::<A>() / scalar_or(recent.len(), A::one());
+        let older_avg =
+            older.iter().map(|(p, _, _)| *p).sum::<A>() / scalar_or(older.len(), A::one());
 
         recent_avg - older_avg
     }
@@ -1043,9 +1047,6 @@ pub mod advanced_drift_analysis {
     pub struct ContextAwareDriftDetector<A: Float + Send + Sync> {
         /// Contextual features
         context_features: Vec<ContextFeature<A>>,
-
-        /// Context-specific drift models
-        context_models: HashMap<String, Box<dyn DriftDetectorTrait<A>>>,
 
         /// Current context state
         current_context: Option<String>,

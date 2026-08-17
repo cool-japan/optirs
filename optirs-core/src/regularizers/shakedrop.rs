@@ -1,6 +1,5 @@
 use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
-use scirs2_core::random::Rng;
 use std::cell::RefCell;
 use std::fmt::Debug;
 
@@ -183,9 +182,11 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
         S: Data<Elem = A>,
         D: Dimension,
     {
-        let (b, alpha, beta) = gate_params;
+        let (b, _alpha, beta) = gate_params;
 
         // During backward pass: grad_x = grad_output * (b + beta - b*beta)
+        // (alpha, drawn for the forward pass, is intentionally not reused here:
+        // ShakeDrop decorrelates the forward and backward scaling factors.)
         let factor = b + beta - b * beta;
         grad_output.mapv(|g| g * factor)
     }
@@ -194,7 +195,7 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> ShakeDrop<A> {
 impl<A: Float + FromPrimitive + Debug + ScalarOperand, D: Dimension + Send + Sync> Regularizer<A, D>
     for ShakeDrop<A>
 {
-    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
+    fn apply(&self, _params: &Array<A, D>, _gradients: &mut Array<A, D>) -> Result<A> {
         // ShakeDrop is typically applied to activations, not parameters
         // In this implementation, apply() isn't the primary usage pattern
         // Instead, users would call forward() during the forward pass
@@ -206,7 +207,7 @@ impl<A: Float + FromPrimitive + Debug + ScalarOperand, D: Dimension + Send + Syn
         ))
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // ShakeDrop doesn't add a penalty term to the loss function
         Ok(A::zero())
     }

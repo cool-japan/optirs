@@ -16,7 +16,7 @@ use optirs_core::privacy::noise_mechanisms::{
 };
 use optirs_core::privacy::{
     build_accountant, AccountingMethod, DifferentialPrivacyConfig, DifferentiallyPrivateOptimizer,
-    NoiseMechanism, PrivacyAccountant, RenyiAccountant,
+    NoiseMechanism, RenyiAccountant,
 };
 use scirs2_core::ndarray::{Array1, Ix1};
 

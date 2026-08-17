@@ -841,7 +841,7 @@ impl<A: Float + Send + Sync> AdaptiveThresholdManager<A> {
     }
 
     /// Adapted thresholds currently held.
-    pub(crate) fn thresholds(&self) -> &HashMap<String, A> {
+    pub fn thresholds(&self) -> &HashMap<String, A> {
         &self.thresholds
     }
 }
@@ -854,7 +854,6 @@ impl<A: Float + Send + Sync> ContextAwareDriftDetector<A> {
     pub(crate) fn new() -> Self {
         Self {
             context_features: Vec::new(),
-            context_models: HashMap::new(),
             current_context: None,
             transition_matrix: HashMap::new(),
         }
@@ -900,7 +899,7 @@ impl<A: Float + Send + Sync> ContextAwareDriftDetector<A> {
     }
 
     /// Observed transition counts between contexts.
-    pub(crate) fn transitions(&self) -> &HashMap<(String, String), A> {
+    pub fn transitions(&self) -> &HashMap<(String, String), A> {
         &self.transition_matrix
     }
 }
@@ -1124,7 +1123,7 @@ impl<A: Float + Send + Sync> DriftImpactAnalyzer<A> {
     }
 
     /// Retained impact assessments.
-    pub(crate) fn impact_history(&self) -> &VecDeque<DriftImpact<A>> {
+    pub fn impact_history(&self) -> &VecDeque<DriftImpact<A>> {
         &self.impact_history
     }
 }
@@ -1207,7 +1206,7 @@ impl<A: Float + Send + Sync> EpsilonGreedyBandit<A> {
     }
 
     /// Measured value of each action.
-    pub(crate) fn action_values(&self) -> &HashMap<String, A> {
+    pub fn action_values(&self) -> &HashMap<String, A> {
         &self.action_values
     }
 }
@@ -1361,12 +1360,12 @@ impl<A: Float + Send + Sync> AdaptationStrategySelector<A> {
     }
 
     /// Measured performance per strategy.
-    pub(crate) fn strategy_performance(&self) -> &HashMap<String, StrategyPerformance<A>> {
+    pub fn strategy_performance(&self) -> &HashMap<String, StrategyPerformance<A>> {
         &self.strategy_performance
     }
 
     /// Bandit action values.
-    pub(crate) fn action_values(&self) -> &HashMap<String, A> {
+    pub fn action_values(&self) -> &HashMap<String, A> {
         self.bandit.action_values()
     }
 }
@@ -1512,7 +1511,7 @@ impl<A: Float + Send + Sync> SimilarityIndex<A> {
 
     /// Ids whose indexed vector is closer than the similarity threshold, best
     /// first.
-    pub(crate) fn find_similar(&self, features: &PatternFeatures<A>) -> Vec<(String, f64)> {
+    pub fn find_similar(&self, features: &PatternFeatures<A>) -> Vec<(String, f64)> {
         let query: Vec<f64> = features
             .named_values()
             .into_iter()
@@ -1636,12 +1635,12 @@ impl<A: Float + Send + Sync> DriftDatabase<A> {
     }
 
     /// Measured outcomes per strategy.
-    pub(crate) fn pattern_outcomes(&self) -> &HashMap<String, Vec<AdaptationOutcome<A>>> {
+    pub fn pattern_outcomes(&self) -> &HashMap<String, Vec<AdaptationOutcome<A>>> {
         &self.pattern_outcomes
     }
 
     /// Historical events most similar to a feature set.
-    pub(crate) fn find_similar(&self, features: &PatternFeatures<A>) -> Vec<(String, f64)> {
+    pub fn find_similar(&self, features: &PatternFeatures<A>) -> Vec<(String, f64)> {
         self.similarity_index.find_similar(features)
     }
 
@@ -1687,7 +1686,7 @@ impl<A: Float + Send + Sync> DriftDatabase<A> {
     }
 
     /// Recurrence profiles observed per strategy.
-    pub(crate) fn seasonal_patterns(&self) -> &HashMap<String, SeasonalPattern<A>> {
+    pub fn seasonal_patterns(&self) -> &HashMap<String, SeasonalPattern<A>> {
         &self.seasonal_patterns
     }
 }

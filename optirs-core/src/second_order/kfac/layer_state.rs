@@ -407,7 +407,7 @@ mod tests {
         let mut state = KFACLayerState::<f64>::new(layer_info, 0.001);
         let activations =
             Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
-                .expect("unwrap failed");
+                .expect("Array2::from_shape_vec succeeds in test_covariance_update");
 
         state
             .update_input_covariance(&activations, 0.95)
@@ -448,15 +448,15 @@ mod tests {
             [49.0 / 3.0, 23.0, 13.0 / 3.0],
             [3.0, 13.0 / 3.0, 1.0],
         ];
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, row) in expected.iter().enumerate() {
+            for (j, &exp) in row.iter().enumerate() {
                 assert!(
-                    (state.a_cov[[i, j]] - expected[i][j]).abs() < 1e-12,
+                    (state.a_cov[[i, j]] - exp).abs() < 1e-12,
                     "A[{},{}] = {}, expected {}",
                     i,
                     j,
                     state.a_cov[[i, j]],
-                    expected[i][j]
+                    exp
                 );
             }
         }

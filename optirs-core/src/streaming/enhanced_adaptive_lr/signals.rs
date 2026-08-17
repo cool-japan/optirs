@@ -867,8 +867,6 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync> DriftAwareAdapte
         ];
 
         let distribution_tracker = DistributionTracker {
-            kl_divergence_threshold: A::from(0.1).unwrap_or_else(A::zero),
-            wasserstein_distance_threshold: A::from(0.1).unwrap_or_else(A::zero),
             ..DistributionTracker::default()
         };
 
@@ -956,7 +954,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync> DriftAwareAdapte
     }
 
     /// Whether any detector currently reports drift.
-    pub(crate) fn drift_detected(&self) -> bool {
+    pub fn drift_detected(&self) -> bool {
         self.drift_detectors
             .iter()
             .any(|detector| from_scalar(detector.drift_confidence) >= 1.0)
@@ -1087,23 +1085,21 @@ impl<A: Float + Default + Send + Sync> DriftSeverityAssessor<A> {
         // Dead band: residual sampling noise in the divergence estimate must
         // not be reported as drift on an otherwise stationary stream.
         let magnitude = if magnitude < 0.05 { 0.0 } else { magnitude };
-        let (level, adjustment, urgency) = if magnitude >= 0.75 {
-            (DriftSeverity::Critical, 2.0, 1.0)
+        let (level, adjustment) = if magnitude >= 0.75 {
+            (DriftSeverity::Critical, 2.0)
         } else if magnitude >= 0.5 {
-            (DriftSeverity::Severe, 1.5, 0.8)
+            (DriftSeverity::Severe, 1.5)
         } else if magnitude >= 0.25 {
-            (DriftSeverity::Moderate, 1.2, 0.5)
+            (DriftSeverity::Moderate, 1.2)
         } else if magnitude > 0.0 {
-            (DriftSeverity::Mild, 1.05, 0.25)
+            (DriftSeverity::Mild, 1.05)
         } else {
-            (DriftSeverity::None, 1.0, 0.0)
+            (DriftSeverity::None, 1.0)
         };
 
         let assessed = DriftSeverityLevel {
             level,
-            magnitude: to_scalar(magnitude),
             recommended_lr_adjustment: to_scalar(adjustment),
-            adaptation_urgency: to_scalar(urgency),
         };
         self.current_severity = assessed.clone();
         self.severity_history.push_back(assessed.clone());
@@ -1139,7 +1135,6 @@ impl<A: Float + Default + Clone + Send + Sync> ResourceAwareAdapter<A> {
             energy_tracker: EnergyConsumptionTracker::default(),
             throughput_requirements: ThroughputRequirements {
                 min_samples_per_second: A::zero(),
-                target_samples_per_second: A::zero(),
                 // No throughput has been observed yet; a caller supplies it
                 // through `record_throughput`.
                 current_throughput: A::zero(),
@@ -1151,7 +1146,6 @@ impl<A: Float + Default + Clone + Send + Sync> ResourceAwareAdapter<A> {
                     .step_time_budget
                     .map(|budget| budget.as_secs_f64())
                     .unwrap_or(0.0),
-                energy_budget_joules: 0.0,
                 budget_utilization: A::zero(),
                 budget_violations: 0,
             },
@@ -1243,10 +1237,13 @@ impl<A: Float + Default + Clone + Send + Sync> ResourceAwareAdapter<A> {
         self.refresh_throughput_deficit();
     }
 
-    /// Set the throughput requirement the deployment has to satisfy.
-    pub(crate) fn set_throughput_requirement(&mut self, minimum: A, target: A) {
+    /// Set the minimum throughput the deployment has to satisfy.
+    ///
+    /// Only the minimum is modelled: `throughput_deficit` — the one quantity the
+    /// resource-aware adapter acts on — is measured against it, and the separate
+    /// "target" the signature used to take had no reader anywhere.
+    pub fn set_throughput_requirement(&mut self, minimum: A) {
         self.throughput_requirements.min_samples_per_second = minimum;
-        self.throughput_requirements.target_samples_per_second = target;
         self.refresh_throughput_deficit();
     }
 

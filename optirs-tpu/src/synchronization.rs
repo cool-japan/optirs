@@ -10,7 +10,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-use crate::coordination::{PodCoordinator, TpuDeviceId};
+use crate::coordination::TpuDeviceId;
 
 /// Synchronization manager for TPU pods
 #[derive(Debug)]
@@ -353,6 +353,22 @@ pub struct SynchronizationStats {
 
     /// Average bandwidth (GB/s)
     pub avg_bandwidth_gb_s: f64,
+
+    /// Total end-to-end time spent dispatching collective operations
+    /// (seconds).
+    ///
+    /// Distinct from [`Self::total_sync_time_seconds`], which accumulates
+    /// barrier *wait* time only. This one is measured by
+    /// [`SynchronizationManager::execute_collective_op`] around the whole
+    /// dispatch -- handler lookup, statistics locking and the data movement
+    /// itself -- so it includes the coordination overhead a caller actually
+    /// pays, not just the transfer kernel that
+    /// [`CollectiveOpResult::duration`] reports.
+    pub total_collective_time_seconds: f64,
+
+    /// Mean of [`Self::total_collective_time_seconds`] over every collective
+    /// operation attempted (successful or not).
+    pub avg_collective_op_time: f64,
 }
 
 /// Errors that can occur during synchronization
@@ -461,6 +477,32 @@ impl SynchronizationManager {
         }
     }
 
+    /// Devices this manager knows about, i.e. the pod it was constructed for.
+    pub fn pod_devices(&self) -> &[TpuDeviceId] {
+        &self.all_devices
+    }
+
+    /// Reject participants that are not members of this pod.
+    ///
+    /// `all_devices` is the manager's authoritative membership list, so a
+    /// barrier or collective naming a device outside it can never rendezvous --
+    /// it would block until timeout (barrier) or index past the known ranks
+    /// (collective). Failing fast with [`SynchronizationError::DeviceNotFound`]
+    /// is the honest answer.
+    fn ensure_pod_members(&self, devices: &[TpuDeviceId]) -> Result<(), SynchronizationError> {
+        if self.all_devices.is_empty() {
+            // A manager built without a membership list cannot contradict the
+            // caller, so nothing to check against.
+            return Ok(());
+        }
+        for device in devices {
+            if !self.all_devices.contains(device) {
+                return Err(SynchronizationError::DeviceNotFound { device_id: *device });
+            }
+        }
+        Ok(())
+    }
+
     /// Create a synchronization barrier
     pub fn create_barrier(
         &self,
@@ -473,6 +515,7 @@ impl SynchronizationManager {
                 reason: format!("Barrier {barrier_id} requires at least one device"),
             });
         }
+        self.ensure_pod_members(&devices)?;
 
         let barrier = Barrier {
             id: barrier_id.clone(),
@@ -643,6 +686,10 @@ impl SynchronizationManager {
     ) -> Result<CollectiveOpResult, SynchronizationError> {
         let start_time = Instant::now();
 
+        // Every participant must belong to this pod; a stranger rank would index
+        // past the known buffers rather than communicate with anything.
+        self.ensure_pod_members(&request.devices)?;
+
         // Update statistics
         {
             let mut stats = lock_stats(&self.stats)?;
@@ -677,6 +724,15 @@ impl SynchronizationManager {
                 stats.collective_ops_failed += 1;
             }
         }
+
+        // Fold this dispatch's real end-to-end cost into the rolling collective
+        // timing statistics.
+        stats.total_collective_time_seconds += start_time.elapsed().as_secs_f64();
+        stats.avg_collective_op_time = if stats.collective_ops_total == 0 {
+            0.0
+        } else {
+            stats.total_collective_time_seconds / stats.collective_ops_total as f64
+        };
 
         result
     }
@@ -1297,42 +1353,42 @@ impl CommunicationTopology {
         let mut parent_child = HashMap::new();
         let mut child_parent = HashMap::new();
 
-        if !devices.is_empty() {
-            let root = devices[0];
+        // The root is the single source of truth for both the adjacency build
+        // and the returned `CommunicationTree`; `first()` also keeps the empty
+        // case from needing an unguarded `devices[0]`.
+        let tree = match devices.first().copied() {
+            Some(root) => {
+                // Simple binary tree
+                for (i, &device) in devices.iter().enumerate() {
+                    let mut children = Vec::new();
 
-            // Simple binary tree
-            for (i, &device) in devices.iter().enumerate() {
-                let mut children = Vec::new();
+                    let left_child_idx = 2 * i + 1;
+                    let right_child_idx = 2 * i + 2;
 
-                let left_child_idx = 2 * i + 1;
-                let right_child_idx = 2 * i + 2;
+                    if let Some(&child) = devices.get(left_child_idx) {
+                        children.push(child);
+                        child_parent.insert(child, device);
+                    }
 
-                if left_child_idx < devices.len() {
-                    children.push(devices[left_child_idx]);
-                    child_parent.insert(devices[left_child_idx], device);
+                    if let Some(&child) = devices.get(right_child_idx) {
+                        children.push(child);
+                        child_parent.insert(child, device);
+                    }
+
+                    if !children.is_empty() {
+                        connections.insert(device, children.clone());
+                        parent_child.insert(device, children);
+                    }
                 }
 
-                if right_child_idx < devices.len() {
-                    children.push(devices[right_child_idx]);
-                    child_parent.insert(devices[right_child_idx], device);
-                }
-
-                if !children.is_empty() {
-                    connections.insert(device, children.clone());
-                    parent_child.insert(device, children);
-                }
+                Some(CommunicationTree {
+                    root,
+                    parent_child,
+                    child_parent,
+                    depth: (devices.len() as f64).log2().ceil() as u32,
+                })
             }
-        }
-
-        let tree = if !devices.is_empty() {
-            Some(CommunicationTree {
-                root: devices[0],
-                parent_child,
-                child_parent,
-                depth: (devices.len() as f64).log2().ceil() as u32,
-            })
-        } else {
-            None
+            None => None,
         };
 
         Self {

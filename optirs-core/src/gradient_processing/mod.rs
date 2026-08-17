@@ -5,7 +5,7 @@
 
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -157,7 +157,6 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> GradientProcessor<A> {
 }
 
 /// Clip gradient values to a specified range
-#[allow(dead_code)]
 pub fn clip_gradients_by_value<A, D>(
     gradients: &mut Array<A, D>,
     min_value: A,
@@ -180,7 +179,6 @@ where
 }
 
 /// Clip gradient L2 norm (global gradient clipping)
-#[allow(dead_code)]
 pub fn clip_gradient_norm<A, D>(gradients: &mut Array<A, D>, maxnorm: A) -> Result<&mut Array<A, D>>
 where
     A: Float + ScalarOperand,
@@ -208,7 +206,6 @@ where
 }
 
 /// Clip gradient L1 norm
-#[allow(dead_code)]
 pub fn clip_gradient_l1_norm<A, D>(
     gradients: &mut Array<A, D>,
     max_l1norm: A,
@@ -236,7 +233,6 @@ where
 }
 
 /// Compute gradient centralization
-#[allow(dead_code)]
 pub fn gradient_centralization<A, D>(gradients: &mut Array<A, D>) -> &mut Array<A, D>
 where
     A: Float + ScalarOperand,
@@ -253,7 +249,6 @@ where
 }
 
 /// Zero out small gradient values
-#[allow(dead_code)]
 pub fn zero_small_gradients<A, D>(gradients: &mut Array<A, D>, threshold: A) -> &mut Array<A, D>
 where
     A: Float + ScalarOperand,
@@ -367,7 +362,6 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientAccum
 ///
 /// Clips gradients based on the ratio of gradient norm to parameter norm.
 /// This is particularly useful for transformer models.
-#[allow(dead_code)]
 pub fn adaptive_gradient_clipping<'a, A, D>(
     gradients: &'a mut Array<A, D>,
     parameters: &Array<A, D>,
@@ -410,8 +404,9 @@ where
 ///
 /// * `gradients` - Gradients to add noise to
 /// * `noise_std` - Standard deviation of Gaussian noise to add
-/// * `seed` - Optional seed for reproducible results
-#[allow(dead_code)]
+/// * `seed` - Optional seed for reproducible results. `Some(seed)` draws from a
+///   deterministically seeded generator, so the same inputs always produce the
+///   same noise; `None` draws from the thread-local generator.
 pub fn add_gradient_noise<A, D>(
     gradients: &mut Array<A, D>,
     noise_std: A,
@@ -421,27 +416,34 @@ where
     A: Float + ScalarOperand,
     D: Dimension,
 {
-    use scirs2_core::random::RandNormal;
-    use scirs2_core::random::Rng;
+    use scirs2_core::random::{seeded_rng, RandNormal};
 
     if noise_std <= A::zero() {
         return gradients;
     }
 
-    let mut rng = thread_rng();
+    let Some(std_f64) = noise_std.to_f64() else {
+        // The requested deviation is not representable in `f64`, so no honest
+        // noise distribution can be built. Leave the gradients untouched
+        // rather than panicking or silently substituting a different scale.
+        return gradients;
+    };
+    let Ok(normal) = RandNormal::new(0.0, std_f64) else {
+        return gradients;
+    };
 
-    // Create noise array manually to avoid trait compatibility issues
-    let shape = gradients.raw_dim();
-    let mut noise = Array::zeros(shape);
-    let normal = RandNormal::new(0.0, noise_std.to_f64().unwrap_or(0.01)).expect("unwrap failed");
+    // `seed` is honoured here: a fixed seed makes the perturbation
+    // reproducible, which is the whole point of the parameter (it used to be
+    // accepted and then ignored, so "reproducible results" was never true).
+    let count = gradients.len();
+    let samples: Vec<f64> = match seed {
+        Some(seed) => seeded_rng(seed).sample_vec(normal, count),
+        None => thread_rng().sample_vec(normal, count),
+    };
 
-    for elem in noise.iter_mut() {
-        *elem = A::from(rng.sample(normal)).unwrap_or(A::zero());
-    }
-
-    gradients.zip_mut_with(&noise, |g, &n| {
+    for (g, &n) in gradients.iter_mut().zip(samples.iter()) {
         *g = *g + A::from(n).unwrap_or(A::zero());
-    });
+    }
 
     gradients
 }

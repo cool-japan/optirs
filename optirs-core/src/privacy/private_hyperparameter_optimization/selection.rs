@@ -36,7 +36,6 @@
 use crate::error::{OptimError, Result};
 use crate::privacy::noise_mechanisms::ExponentialMechanism as ValueExponentialMechanism;
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 use std::fmt::Debug;
 
 use super::types::{

@@ -1,6 +1,5 @@
 // Events Module
 
-use crate::pod_coordination::types::*;
 use std::collections::HashMap;
 
 pub mod handlers;

@@ -4,12 +4,10 @@ use super::replay::{Experience, ExperienceReplayBuffer, ReplaySample};
 use crate::error::{OptimError, Result};
 use crate::reinforcement_learning::{
     add_named_gradients, clip_named_gradients, scale_named_gradients, ActionDistribution,
-    DistributionType, PolicyNetwork, QNetwork, RLOptimizationMetrics, RLScheduler, TrajectoryBatch,
-    ValueNetwork,
+    DistributionType, PolicyNetwork, QNetwork, RLScheduler, TrajectoryBatch, ValueNetwork,
 };
-use scirs2_core::ndarray::{s, Array1, Array2, ScalarOperand};
+use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -470,13 +468,6 @@ impl<
         Ok(Array1::from_vec(dones))
     }
 
-    fn compute_critic_loss(&self, q_values: &Array1<T>, targetq: &Array1<T>) -> Result<T> {
-        Ok((q_values - targetq)
-            .mapv(|x| x * x)
-            .mean()
-            .unwrap_or(T::zero()))
-    }
-
     /// Sample actions from action distribution
     pub(super) fn sample_actions_from_distribution(
         &self,
@@ -515,7 +506,10 @@ impl<
                         let exp_logits: Vec<T> =
                             row.iter().map(|&x| (x - max_logit).exp()).collect();
                         let sum_exp: T = exp_logits.iter().cloned().sum();
-                        if !(sum_exp > T::zero()) {
+                        if !matches!(
+                            sum_exp.partial_cmp(&T::zero()),
+                            Some(std::cmp::Ordering::Greater)
+                        ) {
                             return Err(OptimError::ComputationError(
                                 "categorical logits produced a degenerate distribution".to_string(),
                             ));
@@ -757,8 +751,12 @@ impl<
 {
     /// Update using experience replay.
     ///
-    /// Available only for `V: QNetwork` — SAC, TD3 and DDPG are all built on
-    /// `Q(s, a)`, and the deterministic policy gradient needs `∇_a Q(s, a)`.
+    /// Requires `V: QNetwork` — SAC, TD3 and DDPG are all built on `Q(s, a)`, and
+    /// the deterministic policy gradient needs `∇_a Q(s, a)`. A2C/A3C are
+    /// normally on-policy but accept replayed transitions here too (their
+    /// log-probs/values are recomputed from the current networks — see
+    /// [`ActorCriticOptimizer::experiences_to_trajectory`]). D4PG and MPO are
+    /// not yet implemented.
     pub fn update_from_replay(&mut self, batchsize: usize) -> Result<ActorCriticMetrics<T>> {
         if self.replay_buffer.len() < batchsize {
             return Err(OptimError::InvalidConfig(format!(
@@ -773,6 +771,9 @@ impl<
             ActorCriticMethod::SAC => self.update_sac(&sample),
             ActorCriticMethod::TD3 => self.update_td3(&sample),
             ActorCriticMethod::DDPG => self.update_ddpg(&sample),
+            ActorCriticMethod::A2C | ActorCriticMethod::A3C => {
+                self.update_a2c_from_experiences(&sample.experiences)
+            }
             other => Err(OptimError::UnsupportedOperation(format!(
                 "{other:?} does not support experience-replay updates"
             ))),
@@ -795,16 +796,6 @@ impl<
             Some(ref actor) => actor,
             None => &self.actor,
         }
-    }
-
-    /// `Q(s, a)` — the action argument genuinely participates.
-    fn compute_q_values(
-        &self,
-        critic: &V,
-        states: &Array2<T>,
-        actions: &Array2<T>,
-    ) -> Result<Array1<T>> {
-        critic.evaluate_q(states, actions)
     }
 
     /// Regress the first `n_critics` critics onto `targets`, returning the losses

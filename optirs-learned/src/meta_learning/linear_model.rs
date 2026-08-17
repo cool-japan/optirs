@@ -298,6 +298,90 @@ pub fn label_accuracy<T: Float + Debug + Send + Sync + 'static>(
     T::from(correct).map(|c| c / n)
 }
 
+/// Full-curve area under the ROC curve for binary labels.
+///
+/// The model's raw predictions double as the ranking scores, so no separate
+/// score-retention channel is needed: `evaluate_query_set` already keeps every
+/// prediction in [`super::types::QueryEvaluationResult::predictions`] and hands
+/// that same slice here.
+///
+/// The area is computed exactly, over the *whole* curve, via the rank
+/// (Mann-Whitney U) identity
+///
+/// ```text
+/// AUC = (sum of ranks of the positives - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+/// ```
+///
+/// Tied scores share their mean rank, which is what makes this identity equal
+/// the trapezoidal area of the ROC curve rather than an optimistic step area.
+/// It is therefore a true full-curve AUC, not a single-operating-point
+/// approximation such as `(tpr + tnr) / 2`.
+///
+/// Returns `None` — never a fabricated number — when the area is undefined:
+///
+/// * the lengths disagree or the set is empty,
+/// * some label does not round to `0` or `1` (the labels are not binary),
+/// * every label is the same class (no positive/negative pair to rank),
+/// * some score is NaN (the ranking would be ill-defined).
+pub fn roc_auc<T: Float + Debug + Send + Sync + 'static>(scores: &[T], labels: &[T]) -> Option<T> {
+    if scores.len() != labels.len() || labels.is_empty() {
+        return None;
+    }
+
+    // Binary-label check: every target must round to exactly 0 or 1.
+    let mut positives = Vec::with_capacity(labels.len());
+    for y in labels {
+        let r = y.round();
+        if r == T::zero() {
+            positives.push(false);
+        } else if r == T::one() {
+            positives.push(true);
+        } else {
+            return None;
+        }
+    }
+    let n_pos = positives.iter().filter(|p| **p).count();
+    let n_neg = positives.len() - n_pos;
+    if n_pos == 0 || n_neg == 0 {
+        return None;
+    }
+    if scores.iter().any(|s| s.is_nan()) {
+        return None;
+    }
+
+    // Ascending order by score; NaN was rejected above so the comparison is total.
+    let mut order: Vec<usize> = (0..scores.len()).collect();
+    order.sort_by(|a, b| {
+        scores[*a]
+            .partial_cmp(&scores[*b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Mean rank within each tied block (ranks are 1-based).
+    let mut rank_sum_pos = T::zero();
+    let mut i = 0usize;
+    while i < order.len() {
+        let mut j = i + 1;
+        while j < order.len() && scores[order[j]] == scores[order[i]] {
+            j += 1;
+        }
+        // Ranks i+1 ..= j average to (i + 1 + j) / 2.
+        let mean_rank = T::from(i + 1 + j)? / T::from(2.0)?;
+        for k in order.iter().take(j).skip(i) {
+            if positives[*k] {
+                rank_sum_pos = rank_sum_pos + mean_rank;
+            }
+        }
+        i = j;
+    }
+
+    let n_pos_t = T::from(n_pos)?;
+    let n_neg_t = T::from(n_neg)?;
+    let two = T::from(2.0)?;
+    let min_rank_sum = n_pos_t * (n_pos_t + T::one()) / two;
+    Some((rank_sum_pos - min_rank_sum) / (n_pos_t * n_neg_t))
+}
+
 /// L2 norm of a parameter/gradient map.
 pub fn map_norm<T: Float + Debug + Send + Sync + 'static>(map: &HashMap<String, Array1<T>>) -> T {
     map.values()
@@ -494,5 +578,79 @@ mod tests {
         assert!(r_squared::<f64>(&[1.0, 1.0], &[2.0, 2.0]).is_none());
         let acc = label_accuracy::<f64>(&[0.9, 2.1, 0.2], &[1.0, 2.0, 1.0]).expect("acc");
         approx::assert_abs_diff_eq!(acc, 2.0 / 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_roc_auc_perfect_and_inverted_ranking() {
+        // Every positive outranks every negative -> area 1.
+        let scores = [0.1, 0.2, 0.8, 0.9];
+        let labels = [0.0, 0.0, 1.0, 1.0];
+        approx::assert_abs_diff_eq!(
+            roc_auc::<f64>(&scores, &labels).expect("binary labels give an AUC"),
+            1.0,
+            epsilon = 1e-12
+        );
+        // Reversing the scores mirrors the curve -> area 0.
+        let inverted = [0.9, 0.8, 0.2, 0.1];
+        approx::assert_abs_diff_eq!(
+            roc_auc::<f64>(&inverted, &labels).expect("binary labels give an AUC"),
+            0.0,
+            epsilon = 1e-12
+        );
+    }
+
+    #[test]
+    fn test_roc_auc_uses_full_curve_not_one_operating_point() {
+        // 2 positives (0.3, 0.6) and 2 negatives (0.1, 0.4) give 4 pairs. Only
+        // (0.3 vs 0.4) is mis-ordered, so the area is 3/4.
+        let labels = [0.0, 0.0, 1.0, 1.0];
+        let scores = [0.1, 0.4, 0.3, 0.6];
+        approx::assert_abs_diff_eq!(
+            roc_auc::<f64>(&scores, &labels).expect("binary labels give an AUC"),
+            0.75,
+            epsilon = 1e-12
+        );
+        // Now only (0.6 vs 0.5) survives, so the area drops to 1/4 even though a
+        // single-threshold summary at 0.55 would score both sets identically.
+        let scores_worse = [0.5, 0.7, 0.3, 0.6];
+        approx::assert_abs_diff_eq!(
+            roc_auc::<f64>(&scores_worse, &labels).expect("binary labels give an AUC"),
+            0.25,
+            epsilon = 1e-12
+        );
+    }
+
+    #[test]
+    fn test_roc_auc_ties_take_mean_rank() {
+        // All scores tied: every pair is a coin flip -> exactly 0.5.
+        let scores = [0.5, 0.5, 0.5, 0.5];
+        let labels = [0.0, 1.0, 0.0, 1.0];
+        approx::assert_abs_diff_eq!(
+            roc_auc::<f64>(&scores, &labels).expect("binary labels give an AUC"),
+            0.5,
+            epsilon = 1e-12
+        );
+        // One tied pair between an otherwise perfect split: 3 clean pairs + one
+        // half-credit tie out of 4 -> 0.875.
+        let partial = [0.1, 0.5, 0.5, 0.9];
+        approx::assert_abs_diff_eq!(
+            roc_auc::<f64>(&partial, &labels).expect("binary labels give an AUC"),
+            0.875,
+            epsilon = 1e-12
+        );
+    }
+
+    #[test]
+    fn test_roc_auc_returns_none_when_undefined() {
+        // Non-binary labels (regression targets).
+        assert!(roc_auc::<f64>(&[0.1, 0.2, 0.3], &[2.0, 5.0, 8.0]).is_none());
+        // Single class: no positive/negative pair exists.
+        assert!(roc_auc::<f64>(&[0.1, 0.2], &[1.0, 1.0]).is_none());
+        assert!(roc_auc::<f64>(&[0.1, 0.2], &[0.0, 0.0]).is_none());
+        // Empty and mismatched inputs.
+        assert!(roc_auc::<f64>(&[], &[]).is_none());
+        assert!(roc_auc::<f64>(&[0.1], &[0.0, 1.0]).is_none());
+        // NaN scores make the ranking ill-defined.
+        assert!(roc_auc::<f64>(&[f64::NAN, 0.2], &[0.0, 1.0]).is_none());
     }
 }

@@ -486,8 +486,13 @@ impl PeerReviewSystem {
 
         let mut assignment_ids = Vec::new();
         let now = Utc::now();
-        let session = self.sessions.get(session_id).expect("unwrap failed");
-        let deadline = session.deadline;
+        let deadline = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| {
+                OptimError::InvalidState(format!("session '{session_id}' vanished during lookup"))
+            })?
+            .deadline;
 
         for reviewer_id in reviewer_ids {
             if !self.reviewers.contains_key(reviewer_id) {
@@ -615,8 +620,10 @@ impl PeerReviewSystem {
             self.create_meta_review(session, meta_reviewer_id)
         };
 
-        // Now update the session with mutable access
-        let session = self.sessions.get_mut(session_id).expect("unwrap failed"); // Safe because we just checked it exists
+        // Now update the session with mutable access.
+        let session = self.sessions.get_mut(session_id).ok_or_else(|| {
+            OptimError::InvalidState(format!("session '{session_id}' vanished during lookup"))
+        })?;
         session.meta_review = Some(meta_review);
         session.status = ReviewSessionStatus::Complete;
 
@@ -695,18 +702,54 @@ impl PeerReviewSystem {
         quality_score / total_weight
     }
 
+    /// How well a reviewer's declared expertise covers a session's criteria, in
+    /// `[0, 1]`.
+    ///
+    /// The score is the fraction of the session's review criteria whose name or
+    /// description mentions one of the reviewer's expertise areas
+    /// (case-insensitive substring match). A reviewer with no declared expertise
+    /// scores `0.0`, and a session with no criteria yields `0.5` -- there is
+    /// nothing to match against, so neither a good nor a bad match can be
+    /// claimed.
+    ///
+    /// Until 0.3.2 this ignored `sessionid` entirely and returned the constant
+    /// `0.8` for any reviewer with a non-empty `expertise_areas` list and `0.5`
+    /// otherwise, so assignment ranked a cryptographer and a numerical analyst
+    /// identically on an optimization paper.
     fn calculate_expertise_match(&self, reviewer_id: &str, sessionid: &str) -> f64 {
-        // Simplified expertise matching
-        // In practice, you'd use more sophisticated matching algorithms
-        if let Some(reviewer) = self.reviewers.get(reviewer_id) {
-            if reviewer.expertise_areas.is_empty() {
-                0.5 // Default moderate match
-            } else {
-                0.8 // Good match if has expertise areas
-            }
-        } else {
-            0.0
+        let Some(reviewer) = self.reviewers.get(reviewer_id) else {
+            return 0.0;
+        };
+        if reviewer.expertise_areas.is_empty() {
+            return 0.0;
         }
+        let Some(session) = self.sessions.get(sessionid) else {
+            return 0.5;
+        };
+        if session.criteria.is_empty() {
+            return 0.5;
+        }
+
+        let areas: Vec<String> = reviewer
+            .expertise_areas
+            .iter()
+            .map(|area| area.to_ascii_lowercase())
+            .filter(|area| !area.is_empty())
+            .collect();
+        if areas.is_empty() {
+            return 0.0;
+        }
+
+        let matched = session
+            .criteria
+            .iter()
+            .filter(|criterion| {
+                let haystack =
+                    format!("{} {}", criterion.name, criterion.description).to_ascii_lowercase();
+                areas.iter().any(|area| haystack.contains(area))
+            })
+            .count();
+        matched as f64 / session.criteria.len() as f64
     }
 
     fn create_meta_review(&self, session: &ReviewSession, meta_reviewer_id: &str) -> MetaReview {
@@ -773,13 +816,13 @@ impl PeerReviewSystem {
         ranks.sort_unstable();
 
         let mid = ranks.len() / 2;
-        let median_rank = if ranks.len() % 2 == 0 {
+        let median_rank = if ranks.len().is_multiple_of(2) {
             // Even count: average the two middle ranks, rounding toward the
             // more critical (reject) side on an exact half -- an "err on
             // the side of caution" convention that is itself deterministic.
             let lower = u16::from(ranks[mid - 1]);
             let upper = u16::from(ranks[mid]);
-            ((lower + upper + 1) / 2) as u8
+            (lower + upper).div_ceil(2) as u8
         } else {
             ranks[mid]
         };

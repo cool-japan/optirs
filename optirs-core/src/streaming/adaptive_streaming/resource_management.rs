@@ -7,7 +7,7 @@
 use super::config::*;
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -1131,6 +1131,11 @@ impl ResourceManager {
             // R7: a real count, not the hardcoded zero it used to be.
             budget_violations: self.budget_violations.load(Ordering::Relaxed) as usize,
             budget_penalty: self.budget_penalty,
+            // Accumulated magnitude of the resource changes actually applied
+            // per component. The optimizer tracked this from the start but
+            // nothing surfaced it, so callers had no way to see whether the
+            // optimization engine was doing anything at all.
+            applied_change_magnitude: self.optimizer.performance_impact().clone(),
         }
     }
 }
@@ -1164,6 +1169,9 @@ pub struct ResourceDiagnostics {
     pub budget_violations: usize,
     /// Accumulated budget-violation penalty.
     pub budget_penalty: f64,
+    /// Total absolute resource change applied per component by the
+    /// optimization engine, keyed by component name.
+    pub applied_change_magnitude: HashMap<String, f64>,
 }
 
 impl Default for ResourceUsage {

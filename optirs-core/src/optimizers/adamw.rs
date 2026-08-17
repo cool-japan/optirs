@@ -41,7 +41,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = AdamW::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct AdamW<A: Float + ScalarOperand + Debug> {
@@ -75,10 +75,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdamW<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.999).expect("unwrap failed"),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
-            weight_decay: A::from(0.01).expect("unwrap failed"), // Default weight decay is higher for AdamW
+            beta1: A::from(0.9).expect("AdamW: default beta1 (0.9) must fit in A"),
+            beta2: A::from(0.999).expect("AdamW: default beta2 (0.999) must fit in A"),
+            epsilon: A::from(1e-8).expect("AdamW: default epsilon (1e-8) must fit in A"),
+            // Default weight decay is higher for AdamW
+            weight_decay: A::from(0.01).expect("AdamW: default weight_decay (0.01) must fit in A"),
             m: None,
             v: None,
             t: Vec::new(),
@@ -352,7 +353,9 @@ mod tests {
         let mut optimizer = AdamW::new(0.01);
 
         // Run one step
-        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_adamw_step");
 
         // Check that parameters have been updated
         assert!(new_params.iter().all(|&x| x != 0.0));
@@ -377,7 +380,9 @@ mod tests {
 
         // Run multiple steps
         for _ in 0..10 {
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_adamw_multiple_steps");
         }
 
         // Parameters should continue to move in the direction of the gradients
@@ -419,7 +424,9 @@ mod tests {
         let mut optimizer = AdamW::new(0.01);
 
         // Run one step
-        optimizer.step(&params, &gradients).expect("unwrap failed");
+        optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_adamw_reset");
         assert_eq!(optimizer.timestep(0), 1);
         assert!(optimizer.m.is_some());
         assert!(optimizer.v.is_some());

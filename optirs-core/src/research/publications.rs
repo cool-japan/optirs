@@ -3,14 +3,13 @@
 // This module provides tools for generating academic publications from experimental
 // results, managing bibliographies, and formatting papers for various venues.
 
+use crate::error::OptimError;
 use crate::error::Result;
-use crate::research::experiments::{
-    Experiment, ExperimentResult, ResourceUsage, RunStatus, TrainingHistory,
-};
+use crate::research::experiments::{Experiment, RunStatus};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Academic publication representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,7 +94,7 @@ pub enum AuthorPosition {
 }
 
 /// Publication types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum PublicationType {
     /// Conference paper
     ConferencePaper,
@@ -307,7 +306,7 @@ pub struct BibTeXEntry {
 }
 
 /// Citation styles
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CitationStyle {
     /// APA style
     APA,
@@ -980,13 +979,83 @@ impl Bibliography {
 }
 
 impl PublicationGenerator {
-    /// Create a new publication generator
-    pub fn new(_outputdir: PathBuf) -> Self {
+    /// Create a new publication generator writing into `output_dir`.
+    pub fn new(output_dir: PathBuf) -> Self {
         Self {
             templates: HashMap::new(),
             default_citation_style: CitationStyle::IEEE,
-            output_dir: _outputdir,
+            output_dir,
         }
+    }
+
+    /// The directory generated manuscripts are written to.
+    pub fn output_dir(&self) -> &Path {
+        &self.output_dir
+    }
+
+    /// The citation style applied when a template does not name one.
+    pub fn default_citation_style(&self) -> &CitationStyle {
+        &self.default_citation_style
+    }
+
+    /// Set the fallback citation style.
+    pub fn set_default_citation_style(&mut self, style: CitationStyle) {
+        self.default_citation_style = style;
+    }
+
+    /// Register a reusable template under `publication_type`.
+    ///
+    /// Until 0.3.2 `templates` was an empty map nothing could populate and
+    /// nothing read: [`Self::generate_from_experiments`] required the caller to
+    /// hand in a template every time, so the repository the field documents did
+    /// not exist.
+    pub fn register_template(
+        &mut self,
+        publication_type: PublicationType,
+        template: PublicationTemplate,
+    ) {
+        self.templates.insert(publication_type, template);
+    }
+
+    /// The template registered for `publication_type`, if any.
+    pub fn template(&self, publication_type: &PublicationType) -> Option<&PublicationTemplate> {
+        self.templates.get(publication_type)
+    }
+
+    /// Generate a publication using the registered template for
+    /// `publication_type`.
+    ///
+    /// # Errors
+    ///
+    /// [`OptimError::InvalidConfig`] when no template has been registered for
+    /// that publication type.
+    pub fn generate_registered(
+        &self,
+        experiments: &[Experiment],
+        publication_type: PublicationType,
+    ) -> Result<Publication> {
+        let template = self.templates.get(&publication_type).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "no template is registered for {publication_type:?}; call register_template first"
+            ))
+        })?;
+        let mut publication = self.generate_from_experiments(experiments, template)?;
+        publication.publication_type = publication_type;
+        Ok(publication)
+    }
+
+    /// Render a publication to Markdown under [`Self::output_dir`] and return
+    /// the path written.
+    pub fn write_markdown(&self, publication: &Publication) -> Result<PathBuf> {
+        std::fs::create_dir_all(&self.output_dir)?;
+        let file_name = publication
+            .title
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>();
+        let path = self.output_dir.join(format!("{file_name}.md"));
+        std::fs::write(&path, publication.generate_markdown()?)?;
+        Ok(path)
     }
 
     /// Generate publication from experiments
@@ -1189,6 +1258,7 @@ impl PublicationGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::research::experiments::{ExperimentResult, ResourceUsage, TrainingHistory};
 
     #[test]
     fn test_publication_creation() {

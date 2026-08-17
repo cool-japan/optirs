@@ -6,14 +6,13 @@ use std::fmt::Debug;
 // multi-output fusion to reduce memory traffic and improve performance.
 
 use scirs2_core::numeric::Float;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::super::frontend::{
-    DataType, OperandId, OperationAttributes, OperationId, OperationType, TensorShape,
-    XLAComputation, XLAOperation,
+    OperandId, OperationAttributes, OperationId, OperationType, XLAComputation, XLAOperation,
 };
-use super::{OptimizationPass, OptimizationPipelineConfig};
-use crate::error::{OptimError, Result};
+use super::OptimizationPipelineConfig;
+use crate::error::Result;
 
 /// Kernel fusion engine for XLA computations
 pub struct KernelFusionEngine<T: Float + Debug + Send + Sync + 'static> {
@@ -859,17 +858,119 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         }
     }
 
-    /// Apply producer-consumer fusion
+    /// Run producer-consumer chain detection over a computation.
+    ///
+    /// This is a *detection* pass: it identifies the chains and scores them, and
+    /// returns the computation unchanged. Materializing a chain into a single
+    /// fused operation is [`ElementwiseFusionPass`]'s job -- it already builds
+    /// real fused operations out of elementwise clusters, and duplicating that
+    /// rewrite here would fuse the same operations twice.
     pub fn apply_fusion(&mut self, computation: XLAComputation<T>) -> Result<XLAComputation<T>> {
         self.find_producer_consumer_chains(&computation)?;
-        // Implementation would create fused operations
         Ok(computation)
     }
 
-    /// Find producer-consumer chains
-    fn find_producer_consumer_chains(&mut self, _computation: &XLAComputation<T>) -> Result<()> {
+    /// Chains found by the most recent [`Self::apply_fusion`] call, highest
+    /// scoring first.
+    pub fn chains(&self) -> &[ProducerConsumerChain] {
+        &self.chains
+    }
+
+    /// Find producer-consumer chains.
+    ///
+    /// A chain is a maximal run of operations where each operation's output
+    /// operand is consumed by exactly one other operation, so the intermediate
+    /// tensor never has to be written out to memory if the pair is fused. The
+    /// run stops at `max_chain_length`, at an operand with several consumers,
+    /// and at an operand that is a declared computation output (which must be
+    /// materialized regardless).
+    ///
+    /// The score is the real memory traffic a fusion would save: the byte size
+    /// of every intermediate tensor inside the chain.
+    fn find_producer_consumer_chains(&mut self, computation: &XLAComputation<T>) -> Result<()> {
         self.chains.clear();
-        // Chain detection logic would go here
+        if self.max_chain_length < 2 {
+            return Ok(());
+        }
+
+        // How many operations consume each operand, and which operation
+        // produces it.
+        let mut consumers: HashMap<OperandId, Vec<OperationId>> = HashMap::new();
+        let mut producer: HashMap<OperandId, OperationId> = HashMap::new();
+        for operation in &computation.operations {
+            producer.insert(operation.output, operation.id);
+            for input in &operation.inputs {
+                consumers.entry(*input).or_default().push(operation.id);
+            }
+        }
+
+        let by_id: HashMap<OperationId, &XLAOperation<T>> = computation
+            .operations
+            .iter()
+            .map(|operation| (operation.id, operation))
+            .collect();
+
+        let outputs: HashSet<OperandId> = computation
+            .outputs
+            .iter()
+            .map(|spec| spec.operand)
+            .collect();
+
+        let mut claimed: HashSet<OperationId> = HashSet::new();
+
+        for operation in &computation.operations {
+            if claimed.contains(&operation.id) {
+                continue;
+            }
+
+            let mut chain = vec![operation.id];
+            let mut score = 0.0f64;
+            let mut current = operation;
+
+            while chain.len() < self.max_chain_length {
+                // The intermediate must be consumed exactly once and must not be
+                // a computation output.
+                if outputs.contains(&current.output) {
+                    break;
+                }
+                let Some(next_ids) = consumers.get(&current.output) else {
+                    break;
+                };
+                if next_ids.len() != 1 {
+                    break;
+                }
+                let Some(next) = next_ids.first().and_then(|id| by_id.get(id)).copied() else {
+                    break;
+                };
+                if claimed.contains(&next.id) {
+                    break;
+                }
+
+                // Bytes that would not have to round-trip through memory.
+                if let Some(operand) = computation.operands.get(&current.output) {
+                    score += operand.shape.element_count as f64;
+                }
+
+                chain.push(next.id);
+                current = next;
+            }
+
+            if chain.len() >= 2 {
+                for id in &chain {
+                    claimed.insert(*id);
+                }
+                // Every intermediate that stays in registers is memory the
+                // fused kernel never touches.
+                let memory_reduction = score as usize;
+                self.chains.push(ProducerConsumerChain {
+                    operations: chain,
+                    score,
+                    memory_reduction,
+                });
+            }
+        }
+
+        self.chains.sort_by(|a, b| b.score.total_cmp(&a.score));
         Ok(())
     }
 }

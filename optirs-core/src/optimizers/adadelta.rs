@@ -12,7 +12,7 @@ use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 use scirs2_core::ndarray::{Ix1, ScalarOperand};
 use scirs2_core::ndarray_ext::{Array1, ArrayView1};
-use scirs2_core::numeric::{Float, Zero};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -66,10 +66,10 @@ pub struct AdaDelta<T: Float> {
 impl<T: Float> Default for AdaDelta<T> {
     fn default() -> Self {
         Self::new(
-            T::from(0.95).expect("unwrap failed"), // rho
-            T::from(1e-6).expect("unwrap failed"), // epsilon
+            T::from(0.95).expect("AdaDelta: default rho (0.95) must be representable in T"),
+            T::from(1e-6).expect("AdaDelta: default epsilon (1e-6) must be representable in T"),
         )
-        .expect("unwrap failed")
+        .expect("AdaDelta: default (rho=0.95, epsilon=1e-6) always satisfies validation")
     }
 }
 
@@ -87,11 +87,11 @@ impl<T: Float> AdaDelta<T> {
     /// ```
     /// use optirs_core::optimizers::AdaDelta;
     ///
-    /// let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
+    /// let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("AdaDelta::<f32>::new succeeds");
     /// ```
     pub fn new(rho: T, epsilon: T) -> Result<Self> {
-        let rho_f64 = rho.to_f64().expect("unwrap failed");
-        let epsilon_f64 = epsilon.to_f64().expect("unwrap failed");
+        let rho_f64 = crate::optimizers::scalar_to_f64(rho)?;
+        let epsilon_f64 = crate::optimizers::scalar_to_f64(epsilon)?;
 
         if rho_f64 <= 0.0 || rho_f64 >= 1.0 {
             return Err(OptimError::InvalidParameter(format!(
@@ -172,11 +172,11 @@ impl<T: Float> AdaDelta<T> {
     /// use optirs_core::optimizers::AdaDelta;
     /// use scirs2_core::ndarray_ext::array;
     ///
-    /// let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
+    /// let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("AdaDelta::<f32>::new succeeds");
     /// let params = array![1.0, 2.0, 3.0];
     /// let grads = array![0.1, 0.2, 0.3];
     ///
-    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
+    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("optimizer.step succeeds");
     /// ```
     pub fn step<'a, P, G>(&mut self, params: P, grads: G) -> Result<Array1<T>>
     where
@@ -202,13 +202,12 @@ impl<T: Float> AdaDelta<T> {
         }
 
         // Initialize accumulators on first step
-        if self.accumulated_gradients.is_none() {
-            self.accumulated_gradients = Some(Array1::zeros(n));
-            self.accumulated_updates = Some(Array1::zeros(n));
-        }
-
-        let acc_grad = self.accumulated_gradients.as_mut().expect("unwrap failed");
-        let acc_update = self.accumulated_updates.as_mut().expect("unwrap failed");
+        let acc_grad = self
+            .accumulated_gradients
+            .get_or_insert_with(|| Array1::zeros(n));
+        let acc_update = self
+            .accumulated_updates
+            .get_or_insert_with(|| Array1::zeros(n));
 
         // Update exponentially decaying average of squared gradients
         // E[g²]_t = ρ * E[g²]_{t-1} + (1 - ρ) * g_t²
@@ -320,7 +319,8 @@ mod tests {
 
     #[test]
     fn test_adadelta_creation() {
-        let optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
+        let optimizer = AdaDelta::<f32>::new(0.95, 1e-6)
+            .expect("AdaDelta::<f32>::new succeeds in test_adadelta_creation");
         assert_eq!(optimizer.step_count(), 0);
     }
 
@@ -337,13 +337,14 @@ mod tests {
 
     #[test]
     fn test_adadelta_single_step() {
-        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6)
+            .expect("AdaDelta::<f32>::new succeeds in test_adadelta_single_step");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
         let updated_params = optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adadelta_single_step");
 
         // First step should have small updates (RMS[Δθ]_{-1} = 0)
         assert!(updated_params.len() == 3);
@@ -357,14 +358,15 @@ mod tests {
 
     #[test]
     fn test_adadelta_multiple_steps() {
-        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6)
+            .expect("AdaDelta::<f32>::new succeeds in test_adadelta_multiple_steps");
         let mut params = array![1.0, 2.0, 3.0];
 
         for _ in 0..10 {
             let grads = array![0.1, 0.2, 0.3];
             params = optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_adadelta_multiple_steps");
         }
 
         assert_eq!(optimizer.step_count(), 10);
@@ -377,7 +379,8 @@ mod tests {
 
     #[test]
     fn test_adadelta_shape_mismatch() {
-        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6)
+            .expect("AdaDelta::<f32>::new succeeds in test_adadelta_shape_mismatch");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2]; // Wrong shape
 
@@ -386,13 +389,14 @@ mod tests {
 
     #[test]
     fn test_adadelta_reset() {
-        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f32>::new(0.95, 1e-6)
+            .expect("AdaDelta::<f32>::new succeeds in test_adadelta_reset");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
         optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adadelta_reset");
         assert_eq!(optimizer.step_count(), 1);
         assert!(optimizer.accumulated_gradients.is_some());
 
@@ -411,14 +415,15 @@ mod tests {
         // Plain AdaDelta bootstraps from E[Δθ²] = 0, so the first updates are on the
         // order of sqrt(epsilon). It genuinely needs a few thousand steps on this toy
         // problem; that is the published algorithm, not a defect.
-        let mut optimizer = AdaDelta::<f64>::new(0.99, 1e-6).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f64>::new(0.99, 1e-6)
+            .expect("AdaDelta::<f64>::new succeeds in test_adadelta_convergence");
         let mut params = array![10.0]; // Start far from optimum
 
         for _ in 0..3000 {
             let grads = params.mapv(|x| 2.0 * x); // Gradient of x²
             params = optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_adadelta_convergence");
         }
 
         assert!(
@@ -487,8 +492,6 @@ mod tests {
     /// AdaDelta must be usable through the generic `Optimizer` trait.
     #[test]
     fn test_adadelta_optimizer_trait() {
-        use crate::optimizers::Optimizer as _;
-
         let mut optimizer = AdaDelta::<f64>::new(0.95, 1e-6).expect("valid config");
         let params = array![1.0f64, 2.0, 3.0];
         let grads = array![0.1f64, 0.2, 0.3];
@@ -505,7 +508,8 @@ mod tests {
 
     #[test]
     fn test_adadelta_rms_values() {
-        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f32>::new(0.9, 1e-6)
+            .expect("AdaDelta::<f32>::new succeeds in test_adadelta_rms_values");
 
         // No RMS values before first step
         assert!(optimizer.rms_gradients().is_none());
@@ -516,25 +520,28 @@ mod tests {
 
         optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adadelta_rms_values");
 
         // RMS values should exist after first step
         assert!(optimizer.rms_gradients().is_some());
         assert!(optimizer.rms_updates().is_some());
 
-        let rms_grads = optimizer.rms_gradients().expect("unwrap failed");
+        let rms_grads = optimizer
+            .rms_gradients()
+            .expect("optimizer.rms_gradients succeeds in test_adadelta_rms_values");
         assert_eq!(rms_grads.len(), 3);
     }
 
     #[test]
     fn test_adadelta_f64() {
-        let mut optimizer = AdaDelta::<f64>::new(0.95, 1e-8).expect("unwrap failed");
+        let mut optimizer = AdaDelta::<f64>::new(0.95, 1e-8)
+            .expect("AdaDelta::<f64>::new succeeds in test_adadelta_f64");
         let params = array![1.0, 2.0, 3.0];
         let grads = array![0.1, 0.2, 0.3];
 
         let updated_params = optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_adadelta_f64");
         assert_eq!(updated_params.len(), 3);
     }
 }

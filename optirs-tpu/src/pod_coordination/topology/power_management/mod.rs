@@ -2,7 +2,6 @@
 //
 // This module provides comprehensive power management functionality for TPU topology
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

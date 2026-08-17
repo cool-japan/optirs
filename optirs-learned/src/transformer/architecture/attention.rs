@@ -6,7 +6,6 @@ use std::fmt::Debug;
 
 use scirs2_core::ndarray::{s, Array1, Array2, Array3, ArrayViewMut2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{Random, Rng as SCRRng};
 
 use super::super::TransformerOptimizerConfig;
 use super::positional_encoding::PositionalEncodingType;

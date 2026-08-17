@@ -196,7 +196,12 @@ impl std::fmt::Display for ClockSynchronizationError {
             ClockSynchronizationError::CoreError(e) => {
                 write!(f, "Core synchronization error: {}", e)
             }
-            ClockSynchronizationError::ProtocolError(e) => write!(f, "Protocol error: {}", e),
+            // No prefix here: `ProtocolError`'s own `Display` already starts
+            // with "Protocol error", and prefixing again rendered
+            // "Protocol error: Protocol error: ...". The inner type stays
+            // self-describing because it is also returned standalone from
+            // `NtpTimestamps::round_trip_delay`/`offset`.
+            ClockSynchronizationError::ProtocolError(e) => write!(f, "{}", e),
             ClockSynchronizationError::SourceError(e) => {
                 write!(f, "Source management error: {}", e)
             }
@@ -432,23 +437,34 @@ impl Default for ClockSynchronizationBuilder {
 pub mod utils {
     use super::*;
 
-    /// Create a basic NTP-based synchronization setup
+    /// Create a basic NTP-based synchronization setup, one time source per
+    /// supplied server.
+    ///
+    /// The server list is the whole point of an NTP setup, so an empty list is
+    /// an honest configuration error rather than a manager with nothing to
+    /// synchronize against. (This used to loop over
+    /// `builder.source_configs.len()` -- which is zero on a fresh builder --
+    /// and so added no sources at all while ignoring `ntp_servers` entirely.)
     pub fn create_ntp_sync_manager(
         ntp_servers: Vec<String>,
     ) -> Result<ClockSynchronizationManager> {
+        if ntp_servers.is_empty() {
+            return Err(ClockSynchronizationError::ConfigurationError(
+                "an NTP synchronization manager needs at least one server address".to_string(),
+            ));
+        }
+
         let mut builder = ClockSynchronizationBuilder::new();
 
         // Add NTP protocol
         builder = builder.with_protocol(protocols::ClockSyncProtocol::NTP);
 
-        // Add network time sources
-        let source_count = builder.source_configs.len();
-        for _ in 0..source_count {
-            // Add NTP source
-            let source = sources::TimeSource {
+        // One addressable network time source per configured server.
+        for server in ntp_servers {
+            builder = builder.with_source(sources::TimeSource {
                 source_type: sources::ClockSource::NTP,
-            };
-            builder = builder.with_source(source);
+                address: Some(server),
+            });
         }
 
         // Enable basic monitoring
@@ -467,9 +483,11 @@ pub mod utils {
         // Add GPS configuration
         builder = builder.with_gps_config(gps_config.clone());
 
-        // Add GPS time source
+        // Add GPS time source. The receiver's device path comes from the GPS
+        // configuration rather than being invented here.
         let source = sources::TimeSource {
             source_type: sources::ClockSource::GPS,
+            address: None,
         };
         builder = builder.with_source(source);
 
@@ -488,9 +506,11 @@ pub mod utils {
         // Use PTP for high precision
         builder = builder.with_protocol(protocols::ClockSyncProtocol::PTP);
 
-        // Add atomic clock source
+        // Add atomic clock source. A locally attached reference needs no
+        // network address.
         let source = sources::TimeSource {
             source_type: sources::ClockSource::Atomic,
+            address: None,
         };
         builder = builder.with_source(source);
 

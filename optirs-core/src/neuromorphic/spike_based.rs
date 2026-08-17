@@ -4,23 +4,16 @@
 // and temporal spike patterns, designed for neuromorphic computing platforms.
 
 use super::{
-    to_generic_or, EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics,
-    PlasticityModel, STDPConfig, Spike, SpikeTrain,
+    to_generic_or, MembraneDynamicsConfig, NeuromorphicMetrics, PlasticityModel, STDPConfig, Spike,
+    SpikeTrain,
 };
 
-// SciRS2 Integration - CRITICAL for neuromorphic computing
-use scirs2_neural::activations_minimal::Activation;
-use scirs2_neural::layers::Layer;
-use scirs2_stats::distributions;
-
 use crate::error::Result;
-use crate::optimizers::Optimizer;
-use scirs2_core::ndarray::{Array1, Array2, ArrayBase, Data, DataMut, Dimension};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::Instant;
 
 /// Spike-based optimization configuration
 #[derive(Debug, Clone)]
@@ -833,14 +826,20 @@ impl<T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + std:
 {
     /// Create a new spike train optimizer
     pub fn new(config: SpikingConfig<T>) -> Self {
+        // The kernel width tracks the configured spike-correlation window: a
+        // pattern-matching kernel wider than the correlation window compares
+        // spikes the rest of the model already treats as unrelated. This used to
+        // be a fixed 5 ms regardless of configuration.
+        let kernel_width = config.temporal_window;
+        let pattern_learning_rate = config.spike_learning_rate;
         Self {
             config,
             pattern_templates: Vec::new(),
-            matching_threshold: T::from(0.8).unwrap_or_else(|| T::zero()),
-            pattern_learning_rate: T::from(0.1).unwrap_or_else(|| T::zero()),
+            matching_threshold: to_generic_or(0.8, T::zero()),
+            pattern_learning_rate,
             temporal_kernel: TemporalKernel {
                 kernel_type: TemporalKernelType::Gaussian,
-                width: T::from(5.0).unwrap_or_else(|| T::zero()),
+                width: kernel_width,
                 parameters: vec![T::one()],
             },
         }
@@ -857,8 +856,13 @@ impl<T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + std:
 
     /// Extract patterns from a spike train
     fn extract_and_learn_patterns(&mut self, spike_train: &SpikeTrain<T>) -> Result<()> {
-        let window_size = T::from(50.0).unwrap_or_else(|| T::zero()); // 50 ms windows
-        let step_size = T::from(10.0).unwrap_or_else(|| T::zero()); // 10 ms steps
+        // Window and step come from the configured temporal window and
+        // simulation time step rather than fixed 50 ms / 10 ms constants, so a
+        // model simulated at a different resolution segments its spike trains
+        // at that resolution. Both are floored at one time step so the loop
+        // below always advances.
+        let step_size = self.config.time_step.max(to_generic_or(1e-6, T::one()));
+        let window_size = self.config.temporal_window.max(step_size);
 
         let mut window_start = T::zero();
 

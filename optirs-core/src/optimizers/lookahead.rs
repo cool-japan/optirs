@@ -48,7 +48,7 @@ use std::marker::PhantomData;
 /// // Use like any other optimizer
 /// let params = Array1::zeros(10);
 /// let gradients = Array1::ones(10);
-/// let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let updated_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 pub struct Lookahead<A, O, D>
 where
@@ -84,8 +84,9 @@ where
     pub fn new(inner_optimizer: O) -> Self {
         Self {
             inner_optimizer,
-            alpha: A::from(0.5).expect("unwrap failed"), // Default alpha is 0.5
-            k: 5,                                        // Default k is 5
+            // Default alpha is 0.5
+            alpha: A::from(0.5).expect("Lookahead: default alpha (0.5) must fit in A"),
+            k: 5, // Default k is 5
             current_step: 0,
             slow_weights: None,
             fast_weights: None,
@@ -306,7 +307,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // First step
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lookahead_step");
 
         // After first step, fast weights should be updated by SGD but slow weights unchanged
         // SGD update: params - lr * gradients = [1.0, 2.0, 3.0] - 0.1 * [0.1, 0.2, 0.3] = [0.99, 1.98, 2.97]
@@ -317,7 +320,7 @@ mod tests {
         // Second step
         let updated_params2 = optimizer
             .step(&updated_params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_lookahead_step");
 
         // After second step (which is k), slow weights should be updated and fast weights reset to slow weights
         // SGD update on fast weights: [0.99, 1.98, 2.97] - 0.1 * [0.1, 0.2, 0.3] = [0.98, 1.96, 2.94]
@@ -334,7 +337,7 @@ mod tests {
         // Third step (starting a new cycle)
         let updated_params3 = optimizer
             .step(&updated_params2, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_lookahead_step");
 
         // SGD update on fast weights: [0.99, 1.98, 2.97] - 0.1 * [0.1, 0.2, 0.3] = [0.98, 1.96, 2.94]
         assert_abs_diff_eq!(updated_params3[0], 0.98, epsilon = 1e-6);
@@ -353,7 +356,9 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // First step
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_slow_weights_for_eval");
 
         // Switch to slow weights for evaluation
         optimizer.use_slow_weights_for_eval();
@@ -361,7 +366,7 @@ mod tests {
         // Get the parameters when using slow weights
         let eval_params = optimizer
             .step(&updated_params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_slow_weights_for_eval");
 
         // First step already updated both fast and slow weights
         // When using slow weights, we should get the slow weights which were initialized with
@@ -376,7 +381,7 @@ mod tests {
         // Should be back to fast weights
         let train_params = optimizer
             .step(&eval_params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_slow_weights_for_eval");
         assert!(train_params[0] < 1.0);
     }
 
@@ -390,13 +395,17 @@ mod tests {
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // Do a step to initialize weights
-        let _ = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let _ = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_reset");
 
         // Reset
         optimizer.reset();
 
         // Both fast and slow weights should be None, verified by new initialization
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_reset");
         // First step after reset should be equivalent to first step on a new optimizer
         assert_abs_diff_eq!(updated_params[0], 0.99, epsilon = 1e-6);
     }

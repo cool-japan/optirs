@@ -74,8 +74,6 @@ pub struct OneCycle<A: Float> {
     min_momentum: Option<A>,
     base_momentum: Option<A>,
     anneal_strategy: AnnealStrategy,
-    #[allow(dead_code)]
-    div_factor: A,
     final_div_factor: A,
 }
 
@@ -112,11 +110,6 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> OneCycle<A> {
         // Always leave at least one cool-down step so `total_steps - warmup_steps > 0`.
         let warmup_steps = warmup_steps.min(total_steps.saturating_sub(1));
 
-        let div_factor = if initial_lr == A::zero() {
-            A::one()
-        } else {
-            max_lr / initial_lr
-        };
         let final_div_factor = from_f64::<A>(10000.0); // Very small final LR
 
         Self {
@@ -130,7 +123,6 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> OneCycle<A> {
             min_momentum: None,
             base_momentum: None,
             anneal_strategy: AnnealStrategy::Cosine,
-            div_factor,
             final_div_factor,
         }
     }

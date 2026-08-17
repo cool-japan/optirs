@@ -107,6 +107,11 @@ pub struct TaskBatch<A: Float + ScalarOperand + Debug> {
 /// let updated = opt.step(&params, &grads).expect("step failed");
 /// assert!((updated[0] - (1.0 - 0.05 * 0.1)).abs() < 1e-12);
 /// ```
+/// Result of a multi-step inner adaptation: the final adapted parameters
+/// together with the per-step gradient trajectory (see
+/// [`MAML::inner_adapt_multi_step`]).
+pub type InnerAdaptResult<A, D> = Result<(Array<A, D>, Vec<Array<A, D>>)>;
+
 #[derive(Debug, Clone)]
 pub struct MAML<A: Float + ScalarOperand + Debug> {
     /// Outer / meta learning rate `beta`.
@@ -246,12 +251,11 @@ impl<A: Float + ScalarOperand + Debug> MAML<A> {
     /// gradients evaluated at iterates `theta^{(0)}, theta^{(1)}, ...,
     /// theta^{(K-1)}`. The returned vector therefore has length
     /// `inner_steps`, suitable for direct use in a [`TaskBatch`].
-    #[allow(clippy::type_complexity)]
     pub fn inner_adapt_multi_step<D, F>(
         &self,
         params: &Array<A, D>,
         mut loss_grad_fn: F,
-    ) -> Result<(Array<A, D>, Vec<Array<A, D>>)>
+    ) -> InnerAdaptResult<A, D>
     where
         D: Dimension,
         F: FnMut(&Array<A, D>) -> Array<A, D>,
@@ -321,8 +325,8 @@ impl<A: Float + ScalarOperand + Debug> MAML<A> {
                 }
                 let g_first = &task.inner_gradients[0];
                 let g_last = &task.inner_gradients[k - 1];
-                let denom = self.inner_lr
-                    * A::from(k - 1).expect("MAML: failed to convert inner_steps to scalar type");
+                let steps_minus_one: A = crate::optimizers::cast_scalar(k - 1)?;
+                let denom = self.inner_lr * steps_minus_one;
                 if denom.abs() <= A::epsilon() {
                     return Ok(task.final_loss_grad.clone());
                 }
@@ -408,8 +412,7 @@ impl<A: Float + ScalarOperand + Debug> MAML<A> {
             let g = self.task_meta_gradient(task)?;
             accumulator = &accumulator + &g;
         }
-        let n = A::from(task_batches.len())
-            .expect("MAML: failed to convert task batch count to scalar type");
+        let n: A = crate::optimizers::cast_scalar(task_batches.len())?;
         let mean_meta_grad = &accumulator / n;
 
         // Outer update with optional decoupled weight decay (AdamW-style).

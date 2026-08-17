@@ -62,17 +62,19 @@ fn mse(params: &Array1<f64>, test_set: &[(Vec<f64>, f64)]) -> f64 {
 
 #[test]
 fn streaming_linear_regression_converges() {
-    let mut config = StreamingConfig::default();
-    config.buffer_size = 8;
-    config.async_updates = false;
-    config.gradient_compression = false;
-    // Fixed learning rate (taken from the base optimizer) keeps this test
-    // deterministic and easy to reason about.
-    config.adaptive_learning_rate = false;
-    config.multi_stream_coordination = false;
-    config.predictive_streaming = false;
-    config.stream_fusion = false;
-    config.adaptive_resource_allocation = false;
+    let config = StreamingConfig {
+        buffer_size: 8,
+        async_updates: false,
+        gradient_compression: false,
+        // Fixed learning rate (taken from the base optimizer) keeps this test
+        // deterministic and easy to reason about.
+        adaptive_learning_rate: false,
+        multi_stream_coordination: false,
+        predictive_streaming: false,
+        stream_fusion: false,
+        adaptive_resource_allocation: false,
+        ..Default::default()
+    };
 
     let base_optimizer = SGD::new(0.05_f64);
     let mut streaming: StreamingOptimizer<SGD<f64>, f64, scirs2_core::ndarray::Ix1> =
@@ -81,7 +83,7 @@ fn streaming_linear_regression_converges() {
 
     // Fixed held-out set for measuring generalization loss, drawn from an
     // independent RNG stream so it never overlaps the training stream.
-    let mut test_rng = Xorshift64::new(0xFEED_FACE_C0FF_EEu64);
+    let mut test_rng = Xorshift64::new(0x00FE_EDFA_CEC0_FFEEu64);
     let test_set: Vec<(Vec<f64>, f64)> = (0..64)
         .map(|_| {
             let f = test_rng.next_features(3);
@@ -93,7 +95,7 @@ fn streaming_linear_regression_converges() {
     let initial_loss = mse(&Array1::zeros(3), &test_set);
     assert!(initial_loss > 0.0, "test set should be non-trivial");
 
-    let mut train_rng = Xorshift64::new(0xC0FFEE_1234_5678u64);
+    let mut train_rng = Xorshift64::new(0x00C0_FFEE_1234_5678u64);
     let mut last_params: Option<Array1<f64>> = None;
     for _ in 0..3000 {
         let f = train_rng.next_features(3);
@@ -153,23 +155,25 @@ fn streaming_linear_regression_converges() {
 /// applied to the live parameters, not silently discarded.
 #[test]
 fn streaming_async_updates_change_parameters() {
-    let mut config = StreamingConfig::default();
-    config.buffer_size = 4;
-    config.async_updates = true;
-    config.max_staleness = 2;
-    config.adaptive_learning_rate = false;
-    config.gradient_compression = false;
-    config.multi_stream_coordination = false;
-    config.predictive_streaming = false;
-    config.stream_fusion = false;
-    config.adaptive_resource_allocation = false;
+    let config = StreamingConfig {
+        buffer_size: 4,
+        async_updates: true,
+        max_staleness: 2,
+        adaptive_learning_rate: false,
+        gradient_compression: false,
+        multi_stream_coordination: false,
+        predictive_streaming: false,
+        stream_fusion: false,
+        adaptive_resource_allocation: false,
+        ..Default::default()
+    };
 
     let base_optimizer = SGD::new(0.1_f64);
     let mut streaming: StreamingOptimizer<SGD<f64>, f64, scirs2_core::ndarray::Ix1> =
         StreamingOptimizer::new(base_optimizer, config)
             .expect("failed to construct StreamingOptimizer");
 
-    let mut train_rng = Xorshift64::new(0xABCDEF_0123_4567u64);
+    let mut train_rng = Xorshift64::new(0x00AB_CDEF_0123_4567u64);
     let mut saw_nonzero_update = false;
     for _ in 0..200 {
         let f = train_rng.next_features(3);

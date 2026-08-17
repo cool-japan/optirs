@@ -58,7 +58,8 @@ impl<A: Float + FromPrimitive + Debug + Send + Sync> EntropyRegularization<A> {
     ///
     /// An entropy regularization with default epsilon
     pub fn new(lambda: A, regtype: EntropyRegularizerType) -> Self {
-        let epsilon = A::from_f64(1e-8).expect("unwrap failed");
+        let epsilon =
+            A::from_f64(1e-8).expect("EntropyRegularization: default epsilon (1e-8) must fit in A");
         Self {
             lambda,
             epsilon,
@@ -269,11 +270,15 @@ mod tests {
 
         // Uniform distribution (high entropy)
         let uniform = Array1::from_vec(vec![0.25f64, 0.25, 0.25, 0.25]);
-        let penalty = er.penalty(&uniform).expect("unwrap failed");
+        let penalty = er
+            .penalty(&uniform)
+            .expect("er.penalty succeeds in test_maximize_entropy_penalty");
 
         // Peaked distribution (low entropy)
         let peaked = Array1::from_vec(vec![0.01f64, 0.01, 0.97, 0.01]);
-        let peaked_penalty = er.penalty(&peaked).expect("unwrap failed");
+        let peaked_penalty = er
+            .penalty(&peaked)
+            .expect("er.penalty succeeds in test_maximize_entropy_penalty");
 
         // The penalty for peaked should be greater than for uniform
         // because we're trying to maximize entropy
@@ -287,11 +292,15 @@ mod tests {
 
         // Uniform distribution (high entropy)
         let uniform = Array1::from_vec(vec![0.25f64, 0.25, 0.25, 0.25]);
-        let penalty = er.penalty(&uniform).expect("unwrap failed");
+        let penalty = er
+            .penalty(&uniform)
+            .expect("er.penalty succeeds in test_minimize_entropy_penalty");
 
         // Peaked distribution (low entropy)
         let peaked = Array1::from_vec(vec![0.01f64, 0.01, 0.97, 0.01]);
-        let peaked_penalty = er.penalty(&peaked).expect("unwrap failed");
+        let peaked_penalty = er
+            .penalty(&peaked)
+            .expect("er.penalty succeeds in test_minimize_entropy_penalty");
 
         // The penalty for uniform should be greater than for peaked
         // because we're trying to minimize entropy
@@ -306,7 +315,9 @@ mod tests {
         let probs = Array1::from_vec(vec![0.25f64, 0.25, 0.25, 0.25]);
         let mut gradients = Array1::zeros(4);
 
-        let penalty = er.apply(&probs, &mut gradients).expect("unwrap failed");
+        let penalty = er
+            .apply(&probs, &mut gradients)
+            .expect("er.apply succeeds in test_apply_gradients");
 
         // Check that gradients have been modified
         assert!(gradients.iter().all(|&g| g != 0.0));
@@ -334,8 +345,12 @@ mod tests {
         let mut gradients = Array1::zeros(4);
 
         // Both methods should return the same penalty for the same input
-        let penalty1 = er.apply(&probs, &mut gradients).expect("unwrap failed");
-        let penalty2 = er.penalty(&probs).expect("unwrap failed");
+        let penalty1 = er
+            .apply(&probs, &mut gradients)
+            .expect("er.apply succeeds in test_regularizer_trait");
+        let penalty2 = er
+            .penalty(&probs)
+            .expect("er.penalty succeeds in test_regularizer_trait");
 
         assert_abs_diff_eq!(penalty1, penalty2, epsilon = 1e-10);
     }

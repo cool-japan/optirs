@@ -89,13 +89,15 @@ fn bench_metrics_computation(c: &mut Criterion) {
             let mut metrics = OptimizerMetrics::new("test");
 
             b.iter(|| {
-                metrics.update_step(
-                    Duration::from_micros(10),
-                    0.01,
-                    black_box(&gradients.view()),
-                    black_box(&params_before.view()),
-                    black_box(&params_after.view()),
-                );
+                metrics
+                    .update_step(
+                        Duration::from_micros(10),
+                        0.01,
+                        black_box(&gradients.view()),
+                        black_box(&params_before.view()),
+                        black_box(&params_after.view()),
+                    )
+                    .expect("f64 inputs of matching length always record");
                 black_box(metrics.step_count)
             });
         });

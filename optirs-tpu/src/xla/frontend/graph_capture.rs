@@ -9,7 +9,6 @@ use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
-use super::super::{TPUConfig, XLAOptimizationLevel};
 use crate::error::{OptimError, Result};
 
 /// Computation graph builder
@@ -20,15 +19,6 @@ pub struct ComputationGraphBuilder<T: Float + Debug + Send + Sync + 'static> {
 
     /// Next computation ID
     next_computation_id: u64,
-
-    /// Operation registry
-    operation_registry: HashMap<String, OperationDefinition>,
-
-    /// Graph validation rules
-    validation_rules: Vec<ValidationRule>,
-
-    /// Performance hints
-    performance_hints: HashMap<String, PerformanceHint>,
 
     /// Phantom data for type parameter
     pub _phantom: std::marker::PhantomData<T>,
@@ -607,6 +597,15 @@ pub struct InputSpecification<T: Float + Debug + Send + Sync + 'static> {
     /// Parameter name
     pub name: String,
 
+    /// Operand this parameter defines.
+    ///
+    /// Mirrors [`OutputSpecification::operand`]. Without it the input list can
+    /// only be matched back to the graph by comparing shapes, which aliases as
+    /// soon as two parameters share a shape; an executor binding argument
+    /// values, and shape inference seeding the graph, both need the exact
+    /// operand.
+    pub operand: OperandId,
+
     /// Shape specification
     pub shape: TensorShape,
 
@@ -942,9 +941,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         Self {
             next_op_id: 0,
             next_computation_id: 0,
-            operation_registry: HashMap::new(),
-            validation_rules: Vec::new(),
-            performance_hints: HashMap::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -1019,6 +1015,35 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         computation
             .operands
             .insert(output_operand_id, output_operand);
+
+        // A `Parameter` operation *is* an input declaration, so record it in
+        // `computation.inputs`. Nothing used to populate that list, which left
+        // `ShapeInference::initialize_input_shapes` iterating an empty vector
+        // (so caller-supplied shapes never seeded inference) and left an
+        // executor with no way to tell which operand a given argument binds to.
+        if matches!(op_type, OperationType::Parameter) {
+            let index = computation.inputs.len();
+            let (shape, dtype) = computation
+                .operands
+                .get(&output_operand_id)
+                .map(|operand| (operand.shape.clone(), operand.dtype))
+                .ok_or_else(|| {
+                    OptimError::from(format!(
+                        "parameter operand {output_operand_id:?} vanished while declaring input \
+                         {index} of computation '{}'",
+                        computation.metadata.name
+                    ))
+                })?;
+            computation.inputs.push(InputSpecification {
+                index,
+                name: format!("param_{index}"),
+                operand: output_operand_id,
+                shape,
+                dtype,
+                layout_hint: None,
+                _phantom: std::marker::PhantomData,
+            });
+        }
 
         // Record this operation as a consumer of each input operand.
         for &input_id in &inputs {
@@ -1400,6 +1425,48 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(computation.operations.len(), 1);
+    }
+
+    /// A `Parameter` operation declares an input, and the declaration records
+    /// the exact operand it defines. `computation.inputs` used to stay empty no
+    /// matter how many parameters a graph had, which left shape inference with
+    /// nothing to seed from and gave an executor no way to bind arguments.
+    #[test]
+    fn parameters_are_recorded_as_declared_inputs() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut computation = builder.create_computation("two_params");
+
+        let first = add_op(
+            &mut builder,
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[4]),
+        );
+        // Deliberately the same shape as the first: matching inputs to operands
+        // by shape (the old behaviour) cannot tell these two apart.
+        let second = add_op(
+            &mut builder,
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[4]),
+        );
+        add_op(
+            &mut builder,
+            &mut computation,
+            OperationType::Add,
+            vec![first, second],
+            shape(&[4]),
+        );
+
+        assert_eq!(computation.inputs.len(), 2, "only parameters are inputs");
+        assert_eq!(computation.inputs[0].index, 0);
+        assert_eq!(computation.inputs[1].index, 1);
+        assert_eq!(computation.inputs[0].operand, first);
+        assert_eq!(computation.inputs[1].operand, second);
+        assert_ne!(computation.inputs[0].operand, computation.inputs[1].operand);
+        assert_eq!(computation.inputs[0].shape.dimensions, vec![4]);
     }
 
     /// F3: an operand must know which operation produced it and which

@@ -379,7 +379,8 @@ mod tests {
     #[test]
     fn test_gpu_optimizer_step() {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer)
+            .expect("GpuOptimizer::with_default_config succeeds in test_gpu_optimizer_step");
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3]);
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn test_gpu_availability_matches_device_inventory() {
         let optimizer = SGD::new(0.01);
-        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
+        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("GpuOptimizer::with_default_config succeeds in test_gpu_availability_matches_device_inventory");
 
         let devices = GpuUtils::device_count();
         let backends = GpuUtils::detect_backends();
@@ -414,7 +415,8 @@ mod tests {
     #[test]
     fn test_gpu_backend() {
         let optimizer = SGD::new(0.01);
-        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
+        let gpu_opt = GpuOptimizer::with_default_config(optimizer)
+            .expect("GpuOptimizer::with_default_config succeeds in test_gpu_backend");
 
         // No device => no backend name to report.
         assert_eq!(gpu_opt.gpu_backend().is_some(), gpu_opt.is_gpu_available());
@@ -439,7 +441,9 @@ mod tests {
     #[test]
     fn test_gpu_transfers_report_unavailable() {
         let optimizer = SGD::new(0.01);
-        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
+        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect(
+            "GpuOptimizer::with_default_config succeeds in test_gpu_transfers_report_unavailable",
+        );
 
         let data = Array1::from_vec(vec![1.0f64, 2.0]);
         assert!(gpu_opt.to_gpu(&data.view()).is_err());
@@ -449,7 +453,8 @@ mod tests {
     #[test]
     fn test_gpu_config_mutations() {
         let optimizer = SGD::new(0.01);
-        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
+        let mut gpu_opt = GpuOptimizer::with_default_config(optimizer)
+            .expect("GpuOptimizer::with_default_config succeeds in test_gpu_config_mutations");
 
         gpu_opt.set_use_tensor_cores(false);
         assert!(!gpu_opt.config().use_tensor_cores);

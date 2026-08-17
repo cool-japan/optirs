@@ -23,8 +23,7 @@
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
-use scirs2_core::ScientificNumber;
+use scirs2_core::random::thread_rng;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
