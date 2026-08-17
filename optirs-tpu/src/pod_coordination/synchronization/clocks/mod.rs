@@ -104,9 +104,9 @@ pub use core::{
 
 // Re-export protocol types
 pub use protocols::{
-    BerkeleyConfig, ClockSyncProtocol, CristianConfig, CustomProtocolConfig, NtpConfig,
-    NtpSynchronizer, ProtocolError, ProtocolManager, PtpConfig, PtpSynchronizer, SntpConfig,
-    SntpSynchronizer,
+    BerkeleyConfig, ClockSyncProtocol, CristianConfig, CustomProtocolConfig, NtpConfig, NtpPeer,
+    NtpSynchronizer, NtpTimestamps, ProtocolError, ProtocolManager, PtpConfig, PtpSynchronizer,
+    SntpConfig, SntpSynchronizer,
 };
 
 // Re-export source management types
@@ -549,11 +549,26 @@ pub mod utils {
         sum / metrics.len() as f64
     }
 
-    /// Get system uptime
-    pub fn get_system_uptime() -> Duration {
-        // This would be implemented to get actual system uptime
-        // For now, return a placeholder
-        Duration::from_secs(86400) // 1 day
+    /// Wall-clock time elapsed since this process-uptime tracker was first
+    /// consulted, as a real, live measurement.
+    ///
+    /// There is no portable, pure-Rust way (no FFI, no platform-specific
+    /// `/proc`/`sysctl` parsing) to ask the OS for the true process start
+    /// time on every platform this crate targets. Rather than fabricate a
+    /// plausible-looking constant, this establishes a monotonic anchor the
+    /// first time it is called (via [`std::sync::OnceLock`]) and returns
+    /// [`Instant::elapsed`] against that anchor on every call thereafter
+    /// (including the first, which returns a value very close to zero).
+    ///
+    /// Renamed from the former `get_system_uptime`: that name promised the
+    /// OS-level system uptime, which this never measured (it always
+    /// returned a hardcoded `Duration::from_secs(86400)`). `process_uptime`
+    /// accurately describes what a pure-Rust anchor-based measurement can
+    /// honestly provide.
+    pub fn process_uptime() -> Duration {
+        static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let start = *PROCESS_START.get_or_init(Instant::now);
+        start.elapsed()
     }
 }
 
@@ -599,5 +614,33 @@ mod tests {
         metrics.insert("stability".to_string(), 0.8);
         let score = utils::calculate_quality_score(&metrics);
         assert!((score - 0.85).abs() < 1e-10);
+    }
+
+    // Regression test: `process_uptime` (formerly `get_system_uptime`) used
+    // to always return a hardcoded `Duration::from_secs(86400)`. A fake
+    // constant would pass a naive "returns a Duration" check but can never
+    // reflect real elapsed time; this asserts it strictly increases with
+    // real wall-clock time and never equals the old fabricated value.
+    #[test]
+    fn process_uptime_reflects_real_elapsed_time_not_a_fixed_constant() {
+        let first = utils::process_uptime();
+        std::thread::sleep(Duration::from_millis(30));
+        let second = utils::process_uptime();
+
+        assert!(
+            second > first,
+            "process_uptime must strictly increase with real elapsed time \
+             (first={first:?}, second={second:?})"
+        );
+        assert!(
+            second - first >= Duration::from_millis(20),
+            "process_uptime delta should reflect the real 30ms sleep, got {:?}",
+            second - first
+        );
+        assert_ne!(
+            second,
+            Duration::from_secs(86400),
+            "must not be the old hardcoded fabricated constant"
+        );
     }
 }

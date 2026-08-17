@@ -1377,6 +1377,135 @@ impl Default for ModerationSettings {
     }
 }
 
+impl Default for BackupSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frequency_hours: 24,
+            retention_days: 30,
+            backup_location: PathBuf::from("./backups"),
+        }
+    }
+}
+
+impl Default for CollaborationManagerSettings {
+    fn default() -> Self {
+        Self {
+            max_workspaces_per_user: 10,
+            default_workspace_settings: WorkspaceSettings::default(),
+            backup_settings: BackupSettings::default(),
+        }
+    }
+}
+
+impl CollaborationManager {
+    /// Create a new collaboration manager rooted at `storage_dir`, creating the
+    /// directory on disk if it does not already exist.
+    pub fn new(storage_dir: PathBuf, settings: CollaborationManagerSettings) -> Result<Self> {
+        std::fs::create_dir_all(&storage_dir).map_err(|e| {
+            OptimError::InvalidConfig(format!(
+                "failed to create collaboration storage directory {}: {e}",
+                storage_dir.display()
+            ))
+        })?;
+
+        Ok(Self {
+            workspaces: HashMap::new(),
+            storage_dir,
+            settings,
+        })
+    }
+
+    /// Create and register a new workspace owned by `owner`, enforcing the
+    /// configured per-user workspace limit.
+    pub fn create_workspace(&mut self, name: &str, owner: UserInfo) -> Result<String> {
+        let owned_count = self
+            .workspaces
+            .values()
+            .filter(|ws| {
+                ws.members
+                    .iter()
+                    .any(|m| m.role == MemberRole::Owner && m.user.email == owner.email)
+            })
+            .count();
+
+        if owned_count as u32 >= self.settings.max_workspaces_per_user {
+            return Err(OptimError::InvalidConfig(format!(
+                "user '{}' already owns the maximum of {} workspaces",
+                owner.email, self.settings.max_workspaces_per_user
+            )));
+        }
+
+        let workspace = CollaborativeWorkspace::new(name, owner);
+        let id = workspace.id.clone();
+        self.workspaces.insert(id.clone(), workspace);
+        Ok(id)
+    }
+
+    /// Look up a workspace by ID.
+    pub fn get_workspace(&self, id: &str) -> Option<&CollaborativeWorkspace> {
+        self.workspaces.get(id)
+    }
+
+    /// Look up a workspace by ID, mutably.
+    pub fn get_workspace_mut(&mut self, id: &str) -> Option<&mut CollaborativeWorkspace> {
+        self.workspaces.get_mut(id)
+    }
+
+    /// Iterate over all registered workspaces.
+    pub fn list_workspaces(&self) -> impl Iterator<Item = &CollaborativeWorkspace> {
+        self.workspaces.values()
+    }
+
+    /// Remove and return a workspace from the manager (does not touch disk).
+    pub fn remove_workspace(&mut self, id: &str) -> Option<CollaborativeWorkspace> {
+        self.workspaces.remove(id)
+    }
+
+    /// Persist a registered workspace to `<storage_dir>/<id>.json`.
+    pub fn save_workspace(&self, id: &str) -> Result<PathBuf> {
+        let workspace = self
+            .workspaces
+            .get(id)
+            .ok_or_else(|| OptimError::InvalidConfig(format!("workspace '{id}' not found")))?;
+
+        let path = self.storage_dir.join(format!("{id}.json"));
+        let json = serde_json::to_string_pretty(workspace).map_err(|e| {
+            OptimError::InvalidConfig(format!("failed to serialize workspace '{id}': {e}"))
+        })?;
+        std::fs::write(&path, json).map_err(|e| {
+            OptimError::InvalidConfig(format!("failed to write {}: {e}", path.display()))
+        })?;
+
+        Ok(path)
+    }
+
+    /// Load a workspace previously saved with [`Self::save_workspace`] back
+    /// into the manager, overwriting any in-memory copy with the same ID.
+    pub fn load_workspace(&mut self, id: &str) -> Result<()> {
+        let path = self.storage_dir.join(format!("{id}.json"));
+        let json = std::fs::read_to_string(&path).map_err(|e| {
+            OptimError::InvalidConfig(format!("failed to read {}: {e}", path.display()))
+        })?;
+        let workspace: CollaborativeWorkspace = serde_json::from_str(&json).map_err(|e| {
+            OptimError::InvalidConfig(format!("failed to parse workspace '{id}': {e}"))
+        })?;
+
+        self.workspaces.insert(id.to_string(), workspace);
+        Ok(())
+    }
+
+    /// Manager-wide settings.
+    pub fn settings(&self) -> &CollaborationManagerSettings {
+        &self.settings
+    }
+
+    /// Storage directory backing [`Self::save_workspace`] / [`Self::load_workspace`].
+    pub fn storage_dir(&self) -> &std::path::Path {
+        &self.storage_dir
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1456,5 +1585,77 @@ mod tests {
 
         // Test non-existent user
         assert!(!workspace.has_permission("non-existent", &Permission::Read));
+    }
+
+    fn test_owner(email: &str) -> UserInfo {
+        UserInfo {
+            name: "Dr. Test".to_string(),
+            email: email.to_string(),
+            institution: "Test University".to_string(),
+            avatar_url: None,
+            timezone: "UTC".to_string(),
+            language: "en".to_string(),
+            research_interests: vec![],
+        }
+    }
+
+    // Regression test for F24: `CollaborationManager` was exported with fully
+    // private fields and zero methods (not even a constructor), making it
+    // impossible for any caller to construct or use despite being part of the
+    // public API surface.
+    #[test]
+    fn test_collaboration_manager_is_constructible_and_functional() {
+        let dir = std::env::temp_dir().join(format!("optirs_collab_test_{}", uuid::Uuid::new_v4()));
+
+        let mut manager =
+            CollaborationManager::new(dir.clone(), CollaborationManagerSettings::default())
+                .expect("manager creation should succeed");
+        assert!(dir.exists());
+
+        let workspace_id = manager
+            .create_workspace("Test Workspace", test_owner("owner@example.com"))
+            .expect("workspace creation should succeed");
+
+        assert!(manager.get_workspace(&workspace_id).is_some());
+        assert_eq!(manager.list_workspaces().count(), 1);
+
+        let saved_path = manager
+            .save_workspace(&workspace_id)
+            .expect("save should succeed");
+        assert!(saved_path.exists());
+
+        manager.remove_workspace(&workspace_id);
+        assert!(manager.get_workspace(&workspace_id).is_none());
+
+        manager
+            .load_workspace(&workspace_id)
+            .expect("load should succeed");
+        assert!(manager.get_workspace(&workspace_id).is_some());
+        assert_eq!(
+            manager.get_workspace(&workspace_id).unwrap().name,
+            "Test Workspace"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_collaboration_manager_enforces_workspace_limit() {
+        let dir =
+            std::env::temp_dir().join(format!("optirs_collab_limit_test_{}", uuid::Uuid::new_v4()));
+        let mut settings = CollaborationManagerSettings::default();
+        settings.max_workspaces_per_user = 1;
+
+        let mut manager =
+            CollaborationManager::new(dir.clone(), settings).expect("manager creation");
+
+        manager
+            .create_workspace("First", test_owner("limited@example.com"))
+            .expect("first workspace should succeed");
+
+        let second = manager.create_workspace("Second", test_owner("limited@example.com"));
+        assert!(second.is_err(), "second workspace should exceed the limit");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

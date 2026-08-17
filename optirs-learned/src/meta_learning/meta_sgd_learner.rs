@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::functions::MetaLearner;
+use super::metrics::BatchObservations;
 use super::types::{
-    AdaptationStatistics, AdaptationStep, MetaLearningAlgorithm, MetaTask, MetaTrainingMetrics,
-    MetaTrainingResult, QueryEvaluationMetrics, QueryEvaluationResult, StabilityMetrics,
-    TaskAdaptationMetrics, TaskAdaptationResult,
+    AdaptationStep, MetaLearningAlgorithm, MetaTask, MetaTrainingResult, QueryEvaluationMetrics,
+    QueryEvaluationResult, TaskAdaptationMetrics, TaskAdaptationResult,
 };
 
 /// Result type for inner loop adaptation: adapted parameters and adaptation trajectory
@@ -280,9 +280,20 @@ impl<
             accumulated_diff.insert(name.clone(), Array1::zeros(param.len()));
         }
 
+        // Real per-task observations feed the reported metrics (previously a
+        // block of hard-coded constants regardless of what actually happened).
+        let mut observations = BatchObservations::<T>::new();
+
         for task in task_batch {
             // Save initial params for computing change
             let initial_params = meta_parameters.clone();
+
+            // Pre-adaptation query loss, before the inner loop runs.
+            let pre_loss = self.compute_loss(
+                &task.query_set.features,
+                &task.query_set.targets,
+                &initial_params,
+            )?;
 
             // Run inner loop with per-param LRs
             let (adapted_params, _trajectory) =
@@ -328,6 +339,31 @@ impl<
                     }
                 }
             }
+
+            // Record this task's observations for the batch metrics.
+            let mut param_travel = T::zero();
+            let mut task_grad: HashMap<String, Array1<T>> = HashMap::new();
+            for (name, adapted_param) in &adapted_params {
+                if let Some(initial_param) = initial_params.get(name) {
+                    let diff = adapted_param - initial_param;
+                    param_travel =
+                        param_travel + diff.iter().fold(T::zero(), |a, &v| a + v * v).sqrt();
+                    // Descent-convention per-task meta-gradient: meta - adapted.
+                    task_grad.insert(name.clone(), diff.mapv(|v| -v));
+                }
+            }
+            let grad_norm = query_gradients
+                .values()
+                .flat_map(|g| g.iter())
+                .fold(T::zero(), |a, &v| a + v * v)
+                .sqrt();
+
+            observations.pre_losses.push(pre_loss);
+            observations.post_losses.push(task_loss);
+            observations.convergence_steps.push(self.inner_steps);
+            observations.parameter_changes.push(param_travel);
+            observations.gradient_norms.push(grad_norm);
+            observations.gradients.push(task_grad);
         }
 
         // Clamp per-param LRs to valid range
@@ -355,34 +391,10 @@ impl<
 
         Ok(MetaTrainingResult {
             meta_loss,
-            task_losses: task_losses.clone(),
+            task_losses,
             meta_gradients,
-            metrics: MetaTrainingMetrics {
-                avg_adaptation_speed: scirs2_core::numeric::NumCast::from(2.0)
-                    .unwrap_or_else(|| T::zero()),
-                generalization_performance: scirs2_core::numeric::NumCast::from(0.85)
-                    .unwrap_or_else(|| T::zero()),
-                task_diversity: scirs2_core::numeric::NumCast::from(0.7)
-                    .unwrap_or_else(|| T::zero()),
-                gradient_alignment: scirs2_core::numeric::NumCast::from(0.9)
-                    .unwrap_or_else(|| T::zero()),
-            },
-            adaptation_stats: AdaptationStatistics {
-                convergence_steps: vec![self.inner_steps; task_batch.len()],
-                final_losses: task_losses,
-                adaptation_efficiency: scirs2_core::numeric::NumCast::from(0.8)
-                    .unwrap_or_else(|| T::zero()),
-                stability_metrics: StabilityMetrics {
-                    parameter_stability: scirs2_core::numeric::NumCast::from(0.9)
-                        .unwrap_or_else(|| T::zero()),
-                    performance_stability: scirs2_core::numeric::NumCast::from(0.85)
-                        .unwrap_or_else(|| T::zero()),
-                    gradient_stability: scirs2_core::numeric::NumCast::from(0.92)
-                        .unwrap_or_else(|| T::zero()),
-                    forgetting_measure: scirs2_core::numeric::NumCast::from(0.1)
-                        .unwrap_or_else(|| T::zero()),
-                },
-            },
+            metrics: observations.training_metrics(),
+            adaptation_stats: observations.adaptation_statistics(),
         })
     }
 
@@ -557,6 +569,37 @@ mod tests {
             .zip(updated_weights.iter())
             .any(|(a, b)| (a - b).abs() > 1e-12);
         assert!(changed, "Meta-parameters should change after training step");
+    }
+
+    /// F14 residual regression: the reported training metrics/adaptation
+    /// statistics must be computed from the run, not the old hard-coded
+    /// constants (avg_speed 2.0 / generalization 0.85 / diversity 0.7 /
+    /// alignment 0.9 / efficiency 0.8 / forgetting 0.1).
+    #[test]
+    fn test_meta_sgd_metrics_are_real_not_constant() {
+        let mut learner = MetaSGDLearner::new(0.01f64).with_inner_steps(3);
+        let task = make_test_task();
+        let mut params = make_test_params();
+
+        let result = learner
+            .meta_train_step(&[task], &mut params)
+            .expect("meta_train_step should succeed");
+
+        // Single-task batch: nothing to disperse (diversity 0), the gradient is
+        // self-aligned (1.0), and forgetting is unobservable from one batch (0).
+        // The fabricated code returned 0.7 / 0.9 / 0.1 regardless of the data.
+        approx::assert_abs_diff_eq!(result.metrics.task_diversity, 0.0, epsilon = 1e-12);
+        approx::assert_abs_diff_eq!(result.metrics.gradient_alignment, 1.0, epsilon = 1e-12);
+        approx::assert_abs_diff_eq!(
+            result.adaptation_stats.stability_metrics.forgetting_measure,
+            0.0,
+            epsilon = 1e-12
+        );
+        // Statistics reflect the real run.
+        assert_eq!(result.adaptation_stats.convergence_steps, vec![3]);
+        assert_eq!(result.adaptation_stats.final_losses, result.task_losses);
+        assert!((0.0..=1.0).contains(&result.metrics.generalization_performance));
+        assert!(result.metrics.avg_adaptation_speed.is_finite());
     }
 
     #[test]

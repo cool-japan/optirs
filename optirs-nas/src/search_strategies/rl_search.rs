@@ -1651,11 +1651,15 @@ mod tests {
         ]);
         let target = "RMSprop";
 
-        let mut search = ReinforcementLearningSearch::<f64>::new_with_seed(32, 1, 0.5, 2024);
+        // A deliberately small learning rate keeps early selections near the
+        // uniform 1/3 baseline so the learning curve is visible in the window
+        // comparison below (a large rate saturates within the first few steps,
+        // leaving no measurable early-vs-late gap).
+        let mut search = ReinforcementLearningSearch::<f64>::new_with_seed(32, 1, 0.02, 2024);
         search.set_entropy_bonus(0.0005);
         search.initialize(&space).expect("initialize");
 
-        let iterations = 400usize;
+        let iterations = 600usize;
         let window = 100usize;
         let mut selections: Vec<bool> = Vec::with_capacity(iterations);
 

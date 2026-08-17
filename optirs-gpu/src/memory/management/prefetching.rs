@@ -1117,22 +1117,22 @@ impl ThreadSafePrefetchingEngine {
     }
 
     pub fn record_access(&self, access: MemoryAccess) -> Vec<PrefetchRequest> {
-        let mut engine = self.engine.lock().expect("lock poisoned");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.record_access(access)
     }
 
     pub fn process_prefetch_queue(&self) -> Vec<PrefetchRequest> {
-        let mut engine = self.engine.lock().expect("lock poisoned");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.process_prefetch_queue()
     }
 
     pub fn get_stats(&self) -> PrefetchStats {
-        let engine = self.engine.lock().expect("lock poisoned");
+        let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.get_stats().clone()
     }
 
     pub fn update_performance(&self) {
-        let mut engine = self.engine.lock().expect("lock poisoned");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.update_performance();
     }
 }

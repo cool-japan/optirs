@@ -4,7 +4,7 @@
 // tracking deadlines, and preparing submission materials.
 
 use crate::error::{OptimError, Result};
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -443,6 +443,107 @@ impl ConferenceManager {
         deadlines
     }
 
+    /// Scan all known conferences and create [`DeadlineAlert`]s for any
+    /// still-future deadline that falls within one of the `days_before`
+    /// thresholds (e.g. `&[30, 7, 1]` for month/week/day-out reminders),
+    /// appending them to `self.alerts`. Idempotent: calling this repeatedly
+    /// (e.g. once a day) will not create duplicate alerts for the same
+    /// (conference, deadline type, threshold) combination. Returns the
+    /// alerts newly created by this call.
+    pub fn generate_deadline_alerts(&mut self, days_before: &[u32]) -> Vec<DeadlineAlert> {
+        let now = Utc::now();
+
+        // Snapshot deadlines up front so we are not borrowing
+        // `self.conferences` while mutating `self.alerts` below.
+        let mut deadline_entries: Vec<(String, DeadlineType, DateTime<Utc>)> = Vec::new();
+        for conference in self.conferences.values() {
+            let dates = &conference.dates;
+            if let Some(abstract_deadline) = dates.abstract_deadline {
+                deadline_entries.push((
+                    conference.id.clone(),
+                    DeadlineType::AbstractSubmission,
+                    abstract_deadline,
+                ));
+            }
+            deadline_entries.push((
+                conference.id.clone(),
+                DeadlineType::PaperSubmission,
+                dates.paper_deadline,
+            ));
+            deadline_entries.push((
+                conference.id.clone(),
+                DeadlineType::Notification,
+                dates.notification_date,
+            ));
+            deadline_entries.push((
+                conference.id.clone(),
+                DeadlineType::CameraReady,
+                dates.camera_ready_deadline,
+            ));
+            deadline_entries.push((
+                conference.id.clone(),
+                DeadlineType::ConferenceStart,
+                dates.conference_start,
+            ));
+        }
+
+        let mut new_alerts = Vec::new();
+        for (conference_id, deadline_type, deadline) in deadline_entries {
+            if deadline <= now {
+                continue;
+            }
+            let days_remaining = (deadline - now).num_days().max(0) as u32;
+
+            for &threshold in days_before {
+                if days_remaining > threshold {
+                    continue;
+                }
+
+                let already_exists = self.alerts.iter().any(|alert| {
+                    alert.conference_id == conference_id
+                        && alert.deadline_type == deadline_type
+                        && alert.days_before == threshold
+                });
+                if already_exists {
+                    continue;
+                }
+
+                let alert = DeadlineAlert {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    conference_id: conference_id.clone(),
+                    deadline_type: deadline_type.clone(),
+                    alert_date: now,
+                    days_before: threshold,
+                    message: format!(
+                        "{deadline_type:?} deadline for conference '{conference_id}' is in \
+                         {days_remaining} day(s) ({deadline})"
+                    ),
+                    sent: false,
+                };
+                self.alerts.push(alert.clone());
+                new_alerts.push(alert);
+            }
+        }
+
+        new_alerts
+    }
+
+    /// Alerts that have not yet been marked as sent, most recent first.
+    pub fn pending_alerts(&self) -> Vec<&DeadlineAlert> {
+        self.alerts.iter().filter(|alert| !alert.sent).collect()
+    }
+
+    /// Mark an alert as sent (e.g. after successfully notifying a user).
+    pub fn mark_alert_sent(&mut self, alert_id: &str) -> Result<()> {
+        let alert = self
+            .alerts
+            .iter_mut()
+            .find(|alert| alert.id == alert_id)
+            .ok_or_else(|| OptimError::InvalidConfig(format!("alert '{alert_id}' not found")))?;
+        alert.sent = true;
+        Ok(())
+    }
+
     /// Search conferences by research area
     pub fn search_conferences(&self, research_area: &str) -> Vec<&Conference> {
         self.conferences
@@ -463,19 +564,47 @@ impl ConferenceManager {
             .collect()
     }
 
-    /// Create standard ML/AI conferences
+    /// Create standard ML/AI conferences, using each conference's next
+    /// upcoming edition (by real submission deadline) rather than a fixed
+    /// calendar year, so [`Self::get_upcoming_deadlines`] can actually find
+    /// them no matter when this is called.
     pub fn load_standard_conferences(&mut self) {
-        // Add some well-known conferences
-        self.add_conference(Self::create_neurips_conference());
-        self.add_conference(Self::create_icml_conference());
-        self.add_conference(Self::create_iclr_conference());
-        self.add_conference(Self::create_aaai_conference());
-        self.add_conference(Self::create_ijcai_conference());
+        self.add_conference(Self::next_upcoming_edition(Self::create_neurips_conference));
+        self.add_conference(Self::next_upcoming_edition(Self::create_icml_conference));
+        self.add_conference(Self::next_upcoming_edition(Self::create_iclr_conference));
+        self.add_conference(Self::next_upcoming_edition(Self::create_aaai_conference));
+        self.add_conference(Self::next_upcoming_edition(Self::create_ijcai_conference));
     }
 
-    fn create_neurips_conference() -> Conference {
+    /// Build successive editions of a conference (via `build`, which takes
+    /// the edition's label year, e.g. 2027 for "NeurIPS 2027") until one is
+    /// found whose paper submission deadline has not yet passed, and return
+    /// that edition.
+    ///
+    /// Conference templates below are seasonal (same month/day pattern every
+    /// year), so trying a handful of consecutive label years is always
+    /// sufficient; this makes the loaded deadlines self-correcting as real
+    /// time passes, instead of frozen at whatever year they were written in.
+    fn next_upcoming_edition(build: fn(i32) -> Conference) -> Conference {
+        let now = Utc::now();
+        let start_year = now.year();
+        let last_candidate = start_year + 3;
+        for candidate_year in start_year..=last_candidate {
+            let conference = build(candidate_year);
+            if conference.dates.paper_deadline > now {
+                return conference;
+            }
+        }
+        // Unreachable in practice for an annual conference (deadlines cannot
+        // trail 3+ years behind "now" for every candidate), but stay honest
+        // and return a well-formed, self-consistent edition rather than
+        // panicking.
+        build(last_candidate)
+    }
+
+    fn create_neurips_conference(edition_year: i32) -> Conference {
         Conference {
-            id: "neurips2024".to_string(),
+            id: format!("neurips{edition_year}"),
             name: "Conference on Neural Information Processing Systems".to_string(),
             abbreviation: "NeurIPS".to_string(),
             description: "Premier conference on neural information processing systems".to_string(),
@@ -490,7 +619,7 @@ impl ConferenceManager {
             annual: true,
             series_info: SeriesInfo {
                 series_number: 38,
-                year: 2024,
+                year: edition_year as u32,
                 location: "Vancouver".to_string(),
                 country: "Canada".to_string(),
                 format: ConferenceFormat::Hybrid,
@@ -498,28 +627,28 @@ impl ConferenceManager {
             dates: ConferenceDates {
                 abstract_deadline: Some(
                     chrono::Utc
-                        .with_ymd_and_hms(2024, 5, 15, 23, 59, 59)
+                        .with_ymd_and_hms(edition_year, 5, 15, 23, 59, 59)
                         .single()
                         .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 5, 22, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 5, 22, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 notification_date: chrono::Utc
-                    .with_ymd_and_hms(2024, 9, 25, 12, 0, 0)
+                    .with_ymd_and_hms(edition_year, 9, 25, 12, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 10, 30, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 10, 30, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 conference_start: chrono::Utc
-                    .with_ymd_and_hms(2024, 12, 10, 9, 0, 0)
+                    .with_ymd_and_hms(edition_year, 12, 10, 9, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 conference_end: chrono::Utc
-                    .with_ymd_and_hms(2024, 12, 16, 18, 0, 0)
+                    .with_ymd_and_hms(edition_year, 12, 16, 18, 0, 0)
                     .single()
                     .expect("invalid datetime"),
             },
@@ -527,7 +656,7 @@ impl ConferenceManager {
                 page_limit: 9,
                 word_limit: None,
                 format: FormatRequirements {
-                    template: "NeurIPS 2024 LaTeX template".to_string(),
+                    template: format!("NeurIPS {edition_year} LaTeX template"),
                     font_size: 10,
                     line_spacing: 1.0,
                     margins: "1 inch".to_string(),
@@ -561,9 +690,9 @@ impl ConferenceManager {
         }
     }
 
-    fn create_icml_conference() -> Conference {
+    fn create_icml_conference(edition_year: i32) -> Conference {
         Conference {
-            id: "icml2024".to_string(),
+            id: format!("icml{edition_year}"),
             name: "International Conference on Machine Learning".to_string(),
             abbreviation: "ICML".to_string(),
             description: "Premier international conference on machine learning".to_string(),
@@ -578,7 +707,7 @@ impl ConferenceManager {
             annual: true,
             series_info: SeriesInfo {
                 series_number: 41,
-                year: 2024,
+                year: edition_year as u32,
                 location: "Vienna".to_string(),
                 country: "Austria".to_string(),
                 format: ConferenceFormat::Hybrid,
@@ -586,23 +715,23 @@ impl ConferenceManager {
             dates: ConferenceDates {
                 abstract_deadline: None,
                 paper_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 2, 1, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 2, 1, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 notification_date: chrono::Utc
-                    .with_ymd_and_hms(2024, 5, 1, 12, 0, 0)
+                    .with_ymd_and_hms(edition_year, 5, 1, 12, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 6, 1, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 6, 1, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 conference_start: chrono::Utc
-                    .with_ymd_and_hms(2024, 7, 21, 9, 0, 0)
+                    .with_ymd_and_hms(edition_year, 7, 21, 9, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 conference_end: chrono::Utc
-                    .with_ymd_and_hms(2024, 7, 27, 18, 0, 0)
+                    .with_ymd_and_hms(edition_year, 7, 27, 18, 0, 0)
                     .single()
                     .expect("invalid datetime"),
             },
@@ -610,7 +739,7 @@ impl ConferenceManager {
                 page_limit: 8,
                 word_limit: None,
                 format: FormatRequirements {
-                    template: "ICML 2024 LaTeX template".to_string(),
+                    template: format!("ICML {edition_year} LaTeX template"),
                     font_size: 10,
                     line_spacing: 1.0,
                     margins: "1 inch".to_string(),
@@ -643,9 +772,10 @@ impl ConferenceManager {
         }
     }
 
-    fn create_iclr_conference() -> Conference {
+    fn create_iclr_conference(edition_year: i32) -> Conference {
+        let prior_year = edition_year - 1;
         Conference {
-            id: "iclr2024".to_string(),
+            id: format!("iclr{edition_year}"),
             name: "International Conference on Learning Representations".to_string(),
             abbreviation: "ICLR".to_string(),
             description: "Conference focused on learning representations".to_string(),
@@ -660,7 +790,7 @@ impl ConferenceManager {
             annual: true,
             series_info: SeriesInfo {
                 series_number: 12,
-                year: 2024,
+                year: edition_year as u32,
                 location: "Vienna".to_string(),
                 country: "Austria".to_string(),
                 format: ConferenceFormat::Hybrid,
@@ -668,28 +798,31 @@ impl ConferenceManager {
             dates: ConferenceDates {
                 abstract_deadline: Some(
                     chrono::Utc
-                        .with_ymd_and_hms(2023, 9, 28, 23, 59, 59)
+                        .with_ymd_and_hms(prior_year, 9, 28, 23, 59, 59)
                         .single()
                         .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
-                    .with_ymd_and_hms(2023, 10, 2, 23, 59, 59)
+                    .with_ymd_and_hms(prior_year, 10, 2, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 notification_date: chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 15, 12, 0, 0)
+                    .with_ymd_and_hms(edition_year, 1, 15, 12, 0, 0)
                     .single()
                     .expect("invalid datetime"),
+                // Feb 28 rather than 29: this is a synthetic template date
+                // (not a specific historical deadline), and `edition_year`
+                // varies at runtime, so it must stay valid on non-leap years.
                 camera_ready_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 2, 29, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 2, 28, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 conference_start: chrono::Utc
-                    .with_ymd_and_hms(2024, 5, 7, 9, 0, 0)
+                    .with_ymd_and_hms(edition_year, 5, 7, 9, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 conference_end: chrono::Utc
-                    .with_ymd_and_hms(2024, 5, 11, 18, 0, 0)
+                    .with_ymd_and_hms(edition_year, 5, 11, 18, 0, 0)
                     .single()
                     .expect("invalid datetime"),
             },
@@ -697,7 +830,7 @@ impl ConferenceManager {
                 page_limit: 9,
                 word_limit: None,
                 format: FormatRequirements {
-                    template: "ICLR 2024 LaTeX template".to_string(),
+                    template: format!("ICLR {edition_year} LaTeX template"),
                     font_size: 10,
                     line_spacing: 1.0,
                     margins: "1 inch".to_string(),
@@ -731,9 +864,10 @@ impl ConferenceManager {
         }
     }
 
-    fn create_aaai_conference() -> Conference {
+    fn create_aaai_conference(edition_year: i32) -> Conference {
+        let prior_year = edition_year - 1;
         Conference {
-            id: "aaai2024".to_string(),
+            id: format!("aaai{edition_year}"),
             name: "AAAI Conference on Artificial Intelligence".to_string(),
             abbreviation: "AAAI".to_string(),
             description: "Conference on artificial intelligence".to_string(),
@@ -748,7 +882,7 @@ impl ConferenceManager {
             annual: true,
             series_info: SeriesInfo {
                 series_number: 38,
-                year: 2024,
+                year: edition_year as u32,
                 location: "Vancouver".to_string(),
                 country: "Canada".to_string(),
                 format: ConferenceFormat::Hybrid,
@@ -756,28 +890,28 @@ impl ConferenceManager {
             dates: ConferenceDates {
                 abstract_deadline: Some(
                     chrono::Utc
-                        .with_ymd_and_hms(2023, 8, 15, 23, 59, 59)
+                        .with_ymd_and_hms(prior_year, 8, 15, 23, 59, 59)
                         .single()
                         .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
-                    .with_ymd_and_hms(2023, 8, 19, 23, 59, 59)
+                    .with_ymd_and_hms(prior_year, 8, 19, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 notification_date: chrono::Utc
-                    .with_ymd_and_hms(2023, 12, 9, 12, 0, 0)
+                    .with_ymd_and_hms(prior_year, 12, 9, 12, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 15, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 1, 15, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 conference_start: chrono::Utc
-                    .with_ymd_and_hms(2024, 2, 20, 9, 0, 0)
+                    .with_ymd_and_hms(edition_year, 2, 20, 9, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 conference_end: chrono::Utc
-                    .with_ymd_and_hms(2024, 2, 27, 18, 0, 0)
+                    .with_ymd_and_hms(edition_year, 2, 27, 18, 0, 0)
                     .single()
                     .expect("invalid datetime"),
             },
@@ -785,7 +919,7 @@ impl ConferenceManager {
                 page_limit: 7,
                 word_limit: None,
                 format: FormatRequirements {
-                    template: "AAAI 2024 LaTeX template".to_string(),
+                    template: format!("AAAI {edition_year} LaTeX template"),
                     font_size: 10,
                     line_spacing: 1.0,
                     margins: "0.75 inch".to_string(),
@@ -819,9 +953,9 @@ impl ConferenceManager {
         }
     }
 
-    fn create_ijcai_conference() -> Conference {
+    fn create_ijcai_conference(edition_year: i32) -> Conference {
         Conference {
-            id: "ijcai2024".to_string(),
+            id: format!("ijcai{edition_year}"),
             name: "International Joint Conference on Artificial Intelligence".to_string(),
             abbreviation: "IJCAI".to_string(),
             description: "International conference on artificial intelligence".to_string(),
@@ -836,7 +970,7 @@ impl ConferenceManager {
             annual: true,
             series_info: SeriesInfo {
                 series_number: 33,
-                year: 2024,
+                year: edition_year as u32,
                 location: "Jeju".to_string(),
                 country: "South Korea".to_string(),
                 format: ConferenceFormat::Hybrid,
@@ -844,28 +978,28 @@ impl ConferenceManager {
             dates: ConferenceDates {
                 abstract_deadline: Some(
                     chrono::Utc
-                        .with_ymd_and_hms(2024, 1, 17, 23, 59, 59)
+                        .with_ymd_and_hms(edition_year, 1, 17, 23, 59, 59)
                         .single()
                         .expect("invalid datetime"),
                 ),
                 paper_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 24, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 1, 24, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 notification_date: chrono::Utc
-                    .with_ymd_and_hms(2024, 4, 16, 12, 0, 0)
+                    .with_ymd_and_hms(edition_year, 4, 16, 12, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 camera_ready_deadline: chrono::Utc
-                    .with_ymd_and_hms(2024, 5, 15, 23, 59, 59)
+                    .with_ymd_and_hms(edition_year, 5, 15, 23, 59, 59)
                     .single()
                     .expect("invalid datetime"),
                 conference_start: chrono::Utc
-                    .with_ymd_and_hms(2024, 8, 3, 9, 0, 0)
+                    .with_ymd_and_hms(edition_year, 8, 3, 9, 0, 0)
                     .single()
                     .expect("invalid datetime"),
                 conference_end: chrono::Utc
-                    .with_ymd_and_hms(2024, 8, 9, 18, 0, 0)
+                    .with_ymd_and_hms(edition_year, 8, 9, 18, 0, 0)
                     .single()
                     .expect("invalid datetime"),
             },
@@ -873,7 +1007,7 @@ impl ConferenceManager {
                 page_limit: 7,
                 word_limit: None,
                 format: FormatRequirements {
-                    template: "IJCAI 2024 LaTeX template".to_string(),
+                    template: format!("IJCAI {edition_year} LaTeX template"),
                     font_size: 10,
                     line_spacing: 1.0,
                     margins: "0.75 inch".to_string(),
@@ -924,11 +1058,86 @@ mod tests {
         let mut manager = ConferenceManager::new();
         manager.load_standard_conferences();
 
-        assert!(manager.conferences.contains_key("neurips2024"));
-        assert!(manager.conferences.contains_key("icml2024"));
-        assert!(manager.conferences.contains_key("iclr2024"));
-        assert!(manager.conferences.contains_key("aaai2024"));
-        assert!(manager.conferences.contains_key("ijcai2024"));
+        assert_eq!(manager.conferences.len(), 5);
+        let abbreviations: Vec<&str> = manager
+            .conferences
+            .values()
+            .map(|c| c.abbreviation.as_str())
+            .collect();
+        for expected in ["NeurIPS", "ICML", "ICLR", "AAAI", "IJCAI"] {
+            assert!(
+                abbreviations.contains(&expected),
+                "missing {expected} in {abbreviations:?}"
+            );
+        }
+    }
+
+    // Regression test for F78: the standard conference templates had every
+    // deadline hardcoded to a fixed calendar year (2023/2024). Once that
+    // year passed, `get_upcoming_deadlines` could never return anything for
+    // them again. `load_standard_conferences` must now always select an
+    // edition whose deadlines lie in the future, however far "now" is from
+    // when this code was written.
+    #[test]
+    fn test_load_standard_conferences_deadlines_are_in_the_future() {
+        let mut manager = ConferenceManager::new();
+        manager.load_standard_conferences();
+        let now = Utc::now();
+
+        for conference in manager.conferences.values() {
+            assert!(
+                conference.dates.paper_deadline > now,
+                "{}'s paper deadline {} is not in the future (now = {now})",
+                conference.abbreviation,
+                conference.dates.paper_deadline
+            );
+        }
+
+        // With a wide enough horizon, every loaded conference must surface
+        // at least one upcoming deadline -- this was unconditionally empty
+        // before the fix.
+        let upcoming = manager.get_upcoming_deadlines(400);
+        assert!(
+            !upcoming.is_empty(),
+            "expected at least one upcoming deadline within 400 days"
+        );
+    }
+
+    // Regression test for F78: `alerts` was declared on `ConferenceManager`
+    // but no code path ever wrote to it.
+    #[test]
+    fn test_generate_deadline_alerts_populates_alerts() {
+        let mut manager = ConferenceManager::new();
+        manager.load_standard_conferences();
+        assert!(manager.alerts.is_empty());
+
+        // A very wide threshold guarantees at least the paper deadlines
+        // (already asserted to be in the future) fall inside the window.
+        let created = manager.generate_deadline_alerts(&[400]);
+        assert!(!created.is_empty());
+        assert_eq!(manager.alerts.len(), created.len());
+        assert!(manager.alerts.iter().all(|a| !a.sent));
+        assert_eq!(manager.pending_alerts().len(), manager.alerts.len());
+
+        // Idempotent: calling again with the same thresholds must not
+        // duplicate alerts for the same (conference, type, threshold).
+        let created_again = manager.generate_deadline_alerts(&[400]);
+        assert!(created_again.is_empty());
+        assert_eq!(manager.alerts.len(), created.len());
+
+        let alert_id = manager.alerts[0].id.clone();
+        manager
+            .mark_alert_sent(&alert_id)
+            .expect("mark should succeed");
+        assert!(
+            manager
+                .alerts
+                .iter()
+                .find(|a| a.id == alert_id)
+                .unwrap()
+                .sent
+        );
+        assert_eq!(manager.pending_alerts().len(), manager.alerts.len() - 1);
     }
 
     #[test]

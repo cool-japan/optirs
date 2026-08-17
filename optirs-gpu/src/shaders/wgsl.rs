@@ -227,6 +227,34 @@ pub const ADAGRAD: &str = r#"
 }
 "#;
 
+/// Local reduction step for a multi-GPU all-reduce-mean collective.
+///
+/// | binding | name | meaning |
+/// |---|---|---|
+/// | 0 | `x` | this device's local contribution (read-write, in place) |
+/// | 1 | `y` | `[n, num_gpus]` (both bit-cast `u32`) |
+///
+/// This divides the local buffer by the replica count. It is the *finishing*
+/// step of a sum-then-average all-reduce: the summation across physical
+/// devices itself requires a transport this crate does not have (see
+/// [`crate::multi_gpu`]), so the only replica count ever dispatched is `1`
+/// (this device's own contribution), for which the division is the
+/// mathematically exact identity — computed for real on the GPU rather than
+/// asserted on the host.
+pub const ALL_REDUCE_MEAN: &str = r#"
+@group(0) @binding(0) var<storage, read_write> x: array<f32>;
+@group(0) @binding(1) var<storage, read> y: array<f32>;
+
+@compute @workgroup_size(256) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n = bitcast<u32>(y[0]);
+    let idx = gid.x;
+    if (idx >= n) { return; }
+
+    let num_gpus = bitcast<u32>(y[1]);
+    x[idx] = x[idx] / f32(num_gpus);
+}
+"#;
+
 /// LAMB, run as two dispatches of the *same* pipeline.
 ///
 /// | binding | name | meaning |

@@ -1,27 +1,47 @@
-//! Auto-generated module
+//! Data types of the enhanced audit system.
 //!
-//! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
+//! The behaviour that used to live here in constructor-only shells now lives in
+//! focused sibling modules, each of which documents the fake it replaced:
+//!
+//! | moved type | new home |
+//! |---|---|
+//! | `MerkleTree`, `AuditChain`, `AuditTrail` | [`super::integrity`] |
+//! | `FormalVerificationEngine`, `TheoremProver` | [`super::verification`] |
+//! | `SystemModel`, `ModelChecker` | [`super::model_checking`] |
+//! | `ProofSystem`, `CryptographicProofGenerator` | [`super::proofs`] |
+//! | `RegulatoryComplianceChecker`, `ComplianceMonitor`, `RegulationChecker` | [`super::compliance`] |
+//! | `PrivacyBudgetTracker`, `BudgetForecastingModel`, `PredictionModel` | [`super::budget`] |
+//! | `MonitoringDashboard` | [`super::dashboard`] |
+//!
+//! All of them are still re-exported from `privacy::enhanced_audit`, so paths
+//! that went through the module root are unchanged.
 
-#[allow(dead_code)]
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::budget::PrivacyBudgetTracker;
+use super::compliance::{ComplianceMonitor, RegulatoryComplianceChecker};
+use super::dashboard::MonitoringDashboard;
 use super::functions::{
-    AxiomVerifyFn, ComplianceAssessmentFn, CryptoProofGenerateFn, CryptoProofVerifyFn,
-    ProofGenerateFn, ProofStrategyApplyFn, ProofVerifyFn, TransitionLogicFn, VerifyFn,
+    AxiomVerifyFn, CryptoProofGenerateFn, CryptoProofVerifyFn, ProofGenerateFn,
+    ProofStrategyApplyFn, ProofVerifyFn, TransitionLogicFn, VerifyFn,
 };
+use super::hashing::{canonical_event_bytes, hmac_sha256, random_key, Digest32};
+use super::integrity::AuditTrail;
+use super::model_checking::ModelCheckOutcome;
+use super::proofs::{CryptographicProofGenerator, SHA256_INTEGRITY};
+use super::verification::FormalVerificationEngine;
 
 /// System property for model checking
 #[derive(Debug, Clone)]
 pub struct SystemProperty {
     /// Property name
     pub name: String,
-    /// Formal specification (e.g., CTL formula)
+    /// Formal specification (see [`super::model_checking`] for the grammar)
     pub specification: String,
     /// Property type
     pub property_type: PropertyType,
@@ -39,73 +59,6 @@ pub enum RuleSeverity {
     Low,
     /// Informational only
     Info,
-}
-/// Real-time monitoring dashboard
-pub struct MonitoringDashboard {
-    /// Dashboard metrics
-    metrics: HashMap<String, DashboardMetric>,
-    /// Real-time alerts
-    alerts: VecDeque<DashboardAlert>,
-    /// Dashboard configuration
-    config: DashboardConfig,
-}
-impl MonitoringDashboard {
-    pub fn new() -> Self {
-        Self {
-            metrics: HashMap::new(),
-            alerts: VecDeque::new(),
-            config: DashboardConfig::default(),
-        }
-    }
-    pub fn update_metrics(&mut self, event: &AuditEvent) -> Result<()> {
-        let timestamp = event.timestamp;
-        if let Some(metric) = self.metrics.get_mut("privacy_budget_epsilon") {
-            metric.current_value = event.privacy_context.epsilon_budget;
-            metric
-                .historical_values
-                .push_back((timestamp, event.privacy_context.epsilon_budget));
-            if metric.historical_values.len() > 1000 {
-                metric.historical_values.pop_front();
-            }
-        }
-        Ok(())
-    }
-}
-/// Privacy budget tracker
-pub struct PrivacyBudgetTracker {
-    /// Current allocations by purpose
-    allocations: HashMap<String, BudgetAllocation>,
-    /// Historical consumption
-    consumption_history: VecDeque<BudgetConsumption>,
-    /// Budget alerts
-    alerts: Vec<BudgetAlert>,
-    /// Forecasting model
-    forecasting_model: BudgetForecastingModel,
-}
-impl PrivacyBudgetTracker {
-    pub fn new() -> Self {
-        Self {
-            allocations: HashMap::new(),
-            consumption_history: VecDeque::new(),
-            alerts: Vec::new(),
-            forecasting_model: BudgetForecastingModel::new(),
-        }
-    }
-    pub fn record_consumption(&mut self, event: &AuditEvent) -> Result<()> {
-        let consumption = BudgetConsumption {
-            id: format!("consumption_{}", self.consumption_history.len()),
-            timestamp: event.timestamp,
-            purpose: "optimization".to_string(),
-            epsilon_consumed: event.privacy_context.epsilon_budget,
-            delta_consumed: event.privacy_context.delta_budget,
-            operation: event.data.description.clone(),
-        };
-        self.consumption_history.push_back(consumption);
-        Ok(())
-    }
-    pub fn get_current_allocations(&self) -> HashMap<String, BudgetAllocation> {
-        self.allocations.clone()
-    }
 }
 /// Compliance frameworks supported
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -127,69 +80,6 @@ pub enum ComplianceFramework {
     /// Custom compliance framework
     Custom(String),
 }
-/// Prediction model for budget forecasting
-pub struct PredictionModel {
-    /// Model parameters
-    parameters: Vec<f64>,
-    /// Model type
-    model_type: ModelType,
-}
-impl PredictionModel {
-    pub fn new() -> Self {
-        Self {
-            parameters: Vec::new(),
-            model_type: ModelType::LinearRegression,
-        }
-    }
-}
-/// Regulation checker for specific framework
-pub struct RegulationChecker {
-    /// Framework name
-    pub framework: ComplianceFramework,
-    /// Compliance rules
-    pub rules: Vec<ComplianceRule>,
-    /// Assessment functions
-    pub assessment_fns: HashMap<String, ComplianceAssessmentFn>,
-}
-/// Regulatory compliance checker
-pub struct RegulatoryComplianceChecker {
-    /// Supported regulations
-    regulations: HashMap<ComplianceFramework, RegulationChecker>,
-    /// Compliance reports
-    reports: VecDeque<ComplianceReport>,
-    /// External compliance APIs
-    external_apis: HashMap<String, ExternalComplianceAPI>,
-}
-impl RegulatoryComplianceChecker {
-    pub fn new() -> Self {
-        Self {
-            regulations: HashMap::new(),
-            reports: VecDeque::new(),
-            external_apis: HashMap::new(),
-        }
-    }
-    pub fn generate_report(
-        &self,
-        frameworks: &[ComplianceFramework],
-        period: ReportingPeriod,
-        audit_trail: &AuditTrail,
-    ) -> Result<ComplianceReport> {
-        let report = ComplianceReport {
-            id: format!("report_{}", self.reports.len()),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
-            period,
-            frameworks: frameworks.to_vec(),
-            overall_status: ComplianceStatus::Compliant,
-            assessments: HashMap::new(),
-            executive_summary: "Compliance report generated successfully".to_string(),
-            format: ReportFormat::JSON,
-        };
-        Ok(report)
-    }
-}
 /// Individual compliance finding
 #[derive(Debug, Clone)]
 pub struct ComplianceFinding {
@@ -205,6 +95,9 @@ pub struct ComplianceFinding {
     pub impact: ImpactLevel,
 }
 /// Cryptographic keys for proof generation
+///
+/// Constructors live in [`super::proofs`], including
+/// [`CryptographicKeys::generate`] which draws a MAC key from OS entropy.
 pub struct CryptographicKeys {
     /// Signing keys
     pub signing_keys: HashMap<String, Vec<u8>>,
@@ -212,15 +105,6 @@ pub struct CryptographicKeys {
     pub verification_keys: HashMap<String, Vec<u8>>,
     /// Encryption keys
     pub encryption_keys: HashMap<String, Vec<u8>>,
-}
-impl CryptographicKeys {
-    pub fn new() -> Self {
-        Self {
-            signing_keys: HashMap::new(),
-            verification_keys: HashMap::new(),
-            encryption_keys: HashMap::new(),
-        }
-    }
 }
 /// Impact levels for findings
 #[derive(Debug, Clone, Copy)]
@@ -239,13 +123,13 @@ pub enum ImpactLevel {
 /// Types of prediction models
 #[derive(Debug, Clone, Copy)]
 pub enum ModelType {
-    /// Linear regression
+    /// Linear regression (the only family implemented)
     LinearRegression,
-    /// ARIMA model
+    /// ARIMA model (not implemented; selecting it returns an error)
     ARIMA,
-    /// Neural network
+    /// Neural network (not implemented; selecting it returns an error)
     NeuralNetwork,
-    /// Random forest
+    /// Random forest (not implemented; selecting it returns an error)
     RandomForest,
 }
 /// Proof strategy for theorem proving
@@ -260,7 +144,7 @@ pub struct ProofStrategy<T: Float + Debug + Send + Sync + 'static> {
 pub struct ComplianceAssessment {
     /// Framework assessed
     pub framework: ComplianceFramework,
-    /// Overall compliance score (0.0 - 1.0)
+    /// Fraction of applied checks that passed (0.0 - 1.0)
     pub compliance_score: f64,
     /// Detailed findings
     pub findings: Vec<ComplianceFinding>,
@@ -276,7 +160,7 @@ pub struct DashboardConfig {
     pub refresh_interval: u32,
     /// Historical data retention (hours)
     pub history_retention_hours: u32,
-    /// Alert thresholds
+    /// Alert thresholds, keyed by metric name
     pub alert_thresholds: HashMap<String, AlertThreshold>,
     /// Dashboard layout
     pub layout: DashboardLayout,
@@ -286,11 +170,11 @@ pub struct DashboardConfig {
 pub struct VerificationResult {
     /// Whether verification passed
     pub verified: bool,
-    /// Proof generated
+    /// Commitment to the values that were checked, when the rule reads them
     pub proof: Option<Vec<u8>>,
     /// Verification message
     pub message: String,
-    /// Confidence level
+    /// Confidence in the verdict (1.0 for an exact predicate)
     pub confidence: f64,
 }
 /// Remediation status
@@ -360,8 +244,25 @@ pub struct AuditQueryCriteria {
     pub start_time: Option<u64>,
     /// End time filter
     pub end_time: Option<u64>,
-    /// Text search in descriptions
+    /// Substring search in descriptions
     pub text_search: Option<String>,
+}
+impl AuditQueryCriteria {
+    /// Criteria that match every event.
+    pub fn any() -> Self {
+        Self {
+            actor: None,
+            event_type: None,
+            start_time: None,
+            end_time: None,
+            text_search: None,
+        }
+    }
+}
+impl Default for AuditQueryCriteria {
+    fn default() -> Self {
+        Self::any()
+    }
 }
 /// Compliance status for events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,16 +291,28 @@ pub enum VerificationCriticality {
 /// Cryptographic proof requirements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofRequirements {
-    /// Require zero-knowledge proofs
+    /// Require zero-knowledge proofs (not implemented; requesting it errors)
     pub zero_knowledge_proofs: bool,
-    /// Require non-repudiation proofs
+    /// Require non-repudiation proofs (not implemented; requesting it errors)
     pub non_repudiation: bool,
-    /// Require integrity proofs
+    /// Require integrity proofs (implemented: SHA-256 / HMAC-SHA256)
     pub integrity_proofs: bool,
-    /// Require confidentiality proofs
+    /// Require confidentiality proofs (not implemented; requesting it errors)
     pub confidentiality_proofs: bool,
-    /// Require completeness proofs
+    /// Require completeness proofs (implemented: the commitment covers the
+    /// whole released vector, length included)
     pub completeness_proofs: bool,
+}
+impl Default for ProofRequirements {
+    fn default() -> Self {
+        Self {
+            zero_knowledge_proofs: false,
+            non_repudiation: false,
+            integrity_proofs: true,
+            confidentiality_proofs: false,
+            completeness_proofs: true,
+        }
+    }
 }
 /// Types of dashboard metrics
 #[derive(Debug, Clone, Copy)]
@@ -443,21 +356,6 @@ pub struct RiskFactor {
     /// Factor description
     pub description: String,
 }
-/// Budget forecasting model
-pub struct BudgetForecastingModel {
-    /// Historical consumption patterns
-    patterns: Vec<ConsumptionPattern>,
-    /// Prediction model
-    model: PredictionModel,
-}
-impl BudgetForecastingModel {
-    pub fn new() -> Self {
-        Self {
-            patterns: Vec::new(),
-            model: PredictionModel::new(),
-        }
-    }
-}
 /// Types of consumption patterns
 #[derive(Debug, Clone, Copy)]
 pub enum PatternType {
@@ -470,91 +368,12 @@ pub enum PatternType {
     /// Irregular consumption
     Irregular,
 }
-/// Theorem prover for mathematical verification
-pub struct TheoremProver<T: Float + Debug + Send + Sync + 'static> {
-    /// Axioms and rules
-    axioms: Vec<Axiom<T>>,
-    /// Proof strategies
-    strategies: Vec<ProofStrategy<T>>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> TheoremProver<T> {
-    pub fn new() -> Self {
-        Self {
-            axioms: Vec::new(),
-            strategies: Vec::new(),
-        }
-    }
-}
-/// Audit trail management
-pub struct AuditTrail {
-    /// Audit events
-    pub(super) events: VecDeque<AuditEvent>,
-    /// Event index for fast lookup
-    event_index: HashMap<String, Vec<usize>>,
-    /// Cryptographic chain for tamper detection
-    pub(super) chain: AuditChain,
-    /// Encryption key for sensitive data
-    encryption_key: Option<Vec<u8>>,
-}
-impl AuditTrail {
-    /// Create new audit trail
-    pub fn new() -> Self {
-        Self {
-            events: VecDeque::new(),
-            event_index: HashMap::new(),
-            chain: AuditChain::new(),
-            encryption_key: None,
-        }
-    }
-    /// Add event to audit trail
-    pub fn add_event(&mut self, event: AuditEvent) -> Result<()> {
-        self.chain.add_event(&event)?;
-        let event_index = self.events.len();
-        self.event_index
-            .entry(event.actor.clone())
-            .or_default()
-            .push(event_index);
-        self.events.push_back(event);
-        Ok(())
-    }
-    /// Query events by criteria
-    pub fn query_events(&self, criteria: &AuditQueryCriteria) -> Vec<&AuditEvent> {
-        self.events
-            .iter()
-            .filter(|event| self.matches_criteria(event, criteria))
-            .collect()
-    }
-    /// Check if event matches query criteria
-    fn matches_criteria(&self, event: &AuditEvent, criteria: &AuditQueryCriteria) -> bool {
-        if let Some(ref actor) = criteria.actor {
-            if event.actor != *actor {
-                return false;
-            }
-        }
-        if let Some(ref event_type) = criteria.event_type {
-            if !matches!(&event.event_type, event_type) {
-                return false;
-            }
-        }
-        if let Some(start_time) = criteria.start_time {
-            if event.timestamp < start_time {
-                return false;
-            }
-        }
-        if let Some(end_time) = criteria.end_time {
-            if event.timestamp > end_time {
-                return false;
-            }
-        }
-        true
-    }
-}
 /// Privacy context at time of event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivacyContext {
-    /// Current epsilon budget
+    /// Epsilon spent by the operation this event describes
     pub epsilon_budget: f64,
-    /// Current delta budget
+    /// Delta the guarantee is quoted at
     pub delta_budget: f64,
     /// Privacy mechanism used
     pub privacy_mechanism: String,
@@ -578,100 +397,6 @@ pub enum RiskLevel {
     Low,
     /// Very low risk
     VeryLow,
-}
-/// Enhanced audit system for privacy-preserving optimization
-pub struct EnhancedAuditSystem<T: Float + Debug + Send + Sync + 'static> {
-    /// Configuration for audit system
-    config: AuditConfig,
-    /// Audit trail storage
-    audit_trail: AuditTrail,
-    /// Compliance monitor
-    compliance_monitor: ComplianceMonitor,
-    /// Formal verification engine
-    verification_engine: FormalVerificationEngine<T>,
-    /// Privacy budget tracker
-    privacy_tracker: PrivacyBudgetTracker,
-    /// Cryptographic proof generator
-    proof_generator: CryptographicProofGenerator<T>,
-    /// Regulatory compliance checker
-    regulatory_checker: RegulatoryComplianceChecker,
-    /// Real-time monitoring dashboard
-    monitoring_dashboard: MonitoringDashboard,
-}
-impl<T: Float + Debug + Send + Sync + 'static> EnhancedAuditSystem<T> {
-    /// Create new enhanced audit system
-    pub fn new(config: AuditConfig) -> Self {
-        Self {
-            config,
-            audit_trail: AuditTrail::new(),
-            compliance_monitor: ComplianceMonitor::new(),
-            verification_engine: FormalVerificationEngine::<T>::new(),
-            privacy_tracker: PrivacyBudgetTracker::new(),
-            proof_generator: CryptographicProofGenerator::<T>::new(),
-            regulatory_checker: RegulatoryComplianceChecker::new(),
-            monitoring_dashboard: MonitoringDashboard::new(),
-        }
-    }
-    /// Log audit event
-    pub fn log_event(&mut self, event: AuditEvent) -> Result<()> {
-        let signed_event = self.sign_event(event)?;
-        self.audit_trail.add_event(signed_event.clone())?;
-        self.compliance_monitor.check_event(&signed_event)?;
-        if matches!(
-            signed_event.event_type,
-            AuditEventType::PrivacyBudgetConsumption
-        ) {
-            self.privacy_tracker.record_consumption(&signed_event)?;
-        }
-        self.monitoring_dashboard.update_metrics(&signed_event)?;
-        Ok(())
-    }
-    /// Generate compliance report
-    pub fn generate_compliance_report(
-        &self,
-        frameworks: &[ComplianceFramework],
-        period: ReportingPeriod,
-    ) -> Result<ComplianceReport> {
-        self.regulatory_checker
-            .generate_report(frameworks, period, &self.audit_trail)
-    }
-    /// Verify system properties
-    pub fn verify_system_properties(
-        &self,
-        data: &Array1<T>,
-        context: &PrivacyContext,
-    ) -> Result<Vec<VerificationResult>> {
-        self.verification_engine
-            .verify_all_properties(data, context)
-    }
-    /// Get current privacy budget status
-    pub fn get_privacy_budget_status(&self) -> HashMap<String, BudgetAllocation> {
-        self.privacy_tracker.get_current_allocations()
-    }
-    /// Generate cryptographic proof
-    pub fn generate_proof(&self, prooftype: &str, data: &Array1<T>) -> Result<CryptographicProof> {
-        self.proof_generator.generate_proof(prooftype, data)
-    }
-    /// Sign audit event
-    fn sign_event(&self, mut event: AuditEvent) -> Result<AuditEvent> {
-        let signature = self.generate_signature(&event)?;
-        event.signature = Some(signature);
-        Ok(event)
-    }
-    /// Generate signature for event
-    fn generate_signature(&self, event: &AuditEvent) -> Result<Vec<u8>> {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(event.id.as_bytes());
-        hasher.update(event.timestamp.to_le_bytes());
-        hasher.update(
-            serde_json::to_string(&event.event_type)
-                .expect("unwrap failed")
-                .as_bytes(),
-        );
-        hasher.update(event.actor.as_bytes());
-        Ok(hasher.finalize().to_vec())
-    }
 }
 /// Approval levels for remediation
 #[derive(Debug, Clone, Copy)]
@@ -733,7 +458,7 @@ pub struct RiskAssessment {
     pub risk_factors: Vec<RiskFactor>,
     /// Mitigation recommendations
     pub mitigations: Vec<String>,
-    /// Residual risk
+    /// Residual risk after the listed mitigations have been executed
     pub residual_risk: f64,
 }
 /// Budget allocation for specific purpose
@@ -743,11 +468,11 @@ pub struct BudgetAllocation {
     pub purpose: String,
     /// Allocated epsilon
     pub allocated_epsilon: f64,
-    /// Allocated delta
+    /// Delta the allocation is quoted at
     pub allocated_delta: f64,
     /// Consumed epsilon
     pub consumed_epsilon: f64,
-    /// Consumed delta
+    /// Largest delta reported against this allocation
     pub consumed_delta: f64,
     /// Allocation timestamp
     pub timestamp: u64,
@@ -757,13 +482,13 @@ pub struct BudgetAllocation {
 /// Consumption pattern
 #[derive(Debug, Clone)]
 pub struct ConsumptionPattern {
-    /// Pattern identifier
+    /// Pattern identifier (the purpose it was derived from)
     pub id: String,
-    /// Time window
+    /// Time window covered, in seconds
     pub time_window: u64,
-    /// Average consumption rate
+    /// Average consumption rate (epsilon per second)
     pub avg_consumption_rate: f64,
-    /// Peak consumption rate
+    /// Largest single spend observed
     pub peak_consumption_rate: f64,
     /// Pattern type
     pub pattern_type: PatternType,
@@ -774,31 +499,6 @@ pub struct TransitionFunction<T: Float + Debug + Send + Sync + 'static> {
     pub name: String,
     /// Transition logic
     pub logic: TransitionLogicFn<T>,
-}
-/// Cryptographic proof generator
-pub struct CryptographicProofGenerator<T: Float + Debug + Send + Sync + 'static> {
-    /// Proof types supported
-    proof_types: HashMap<String, CryptographicProofType<T>>,
-    /// Cryptographic keys
-    keys: CryptographicKeys,
-}
-impl<T: Float + Debug + Send + Sync + 'static> CryptographicProofGenerator<T> {
-    pub fn new() -> Self {
-        Self {
-            proof_types: HashMap::new(),
-            keys: CryptographicKeys::new(),
-        }
-    }
-    pub fn generate_proof(&self, prooftype: &str, data: &Array1<T>) -> Result<CryptographicProof> {
-        if let Some(proof_gen) = self.proof_types.get(prooftype) {
-            (proof_gen.generate_fn)(data, &self.keys)
-        } else {
-            Err(OptimError::InvalidConfig(format!(
-                "Unknown proof _type: {}",
-                prooftype
-            )))
-        }
-    }
 }
 /// Dashboard layout configuration
 #[derive(Debug, Clone)]
@@ -827,63 +527,6 @@ pub struct ComplianceViolation {
     pub remediation_status: RemediationStatus,
     /// Associated audit event
     pub audit_event_id: String,
-}
-/// Compliance monitoring system
-pub struct ComplianceMonitor {
-    /// Active compliance frameworks
-    frameworks: Vec<ComplianceFramework>,
-    /// Compliance rules
-    rules: HashMap<ComplianceFramework, Vec<ComplianceRule>>,
-    /// Violation history
-    violations: VecDeque<ComplianceViolation>,
-    /// Automated remediation actions
-    remediation_actions: HashMap<String, RemediationAction>,
-}
-impl ComplianceMonitor {
-    pub fn new() -> Self {
-        Self {
-            frameworks: Vec::new(),
-            rules: HashMap::new(),
-            violations: VecDeque::new(),
-            remediation_actions: HashMap::new(),
-        }
-    }
-    pub fn check_event(&mut self, event: &AuditEvent) -> Result<()> {
-        for framework in self.frameworks.iter() {
-            if let Some(rules) = self.rules.get(framework) {
-                for rule in rules.iter() {
-                    let result = (rule.evaluation_fn)(event);
-                    if !result.passed {
-                        eprintln!("Compliance violation: {} in {:?}", rule.name, framework);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-    fn record_violation(
-        &mut self,
-        framework: &ComplianceFramework,
-        rule: &ComplianceRule,
-        event: &AuditEvent,
-        result: ComplianceRuleResult,
-    ) -> Result<()> {
-        let violation = ComplianceViolation {
-            id: format!("violation_{}", self.violations.len()),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
-            rule_id: rule.id.clone(),
-            severity: rule.severity,
-            framework: framework.clone(),
-            description: result.message,
-            remediation_status: RemediationStatus::Open,
-            audit_event_id: event.id.clone(),
-        };
-        self.violations.push_back(violation);
-        Ok(())
-    }
 }
 /// Automated remediation action
 #[derive(Debug, Clone)]
@@ -914,43 +557,11 @@ pub struct AuditEvent {
     pub data: AuditEventData,
     /// Privacy parameters at time of event
     pub privacy_context: PrivacyContext,
-    /// Cryptographic signature
+    /// Keyed integrity tag (HMAC-SHA256), set by
+    /// [`EnhancedAuditSystem::log_event`]
     pub signature: Option<Vec<u8>>,
     /// Compliance annotations
     pub compliance_annotations: HashMap<ComplianceFramework, ComplianceStatus>,
-}
-/// Formal verification engine
-pub struct FormalVerificationEngine<T: Float + Debug + Send + Sync + 'static> {
-    /// Verification rules
-    verification_rules: Vec<FormalVerificationRule<T>>,
-    /// Proof system
-    proof_system: ProofSystem<T>,
-    /// Model checker
-    model_checker: ModelChecker<T>,
-    /// Theorem prover
-    theorem_prover: TheoremProver<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> FormalVerificationEngine<T> {
-    pub fn new() -> Self {
-        Self {
-            verification_rules: Vec::new(),
-            proof_system: ProofSystem::<T>::new(),
-            model_checker: ModelChecker::<T>::new(),
-            theorem_prover: TheoremProver::<T>::new(),
-        }
-    }
-    pub fn verify_all_properties(
-        &self,
-        data: &Array1<T>,
-        context: &PrivacyContext,
-    ) -> Result<Vec<VerificationResult>> {
-        let mut results = Vec::new();
-        for rule in &self.verification_rules {
-            let result = (rule.verify_fn)(data, context);
-            results.push(result);
-        }
-        Ok(results)
-    }
 }
 /// System state
 #[derive(Debug, Clone)]
@@ -989,17 +600,17 @@ pub enum AlertStatus {
 /// Reporting periods
 #[derive(Debug, Clone)]
 pub enum ReportingPeriod {
-    /// Daily report
+    /// The last 24 hours
     Daily,
-    /// Weekly report
+    /// The last 7 days
     Weekly,
-    /// Monthly report
+    /// The last 30 days
     Monthly,
-    /// Quarterly report
+    /// The last 91 days
     Quarterly,
-    /// Annual report
+    /// The last 365 days
     Annual,
-    /// Custom period
+    /// An explicit inclusive `[start, end]` timestamp range
     Custom(u64, u64),
 }
 /// Dashboard metric
@@ -1017,6 +628,9 @@ pub struct DashboardMetric {
     pub metric_type: MetricType,
 }
 /// External compliance API
+///
+/// Registration records the endpoint only: this crate performs no network I/O,
+/// so an external API never contributes to a compliance verdict.
 pub struct ExternalComplianceAPI {
     /// API name
     pub name: String,
@@ -1027,64 +641,6 @@ pub struct ExternalComplianceAPI {
     /// Supported frameworks
     pub frameworks: Vec<ComplianceFramework>,
 }
-/// Merkle tree for audit trail integrity
-pub struct MerkleTree {
-    /// Tree nodes
-    nodes: Vec<Vec<u8>>,
-    /// Tree depth
-    depth: usize,
-    /// Root hash
-    root_hash: Option<Vec<u8>>,
-}
-impl MerkleTree {
-    /// Create new Merkle tree
-    pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            depth: 0,
-            root_hash: None,
-        }
-    }
-    /// Add leaf to tree
-    pub fn add_leaf(&mut self, leafhash: Vec<u8>) -> Result<()> {
-        self.nodes.push(leafhash);
-        self.rebuild_tree()?;
-        Ok(())
-    }
-    /// Rebuild Merkle tree
-    fn rebuild_tree(&mut self) -> Result<()> {
-        if self.nodes.is_empty() {
-            return Ok(());
-        }
-        let mut current_level = self.nodes.clone();
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-            for chunk in current_level.chunks(2) {
-                let combined_hash = if chunk.len() == 2 {
-                    self.combine_hashes(&chunk[0], &chunk[1])?
-                } else {
-                    chunk[0].clone()
-                };
-                next_level.push(combined_hash);
-            }
-            current_level = next_level;
-        }
-        self.root_hash = current_level.into_iter().next();
-        Ok(())
-    }
-    /// Combine two hashes
-    fn combine_hashes(&self, left: &[u8], right: &[u8]) -> Result<Vec<u8>> {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(left);
-        hasher.update(right);
-        Ok(hasher.finalize().to_vec())
-    }
-    /// Verify tree integrity
-    pub fn verify_integrity(&self) -> bool {
-        !self.nodes.is_empty() && self.root_hash.is_some()
-    }
-}
 /// Proof algorithm
 pub struct ProofAlgorithm<T: Float + Debug + Send + Sync + 'static> {
     /// Algorithm name
@@ -1093,21 +649,6 @@ pub struct ProofAlgorithm<T: Float + Debug + Send + Sync + 'static> {
     pub generate_fn: ProofGenerateFn<T>,
     /// Proof verification function
     pub verify_fn: ProofVerifyFn<T>,
-}
-/// System model for verification
-pub struct SystemModel<T: Float + Debug + Send + Sync + 'static> {
-    /// System states
-    states: Vec<SystemState<T>>,
-    /// Transition function
-    transitions: HashMap<String, TransitionFunction<T>>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> SystemModel<T> {
-    pub fn new() -> Self {
-        Self {
-            states: Vec::new(),
-            transitions: HashMap::new(),
-        }
-    }
 }
 /// Types of budget alerts
 #[derive(Debug, Clone, Copy)]
@@ -1135,22 +676,46 @@ pub struct Axiom<T: Float + Debug + Send + Sync + 'static> {
 /// Configuration for audit system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditConfig {
-    /// Enable comprehensive logging
+    /// Record every event type. When false, only privacy-relevant event types
+    /// are recorded and the rest are skipped.
     pub comprehensive_logging: bool,
-    /// Enable real-time monitoring
+    /// Feed the monitoring dashboard from every logged event
     pub real_time_monitoring: bool,
-    /// Enable formal verification
+    /// Enable formal verification. When false,
+    /// [`EnhancedAuditSystem::verify_system_properties`] returns an error
+    /// rather than an empty (and therefore vacuously passing) result.
     pub formal_verification: bool,
-    /// Retention period for audit logs (days)
+    /// Retention period for audit logs (days); must be positive
     pub retention_period_days: u32,
     /// Compliance frameworks to check
     pub compliance_frameworks: Vec<ComplianceFramework>,
     /// Cryptographic proof requirements
     pub proof_requirements: ProofRequirements,
-    /// Audit trail encryption
+    /// Encrypt the audit trail at rest.
+    ///
+    /// Not implemented: this build carries no authenticated-encryption
+    /// primitive, so setting it makes [`EnhancedAuditSystem::new`] fail rather
+    /// than storing plaintext behind a flag that claims otherwise.
     pub encrypt_audit_trail: bool,
-    /// External audit integration
+    /// Submit the trail to an external auditor.
+    ///
+    /// Not implemented: this crate performs no network I/O, so setting it makes
+    /// [`EnhancedAuditSystem::new`] fail.
     pub external_audit_integration: bool,
+}
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            comprehensive_logging: true,
+            real_time_monitoring: true,
+            formal_verification: true,
+            retention_period_days: 365,
+            compliance_frameworks: super::compliance::supported_frameworks(),
+            proof_requirements: ProofRequirements::default(),
+            encrypt_audit_trail: false,
+            external_audit_integration: false,
+        }
+    }
 }
 /// Audit event data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1161,7 +726,8 @@ pub struct AuditEventData {
     pub affected_data_subjects: Vec<String>,
     /// Data categories involved
     pub data_categories: Vec<String>,
-    /// Processing purposes
+    /// Processing purposes; the first is the budget purpose the event is
+    /// accounted against
     pub processing_purposes: Vec<String>,
     /// Legal basis for processing
     pub legal_basis: Vec<String>,
@@ -1182,21 +748,6 @@ pub struct ProofResult {
     /// Proof confidence
     pub confidence: f64,
 }
-/// Proof system for formal verification
-pub struct ProofSystem<T: Float + Debug + Send + Sync + 'static> {
-    /// Proof generation algorithms
-    algorithms: HashMap<String, ProofAlgorithm<T>>,
-    /// Verification keys
-    verification_keys: HashMap<String, Vec<u8>>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ProofSystem<T> {
-    pub fn new() -> Self {
-        Self {
-            algorithms: HashMap::new(),
-            verification_keys: HashMap::new(),
-        }
-    }
-}
 /// Budget consumption record
 #[derive(Debug, Clone)]
 pub struct BudgetConsumption {
@@ -1208,7 +759,7 @@ pub struct BudgetConsumption {
     pub purpose: String,
     /// Epsilon consumed
     pub epsilon_consumed: f64,
-    /// Delta consumed
+    /// Delta the spend is quoted at
     pub delta_consumed: f64,
     /// Operation performed
     pub operation: String,
@@ -1226,7 +777,7 @@ pub struct ComplianceReport {
     pub frameworks: Vec<ComplianceFramework>,
     /// Overall compliance status
     pub overall_status: ComplianceStatus,
-    /// Detailed assessments
+    /// Detailed assessments, for frameworks that have a rule set
     pub assessments: HashMap<ComplianceFramework, ComplianceAssessment>,
     /// Executive summary
     pub executive_summary: String,
@@ -1293,45 +844,6 @@ pub enum WidgetType {
     /// Alert list
     AlertList,
 }
-/// Cryptographic audit chain
-pub struct AuditChain {
-    /// Chain of hashes for tamper detection
-    hash_chain: Vec<Vec<u8>>,
-    /// Digital signatures for non-repudiation
-    signatures: Vec<Vec<u8>>,
-    /// Merkle tree for efficient verification
-    merkle_tree: MerkleTree,
-}
-impl AuditChain {
-    /// Create new audit chain
-    pub fn new() -> Self {
-        Self {
-            hash_chain: Vec::new(),
-            signatures: Vec::new(),
-            merkle_tree: MerkleTree::new(),
-        }
-    }
-    /// Add event to chain
-    pub fn add_event(&mut self, event: &AuditEvent) -> Result<()> {
-        let event_hash = self.compute_event_hash(event)?;
-        self.hash_chain.push(event_hash.clone());
-        self.merkle_tree.add_leaf(event_hash)?;
-        Ok(())
-    }
-    /// Compute hash of event
-    fn compute_event_hash(&self, event: &AuditEvent) -> Result<Vec<u8>> {
-        use sha2::{Digest, Sha256};
-        let event_json = serde_json::to_string(event)
-            .map_err(|_| OptimError::InvalidConfig("Failed to serialize event".to_string()))?;
-        let mut hasher = Sha256::new();
-        hasher.update(event_json.as_bytes());
-        Ok(hasher.finalize().to_vec())
-    }
-    /// Verify chain integrity
-    pub fn verify_integrity(&self) -> bool {
-        self.merkle_tree.verify_integrity()
-    }
-}
 /// Cryptographic proof type
 pub struct CryptographicProofType<T: Float + Debug + Send + Sync + 'static> {
     /// Proof type name
@@ -1370,18 +882,583 @@ pub struct ComplianceRule {
     /// Applicable frameworks
     pub frameworks: Vec<ComplianceFramework>,
 }
-/// Model checker for system properties
-pub struct ModelChecker<T: Float + Debug + Send + Sync + 'static> {
-    /// System model
-    model: SystemModel<T>,
-    /// Properties to check
-    properties: Vec<SystemProperty>,
+
+/// Whether an event type is privacy-relevant.
+///
+/// Used to honour `AuditConfig::comprehensive_logging`: with comprehensive
+/// logging off, only these event types are recorded.
+fn is_privacy_relevant(event_type: &AuditEventType) -> bool {
+    matches!(
+        event_type,
+        AuditEventType::PrivacyBudgetAllocation
+            | AuditEventType::PrivacyBudgetConsumption
+            | AuditEventType::GradientComputation
+            | AuditEventType::DataAccess
+            | AuditEventType::DataDeletion
+            | AuditEventType::UserConsent
+            | AuditEventType::AnonymizationProcess
+            | AuditEventType::SecurityIncident
+    )
 }
-impl<T: Float + Debug + Send + Sync + 'static> ModelChecker<T> {
-    pub fn new() -> Self {
-        Self {
-            model: SystemModel::new(),
-            properties: Vec::new(),
+
+/// Enhanced audit system for privacy-preserving optimization.
+pub struct EnhancedAuditSystem<T: Float + Debug + Send + Sync + 'static> {
+    /// Configuration for audit system
+    config: AuditConfig,
+    /// Audit trail storage
+    audit_trail: AuditTrail,
+    /// Compliance monitor
+    compliance_monitor: ComplianceMonitor,
+    /// Formal verification engine
+    verification_engine: FormalVerificationEngine<T>,
+    /// Privacy budget tracker
+    privacy_tracker: PrivacyBudgetTracker,
+    /// Cryptographic proof generator
+    proof_generator: CryptographicProofGenerator<T>,
+    /// Regulatory compliance checker
+    regulatory_checker: RegulatoryComplianceChecker,
+    /// Real-time monitoring dashboard
+    monitoring_dashboard: MonitoringDashboard,
+    /// Key used for the per-event integrity tag
+    event_tag_key: Digest32,
+    /// Number of events skipped because comprehensive logging is off
+    skipped_events: usize,
+}
+
+impl<T: Float + Debug + Send + Sync + 'static> EnhancedAuditSystem<T> {
+    /// Create a new enhanced audit system.
+    ///
+    /// Returns an error when the configuration asks for a guarantee this build
+    /// cannot provide (at-rest encryption, external audit submission, or a
+    /// proof requirement outside the integrity family). Accepting such a
+    /// configuration and quietly not honouring it is exactly the failure mode
+    /// this module is being repaired for, so the constructor is fallible.
+    pub fn new(config: AuditConfig) -> Result<Self> {
+        if config.retention_period_days == 0 {
+            return Err(OptimError::InvalidConfig(
+                "retention_period_days must be positive".to_string(),
+            ));
         }
+        if config.encrypt_audit_trail {
+            return Err(OptimError::UnsupportedOperation(
+                "encrypt_audit_trail was requested, but this build carries no \
+                 authenticated-encryption primitive; the trail would be stored in plaintext"
+                    .to_string(),
+            ));
+        }
+        if config.external_audit_integration {
+            return Err(OptimError::UnsupportedOperation(
+                "external_audit_integration was requested, but this crate performs no network I/O"
+                    .to_string(),
+            ));
+        }
+
+        let proof_generator = CryptographicProofGenerator::<T>::new();
+        proof_generator.check_requirements(&config.proof_requirements)?;
+
+        let compliance_monitor = ComplianceMonitor::for_frameworks(&config.compliance_frameworks);
+        let verification_engine = if config.formal_verification {
+            FormalVerificationEngine::<T>::new()
+        } else {
+            FormalVerificationEngine::<T>::empty()
+        };
+
+        Ok(Self {
+            config,
+            audit_trail: AuditTrail::new(),
+            compliance_monitor,
+            verification_engine,
+            privacy_tracker: PrivacyBudgetTracker::new(),
+            proof_generator,
+            regulatory_checker: RegulatoryComplianceChecker::new(),
+            monitoring_dashboard: MonitoringDashboard::new(),
+            event_tag_key: random_key(),
+            skipped_events: 0,
+        })
+    }
+
+    /// The active configuration.
+    pub fn config(&self) -> &AuditConfig {
+        &self.config
+    }
+
+    /// Read-only access to the audit trail.
+    pub fn audit_trail(&self) -> &AuditTrail {
+        &self.audit_trail
+    }
+
+    /// Read-only access to the compliance monitor.
+    pub fn compliance_monitor(&self) -> &ComplianceMonitor {
+        &self.compliance_monitor
+    }
+
+    /// Read-only access to the monitoring dashboard.
+    pub fn monitoring_dashboard(&self) -> &MonitoringDashboard {
+        &self.monitoring_dashboard
+    }
+
+    /// Read-only access to the privacy budget tracker.
+    pub fn privacy_tracker(&self) -> &PrivacyBudgetTracker {
+        &self.privacy_tracker
+    }
+
+    /// Read-only access to the formal verification engine.
+    pub fn verification_engine(&self) -> &FormalVerificationEngine<T> {
+        &self.verification_engine
+    }
+
+    /// Number of events skipped because comprehensive logging is off.
+    pub fn skipped_event_count(&self) -> usize {
+        self.skipped_events
+    }
+
+    /// Allocate privacy budget to a processing purpose.
+    pub fn allocate_privacy_budget(
+        &mut self,
+        purpose: impl Into<String>,
+        epsilon: f64,
+        delta: f64,
+        timestamp: u64,
+        expires_at: Option<u64>,
+    ) -> Result<()> {
+        self.privacy_tracker
+            .allocate(purpose, epsilon, delta, timestamp, expires_at)
+    }
+
+    /// Log an audit event.
+    ///
+    /// Returns the number of compliance violations the event triggered, so a
+    /// caller can react instead of having them written to stderr.
+    pub fn log_event(&mut self, event: AuditEvent) -> Result<usize> {
+        if !self.config.comprehensive_logging && !is_privacy_relevant(&event.event_type) {
+            self.skipped_events += 1;
+            return Ok(0);
+        }
+
+        let signed_event = self.sign_event(event);
+        self.audit_trail.add_event(signed_event.clone())?;
+        let violations = self.compliance_monitor.check_event(&signed_event)?;
+        if matches!(
+            signed_event.event_type,
+            AuditEventType::PrivacyBudgetConsumption
+        ) {
+            self.privacy_tracker.record_consumption(&signed_event)?;
+        }
+        if self.config.real_time_monitoring {
+            self.monitoring_dashboard.update_metrics(&signed_event)?;
+        }
+        Ok(violations)
+    }
+
+    /// Re-derive every commitment in the audit trail.
+    pub fn verify_audit_trail(&self) -> Result<()> {
+        self.audit_trail.verify_integrity()
+    }
+
+    /// Verify the integrity tag of a stored event.
+    pub fn verify_event_tag(&self, event: &AuditEvent) -> bool {
+        let Some(recorded) = event.signature.as_ref() else {
+            return false;
+        };
+        let expected = self.compute_event_tag(event);
+        recorded.len() == expected.len() && {
+            let mut difference = 0u8;
+            for (left, right) in recorded.iter().zip(expected.iter()) {
+                difference |= left ^ right;
+            }
+            difference == 0
+        }
+    }
+
+    /// Query the audit trail.
+    pub fn query_events(&self, criteria: &AuditQueryCriteria) -> Vec<&AuditEvent> {
+        self.audit_trail.query_events(criteria)
+    }
+
+    /// Identifiers of events whose age exceeds the retention period.
+    ///
+    /// The trail is append-only and tamper-evident: deleting an event in place
+    /// would break the hash chain and make every later verification fail. This
+    /// returns the events a caller may export and then discard *with the whole
+    /// trail*, rather than pretending in-place pruning is possible.
+    pub fn events_past_retention(&self, now: u64) -> Vec<String> {
+        let retention_seconds = u64::from(self.config.retention_period_days) * 86_400;
+        let cutoff = now.saturating_sub(retention_seconds);
+        self.audit_trail
+            .events()
+            .filter(|event| event.timestamp < cutoff)
+            .map(|event| event.id.clone())
+            .collect()
+    }
+
+    /// Generate a compliance report from the recorded events.
+    pub fn generate_compliance_report(
+        &self,
+        frameworks: &[ComplianceFramework],
+        period: ReportingPeriod,
+    ) -> Result<ComplianceReport> {
+        self.regulatory_checker
+            .generate_report(frameworks, period, &self.audit_trail)
+    }
+
+    /// Verify the formal properties of a release.
+    pub fn verify_system_properties(
+        &self,
+        data: &Array1<T>,
+        context: &PrivacyContext,
+    ) -> Result<Vec<VerificationResult>> {
+        if !self.config.formal_verification {
+            return Err(OptimError::InvalidState(
+                "formal_verification is disabled in the audit configuration, so no property was \
+                 checked"
+                    .to_string(),
+            ));
+        }
+        self.verification_engine
+            .verify_all_properties(data, context)
+    }
+
+    /// Verify the formal properties of a release, failing on any critical
+    /// violation.
+    pub fn require_system_properties(
+        &self,
+        data: &Array1<T>,
+        context: &PrivacyContext,
+    ) -> Result<Vec<VerificationResult>> {
+        if !self.config.formal_verification {
+            return Err(OptimError::InvalidState(
+                "formal_verification is disabled in the audit configuration".to_string(),
+            ));
+        }
+        self.verification_engine
+            .require_all_properties(data, context)
+    }
+
+    /// Check a bounded invariant property of the registered system model.
+    pub fn check_model_property(&self, property: &SystemProperty) -> Result<ModelCheckOutcome> {
+        if !self.config.formal_verification {
+            return Err(OptimError::InvalidState(
+                "formal_verification is disabled in the audit configuration".to_string(),
+            ));
+        }
+        self.verification_engine.check_model_property(property)
+    }
+
+    /// Current privacy budget status, by purpose.
+    pub fn get_privacy_budget_status(&self) -> HashMap<String, BudgetAllocation> {
+        self.privacy_tracker.get_current_allocations()
+    }
+
+    /// Generate a cryptographic proof over a released vector.
+    pub fn generate_proof(&self, prooftype: &str, data: &Array1<T>) -> Result<CryptographicProof> {
+        self.proof_generator.generate_proof(prooftype, data)
+    }
+
+    /// Generate the default (unkeyed) integrity proof.
+    pub fn generate_integrity_proof(&self, data: &Array1<T>) -> Result<CryptographicProof> {
+        self.proof_generator.generate_proof(SHA256_INTEGRITY, data)
+    }
+
+    /// Verify a cryptographic proof against a released vector.
+    pub fn verify_proof(&self, proof: &CryptographicProof, data: &Array1<T>) -> Result<bool> {
+        self.proof_generator.verify_proof(proof, data)
+    }
+
+    /// Attach the integrity tag to an event.
+    fn sign_event(&self, mut event: AuditEvent) -> AuditEvent {
+        event.signature = None;
+        let tag = self.compute_event_tag(&event);
+        event.signature = Some(tag);
+        event
+    }
+
+    /// HMAC-SHA256 over the canonical encoding of an event.
+    ///
+    /// The previous implementation hashed four fields with `serde_json` and
+    /// `.expect("unwrap failed")`, so most of the event was unauthenticated and
+    /// a serialisation failure was a panic.
+    fn compute_event_tag(&self, event: &AuditEvent) -> Vec<u8> {
+        hmac_sha256(&self.event_tag_key, &canonical_event_bytes(event)).to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(id: &str, epsilon: f64, timestamp: u64) -> AuditEvent {
+        AuditEvent {
+            id: id.to_string(),
+            timestamp,
+            event_type: AuditEventType::PrivacyBudgetConsumption,
+            actor: "trainer".to_string(),
+            data: AuditEventData {
+                description: "spend".to_string(),
+                affected_data_subjects: Vec::new(),
+                data_categories: Vec::new(),
+                processing_purposes: vec!["ml_training".to_string()],
+                legal_basis: vec!["consent".to_string()],
+                technical_measures: vec!["differential_privacy".to_string()],
+                metadata: HashMap::new(),
+            },
+            privacy_context: PrivacyContext {
+                epsilon_budget: epsilon,
+                delta_budget: 1e-6,
+                privacy_mechanism: "dp_sgd".to_string(),
+                data_minimization: true,
+                purpose_limitation: true,
+                storage_limitation: true,
+            },
+            signature: None,
+            compliance_annotations: HashMap::new(),
+        }
+    }
+
+    fn system() -> EnhancedAuditSystem<f64> {
+        match EnhancedAuditSystem::<f64>::new(AuditConfig::default()) {
+            Ok(system) => system,
+            Err(err) => panic!("construction failed: {err}"),
+        }
+    }
+
+    #[test]
+    fn logging_events_drives_the_trail_the_budget_and_the_dashboard() {
+        let mut audit = system();
+        let ok = audit.allocate_privacy_budget("ml_training", 1.0, 1e-5, 0, None);
+        assert!(ok.is_ok());
+
+        for step in 0..3u64 {
+            let violations = match audit.log_event(event(&format!("e{step}"), 0.1, 100 + step)) {
+                Ok(count) => count,
+                Err(err) => panic!("log_event failed: {err}"),
+            };
+            assert_eq!(violations, 0, "a well-formed event violates nothing");
+        }
+
+        assert_eq!(audit.audit_trail().len(), 3);
+        assert!(audit.verify_audit_trail().is_ok());
+
+        let status = audit.get_privacy_budget_status();
+        let training = match status.get("ml_training") {
+            Some(allocation) => allocation,
+            None => panic!("the allocation must be reported"),
+        };
+        assert!((training.consumed_epsilon - 0.3).abs() < 1e-12);
+
+        let events_metric = audit
+            .monitoring_dashboard()
+            .metric(super::super::dashboard::METRIC_EVENTS)
+            .map(|metric| metric.current_value);
+        assert_eq!(events_metric, Some(3.0));
+    }
+
+    #[test]
+    fn every_logged_event_carries_a_verifiable_integrity_tag() {
+        let mut audit = system();
+        let ok = audit.log_event(event("e0", 0.1, 100));
+        assert!(ok.is_ok());
+        let stored = match audit.audit_trail().events().next() {
+            Some(stored) => stored.clone(),
+            None => panic!("the event must be stored"),
+        };
+        assert!(stored.signature.is_some());
+        assert!(audit.verify_event_tag(&stored));
+
+        let mut tampered = stored;
+        tampered.privacy_context.epsilon_budget = 9.0;
+        assert!(
+            !audit.verify_event_tag(&tampered),
+            "the tag must cover the privacy context"
+        );
+    }
+
+    #[test]
+    fn a_configuration_asking_for_at_rest_encryption_is_refused() {
+        let mut config = AuditConfig::default();
+        config.encrypt_audit_trail = true;
+        let outcome = EnhancedAuditSystem::<f64>::new(config);
+        let message = match outcome {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("an unimplementable guarantee must not be accepted"),
+        };
+        assert!(
+            message.contains("authenticated-encryption"),
+            "got: {message}"
+        );
+    }
+
+    #[test]
+    fn a_configuration_asking_for_external_audit_submission_is_refused() {
+        let mut config = AuditConfig::default();
+        config.external_audit_integration = true;
+        assert!(EnhancedAuditSystem::<f64>::new(config).is_err());
+    }
+
+    #[test]
+    fn a_configuration_asking_for_zero_knowledge_proofs_is_refused() {
+        let mut config = AuditConfig::default();
+        config.proof_requirements.zero_knowledge_proofs = true;
+        assert!(EnhancedAuditSystem::<f64>::new(config).is_err());
+    }
+
+    #[test]
+    fn a_zero_retention_period_is_refused() {
+        let mut config = AuditConfig::default();
+        config.retention_period_days = 0;
+        assert!(EnhancedAuditSystem::<f64>::new(config).is_err());
+    }
+
+    #[test]
+    fn disabling_formal_verification_errors_instead_of_passing_vacuously() {
+        // The old engine returned Ok(vec![]) with no rules registered, which
+        // reads as "verified". With verification disabled the call must fail.
+        let mut config = AuditConfig::default();
+        config.formal_verification = false;
+        let audit = match EnhancedAuditSystem::<f64>::new(config) {
+            Ok(audit) => audit,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        let data = Array1::from(vec![0.1, 0.2]);
+        let context = event("e", 0.1, 1).privacy_context;
+        assert!(audit.verify_system_properties(&data, &context).is_err());
+    }
+
+    #[test]
+    fn formal_verification_runs_real_rules_by_default() {
+        let audit = system();
+        let context = event("e", 0.1, 1).privacy_context;
+        let results = match audit.verify_system_properties(&Array1::from(vec![0.1, 0.2]), &context)
+        {
+            Ok(results) => results,
+            Err(err) => panic!("verification failed: {err}"),
+        };
+        assert!(
+            !results.is_empty(),
+            "the default rule set must not be empty"
+        );
+        assert!(results.iter().all(|result| result.verified));
+
+        let bad = Array1::from(vec![f64::NAN]);
+        assert!(audit.require_system_properties(&bad, &context).is_err());
+    }
+
+    #[test]
+    fn comprehensive_logging_off_skips_non_privacy_events() {
+        let mut config = AuditConfig::default();
+        config.comprehensive_logging = false;
+        let mut audit = match EnhancedAuditSystem::<f64>::new(config) {
+            Ok(audit) => audit,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        let mut chatter = event("noise", 0.0, 10);
+        chatter.event_type = AuditEventType::SystemLifecycle;
+        let ok = audit.log_event(chatter);
+        assert!(ok.is_ok());
+        assert_eq!(audit.audit_trail().len(), 0);
+        assert_eq!(audit.skipped_event_count(), 1);
+
+        let ok = audit.log_event(event("spend", 0.1, 11));
+        assert!(ok.is_ok());
+        assert_eq!(audit.audit_trail().len(), 1);
+    }
+
+    #[test]
+    fn a_violating_event_is_reported_to_the_caller() {
+        let mut audit = system();
+        let mut bad = event("bad", 0.1, 100);
+        bad.data.legal_basis.clear();
+        let violations = match audit.log_event(bad) {
+            Ok(count) => count,
+            Err(err) => panic!("log_event failed: {err}"),
+        };
+        assert!(violations > 0, "a missing legal basis is a GDPR violation");
+        assert_eq!(audit.compliance_monitor().violation_count(), violations);
+    }
+
+    #[test]
+    fn the_compliance_report_reflects_the_recorded_events() {
+        let mut audit = system();
+        let ok = audit.log_event(event(
+            "good",
+            0.1,
+            match super::super::proofs::unix_timestamp() {
+                Ok(now) => now,
+                Err(_) => 0,
+            },
+        ));
+        assert!(ok.is_ok());
+        let report = match audit
+            .generate_compliance_report(&[ComplianceFramework::GDPR], ReportingPeriod::Daily)
+        {
+            Ok(report) => report,
+            Err(err) => panic!("report failed: {err}"),
+        };
+        assert!(matches!(report.overall_status, ComplianceStatus::Compliant));
+        assert!(report.assessments.contains_key(&ComplianceFramework::GDPR));
+    }
+
+    #[test]
+    fn proofs_generated_by_the_system_verify() {
+        let audit = system();
+        let data = Array1::from(vec![0.5, -0.25]);
+        let proof = match audit.generate_integrity_proof(&data) {
+            Ok(proof) => proof,
+            Err(err) => panic!("proof failed: {err}"),
+        };
+        match audit.verify_proof(&proof, &data) {
+            Ok(true) => {}
+            Ok(false) => panic!("the proof must verify"),
+            Err(err) => panic!("verification failed: {err}"),
+        }
+        match audit.verify_proof(&proof, &Array1::from(vec![0.5, -0.26])) {
+            Ok(false) => {}
+            Ok(true) => panic!("the proof must not verify against other data"),
+            Err(err) => panic!("verification failed: {err}"),
+        }
+    }
+
+    #[test]
+    fn events_past_retention_are_listed_rather_than_silently_pruned() {
+        let mut config = AuditConfig::default();
+        config.retention_period_days = 1;
+        let mut audit = match EnhancedAuditSystem::<f64>::new(config) {
+            Ok(audit) => audit,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        let ok = audit.log_event(event("old", 0.1, 0));
+        assert!(ok.is_ok());
+        let ok = audit.log_event(event("new", 0.1, 200_000));
+        assert!(ok.is_ok());
+
+        let expired = audit.events_past_retention(200_000);
+        assert_eq!(expired, vec!["old".to_string()]);
+        // Pruning is not performed, so the chain still verifies.
+        assert!(audit.verify_audit_trail().is_ok());
+        assert_eq!(audit.audit_trail().len(), 2);
+    }
+
+    #[test]
+    fn queries_filter_by_actor_and_time() {
+        let mut audit = system();
+        let mut first = event("a", 0.1, 100);
+        first.actor = "alice".to_string();
+        let mut second = event("b", 0.1, 200);
+        second.actor = "bob".to_string();
+        let ok = audit.log_event(first);
+        assert!(ok.is_ok());
+        let ok = audit.log_event(second);
+        assert!(ok.is_ok());
+
+        let alice = audit.query_events(&AuditQueryCriteria {
+            actor: Some("alice".to_string()),
+            ..AuditQueryCriteria::any()
+        });
+        assert_eq!(alice.len(), 1);
+        let late = audit.query_events(&AuditQueryCriteria {
+            start_time: Some(150),
+            ..AuditQueryCriteria::any()
+        });
+        assert_eq!(late.len(), 1);
+        assert_eq!(late[0].id, "b");
     }
 }

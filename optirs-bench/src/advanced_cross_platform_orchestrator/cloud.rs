@@ -3,14 +3,11 @@
 // This module provides cloud provider abstractions and implementations
 // for AWS, Azure, GCP, GitHub Actions, and custom cloud providers.
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use std::collections::HashMap;
 
 use super::config::*;
 use super::types::*;
-
-// SciRS2 Integration - Use scirs2_core for random number generation
-use scirs2_core::random::{rng, Random};
 
 /// Cloud provider trait
 #[async_trait::async_trait]
@@ -60,49 +57,31 @@ impl AwsProvider {
 #[async_trait::async_trait]
 impl CloudProvider for AwsProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let instance_type = self
-            .config
-            .instance_types
-            .get(platform)
-            .cloned()
-            .unwrap_or_else(|| "t3.micro".to_string());
-
-        let instance_id = format!(
-            "i-{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_nanos() as u64
-        );
-        let instance = CloudInstance {
-            instance_id,
-            provider: "aws".to_string(),
-            instance_type,
-            platform: platform.clone(),
-            status: CloudInstanceStatus::Pending,
-            public_ip: Some("54.123.45.67".to_string()),
-            private_ip: Some("10.0.1.123".to_string()),
-            launch_time: std::time::SystemTime::now(),
-            cost_per_hour: 0.0464, // t3.micro pricing
-            config: HashMap::new(),
-        };
-
-        // Simulate AWS instance provisioning
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        Ok(instance)
+        // Real EC2 provisioning requires the AWS SDK plus valid credentials, neither
+        // of which is available in this build. Refuse to fabricate an instance with a
+        // made-up IP and status; return an explicit, honest error instead.
+        Err(OptimError::UnsupportedOperation(format!(
+            "AWS EC2 provisioning for platform {} in region {} is not available: it \
+             requires a configured AWS SDK and credentials, which are not present in \
+             this build",
+            platform, self.config.region
+        )))
     }
 
     async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
-        log::info!("Terminating AWS instance: {}", instance_id);
-        // Simulate instance termination
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        Ok(())
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot terminate AWS instance {} in region {}: a configured AWS SDK and \
+             credentials are not available in this build",
+            instance_id, self.config.region
+        )))
     }
 
     async fn get_instance_status(&self, instance_id: &str) -> Result<CloudInstanceStatus> {
-        // Simulate status check
-        Ok(CloudInstanceStatus::Running)
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot query AWS status for instance {} in region {}: a configured AWS \
+             SDK and credentials are not available in this build",
+            instance_id, self.config.region
+        )))
     }
 
     fn get_provider_name(&self) -> &str {
@@ -119,47 +98,30 @@ impl AzureProvider {
 #[async_trait::async_trait]
 impl CloudProvider for AzureProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let vm_size = self
-            .config
-            .vm_sizes
-            .get(platform)
-            .cloned()
-            .unwrap_or_else(|| "Standard_B1s".to_string());
-
-        let instance_id = format!(
-            "vm-{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_nanos() as u64
-        );
-        let instance = CloudInstance {
-            instance_id,
-            provider: "azure".to_string(),
-            instance_type: vm_size,
-            platform: platform.clone(),
-            status: CloudInstanceStatus::Pending,
-            public_ip: Some("20.123.45.67".to_string()),
-            private_ip: Some("10.1.0.123".to_string()),
-            launch_time: std::time::SystemTime::now(),
-            cost_per_hour: 0.0408, // Standard_B1s pricing
-            config: HashMap::new(),
-        };
-
-        // Simulate Azure VM provisioning
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-
-        Ok(instance)
+        // Real Azure VM provisioning requires the Azure SDK plus valid credentials;
+        // neither is available here. Do not fabricate a VM with a made-up IP/status.
+        Err(OptimError::UnsupportedOperation(format!(
+            "Azure VM provisioning for platform {} (subscription {}, resource group \
+             {}) is not available: it requires a configured Azure SDK and \
+             credentials, which are not present in this build",
+            platform, self.config.subscription_id, self.config.resource_group
+        )))
     }
 
     async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
-        log::info!("Terminating Azure VM: {}", instance_id);
-        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-        Ok(())
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot terminate Azure VM {} (subscription {}): a configured Azure SDK \
+             and credentials are not available in this build",
+            instance_id, self.config.subscription_id
+        )))
     }
 
     async fn get_instance_status(&self, instance_id: &str) -> Result<CloudInstanceStatus> {
-        Ok(CloudInstanceStatus::Running)
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot query Azure status for VM {} (subscription {}): a configured \
+             Azure SDK and credentials are not available in this build",
+            instance_id, self.config.subscription_id
+        )))
     }
 
     fn get_provider_name(&self) -> &str {
@@ -176,47 +138,30 @@ impl GcpProvider {
 #[async_trait::async_trait]
 impl CloudProvider for GcpProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let machine_type = self
-            .config
-            .machine_types
-            .get(platform)
-            .cloned()
-            .unwrap_or_else(|| "e2-micro".to_string());
-
-        let instance_id = format!(
-            "gcp-{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_nanos() as u64
-        );
-        let instance = CloudInstance {
-            instance_id,
-            provider: "gcp".to_string(),
-            instance_type: machine_type,
-            platform: platform.clone(),
-            status: CloudInstanceStatus::Pending,
-            public_ip: Some("35.123.45.67".to_string()),
-            private_ip: Some("10.2.0.123".to_string()),
-            launch_time: std::time::SystemTime::now(),
-            cost_per_hour: 0.0445, // e2-micro pricing
-            config: HashMap::new(),
-        };
-
-        // Simulate GCP instance provisioning
-        tokio::time::sleep(std::time::Duration::from_millis(110)).await;
-
-        Ok(instance)
+        // Real GCE provisioning requires the Google Cloud SDK plus valid
+        // credentials; neither is available here. Do not fabricate an instance.
+        Err(OptimError::UnsupportedOperation(format!(
+            "GCP Compute Engine provisioning for platform {} (project {}, zone {}) is \
+             not available: it requires a configured Google Cloud SDK and \
+             credentials, which are not present in this build",
+            platform, self.config.project_id, self.config.zone
+        )))
     }
 
     async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
-        log::info!("Terminating GCP instance: {}", instance_id);
-        tokio::time::sleep(std::time::Duration::from_millis(55)).await;
-        Ok(())
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot terminate GCP instance {} (project {}): a configured Google Cloud \
+             SDK and credentials are not available in this build",
+            instance_id, self.config.project_id
+        )))
     }
 
     async fn get_instance_status(&self, instance_id: &str) -> Result<CloudInstanceStatus> {
-        Ok(CloudInstanceStatus::Running)
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot query GCP status for instance {} (project {}): a configured \
+             Google Cloud SDK and credentials are not available in this build",
+            instance_id, self.config.project_id
+        )))
     }
 
     fn get_provider_name(&self) -> &str {
@@ -233,46 +178,33 @@ impl GitHubActionsProvider {
 #[async_trait::async_trait]
 impl CloudProvider for GitHubActionsProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let runner_type = match platform {
-            PlatformTarget::LinuxX86_64 => "ubuntu-latest",
-            PlatformTarget::WindowsX86_64 => "windows-latest",
-            PlatformTarget::MacOSX86_64 => "macos-latest",
-            _ => "ubuntu-latest",
-        };
-
-        let instance_id = format!(
-            "gh-{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_nanos() as u64
-        );
-        let instance = CloudInstance {
-            instance_id,
-            provider: "github".to_string(),
-            instance_type: runner_type.to_string(),
-            platform: platform.clone(),
-            status: CloudInstanceStatus::Pending,
-            public_ip: None, // GitHub Actions runners don't expose public IPs
-            private_ip: None,
-            launch_time: std::time::SystemTime::now(),
-            cost_per_hour: 0.0, // Free for public repos
-            config: HashMap::new(),
-        };
-
-        // Simulate GitHub Actions runner provisioning
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        Ok(instance)
+        // Dispatching a GitHub Actions runner requires the GitHub API plus a token,
+        // neither of which is available here. Do not fabricate a runner instance.
+        Err(OptimError::UnsupportedOperation(format!(
+            "GitHub Actions runner provisioning for platform {} on repository {} is \
+             not available: it requires the GitHub API and an access token, which are \
+             not present in this build",
+            platform, self.config.repository
+        )))
     }
 
     async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
-        log::info!("Terminating GitHub Actions runner: {}", instance_id);
-        Ok(()) // GitHub Actions handles cleanup automatically
+        // GitHub Actions ephemeral runners are torn down by the platform itself; there
+        // is genuinely nothing to terminate from here, so this is an honest no-op.
+        log::info!(
+            "GitHub Actions runner {} is managed and cleaned up by GitHub; no local \
+             termination required",
+            instance_id
+        );
+        Ok(())
     }
 
     async fn get_instance_status(&self, instance_id: &str) -> Result<CloudInstanceStatus> {
-        Ok(CloudInstanceStatus::Running)
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot query GitHub Actions runner status for {} on repository {}: the \
+             GitHub API and an access token are not available in this build",
+            instance_id, self.config.repository
+        )))
     }
 
     fn get_provider_name(&self) -> &str {
@@ -289,40 +221,30 @@ impl CustomProvider {
 #[async_trait::async_trait]
 impl CloudProvider for CustomProvider {
     async fn provision_instance(&self, platform: &PlatformTarget) -> Result<CloudInstance> {
-        let instance_id = format!(
-            "custom-{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_nanos() as u64
-        );
-        let instance = CloudInstance {
-            instance_id,
-            provider: self.config.name.clone(),
-            instance_type: "custom".to_string(),
-            platform: platform.clone(),
-            status: CloudInstanceStatus::Pending,
-            public_ip: Some("198.51.100.123".to_string()),
-            private_ip: Some("192.168.1.123".to_string()),
-            launch_time: std::time::SystemTime::now(),
-            cost_per_hour: 0.10, // Custom pricing
-            config: HashMap::new(),
-        };
-
-        // Simulate custom provider provisioning
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
-        Ok(instance)
+        // A custom provider would need a real client for its endpoint plus
+        // credentials; none is implemented here. Do not fabricate an instance.
+        Err(OptimError::UnsupportedOperation(format!(
+            "Custom provider '{}' provisioning for platform {} is not available: it \
+             requires a real client for endpoint '{}' and credentials, which are not \
+             implemented in this build",
+            self.config.name, platform, self.config.endpoint
+        )))
     }
 
     async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
-        log::info!("Terminating custom provider instance: {}", instance_id);
-        tokio::time::sleep(std::time::Duration::from_millis(75)).await;
-        Ok(())
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot terminate custom provider '{}' instance {}: a real client for \
+             endpoint '{}' is not implemented in this build",
+            self.config.name, instance_id, self.config.endpoint
+        )))
     }
 
     async fn get_instance_status(&self, instance_id: &str) -> Result<CloudInstanceStatus> {
-        Ok(CloudInstanceStatus::Running)
+        Err(OptimError::UnsupportedOperation(format!(
+            "Cannot query custom provider '{}' status for instance {}: a real client \
+             for endpoint '{}' is not implemented in this build",
+            self.config.name, instance_id, self.config.endpoint
+        )))
     }
 
     fn get_provider_name(&self) -> &str {
@@ -388,7 +310,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_aws_provider() {
+    async fn test_aws_provider_provisioning_is_honest_error() {
+        // Regression (F76): without a cloud SDK + credentials, provisioning must NOT
+        // fabricate an instance with a made-up IP and "Running" status. It must return
+        // an explicit error, and status/termination queries must be honest errors too.
         let config = AwsConfig {
             region: "us-east-1".to_string(),
             instance_types: HashMap::new(),
@@ -402,19 +327,28 @@ mod tests {
             max_spot_price: None,
         };
 
-        let provider = AwsProvider::new(config).expect("unwrap failed");
-        let instance = provider
-            .provision_instance(&PlatformTarget::LinuxX86_64)
-            .await
-            .expect("unwrap failed");
-
-        assert_eq!(instance.provider, "aws");
-        assert_eq!(instance.platform, PlatformTarget::LinuxX86_64);
-        assert!(instance.instance_id.starts_with("i-"));
+        let provider = AwsProvider::new(config).expect("provider construction succeeds");
+        assert!(
+            provider
+                .provision_instance(&PlatformTarget::LinuxX86_64)
+                .await
+                .is_err(),
+            "AWS provisioning must not fabricate an instance without a cloud SDK"
+        );
+        assert!(
+            provider
+                .get_instance_status("i-doesnotexist")
+                .await
+                .is_err(),
+            "AWS status query must be an honest error, not unconditional Running"
+        );
+        assert!(provider.terminate_instance("i-doesnotexist").await.is_err());
     }
 
     #[tokio::test]
-    async fn test_github_provider() {
+    async fn test_github_provider_provisioning_is_honest_error() {
+        // Regression (F76): the GitHub Actions runner path also fabricated an instance
+        // id and unconditional Running status; both must now be honest.
         let config = GitHubActionsConfig {
             repository: "test/repo".to_string(),
             workflow_templates: HashMap::new(),
@@ -423,14 +357,20 @@ mod tests {
             matrix_strategy: "matrix".to_string(),
         };
 
-        let provider = GitHubActionsProvider::new(config).expect("unwrap failed");
-        let instance = provider
-            .provision_instance(&PlatformTarget::LinuxX86_64)
-            .await
-            .expect("unwrap failed");
-
-        assert_eq!(instance.provider, "github");
-        assert_eq!(instance.cost_per_hour, 0.0);
-        assert!(instance.instance_id.starts_with("gh-"));
+        let provider = GitHubActionsProvider::new(config).expect("provider construction succeeds");
+        assert!(
+            provider
+                .provision_instance(&PlatformTarget::LinuxX86_64)
+                .await
+                .is_err(),
+            "GitHub Actions provisioning must not fabricate a runner"
+        );
+        assert!(
+            provider
+                .get_instance_status("gh-doesnotexist")
+                .await
+                .is_err(),
+            "GitHub Actions status query must be an honest error"
+        );
     }
 }

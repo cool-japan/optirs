@@ -84,6 +84,9 @@ pub struct PluginRegistration {
     pub factory: Box<dyn PluginFactoryWrapper>,
     /// Plugin metadata
     pub info: PluginInfo,
+    /// Capabilities declared by the factory at registration time, used to
+    /// enforce `PluginQuery::required_capabilities` in `matches_query`.
+    pub capabilities: PluginCapabilities,
     /// Registration timestamp
     pub registered_at: std::time::SystemTime,
     /// Plugin status
@@ -104,6 +107,17 @@ pub trait PluginFactoryWrapper: Debug + Send + Sync {
 
     /// Get factory information
     fn info(&self) -> PluginInfo;
+
+    /// Get the capabilities the produced optimizer declares. Backed by a
+    /// default so existing `PluginFactoryWrapper` implementors outside this
+    /// crate keep compiling; the default reports every capability absent
+    /// (`PluginCapabilities::default()` is all-`false`), which is the safe
+    /// direction to fail in for `PluginQuery::required_capabilities`
+    /// filtering -- an unimplemented override under-promises rather than
+    /// over-promising what the plugin can do.
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::default()
+    }
 
     /// Validate configuration
     fn validate_config(&self, config: &OptimizerConfig) -> Result<()>;
@@ -297,9 +311,11 @@ impl PluginRegistry {
             self.validate_plugin(&factory)?;
         }
 
+        let capabilities = factory.capabilities();
         let registration = PluginRegistration {
             factory: Box::new(factory),
             info: info.clone(),
+            capabilities,
             registered_at: std::time::SystemTime::now(),
             status: PluginStatus::Active,
             load_count: 0,
@@ -347,7 +363,18 @@ impl PluginRegistry {
     where
         A: Float + Debug + Send + Sync + 'static,
     {
-        let factories = read_lock(&self.factories);
+        // A single write guard covers status check, validation, creation,
+        // and the load_count/last_used update -- there is no read-then-
+        // reacquire-as-write gap for another thread to unregister the
+        // plugin (or race a concurrent `create_optimizer` call) in between.
+        // The previous version dropped its read lock and reacquired a write
+        // lock purely to bump the usage counters, so `factories.get_mut(name)`
+        // could silently find nothing if the plugin was unregistered in
+        // that window -- the statistics update for an otherwise-successful
+        // creation would vanish with no error. Third-party factory code
+        // still runs under `catch_unwind` (as before), so a panicking
+        // plugin cannot poison this exclusive lock either.
+        let mut factories = write_lock(&self.factories);
         let registration = factories
             .get(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -374,8 +401,8 @@ impl PluginRegistry {
         registration.factory.validate_config(&config)?;
 
         // Create optimizer based on type. Third-party factory code runs here
-        // while `factories` is still held read-locked below, so a panic is
-        // caught rather than allowed to poison the registry-wide lock.
+        // while `factories` is held write-locked, so a panic is caught
+        // rather than allowed to poison the registry-wide lock.
         let optimizer = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
             let opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 registration.factory.create_f32(config)
@@ -423,9 +450,9 @@ impl PluginRegistry {
             )));
         };
 
-        // Update usage statistics
-        drop(factories);
-        let mut factories = write_lock(&self.factories);
+        // Update usage statistics under the same write guard used to read
+        // and create -- no reacquisition, so this entry cannot have been
+        // removed since the lookup above.
         if let Some(registration) = factories.get_mut(name) {
             registration.load_count += 1;
             registration.last_used = Some(std::time::SystemTime::now());
@@ -455,7 +482,7 @@ impl PluginRegistry {
         let mut matching_plugins = Vec::new();
 
         for registration in factories.values() {
-            if self.matches_query(&registration.info, &query) {
+            if self.matches_query(&registration.info, &registration.capabilities, &query) {
                 matching_plugins.push(registration.info.clone());
             }
         }
@@ -563,7 +590,12 @@ impl PluginRegistry {
         Ok(())
     }
 
-    fn matches_query(&self, info: &PluginInfo, query: &PluginQuery) -> bool {
+    fn matches_query(
+        &self,
+        info: &PluginInfo,
+        capabilities: &PluginCapabilities,
+        query: &PluginQuery,
+    ) -> bool {
         // Check name pattern
         if let Some(ref pattern) = query.name_pattern {
             if !info.name.contains(pattern) {
@@ -604,6 +636,19 @@ impl PluginRegistry {
             }
         }
 
+        // Check required capabilities: every named capability must be
+        // declared `true` by the plugin, or it is excluded from the
+        // results. Previously this field was declared on `PluginQuery` and
+        // never consulted at all, so a caller searching for e.g.
+        // `["gpu_support"]` got back plugins that do not support GPUs.
+        if !query
+            .required_capabilities
+            .iter()
+            .all(|cap| capabilities.has_capability(cap))
+        {
+            return false;
+        }
+
         true
     }
 
@@ -627,16 +672,48 @@ impl PluginRegistry {
         true
     }
 
+    /// Recursively count candidate plugin files under `path` (same
+    /// extension/name convention as `PluginLoader::is_plugin_file`: shared
+    /// libraries, or a `plugin.toml` manifest).
+    ///
+    /// This crate has no dynamic-loading backend (see the module-level note
+    /// in `plugin::loader` on why `dlopen`/`libloading` is not wired up),
+    /// so a discovered file cannot actually be turned into a registered
+    /// `PluginRegistration` here -- previously this returned a hardcoded
+    /// `Ok(0)` regardless of what was on disk, which reads identically to
+    /// "no plugins present" and "discovery is unimplemented". Returning the
+    /// real count at least tells a caller the truth about what discovery
+    /// *found*, even though loading them still requires
+    /// `PluginRegistry::register_plugin` with a statically compiled
+    /// factory.
     fn discover_plugins_in_directory(&self, path: &Path) -> Result<usize> {
-        // In a real implementation, this would scan for plugin files
-        // and attempt to load them dynamically
-        Ok(0)
+        let mut count = 0;
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                count += self.discover_plugins_in_directory(&entry_path)?;
+                continue;
+            }
+            let is_candidate = match entry_path.extension().and_then(|e| e.to_str()) {
+                Some("so") | Some("dylib") | Some("dll") => true,
+                _ => entry_path.file_name().and_then(|n| n.to_str()) == Some("plugin.toml"),
+            };
+            if is_candidate {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
-    fn register_builtin_plugins(&mut self) {
-        // Register built-in plugins would go here
-        // For now, this is a placeholder
-    }
+    /// Register any statically-compiled built-in plugins. There are
+    /// currently none shipped with this crate -- optimizers ship as their
+    /// own `OptimizerPlugin` implementations registered directly by the
+    /// caller via `register_plugin`, not as a fixed built-in set -- so this
+    /// legitimately has nothing to do. Kept as an explicit extension point
+    /// (and call site in `global()`) rather than removed, so adding a
+    /// future built-in plugin is a one-line change here.
+    fn register_builtin_plugins(&mut self) {}
 }
 
 impl PluginCache {
@@ -744,5 +821,434 @@ mod tests {
         assert_eq!(query.name_pattern, Some("adam".to_string()));
         assert_eq!(query.category, Some(PluginCategory::FirstOrder));
         assert_eq!(query.limit, Some(10));
+    }
+
+    #[test]
+    fn discover_plugins_counts_real_files_on_disk() {
+        // F69 regression: `discover_plugins_in_directory` previously
+        // returned a hardcoded `Ok(0)` regardless of directory contents,
+        // making a directory full of plugin files indistinguishable from
+        // an empty one.
+        let root = std::env::temp_dir().join(format!(
+            "optirs_registry_discover_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).expect("create temp dir tree");
+
+        std::fs::write(root.join("plugin.toml"), "[plugin]\nname = \"x\"").expect("write");
+        std::fs::write(root.join("libfoo.so"), b"not a real library").expect("write");
+        std::fs::write(root.join("readme.txt"), b"not a plugin").expect("write");
+        std::fs::write(nested.join("bar.dylib"), b"not a real library").expect("write");
+
+        let config = RegistryConfig {
+            auto_discovery: true,
+            ..RegistryConfig::default()
+        };
+        let registry = PluginRegistry::new(config);
+        registry.add_search_path(&root);
+
+        let discovered = registry
+            .discover_plugins()
+            .expect("discovery should succeed");
+        assert_eq!(
+            discovered, 3,
+            "expected plugin.toml + libfoo.so + nested/bar.dylib, not readme.txt"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn discover_plugins_is_a_noop_when_auto_discovery_disabled() {
+        let root = std::env::temp_dir().join(format!(
+            "optirs_registry_discover_disabled_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        std::fs::write(root.join("plugin.toml"), "[plugin]\nname = \"x\"").expect("write");
+
+        let config = RegistryConfig {
+            auto_discovery: false,
+            ..RegistryConfig::default()
+        };
+        let registry = PluginRegistry::new(config);
+        registry.add_search_path(&root);
+
+        assert_eq!(registry.discover_plugins().expect("should succeed"), 0);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+// Regression tests for the static plugin path: register -> create -> step,
+// the panic-at-the-trust-boundary guard (a plugin panic must surface as an
+// error, never poison the process-wide registry), and the lock-poisoning
+// recovery helpers themselves.
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    use scirs2_core::ndarray::Array1;
+
+    /// Minimal SGD-style optimizer used as a well-behaved test plugin.
+    #[derive(Debug, Clone)]
+    struct TestOptimizer<A: Float> {
+        lr: A,
+        initialized: bool,
+    }
+
+    impl<A: Float + Debug + Send + Sync + 'static> OptimizerPlugin<A> for TestOptimizer<A> {
+        fn step(&mut self, params: &Array1<A>, gradients: &Array1<A>) -> Result<Array1<A>> {
+            // Element-wise to avoid a `ScalarOperand` bound on `A`.
+            let out: Array1<A> = params
+                .iter()
+                .zip(gradients.iter())
+                .map(|(&p, &g)| p - g * self.lr)
+                .collect();
+            Ok(out)
+        }
+        fn name(&self) -> &str {
+            "test-sgd"
+        }
+        fn version(&self) -> &str {
+            "1.0.0"
+        }
+        fn plugin_info(&self) -> PluginInfo {
+            PluginInfo {
+                name: "test-sgd".to_string(),
+                version: "1.0.0".to_string(),
+                ..PluginInfo::default()
+            }
+        }
+        fn capabilities(&self) -> PluginCapabilities {
+            PluginCapabilities::default()
+        }
+        fn initialize(&mut self, _paramshape: &[usize]) -> Result<()> {
+            self.initialized = true;
+            Ok(())
+        }
+        fn reset(&mut self) -> Result<()> {
+            self.initialized = false;
+            Ok(())
+        }
+        fn get_config(&self) -> OptimizerConfig {
+            OptimizerConfig::default()
+        }
+        fn set_config(&mut self, _config: OptimizerConfig) -> Result<()> {
+            Ok(())
+        }
+        fn get_state(&self) -> Result<OptimizerState> {
+            Ok(OptimizerState::default())
+        }
+        fn set_state(&mut self, _state: OptimizerState) -> Result<()> {
+            Ok(())
+        }
+        fn clone_plugin(&self) -> Box<dyn OptimizerPlugin<A>> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestFactory;
+
+    impl PluginFactoryWrapper for TestFactory {
+        fn create_f32(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f32>>> {
+            Ok(Box::new(TestOptimizer::<f32> {
+                lr: 0.1,
+                initialized: false,
+            }))
+        }
+        fn create_f64(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f64>>> {
+            Ok(Box::new(TestOptimizer::<f64> {
+                lr: 0.1,
+                initialized: false,
+            }))
+        }
+        fn info(&self) -> PluginInfo {
+            PluginInfo {
+                name: "test-sgd".to_string(),
+                version: "1.0.0".to_string(),
+                ..PluginInfo::default()
+            }
+        }
+        fn validate_config(&self, _config: &OptimizerConfig) -> Result<()> {
+            Ok(())
+        }
+        fn default_config(&self) -> OptimizerConfig {
+            OptimizerConfig::default()
+        }
+        fn config_schema(&self) -> ConfigSchema {
+            ConfigSchema {
+                fields: HashMap::new(),
+                required_fields: Vec::new(),
+                version: "1.0.0".to_string(),
+            }
+        }
+        fn supports_type(&self, _datatype: &DataType) -> bool {
+            true
+        }
+    }
+
+    /// A factory whose creation always panics -- stands in for third-party
+    /// plugin code that blows up while a registry lock is held.
+    #[derive(Debug)]
+    struct PanicFactory;
+
+    impl PluginFactoryWrapper for PanicFactory {
+        fn create_f32(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f32>>> {
+            panic!("intentional panic inside factory create_f32");
+        }
+        fn create_f64(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f64>>> {
+            panic!("intentional panic inside factory create_f64");
+        }
+        fn info(&self) -> PluginInfo {
+            PluginInfo {
+                name: "panic-plugin".to_string(),
+                version: "1.0.0".to_string(),
+                ..PluginInfo::default()
+            }
+        }
+        fn validate_config(&self, _config: &OptimizerConfig) -> Result<()> {
+            Ok(())
+        }
+        fn default_config(&self) -> OptimizerConfig {
+            OptimizerConfig::default()
+        }
+        fn config_schema(&self) -> ConfigSchema {
+            ConfigSchema {
+                fields: HashMap::new(),
+                required_fields: Vec::new(),
+                version: "1.0.0".to_string(),
+            }
+        }
+        fn supports_type(&self, _datatype: &DataType) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn static_plugin_roundtrip_creates_and_steps() {
+        let registry = PluginRegistry::new(RegistryConfig::default());
+        registry
+            .register_plugin(TestFactory)
+            .expect("registration should succeed");
+
+        // f64 path.
+        let mut opt = registry
+            .create_optimizer::<f64>("test-sgd", OptimizerConfig::default())
+            .expect("f64 optimizer should be creatable");
+        opt.initialize(&[3]).expect("initialize");
+        let params = Array1::from(vec![1.0_f64, 2.0, 3.0]);
+        let grads = Array1::from(vec![0.5_f64, 0.5, 0.5]);
+        let updated = opt.step(&params, &grads).expect("step should succeed");
+        // lr = 0.1, so each coordinate moves by 0.05.
+        assert!((updated[0] - 0.95).abs() < 1e-9);
+        assert!((updated[1] - 1.95).abs() < 1e-9);
+        assert!((updated[2] - 2.95).abs() < 1e-9);
+
+        // f32 path exercises the other `Any` downcast branch.
+        let opt32 = registry
+            .create_optimizer::<f32>("test-sgd", OptimizerConfig::default())
+            .expect("f32 optimizer should be creatable");
+        assert_eq!(opt32.name(), "test-sgd");
+    }
+
+    #[test]
+    fn create_optimizer_reliably_updates_usage_statistics() {
+        // F71 regression: `create_optimizer` previously dropped its read
+        // lock and reacquired a *new* write lock purely to bump
+        // `load_count`/`last_used`, leaving a window in which another
+        // thread could unregister the plugin -- the statistics update
+        // would then silently vanish (`factories.get_mut` finds nothing)
+        // even though the just-created optimizer was handed back as `Ok`.
+        // The fix folds the update into the single write guard already
+        // held for status-check/validate/create, so this can no longer
+        // race. This test cannot easily force the race itself, but it
+        // pins the now-guaranteed behaviour: `load_count` increments
+        // exactly once per successful `create_optimizer` call, every time.
+        let registry = PluginRegistry::new(RegistryConfig::default());
+        registry
+            .register_plugin(TestFactory)
+            .expect("registration should succeed");
+
+        for expected_count in 1..=5usize {
+            let _ = registry
+                .create_optimizer::<f64>("test-sgd", OptimizerConfig::default())
+                .expect("optimizer should be creatable");
+            let factories = read_lock(&registry.factories);
+            let registration = factories.get("test-sgd").expect("plugin must still exist");
+            assert_eq!(
+                registration.load_count, expected_count,
+                "load_count must increment exactly once per successful create_optimizer call"
+            );
+            assert!(
+                registration.last_used.is_some(),
+                "last_used must be set after a successful create_optimizer call"
+            );
+        }
+    }
+
+    /// A second factory identical to `TestFactory` except it declares
+    /// `gpu_support: true`, used to prove `required_capabilities`
+    /// filtering actually discriminates between plugins rather than
+    /// silently matching everything (F72).
+    #[derive(Debug)]
+    struct GpuTestFactory;
+
+    impl PluginFactoryWrapper for GpuTestFactory {
+        fn create_f32(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f32>>> {
+            Ok(Box::new(TestOptimizer::<f32> {
+                lr: 0.1,
+                initialized: false,
+            }))
+        }
+        fn create_f64(&self, _config: OptimizerConfig) -> Result<Box<dyn OptimizerPlugin<f64>>> {
+            Ok(Box::new(TestOptimizer::<f64> {
+                lr: 0.1,
+                initialized: false,
+            }))
+        }
+        fn info(&self) -> PluginInfo {
+            PluginInfo {
+                name: "gpu-sgd".to_string(),
+                version: "1.0.0".to_string(),
+                ..PluginInfo::default()
+            }
+        }
+        fn capabilities(&self) -> PluginCapabilities {
+            PluginCapabilities {
+                gpu_support: true,
+                ..PluginCapabilities::default()
+            }
+        }
+        fn validate_config(&self, _config: &OptimizerConfig) -> Result<()> {
+            Ok(())
+        }
+        fn default_config(&self) -> OptimizerConfig {
+            OptimizerConfig::default()
+        }
+        fn config_schema(&self) -> ConfigSchema {
+            ConfigSchema {
+                fields: HashMap::new(),
+                required_fields: Vec::new(),
+                version: "1.0.0".to_string(),
+            }
+        }
+        fn supports_type(&self, _datatype: &DataType) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn search_plugins_filters_by_required_capabilities() {
+        // F72 regression: `PluginQuery.required_capabilities` was declared
+        // and never consulted by `matches_query`, so a search filtering on
+        // it silently returned every plugin regardless of what it
+        // supported.
+        let registry = PluginRegistry::new(RegistryConfig::default());
+        registry
+            .register_plugin(TestFactory) // gpu_support: false (default)
+            .expect("registration should succeed");
+        registry
+            .register_plugin(GpuTestFactory) // gpu_support: true
+            .expect("registration should succeed");
+
+        let all = registry.search_plugins(PluginQuery::default());
+        assert_eq!(all.total_count, 2, "sanity: both plugins are registered");
+
+        let gpu_only = registry.search_plugins(PluginQuery {
+            required_capabilities: vec!["gpu_support".to_string()],
+            ..PluginQuery::default()
+        });
+        assert_eq!(
+            gpu_only.total_count, 1,
+            "only the GPU-capable plugin should match"
+        );
+        assert_eq!(gpu_only.plugins[0].name, "gpu-sgd");
+
+        // An unknown capability name must exclude everything rather than
+        // matching everything -- `has_capability` returns `false` for
+        // names it does not recognise.
+        let unknown = registry.search_plugins(PluginQuery {
+            required_capabilities: vec!["quantum_teleportation".to_string()],
+            ..PluginQuery::default()
+        });
+        assert_eq!(unknown.total_count, 0);
+    }
+
+    #[test]
+    fn panicking_factory_is_caught_and_registry_survives() {
+        // Disable creation-based validation so registration itself does not
+        // trip the panic; we want the panic to happen inside `create_optimizer`
+        // while the registry read lock is held.
+        let config = RegistryConfig {
+            validate_on_registration: false,
+            ..RegistryConfig::default()
+        };
+        let registry = PluginRegistry::new(config);
+        registry
+            .register_plugin(PanicFactory)
+            .expect("registration should succeed");
+
+        // Silence the default panic hook for the duration of the caught panic
+        // so the test output stays clean.
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = registry.create_optimizer::<f64>("panic-plugin", OptimizerConfig::default());
+        std::panic::set_hook(prev_hook);
+
+        assert!(
+            result.is_err(),
+            "a panicking factory must surface as Err, not unwind out of create_optimizer"
+        );
+
+        // The registry must remain fully usable: the lock was not poisoned
+        // (catch_unwind) or, if it were, the recovery helpers heal it.
+        registry
+            .register_plugin(TestFactory)
+            .expect("registry must still accept registrations after a caught panic");
+        let opt = registry
+            .create_optimizer::<f64>("test-sgd", OptimizerConfig::default())
+            .expect("registry must still create optimizers after a caught panic");
+        assert_eq!(opt.name(), "test-sgd");
+    }
+
+    #[test]
+    fn lock_helpers_recover_from_poisoning() {
+        use std::sync::{Arc, Mutex, RwLock};
+
+        // Poison an RwLock by panicking while holding its write guard.
+        let rw = Arc::new(RwLock::new(5_i32));
+        let rw_clone = Arc::clone(&rw);
+        let _ = std::thread::spawn(move || {
+            let _guard = rw_clone.write().unwrap_or_else(|e| e.into_inner());
+            panic!("poison the rwlock");
+        })
+        .join();
+        assert!(rw.read().is_err(), "precondition: the RwLock is poisoned");
+        // Helpers hand back a usable guard rather than panicking.
+        assert_eq!(*read_lock(&rw), 5);
+        *write_lock(&rw) = 7;
+        assert_eq!(*read_lock(&rw), 7);
+
+        // Poison a Mutex the same way.
+        let mx = Arc::new(Mutex::new(1_i32));
+        let mx_clone = Arc::clone(&mx);
+        let _ = std::thread::spawn(move || {
+            let _guard = mx_clone.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("poison the mutex");
+        })
+        .join();
+        assert!(mx.lock().is_err(), "precondition: the Mutex is poisoned");
+        *mutex_lock(&mx) += 10;
+        assert_eq!(*mutex_lock(&mx), 11);
     }
 }

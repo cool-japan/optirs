@@ -837,14 +837,42 @@ impl ReportGenerator {
             TrendDirection::Unknown
         };
 
+        let values: Vec<f64> = data_points.iter().map(|p| p.value).collect();
+        let (trend_strength, statistical_significance) = Self::compute_trend_stats(&values);
+
         Ok(PerformanceTrendAnalysis {
             metric_name: "Execution Time".to_string(),
             trend_direction,
-            trend_strength: 0.7,            // Simplified
-            statistical_significance: 0.95, // Simplified
+            trend_strength,
+            statistical_significance,
             data_points,
             summary: "Execution time trend analysis based on recent test runs".to_string(),
         })
+    }
+
+    /// Compute `(trend_strength, statistical_significance)` from a metric
+    /// series.
+    ///
+    /// `trend_strength` is the absolute Pearson correlation of the values
+    /// against their sample index (scale-invariant, in `[0, 1]`);
+    /// `statistical_significance` is `1 - p` from the Mann-Kendall trend test
+    /// (also scale-invariant). Both are `0.0` when there is insufficient data.
+    /// These replace previously hardcoded constants.
+    fn compute_trend_stats(values: &[f64]) -> (f64, f64) {
+        let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+        if finite.len() < 2 {
+            return (0.0, 0.0);
+        }
+        let indices: Vec<f64> = (0..finite.len()).map(|i| i as f64).collect();
+        let strength =
+            crate::regression_tester::distributions::pearson_correlation(&indices, &finite)
+                .map(|r| r.abs().clamp(0.0, 1.0))
+                .unwrap_or(0.0);
+        let significance = match crate::regression_tester::distributions::mann_kendall(&finite) {
+            Some(result) if result.p_value.is_finite() => (1.0 - result.p_value).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+        (strength, significance)
     }
 
     /// Analyze memory usage trend
@@ -863,11 +891,29 @@ impl ReportGenerator {
             });
         }
 
+        let values: Vec<f64> = data_points.iter().map(|p| p.value).collect();
+        let trend_direction = if values.len() >= 2 {
+            let half = values.len() / 2;
+            let first_half_avg = values.iter().take(half).sum::<f64>() / half as f64;
+            let second_half_avg =
+                values.iter().skip(half).sum::<f64>() / (values.len() - half) as f64;
+            if second_half_avg > first_half_avg * 1.1 {
+                TrendDirection::Degrading
+            } else if second_half_avg < first_half_avg * 0.9 {
+                TrendDirection::Improving
+            } else {
+                TrendDirection::Stable
+            }
+        } else {
+            TrendDirection::Unknown
+        };
+        let (trend_strength, statistical_significance) = Self::compute_trend_stats(&values);
+
         Ok(PerformanceTrendAnalysis {
             metric_name: "Memory Usage".to_string(),
-            trend_direction: TrendDirection::Stable, // Simplified
-            trend_strength: 0.5,
-            statistical_significance: 0.85,
+            trend_direction,
+            trend_strength,
+            statistical_significance,
             data_points,
             summary: "Memory usage trend analysis based on recent test runs".to_string(),
         })

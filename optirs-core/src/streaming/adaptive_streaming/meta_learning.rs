@@ -5,6 +5,7 @@
 // experience replay, transfer learning, and adaptive strategy selection.
 
 use super::config::*;
+use super::meta_bandit::{arm_index_for, arm_table, state_features, BanditArm, FeatureScaler};
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 use super::performance::{PerformanceSnapshot, PerformanceTracker};
 
@@ -40,6 +41,17 @@ pub struct MetaLearner<A: Float + Send + Sync> {
     statistics: MetaLearningStatistics<A>,
     /// Learning rate adaptation
     learning_rate_adapter: LearningRateAdapter<A>,
+    /// Instant the current episode began (real clock for episode duration).
+    episode_start: Instant,
+    /// First reward recorded in the current episode.
+    episode_initial_performance: Option<A>,
+    /// Number of experiences recorded in the current episode.
+    episode_adaptation_count: usize,
+    /// Externally supplied resource-state signal, set via
+    /// [`MetaLearner::update_context_signals`]. Empty means "not reported".
+    context_resource_state: Vec<A>,
+    /// Externally supplied drift-indicator signal.
+    context_drift_indicators: Vec<A>,
 }
 
 /// Type alias for experience replay functionality
@@ -221,6 +233,13 @@ pub struct MetaModel<A: Float + Send + Sync> {
     performance_metrics: ModelPerformanceMetrics<A>,
     /// Feature importance
     feature_importance: Vec<A>,
+    /// Contextual-bandit arms: the concrete adaptations the model can
+    /// recommend, each with its own online linear reward model.
+    arms: Vec<BanditArm<A>>,
+    /// Number of training steps applied.
+    training_steps: usize,
+    /// Running feature statistics used to standardise the state vector.
+    feature_scaler: FeatureScaler<A>,
 }
 
 /// Meta-model parameters
@@ -646,7 +665,24 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
             transfer_learning,
             statistics,
             learning_rate_adapter,
+            episode_start: Instant::now(),
+            episode_initial_performance: None,
+            episode_adaptation_count: 0,
+            context_resource_state: Vec::new(),
+            context_drift_indicators: Vec::new(),
         })
+    }
+
+    /// Supplies the resource and drift signals the meta-learner cannot observe
+    /// for itself.
+    ///
+    /// ML5: `extract_meta_state` used to fill `resource_state` with the
+    /// constants `[0.5, 0.3]` and `drift_indicators` with `[0.1]`, so the
+    /// bandit's context vector was two thirds fabricated and identical on every
+    /// call. The owning optimizer knows the real values and reports them here.
+    pub fn update_context_signals(&mut self, resource_state: Vec<A>, drift_indicators: Vec<A>) {
+        self.context_resource_state = resource_state;
+        self.context_drift_indicators = drift_indicators;
     }
 
     /// Updates the meta-learner with new experience
@@ -671,6 +707,12 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         // Add to experience buffer
         self.experience_buffer.add_experience(experience)?;
 
+        // Real per-episode bookkeeping.
+        if self.episode_initial_performance.is_none() {
+            self.episode_initial_performance = Some(reward);
+        }
+        self.episode_adaptation_count = self.episode_adaptation_count.saturating_add(1);
+
         // Update statistics
         self.statistics.total_experiences += 1;
 
@@ -691,15 +733,25 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         self.statistics.total_experiences as u64 + 1
     }
 
-    /// Creates episode context for experience
+    /// Creates episode context for experience.
+    ///
+    /// ML5: `duration`, `initial_performance` and `adaptation_count` were the
+    /// fabricated constants `60s`, `0.5` and `1`, and `start_time` was stamped
+    /// as "now" for every experience so the duration could never be anything
+    /// else. All four are now measured from real episode state: the episode's
+    /// actual start `Instant`, the first reward recorded in the episode, and the
+    /// number of experiences the episode has accumulated.
     fn create_episode_context(&self, reward: A) -> Result<EpisodeContext<A>, String> {
-        let outcome = if reward > A::from(0.8).expect("unwrap failed") {
+        let convert = |value: f64| -> Result<A, String> {
+            A::from(value).ok_or_else(|| format!("{value} is not representable"))
+        };
+        let outcome = if reward > convert(0.8)? {
             EpisodeOutcome::Success
-        } else if reward > A::from(0.5).expect("unwrap failed") {
+        } else if reward > convert(0.5)? {
             EpisodeOutcome::PartialSuccess
-        } else if reward > A::from(0.2).expect("unwrap failed") {
+        } else if reward > convert(0.2)? {
             EpisodeOutcome::Neutral
-        } else if reward > A::from(-0.2).expect("unwrap failed") {
+        } else if reward > convert(-0.2)? {
             EpisodeOutcome::Failure
         } else {
             EpisodeOutcome::CriticalFailure
@@ -707,11 +759,16 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
 
         Ok(EpisodeContext {
             episode_id: self.statistics.training_episodes as u64,
-            start_time: Instant::now(),
-            duration: Duration::from_secs(60), // Simplified
-            initial_performance: A::from(0.5).expect("unwrap failed"), // Simplified
+            start_time: self.episode_start,
+            // Real elapsed time since the current episode began.
+            duration: self.episode_start.elapsed(),
+            // The first reward recorded in this episode; for the first
+            // experience of an episode that is this reward itself.
+            initial_performance: self.episode_initial_performance.unwrap_or(reward),
             final_performance: reward,
-            adaptation_count: 1, // Simplified
+            // Real count of experiences accumulated in this episode, including
+            // the one being created.
+            adaptation_count: self.episode_adaptation_count + 1,
             outcome,
         })
     }
@@ -741,8 +798,36 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
         self.strategy_selector
             .update_from_experiences(&training_batch)?;
 
-        // Update statistics
+        // Update statistics from the batch that was actually trained on, so the
+        // reward figures are measurements rather than initial zeros.
         self.statistics.training_episodes += 1;
+        if !training_batch.is_empty() {
+            let count = A::from(training_batch.len())
+                .ok_or_else(|| "batch size is not representable".to_string())?;
+            let total = training_batch
+                .iter()
+                .fold(A::zero(), |acc, experience| acc + experience.reward);
+            let mean = total / count;
+            self.statistics.avg_reward_per_episode = mean;
+            for experience in &training_batch {
+                if experience.reward > self.statistics.best_episode_reward {
+                    self.statistics.best_episode_reward = experience.reward;
+                }
+            }
+            // Learning progress is the model's measured prediction accuracy —
+            // how well it has learned to anticipate reward.
+            self.statistics.learning_progress =
+                self.meta_model.performance_metrics.prediction_accuracy;
+            self.statistics.strategy_selection_accuracy =
+                self.meta_model.performance_metrics.decision_quality;
+            self.statistics.replay_effectiveness = mean;
+        }
+
+        // A training round closes the current episode: start a fresh one so the
+        // next episode's duration and adaptation count are measured from here.
+        self.episode_start = Instant::now();
+        self.episode_initial_performance = None;
+        self.episode_adaptation_count = 0;
 
         Ok(())
     }
@@ -787,14 +872,11 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
             vec![A::zero(), A::zero(), A::zero()]
         };
 
-        // Extract resource state (simplified)
-        let resource_state = vec![
-            A::from(0.5).expect("unwrap failed"),
-            A::from(0.3).expect("unwrap failed"),
-        ];
-
-        // Extract drift indicators (simplified)
-        let drift_indicators = vec![A::from(0.1).expect("unwrap failed")];
+        // Resource and drift signals as reported by the owning optimizer. An
+        // empty vector honestly means "not reported" rather than a stand-in
+        // value that the bandit would learn a weight for.
+        let resource_state = self.context_resource_state.clone();
+        let drift_indicators = self.context_drift_indicators.clone();
 
         Ok(MetaState {
             performance_metrics,
@@ -988,7 +1070,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
             MetaModelComplexity::Low => MetaModelParameters {
                 weights: vec![vec![A::from(0.1).expect("unwrap failed"); 10]; 2],
                 biases: vec![A::zero(); 10],
-                learning_rate: A::from(0.01).expect("unwrap failed"),
+                // Normalised-LMS step size (stable for 0 < mu < 2), not an
+                // unnormalised SGD rate.
+                learning_rate: A::from(0.5).unwrap_or_else(A::one),
                 regularization: RegularizationParams {
                     l1_lambda: A::from(0.001).expect("unwrap failed"),
                     l2_lambda: A::from(0.001).expect("unwrap failed"),
@@ -1006,7 +1090,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
             _ => MetaModelParameters {
                 weights: vec![vec![A::from(0.1).expect("unwrap failed"); 50]; 3],
                 biases: vec![A::zero(); 50],
-                learning_rate: A::from(0.001).expect("unwrap failed"),
+                // A larger model gets a more conservative NLMS step size.
+                learning_rate: A::from(0.3).unwrap_or_else(A::one),
                 regularization: RegularizationParams {
                     l1_lambda: A::from(0.0001).expect("unwrap failed"),
                     l2_lambda: A::from(0.0001).expect("unwrap failed"),
@@ -1023,61 +1108,249 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MetaModel<A> {
             },
         };
 
+        let arms: Vec<BanditArm<A>> = arm_table()
+            .into_iter()
+            .map(|(prefix, adaptation_type, magnitude)| {
+                BanditArm::new(format!("{prefix}:{magnitude}"), adaptation_type, magnitude)
+            })
+            .collect();
+
         Ok(Self {
-            model_type: MetaModelType::NeuralNetwork,
+            // The model is a linear contextual bandit, so name it honestly
+            // instead of claiming to be a neural network.
+            model_type: MetaModelType::LinearRegression,
             parameters,
             training_history: VecDeque::with_capacity(1000),
             performance_metrics: ModelPerformanceMetrics {
-                prediction_accuracy: A::from(0.5).expect("unwrap failed"),
-                decision_quality: A::from(0.5).expect("unwrap failed"),
-                adaptation_effectiveness: A::from(0.5).expect("unwrap failed"),
-                transfer_success_rate: A::from(0.5).expect("unwrap failed"),
-                generalization_performance: A::from(0.5).expect("unwrap failed"),
+                // All five metrics start at zero: nothing has been measured yet,
+                // and a 0.5 seed would read as "50% accurate" before the model
+                // has seen a single experience.
+                prediction_accuracy: A::zero(),
+                decision_quality: A::zero(),
+                adaptation_effectiveness: A::zero(),
+                transfer_success_rate: A::zero(),
+                generalization_performance: A::zero(),
             },
             feature_importance: Vec::new(),
+            arms,
+            training_steps: 0,
+            feature_scaler: FeatureScaler::default(),
         })
     }
 
+    /// Trains the contextual bandit on a batch of observed experiences.
+    ///
+    /// ML2: this used to compute the batch's mean reward, nudge the learning
+    /// rate by ±1%, and assign that mean reward directly to
+    /// `prediction_accuracy` — no model parameter was ever touched, so nothing
+    /// was learned and "accuracy" was a relabelled reward.
+    ///
+    /// Each experience now performs a real stochastic-gradient step on the
+    /// squared error between the arm's predicted reward and the observed
+    /// reward, and `prediction_accuracy` is measured from the *pre-update*
+    /// prediction error — a genuine held-out-by-one-step accuracy.
     fn train_on_batch(&mut self, batch: &[MetaExperience<A>]) -> Result<(), String> {
         if batch.is_empty() {
             return Ok(());
         }
 
-        // Simplified training - in practice would implement proper neural network training
-        let avg_reward = batch.iter().map(|e| e.reward).sum::<A>()
-            / A::from(batch.len()).expect("unwrap failed");
+        let training_started = Instant::now();
 
-        // Update learning rate based on performance
-        if avg_reward > A::from(0.5).expect("unwrap failed") {
-            self.parameters.learning_rate =
-                self.parameters.learning_rate * A::from(1.01).expect("unwrap failed");
-        } else {
-            self.parameters.learning_rate =
-                self.parameters.learning_rate * A::from(0.99).expect("unwrap failed");
+        // Fold the batch into the feature scaler before training on it, so every
+        // experience in the batch is standardised against the same statistics.
+        for experience in batch {
+            self.feature_scaler
+                .observe(&state_features(&experience.state));
         }
 
-        // Update performance metrics
-        self.performance_metrics.prediction_accuracy = avg_reward;
+        let mut squared_error_total = A::zero();
+        let mut scale_total = A::zero();
+        let mut trained = 0usize;
+
+        for experience in batch {
+            let features = self
+                .feature_scaler
+                .standardize(&state_features(&experience.state));
+            let arm = match arm_index_for(&experience.action) {
+                Some(index) => index,
+                // An experience whose action does not correspond to any arm the
+                // model can take carries no gradient for it.
+                None => continue,
+            };
+
+            let predicted = self.arms[arm].predict(&features);
+            let error = predicted - experience.reward;
+            squared_error_total = squared_error_total + error * error;
+            scale_total = scale_total + experience.reward.abs();
+
+            let learning_rate = self.parameters.learning_rate;
+            let l2 = self.parameters.regularization.l2_lambda;
+            self.arms[arm].sgd_step(&features, error, learning_rate, l2);
+            self.arms[arm].observe(experience.reward);
+            trained += 1;
+        }
+
+        if trained == 0 {
+            return Ok(());
+        }
+
+        let count =
+            A::from(trained).ok_or_else(|| format!("batch size {trained} is not representable"))?;
+        let rmse = (squared_error_total / count).sqrt();
+        let mean_scale = (scale_total / count)
+            .max(A::from(1e-8).ok_or_else(|| "1e-8 is not representable".to_string())?);
+
+        // Accuracy as one minus the normalised prediction error, clamped into
+        // [0, 1]. This is a real measurement of how well the model predicts
+        // reward, not the reward itself.
+        let accuracy = (A::one() - (rmse / mean_scale).min(A::one())).max(A::zero());
+        self.performance_metrics.prediction_accuracy = accuracy;
+
+        // Decision quality: the fraction of experiences whose reward beat the
+        // running average, which is what "did the chosen action help" means
+        // with the data available here.
+        let average_reward = self.average_observed_reward();
+        let better = batch
+            .iter()
+            .filter(|experience| experience.reward > average_reward)
+            .count();
+        if let Some(fraction) = A::from(better as f64 / batch.len() as f64) {
+            self.performance_metrics.decision_quality = fraction;
+        }
+
+        // Track training history so the field is real state, not dead weight.
+        self.training_steps += 1;
+        if self.training_history.len() >= 1000 {
+            self.training_history.pop_front();
+        }
+        self.training_history.push_back(TrainingEpisode {
+            episode_id: self.training_steps as u64,
+            training_loss: rmse,
+            // No held-out split exists in a streaming setting, so validation and
+            // training figures are the same measurement; they are not two
+            // independently-invented numbers.
+            validation_loss: rmse,
+            training_accuracy: accuracy,
+            validation_accuracy: accuracy,
+            duration: training_started.elapsed(),
+            timestamp: Instant::now(),
+        });
+
+        // Real learning-rate schedule: anneal towards a floor once the model is
+        // already accurate (fine-tuning), hold otherwise. The floor matters —
+        // an unbounded decay would eventually freeze learning entirely, which is
+        // indistinguishable from not learning at all.
+        if accuracy > A::from(0.9).unwrap_or_else(A::one) {
+            let decay = A::from(0.99).unwrap_or_else(A::one);
+            let floor = A::from(NLMS_STEP_FLOOR).unwrap_or_else(A::zero);
+            self.parameters.learning_rate = (self.parameters.learning_rate * decay).max(floor);
+        }
+
+        // Feature importance is the mean absolute weight across arms — a real,
+        // if simple, attribution.
+        self.feature_importance = self.mean_absolute_weights();
 
         Ok(())
     }
 
+    /// Selects an action for the given state using the learned bandit.
+    ///
+    /// ML1: this used to return the constants `[0.1, -0.05]` with
+    /// `learning_rate_change: 0.01` and `buffer_size_change: 5.0` for every
+    /// state — `state` was accepted and never read, so the meta-learner
+    /// recommended the identical adaptation forever.
+    ///
+    /// The action is now the arm with the highest predicted reward for this
+    /// state's feature vector, so a different state genuinely yields a
+    /// different recommendation.
     fn predict_action(&self, state: &MetaState<A>) -> Result<MetaAction<A>, String> {
-        // Simplified prediction - in practice would use trained neural network
-        let action = MetaAction {
-            adaptation_magnitudes: vec![
-                A::from(0.1).expect("unwrap failed"),
-                A::from(-0.05).expect("unwrap failed"),
-            ],
-            adaptation_types: vec![AdaptationType::LearningRate, AdaptationType::BufferSize],
-            learning_rate_change: A::from(0.01).expect("unwrap failed"),
-            buffer_size_change: A::from(5.0).expect("unwrap failed"),
-            timestamp: Instant::now(),
+        let features = self.feature_scaler.standardize(&state_features(state));
+        if self.arms.is_empty() {
+            return Err("meta-model has no action arms".to_string());
+        }
+
+        let mut best_index = 0usize;
+        let mut best_value = self.arms[0].predict(&features);
+        for (index, arm) in self.arms.iter().enumerate().skip(1) {
+            let value = arm.predict(&features);
+            if value > best_value {
+                best_value = value;
+                best_index = index;
+            }
+        }
+
+        let arm = &self.arms[best_index];
+        let magnitude = arm
+            .magnitude()
+            .ok_or_else(|| "arm magnitude is not representable".to_string())?;
+
+        let (learning_rate_change, buffer_size_change) = match arm.adaptation_type {
+            AdaptationType::LearningRate => (magnitude, A::zero()),
+            AdaptationType::BufferSize => (A::zero(), magnitude),
+            _ => (A::zero(), A::zero()),
         };
 
-        Ok(action)
+        Ok(MetaAction {
+            adaptation_magnitudes: vec![magnitude],
+            adaptation_types: vec![arm.adaptation_type.clone()],
+            learning_rate_change,
+            buffer_size_change,
+            timestamp: Instant::now(),
+        })
+    }
+
+    /// Mean reward observed across every arm, or zero before any observation.
+    fn average_observed_reward(&self) -> A {
+        let total_pulls: usize = self.arms.iter().map(|arm| arm.pulls).sum();
+        if total_pulls == 0 {
+            return A::zero();
+        }
+        let Some(count) = A::from(total_pulls) else {
+            return A::zero();
+        };
+        let total: A = self
+            .arms
+            .iter()
+            .fold(A::zero(), |acc, arm| acc + arm.reward_total);
+        total / count
+    }
+
+    /// Mean absolute weight per feature across all arms.
+    fn mean_absolute_weights(&self) -> Vec<A> {
+        let width = self
+            .arms
+            .iter()
+            .map(|arm| arm.weights.len())
+            .max()
+            .unwrap_or(0);
+        let Some(arm_count) = A::from(self.arms.len().max(1)) else {
+            return Vec::new();
+        };
+        (0..width)
+            .map(|index| {
+                let total = self.arms.iter().fold(A::zero(), |acc, arm| {
+                    acc + arm
+                        .weights
+                        .get(index)
+                        .map(|w| w.abs())
+                        .unwrap_or_else(A::zero)
+                });
+                total / arm_count
+            })
+            .collect()
+    }
+
+    /// Number of times each arm has been trained on, keyed by arm label.
+    pub fn arm_pull_counts(&self) -> Vec<(String, usize)> {
+        self.arms
+            .iter()
+            .map(|arm| (arm.label.clone(), arm.pulls))
+            .collect()
     }
 }
+
+// The contextual-bandit arms, the feature standardiser and the state/action
+// encoding live in `super::meta_bandit`.
 
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector<A> {
     fn new() -> Self {
@@ -1101,8 +1374,10 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
                 name: "aggressive".to_string(),
                 parameters: HashMap::new(),
                 strategy_type: StrategyType::Aggressive,
+                // Prior expected improvement, used only until the arm has been
+                // used at least once and has a measured average.
+                expected_outcomes: vec![A::from(0.2).unwrap_or_else(A::zero)],
                 conditions: Vec::new(),
-                expected_outcomes: vec![A::from(0.2).expect("unwrap failed")],
             },
         );
 
@@ -1121,25 +1396,354 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StrategySelector
         }
     }
 
-    fn select_strategy(&self, _state: &MetaState<A>) -> Result<AdaptationStrategy<A>, String> {
-        // Simple strategy selection - in practice would be more sophisticated
-        if let Some(strategy) = self.strategies.get("balanced") {
-            Ok(strategy.clone())
-        } else if let Some(strategy) = self.strategies.values().next() {
-            Ok(strategy.clone())
-        } else {
-            Err("No strategies available".to_string())
+    /// Selects a strategy for the given state using the configured policy.
+    ///
+    /// ML3: this used to look up the literal key `"balanced"`, which the
+    /// constructor never inserted — so the lookup always missed and the fallback
+    /// `self.strategies.values().next()` returned an arbitrary `HashMap` entry,
+    /// which is not even deterministic across runs. The `_state` argument,
+    /// `selection_policy` and `exploration_params` were all unread.
+    ///
+    /// Selection is now genuinely policy-driven over the measured per-strategy
+    /// performance, and the ordering is deterministic (ties broken by name)
+    /// rather than dependent on hash iteration order.
+    fn select_strategy(&self, state: &MetaState<A>) -> Result<AdaptationStrategy<A>, String> {
+        if self.strategies.is_empty() {
+            return Err("No strategies available".to_string());
         }
+
+        // Deterministic candidate order.
+        let mut names: Vec<&String> = self.strategies.keys().collect();
+        names.sort();
+
+        // Value of each arm: its measured average improvement, or the strategy's
+        // declared expected outcome while it has never been used (which is the
+        // only prior available).
+        let scored: Vec<(&String, A, usize)> = names
+            .iter()
+            .map(|name| {
+                let (value, usage) = match self.strategy_performance.get(*name) {
+                    Some(performance) if performance.usage_count > 0 => {
+                        (performance.avg_improvement, performance.usage_count)
+                    }
+                    _ => {
+                        let prior = self
+                            .strategies
+                            .get(*name)
+                            .and_then(|strategy| strategy.expected_outcomes.first().copied())
+                            .unwrap_or_else(A::zero);
+                        (prior, 0)
+                    }
+                };
+                (*name, value, usage)
+            })
+            .collect();
+
+        let chosen = match &self.selection_policy {
+            SelectionPolicy::EpsilonGreedy { epsilon } => {
+                let effective_epsilon = self
+                    .exploration_params
+                    .exploration_rate
+                    .to_f64()
+                    .unwrap_or(*epsilon)
+                    .max(
+                        self.exploration_params
+                            .min_exploration_rate
+                            .to_f64()
+                            .unwrap_or(0.0),
+                    )
+                    .clamp(0.0, 1.0);
+                if thread_rng().gen_range(0.0..1.0) < effective_epsilon {
+                    // Explore: prefer the least-used arm, which is the
+                    // information-maximising choice.
+                    scored
+                        .iter()
+                        .min_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(b.0)))
+                        .map(|entry| entry.0)
+                } else {
+                    best_by_value(&scored)
+                }
+            }
+            SelectionPolicy::UCB {
+                confidence_parameter,
+            } => {
+                let total_usage: usize = scored.iter().map(|entry| entry.2).sum();
+                let total = (total_usage.max(1) as f64).ln();
+                let c = *confidence_parameter;
+                scored
+                    .iter()
+                    .max_by(|a, b| {
+                        let score_a = ucb_score(a.1, a.2, total, c);
+                        let score_b = ucb_score(b.1, b.2, total, c);
+                        score_a
+                            .partial_cmp(&score_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| b.0.cmp(a.0))
+                    })
+                    .map(|entry| entry.0)
+            }
+            SelectionPolicy::Softmax { temperature } => {
+                let temperature = temperature.abs().max(1e-6);
+                let values: Vec<f64> = scored
+                    .iter()
+                    .map(|entry| entry.1.to_f64().unwrap_or(0.0) / temperature)
+                    .collect();
+                let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let exponentials: Vec<f64> =
+                    values.iter().map(|value| (value - max).exp()).collect();
+                let total: f64 = exponentials.iter().sum();
+                if total <= 0.0 {
+                    best_by_value(&scored)
+                } else {
+                    let mut draw = thread_rng().gen_range(0.0..total);
+                    let mut selected = scored.last().map(|entry| entry.0);
+                    for (entry, weight) in scored.iter().zip(exponentials.iter()) {
+                        draw -= *weight;
+                        if draw <= 0.0 {
+                            selected = Some(entry.0);
+                            break;
+                        }
+                    }
+                    selected
+                }
+            }
+            SelectionPolicy::ThompsonSampling | SelectionPolicy::MultiArmedBandit => {
+                // Sample each arm's value perturbed by a scale that shrinks as
+                // the arm accumulates evidence — the defining behaviour of
+                // posterior sampling.
+                scored
+                    .iter()
+                    .map(|entry| {
+                        let scale = 1.0 / ((entry.2 as f64) + 1.0).sqrt();
+                        let noise = thread_rng().gen_range(-1.0..1.0) * scale;
+                        (entry.0, entry.1.to_f64().unwrap_or(0.0) + noise)
+                    })
+                    .max_by(|a, b| {
+                        a.1.partial_cmp(&b.1)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| b.0.cmp(a.0))
+                    })
+                    .map(|entry| entry.0)
+            }
+            SelectionPolicy::ContextAware => {
+                // Score arms by their measured performance *in this state's
+                // context bucket*, falling back to the global value.
+                let context_key = context_key_for(state);
+                scored
+                    .iter()
+                    .max_by(|a, b| {
+                        let value_a = self
+                            .strategy_performance
+                            .get(a.0)
+                            .and_then(|p| p.context_performance.get(&context_key).copied())
+                            .unwrap_or(a.1);
+                        let value_b = self
+                            .strategy_performance
+                            .get(b.0)
+                            .and_then(|p| p.context_performance.get(&context_key).copied())
+                            .unwrap_or(b.1);
+                        value_a
+                            .partial_cmp(&value_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| b.0.cmp(a.0))
+                    })
+                    .map(|entry| entry.0)
+            }
+        };
+
+        let name = chosen.ok_or_else(|| "strategy selection produced no candidate".to_string())?;
+        self.strategies
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("selected strategy '{name}' is not registered"))
     }
 
-    fn update_from_experiences(
-        &mut self,
-        _experiences: &[MetaExperience<A>],
-    ) -> Result<(), String> {
-        // Update strategy performance based on experiences
+    /// Updates per-strategy reward statistics from observed experiences.
+    ///
+    /// ML4: this was an unconditional `Ok(())`, so `strategy_performance` stayed
+    /// permanently empty and every policy above would have had nothing to choose
+    /// on. Each experience now moves the usage count, running average
+    /// improvement, best/worst outcomes, success rate, per-context performance
+    /// and trend of the strategy that produced it, and decays the exploration
+    /// rate towards its floor.
+    fn update_from_experiences(&mut self, experiences: &[MetaExperience<A>]) -> Result<(), String> {
+        if experiences.is_empty() {
+            return Ok(());
+        }
+
+        let success_threshold =
+            A::from(0.5).ok_or_else(|| "0.5 is not representable".to_string())?;
+
+        for experience in experiences {
+            let strategy_name = strategy_name_for(&experience.action);
+            if !self.strategies.contains_key(&strategy_name) {
+                continue;
+            }
+            let context_key = context_key_for(&experience.state);
+            let reward = experience.reward;
+
+            let entry = self
+                .strategy_performance
+                .entry(strategy_name)
+                .or_insert_with(|| StrategyPerformance {
+                    usage_count: 0,
+                    success_rate: A::zero(),
+                    avg_improvement: A::zero(),
+                    best_improvement: reward,
+                    worst_outcome: reward,
+                    recent_trend: TrendDirection::Stable,
+                    context_performance: HashMap::new(),
+                });
+
+            let previous_average = entry.avg_improvement;
+            entry.usage_count = entry.usage_count.saturating_add(1);
+            let count = A::from(entry.usage_count)
+                .ok_or_else(|| "usage count is not representable".to_string())?;
+
+            // Incremental mean.
+            entry.avg_improvement = previous_average + (reward - previous_average) / count;
+
+            // Incremental success rate over the same counter.
+            let success = if reward > success_threshold {
+                A::one()
+            } else {
+                A::zero()
+            };
+            entry.success_rate = entry.success_rate + (success - entry.success_rate) / count;
+
+            if reward > entry.best_improvement {
+                entry.best_improvement = reward;
+            }
+            if reward < entry.worst_outcome {
+                entry.worst_outcome = reward;
+            }
+
+            entry.recent_trend = if entry.avg_improvement > previous_average {
+                TrendDirection::Improving
+            } else if entry.avg_improvement < previous_average {
+                TrendDirection::Declining
+            } else {
+                TrendDirection::Stable
+            };
+
+            // Per-context running mean.
+            let context_entry = entry
+                .context_performance
+                .entry(context_key)
+                .or_insert_with(|| reward);
+            let smoothing = A::from(0.2).unwrap_or_else(A::one);
+            *context_entry = smoothing * reward + (A::one() - smoothing) * *context_entry;
+        }
+
+        // Real exploration decay: each learning round moves the rate towards its
+        // configured floor.
+        let decayed =
+            self.exploration_params.exploration_rate * self.exploration_params.exploration_decay;
+        self.exploration_params.exploration_rate =
+            decayed.max(self.exploration_params.min_exploration_rate);
+
         Ok(())
     }
+
+    /// Measured performance of a named strategy, if it has been used.
+    pub fn strategy_performance_for(&self, name: &str) -> Option<&StrategyPerformance<A>> {
+        self.strategy_performance.get(name)
+    }
+
+    /// Current exploration rate.
+    pub fn exploration_rate(&self) -> A {
+        self.exploration_params.exploration_rate
+    }
 }
+
+/// Picks the highest-valued arm, breaking ties by name for determinism.
+fn best_by_value<'a, A: Float + Send + Sync>(
+    scored: &'a [(&'a String, A, usize)],
+) -> Option<&'a String> {
+    scored
+        .iter()
+        .max_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.0.cmp(a.0))
+        })
+        .map(|entry| entry.0)
+}
+
+/// UCB1 score: mean value plus an exploration bonus that shrinks as the arm is
+/// used more.
+fn ucb_score<A: Float + Send + Sync>(
+    value: A,
+    usage: usize,
+    log_total_usage: f64,
+    confidence: f64,
+) -> f64 {
+    let mean = value.to_f64().unwrap_or(0.0);
+    if usage == 0 {
+        // An untried arm has an unbounded bonus, so it is always tried first.
+        return f64::INFINITY;
+    }
+    mean + confidence * (log_total_usage / usage as f64).sqrt()
+}
+
+/// Maps a meta-state onto a coarse context bucket key.
+///
+/// The key is derived from the sign and magnitude band of the loss and the drift
+/// level, so states that call for the same kind of response share a bucket.
+fn context_key_for<A: Float + Send + Sync>(state: &MetaState<A>) -> String {
+    let loss = state
+        .performance_metrics
+        .first()
+        .and_then(|value| value.to_f64())
+        .unwrap_or(0.0);
+    let drift = state
+        .drift_indicators
+        .first()
+        .and_then(|value| value.to_f64())
+        .unwrap_or(0.0);
+    let loss_band = if loss <= 0.1 {
+        "loss:low"
+    } else if loss <= 1.0 {
+        "loss:mid"
+    } else {
+        "loss:high"
+    };
+    let drift_band = if drift < 0.5 {
+        "drift:none"
+    } else if drift < 1.5 {
+        "drift:warning"
+    } else {
+        "drift:active"
+    };
+    format!("{loss_band}|{drift_band}")
+}
+
+/// Maps an action onto the strategy whose aggressiveness it matches.
+///
+/// This is how an observed experience is attributed back to a strategy: the
+/// magnitude of the adaptation that was applied tells us whether a conservative
+/// or aggressive strategy produced it.
+fn strategy_name_for<A: Float + Send + Sync>(action: &MetaAction<A>) -> String {
+    let magnitude = action
+        .adaptation_magnitudes
+        .first()
+        .and_then(|value| value.to_f64())
+        .map(f64::abs)
+        .unwrap_or(0.0);
+    if magnitude >= AGGRESSIVE_MAGNITUDE_THRESHOLD {
+        "aggressive".to_string()
+    } else {
+        "conservative".to_string()
+    }
+}
+
+/// Magnitude at or above which an adaptation is attributed to the aggressive
+/// strategy.
+const AGGRESSIVE_MAGNITUDE_THRESHOLD: f64 = 0.15;
+
+/// Lower bound on the meta-model's normalised-LMS step size, so the accuracy
+/// annealing schedule cannot decay learning to a standstill.
+const NLMS_STEP_FLOOR: f64 = 0.01;
 
 impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ContextBasedSelector<A> {
     fn new() -> Self {
@@ -1212,3 +1816,7 @@ pub struct MetaLearningDiagnostics {
     pub strategy_count: usize,
     pub transfer_success_rate: f64,
 }
+
+#[cfg(test)]
+#[path = "meta_learning_regression_tests.rs"]
+mod regression_tests;

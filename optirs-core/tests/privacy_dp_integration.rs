@@ -330,13 +330,20 @@ fn two_optimizers_produce_different_noise() {
 #[test]
 fn renyi_accountant_golden_values_for_the_canonical_dp_sgd_setup() {
     // Canonical DP-SGD configuration: sigma = 1.0, q = 0.01, T = 1000,
-    // delta = 1e-5. Published implementations (Opacus / TensorFlow Privacy,
-    // RDP accountant over a comparable order grid) report a single-digit
-    // epsilon of roughly 2-3 for this setting. The band below is deliberately
-    // generous but excludes both historical defects: the old moments
-    // accountant in privacy/mod.rs reported 0.41 (a ~2x under-report, the
-    // dangerous direction) and the copy in moment_accountant.rs reported
-    // 177.2 (a ~65x over-report).
+    // delta = 1e-5.
+    //
+    // This is the *shape* check; the exact value is pinned by
+    // `GOLDEN_EPSILON_SCHEDULE` above (2.107753075452), whose provenance is
+    // documented there. No published Opacus/TF-Privacy figure exists for this
+    // particular configuration -- the external anchor is the TF-Privacy
+    // tutorial reproduction in
+    // `privacy::renyi_accountant::tests::
+    //  test_kernel_reproduces_the_published_tensorflow_privacy_reference`.
+    //
+    // The band below is deliberately generous but excludes both historical
+    // defects: the old moments accountant in privacy/mod.rs reported 0.41
+    // (a ~2x under-report, the dangerous direction) and the copy in
+    // moment_accountant.rs reported 177.2 (a ~65x over-report).
     let mut accountant = RenyiAccountant::with_default_orders();
     match accountant.add_subsampled_gaussian(1.0, 0.01, 1000) {
         Ok(()) => {}
@@ -369,6 +376,250 @@ fn renyi_accountant_golden_values_for_the_canonical_dp_sgd_setup() {
         quiet < conversion.epsilon,
         "more noise must cost less privacy: {quiet} vs {}",
         conversion.epsilon
+    );
+}
+
+/// Golden `(steps, epsilon, optimal Renyi order)` schedule for the canonical
+/// DP-SGD configuration `sigma = 1.0`, `q = 0.01`, `delta = 1e-5`.
+///
+/// # Provenance
+///
+/// These are **not** copied from an Opacus or TensorFlow Privacy run: they pin
+/// *this* crate's configuration (exact integer-order sampled-Gaussian RDP,
+/// fractional orders bounded by `ceil`, the `DEFAULT_ALPHAS` grid, and the
+/// Canonne-Kamath-Steinke RDP-to-DP conversion).
+///
+/// What makes them golden rather than self-referential is the external anchor
+/// in `privacy::renyi_accountant::tests::
+/// test_kernel_reproduces_the_published_tensorflow_privacy_reference`: with the
+/// classic Mironov conversion that TF Privacy uses, the same kernel reproduces
+/// the published tutorial value `eps = 1.18` (1.1799007 at alpha = 17) for
+/// `N = 60000, B = 250, sigma = 1.3, 15 epochs`. The kernel is additionally
+/// pinned against Simpson quadrature of the Renyi divergence integral and
+/// against the closed-form Gaussian RDP `alpha / (2 sigma^2)` at `q -> 1`.
+///
+/// Composition and conversion then determine the values below exactly.
+const GOLDEN_EPSILON_SCHEDULE: [(usize, f64); 4] = [
+    (1, 0.956_281_055_679),
+    (10, 1.064_496_195_732),
+    (100, 1.224_845_779_636),
+    (1000, 2.107_753_075_452),
+];
+
+/// Configuration realising `sigma = 1.0`, `q = 100/10_000 = 0.01`.
+fn golden_config() -> DifferentialPrivacyConfig {
+    DifferentialPrivacyConfig {
+        target_epsilon: 5.0,
+        target_delta: 1e-5,
+        noise_multiplier: 1.0,
+        l2_norm_clip: 1.0,
+        batch_size: 100,
+        dataset_size: 10_000,
+        max_steps: 1000,
+        accounting_method: AccountingMethod::RenyiDP,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn thousand_end_to_end_dp_steps_reproduce_the_golden_epsilon_schedule() {
+    // The end-to-end regression for F114/F115: `dp_step` used to fail on the
+    // very first call (delta_remaining = target - target = 0) or succeed
+    // exactly once and then report the budget as exhausted. This test drives
+    // 1000 real steps through the public per-example entry point and pins the
+    // epsilon reported after 1, 10, 100 and 1000 of them.
+    let mut optimizer = match DPSGDOptimizer::<_, f64, Ix1>::new(SGD::new(0.05), golden_config()) {
+        Ok(optimizer) => optimizer,
+        Err(err) => panic!("failed to construct DP-SGD: {err}"),
+    };
+
+    let params = Array1::<f64>::zeros(8);
+    // 100 per-example gradients => batch size 100 => q = 100 / 10_000 = 0.01.
+    let batch = batch_of(100, 8, 0.02);
+
+    let mut checkpoint = 0usize;
+    let mut previous_epsilon = 0.0;
+
+    for step in 1..=1000usize {
+        match optimizer.dp_step_per_example(&params, &batch) {
+            Ok(updated) => assert!(
+                updated.iter().all(|value| value.is_finite()),
+                "step {step} produced non-finite parameters"
+            ),
+            Err(err) => panic!("step {step} failed: {err}"),
+        }
+
+        let epsilon = match optimizer.consumed_epsilon() {
+            Ok(value) => value,
+            Err(err) => panic!("accounting failed at step {step}: {err}"),
+        };
+        assert!(
+            epsilon > previous_epsilon,
+            "step {step}: epsilon must increase strictly ({previous_epsilon} -> {epsilon})"
+        );
+        previous_epsilon = epsilon;
+
+        if checkpoint < GOLDEN_EPSILON_SCHEDULE.len()
+            && GOLDEN_EPSILON_SCHEDULE[checkpoint].0 == step
+        {
+            let expected = GOLDEN_EPSILON_SCHEDULE[checkpoint].1;
+            assert!(
+                (epsilon - expected).abs() < 1e-9,
+                "after {step} steps epsilon = {epsilon}, golden value {expected}"
+            );
+            checkpoint += 1;
+        }
+    }
+
+    assert_eq!(
+        checkpoint,
+        GOLDEN_EPSILON_SCHEDULE.len(),
+        "every golden checkpoint must have been reached"
+    );
+
+    // A short-circuit must not be able to masquerade as success.
+    let budget = match optimizer.get_privacy_budget() {
+        Ok(budget) => budget,
+        Err(err) => panic!("budget query failed: {err}"),
+    };
+    assert_eq!(budget.steps_taken, 1000);
+    assert_eq!(budget.delta_consumed, 0.0);
+    assert_eq!(budget.delta_remaining, 1e-5);
+
+    let segments = optimizer.accounting_segments();
+    assert_eq!(segments.len(), 1, "constant parameters must be one segment");
+    assert_eq!(segments[0].noise_multiplier, 1.0);
+    assert_eq!(segments[0].sampling_probability, 0.01);
+    assert_eq!(segments[0].steps, 1000);
+
+    // max_steps = 1000: the 1001st step must be refused, not silently taken.
+    match optimizer.dp_step_per_example(&params, &batch) {
+        Err(OptimError::PrivacyBudgetExhausted { .. }) => {}
+        other => panic!("the step cap must be enforced, got {other:?}"),
+    }
+}
+
+#[test]
+fn per_step_composition_matches_one_shot_composition_and_both_optimizers_agree() {
+    // Driving 100 real steps must cost exactly what composing 100 steps in one
+    // call costs -- an accountant that rebuilt itself per step (F128) or
+    // ignored the batch size (F129) would diverge here.
+    let steps = 100usize;
+    let golden = GOLDEN_EPSILON_SCHEDULE[2].1;
+    assert_eq!(GOLDEN_EPSILON_SCHEDULE[2].0, steps);
+
+    let mut reference = match build_accountant(AccountingMethod::RenyiDP, 1.0, 1e-5, 100, 10_000) {
+        Ok(accountant) => accountant,
+        Err(err) => panic!("failed to build the reference accountant: {err}"),
+    };
+    match reference.compose_subsampled_gaussian(1.0, 0.01, steps) {
+        Ok(()) => {}
+        Err(err) => panic!("composition failed: {err}"),
+    }
+    let (eps_reference, delta_reference) = match reference.privacy_spent(1e-5) {
+        Ok(value) => value,
+        Err(err) => panic!("conversion failed: {err}"),
+    };
+    assert_eq!(delta_reference, 1e-5);
+    assert!(
+        (eps_reference - golden).abs() < 1e-9,
+        "one-shot composition {eps_reference} must equal the golden value {golden}"
+    );
+
+    let params = Array1::<f64>::zeros(8);
+    let batch = batch_of(100, 8, 0.02);
+
+    let mut dp_sgd = match DPSGDOptimizer::<_, f64, Ix1>::new(SGD::new(0.05), golden_config()) {
+        Ok(optimizer) => optimizer,
+        Err(err) => panic!("failed to construct DP-SGD: {err}"),
+    };
+    let mut wrapper = build_dp_optimizer(golden_config());
+
+    for step in 1..=steps {
+        match dp_sgd.dp_step_per_example(&params, &batch) {
+            Ok(_) => {}
+            Err(err) => panic!("DPSGDOptimizer step {step} failed: {err}"),
+        }
+        match wrapper.dp_step_per_example(&params, &batch) {
+            Ok(_) => {}
+            Err(err) => panic!("DifferentiallyPrivateOptimizer step {step} failed: {err}"),
+        }
+    }
+
+    let eps_dp_sgd = match dp_sgd.consumed_epsilon() {
+        Ok(value) => value,
+        Err(err) => panic!("accounting failed: {err}"),
+    };
+    let eps_wrapper = match wrapper.consumed_epsilon() {
+        Ok(value) => value,
+        Err(err) => panic!("accounting failed: {err}"),
+    };
+
+    assert!(
+        (eps_dp_sgd - eps_reference).abs() < 1e-12,
+        "per-step composition {eps_dp_sgd} must equal one-shot {eps_reference}"
+    );
+    assert!(
+        (eps_wrapper - eps_reference).abs() < 1e-12,
+        "the two DP optimizers must report the same spend: {eps_wrapper} vs {eps_reference}"
+    );
+}
+
+#[test]
+fn aggregate_dp_step_is_accounted_without_subsampling_amplification() {
+    // `dp_step` clips an already aggregated gradient, so it only supports
+    // batch-level adjacency. It must therefore be charged at q = 1 -- charging
+    // it at q = batch/dataset would claim amplification the mechanism does not
+    // have.
+    let config = DifferentialPrivacyConfig {
+        target_epsilon: 1e6,
+        acknowledge_aggregate_clipping: true,
+        ..golden_config()
+    };
+    let mut optimizer = match DPSGDOptimizer::<_, f64, Ix1>::new(SGD::new(0.05), config) {
+        Ok(optimizer) => optimizer,
+        Err(err) => panic!("failed to construct DP-SGD: {err}"),
+    };
+
+    let params = Array1::<f64>::zeros(4);
+    let mut gradients = Array1::from_elem(4, 0.5);
+    for step in 1..=10usize {
+        match optimizer.dp_step(&params, &mut gradients, 100) {
+            Ok(_) => {}
+            Err(err) => panic!("aggregate step {step} failed: {err}"),
+        }
+    }
+
+    let segments = optimizer.accounting_segments();
+    assert_eq!(segments.len(), 1);
+    assert_eq!(
+        segments[0].sampling_probability, 1.0,
+        "aggregate clipping must not claim subsampling amplification"
+    );
+    assert_eq!(segments[0].steps, 10);
+
+    // With q = 1 the sampled Gaussian *is* the Gaussian mechanism, whose RDP
+    // has the closed form alpha / (2 sigma^2) per step. For sigma = 1 and
+    // T = 10 the CKS conversion over DEFAULT_ALPHAS therefore evaluates
+    //
+    //     min_alpha [ 10 * alpha / 2 + ln((alpha - 1)/alpha)
+    //                 - (ln(1e-5) + ln(alpha)) / (alpha - 1) ]
+    //
+    // which is 19.0535975316... attained at alpha = 2.5. Pinning it two-sided
+    // catches both a mechanism that silently claimed amplification (epsilon
+    // would collapse towards the subsampled value) and one that stopped
+    // accounting at all.
+    let epsilon = match optimizer.consumed_epsilon() {
+        Ok(value) => value,
+        Err(err) => panic!("accounting failed: {err}"),
+    };
+    assert!(
+        (epsilon - 19.053_597_531_631_39).abs() < 1e-9,
+        "un-amplified accounting must match the closed-form Gaussian value, got {epsilon}"
+    );
+    assert!(
+        epsilon > 10.0 * GOLDEN_EPSILON_SCHEDULE[1].1,
+        "un-amplified accounting must cost far more than the subsampled one: {epsilon}"
     );
 }
 

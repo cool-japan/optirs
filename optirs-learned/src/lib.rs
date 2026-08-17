@@ -1,30 +1,34 @@
 //! # OptiRS Learned - Learned Optimizers and Meta-Learning
 //!
 //! **Version:** 0.3.2
-//! **Status:** Research Phase (Early Implementation)
+//! **Status:** Research-grade implementations; APIs may still change between releases
 //!
-//! ⚠️ **Warning:** This crate is in early research phase. APIs may change significantly
-//! in future releases. Not recommended for production use.
+//! ⚠️ **Warning:** Learned optimizers are inherently sensitive to the distribution of
+//! tasks they were meta-trained on. Benchmark against `optirs-core`'s hand-designed
+//! optimizers on your own workload before depending on a learned one in production.
 //!
 //! `optirs-learned` provides learned optimizers, meta-learning algorithms, and adaptive
 //! optimization systems built on [SciRS2](https://github.com/cool-japan/scirs).
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
-//! - `optirs-core` 0.1.0 - Core optimizers
+//! - `scirs2-core` 0.6.5 - Required foundation
+//! - `optirs-core` 0.3.2 - Core optimizers
 //!
-//! ## Implementation Status (v0.1.0)
+//! ## Implementation Status (v0.3.2)
 //!
-//! - 🚧 Transformer-based optimizers (in development)
-//! - 🚧 LSTM optimizers (planned)
-//! - 🚧 Meta-learning framework (in development)
-//! - 📝 Research prototypes only
-//! - 📝 No production-ready implementations yet
-//!
-//! ## Status: Research Phase
-//!
-//! This crate implements cutting-edge research in learned optimization.
+//! - ✅ Transformer-based optimizers ([`transformer`], [`transformer_based_optimizer`] -
+//!   self-/cross-attention over parameters)
+//! - ✅ LSTM optimizers ([`lstm`] - recurrent per-parameter update rule)
+//! - ✅ Meta-learning framework ([`meta_learning`] - MAML, Reptile, Meta-SGD)
+//! - ✅ Graph-neural-network optimizer ([`gnn_optimizer`]) and Neural Turing Machine
+//!   optimizer ([`ntm_optimizer`])
+//! - ✅ Differentiable optimizer search ([`darts_optimizer_search`] - DARTS-style)
+//! - ✅ Forward/reverse-mode autodiff engines ([`forward_mode`], [`reverse_mode`])
+//! - ✅ Continual learning ([`continual_learning`] - EWC, progressive networks), few-shot,
+//!   zero-shot and realtime drift adaptation ([`realtime_adaptation`])
+//! - 📝 Real, tested algorithms throughout - still labeled research-grade because learned
+//!   optimizers carry that distribution-sensitivity caveat, not because they are stubs
 //!
 //! ## Features
 //!

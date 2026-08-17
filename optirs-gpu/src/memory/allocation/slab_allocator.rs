@@ -839,22 +839,22 @@ impl ThreadSafeSlabAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, SlabError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.allocate(size)
     }
 
     pub fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<(), SlabError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.deallocate(ptr, size)
     }
 
     pub fn get_stats(&self) -> SlabAllocatorStats {
-        let allocator = self.allocator.lock().expect("lock poisoned");
+        let allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.get_stats()
     }
 
     pub fn reclaim_memory(&self) -> usize {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.reclaim_memory()
     }
 }

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // Submodule declarations
 pub mod monitoring;
@@ -37,10 +37,11 @@ pub type OptimizationTask<T> = ScheduledTask<T>;
 
 pub use orchestration::{
     AlertConfiguration, Checkpoint, CheckpointConfiguration, CheckpointManager, CheckpointMetadata,
-    Experiment, ExperimentConfiguration, ExperimentExecution, ExperimentManager, ExperimentResult,
-    ExperimentStatus, MonitoringConfiguration, OptimizationPipeline, PipelineConfiguration,
-    PipelineExecution, PipelineOrchestrator, PipelineStage, RecoveryManager, RecoveryStrategy,
-    ResourceLimits, StageResult, StorageConfiguration, TimeoutSettings,
+    CheckpointStorage, Experiment, ExperimentConfiguration, ExperimentExecution, ExperimentManager,
+    ExperimentResult, ExperimentStatus, InMemoryCheckpointStorage, MonitoringConfiguration,
+    OptimizationPipeline, PipelineConfiguration, PipelineExecution, PipelineOrchestrator,
+    PipelineStage, RecoveryManager, RecoveryOptions, RecoveryStrategy, RecoveryTarget,
+    ResourceLimits, StageResult, StateType, StorageConfiguration, TimeoutSettings, ValidationRule,
 };
 
 pub use monitoring::{
@@ -577,17 +578,21 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
     }
 
     fn cleanup_completed_items(&mut self) {
-        // Remove completed tasks older than threshold
+        // Tasks are removed from `active_tasks` synchronously as soon as
+        // `process_scheduled_tasks` finishes executing them (success or
+        // failure) -- see the `self.state.active_tasks.remove(&task_id)`
+        // calls there -- so anything still here has been submitted but not
+        // yet picked up by the scheduler. Drop entries that have sat
+        // unscheduled longer than `threshold` instead of retaining every
+        // task forever (the previous `retain(|_, _| true)` never removed
+        // anything, regardless of age).
         let threshold = Duration::from_secs(3600); // 1 hour
-        let now = Instant::now();
+        let now = SystemTime::now();
 
-        self.state.active_tasks.retain(|_, _task| {
-            true // Need proper completion check implementation
-                 // !task.is_completed()
-                 //     || task
-                 //         .get_completion_time()
-                 //         .map(|t| now.duration_since(t) < threshold)
-                 //         .unwrap_or(true)
+        self.state.active_tasks.retain(|_, task| {
+            now.duration_since(task.created_at)
+                .map(|age| age < threshold)
+                .unwrap_or(true)
         });
     }
 
@@ -629,8 +634,19 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
                 / T::from(uptime.as_secs()).unwrap_or_else(|| T::one());
         }
 
-        // Update resource utilization
-        self.metrics.resource_utilization = T::zero(); // Needs proper implementation
+        // Fraction of the coordinator's configured task-concurrency
+        // capacity currently in use. `self.state.resource_usage` (CPU/
+        // memory/etc. from `research::experiments::ResourceUsage`) is never
+        // populated by any real sampling anywhere in this coordinator, so
+        // deriving from it would still be a fabricated number; this is
+        // real, live data instead of the previous hardcoded `T::zero()`.
+        self.metrics.resource_utilization = if self.config.max_concurrent_tasks > 0 {
+            (T::from(self.state.active_tasks.len()).unwrap_or_else(|| T::zero())
+                / T::from(self.config.max_concurrent_tasks).unwrap_or_else(|| T::one()))
+            .min(T::one())
+        } else {
+            T::zero()
+        };
 
         // Update convergence and anomaly rates
         self.metrics.convergence_rate = self.calculate_convergence_rate();
@@ -939,6 +955,75 @@ mod tests {
             stats.total_tasks_completed + stats.total_tasks_failed,
             1,
             "the dispatched task must be reflected in scheduler statistics"
+        );
+    }
+
+    // Regression test for F62 (additional fix beyond the pre-existing
+    // execute_task/rates fixes above): `resource_utilization` was
+    // hardcoded to `T::zero()` on every call to `update_metrics`
+    // ("Needs proper implementation"), which fed into
+    // `assess_health_status`'s Degraded threshold and
+    // `update_adaptive_parameters`'s scale-up/down decisions -- both of
+    // which could therefore never observe anything but "0% utilized".
+    #[test]
+    fn resource_utilization_reflects_real_active_task_load() {
+        let mut coordinator = CoordinatorBuilder::<f64>::new()
+            .max_concurrent_tasks(4)
+            .build()
+            .expect("unwrap failed");
+
+        coordinator.update_metrics();
+        assert_eq!(coordinator.metrics.resource_utilization, 0.0);
+
+        for i in 0..2 {
+            let task = OptimizationTask::new(format!("util_task_{i}"));
+            coordinator
+                .submit_task(task)
+                .expect("submit should succeed");
+        }
+        coordinator.update_metrics();
+
+        assert_eq!(
+            coordinator.metrics.resource_utilization, 0.5,
+            "2 active tasks out of a configured max of 4 must report 50% utilization, \
+             not the old hardcoded 0.0"
+        );
+    }
+
+    // Regression test for F62 (additional fix): `cleanup_completed_items`
+    // always retained every task (`retain(|_, _| true)`, "Need proper
+    // completion check implementation"), so nothing was ever actually
+    // cleaned up regardless of age.
+    #[test]
+    fn cleanup_completed_items_removes_only_stale_tasks() {
+        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default())
+            .expect("unwrap failed");
+
+        let mut old_task = OptimizationTask::new("old_task".to_string());
+        old_task.created_at = SystemTime::now() - Duration::from_secs(7200); // 2h old
+        coordinator
+            .state
+            .active_tasks
+            .insert(old_task.task_id.clone(), old_task);
+
+        let fresh_task = OptimizationTask::new("fresh_task".to_string());
+        let fresh_id = fresh_task.task_id.clone();
+        coordinator
+            .state
+            .active_tasks
+            .insert(fresh_id.clone(), fresh_task);
+
+        assert_eq!(coordinator.state.active_tasks.len(), 2);
+        coordinator.cleanup_completed_items();
+
+        assert_eq!(
+            coordinator.state.active_tasks.len(),
+            1,
+            "the stale (>1h old) task must be removed"
+        );
+        assert!(
+            coordinator.state.active_tasks.contains_key(&fresh_id),
+            "the fresh task must be retained"
         );
     }
 }

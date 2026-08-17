@@ -5,6 +5,10 @@
 #[allow(unused_imports)]
 use crate::error::Result;
 use crate::transformer_based_optimizer::{TransformerOptimizer, TransformerOptimizerConfig};
+
+use super::landscape::LandscapeStatistics;
+use super::performance_predictor::TransformerPerformancePredictor;
+use super::predictor::{PredictorFitReport, PredictorSample};
 use crate::LearnedOptimizerConfig;
 #[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2, Array3};
@@ -13,46 +17,6 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::Instant;
 
-/// Performance predictor for transformer variants
-#[derive(Debug)]
-pub struct TransformerPerformancePredictor<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Neural predictor network
-    predictor_network: PredictorNetwork<T>,
-    /// Feature extractor
-    feature_extractor: PerformanceFeatureExtractor<T>,
-    /// Prediction cache
-    prediction_cache: PredictionCache<T>,
-    /// Uncertainty estimator
-    uncertainty_estimator: UncertaintyEstimator<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    TransformerPerformancePredictor<T>
-{
-    fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
-        Ok(Self {
-            predictor_network: PredictorNetwork::new(vec![64, 128, 64, 1])?,
-            feature_extractor: PerformanceFeatureExtractor::new(64)?,
-            prediction_cache: PredictionCache::new(1000),
-            uncertainty_estimator: UncertaintyEstimator::new(UncertaintyMethod::Ensemble),
-        })
-    }
-    fn predict_improvement(
-        &mut self,
-        landscape: &LandscapeAnalysis<T>,
-        _adaptation: &ArchitectureAdaptation<T>,
-    ) -> Result<PerformancePrediction<T>> {
-        Ok(PerformancePrediction {
-            convergence_improvement: scirs2_core::numeric::NumCast::from(0.15)
-                .unwrap_or_else(|| T::zero()),
-            final_performance: scirs2_core::numeric::NumCast::from(0.92)
-                .unwrap_or_else(|| T::zero()),
-            confidence: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
-            uncertainty: scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero()),
-        })
-    }
-}
 /// Architecture adaptation result
 #[derive(Debug)]
 pub struct ArchitectureAdaptation<
@@ -82,17 +46,48 @@ pub struct MemoryEfficientAttentionManager<
     global_heads: Vec<usize>,
     /// Memory usage tracker
     memory_tracker: MemoryUsageTracker,
+    /// Minimum sparsity level, from `AdaptiveConfig::attention_sparsity_threshold`
+    sparsity_floor: T,
+    /// Whether the head count may be reduced, from
+    /// `AdaptiveConfig::dynamic_head_pruning`
+    allow_head_pruning: bool,
+    /// Lower bound on the attention span, from
+    /// `AdaptiveConfig::min_sequence_length`
+    min_span: usize,
+    /// Upper bound on the attention span, from
+    /// `AdaptiveConfig::max_sequence_length`
+    max_span: usize,
 }
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     MemoryEfficientAttentionManager<T>
 {
+    /// Build the attention manager from the adaptive configuration.
+    ///
+    /// The configuration is genuinely consumed: `attention_sparsity_threshold`
+    /// becomes the sparsity floor used by [`Self::optimize_attention`],
+    /// `memory_budget` becomes the tracker's budget, `dynamic_head_pruning`
+    /// decides whether the head count is allowed to shrink, and
+    /// `max_sequence_length` / `min_sequence_length` bound the attention span.
+    /// Previously every field was ignored.
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
+        if config.min_sequence_length == 0
+            || config.min_sequence_length > config.max_sequence_length
+        {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "sequence length bounds must satisfy 0 < min ({}) <= max ({})",
+                config.min_sequence_length, config.max_sequence_length
+            )));
+        }
         Ok(Self {
             pattern_cache: AttentionPatternCache::new(),
             sparse_mask: Array2::default((0, 0)),
             local_windows: Vec::new(),
             global_heads: Vec::new(),
-            memory_tracker: MemoryUsageTracker::new(),
+            memory_tracker: MemoryUsageTracker::with_budget(config.memory_budget),
+            sparsity_floor: config.attention_sparsity_threshold,
+            allow_head_pruning: config.dynamic_head_pruning,
+            min_span: config.min_sequence_length,
+            max_span: config.max_sequence_length,
         })
     }
     fn optimize_attention(
@@ -104,10 +99,15 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         let (num_heads, seq_len) = self.determine_attention_dimensions(complexity, difficulty)?;
         let mut attention_patterns = Array3::zeros((num_heads, seq_len, seq_len));
         self.generate_attention_patterns(&mut attention_patterns, analysis)?;
-        let sparsitylevel = if complexity > 0.7 {
-            scirs2_core::numeric::NumCast::from(0.05).unwrap_or_else(|| T::zero())
+        // A more complex landscape needs a denser (less pruned) pattern, but the
+        // configured `attention_sparsity_threshold` is always the floor.
+        let requested: T =
+            scirs2_core::numeric::NumCast::from(if complexity > 0.7 { 0.05 } else { 0.15 })
+                .unwrap_or_else(|| T::zero());
+        let sparsitylevel = if requested > self.sparsity_floor {
+            requested
         } else {
-            scirs2_core::numeric::NumCast::from(0.15).unwrap_or_else(|| T::zero())
+            self.sparsity_floor
         };
         self.apply_sparsity_mask(&mut attention_patterns, sparsitylevel)?;
         let pattern_key = format!("pattern_{}_{}", num_heads, seq_len);
@@ -138,29 +138,39 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             computational_speedup,
         })
     }
+    /// Choose (head count, attention span) for the measured landscape.
+    ///
+    /// Head count grows with complexity; it is only allowed to *shrink* below
+    /// the base when `AdaptiveConfig::dynamic_head_pruning` is enabled. The span
+    /// grows with difficulty and is clamped to the configured
+    /// `[min_sequence_length, max_sequence_length]` window instead of a
+    /// hardcoded `[256, 1024]`.
     fn determine_attention_dimensions(
         &self,
         complexity: f64,
         difficulty: f64,
     ) -> Result<(usize, usize)> {
         let base_heads = 8;
-        let base_seq_len = 512;
-        let heads = (if complexity > 0.8 {
+        let scaled_heads = if complexity > 0.8 {
             (base_heads as f64 * 1.5) as usize
-        } else if complexity < 0.3 {
+        } else if complexity < 0.3 && self.allow_head_pruning {
             (base_heads as f64 * 0.75) as usize
         } else {
             base_heads
-        })
-        .clamp(4, 16);
-        let seq_len = (if difficulty > 0.7 {
-            (base_seq_len as f64 * 1.2) as usize
+        };
+        let heads = scaled_heads.clamp(4, 16);
+
+        // Base span is the midpoint of the configured window, so the whole
+        // decision lives inside the caller's budget.
+        let base_span = (self.min_span + self.max_span) / 2;
+        let scaled_span = if difficulty > 0.7 {
+            (base_span as f64 * 1.2) as usize
         } else if difficulty < 0.3 {
-            (base_seq_len as f64 * 0.8) as usize
+            (base_span as f64 * 0.8) as usize
         } else {
-            base_seq_len
-        })
-        .clamp(256, 1024);
+            base_span
+        };
+        let seq_len = scaled_span.clamp(self.min_span, self.max_span).max(1);
         Ok((heads, seq_len))
     }
     fn generate_attention_patterns(
@@ -220,18 +230,42 @@ pub struct AdaptiveSequenceProcessor<
     compressor: SequenceCompressor<T>,
     /// Adaptive windowing strategy
     windowing_strategy: WindowingStrategy,
+    /// Lower bound, from `AdaptiveConfig::min_sequence_length`
+    min_length: usize,
+    /// Upper bound, from `AdaptiveConfig::max_sequence_length`
+    max_length: usize,
+    /// Whether the length may change, from `AdaptiveConfig::adaptive_sequence_length`
+    length_adaptation_enabled: bool,
 }
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     AdaptiveSequenceProcessor<T>
 {
+    /// Build the sequence processor from the adaptive configuration.
+    ///
+    /// `min_sequence_length` / `max_sequence_length` bound every adaptation (the
+    /// starting length is the midpoint), and `adaptive_sequence_length` decides
+    /// whether the length is allowed to move at all. Previously the starting
+    /// length was the constant 512 and the bounds were hardcoded to `[64, 2048]`
+    /// inside `adapt_to_landscape`.
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
+        if config.min_sequence_length == 0
+            || config.min_sequence_length > config.max_sequence_length
+        {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "sequence length bounds must satisfy 0 < min ({}) <= max ({})",
+                config.min_sequence_length, config.max_sequence_length
+            )));
+        }
         Ok(Self {
-            current_length: 512,
+            current_length: (config.min_sequence_length + config.max_sequence_length) / 2,
             importance_scores: VecDeque::new(),
             compression_ratio: scirs2_core::numeric::NumCast::from(0.8)
                 .unwrap_or_else(|| T::zero()),
             compressor: SequenceCompressor::new()?,
             windowing_strategy: WindowingStrategy::ImportanceBased,
+            min_length: config.min_sequence_length,
+            max_length: config.max_sequence_length,
+            length_adaptation_enabled: config.adaptive_sequence_length,
         })
     }
     fn adapt_to_landscape(
@@ -240,10 +274,12 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     ) -> Result<SequenceAdaptation<T>> {
         let complexity_factor = analysis.complexity.to_f64().unwrap_or(0.5);
         let difficulty_factor = analysis.difficulty.to_f64().unwrap_or(0.3);
-        let new_length = if complexity_factor > 0.7 {
-            (self.current_length as f64 * 1.2).min(2048.0) as usize
+        let new_length = if !self.length_adaptation_enabled {
+            self.current_length
+        } else if complexity_factor > 0.7 {
+            ((self.current_length as f64 * 1.2) as usize).min(self.max_length)
         } else if complexity_factor < 0.3 {
-            (self.current_length as f64 * 0.8).max(64.0) as usize
+            ((self.current_length as f64 * 0.8) as usize).max(self.min_length)
         } else {
             self.current_length
         };
@@ -535,29 +571,11 @@ pub struct Symmetry<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Sen
     /// Symmetry strength
     strength: T,
 }
-/// Performance feature extractor
-#[derive(Debug)]
-pub struct PerformanceFeatureExtractor<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Feature dimensions
-    feature_dims: usize,
-    /// Feature computation cache
-    feature_cache: HashMap<String, Array1<T>>,
-    /// Feature importance weights
-    importance_weights: Array1<T>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    PerformanceFeatureExtractor<T>
-{
-    fn new(dims: usize) -> Result<Self> {
-        Ok(Self {
-            feature_dims: dims,
-            feature_cache: HashMap::new(),
-            importance_weights: Array1::ones(dims),
-        })
-    }
-}
+// NOTE: `PerformanceFeatureExtractor` used to be declared here holding a
+// dimension, an empty cache and an all-ones importance vector, with no method
+// that extracted anything. Real feature extraction is
+// `TransformerPerformancePredictor::extract_features` above, producing the
+// documented [`PredictionFeatures`] vector.
 /// Compression algorithms
 #[derive(Debug, Clone, Copy)]
 pub enum CompressionAlgorithm {
@@ -770,6 +788,11 @@ pub struct OptimizationLandscapeAnalyzer<
     global_structure: GlobalStructureDetector<T>,
     /// Analysis cache
     analysis_cache: HashMap<String, AnalysisResult<T>>,
+    /// Horizon (in history samples) at which the analysis confidence saturates.
+    /// Taken from `AdaptiveConfig::prediction_horizon`.
+    confidence_horizon: usize,
+    /// Statistics of the most recent analysis, for inspection and testing.
+    last_statistics: LandscapeStatistics,
 }
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     OptimizationLandscapeAnalyzer<T>
@@ -781,19 +804,90 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             local_geometry: LocalGeometryAnalyzer::new(),
             global_structure: GlobalStructureDetector::new(),
             analysis_cache: HashMap::new(),
+            confidence_horizon: config.prediction_horizon.max(2),
+            last_statistics: LandscapeStatistics::empty(),
         })
     }
+
+    /// Analyze the optimization landscape from the observed history.
+    ///
+    /// Every returned number is a statistic of the inputs — see
+    /// [`LandscapeStatistics`] for the formulas. Previously this ignored both
+    /// arguments and returned `complexity = 0.5`, `difficulty = 0.3`,
+    /// `confidence = 0.9`, `strategies = [Adaptive]` on every call.
+    ///
+    /// The recommended strategy set is derived from where the history sits in
+    /// the (complexity, difficulty) plane:
+    ///
+    /// | condition                          | strategy       |
+    /// |------------------------------------|----------------|
+    /// | difficulty high, complexity high   | `Exploratory`  |
+    /// | difficulty high, complexity low    | `Aggressive`   |
+    /// | difficulty low, complexity high    | `Conservative` |
+    /// | difficulty low, complexity low     | `Exploitative` |
+    /// | anything in between                | `Adaptive`     |
+    ///
+    /// # Errors
+    /// Returns `Err` when both histories are empty — there is nothing to
+    /// analyze, and answering with neutral constants is what this method used to
+    /// do wrong.
     fn analyze(
         &mut self,
-        _gradient_history: &[Array1<T>],
-        _loss_history: &[T],
+        gradient_history: &[Array1<T>],
+        loss_history: &[T],
     ) -> Result<LandscapeAnalysis<T>> {
+        if gradient_history.is_empty() && loss_history.is_empty() {
+            return Err(crate::error::OptimError::InsufficientData(
+                "landscape analysis needs at least one gradient or loss sample".to_string(),
+            ));
+        }
+
+        let stats = LandscapeStatistics::from_history(gradient_history, loss_history);
+        let complexity = stats.complexity();
+        let difficulty = stats.difficulty();
+        let confidence = stats.analysis_confidence(self.confidence_horizon);
+
+        // Keep the (previously write-only) feature summaries in sync with the
+        // statistics that were actually measured.
+        self.landscape_features.smoothness =
+            scirs2_core::numeric::NumCast::from(1.0 - stats.loss_roughness)
+                .unwrap_or_else(|| T::zero());
+        self.landscape_features.multimodality =
+            scirs2_core::numeric::NumCast::from(stats.reversal_rate).unwrap_or_else(|| T::zero());
+        self.landscape_features.noise_level =
+            scirs2_core::numeric::NumCast::from(stats.gradient_norm_cv)
+                .unwrap_or_else(|| T::zero());
+        self.complexity_estimator.computational_complexity =
+            scirs2_core::numeric::NumCast::from(complexity).unwrap_or_else(|| T::zero());
+        self.complexity_estimator.generalization_complexity =
+            scirs2_core::numeric::NumCast::from(difficulty).unwrap_or_else(|| T::zero());
+
+        let high = 0.6;
+        let low = 0.4;
+        let strategy = match (difficulty >= high, complexity >= high) {
+            (true, true) => OptimizationStrategy::Exploratory,
+            (true, false) if complexity <= low => OptimizationStrategy::Aggressive,
+            (false, true) if difficulty <= low => OptimizationStrategy::Conservative,
+            _ if difficulty <= low && complexity <= low => OptimizationStrategy::Exploitative,
+            _ => OptimizationStrategy::Adaptive,
+        };
+
+        self.last_statistics = stats;
+
         Ok(LandscapeAnalysis {
-            complexity: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
-            difficulty: scirs2_core::numeric::NumCast::from(0.3).unwrap_or_else(|| T::zero()),
-            recommended_strategies: vec![OptimizationStrategy::Adaptive],
-            confidence: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
+            complexity: scirs2_core::numeric::NumCast::from(complexity)
+                .unwrap_or_else(|| T::zero()),
+            difficulty: scirs2_core::numeric::NumCast::from(difficulty)
+                .unwrap_or_else(|| T::zero()),
+            recommended_strategies: vec![strategy],
+            confidence: scirs2_core::numeric::NumCast::from(confidence)
+                .unwrap_or_else(|| T::zero()),
         })
+    }
+
+    /// Statistics behind the most recent [`Self::analyze`] call.
+    pub fn last_statistics(&self) -> &LandscapeStatistics {
+        &self.last_statistics
     }
 }
 /// Analysis result container
@@ -879,29 +973,11 @@ pub struct AdaptiveConfig<
     /// Adaptation learning rate
     pub adaptation_lr: T,
 }
-/// Prediction cache
-#[derive(Debug)]
-pub struct PredictionCache<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Cached predictions
-    predictions: HashMap<String, PredictionResult<T>>,
-    /// Cache hit rate
-    hit_rate: f64,
-    /// Cache capacity
-    capacity: usize,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    PredictionCache<T>
-{
-    fn new(capacity: usize) -> Self {
-        Self {
-            predictions: HashMap::new(),
-            hit_rate: 0.0,
-            capacity,
-        }
-    }
-}
+// NOTE: `PredictionCache` used to be declared here as a `HashMap` plus a
+// `hit_rate` and a `capacity` that were never read or updated. The real,
+// capacity-enforcing, hit-rate-tracking cache lives in
+// [`crate::adaptive::predictor::PredictionCache`] and is re-exported by
+// `adaptive::mod`.
 /// Attention optimization result
 #[derive(Debug, Clone)]
 pub struct AttentionOptimization<
@@ -942,70 +1018,12 @@ pub enum UncertaintyMethod {
     /// Variational inference
     VariationalInference,
 }
-/// Performance prediction network
-#[derive(Debug)]
-pub struct PredictorNetwork<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Network weights
-    weights: Vec<Array2<T>>,
-    /// Network biases
-    biases: Vec<Array1<T>>,
-    /// Activation functions
-    activations: Vec<ActivationType>,
-    /// Network architecture
-    architecture: Vec<usize>,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    PredictorNetwork<T>
-{
-    fn new(architecture: Vec<usize>) -> Result<Self> {
-        let mut weights = Vec::new();
-        let mut biases = Vec::new();
-        let activations = vec![ActivationType::ReLU; architecture.len() - 1];
-        for i in 0..architecture.len() - 1 {
-            let weight = Array2::zeros((architecture[i + 1], architecture[i]));
-            let bias = Array1::zeros(architecture[i + 1]);
-            weights.push(weight);
-            biases.push(bias);
-        }
-        Ok(Self {
-            weights,
-            biases,
-            activations,
-            architecture,
-        })
-    }
-}
-/// Uncertainty estimator
-#[derive(Debug)]
-pub struct UncertaintyEstimator<
-    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
-> {
-    /// Epistemic uncertainty
-    epistemic_uncertainty: T,
-    /// Aleatoric uncertainty
-    aleatoric_uncertainty: T,
-    /// Total uncertainty
-    total_uncertainty: T,
-    /// Uncertainty estimation method
-    estimation_method: UncertaintyMethod,
-}
-impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
-    UncertaintyEstimator<T>
-{
-    fn new(method: UncertaintyMethod) -> Self {
-        Self {
-            epistemic_uncertainty: scirs2_core::numeric::NumCast::from(0.1)
-                .unwrap_or_else(|| T::zero()),
-            aleatoric_uncertainty: scirs2_core::numeric::NumCast::from(0.05)
-                .unwrap_or_else(|| T::zero()),
-            total_uncertainty: scirs2_core::numeric::NumCast::from(0.15)
-                .unwrap_or_else(|| T::zero()),
-            estimation_method: method,
-        }
-    }
-}
+// NOTE: `PredictorNetwork` used to be declared here with `Array2::zeros`
+// weights and no forward pass, and `UncertaintyEstimator` held three hardcoded
+// constants (0.1 / 0.05 / 0.15) that nothing computed. Both are replaced by
+// [`crate::adaptive::predictor::PredictorNetwork`], which is Xavier-initialized,
+// has a real forward pass, is fitted by closed-form ridge regression, and
+// derives its uncertainty from the ridge posterior.
 /// Optimization pattern
 #[derive(Debug, Clone)]
 pub struct OptimizationPattern<
@@ -1130,32 +1148,158 @@ pub struct DynamicArchitectureAdapter<
     resource_constraints: ResourceConstraints,
     /// Architecture search space
     search_space: ArchitectureSearchSpace,
+    /// Whether layer-count changes are permitted, from
+    /// `AdaptiveConfig::layer_adaptation`
+    layer_adaptation_enabled: bool,
 }
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     DynamicArchitectureAdapter<T>
 {
+    /// Build the architecture adapter from the adaptive configuration.
+    ///
+    /// `layer_adaptation` selects the adaptation strategy (`Gradual` when layer
+    /// changes are allowed, `Conservative` when they are not) and gates the
+    /// layer-count moves in [`Self::adapt_architecture`]; `memory_budget`
+    /// becomes the adapter's memory constraint. Previously the config was
+    /// ignored entirely.
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
+        let mut resource_constraints = ResourceConstraints::default();
+        if config.memory_budget > 0 {
+            resource_constraints.max_memory = config.memory_budget;
+        }
         Ok(Self {
             current_config: TransformerOptimizerConfig::<T>::default(),
             performance_history: VecDeque::new(),
-            adaptation_strategy: AdaptationStrategy::Gradual,
-            resource_constraints: ResourceConstraints::default(),
+            adaptation_strategy: if config.layer_adaptation {
+                AdaptationStrategy::Gradual
+            } else {
+                AdaptationStrategy::Conservative
+            },
+            resource_constraints,
             search_space: ArchitectureSearchSpace::default(),
+            layer_adaptation_enabled: config.layer_adaptation,
         })
     }
+
+    /// Propose an architecture change for the measured landscape.
+    ///
+    /// The proposal is derived, not fabricated:
+    ///
+    /// * **Layer count** moves one step within
+    ///   `ArchitectureSearchSpace::layer_count_range` — up when the landscape is
+    ///   complex, down when it is simple — and only when
+    ///   `AdaptiveConfig::layer_adaptation` is enabled.
+    /// * **Attention heads** follow the head count the attention manager
+    ///   actually chose, snapped to the nearest legal option that divides the
+    ///   model dimension.
+    /// * **Dropout** rises with difficulty (more regularization when
+    ///   optimization is struggling), bounded to `[0, 0.5]`.
+    /// * **Expected improvement** is the measured headroom
+    ///   `difficulty · (1 - complexity) · efficiency_gain`, i.e. large only when
+    ///   there is something to gain *and* the surface is tractable *and* the
+    ///   sequence adaptation actually bought efficiency.
+    /// * **Confidence** is the landscape analysis confidence discounted by how
+    ///   many changes are being proposed at once.
+    ///
+    /// The previous implementation ignored all three inputs and always returned
+    /// `changes = [LayerCountChange(6)]`, `expected_improvement = 0.1`,
+    /// `confidence = 0.8`.
     fn adapt_architecture(
         &mut self,
         landscape: &LandscapeAnalysis<T>,
-        _sequence: &SequenceAdaptation<T>,
-        _attention: &AttentionOptimization<T>,
+        sequence: &SequenceAdaptation<T>,
+        attention: &AttentionOptimization<T>,
     ) -> Result<ArchitectureAdaptation<T>> {
+        let complexity = landscape.complexity.to_f64().unwrap_or(0.0);
+        let difficulty = landscape.difficulty.to_f64().unwrap_or(0.0);
+
+        let mut adapted = self.current_config.clone();
+        let mut changes = Vec::new();
+
+        // --- layers ---------------------------------------------------------
+        if self.layer_adaptation_enabled {
+            let (min_layers, max_layers) = self.search_space.layer_count_range;
+            let current = adapted.num_transformer_layers;
+            let proposed = if complexity > 0.6 {
+                (current + 1).min(max_layers.max(min_layers))
+            } else if complexity < 0.3 {
+                current.saturating_sub(1).max(min_layers)
+            } else {
+                current
+            };
+            if proposed != current && proposed > 0 {
+                adapted.num_transformer_layers = proposed;
+                changes.push(ArchitectureChange::LayerCountChange(proposed));
+            }
+        }
+
+        // --- attention heads ------------------------------------------------
+        let requested_heads = attention.attention_patterns.dim().0;
+        if requested_heads > 0 && requested_heads != adapted.num_attention_heads {
+            // Only accept a head count that evenly divides the model dimension.
+            let candidate = self
+                .search_space
+                .attention_head_options
+                .iter()
+                .copied()
+                .filter(|&h| h > 0 && adapted.model_dimension.is_multiple_of(h))
+                .min_by_key(|&h| h.abs_diff(requested_heads));
+            if let Some(heads) = candidate {
+                if heads != adapted.num_attention_heads {
+                    adapted.num_attention_heads = heads;
+                    adapted.attention_head_dimension = adapted.model_dimension / heads;
+                    changes.push(ArchitectureChange::AttentionHeadChange(heads));
+                }
+            }
+        }
+
+        // --- dropout --------------------------------------------------------
+        let proposed_dropout = (0.5 * difficulty).clamp(0.0, 0.5);
+        if (proposed_dropout - adapted.dropout_rate).abs() > 1e-6 {
+            adapted.dropout_rate = proposed_dropout;
+            changes.push(ArchitectureChange::DropoutChange(proposed_dropout));
+        }
+
+        // --- expected improvement & confidence ------------------------------
+        let efficiency = sequence
+            .efficiency_gain
+            .to_f64()
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let headroom = (difficulty * (1.0 - complexity) * efficiency).clamp(0.0, 1.0);
+        // Each simultaneous change dilutes confidence: more moving parts, less
+        // certainty that the estimate holds.
+        let dilution = 1.0 / (1.0 + changes.len() as f64);
+        let confidence = (landscape.confidence.to_f64().unwrap_or(0.0) * dilution).clamp(0.0, 1.0);
+
         Ok(ArchitectureAdaptation {
-            adapted_config: self.current_config.clone(),
-            changes: vec![ArchitectureChange::LayerCountChange(6)],
-            expected_improvement: scirs2_core::numeric::NumCast::from(0.1)
+            adapted_config: adapted,
+            changes,
+            expected_improvement: scirs2_core::numeric::NumCast::from(headroom)
                 .unwrap_or_else(|| T::zero()),
-            confidence: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
+            confidence: scirs2_core::numeric::NumCast::from(confidence)
+                .unwrap_or_else(|| T::zero()),
         })
+    }
+
+    /// Adopt `config` as the baseline every future proposal is a delta from.
+    ///
+    /// Without this the adapter always started from
+    /// `TransformerOptimizerConfig::default()` and proposed changes relative to
+    /// that, regardless of how the optimizer it was supposed to be adapting was
+    /// actually configured.
+    pub fn sync_with(&mut self, config: &TransformerOptimizerConfig<T>) {
+        self.current_config = config.clone();
+    }
+
+    /// The configuration the adapter currently proposes.
+    pub fn current_config(&self) -> &TransformerOptimizerConfig<T> {
+        &self.current_config
+    }
+
+    /// Adaptation strategy selected from the configuration.
+    pub fn adaptation_strategy(&self) -> AdaptationStrategy {
+        self.adaptation_strategy
     }
 }
 /// Memory usage tracker
@@ -1171,13 +1315,25 @@ pub struct MemoryUsageTracker {
     usage_history: VecDeque<usize>,
 }
 impl MemoryUsageTracker {
-    fn new() -> Self {
+    /// Tracker with a caller-supplied budget (from
+    /// `AdaptiveConfig::memory_budget`); `0` falls back to 8192 MB.
+    fn with_budget(budget: usize) -> Self {
         Self {
             current_usage: 0,
             peak_usage: 0,
-            budget: 8192,
+            budget: if budget == 0 { 8192 } else { budget },
             usage_history: VecDeque::new(),
         }
+    }
+
+    /// Configured budget.
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
+    /// Peak usage observed so far.
+    pub fn peak_usage(&self) -> usize {
+        self.peak_usage
     }
 }
 /// Local minimum representation
@@ -1291,6 +1447,19 @@ pub struct AdaptiveTransformerEnhancement<
     performance_predictor: TransformerPerformancePredictor<T>,
     /// Adaptive configuration
     adaptive_config: AdaptiveConfig<T>,
+    /// Exponential moving average of per-parameter squared gradients.
+    ///
+    /// This is what makes the adaptive learning rate genuinely per-parameter:
+    /// the previous implementation returned `base_lr · scale · 1.1` for even
+    /// indices and `base_lr · scale · 0.9` for odd ones, i.e. index-parity noise
+    /// that carried no information about the parameter at all.
+    grad_second_moment: Array1<T>,
+    /// Number of `enhanced_optimize_step` calls, used to bias-correct the
+    /// second-moment estimate and to honour
+    /// `AdaptiveConfig::landscape_analysis_frequency`.
+    step_count: usize,
+    /// Most recent landscape analysis, reused between analysis refreshes.
+    cached_landscape: Option<LandscapeAnalysis<T>>,
 }
 impl<
         T: Float
@@ -1299,16 +1468,34 @@ impl<
             + Send
             + Sync
             + 'static
-            + std::iter::Sum,
+            + std::iter::Sum
+            + scirs2_core::numeric::FromPrimitive,
     > AdaptiveTransformerEnhancement<T>
 {
-    /// Enhance transformer optimizer for current optimization task
+    /// Enhance a transformer optimizer for the current optimization task.
+    ///
+    /// This now *acts on* `transformer` instead of ignoring it: after deriving
+    /// the architecture adaptation, the adapted configuration is pushed into the
+    /// optimizer via [`TransformerOptimizer::apply_architecture_config`]. That
+    /// call rebuilds the optimizer's transformer stack when a dimension actually
+    /// changed, and is a no-op when the proposal matches the live configuration.
+    ///
+    /// The returned [`EnhancementResult::architecture_adaptation`] reports the
+    /// proposal; whether it was applied is observable through the optimizer's
+    /// own configuration.
+    ///
+    /// # Errors
+    /// Propagates analysis errors (an empty history is an error, not a set of
+    /// neutral constants) and any error from reconfiguring the optimizer.
     pub fn enhance_optimizer(
         &mut self,
         transformer: &mut TransformerOptimizer<T>,
         gradient_history: &[Array1<T>],
         losshistory: &[T],
     ) -> Result<EnhancementResult<T>> {
+        // Adapt *this* optimizer's architecture, not a default one.
+        self.architecture_adapter.sync_with(transformer.config());
+
         let landscape_analysis = self
             .landscape_analyzer
             .analyze(gradient_history, losshistory)?;
@@ -1326,6 +1513,10 @@ impl<
         let performance_prediction = self
             .performance_predictor
             .predict_improvement(&landscape_analysis, &architecture_adaptation)?;
+
+        // F22: actually push the adaptation into the optimizer we were handed.
+        transformer.apply_architecture_config(&architecture_adaptation.adapted_config)?;
+
         let convergence_metrics = self.calculate_convergence_metrics(losshistory);
         Ok(EnhancementResult {
             sequence_adaptation,
@@ -1355,9 +1546,45 @@ impl<
             landscape_analyzer: OptimizationLandscapeAnalyzer::new(&config)?,
             performance_predictor: TransformerPerformancePredictor::new(&config)?,
             adaptive_config: config,
+            grad_second_moment: Array1::zeros(0),
+            step_count: 0,
+            cached_landscape: None,
         })
     }
-    /// Enhanced optimization step with adaptive features
+
+    /// Read-only access to the configuration this enhancement was built with.
+    pub fn config(&self) -> &AdaptiveConfig<T> {
+        &self.adaptive_config
+    }
+
+    /// Fit the performance predictor on observed outcomes.
+    ///
+    /// See [`TransformerPerformancePredictor::train`]. Until this is called,
+    /// [`EnhancementResult::performance_prediction`] honestly reports zero means
+    /// with unit uncertainty.
+    pub fn train_performance_predictor(
+        &mut self,
+        samples: &[PredictorSample],
+    ) -> Result<PredictorFitReport> {
+        self.performance_predictor.train(samples)
+    }
+
+    /// Whether the performance predictor has been fitted.
+    pub fn predictor_is_trained(&self) -> bool {
+        self.performance_predictor.is_trained()
+    }
+
+    /// Current per-parameter second-moment estimates (empty before the first
+    /// [`Self::enhanced_optimize_step`]).
+    pub fn gradient_second_moment(&self) -> &Array1<T> {
+        &self.grad_second_moment
+    }
+    /// Enhanced optimization step with adaptive features.
+    ///
+    /// The landscape is re-analyzed at most once every
+    /// `AdaptiveConfig::landscape_analysis_frequency` steps and reused in
+    /// between; that field previously configured nothing and the (constant)
+    /// analysis was recomputed on every call.
     pub fn enhanced_optimize_step(
         &mut self,
         parameters: &mut Array1<T>,
@@ -1365,9 +1592,32 @@ impl<
         losshistory: &[T],
         gradient_history: &[Array1<T>],
     ) -> Result<EnhancementResult<T>> {
-        let landscape = self
-            .landscape_analyzer
-            .analyze(gradient_history, losshistory)?;
+        let frequency = self.adaptive_config.landscape_analysis_frequency.max(1);
+        let refresh = self.cached_landscape.is_none() || self.step_count.is_multiple_of(frequency);
+        let landscape = if refresh {
+            let fresh = self
+                .landscape_analyzer
+                .analyze(gradient_history, losshistory)?;
+            self.cached_landscape = Some(LandscapeAnalysis {
+                complexity: fresh.complexity,
+                difficulty: fresh.difficulty,
+                recommended_strategies: fresh.recommended_strategies.clone(),
+                confidence: fresh.confidence,
+            });
+            fresh
+        } else {
+            match &self.cached_landscape {
+                Some(cached) => LandscapeAnalysis {
+                    complexity: cached.complexity,
+                    difficulty: cached.difficulty,
+                    recommended_strategies: cached.recommended_strategies.clone(),
+                    confidence: cached.confidence,
+                },
+                None => self
+                    .landscape_analyzer
+                    .analyze(gradient_history, losshistory)?,
+            }
+        };
         let sequence_adaptation = self.sequence_processor.adapt_to_landscape(&landscape)?;
         let attention_optimization = self.attention_manager.optimize_attention(&landscape)?;
         let architecture_adaptation = self.architecture_adapter.adapt_architecture(
@@ -1395,6 +1645,19 @@ impl<
         })
     }
     /// Apply adaptive updates to parameters
+    /// Apply the adaptive update to `parameters`.
+    ///
+    /// Two things changed here. First, the composite scale is now a *bounded*
+    /// blend rather than a raw triple product: `computational_speedup` can be in
+    /// the tens, so multiplying three unbounded factors and dividing by 3 could
+    /// produce a scale far above 1 and diverge. Second, the per-parameter rate
+    /// is a real RMSProp-style rate over the observed gradient second moment
+    /// (see [`Self::calculate_adaptive_learning_rate`]) instead of index parity.
+    ///
+    /// # Errors
+    /// Returns `Err` when `parameters` and `gradients` have different lengths —
+    /// previously `zip` silently truncated to the shorter one, leaving the tail
+    /// of a longer parameter vector un-updated.
     fn apply_adaptive_updates(
         &mut self,
         parameters: &mut Array1<T>,
@@ -1403,26 +1666,75 @@ impl<
         attention_optimization: &AttentionOptimization<T>,
         architecture_adaptation: &ArchitectureAdaptation<T>,
     ) -> Result<()> {
-        let sequence_scale = sequence_adaptation.efficiency_gain;
-        let attention_scale = attention_optimization.computational_speedup;
-        let architecture_scale = architecture_adaptation.expected_improvement;
-        let combined_scale = sequence_scale * attention_scale * architecture_scale
-            / scirs2_core::numeric::NumCast::from(3.0).unwrap_or_else(|| T::zero());
+        if parameters.len() != gradients.len() {
+            return Err(crate::error::OptimError::ComputationError(format!(
+                "parameter/gradient length mismatch: {} vs {}",
+                parameters.len(),
+                gradients.len()
+            )));
+        }
+
+        // Bound each factor to [0, 1] before averaging so the composite scale is
+        // itself in [0, 1] and cannot blow the step up.
+        let squash = |v: T| -> T {
+            let x = v.to_f64().unwrap_or(0.0).abs();
+            scirs2_core::numeric::NumCast::from(x / (1.0 + x)).unwrap_or_else(|| T::zero())
+        };
+        let three: T = scirs2_core::numeric::NumCast::from(3.0).unwrap_or_else(|| T::one());
+        let combined_scale = (squash(sequence_adaptation.efficiency_gain)
+            + squash(attention_optimization.computational_speedup)
+            + squash(architecture_adaptation.expected_improvement))
+            / three;
+
+        // Second-moment accumulator tracks the parameter vector's width.
+        if self.grad_second_moment.len() != gradients.len() {
+            self.grad_second_moment = Array1::zeros(gradients.len());
+        }
+        let beta: T = scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero());
+        let one_minus_beta = T::one() - beta;
+        for (slot, &g) in self.grad_second_moment.iter_mut().zip(gradients.iter()) {
+            *slot = beta * *slot + one_minus_beta * g * g;
+        }
+
+        self.step_count += 1;
         for (i, (param, grad)) in parameters.iter_mut().zip(gradients.iter()).enumerate() {
             let adaptive_lr = self.calculate_adaptive_learning_rate(i, combined_scale)?;
             *param = *param - adaptive_lr * *grad;
         }
         Ok(())
     }
-    /// Calculate adaptive learning rate for each parameter
+
+    /// Per-parameter learning rate for parameter `param_index`.
+    ///
+    /// RMSProp form: `lr_i = base_lr · scale / (sqrt(v̂_i) + ε)` where `v̂_i` is
+    /// the bias-corrected exponential moving average of `g_i²` maintained by
+    /// [`Self::apply_adaptive_updates`]. Parameters with a persistently large
+    /// gradient therefore get a *smaller* step, which is the whole point of a
+    /// per-parameter rate.
+    ///
+    /// `base_lr` is `AdaptiveConfig::adaptation_lr` — the config field that used
+    /// to be ignored in favour of a hardcoded `0.001`.
+    ///
+    /// # Errors
+    /// Returns `Err` when `param_index` is outside the tracked width.
     fn calculate_adaptive_learning_rate(&self, param_index: usize, basescale: T) -> Result<T> {
-        let base_lr = scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero());
-        let param_adaptation = if param_index.is_multiple_of(2) {
-            scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero())
-        } else {
-            scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())
-        };
-        Ok(base_lr * basescale * param_adaptation)
+        if param_index >= self.grad_second_moment.len() {
+            return Err(crate::error::OptimError::ComputationError(format!(
+                "parameter index {param_index} outside the tracked width {}",
+                self.grad_second_moment.len()
+            )));
+        }
+        let base_lr = self.adaptive_config.adaptation_lr;
+        let epsilon: T = scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero());
+
+        // Bias correction for the EMA warm-up (Kingma & Ba 2015, eq. 2).
+        let beta = 0.9_f64;
+        let correction = 1.0 - beta.powi(self.step_count.max(1) as i32);
+        let correction_t: T = scirs2_core::numeric::NumCast::from(correction.max(f64::EPSILON))
+            .unwrap_or_else(|| T::one());
+        let v_hat = self.grad_second_moment[param_index] / correction_t;
+
+        Ok(base_lr * basescale / (v_hat.sqrt() + epsilon))
     }
     /// Calculate convergence metrics
     fn calculate_convergence_metrics(&self, losshistory: &[T]) -> ConvergenceMetrics<T> {

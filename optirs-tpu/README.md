@@ -1,359 +1,159 @@
 # OptiRS TPU
 
-TPU coordination and pod management for large-scale distributed optimization in the OptiRS machine learning optimization library.
+TPU-style coordination, pod management, and an XLA-shaped compilation pipeline for
+large-scale distributed optimization in the OptiRS machine learning optimization library.
 
 ## Overview
 
-OptiRS-TPU provides comprehensive support for Google Cloud TPU (Tensor Processing Unit) coordination, pod management, and distributed training optimization. This crate enables efficient scaling of machine learning optimization workloads across TPU pods, with intelligent resource allocation, fault tolerance, and performance monitoring.
+`optirs-tpu` implements the coordination and compilation logic a TPU pod optimizer needs
+— device/pod topology, barrier synchronization, fault detection and checkpointing, and an
+XLA-style graph compiler (shape inference, constant folding, common-subexpression
+elimination, dead-code elimination, kernel fusion, memory planning) — as real, tested, pure
+Rust algorithms running on a CPU reference executor.
 
-## Features
+**There is no Google Cloud / vendor TPU runtime linked into this crate.** That runtime is
+proprietary and cannot be shipped as pure Rust, so this crate does not provision TPU pods,
+authenticate against GCP, or execute on physical TPU silicon. Where a capability genuinely
+needs that runtime (e.g. migrating a running workload between devices), the corresponding
+function returns a descriptive `Err` rather than a fabricated success. See the crate-level
+doc comment (`cargo doc -p optirs-tpu --open`) for the current per-module status.
 
-- **TPU Pod Management**: Automatic TPU pod allocation and coordination
-- **Distributed Optimization**: Seamless scaling across TPU cores and pods
-- **XLA Integration**: Optimized compilation for TPU execution
-- **Fault Tolerance**: Robust error handling and recovery mechanisms
-- **Dynamic Scaling**: Automatic resource scaling based on workload demands
-- **Performance Monitoring**: Real-time TPU utilization and optimization metrics
-- **Cost Optimization**: Intelligent resource allocation to minimize costs
-- **Multi-Region Support**: Cross-region TPU coordination capabilities
+## What's real
 
-## TPU Architecture Support
+- **`TPUOptimizer`** wraps any `optirs_core::Optimizer` (and implements that trait
+  itself), driving it through a real compile → execute → profile pipeline.
+- **XLA-shaped compiler** (`xla` module): computation-graph construction with real
+  producer/consumer dependency tracking, dead-code elimination (with a fail-safe against
+  deleting a graph whose outputs were never declared), constant folding, common
+  sub-expression elimination, kernel-fusion legality checks, a real allocator with
+  free/coalescing (not bump-only), and shape inference for reshape, convolution, dot, and
+  broadcast.
+- **`coordination::PodCoordinator`**: device and pairwise-channel topology, barrier
+  synchronization, load balancing, and fault detection over real, observable in-process
+  state.
+- **`fault_tolerance`**: checkpoints are serialized to disk with a SHA-256 integrity hash
+  and verified on restore; rollback and replication reuse that same verified path.
+- **`synchronization`**: barriers with a correctly-signaled condvar predicate, plus ring
+  all-reduce / broadcast / reduce-scatter collectives.
+- **`pod_coordination::TPUPodCoordinator<T>`**: delegates every operation to the real
+  `coordination::PodCoordinator` above (translating between their two independently
+  designed config schemas); it used to hold only its config with no other methods.
+- **`pod_coordination::synchronization::clocks::protocols::NtpSynchronizer`**: real
+  RFC 5905 four-timestamp round-trip clock-offset estimation, rejecting a physically
+  inconsistent exchange with `Err` rather than fabricating an offset.
 
-### TPU Generations
-- **TPU v4**: Latest generation with enhanced performance and memory
-- **TPU v3**: High-performance training and inference
-- **TPU v2**: Cost-effective training for medium-scale models
-- **TPU Edge**: Edge deployment optimization (future support)
+## What's not implemented
 
-### Pod Configurations
-- **Single TPU**: Development and small-scale training
-- **TPU Pod Slice**: Multi-core coordination (8, 32, 128 cores)
-- **Full TPU Pod**: Large-scale distributed training (256+ cores)
-- **Multi-Pod**: Cross-pod coordination for massive workloads
+- Execution on real TPU hardware (needs a vendor runtime this crate does not have).
+- Cross-device workload migration (`FaultToleranceManager::migrate_workload` returns `Err`
+  by design rather than fabricate a live migration).
+- Cloud provisioning, billing/spot-bidding, and multi-region orchestration are out of
+  scope for this crate; it coordinates a pod you already have, it does not create one.
+- Real TPU memory-allocation events are not fed into
+  `xla::backend::profiling_integration`'s memory profiler (that would mean bridging into
+  the separate `tpu_backend` memory manager), so its memory export is honestly empty; the
+  same module's counter/trace export report real recorded compile-step timings.
+- Some deeper `pod_coordination` submodules are still mixed-maturity scaffolding — check
+  the module's own doc comments.
 
 ## Installation
-
-Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 optirs-tpu = "0.3.2"
-scirs2-core = "0.4.0"  # Required foundation
+optirs-core = "0.3.2"
+scirs2-core = "0.4"
 ```
-
-### Prerequisites
-
-1. **Google Cloud Setup**:
-   ```bash
-   gcloud auth login
-   gcloud config set project YOUR_PROJECT_ID
-   ```
-
-2. **TPU Quotas**: Ensure sufficient TPU quotas in your GCP project
-
-3. **Network Configuration**: Proper VPC and firewall settings for TPU communication
 
 ## Usage
 
-### Basic TPU Optimization
-
 ```rust
-use optirs_tpu::{TpuManager, TpuOptimizer, PodConfig};
-use optirs_core::optimizers::Adam;
+use optirs_core::optimizers::SGD;
+use optirs_tpu::{TPUConfig, TPUOptimizer, TPUVersion};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize TPU manager
-    let tpu_manager = TpuManager::new()
-        .with_project("your-gcp-project")
-        .with_zone("us-central1-a")
-        .build()
-        .await?;
+fn main() -> Result<(), optirs_tpu::error::OptimError> {
+    let base_optimizer = SGD::new(0.01f32);
+    let config = TPUConfig {
+        tpu_version: TPUVersion::V4,
+        num_cores: 8,
+        ..Default::default()
+    };
 
-    // Request TPU resources
-    let pod_config = PodConfig::new()
-        .with_tpu_type("v3-8")
-        .with_cores(8)
-        .build();
+    let mut tpu_opt = TPUOptimizer::new(base_optimizer, config)?;
 
-    let tpu_pod = tpu_manager.allocate_pod(&pod_config).await?;
-
-    // Create TPU-optimized optimizer
-    let mut optimizer = TpuOptimizer::new(tpu_pod)
-        .with_optimizer(Adam::new(0.001))
-        .with_xla_optimization(true)
-        .build()?;
-
-    // Distributed optimization across TPU cores
-    let mut params = optimizer.create_distributed_tensor(&[8192, 4096])?;
-    let grads = optimizer.load_gradients_from_dataset(&training_data).await?;
-
-    // Perform distributed optimization step
-    optimizer.step_distributed(&mut params, &grads).await?;
+    // params/gradients are ndarray arrays; tpu_step compiles (or reuses a cached
+    // compilation of) the update graph and runs it on the CPU reference executor.
+    // let updated = tpu_opt.tpu_step(&params, &gradients)?;
 
     Ok(())
 }
 ```
 
-### Multi-Pod Training
+`TPUOptimizer` also implements `optirs_core::Optimizer`, so it can be used anywhere generic
+code expects one:
 
-```rust
-use optirs_tpu::{MultiPodManager, PodTopology, AllReduceStrategy};
-
-// Setup multi-pod coordination
-let multi_pod = MultiPodManager::new()
-    .with_topology(PodTopology::Ring)
-    .with_allreduce_strategy(AllReduceStrategy::HierarchicalAllReduce)
-    .with_pods(&[
-        pod_config_a.in_zone("us-central1-a"),
-        pod_config_b.in_zone("us-central1-b"),
-        pod_config_c.in_zone("europe-west4-a"),
-    ])
-    .build()
-    .await?;
-
-// Distribute model across pods
-multi_pod.distribute_model(&model_parameters).await?;
-
-// Synchronized optimization across all pods
-let optimization_result = multi_pod
-    .step_synchronized(&gradients)
-    .with_timeout(Duration::from_secs(300))
-    .await?;
-```
-
-### Dynamic Resource Scaling
-
-```rust
-use optirs_tpu::{AutoScaler, ScalingPolicy, WorkloadMetrics};
-
-// Setup automatic scaling
-let autoscaler = AutoScaler::new()
-    .with_policy(ScalingPolicy::PerformanceBased)
-    .with_min_cores(8)
-    .with_max_cores(256)
-    .with_target_utilization(0.85)
-    .build();
-
-// Monitor and scale based on workload
-let metrics = WorkloadMetrics::from_current_training(&optimizer).await?;
-let scaling_decision = autoscaler.evaluate_scaling(&metrics).await?;
-
-if let Some(new_config) = scaling_decision {
-    optimizer.scale_to_config(new_config).await?;
+```rust,ignore
+fn run_step<O: optirs_core::Optimizer<f32, scirs2_core::ndarray::Ix1>>(
+    optimizer: &mut O,
+    params: &Array1<f32>,
+    grads: &Array1<f32>,
+) -> optirs_core::Result<Array1<f32>> {
+    optimizer.step(params, grads)
 }
 ```
 
-### XLA Optimization
+### Pod coordination
 
 ```rust
-use optirs_tpu::xla::{XlaCompiler, OptimizationFlags};
+use optirs_tpu::coordination::{CoordinationError, PodConfig, PodCoordinator};
 
-// Compile optimization pipeline with XLA
-let xla_compiler = XlaCompiler::new()
-    .with_optimization_level(3)
-    .with_flags(OptimizationFlags {
-        enable_fusion: true,
-        enable_layout_optimization: true,
-        enable_memory_optimization: true,
-    })
-    .build();
-
-let optimized_graph = xla_compiler
-    .compile_optimization_pipeline(&optimizer_config)
-    .await?;
-
-optimizer.load_xla_graph(optimized_graph)?;
+fn coordinate_one_step() -> Result<(), CoordinationError> {
+    let config = PodConfig {
+        num_devices: 8,
+        ..Default::default()
+    };
+    let mut pod = PodCoordinator::new(config)?;
+    pod.synchronize_devices("step-0".to_string())?;
+    Ok(())
+}
 ```
+
+### Checkpointing
+
+`fault_tolerance::FaultToleranceManager::create_checkpoint` serializes real coordination
+state to disk under the configured storage path and records a SHA-256 hash;
+`restore_checkpoint` re-verifies that hash before applying anything, so a corrupted or
+truncated checkpoint fails loudly instead of silently "succeeding".
 
 ## Architecture
 
-### TPU Resource Management
-- **Pod Allocation**: Intelligent TPU pod allocation and deallocation
-- **Resource Scheduling**: Optimal scheduling across available TPU resources
-- **Cost Management**: Cost-aware resource allocation strategies
-- **Health Monitoring**: Continuous TPU health and performance monitoring
+Built on [SciRS2](https://github.com/cool-japan/scirs) abstractions:
+- **Numeric**: `scirs2_core::ndarray`, `scirs2_core::numeric::Float`
+- **Errors**: `scirs2_core::error::CoreError`, re-exported here as `optirs_tpu::error::OptimError`
 
-### Distributed Coordination
-- **Communication Patterns**: Efficient inter-TPU communication protocols
-- **Synchronization**: Gradient synchronization across TPU cores and pods
-- **Load Balancing**: Dynamic load balancing for optimal utilization
-- **Fault Recovery**: Automatic recovery from TPU failures
-
-### Performance Optimization
-- **Memory Management**: Efficient TPU memory utilization
-- **Computation Overlap**: Overlapping computation and communication
-- **Pipeline Parallelism**: Advanced pipelining for large models
-- **Mixed Precision**: Automatic mixed precision optimization
-
-## Configuration
-
-### Environment Variables
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account.json"
-export TPU_PROJECT="your-gcp-project"
-export TPU_ZONE="us-central1-a"
-export TPU_NETWORK="default"
-```
-
-### Configuration File
-```yaml
-# tpu_config.yaml
-project: "your-gcp-project"
-zone: "us-central1-a"
-network: "default"
-accelerator_type: "v3-8"
-software_version: "2.8.0"
-enable_ip_alias: true
-reserved: false
-```
-
-Load configuration:
-```rust
-use optirs_tpu::config::TpuConfig;
-
-let config = TpuConfig::from_file("tpu_config.yaml").await?;
-let tpu_manager = TpuManager::from_config(config).await?;
-```
-
-## Monitoring and Observability
-
-### Performance Metrics
-- TPU utilization rates
-- Memory usage patterns
-- Communication overhead
-- Computation efficiency
-- Power consumption
-
-### Logging Integration
-```rust
-use optirs_tpu::monitoring::{TpuMonitor, MetricsCollector};
-
-let monitor = TpuMonitor::new()
-    .with_collection_interval(Duration::from_secs(30))
-    .with_metrics_endpoint("https://monitoring.googleapis.com")
-    .build();
-
-// Collect and report TPU metrics
-let metrics = monitor.collect_metrics().await?;
-monitor.report_to_cloud_monitoring(&metrics).await?;
-```
-
-## Error Handling
-
-OptiRS-TPU provides comprehensive error handling for distributed TPU operations:
-
-```rust
-use optirs_tpu::error::{TpuError, TpuResult};
-
-match optimizer.step_distributed(&mut params, &grads).await {
-    Ok(metrics) => {
-        println!("Optimization successful: {:.4} loss", metrics.loss);
-    }
-    Err(TpuError::PodUnavailable) => {
-        // Handle TPU pod unavailability
-        tpu_manager.request_alternate_pod().await?;
-    }
-    Err(TpuError::CommunicationTimeout) => {
-        // Handle communication timeouts
-        optimizer.reduce_batch_size().await?;
-    }
-    Err(TpuError::OutOfMemory) => {
-        // Handle TPU memory exhaustion
-        optimizer.enable_gradient_checkpointing().await?;
-    }
-    Err(e) => return Err(e.into()),
-}
-```
-
-## Cost Optimization
-
-### Preemptible TPUs
-```rust
-use optirs_tpu::preemptible::{PreemptibleManager, PreemptionHandler};
-
-let preemptible_config = PodConfig::new()
-    .with_tpu_type("v3-8")
-    .with_preemptible(true)  // 70% cost savings
-    .build();
-
-let preemption_handler = PreemptionHandler::new()
-    .with_checkpoint_frequency(Duration::from_secs(300))
-    .with_auto_restart(true)
-    .build();
-
-let tpu_pod = tpu_manager
-    .allocate_preemptible_pod(&preemptible_config, preemption_handler)
-    .await?;
-```
-
-### Spot TPU Bidding
-```rust
-use optirs_tpu::spot::{SpotManager, BiddingStrategy};
-
-let spot_manager = SpotManager::new()
-    .with_bidding_strategy(BiddingStrategy::CostOptimized)
-    .with_max_price_per_hour(2.50)
-    .build();
-
-let spot_pod = spot_manager.bid_for_pod(&pod_config).await?;
-```
-
-## Platform Support
-
-| Feature | Google Cloud TPU | TPU Research Cloud | On-Premise |
-|---------|------------------|-------------------|-------------|
-| v2 TPUs | ✅ | ✅ | ❌ |
-| v3 TPUs | ✅ | ✅ | ❌ |
-| v4 TPUs | ✅ | ✅ | ❌ |
-| Pod Management | ✅ | Limited | ❌ |
-| Preemptible | ✅ | ❌ | ❌ |
+Module map:
+- `coordination` — pod/device topology, barriers, load balancing, fault detection
+- `synchronization` — condvar barriers and ring collectives
+- `fault_tolerance` — checkpoint/restore, recovery strategies
+- `monitoring` — health checks and performance reports over live metric history
+- `tpu_backend` — device management and the CPU reference executor
+- `xla` — the graph-capture / shape-inference / optimization / scheduling pipeline
+- `pod_coordination` — larger-scale pod topology and clock-synchronization scaffolding
+  (mixed maturity; consult individual module docs)
 
 ## Development Guidelines
 
-### Coding Standards
-
-To maintain consistency and readability across the codebase, please follow these guidelines:
-
-#### Variable Naming
-- **Always use `snake_case` for variable names** (e.g., `user_id`, `max_iterations`, `learning_rate`)
-- **Avoid camelCase or other naming conventions** (e.g., `userId` ❌, `maxIterations` ❌)
-- **Use descriptive names** that clearly indicate the variable's purpose
-
-```rust
-// ✅ Correct: snake_case
-let experiment_id = "exp_001";
-let max_epochs = 100;
-let learning_rate = 0.001;
-
-// ❌ Incorrect: camelCase or other formats
-let experimentId = "exp_001";
-let maxEpochs = 100;
-let learningrate = 0.001;
-```
-
-#### Function and Method Names
-- Use `snake_case` for function and method names
-- Use descriptive verbs that indicate the function's action
-
-#### Type Names
-- Use `PascalCase` for struct, enum, and trait names
-- Use `SCREAMING_SNAKE_CASE` for constants
-
-#### General Guidelines
-- Follow Rust's official naming conventions as specified in [RFC 430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md)
-- Use `rustfmt` and `clippy` to maintain code formatting and catch common issues
-- Write clear, self-documenting code with appropriate comments
-
-### Before Submitting Code
-1. Run `cargo fmt` to format your code
-2. Run `cargo clippy` to check for lint issues
-3. Ensure all tests pass with `cargo test`
-4. Verify compilation with `cargo check`
+- `snake_case` for variables and functions, `PascalCase` for types, `SCREAMING_SNAKE_CASE`
+  for constants, per [RFC 430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md).
+- No fabricated success values or hardcoded placeholder outputs. Where a capability
+  genuinely requires hardware or a runtime this crate does not have, return a descriptive
+  `Err` rather than simulate one.
+- Before submitting: `cargo fmt`, `cargo clippy --all-features`, `cargo test --all-features`.
 
 ## Contributing
 
-OptiRS follows the Cool Japan organization's development standards. See the main OptiRS repository for contribution guidelines.
+OptiRS follows the Cool Japan organization's development standards. See the main OptiRS
+repository for contribution guidelines.
 
 ## License
 

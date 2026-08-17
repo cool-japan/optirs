@@ -12,6 +12,12 @@
 // `*_with_seed` constructors exist for reproducible tests and must never be
 // used to release real data.
 
+// Parameter validation uses `!(x > zero)` deliberately: unlike `x <= zero`, this
+// form rejects NaN (a NaN comparison is `false`, so its negation is `true`). Under
+// differential privacy a silently-accepted NaN scale voids the guarantee, so the
+// NaN-rejecting spelling is a correctness requirement, not a style choice.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use std::fmt::Debug;
 
 use scirs2_core::ndarray::{

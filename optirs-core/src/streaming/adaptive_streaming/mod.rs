@@ -3,13 +3,24 @@
 // This module provides comprehensive adaptive streaming optimization for ML workloads.
 
 pub mod anomaly_detection;
+pub mod anomaly_ml;
+pub mod anomaly_statistical;
 pub mod buffering;
 pub mod config;
 pub mod drift_detection;
+pub mod drift_tests;
+pub mod meta_bandit;
 pub mod meta_learning;
 pub mod optimizer;
 pub mod performance;
 pub mod resource_management;
+pub mod statistics;
+
+// NOTE: `anomaly_ml`, `anomaly_statistical`, `drift_tests`, `meta_bandit`
+// and `statistics` are deliberately NOT glob-re-exported. The glob exports below already
+// collide across modules (see the aliased re-exports further down), and
+// adding four more globs would reintroduce ambiguous names for every
+// downstream consumer. Reach for them through their module path instead.
 
 // Selective exports to avoid import conflicts
 pub use buffering::*;
@@ -73,7 +84,10 @@ where
         + 'static,
 {
     let config = StreamingConfig::default();
-    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).expect("unwrap failed")); // Default learning rate
+    let default_learning_rate = A::from(DEFAULT_LEARNING_RATE).ok_or_else(|| {
+        format!("element type cannot represent the default learning rate {DEFAULT_LEARNING_RATE}")
+    })?;
+    let base_optimizer = crate::optimizers::Adam::new(default_learning_rate);
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)
 }
 
@@ -97,9 +111,16 @@ where
         + Sync
         + 'static,
 {
-    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).expect("unwrap failed")); // Default learning rate
+    let default_learning_rate = A::from(DEFAULT_LEARNING_RATE).ok_or_else(|| {
+        format!("element type cannot represent the default learning rate {DEFAULT_LEARNING_RATE}")
+    })?;
+    let base_optimizer = crate::optimizers::Adam::new(default_learning_rate);
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)
 }
+
+/// Learning rate used by the convenience constructors above when the caller
+/// does not supply one.
+pub const DEFAULT_LEARNING_RATE: f64 = 0.001;
 
 // Result type alias
 pub type StreamingResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

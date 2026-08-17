@@ -464,6 +464,89 @@ mod tests {
     }
 
     #[test]
+    fn test_golden_epsilon_for_both_accounting_methods() {
+        // Canonical DP-SGD setting: sigma = 1.0, q = 0.01, delta = 1e-5.
+        //
+        // Both accountants compose the same externally-anchored per-step RDP
+        // kernel (see
+        // `renyi_accountant::tests::test_kernel_reproduces_the_published_tensorflow_privacy_reference`,
+        // which reproduces the published TF Privacy tutorial value 1.18). They
+        // differ only in the order grid and the RDP-to-DP conversion:
+        //
+        // * `RenyiPrivacyAccountant`  - DEFAULT_ALPHAS, Canonne-Kamath-Steinke
+        // * `MomentsPrivacyAccountant` - integer orders 2..=64, classic Mironov
+        //
+        // The moments value is therefore expected to be the larger of the two.
+        let cases: [(usize, f64, f64); 2] = [
+            (100, 1.224_845_779_636, 1.617_281_887_460),
+            (1000, 2.107_753_075_452, 2.538_347_545_459),
+        ];
+
+        for (steps, golden_renyi, golden_moments) in cases {
+            let mut renyi = RenyiPrivacyAccountant::new();
+            let mut moments = MomentsPrivacyAccountant::new(1.0, 1.0e-5, 100, 10_000);
+            renyi
+                .compose_subsampled_gaussian(1.0, 0.01, steps)
+                .expect("composition");
+            moments
+                .compose_subsampled_gaussian(1.0, 0.01, steps)
+                .expect("composition");
+
+            let (eps_renyi, _) = renyi.privacy_spent(1.0e-5).expect("conversion");
+            let (eps_moments, _) = moments.privacy_spent(1.0e-5).expect("conversion");
+
+            assert!(
+                (eps_renyi - golden_renyi).abs() < 1.0e-9,
+                "T={steps}: Renyi epsilon {eps_renyi} != golden {golden_renyi}"
+            );
+            assert!(
+                (eps_moments - golden_moments).abs() < 1.0e-9,
+                "T={steps}: moments epsilon {eps_moments} != golden {golden_moments}"
+            );
+            assert!(
+                eps_moments > eps_renyi,
+                "T={steps}: the classic conversion cannot be tighter than CKS"
+            );
+        }
+    }
+
+    #[test]
+    fn test_projected_spend_matches_the_spend_after_actually_composing() {
+        // `projected_privacy_spent` is what enforces the budget *before* a
+        // noisy value is released, so it must agree exactly with the spend the
+        // step would actually incur -- and must leave the ledger untouched.
+        for method in [
+            AccountingMethod::RenyiDP,
+            AccountingMethod::MomentsAccountant,
+        ] {
+            let mut accountant =
+                build_accountant(method, 1.0, 1.0e-5, 100, 10_000).expect("implemented method");
+            accountant
+                .compose_subsampled_gaussian(1.0, 0.01, 99)
+                .expect("composition");
+
+            let (projected, _) = accountant
+                .projected_privacy_spent(1.0, 0.01, 1, 1.0e-5)
+                .expect("projection");
+            assert_eq!(
+                accountant.total_steps(),
+                99,
+                "{method:?}: a projection must not record anything"
+            );
+
+            accountant
+                .compose_subsampled_gaussian(1.0, 0.01, 1)
+                .expect("composition");
+            let (actual, _) = accountant.privacy_spent(1.0e-5).expect("conversion");
+
+            assert!(
+                (projected - actual).abs() < 1.0e-12,
+                "{method:?}: projected {projected} must equal realised {actual}"
+            );
+        }
+    }
+
+    #[test]
     fn test_heterogeneous_segments_compose() {
         let mut accountant = RenyiPrivacyAccountant::new();
         accountant

@@ -30,6 +30,22 @@ pub struct AnomalyDetector<A: Float + Send + Sync> {
     false_positive_tracker: FalsePositiveTracker<A>,
     /// Anomaly response system
     response_system: AnomalyResponseSystem<A>,
+    /// Bounded window of the most recently scored data points.
+    ///
+    /// `create_anomaly_context`/`calculate_recent_statistics` compute from this
+    /// window; before it existed they returned a hard-coded two-feature summary
+    /// that was wrong for every stream and silently assumed a feature width of
+    /// exactly two.
+    recent_points: VecDeque<StreamingDataPoint<A>>,
+    /// Capacity of `recent_points`.
+    recent_capacity: usize,
+    /// Externally supplied context signals, set by the owning optimizer via
+    /// [`AnomalyDetector::update_context_signals`]. Empty means "the caller has
+    /// not reported any", which is honest — the detector has no direct access
+    /// to the performance tracker, resource manager or drift detector.
+    context_performance_metrics: Vec<A>,
+    context_resource_usage: Vec<A>,
+    context_drift_indicators: Vec<A>,
 }
 
 /// Anomaly event record
@@ -167,11 +183,145 @@ pub trait MLAnomalyDetector<A: Float + Send + Sync>: Send + Sync {
     /// Updates the model incrementally
     fn update_incremental(&mut self, data_point: &StreamingDataPoint<A>) -> Result<(), String>;
 
-    /// Gets model performance metrics
-    fn get_performance_metrics(&self) -> MLModelMetrics<A>;
+    /// Records the ground truth for one of this detector's predictions.
+    ///
+    /// Quality metrics for an unsupervised novelty detector are unknowable
+    /// without labels, so they are only defined once outcomes are fed back in
+    /// through this method (see [`AnomalyDetector::record_detection_outcome`]).
+    fn record_outcome(&mut self, predicted_anomaly: bool, was_true_anomaly: bool);
+
+    /// Gets model performance metrics.
+    ///
+    /// Returns an error while no labelled outcome has been recorded: an
+    /// accuracy figure invented before any ground truth exists would be a
+    /// fabrication, not a measurement.
+    fn get_performance_metrics(&self) -> Result<MLModelMetrics<A>, String>;
 
     /// Gets detector name
     fn name(&self) -> String;
+}
+
+/// Real confusion-matrix counters backing every ML detector's quality metrics.
+///
+/// `predictions`/`flagged` are updated on every scored point (so the observed
+/// flag rate is always available), while the four confusion cells only move
+/// when ground truth is supplied via [`DetectionCounters::record_outcome`].
+#[derive(Debug, Clone, Default)]
+pub struct DetectionCounters {
+    /// Points scored by the detector.
+    pub predictions: usize,
+    /// Points the detector flagged as anomalous.
+    pub flagged: usize,
+    /// Flagged and genuinely anomalous.
+    pub true_positives: usize,
+    /// Flagged but genuinely normal.
+    pub false_positives: usize,
+    /// Not flagged and genuinely normal.
+    pub true_negatives: usize,
+    /// Not flagged but genuinely anomalous.
+    pub false_negatives: usize,
+}
+
+impl DetectionCounters {
+    /// Records that a point was scored, and whether it was flagged.
+    pub fn record_prediction(&mut self, flagged: bool) {
+        self.predictions += 1;
+        if flagged {
+            self.flagged += 1;
+        }
+    }
+
+    /// Records ground truth for one prediction.
+    pub fn record_outcome(&mut self, predicted_anomaly: bool, was_true_anomaly: bool) {
+        match (predicted_anomaly, was_true_anomaly) {
+            (true, true) => self.true_positives += 1,
+            (true, false) => self.false_positives += 1,
+            (false, false) => self.true_negatives += 1,
+            (false, true) => self.false_negatives += 1,
+        }
+    }
+
+    /// Total number of labelled outcomes recorded.
+    pub fn labelled(&self) -> usize {
+        self.true_positives + self.false_positives + self.true_negatives + self.false_negatives
+    }
+
+    /// Fraction of scored points that were flagged, or `None` before any point
+    /// has been scored. This is a real observation, available without labels.
+    pub fn observed_flag_rate(&self) -> Option<f64> {
+        if self.predictions == 0 {
+            None
+        } else {
+            Some(self.flagged as f64 / self.predictions as f64)
+        }
+    }
+
+    /// Derives quality metrics from the recorded confusion matrix.
+    ///
+    /// `auc_roc` is the exact single-operating-point ROC area
+    /// `(TPR + TNR) / 2`, which is all that a one-threshold detector's
+    /// confusion matrix can support; a full curve would need scores retained
+    /// against labels across thresholds.
+    pub fn to_metrics<A: Float + Send + Sync>(
+        &self,
+        detector_name: String,
+        training_time: Duration,
+        inference_time: Duration,
+    ) -> Result<MLModelMetrics<A>, String> {
+        let labelled = self.labelled();
+        if labelled == 0 {
+            return Err(format!(
+                "{detector_name}: no labelled outcomes recorded, so accuracy, \
+                 precision, recall, F1 and AUC are undefined — call \
+                 `record_outcome` with ground truth first"
+            ));
+        }
+
+        let true_positives = self.true_positives as f64;
+        let false_positives = self.false_positives as f64;
+        let true_negatives = self.true_negatives as f64;
+        let false_negatives = self.false_negatives as f64;
+
+        let precision = if true_positives + false_positives > 0.0 {
+            true_positives / (true_positives + false_positives)
+        } else {
+            0.0
+        };
+        let recall = if true_positives + false_negatives > 0.0 {
+            true_positives / (true_positives + false_negatives)
+        } else {
+            0.0
+        };
+        let f1_score = if precision + recall > 0.0 {
+            2.0 * precision * recall / (precision + recall)
+        } else {
+            0.0
+        };
+        let accuracy = (true_positives + true_negatives) / labelled as f64;
+        let false_positive_rate = if false_positives + true_negatives > 0.0 {
+            false_positives / (false_positives + true_negatives)
+        } else {
+            0.0
+        };
+        let true_negative_rate = 1.0 - false_positive_rate;
+        let auc_roc = (recall + true_negative_rate) / 2.0;
+
+        let convert = |value: f64| -> Result<A, String> {
+            A::from(value)
+                .ok_or_else(|| format!("{value} cannot be represented in the element type"))
+        };
+
+        Ok(MLModelMetrics {
+            accuracy: convert(accuracy)?,
+            precision: convert(precision)?,
+            recall: convert(recall)?,
+            f1_score: convert(f1_score)?,
+            auc_roc: convert(auc_roc)?,
+            false_positive_rate: convert(false_positive_rate)?,
+            training_time,
+            inference_time,
+        })
+    }
 }
 
 /// Result of anomaly detection
@@ -473,7 +623,29 @@ pub struct AnomalyResponseSystem<A: Float + Send + Sync> {
     effectiveness_tracker: ResponseEffectivenessTracker<A>,
     /// Escalation rules
     escalation_rules: Vec<EscalationRule<A>>,
+    /// Monotonically increasing response identifier.
+    next_response_id: u64,
+    /// Messages written by executed `Log` actions.
+    log_entries: VecDeque<String>,
+    /// Messages written by executed `Alert` actions.
+    alert_entries: VecDeque<String>,
+    /// Data points held by executed `Quarantine` actions.
+    quarantined_points: VecDeque<StreamingDataPoint<A>>,
+    /// Threshold adjustment requested by `ModelAdjustment` actions, awaiting
+    /// application by the owning detector.
+    pending_threshold_adjustment: Option<f64>,
+    /// Monitoring level, raised by `IncreaseMonitoring` actions.
+    monitoring_level: u32,
 }
+
+/// Number of scored data points retained for context statistics.
+const RECENT_POINT_WINDOW: usize = 512;
+
+/// Bound on the response log / alert / execution histories.
+const RESPONSE_HISTORY_CAPACITY: usize = 1000;
+
+/// Bound on the quarantine buffer.
+const QUARANTINE_CAPACITY: usize = 256;
 
 /// Response actions for anomalies
 #[derive(Debug, Clone)]
@@ -722,11 +894,15 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         // Initialize statistical detectors
         statistical_detectors.insert(
             "zscore".to_string(),
-            Box::new(ZScoreDetector::new(anomaly_config.threshold)?),
+            Box::new(super::anomaly_statistical::ZScoreDetector::new(
+                anomaly_config.threshold,
+            )?),
         );
         statistical_detectors.insert(
             "iqr".to_string(),
-            Box::new(IQRDetector::new(anomaly_config.threshold)?),
+            Box::new(super::anomaly_statistical::IQRDetector::new(
+                anomaly_config.threshold,
+            )?),
         );
 
         // Initialize ML detectors based on method
@@ -734,17 +910,20 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
             AnomalyDetectionMethod::IsolationForest => {
                 ml_detectors.insert(
                     "isolation_forest".to_string(),
-                    Box::new(IsolationForestDetector::new()?),
+                    Box::new(super::anomaly_ml::IsolationForestDetector::new()?),
                 );
             }
             AnomalyDetectionMethod::OneClassSVM => {
                 ml_detectors.insert(
                     "one_class_svm".to_string(),
-                    Box::new(OneClassSVMDetector::new()?),
+                    Box::new(super::anomaly_ml::OneClassSvmDetector::new()?),
                 );
             }
             AnomalyDetectionMethod::LocalOutlierFactor => {
-                ml_detectors.insert("lof".to_string(), Box::new(LOFDetector::new()?));
+                ml_detectors.insert(
+                    "lof".to_string(),
+                    Box::new(super::anomaly_ml::LofDetector::new()?),
+                );
             }
             _ => {
                 // Use statistical methods for other cases
@@ -757,6 +936,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         let false_positive_tracker = FalsePositiveTracker::new();
         let response_system = AnomalyResponseSystem::new(&anomaly_config.response_strategy)?;
 
+        let recent_capacity = RECENT_POINT_WINDOW;
         Ok(Self {
             config: anomaly_config,
             statistical_detectors,
@@ -766,7 +946,114 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
             anomaly_history: VecDeque::with_capacity(10000),
             false_positive_tracker,
             response_system,
+            recent_points: VecDeque::with_capacity(recent_capacity),
+            recent_capacity,
+            context_performance_metrics: Vec::new(),
+            context_resource_usage: Vec::new(),
+            context_drift_indicators: Vec::new(),
         })
+    }
+
+    /// Supplies the context signals that the detector cannot observe itself.
+    ///
+    /// The owning optimizer knows the current performance, resource and drift
+    /// state; feeding them in here makes [`AnomalyContext`] carry real values
+    /// instead of the placeholders it used to be built from.
+    pub fn update_context_signals(
+        &mut self,
+        performance_metrics: Vec<A>,
+        resource_usage: Vec<A>,
+        drift_indicators: Vec<A>,
+    ) {
+        self.context_performance_metrics = performance_metrics;
+        self.context_resource_usage = resource_usage;
+        self.context_drift_indicators = drift_indicators;
+    }
+
+    /// Feeds ground truth for the most recent detection back into the
+    /// detectors and the false-positive tracker.
+    ///
+    /// This is the only path by which the ML detectors' quality metrics become
+    /// defined; without it `get_performance_metrics` honestly reports that it
+    /// has nothing to measure.
+    pub fn record_detection_outcome(&mut self, predicted_anomaly: bool, was_true_anomaly: bool) {
+        for detector in self.ml_detectors.values_mut() {
+            detector.record_outcome(predicted_anomaly, was_true_anomaly);
+        }
+        self.false_positive_tracker
+            .record_outcome(predicted_anomaly, was_true_anomaly);
+
+        // A confirmed false positive is attributed to the most recent recorded
+        // anomaly, which is the one the caller is giving feedback on.
+        if predicted_anomaly && !was_true_anomaly {
+            if let Some(event) = self.anomaly_history.back().cloned() {
+                self.false_positive_tracker.record_false_positive(&event);
+            }
+        }
+    }
+
+    /// Number of confirmed false positives retained by the tracker.
+    pub fn confirmed_false_positive_count(&self) -> usize {
+        self.false_positive_tracker.confirmed_false_positive_count()
+    }
+
+    /// Number of response executions the response system has recorded.
+    pub fn response_execution_count(&self) -> usize {
+        self.response_system.execution_count()
+    }
+
+    /// Entries written by executed `Log` response actions.
+    pub fn response_log_entry_count(&self) -> usize {
+        self.response_system.log_entry_count()
+    }
+
+    /// Entries written by executed `Alert` response actions.
+    pub fn response_alert_entry_count(&self) -> usize {
+        self.response_system.alert_entry_count()
+    }
+
+    /// Data points held by executed `Quarantine` response actions.
+    pub fn quarantined_point_count(&self) -> usize {
+        self.response_system.quarantined_count()
+    }
+
+    /// Monitoring level, raised by executed `IncreaseMonitoring` actions.
+    pub fn monitoring_level(&self) -> u32 {
+        self.response_system.monitoring_level()
+    }
+
+    /// Quality metrics for every registered ML detector that has labelled
+    /// outcomes recorded. Detectors without ground truth are reported with the
+    /// error explaining why, rather than a fabricated score.
+    pub fn ml_performance_metrics(&self) -> HashMap<String, Result<MLModelMetrics<A>, String>> {
+        self.ml_detectors
+            .iter()
+            .map(|(name, detector)| (name.clone(), detector.get_performance_metrics()))
+            .collect()
+    }
+
+    /// Number of data points currently retained for context statistics.
+    pub fn recent_window_len(&self) -> usize {
+        self.recent_points.len()
+    }
+
+    /// Builds the anomaly context for a data point without recording an event.
+    ///
+    /// Exposed so callers (and tests) can inspect the real statistics the
+    /// detector derives from its retained window.
+    pub fn build_context_for_test(
+        &self,
+        data_point: &StreamingDataPoint<A>,
+    ) -> Result<AnomalyContext<A>, String> {
+        self.create_anomaly_context(data_point)
+    }
+
+    /// Adds a scored point to the bounded context window.
+    fn remember_point(&mut self, data_point: &StreamingDataPoint<A>) {
+        if self.recent_points.len() >= self.recent_capacity {
+            self.recent_points.pop_front();
+        }
+        self.recent_points.push_back(data_point.clone());
     }
 
     /// Detects anomalies in a data point
@@ -788,10 +1075,15 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         // Combine results using ensemble
         let ensemble_result = self.ensemble_detector.combine_results(detection_results)?;
 
+        // Retain the point for the context statistics window regardless of the
+        // verdict — the summary describes the recent stream, not just the
+        // anomalies in it.
+        self.remember_point(data_point);
+
         // Check if anomaly was detected
         if ensemble_result.is_anomaly {
             // Create anomaly event
-            let anomaly_event = AnomalyEvent {
+            let mut anomaly_event = AnomalyEvent {
                 id: self.generate_event_id(),
                 timestamp: Instant::now(),
                 anomaly_type: ensemble_result
@@ -808,12 +1100,27 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
                 response_actions: Vec::new(),
             };
 
+            // Trigger the configured responses and record what actually ran,
+            // so `response_actions` reflects real executions instead of the
+            // empty vector a no-op `trigger_response` left behind.
+            anomaly_event.response_actions =
+                self.response_system.trigger_response(&anomaly_event)?;
+
+            // Any threshold adjustment the responses asked for is applied for
+            // real, not merely logged.
+            if let Some(adjustment) = self.response_system.take_pending_threshold_adjustment() {
+                let magnitude = A::from(adjustment).ok_or_else(|| {
+                    format!("threshold adjustment {adjustment} is not representable")
+                })?;
+                for detector in self.statistical_detectors.values_mut() {
+                    let updated = detector.get_threshold() + magnitude;
+                    detector.set_threshold(updated);
+                }
+                self.ensemble_detector.adjust_sensitivity(magnitude)?;
+            }
+
             // Record anomaly
             self.record_anomaly(anomaly_event)?;
-
-            // Trigger response
-            self.response_system
-                .trigger_response(&ensemble_result, data_point)?;
 
             return Ok(true);
         }
@@ -840,72 +1147,153 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         &self,
         data_point: &StreamingDataPoint<A>,
     ) -> Result<AnomalyContext<A>, String> {
-        // Calculate recent statistics
-        let recent_statistics = self.calculate_recent_statistics()?;
+        // Calculate recent statistics from the retained window.
+        let recent_statistics = self.calculate_recent_statistics(data_point)?;
 
-        // Get performance metrics (simplified)
-        let performance_metrics = vec![
-            A::from(0.8).expect("unwrap failed"),
-            A::from(0.7).expect("unwrap failed"),
-        ];
-
-        // Get resource usage (simplified)
-        let resource_usage = vec![
-            A::from(0.6).expect("unwrap failed"),
-            A::from(0.5).expect("unwrap failed"),
-        ];
-
-        // Get drift indicators (simplified)
-        let drift_indicators = vec![A::from(0.1).expect("unwrap failed")];
-
-        // Calculate time since last anomaly
-        let time_since_last_anomaly = if let Some(last_anomaly) = self.anomaly_history.back() {
-            last_anomaly.timestamp.elapsed()
-        } else {
-            Duration::from_secs(3600) // Default 1 hour
+        // Calculate time since last anomaly. With no prior anomaly there is no
+        // interval to report, so use the age of the oldest retained
+        // observation — a real measurement — rather than a fixed hour.
+        let time_since_last_anomaly = match self.anomaly_history.back() {
+            Some(last_anomaly) => last_anomaly.timestamp.elapsed(),
+            None => self
+                .recent_points
+                .front()
+                .map(|point| point.timestamp.elapsed())
+                .unwrap_or(Duration::ZERO),
         };
 
         Ok(AnomalyContext {
             recent_statistics,
-            performance_metrics,
-            resource_usage,
-            drift_indicators,
+            // Reported by the owning optimizer through
+            // `update_context_signals`; empty means "not reported", which is
+            // honest, unlike the 0.8/0.7, 0.6/0.5, 0.1 placeholders this used
+            // to invent.
+            performance_metrics: self.context_performance_metrics.clone(),
+            resource_usage: self.context_resource_usage.clone(),
+            drift_indicators: self.context_drift_indicators.clone(),
             time_since_last_anomaly,
         })
     }
 
-    /// Calculates recent data statistics
-    fn calculate_recent_statistics(&self) -> Result<DataStatistics<A>, String> {
-        // Simplified implementation - would use actual recent data
+    /// Computes per-feature statistics over the retained window of recent data
+    /// points.
+    ///
+    /// The summary is dimension-general: it is sized from the widest feature
+    /// vector actually observed (including the point being classified), so a
+    /// stream with any number of features is described correctly. Every
+    /// quantity — mean, standard deviation, min, max, median, skewness and
+    /// kurtosis — is computed from the real observations.
+    fn calculate_recent_statistics(
+        &self,
+        data_point: &StreamingDataPoint<A>,
+    ) -> Result<DataStatistics<A>, String> {
+        let feature_count = self
+            .recent_points
+            .iter()
+            .map(|point| point.features.len())
+            .chain(std::iter::once(data_point.features.len()))
+            .max()
+            .unwrap_or(0);
+
+        let mut means = Vec::with_capacity(feature_count);
+        let mut std_devs = Vec::with_capacity(feature_count);
+        let mut min_values = Vec::with_capacity(feature_count);
+        let mut max_values = Vec::with_capacity(feature_count);
+        let mut medians = Vec::with_capacity(feature_count);
+        let mut skewness = Vec::with_capacity(feature_count);
+        let mut kurtosis = Vec::with_capacity(feature_count);
+
+        for index in 0..feature_count {
+            let mut column: Vec<A> = self
+                .recent_points
+                .iter()
+                .filter_map(|point| point.features.get(index).copied())
+                .collect();
+            if let Some(value) = data_point.features.get(index) {
+                column.push(*value);
+            }
+
+            if column.is_empty() {
+                means.push(A::zero());
+                std_devs.push(A::zero());
+                min_values.push(A::zero());
+                max_values.push(A::zero());
+                medians.push(A::zero());
+                skewness.push(A::zero());
+                kurtosis.push(A::zero());
+                continue;
+            }
+
+            let count = A::from(column.len())
+                .ok_or_else(|| format!("sample count {} is not representable", column.len()))?;
+            let mean = column.iter().fold(A::zero(), |acc, &v| acc + v) / count;
+            let variance = column
+                .iter()
+                .fold(A::zero(), |acc, &v| acc + (v - mean) * (v - mean))
+                / count;
+            let std_dev = variance.sqrt();
+
+            let minimum = column
+                .iter()
+                .copied()
+                .reduce(|a, b| {
+                    if super::statistics::total_order(&b, &a) == std::cmp::Ordering::Less {
+                        b
+                    } else {
+                        a
+                    }
+                })
+                .unwrap_or_else(A::zero);
+            let maximum = column
+                .iter()
+                .copied()
+                .reduce(|a, b| {
+                    if super::statistics::total_order(&b, &a) == std::cmp::Ordering::Greater {
+                        b
+                    } else {
+                        a
+                    }
+                })
+                .unwrap_or_else(A::zero);
+            let median = super::statistics::median_in_place(&mut column).unwrap_or(mean);
+
+            // Standardised third and fourth central moments. Both are
+            // undefined for a constant column, which is reported as zero
+            // (a symmetric, mesokurtic degenerate distribution) rather than a
+            // division by zero.
+            let (skew, kurt) = if std_dev > A::zero() {
+                let mut third = A::zero();
+                let mut fourth = A::zero();
+                for &value in column.iter() {
+                    let z = (value - mean) / std_dev;
+                    let z2 = z * z;
+                    third = third + z2 * z;
+                    fourth = fourth + z2 * z2;
+                }
+                let three = A::from(3.0).ok_or_else(|| "3.0 is not representable".to_string())?;
+                // Excess kurtosis, so a Gaussian column reports ~0.
+                (third / count, fourth / count - three)
+            } else {
+                (A::zero(), A::zero())
+            };
+
+            means.push(mean);
+            std_devs.push(std_dev);
+            min_values.push(minimum);
+            max_values.push(maximum);
+            medians.push(median);
+            skewness.push(skew);
+            kurtosis.push(kurt);
+        }
+
         Ok(DataStatistics {
-            means: vec![
-                A::from(0.5).expect("unwrap failed"),
-                A::from(0.3).expect("unwrap failed"),
-            ],
-            std_devs: vec![
-                A::from(0.1).expect("unwrap failed"),
-                A::from(0.15).expect("unwrap failed"),
-            ],
-            min_values: vec![
-                A::from(0.0).expect("unwrap failed"),
-                A::from(0.0).expect("unwrap failed"),
-            ],
-            max_values: vec![
-                A::from(1.0).expect("unwrap failed"),
-                A::from(1.0).expect("unwrap failed"),
-            ],
-            medians: vec![
-                A::from(0.5).expect("unwrap failed"),
-                A::from(0.3).expect("unwrap failed"),
-            ],
-            skewness: vec![
-                A::from(0.0).expect("unwrap failed"),
-                A::from(0.1).expect("unwrap failed"),
-            ],
-            kurtosis: vec![
-                A::from(0.0).expect("unwrap failed"),
-                A::from(0.0).expect("unwrap failed"),
-            ],
+            means,
+            std_devs,
+            min_values,
+            max_values,
+            medians,
+            skewness,
+            kurtosis,
         })
     }
 
@@ -951,419 +1339,38 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
             false_positive_rate: self.false_positive_tracker.get_current_fp_rate(),
             detector_count: self.statistical_detectors.len() + self.ml_detectors.len(),
             response_success_rate: self.response_system.get_success_rate(),
+            response_executions: self.response_system.execution_count(),
+            recent_window_len: self.recent_points.len(),
         }
     }
 
     /// Calculates recent anomaly rate
     fn calculate_recent_anomaly_rate(&self) -> f64 {
         let recent_window = Duration::from_secs(3600); // 1 hour
-        let cutoff_time = Instant::now() - recent_window;
+                                                       // `Instant::now() - Duration` panics if the process has been up for
+                                                       // less than the window, so subtract with a checked operation.
+        let now = Instant::now();
 
         let recent_count = self
             .anomaly_history
             .iter()
-            .filter(|event| event.timestamp > cutoff_time)
+            .filter(|event| now.duration_since(event.timestamp) <= recent_window)
             .count();
 
-        recent_count as f64 / 3600.0 // Anomalies per second
+        recent_count as f64 / recent_window.as_secs_f64() // Anomalies per second
     }
 }
 
-// Simplified implementations of detector types
+// The classic statistical detectors (z-score and IQR) live in
+// `super::anomaly_statistical`; the real machine-learning detectors (isolation
+// forest, online one-class SVM and local outlier factor) live in
+// `super::anomaly_ml`, where the latter three were previously stubs here that
+// returned the constants 0.3 / 0.2 / 0.1 regardless of their input.
 
-/// Z-Score based statistical detector
-pub struct ZScoreDetector<A: Float + Send + Sync> {
-    threshold: A,
-    running_mean: A,
-    running_variance: A,
-    sample_count: usize,
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> ZScoreDetector<A> {
-    fn new(threshold: f64) -> Result<Self, String> {
-        Ok(Self {
-            threshold: A::from(threshold).expect("unwrap failed"),
-            running_mean: A::zero(),
-            running_variance: A::zero(),
-            sample_count: 0,
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalAnomalyDetector<A>
-    for ZScoreDetector<A>
-{
-    fn detect_anomaly(
-        &mut self,
-        data_point: &StreamingDataPoint<A>,
-    ) -> Result<AnomalyDetectionResult<A>, String> {
-        if self.sample_count < 10 {
-            // Not enough samples for reliable detection
-            return Ok(AnomalyDetectionResult {
-                is_anomaly: false,
-                anomaly_score: A::zero(),
-                confidence: A::zero(),
-                anomaly_type: None,
-                severity: AnomalySeverity::Low,
-                metadata: HashMap::new(),
-            });
-        }
-
-        // Calculate Z-score for the data point
-        let feature_sum = data_point.features.iter().cloned().sum::<A>();
-        let z_score = if self.running_variance > A::zero() {
-            (feature_sum - self.running_mean) / self.running_variance.sqrt()
-        } else {
-            A::zero()
-        };
-
-        let is_anomaly = z_score.abs() > self.threshold;
-        let anomaly_score = z_score.abs();
-
-        Ok(AnomalyDetectionResult {
-            is_anomaly,
-            anomaly_score,
-            confidence: if is_anomaly {
-                A::from(0.8).expect("unwrap failed")
-            } else {
-                A::from(0.2).expect("unwrap failed")
-            },
-            anomaly_type: if is_anomaly {
-                Some(AnomalyType::StatisticalOutlier)
-            } else {
-                None
-            },
-            severity: if anomaly_score > A::from(3.0).expect("unwrap failed") {
-                AnomalySeverity::High
-            } else if anomaly_score > A::from(2.0).expect("unwrap failed") {
-                AnomalySeverity::Medium
-            } else {
-                AnomalySeverity::Low
-            },
-            metadata: HashMap::new(),
-        })
-    }
-
-    fn update(&mut self, data_point: &StreamingDataPoint<A>) -> Result<(), String> {
-        let feature_sum = data_point.features.iter().cloned().sum::<A>();
-
-        // Update running statistics
-        self.sample_count += 1;
-        let delta = feature_sum - self.running_mean;
-        self.running_mean =
-            self.running_mean + delta / A::from(self.sample_count).expect("unwrap failed");
-        let delta2 = feature_sum - self.running_mean;
-        self.running_variance = self.running_variance + delta * delta2;
-
-        Ok(())
-    }
-
-    fn reset(&mut self) {
-        self.running_mean = A::zero();
-        self.running_variance = A::zero();
-        self.sample_count = 0;
-    }
-
-    fn name(&self) -> String {
-        "zscore".to_string()
-    }
-
-    fn get_threshold(&self) -> A {
-        self.threshold
-    }
-
-    fn set_threshold(&mut self, threshold: A) {
-        self.threshold = threshold;
-    }
-}
-
-/// IQR-based statistical detector
-pub struct IQRDetector<A: Float + Send + Sync> {
-    threshold: A,
-    recent_values: VecDeque<A>,
-    window_size: usize,
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> IQRDetector<A> {
-    fn new(threshold: f64) -> Result<Self, String> {
-        Ok(Self {
-            threshold: A::from(threshold).expect("unwrap failed"),
-            recent_values: VecDeque::with_capacity(100),
-            window_size: 100,
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalAnomalyDetector<A>
-    for IQRDetector<A>
-{
-    fn detect_anomaly(
-        &mut self,
-        data_point: &StreamingDataPoint<A>,
-    ) -> Result<AnomalyDetectionResult<A>, String> {
-        if self.recent_values.len() < 20 {
-            return Ok(AnomalyDetectionResult {
-                is_anomaly: false,
-                anomaly_score: A::zero(),
-                confidence: A::zero(),
-                anomaly_type: None,
-                severity: AnomalySeverity::Low,
-                metadata: HashMap::new(),
-            });
-        }
-
-        // Calculate IQR
-        let mut sorted_values: Vec<A> = self.recent_values.iter().cloned().collect();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
-
-        let q1_idx = sorted_values.len() / 4;
-        let q3_idx = 3 * sorted_values.len() / 4;
-        let q1 = sorted_values[q1_idx];
-        let q3 = sorted_values[q3_idx];
-        let iqr = q3 - q1;
-
-        let lower_bound = q1 - self.threshold * iqr;
-        let upper_bound = q3 + self.threshold * iqr;
-
-        let feature_sum = data_point.features.iter().cloned().sum::<A>();
-        let is_anomaly = feature_sum < lower_bound || feature_sum > upper_bound;
-
-        let distance_from_bounds = if feature_sum < lower_bound {
-            lower_bound - feature_sum
-        } else if feature_sum > upper_bound {
-            feature_sum - upper_bound
-        } else {
-            A::zero()
-        };
-
-        Ok(AnomalyDetectionResult {
-            is_anomaly,
-            anomaly_score: distance_from_bounds / iqr.max(A::from(1e-8).expect("unwrap failed")),
-            confidence: if is_anomaly {
-                A::from(0.7).expect("unwrap failed")
-            } else {
-                A::from(0.3).expect("unwrap failed")
-            },
-            anomaly_type: if is_anomaly {
-                Some(AnomalyType::StatisticalOutlier)
-            } else {
-                None
-            },
-            severity: if distance_from_bounds > iqr * A::from(2.0).expect("unwrap failed") {
-                AnomalySeverity::High
-            } else {
-                AnomalySeverity::Medium
-            },
-            metadata: HashMap::new(),
-        })
-    }
-
-    fn update(&mut self, data_point: &StreamingDataPoint<A>) -> Result<(), String> {
-        let feature_sum = data_point.features.iter().cloned().sum::<A>();
-
-        if self.recent_values.len() >= self.window_size {
-            self.recent_values.pop_front();
-        }
-        self.recent_values.push_back(feature_sum);
-
-        Ok(())
-    }
-
-    fn reset(&mut self) {
-        self.recent_values.clear();
-    }
-
-    fn name(&self) -> String {
-        "iqr".to_string()
-    }
-
-    fn get_threshold(&self) -> A {
-        self.threshold
-    }
-
-    fn set_threshold(&mut self, threshold: A) {
-        self.threshold = threshold;
-    }
-}
-
-// Simplified ML detector implementations
-pub struct IsolationForestDetector<A: Float + Send + Sync> {
-    model_trained: bool,
-    threshold: A,
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> IsolationForestDetector<A> {
-    fn new() -> Result<Self, String> {
-        Ok(Self {
-            model_trained: false,
-            threshold: A::from(0.5).expect("unwrap failed"),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetector<A>
-    for IsolationForestDetector<A>
-{
-    fn detect_anomaly(
-        &mut self,
-        data_point: &StreamingDataPoint<A>,
-    ) -> Result<AnomalyDetectionResult<A>, String> {
-        // Simplified implementation
-        let anomaly_score = A::from(0.3).expect("unwrap failed"); // Placeholder
-        Ok(AnomalyDetectionResult {
-            is_anomaly: anomaly_score > self.threshold,
-            anomaly_score,
-            confidence: A::from(0.6).expect("unwrap failed"),
-            anomaly_type: Some(AnomalyType::StatisticalOutlier),
-            severity: AnomalySeverity::Medium,
-            metadata: HashMap::new(),
-        })
-    }
-
-    fn train(&mut self, _training_data: &[StreamingDataPoint<A>]) -> Result<(), String> {
-        self.model_trained = true;
-        Ok(())
-    }
-
-    fn update_incremental(&mut self, _data_point: &StreamingDataPoint<A>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn get_performance_metrics(&self) -> MLModelMetrics<A> {
-        MLModelMetrics {
-            accuracy: A::from(0.85).expect("unwrap failed"),
-            precision: A::from(0.8).expect("unwrap failed"),
-            recall: A::from(0.75).expect("unwrap failed"),
-            f1_score: A::from(0.77).expect("unwrap failed"),
-            auc_roc: A::from(0.88).expect("unwrap failed"),
-            false_positive_rate: A::from(0.05).expect("unwrap failed"),
-            training_time: Duration::from_secs(60),
-            inference_time: Duration::from_millis(10),
-        }
-    }
-
-    fn name(&self) -> String {
-        "isolation_forest".to_string()
-    }
-}
-
-pub struct OneClassSVMDetector<A: Float + Send + Sync> {
-    model_trained: bool,
-    threshold: A,
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> OneClassSVMDetector<A> {
-    fn new() -> Result<Self, String> {
-        Ok(Self {
-            model_trained: false,
-            threshold: A::from(0.0).expect("unwrap failed"),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetector<A>
-    for OneClassSVMDetector<A>
-{
-    fn detect_anomaly(
-        &mut self,
-        _data_point: &StreamingDataPoint<A>,
-    ) -> Result<AnomalyDetectionResult<A>, String> {
-        // Simplified implementation
-        Ok(AnomalyDetectionResult {
-            is_anomaly: false,
-            anomaly_score: A::from(0.2).expect("unwrap failed"),
-            confidence: A::from(0.5).expect("unwrap failed"),
-            anomaly_type: None,
-            severity: AnomalySeverity::Low,
-            metadata: HashMap::new(),
-        })
-    }
-
-    fn train(&mut self, _training_data: &[StreamingDataPoint<A>]) -> Result<(), String> {
-        self.model_trained = true;
-        Ok(())
-    }
-
-    fn update_incremental(&mut self, _data_point: &StreamingDataPoint<A>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn get_performance_metrics(&self) -> MLModelMetrics<A> {
-        MLModelMetrics {
-            accuracy: A::from(0.82).expect("unwrap failed"),
-            precision: A::from(0.78).expect("unwrap failed"),
-            recall: A::from(0.73).expect("unwrap failed"),
-            f1_score: A::from(0.75).expect("unwrap failed"),
-            auc_roc: A::from(0.85).expect("unwrap failed"),
-            false_positive_rate: A::from(0.08).expect("unwrap failed"),
-            training_time: Duration::from_secs(120),
-            inference_time: Duration::from_millis(5),
-        }
-    }
-
-    fn name(&self) -> String {
-        "one_class_svm".to_string()
-    }
-}
-
-pub struct LOFDetector<A: Float + Send + Sync> {
-    model_trained: bool,
-    threshold: A,
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> LOFDetector<A> {
-    fn new() -> Result<Self, String> {
-        Ok(Self {
-            model_trained: false,
-            threshold: A::from(1.5).expect("unwrap failed"),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetector<A>
-    for LOFDetector<A>
-{
-    fn detect_anomaly(
-        &mut self,
-        _data_point: &StreamingDataPoint<A>,
-    ) -> Result<AnomalyDetectionResult<A>, String> {
-        // Simplified implementation
-        Ok(AnomalyDetectionResult {
-            is_anomaly: false,
-            anomaly_score: A::from(0.1).expect("unwrap failed"),
-            confidence: A::from(0.4).expect("unwrap failed"),
-            anomaly_type: None,
-            severity: AnomalySeverity::Low,
-            metadata: HashMap::new(),
-        })
-    }
-
-    fn train(&mut self, _training_data: &[StreamingDataPoint<A>]) -> Result<(), String> {
-        self.model_trained = true;
-        Ok(())
-    }
-
-    fn update_incremental(&mut self, _data_point: &StreamingDataPoint<A>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn get_performance_metrics(&self) -> MLModelMetrics<A> {
-        MLModelMetrics {
-            accuracy: A::from(0.79).expect("unwrap failed"),
-            precision: A::from(0.76).expect("unwrap failed"),
-            recall: A::from(0.71).expect("unwrap failed"),
-            f1_score: A::from(0.73).expect("unwrap failed"),
-            auc_roc: A::from(0.83).expect("unwrap failed"),
-            false_positive_rate: A::from(0.12).expect("unwrap failed"),
-            training_time: Duration::from_secs(90),
-            inference_time: Duration::from_millis(15),
-        }
-    }
-
-    fn name(&self) -> String {
-        "lof".to_string()
-    }
-}
+// The real machine-learning detectors (isolation forest, online one-class SVM
+// and local outlier factor) live in `super::anomaly_ml`; they were previously
+// three stubs here that returned the constants 0.3 / 0.2 / 0.1 regardless of
+// their input.
 
 // Simplified implementations for supporting structures
 
@@ -1483,11 +1490,69 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> FalsePositiveTracke
         }
     }
 
-    fn get_current_fp_rate(&self) -> f64 {
-        self.fp_rate_calculator
-            .current_fp_rate
-            .to_f64()
-            .unwrap_or(0.05)
+    /// Observed false-positive rate, or `None` before any labelled outcome has
+    /// been recorded.
+    ///
+    /// The constructor seeds `current_fp_rate` with the *target* rate, so
+    /// reporting it unconditionally would present a configuration value as a
+    /// measurement.
+    fn get_current_fp_rate(&self) -> Option<f64> {
+        if self.fp_rate_calculator.recent_results.is_empty() {
+            return None;
+        }
+        self.fp_rate_calculator.current_fp_rate.to_f64()
+    }
+
+    /// Records ground truth for one prediction and recomputes the observed
+    /// false-positive rate over the sliding evaluation window.
+    fn record_outcome(&mut self, predicted_anomaly: bool, was_true_anomaly: bool) {
+        let calculator = &mut self.fp_rate_calculator;
+        if calculator.recent_results.len() >= calculator.window_size {
+            calculator.recent_results.pop_front();
+        }
+        calculator.recent_results.push_back(DetectionResult {
+            timestamp: Instant::now(),
+            anomaly_detected: predicted_anomaly,
+            ground_truth: Some(was_true_anomaly),
+            detector_name: "ensemble".to_string(),
+        });
+
+        // The false-positive rate is `FP / (FP + TN)`: the fraction of
+        // genuinely normal points that were incorrectly flagged.
+        let negatives = calculator
+            .recent_results
+            .iter()
+            .filter(|result| result.ground_truth == Some(false))
+            .count();
+        if negatives > 0 {
+            let false_positives = calculator
+                .recent_results
+                .iter()
+                .filter(|result| result.anomaly_detected && result.ground_truth == Some(false))
+                .count();
+            if let Some(rate) = A::from(false_positives as f64 / negatives as f64) {
+                calculator.current_fp_rate = rate;
+            }
+        }
+    }
+
+    /// Records the full detail of a confirmed false positive.
+    fn record_false_positive(&mut self, event: &AnomalyEvent<A>) {
+        if self.false_positives.len() >= RESPONSE_HISTORY_CAPACITY {
+            self.false_positives.pop_front();
+        }
+        self.false_positives.push_back(FalsePositiveEvent {
+            timestamp: event.timestamp,
+            data_point: event.data_point.clone(),
+            detector_name: event.detector_name.clone(),
+            anomaly_score: event.anomaly_score,
+            context: event.context.clone(),
+        });
+    }
+
+    /// Number of confirmed false positives retained.
+    fn confirmed_false_positive_count(&self) -> usize {
+        self.false_positives.len()
     }
 }
 
@@ -1537,30 +1602,271 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> AnomalyResponseSyst
                 effectiveness_trends: HashMap::new(),
             },
             escalation_rules: Vec::new(),
+            next_response_id: 0,
+            log_entries: VecDeque::with_capacity(RESPONSE_HISTORY_CAPACITY),
+            alert_entries: VecDeque::with_capacity(RESPONSE_HISTORY_CAPACITY),
+            quarantined_points: VecDeque::with_capacity(QUARANTINE_CAPACITY),
+            pending_threshold_adjustment: None,
+            monitoring_level: 0,
         })
     }
 
-    fn trigger_response(
-        &mut self,
-        _result: &AnomalyDetectionResult<A>,
-        _data_point: &StreamingDataPoint<A>,
-    ) -> Result<(), String> {
-        // Simplified response triggering
-        Ok(())
+    /// Queues and executes the responses configured for this anomaly type,
+    /// returning the names of the actions that actually ran.
+    ///
+    /// Every action either performs a real, observable state change (a log or
+    /// alert entry, a quarantined data point, a queued threshold adjustment, a
+    /// raised monitoring level) or is recorded as an honest failure with the
+    /// reason — there is no subsystem behind `TriggerRecovery` or a custom
+    /// action, so claiming success for them would be a fabrication.
+    fn trigger_response(&mut self, event: &AnomalyEvent<A>) -> Result<Vec<String>, String> {
+        let actions = self
+            .response_strategies
+            .get(&event.anomaly_type)
+            .or_else(|| {
+                self.response_strategies
+                    .get(&AnomalyType::StatisticalOutlier)
+            })
+            .cloned()
+            .unwrap_or_default();
+
+        if actions.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let priority = match event.severity {
+            AnomalySeverity::Critical => ResponsePriority::Critical,
+            AnomalySeverity::High => ResponsePriority::High,
+            AnomalySeverity::Medium => ResponsePriority::Normal,
+            AnomalySeverity::Low => ResponsePriority::Low,
+        };
+        let timeout = self.response_executor.resource_limits.max_execution_time;
+
+        for action in actions {
+            if self.response_executor.pending_responses.len()
+                >= self
+                    .response_executor
+                    .resource_limits
+                    .max_concurrent_responses
+            {
+                // Respect the configured concurrency limit instead of growing
+                // an unbounded queue.
+                break;
+            }
+            self.next_response_id += 1;
+            self.response_executor
+                .pending_responses
+                .push_back(PendingResponse {
+                    id: self.next_response_id,
+                    anomaly_event: event.clone(),
+                    action,
+                    priority: priority.clone(),
+                    scheduled_time: Instant::now(),
+                    timeout,
+                });
+        }
+
+        self.execute_pending_responses()
     }
 
-    fn get_success_rate(&self) -> f64 {
-        // Simplified success rate calculation
-        0.85
+    /// Drains the pending queue, highest priority first, executing each action.
+    fn execute_pending_responses(&mut self) -> Result<Vec<String>, String> {
+        // Highest priority first; the queue is small (bounded by
+        // `max_concurrent_responses`) so a sort is cheap.
+        self.response_executor
+            .pending_responses
+            .make_contiguous()
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        let mut executed = Vec::new();
+        while let Some(pending) = self.response_executor.pending_responses.pop_front() {
+            let started = Instant::now();
+            let outcome = self.perform_action(&pending);
+            let duration = started.elapsed();
+
+            let (success, error_message) = match &outcome {
+                Ok(()) => (true, None),
+                Err(reason) => (false, Some(reason.clone())),
+            };
+            if success {
+                executed.push(format!("{:?}", pending.action));
+            }
+
+            let mut resources_consumed = HashMap::new();
+            if let Some(millis) = A::from(duration.as_secs_f64() * 1000.0) {
+                resources_consumed.insert("execution_time_ms".to_string(), millis);
+            }
+
+            let execution = ResponseExecution {
+                id: pending.id,
+                response: pending,
+                start_time: started,
+                duration,
+                success,
+                error_message,
+                resources_consumed,
+            };
+
+            if self.response_executor.execution_history.len() >= RESPONSE_HISTORY_CAPACITY {
+                self.response_executor.execution_history.pop_front();
+            }
+            self.response_executor
+                .execution_history
+                .push_back(execution);
+        }
+
+        Ok(executed)
     }
+
+    /// Carries out a single response action.
+    fn perform_action(&mut self, pending: &PendingResponse<A>) -> Result<(), String> {
+        match &pending.action {
+            ResponseAction::Log => {
+                self.push_bounded(
+                    ResponseChannel::Log,
+                    format!(
+                        "anomaly {} type={:?} severity={:?} score={:?}",
+                        pending.anomaly_event.id,
+                        pending.anomaly_event.anomaly_type,
+                        pending.anomaly_event.severity,
+                        pending.anomaly_event.anomaly_score.to_f64()
+                    ),
+                );
+                Ok(())
+            }
+            ResponseAction::Alert => {
+                self.push_bounded(
+                    ResponseChannel::Alert,
+                    format!(
+                        "ALERT: anomaly {} severity={:?}",
+                        pending.anomaly_event.id, pending.anomaly_event.severity
+                    ),
+                );
+                Ok(())
+            }
+            ResponseAction::Quarantine => {
+                if self.quarantined_points.len() >= QUARANTINE_CAPACITY {
+                    self.quarantined_points.pop_front();
+                }
+                self.quarantined_points
+                    .push_back(pending.anomaly_event.data_point.clone());
+                Ok(())
+            }
+            ResponseAction::ModelAdjustment => {
+                // Ask the owning detector to raise its thresholds in
+                // proportion to the severity of what got through. The caller
+                // applies this via `take_pending_threshold_adjustment`, so the
+                // adjustment is a real state change rather than a log line.
+                let step = match pending.anomaly_event.severity {
+                    AnomalySeverity::Critical => 0.20,
+                    AnomalySeverity::High => 0.10,
+                    AnomalySeverity::Medium => 0.05,
+                    AnomalySeverity::Low => 0.01,
+                };
+                self.pending_threshold_adjustment =
+                    Some(self.pending_threshold_adjustment.unwrap_or(0.0) + step);
+                Ok(())
+            }
+            ResponseAction::IncreaseMonitoring => {
+                self.monitoring_level = self.monitoring_level.saturating_add(1);
+                Ok(())
+            }
+            ResponseAction::TriggerRecovery => Err(
+                "no recovery procedure is registered with this response system; \
+                 a recovery handler must be installed before this action can run"
+                    .to_string(),
+            ),
+            ResponseAction::Custom(name) => Err(format!(
+                "no handler is registered for custom response action '{name}'"
+            )),
+        }
+    }
+
+    fn push_bounded(&mut self, channel: ResponseChannel, message: String) {
+        let sink = match channel {
+            ResponseChannel::Log => &mut self.log_entries,
+            ResponseChannel::Alert => &mut self.alert_entries,
+        };
+        if sink.len() >= RESPONSE_HISTORY_CAPACITY {
+            sink.pop_front();
+        }
+        sink.push_back(message);
+    }
+
+    /// Takes any threshold adjustment the responses requested, clearing it.
+    fn take_pending_threshold_adjustment(&mut self) -> Option<f64> {
+        self.pending_threshold_adjustment.take()
+    }
+
+    /// Fraction of executed responses that succeeded, or `None` when nothing
+    /// has been executed yet.
+    ///
+    /// Returning `None` is the honest answer for an empty history; the previous
+    /// implementation reported a hard-coded `0.85` from the moment the system
+    /// was constructed.
+    fn get_success_rate(&self) -> Option<f64> {
+        let history = &self.response_executor.execution_history;
+        if history.is_empty() {
+            return None;
+        }
+        let successes = history.iter().filter(|execution| execution.success).count();
+        Some(successes as f64 / history.len() as f64)
+    }
+
+    /// Entries written by executed `Log` actions.
+    fn log_entry_count(&self) -> usize {
+        self.log_entries.len()
+    }
+
+    /// Entries written by executed `Alert` actions.
+    fn alert_entry_count(&self) -> usize {
+        self.alert_entries.len()
+    }
+
+    /// Data points held by executed `Quarantine` actions.
+    fn quarantined_count(&self) -> usize {
+        self.quarantined_points.len()
+    }
+
+    /// Current monitoring level, raised by `IncreaseMonitoring` actions.
+    fn monitoring_level(&self) -> u32 {
+        self.monitoring_level
+    }
+
+    /// Number of response executions recorded.
+    fn execution_count(&self) -> usize {
+        self.response_executor.execution_history.len()
+    }
+}
+
+/// Sinks that a response action can write to.
+#[derive(Debug, Clone, Copy)]
+enum ResponseChannel {
+    Log,
+    Alert,
 }
 
 /// Diagnostic information for anomaly detection
 #[derive(Debug, Clone)]
 pub struct AnomalyDiagnostics {
+    /// Anomalies retained in the history buffer.
     pub total_anomalies: usize,
+    /// Anomalies per second over the last hour.
     pub recent_anomaly_rate: f64,
-    pub false_positive_rate: f64,
+    /// Observed false-positive rate, or `None` before any labelled outcome has
+    /// been recorded (it is genuinely unmeasurable until then).
+    pub false_positive_rate: Option<f64>,
+    /// Number of registered detectors.
     pub detector_count: usize,
-    pub response_success_rate: f64,
+    /// Fraction of executed responses that succeeded, or `None` before any
+    /// response has run.
+    pub response_success_rate: Option<f64>,
+    /// Number of response executions recorded.
+    pub response_executions: usize,
+    /// Data points currently retained for context statistics.
+    pub recent_window_len: usize,
 }
+
+#[cfg(test)]
+#[path = "anomaly_detection_regression_tests.rs"]
+mod regression_tests;

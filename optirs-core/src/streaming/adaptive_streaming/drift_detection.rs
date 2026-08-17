@@ -5,10 +5,13 @@
 // and ensemble methods for identifying concept drift in streaming data.
 
 use super::config::*;
+use super::drift_tests::{
+    AdwinTest, CusumTest, DdmTest, EddmTest, HistogramComparator, HistogramDivergence, KsTest,
+    LinearModelDetector, MannWhitneyUTest, PageHinkleyTest, WassersteinComparator,
+};
 use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
 
 use scirs2_core::numeric::Float;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -199,32 +202,82 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         let mut model_detectors: HashMap<ModelType, Box<dyn ModelBasedDetector<A>>> =
             HashMap::new();
 
-        // Initialize statistical tests
+        let sensitivity = drift_config.sensitivity;
+        let alpha = drift_config.significance_level;
+
+        // Initialize statistical tests. Every `StatisticalMethod` variant is
+        // backed by a real implementation of the method it names (see
+        // `drift_tests`), so an unregistered method is a genuine configuration
+        // error rather than something to silently substitute a different
+        // statistic for.
         statistical_tests.insert(
             StatisticalMethod::ADWIN,
-            Box::new(ADWINTest::new(drift_config.sensitivity)?),
+            Box::new(AdwinTest::new(sensitivity, alpha)?),
         );
         statistical_tests.insert(
             StatisticalMethod::DDM,
-            Box::new(DDMTest::new(drift_config.sensitivity)?),
+            Box::new(DdmTest::new(sensitivity, alpha)?),
+        );
+        statistical_tests.insert(
+            StatisticalMethod::EDDM,
+            Box::new(EddmTest::new(sensitivity, alpha)?),
         );
         statistical_tests.insert(
             StatisticalMethod::PageHinkley,
-            Box::new(PageHinkleyTest::new(drift_config.sensitivity)?),
+            Box::new(PageHinkleyTest::new(sensitivity, alpha)?),
+        );
+        statistical_tests.insert(
+            StatisticalMethod::CUSUM,
+            Box::new(CusumTest::new(sensitivity, alpha)?),
+        );
+        statistical_tests.insert(
+            StatisticalMethod::KolmogorovSmirnov,
+            Box::new(KsTest::new(sensitivity, alpha)?),
+        );
+        statistical_tests.insert(
+            StatisticalMethod::MannWhitneyU,
+            Box::new(MannWhitneyUTest::new(sensitivity, alpha)?),
         );
 
-        // Initialize distribution methods
+        // Initialize distribution methods.
         distribution_methods.insert(
             DistributionMethod::KLDivergence,
-            Box::new(KLDivergenceComparator::new(drift_config.sensitivity)?),
+            Box::new(HistogramComparator::new(
+                HistogramDivergence::KullbackLeibler,
+                sensitivity,
+            )?),
         );
         distribution_methods.insert(
             DistributionMethod::JSDivergence,
-            Box::new(JSDivergenceComparator::new(drift_config.sensitivity)?),
+            Box::new(HistogramComparator::new(
+                HistogramDivergence::JensenShannon,
+                sensitivity,
+            )?),
+        );
+        distribution_methods.insert(
+            DistributionMethod::HellingerDistance,
+            Box::new(HistogramComparator::new(
+                HistogramDivergence::Hellinger,
+                sensitivity,
+            )?),
+        );
+        // In one dimension the Earth Mover's Distance and the first
+        // Wasserstein distance are the same quantity, so both variants map to
+        // the same real optimal-transport computation.
+        distribution_methods.insert(
+            DistributionMethod::WassersteinDistance,
+            Box::new(WassersteinComparator::new(sensitivity)?),
+        );
+        distribution_methods.insert(
+            DistributionMethod::EarthMoverDistance,
+            Box::new(WassersteinComparator::new(sensitivity)?),
         );
 
-        // Initialize model detectors
-        model_detectors.insert(ModelType::Linear, Box::new(LinearModelDetector::new()?));
+        // Initialize model detectors.
+        model_detectors.insert(
+            ModelType::Linear,
+            Box::new(LinearModelDetector::new(sensitivity)?),
+        );
 
         let ensemble_strategy = match &drift_config.detection_method {
             DriftDetectionMethod::Ensemble {
@@ -351,84 +404,32 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         if let Some(test) = self.statistical_tests.get_mut(method) {
             let mut result = test.test_for_drift(reference, current)?;
 
-            // Apply sensitivity factor
-            result.confidence = result.confidence * self.sensitivity_factor;
-            result.drift_detected = result.p_value
-                < A::from(self.config.significance_level).expect("unwrap failed")
-                    * self.sensitivity_factor;
+            // The detector's own published decision rule stays authoritative
+            // (ADWIN's Hoeffding cut, DDM's 3-sigma rule, CUSUM's decision
+            // interval, ...) because a raw p-value threshold cannot express
+            // any of them. The adaptive sensitivity factor supplies a second,
+            // independent gate on the *real* p-value: raising the factor makes
+            // the detector fire on evidence that its native rule alone would
+            // have let through. Previously this branch discarded the
+            // detector's verdict entirely and rethresholded a fabricated
+            // p-value.
+            let alpha = A::from(self.config.significance_level).ok_or_else(|| {
+                format!(
+                    "significance level {} cannot be represented in the element type",
+                    self.config.significance_level
+                )
+            })?;
+            let effective_alpha = alpha * self.sensitivity_factor;
+            result.drift_detected = result.drift_detected || result.p_value < effective_alpha;
+            result.confidence = (result.confidence * self.sensitivity_factor).min(A::one());
 
             Ok(result)
         } else {
-            // Inline Kolmogorov-Smirnov test fallback for unregistered statistical methods.
-            // KS statistic = max|F_ref(x) - F_cur(x)| over all x.
-            if reference.is_empty() || current.is_empty() {
-                return Err("KS fallback: empty sample".to_string());
-            }
-
-            // Build sorted combined sample and compute empirical CDFs
-            let mut ref_sorted: Vec<A> = reference.to_vec();
-            let mut cur_sorted: Vec<A> = current.to_vec();
-            ref_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            cur_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-            let n_ref = ref_sorted.len();
-            let n_cur = cur_sorted.len();
-            let mut ks_stat = A::zero();
-            let mut ref_i = 0usize;
-            let mut cur_i = 0usize;
-
-            // Walk merged sorted order
-            while ref_i < n_ref || cur_i < n_cur {
-                let take_ref = if cur_i >= n_cur {
-                    true
-                } else if ref_i >= n_ref {
-                    false
-                } else {
-                    ref_sorted[ref_i] <= cur_sorted[cur_i]
-                };
-
-                if take_ref {
-                    ref_i += 1;
-                } else {
-                    cur_i += 1;
-                }
-
-                let ecdf_ref =
-                    A::from(ref_i).unwrap_or_else(A::zero) / A::from(n_ref).unwrap_or_else(A::one);
-                let ecdf_cur =
-                    A::from(cur_i).unwrap_or_else(A::zero) / A::from(n_cur).unwrap_or_else(A::one);
-                let diff = (ecdf_ref - ecdf_cur).abs();
-                if diff > ks_stat {
-                    ks_stat = diff;
-                }
-            }
-
-            // Approximate p-value using the KS distribution:
-            // p ≈ 2 * exp(-2 * n_eff * D^2), n_eff = n*m/(n+m)
-            let n_eff_denom = n_ref + n_cur;
-            let n_eff = if n_eff_denom == 0 {
-                A::one()
-            } else {
-                A::from(n_ref * n_cur).unwrap_or_else(A::one)
-                    / A::from(n_eff_denom).unwrap_or_else(A::one)
-            };
-            let ks_sq = ks_stat * ks_stat;
-            let exponent = A::from(-2.0).unwrap_or_else(A::zero) * n_eff * ks_sq;
-            let p_value = (A::from(2.0).unwrap_or_else(A::one) * exponent.exp())
-                .min(A::one())
-                .max(A::zero());
-
-            let sig_level = A::from(self.config.significance_level)
-                .unwrap_or_else(|| A::from(0.05).unwrap_or_else(A::zero));
-            let drift_detected = p_value < sig_level * self.sensitivity_factor;
-
-            Ok(DriftTestResult {
-                drift_detected,
-                p_value,
-                test_statistic: ks_stat,
-                confidence: (A::one() - p_value) * self.sensitivity_factor,
-                metadata: HashMap::new(),
-            })
+            Err(format!(
+                "no statistical drift test is registered for {method:?}; \
+                 substituting a different statistic would misreport which \
+                 test produced the verdict"
+            ))
         }
     }
 
@@ -442,94 +443,42 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         if let Some(comparator) = self.distribution_methods.get(method) {
             let comparison = comparator.compare_distributions(reference, current)?;
 
+            // Every comparator reports `confidence = 1 - p`, where `p` comes
+            // from a real significance test evaluated on the same binning or
+            // the same empirical CDFs as the distance (a G-test for the
+            // histogram divergences, a two-sample KS test for Wasserstein), so
+            // recovering the p-value here is exact rather than a rescaling of
+            // an invented confidence.
+            let p_value = (A::one() - comparison.confidence)
+                .max(A::zero())
+                .min(A::one());
+            let alpha = A::from(self.config.significance_level).ok_or_else(|| {
+                format!(
+                    "significance level {} cannot be represented in the element type",
+                    self.config.significance_level
+                )
+            })?;
+
+            let mut metadata = HashMap::new();
+            metadata.insert("distance".to_string(), comparison.distance);
+            metadata.insert("threshold".to_string(), comparison.threshold);
+
             let result = DriftTestResult {
-                drift_detected: comparison.drift_detected,
-                p_value: A::one() - comparison.confidence, // Convert confidence to p-value like measure
+                drift_detected: comparison.drift_detected
+                    || p_value < alpha * self.sensitivity_factor,
+                p_value,
                 test_statistic: comparison.distance,
-                confidence: comparison.confidence * self.sensitivity_factor,
-                metadata: HashMap::new(),
+                confidence: (comparison.confidence * self.sensitivity_factor).min(A::one()),
+                metadata,
             };
 
             Ok(result)
         } else {
-            // Inline Jensen-Shannon divergence fallback for unregistered distribution methods.
-            // JS(P||Q) = 0.5 * KL(P||M) + 0.5 * KL(Q||M), M = 0.5*(P+Q).
-            // We compute it over histogram bins derived from the sorted merged sample.
-            if reference.is_empty() || current.is_empty() {
-                return Err("JS fallback: empty sample".to_string());
-            }
-
-            let n_bins = 10usize;
-
-            // Compute global min/max over both samples
-            let all_min = reference
-                .iter()
-                .chain(current.iter())
-                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .copied()
-                .unwrap_or_else(A::zero);
-            let all_max = reference
-                .iter()
-                .chain(current.iter())
-                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .copied()
-                .unwrap_or_else(A::one);
-
-            let range = all_max - all_min;
-            let bin_width = if range > A::zero() {
-                range / A::from(n_bins).unwrap_or_else(A::one)
-            } else {
-                A::one()
-            };
-
-            // Histogram counts
-            let mut ref_hist = vec![0usize; n_bins];
-            let mut cur_hist = vec![0usize; n_bins];
-
-            for &v in reference {
-                let idx = ((v - all_min) / bin_width)
-                    .to_usize()
-                    .unwrap_or(0)
-                    .min(n_bins - 1);
-                ref_hist[idx] += 1;
-            }
-            for &v in current {
-                let idx = ((v - all_min) / bin_width)
-                    .to_usize()
-                    .unwrap_or(0)
-                    .min(n_bins - 1);
-                cur_hist[idx] += 1;
-            }
-
-            let n_ref = reference.len() as f64;
-            let n_cur = current.len() as f64;
-            let epsilon = 1e-10_f64;
-
-            let mut js_div = 0.0_f64;
-            for i in 0..n_bins {
-                let p = ref_hist[i] as f64 / n_ref + epsilon;
-                let q = cur_hist[i] as f64 / n_cur + epsilon;
-                let m = 0.5 * (p + q);
-                js_div += 0.5 * p * (p / m).ln() + 0.5 * q * (q / m).ln();
-            }
-            // JS divergence is in [0, ln(2)] ≈ 0.693
-            let js_div = js_div.clamp(0.0, std::f64::consts::LN_2);
-            let normalised = js_div / std::f64::consts::LN_2; // [0, 1]
-
-            let threshold: f64 =
-                scirs2_core::numeric::NumCast::from(self.sensitivity_factor).unwrap_or(0.5);
-            let drift_detected = normalised > threshold * 0.5;
-
-            let js_a = A::from(js_div).unwrap_or_else(A::zero);
-            let confidence = A::from(normalised).unwrap_or_else(A::zero) * self.sensitivity_factor;
-
-            Ok(DriftTestResult {
-                drift_detected,
-                p_value: A::one() - confidence,
-                test_statistic: js_a,
-                confidence,
-                metadata: HashMap::new(),
-            })
+            Err(format!(
+                "no distribution comparator is registered for {method:?}; \
+                 substituting a different divergence would misreport which \
+                 measure produced the verdict"
+            ))
         }
     }
 
@@ -542,81 +491,43 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         if let Some(detector) = self.model_detectors.get_mut(model_type) {
             let model_result = detector.detect_drift(batch)?;
 
+            // `confidence` is `1 - p` from the detector's own one-sided test on
+            // its real prediction error, so this recovers the true p-value.
+            let p_value = (A::one() - model_result.confidence)
+                .max(A::zero())
+                .min(A::one());
+            let alpha = A::from(self.config.significance_level).ok_or_else(|| {
+                format!(
+                    "significance level {} cannot be represented in the element type",
+                    self.config.significance_level
+                )
+            })?;
+
+            let mut metadata = HashMap::new();
+            metadata.insert(
+                "performance_degradation".to_string(),
+                model_result.performance_degradation,
+            );
+            for (index, change) in model_result.feature_importance_changes.iter().enumerate() {
+                metadata.insert(format!("weight_delta_{index}"), *change);
+            }
+
             let result = DriftTestResult {
-                drift_detected: model_result.drift_detected,
-                p_value: A::one() - model_result.confidence,
+                drift_detected: model_result.drift_detected
+                    || p_value < alpha * self.sensitivity_factor,
+                p_value,
                 test_statistic: model_result.performance_degradation,
-                confidence: model_result.confidence * self.sensitivity_factor,
-                metadata: HashMap::new(),
+                confidence: (model_result.confidence * self.sensitivity_factor).min(A::one()),
+                metadata,
             };
 
             Ok(result)
         } else {
-            // Inline model-drift fallback: detect prediction accuracy degradation.
-            // We compare the mean of the label/target field in the first half of the
-            // reference window against the current batch. A significant drop signals drift.
-            if batch.is_empty() {
-                return Err("Model drift fallback: empty batch".to_string());
-            }
-
-            // Extract scalar "performance proxy" from each data point:
-            // use the mean of the features as a proxy for model confidence/accuracy.
-            let batch_mean: A = {
-                let sum: A = batch
-                    .iter()
-                    .flat_map(|dp| dp.features.iter().copied())
-                    .fold(A::zero(), |acc, v| acc + v);
-                let count = batch.iter().map(|dp| dp.features.len()).sum::<usize>();
-                if count == 0 {
-                    A::zero()
-                } else {
-                    sum / A::from(count).unwrap_or_else(A::one)
-                }
-            };
-
-            // Compare against reference window mean (first half)
-            let ref_half: Vec<_> = self
-                .reference_window
-                .iter()
-                .take(self.reference_window.len() / 2 + 1)
-                .collect();
-
-            let ref_mean: A = if ref_half.is_empty() {
-                batch_mean
-            } else {
-                let sum: A = ref_half
-                    .iter()
-                    .flat_map(|dp| dp.features.iter().copied())
-                    .fold(A::zero(), |acc, v| acc + v);
-                let count = ref_half.iter().map(|dp| dp.features.len()).sum::<usize>();
-                if count == 0 {
-                    batch_mean
-                } else {
-                    sum / A::from(count).unwrap_or_else(A::one)
-                }
-            };
-
-            // Degradation = |ref_mean - batch_mean| / (|ref_mean| + ε)
-            let epsilon = A::from(1e-8).unwrap_or_else(A::zero);
-            let degradation = (ref_mean - batch_mean).abs() / (ref_mean.abs() + epsilon);
-
-            let threshold = A::from(0.1).unwrap_or_else(A::zero);
-            let drift_detected = degradation > threshold;
-
-            let confidence = if drift_detected {
-                (degradation * A::from(5.0).unwrap_or_else(A::one)).min(A::one())
-                    * self.sensitivity_factor
-            } else {
-                A::from(0.2).unwrap_or_else(A::zero) * self.sensitivity_factor
-            };
-
-            Ok(DriftTestResult {
-                drift_detected,
-                p_value: A::one() - confidence,
-                test_statistic: degradation,
-                confidence,
-                metadata: HashMap::new(),
-            })
+            Err(format!(
+                "no model-based drift detector is registered for {model_type:?}; \
+                 a feature-mean proxy is not the model-performance signal this \
+                 method is defined over"
+            ))
         }
     }
 
@@ -913,330 +824,210 @@ pub struct DriftDiagnostics {
     pub reference_window_size: usize,
 }
 
-// Simplified implementations of detection methods
-// In practice, these would be more sophisticated
+#[cfg(test)]
+mod drift_detector_regression_tests {
+    use super::*;
+    use scirs2_core::ndarray::Array1;
 
-struct ADWINTest<A: Float + Send + Sync> {
-    sensitivity: A,
-    window: VecDeque<A>,
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ADWINTest<A> {
-    fn new(sensitivity: f64) -> Result<Self, String> {
-        Ok(Self {
-            sensitivity: A::from(sensitivity).expect("unwrap failed"),
-            window: VecDeque::new(),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<A>
-    for ADWINTest<A>
-{
-    fn test_for_drift(
-        &mut self,
-        reference: &[A],
-        current: &[A],
-    ) -> Result<DriftTestResult<A>, String> {
-        // Simplified ADWIN implementation
-        let ref_mean =
-            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
-        let cur_mean =
-            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
-
-        let difference = (ref_mean - cur_mean).abs();
-        let threshold = self.sensitivity;
-
-        let drift_detected = difference > threshold;
-
-        Ok(DriftTestResult {
-            drift_detected,
-            p_value: if drift_detected {
-                A::from(0.01).expect("unwrap failed")
-            } else {
-                A::from(0.5).expect("unwrap failed")
-            },
-            test_statistic: difference,
-            confidence: if drift_detected {
-                A::from(0.9).expect("unwrap failed")
-            } else {
-                A::from(0.1).expect("unwrap failed")
-            },
-            metadata: HashMap::new(),
-        })
+    fn detector_with(method: DriftDetectionMethod) -> EnhancedDriftDetector<f64> {
+        let mut config = StreamingConfig::default();
+        config.drift_config.detection_method = method;
+        config.drift_config.min_samples = 10;
+        config.drift_config.window_size = 200;
+        EnhancedDriftDetector::new(&config).expect("drift detector")
     }
 
-    fn update_parameters(&mut self, _performance_feedback: A) -> Result<(), String> {
-        Ok(())
+    fn wobble(index: usize) -> f64 {
+        ((index as f64) * 0.7548776662).fract() - 0.5
     }
 
-    fn reset(&mut self) {
-        self.window.clear();
-    }
-}
-
-struct DDMTest<A: Float + Send + Sync> {
-    sensitivity: A,
-    error_rate: A,
-    std_dev: A,
-}
-
-impl<A: Float + Default + Send + Sync + std::iter::Sum> DDMTest<A> {
-    fn new(sensitivity: f64) -> Result<Self, String> {
-        Ok(Self {
-            sensitivity: A::from(sensitivity).expect("unwrap failed"),
-            error_rate: A::zero(),
-            std_dev: A::zero(),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<A> for DDMTest<A> {
-    fn test_for_drift(
-        &mut self,
-        reference: &[A],
-        current: &[A],
-    ) -> Result<DriftTestResult<A>, String> {
-        // Simplified DDM implementation
-        let ref_mean =
-            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
-        let cur_mean =
-            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
-
-        let difference = (ref_mean - cur_mean).abs();
-        let drift_detected = difference > self.sensitivity;
-
-        Ok(DriftTestResult {
-            drift_detected,
-            p_value: if drift_detected {
-                A::from(0.02).expect("unwrap failed")
-            } else {
-                A::from(0.6).expect("unwrap failed")
-            },
-            test_statistic: difference,
-            confidence: if drift_detected {
-                A::from(0.85).expect("unwrap failed")
-            } else {
-                A::from(0.15).expect("unwrap failed")
-            },
-            metadata: HashMap::new(),
-        })
+    fn batch(level: f64, count: usize, offset: usize) -> Vec<StreamingDataPoint<f64>> {
+        (0..count)
+            .map(|i| StreamingDataPoint {
+                features: Array1::from_vec(vec![level + wobble(i + offset)]),
+                target: Some(Array1::from_vec(vec![level])),
+                timestamp: Instant::now(),
+                source_id: None,
+                quality_score: 1.0,
+                metadata: HashMap::new(),
+            })
+            .collect()
     }
 
-    fn update_parameters(&mut self, _performance_feedback: A) -> Result<(), String> {
-        Ok(())
+    /// D1: every `StatisticalMethod` variant is now backed by a real
+    /// implementation of the method it names, so constructing a detector for any
+    /// of them succeeds — and none of them silently substitutes a different
+    /// statistic.
+    #[test]
+    fn every_statistical_method_is_registered() {
+        for method in [
+            StatisticalMethod::ADWIN,
+            StatisticalMethod::DDM,
+            StatisticalMethod::EDDM,
+            StatisticalMethod::PageHinkley,
+            StatisticalMethod::CUSUM,
+            StatisticalMethod::KolmogorovSmirnov,
+            StatisticalMethod::MannWhitneyU,
+        ] {
+            let mut detector = detector_with(DriftDetectionMethod::Statistical(method.clone()));
+            // Warm-up, then a genuine shift.
+            detector.detect_drift(&batch(10.0, 120, 0)).expect("warmup");
+            let result = detector.detect_drift(&batch(40.0, 120, 500));
+            assert!(
+                result.is_ok(),
+                "{method:?} failed on a genuine mean shift: {result:?}"
+            );
+        }
     }
 
-    fn reset(&mut self) {
-        self.error_rate = A::zero();
-        self.std_dev = A::zero();
-    }
-}
-
-struct PageHinkleyTest<A: Float + Send + Sync> {
-    sensitivity: A,
-    cumulative_sum: A,
-}
-
-impl<A: Float + Default + Send + Sync + std::iter::Sum> PageHinkleyTest<A> {
-    fn new(sensitivity: f64) -> Result<Self, String> {
-        Ok(Self {
-            sensitivity: A::from(sensitivity).expect("unwrap failed"),
-            cumulative_sum: A::zero(),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> StatisticalTest<A>
-    for PageHinkleyTest<A>
-{
-    fn test_for_drift(
-        &mut self,
-        reference: &[A],
-        current: &[A],
-    ) -> Result<DriftTestResult<A>, String> {
-        // Simplified Page-Hinkley test
-        let ref_mean =
-            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
-        let cur_mean =
-            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
-
-        let difference = cur_mean - ref_mean;
-        self.cumulative_sum = self.cumulative_sum + difference;
-
-        let drift_detected = self.cumulative_sum.abs() > self.sensitivity;
-
-        Ok(DriftTestResult {
-            drift_detected,
-            p_value: if drift_detected {
-                A::from(0.015).expect("unwrap failed")
-            } else {
-                A::from(0.7).expect("unwrap failed")
-            },
-            test_statistic: self.cumulative_sum,
-            confidence: if drift_detected {
-                A::from(0.88).expect("unwrap failed")
-            } else {
-                A::from(0.12).expect("unwrap failed")
-            },
-            metadata: HashMap::new(),
-        })
+    /// D1: every `DistributionMethod` variant is registered with a real
+    /// divergence, so the dishonest "compute a Jensen-Shannon divergence and
+    /// report it as whatever the caller asked for" fallback is gone.
+    #[test]
+    fn every_distribution_method_is_registered() {
+        for method in [
+            DistributionMethod::KLDivergence,
+            DistributionMethod::JSDivergence,
+            DistributionMethod::HellingerDistance,
+            DistributionMethod::WassersteinDistance,
+            DistributionMethod::EarthMoverDistance,
+        ] {
+            let mut detector = detector_with(DriftDetectionMethod::Distribution(method.clone()));
+            detector.detect_drift(&batch(10.0, 120, 0)).expect("warmup");
+            let result = detector.detect_drift(&batch(40.0, 120, 500));
+            assert!(
+                result.is_ok(),
+                "{method:?} failed on a genuine distribution shift: {result:?}"
+            );
+        }
     }
 
-    fn update_parameters(&mut self, _performance_feedback: A) -> Result<(), String> {
-        Ok(())
+    /// D1: an unregistered method must be an honest error rather than quietly
+    /// computing a *different* statistic and reporting it under the requested
+    /// method's name. The three unregistered `ModelType`s are the reachable case.
+    #[test]
+    fn unregistered_model_types_are_an_honest_error() {
+        for model_type in [
+            ModelType::NeuralNetwork,
+            ModelType::DecisionTree,
+            ModelType::Ensemble,
+        ] {
+            let mut detector = detector_with(DriftDetectionMethod::ModelBased(model_type.clone()));
+            detector.detect_drift(&batch(10.0, 120, 0)).ok();
+            let result = detector.detect_drift(&batch(40.0, 120, 500));
+            assert!(
+                result.is_err(),
+                "{model_type:?} has no registered detector, so it must report an \
+                 error instead of a feature-mean proxy dressed up as a \
+                 model-drift verdict"
+            );
+        }
     }
 
-    fn reset(&mut self) {
-        self.cumulative_sum = A::zero();
-    }
-}
+    /// D2: `ModelType::Linear` is backed by a real online regressor, so it works
+    /// end-to-end on labelled data and reports a real degradation figure.
+    #[test]
+    fn linear_model_drift_detection_works_end_to_end() {
+        let mut detector = detector_with(DriftDetectionMethod::ModelBased(ModelType::Linear));
 
-struct KLDivergenceComparator<A: Float + Send + Sync> {
-    threshold: A,
-}
+        // Learn a stable relationship.
+        for round in 0..6 {
+            detector
+                .detect_drift(&batch(10.0, 60, round * 60))
+                .expect("stable rounds must not error");
+        }
 
-impl<A: Float + Send + Sync + Send + Sync> KLDivergenceComparator<A> {
-    fn new(sensitivity: f64) -> Result<Self, String> {
-        Ok(Self {
-            threshold: A::from(sensitivity).expect("unwrap failed"),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> DistributionComparator<A>
-    for KLDivergenceComparator<A>
-{
-    fn compare_distributions(
-        &self,
-        reference: &[A],
-        current: &[A],
-    ) -> Result<DistributionComparison<A>, String> {
-        // Simplified KL divergence calculation
-        let ref_mean =
-            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
-        let cur_mean =
-            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
-
-        let distance = (ref_mean - cur_mean).abs();
-        let drift_detected = distance > self.threshold;
-
-        Ok(DistributionComparison {
-            distance,
-            threshold: self.threshold,
-            drift_detected,
-            confidence: if drift_detected {
-                A::from(0.8).expect("unwrap failed")
-            } else {
-                A::from(0.2).expect("unwrap failed")
-            },
-        })
+        let diagnostics = detector.get_diagnostics();
+        assert!(
+            diagnostics.reference_window_size > 0,
+            "the reference window must retain real observations"
+        );
     }
 
-    fn get_threshold(&self) -> A {
-        self.threshold
+    /// D1: with a real detector, a stationary stream must not raise a drift
+    /// event. Against the pre-fix ADWIN — which compared a raw mean difference
+    /// against `sensitivity = 0.05` used as an absolute magnitude — ordinary
+    /// noise on a stream at level 10 would clear that threshold constantly.
+    #[test]
+    fn stationary_stream_does_not_raise_drift() {
+        let mut detector = detector_with(DriftDetectionMethod::Statistical(
+            StatisticalMethod::KolmogorovSmirnov,
+        ));
+
+        let mut fired = 0usize;
+        for round in 0..12 {
+            if detector
+                .detect_drift(&batch(10.0, 60, round * 60))
+                .expect("detect_drift")
+            {
+                fired += 1;
+            }
+        }
+        assert_eq!(
+            fired, 0,
+            "a stationary stream raised {fired} drift events out of 12 rounds"
+        );
+        assert_eq!(detector.get_drift_state(), &DriftState::Stable);
     }
 
-    fn update_threshold(&mut self, new_threshold: A) {
-        self.threshold = new_threshold;
-    }
-}
+    /// D1: p-values recorded on real drift events must be genuine values, not one
+    /// of the handful of hard-coded literals (`0.01`, `0.02`, `0.015`, `0.5`,
+    /// `0.6`, `0.7`) the old detectors returned.
+    #[test]
+    fn recorded_drift_events_carry_real_p_values() {
+        let mut detector = detector_with(DriftDetectionMethod::Statistical(
+            StatisticalMethod::KolmogorovSmirnov,
+        ));
+        detector.detect_drift(&batch(10.0, 120, 0)).expect("warmup");
+        let fired = detector
+            .detect_drift(&batch(100.0, 120, 500))
+            .expect("detect_drift");
+        assert!(fired, "a 90-unit mean shift must be detected");
 
-struct JSDivergenceComparator<A: Float + Send + Sync> {
-    threshold: A,
-}
-
-impl<A: Float + Send + Sync + Send + Sync> JSDivergenceComparator<A> {
-    fn new(sensitivity: f64) -> Result<Self, String> {
-        Ok(Self {
-            threshold: A::from(sensitivity).expect("unwrap failed"),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> DistributionComparator<A>
-    for JSDivergenceComparator<A>
-{
-    fn compare_distributions(
-        &self,
-        reference: &[A],
-        current: &[A],
-    ) -> Result<DistributionComparison<A>, String> {
-        // Simplified JS divergence calculation
-        let ref_mean =
-            reference.iter().cloned().sum::<A>() / A::from(reference.len()).expect("unwrap failed");
-        let cur_mean =
-            current.iter().cloned().sum::<A>() / A::from(current.len()).expect("unwrap failed");
-
-        let distance = (ref_mean - cur_mean).abs() * A::from(0.5).expect("unwrap failed"); // Simplified
-        let drift_detected = distance > self.threshold;
-
-        Ok(DistributionComparison {
-            distance,
-            threshold: self.threshold,
-            drift_detected,
-            confidence: if drift_detected {
-                A::from(0.75).expect("unwrap failed")
-            } else {
-                A::from(0.25).expect("unwrap failed")
-            },
-        })
+        let events = detector.get_recent_drift_events(1);
+        let event = events.first().expect("an event must be recorded");
+        let p_value = event.p_value.expect("a p-value must be recorded");
+        for fabricated in [0.01_f64, 0.015, 0.02, 0.5, 0.6, 0.7] {
+            assert!(
+                (p_value - fabricated).abs() > 1e-12,
+                "D1 regression: p-value {p_value} matches the hard-coded literal \
+                 {fabricated}"
+            );
+        }
+        assert!(
+            (0.0..=1.0).contains(&p_value),
+            "a p-value must lie in [0, 1], got {p_value}"
+        );
+        // The recorded metadata must carry the detector's own diagnostics.
+        assert!(
+            event.magnitude > 0.0,
+            "the recorded magnitude must be the real test statistic"
+        );
     }
 
-    fn get_threshold(&self) -> A {
-        self.threshold
-    }
+    /// D1: the ensemble path must aggregate genuinely different detectors. The
+    /// old code made every member compute the same mean difference, so a
+    /// unanimous vote was free; with real, distinct detectors a unanimous vote is
+    /// meaningful and must still fire on an unmistakable shift.
+    #[test]
+    fn ensemble_of_distinct_detectors_agrees_on_an_unmistakable_shift() {
+        let mut detector = detector_with(DriftDetectionMethod::Ensemble {
+            methods: vec![
+                DriftDetectionMethod::Statistical(StatisticalMethod::KolmogorovSmirnov),
+                DriftDetectionMethod::Statistical(StatisticalMethod::MannWhitneyU),
+                DriftDetectionMethod::Distribution(DistributionMethod::JSDivergence),
+            ],
+            voting_strategy: VotingStrategy::Majority,
+        });
 
-    fn update_threshold(&mut self, new_threshold: A) {
-        self.threshold = new_threshold;
-    }
-}
-
-struct LinearModelDetector<A: Float + Send + Sync> {
-    model_performance: A,
-    baseline_performance: A,
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> LinearModelDetector<A> {
-    fn new() -> Result<Self, String> {
-        Ok(Self {
-            model_performance: A::zero(),
-            baseline_performance: A::zero(),
-        })
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ModelBasedDetector<A>
-    for LinearModelDetector<A>
-{
-    fn update_model(&mut self, _data: &[StreamingDataPoint<A>]) -> Result<(), String> {
-        // Simplified model update
-        Ok(())
-    }
-
-    fn detect_drift(
-        &mut self,
-        _data: &[StreamingDataPoint<A>],
-    ) -> Result<ModelDriftResult<A>, String> {
-        // Simplified drift detection based on performance degradation
-        let performance_degradation = self.baseline_performance - self.model_performance;
-        let drift_detected = performance_degradation > A::from(0.1).expect("unwrap failed");
-
-        Ok(ModelDriftResult {
-            drift_detected,
-            performance_degradation,
-            confidence: if drift_detected {
-                A::from(0.7).expect("unwrap failed")
-            } else {
-                A::from(0.3).expect("unwrap failed")
-            },
-            feature_importance_changes: Vec::new(),
-        })
-    }
-
-    fn reset_model(&mut self) -> Result<(), String> {
-        self.model_performance = A::zero();
-        self.baseline_performance = A::zero();
-        Ok(())
+        detector.detect_drift(&batch(10.0, 120, 0)).expect("warmup");
+        let fired = detector
+            .detect_drift(&batch(500.0, 120, 900))
+            .expect("detect_drift");
+        assert!(
+            fired,
+            "a 490-unit mean shift must be detected by a majority of three real \
+             detectors"
+        );
     }
 }

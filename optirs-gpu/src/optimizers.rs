@@ -2,7 +2,7 @@
 //!
 //! Every optimizer here implements [`crate::GpuOptimizer`] for `f32` and runs a
 //! real compute shader: parameters and gradients are uploaded to device
-//! buffers, a WGSL kernel from [`crate::wgsl`] is dispatched, and the updated
+//! buffers, a WGSL kernel from [`crate::shaders::wgsl`] is dispatched, and the updated
 //! parameters are read back. The per-parameter optimizer state (Adam's `m`/`v`,
 //! SGD's momentum buffer, ...) stays resident in device memory between steps;
 //! [`crate::GpuOptimizer::to_cpu`] genuinely downloads it and

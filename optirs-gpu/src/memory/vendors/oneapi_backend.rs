@@ -3,6 +3,18 @@
 // This module provides Intel OneAPI/SYCL-specific memory management functionality,
 // including device memory allocation, SYCL queues, and performance optimization
 // features specific to Intel GPUs and accelerators.
+//
+// # This is a host-memory simulation, not real OneAPI
+//
+// `optirs-gpu` is Pure Rust with no FFI dependencies by default, and this
+// crate ships no SYCL/Level Zero runtime bindings. There is therefore no
+// real `malloc_device`/`malloc_shared` underneath this module: "device",
+// "host", "shared" and "system" USM allocations are all the *same*
+// system-heap allocation (see `sim_alloc`/`sim_dealloc` below), and
+// `SyclDeviceProperties`/`OneApiStats` are example numbers, not a query of
+// real hardware. This module models the SYCL USM memory-management *API
+// shape* for testing that shape in isolation; treat every allocation as host
+// memory and every device number as illustrative.
 
 #[allow(dead_code)]
 use std::collections::HashMap;
@@ -10,6 +22,92 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Upper bound this module's simulated allocator supports for a caller-
+/// requested alignment (both `sycl_malloc`'s `usm_properties.alignment` and
+/// `direct_allocate`'s local `64` are well under this in practice). Also the
+/// fixed header size reserved ahead of every non-empty allocation, so a
+/// request with alignment `<= SIM_ALLOC_ALIGN` needs no per-call alignment
+/// bookkeeping: over-aligning to `SIM_ALLOC_ALIGN` always satisfies a
+/// smaller request too.
+const SIM_ALLOC_ALIGN: usize = 256;
+
+/// Allocate `size` bytes at (at least) `align`-byte alignment through the
+/// system allocator, without the two ways the naive
+/// `std::alloc::alloc(Layout::from_size_align_unchecked(size, align))` this
+/// module used to call was undefined behaviour: a zero-size layout is
+/// unsound to pass to `GlobalAlloc::alloc`, and a real allocation failure
+/// returns null, which must never be treated as valid memory. See
+/// `cuda_backend::sim_alloc` for the full rationale (this mirrors it, with
+/// an added alignment check since this module's alignment is caller-chosen
+/// rather than a fixed constant).
+///
+/// The payload is prefixed with a `SIM_ALLOC_ALIGN`-byte header recording
+/// the requested size, so [`sim_dealloc`] can reconstruct the exact `Layout`
+/// this function used — the `Layout::from_size_align_unchecked(1, 1)` this
+/// module used at free time was a mismatched-layout deallocation, itself
+/// unconditionally undefined behaviour.
+fn sim_alloc(size: usize, align: usize) -> Result<*mut c_void, OneApiError> {
+    if !align.is_power_of_two() || align > SIM_ALLOC_ALIGN {
+        return Err(OneApiError::OutOfMemory(format!(
+            "unsupported allocation alignment {align}: this simulated backend supports \
+             power-of-two alignments up to {SIM_ALLOC_ALIGN} bytes"
+        )));
+    }
+    if size == 0 {
+        return Ok(SIM_ALLOC_ALIGN as *mut c_void);
+    }
+    let total = SIM_ALLOC_ALIGN.checked_add(size).ok_or_else(|| {
+        OneApiError::OutOfMemory(format!(
+            "{size}-byte request overflows the allocator's size limit"
+        ))
+    })?;
+    // Always allocate at `SIM_ALLOC_ALIGN`: since `align <= SIM_ALLOC_ALIGN`
+    // and both are powers of two, this over-aligned block also satisfies the
+    // caller's smaller request.
+    let layout = std::alloc::Layout::from_size_align(total, SIM_ALLOC_ALIGN)
+        .map_err(|e| OneApiError::OutOfMemory(format!("invalid allocation layout: {e}")))?;
+    // SAFETY: `layout` has non-zero size (checked above) and a valid
+    // (power-of-two) alignment constructed by `Layout::from_size_align`.
+    let base = unsafe { std::alloc::alloc(layout) };
+    if base.is_null() {
+        return Err(OneApiError::OutOfMemory(format!(
+            "allocator returned null for a {size}-byte request"
+        )));
+    }
+    // SAFETY: `base` is non-null and `layout`'s size is at least
+    // `SIM_ALLOC_ALIGN + size >= SIM_ALLOC_ALIGN >= size_of::<usize>()`, so
+    // writing one `usize` at the start of the block is in-bounds.
+    unsafe { (base as *mut usize).write(size) };
+    // SAFETY: `base` was allocated with `total = SIM_ALLOC_ALIGN + size`
+    // bytes, so offsetting by `SIM_ALLOC_ALIGN` stays within (or one past)
+    // the allocation.
+    Ok(unsafe { base.add(SIM_ALLOC_ALIGN) } as *mut c_void)
+}
+
+/// Free a pointer returned by [`sim_alloc`]. A no-op for a null pointer or
+/// the zero-size sentinel — neither was ever allocated.
+///
+/// Only ever called from this module (it is not `pub`) with a pointer
+/// `sim_alloc` returned that has not already been freed — the unsafety of
+/// the pointer arithmetic below is contained to that invariant, matching
+/// this module's existing style of confining `unsafe` to the raw
+/// `std::alloc` calls rather than marking `free()`'s public wrapper unsafe.
+fn sim_dealloc(ptr: *mut c_void) {
+    if ptr.is_null() || (ptr as usize) == SIM_ALLOC_ALIGN {
+        return;
+    }
+    // SAFETY: by this function's contract `ptr` came from `sim_alloc`.
+    let base = unsafe { (ptr as *mut u8).sub(SIM_ALLOC_ALIGN) };
+    // SAFETY: `sim_alloc` wrote a `usize` at `base` before returning.
+    let size = unsafe { (base as *const usize).read() };
+    if let Ok(layout) = std::alloc::Layout::from_size_align(SIM_ALLOC_ALIGN + size, SIM_ALLOC_ALIGN)
+    {
+        // SAFETY: `layout` is exactly the layout `sim_alloc` allocated
+        // `base` with.
+        unsafe { std::alloc::dealloc(base, layout) };
+    }
+}
 
 /// OneAPI memory backend implementation
 pub struct OneApiMemoryBackend {
@@ -321,7 +419,9 @@ impl OneApiMemoryPool {
         // Try to find suitable free block
         for i in 0..self.free_blocks.len() {
             if self.free_blocks[i].size >= size {
-                let mut block = self.free_blocks.remove(i).expect("unwrap failed");
+                let Some(mut block) = self.free_blocks.remove(i) else {
+                    continue;
+                };
 
                 // Split block if much larger
                 if block.size > size * 2 {
@@ -452,42 +552,10 @@ impl OneApiMemoryPool {
     fn sycl_malloc(&self, size: usize) -> Result<*mut c_void, OneApiError> {
         // Simulate SYCL USM allocation
         match self.memory_type {
-            OneApiMemoryType::Device => {
-                // malloc_device equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size,
-                        self.usm_properties.alignment,
-                    )) as *mut c_void
-                })
-            }
-            OneApiMemoryType::Host => {
-                // malloc_host equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size,
-                        self.usm_properties.alignment,
-                    )) as *mut c_void
-                })
-            }
-            OneApiMemoryType::Shared => {
-                // malloc_shared equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size,
-                        self.usm_properties.alignment,
-                    )) as *mut c_void
-                })
-            }
-            OneApiMemoryType::System => {
-                // System malloc
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size,
-                        self.usm_properties.alignment,
-                    )) as *mut c_void
-                })
-            }
+            OneApiMemoryType::Device => sim_alloc(size, self.usm_properties.alignment), // malloc_device
+            OneApiMemoryType::Host => sim_alloc(size, self.usm_properties.alignment), // malloc_host
+            OneApiMemoryType::Shared => sim_alloc(size, self.usm_properties.alignment), // malloc_shared
+            OneApiMemoryType::System => sim_alloc(size, self.usm_properties.alignment), // system malloc
             _ => Err(OneApiError::UnsupportedOperation(
                 "Unsupported memory type for allocation".to_string(),
             )),
@@ -808,38 +876,10 @@ impl OneApiMemoryBackend {
         let alignment = 64; // Common alignment for Intel GPUs
 
         match memory_type {
-            OneApiMemoryType::Device => {
-                // malloc_device
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
-            OneApiMemoryType::Host => {
-                // malloc_host
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
-            OneApiMemoryType::Shared => {
-                // malloc_shared
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
-            OneApiMemoryType::System => {
-                // System malloc
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
+            OneApiMemoryType::Device => sim_alloc(size, alignment), // malloc_device
+            OneApiMemoryType::Host => sim_alloc(size, alignment),   // malloc_host
+            OneApiMemoryType::Shared => sim_alloc(size, alignment), // malloc_shared
+            OneApiMemoryType::System => sim_alloc(size, alignment), // system malloc
             _ => Err(OneApiError::UnsupportedMemoryType(
                 "Unsupported memory type".to_string(),
             )),
@@ -861,13 +901,10 @@ impl OneApiMemoryBackend {
                 ));
             }
         } else {
-            // Direct deallocation
-            unsafe {
-                std::alloc::dealloc(
-                    ptr as *mut u8,
-                    std::alloc::Layout::from_size_align_unchecked(1, 1),
-                );
-            }
+            // Direct deallocation. `ptr` was returned by `sim_alloc` via
+            // `sycl_malloc`/`direct_allocate` above, and this is the first
+            // time it is freed.
+            sim_dealloc(ptr);
         }
 
         self.stats.total_deallocations += 1;
@@ -1029,17 +1066,17 @@ impl ThreadSafeOneApiBackend {
         size: usize,
         memory_type: OneApiMemoryType,
     ) -> Result<*mut c_void, OneApiError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.allocate(size, memory_type)
     }
 
     pub fn free(&self, ptr: *mut c_void, memory_type: OneApiMemoryType) -> Result<(), OneApiError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.free(ptr, memory_type)
     }
 
     pub fn get_stats(&self) -> OneApiStats {
-        let backend = self.backend.lock().expect("lock poisoned");
+        let backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.get_stats().clone()
     }
 }
@@ -1047,6 +1084,54 @@ impl ThreadSafeOneApiBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for F26: a zero-size request must not reach
+    /// `std::alloc::alloc` (unsound for a zero-size layout), and an
+    /// out-of-range alignment must be an honest error, not silent UB.
+    #[test]
+    fn sim_alloc_zero_size_is_a_safe_sentinel_not_a_ub_call() {
+        let ptr = sim_alloc(0, 64).expect("zero-size request must succeed");
+        assert!(!ptr.is_null());
+        sim_dealloc(ptr);
+    }
+
+    #[test]
+    fn sim_alloc_rejects_unsupported_alignment() {
+        assert!(sim_alloc(16, 3).is_err(), "3 is not a power of two");
+        assert!(
+            sim_alloc(16, 512).is_err(),
+            "512 exceeds this simulated backend's supported alignment"
+        );
+    }
+
+    /// A real allocation must be readable/writable across its full size and
+    /// must free through the same layout it was allocated with.
+    #[test]
+    fn sim_alloc_real_allocation_round_trips_and_frees_cleanly() {
+        for (size, align) in [(1usize, 8usize), (7, 16), (256, 64), (4096, 128)] {
+            let ptr = sim_alloc(size, align).expect("allocation must succeed") as *mut u8;
+            assert!(!ptr.is_null());
+            assert_eq!(
+                (ptr as usize) % align,
+                0,
+                "returned pointer does not honour the requested alignment"
+            );
+            unsafe {
+                for i in 0..size {
+                    ptr.add(i).write(0xAB);
+                }
+                for i in 0..size {
+                    assert_eq!(ptr.add(i).read(), 0xAB);
+                }
+                sim_dealloc(ptr as *mut c_void);
+            }
+        }
+    }
+
+    #[test]
+    fn sim_dealloc_null_is_a_no_op() {
+        sim_dealloc(std::ptr::null_mut());
+    }
 
     #[test]
     fn test_oneapi_backend_creation() {

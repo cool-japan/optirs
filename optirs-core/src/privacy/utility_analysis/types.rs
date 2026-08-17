@@ -483,10 +483,10 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         // the data to run, and it is what `confidence_score` is derived from.
         let statistical_tests = self.frontier_statistical_tests(&pareto_frontier)?;
         let confidence_score = match statistical_tests.as_ref() {
-            Some(tests) => match tests.hypothesis_tests.first() {
-                Some(test) => Some(T::one() - test.p_value),
-                None => None,
-            },
+            Some(tests) => tests
+                .hypothesis_tests
+                .first()
+                .map(|test| T::one() - test.p_value),
             None => None,
         };
 
@@ -648,11 +648,11 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
             let (point_i, eps_i, delta_i) = (&evaluated[i].0, evaluated[i].1, evaluated[i].2);
             let utility_i = to_f64(point_i.utility_value)?;
             let mut is_dominated = false;
-            for j in 0..evaluated.len() {
+            for (j, eval_j) in evaluated.iter().enumerate() {
                 if i == j {
                     continue;
                 }
-                let (point_j, eps_j, delta_j) = (&evaluated[j].0, evaluated[j].1, evaluated[j].2);
+                let (point_j, eps_j, delta_j) = (&eval_j.0, eval_j.1, eval_j.2);
                 let utility_j = to_f64(point_j.utility_value)?;
                 let no_worse = eps_j <= eps_i && delta_j <= delta_i && utility_j >= utility_i;
                 let strictly_better = eps_j < eps_i || delta_j < delta_i || utility_j > utility_i;
@@ -875,6 +875,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
         for point in frontier {
             best_utility = best_utility.max(to_f64(point.utility_value)?);
         }
+        // `!(best_utility > 0.0)` rejects NaN as well as non-positive values; the
+        // negated form is deliberate (a NaN utility must not pass this guard).
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(best_utility > 0.0) {
             return Ok(Vec::new());
         }

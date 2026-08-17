@@ -301,7 +301,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Constan
             (OperationType::Divide, [a, b]) => {
                 // Refuse to fold a division by zero: materializing inf/NaN at
                 // compile time changes observable behaviour.
-                if b.data.iter().any(|&v| v == 0.0) {
+                if b.data.contains(&0.0) {
                     None
                 } else {
                     Self::binary(a, b, |x, y| x / y)

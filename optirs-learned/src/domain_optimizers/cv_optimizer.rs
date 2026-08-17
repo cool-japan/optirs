@@ -171,8 +171,14 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
 
     /// Apply per-channel normalization to gradients.
     ///
-    /// Splits gradients into 4 equal groups (simulating channels) and
-    /// normalises each group to have unit norm, preserving direction.
+    /// Splits gradients into 4 equal groups (simulating channels), equalises
+    /// their norms so no single channel dominates, then **rescales the whole
+    /// vector back to its original overall magnitude**. Preserving the total
+    /// gradient norm is essential: normalising each channel to unit norm on its
+    /// own discards magnitude, so the step size never shrank as gradients
+    /// vanished and the optimizer oscillated instead of converging. Here only
+    /// the *balance between* channels changes; the overall step magnitude still
+    /// tracks the true gradient norm.
     fn apply_channel_normalization(&self, gradients: &Array1<T>) -> Array1<T> {
         if !self.channel_normalization {
             return gradients.clone();
@@ -184,6 +190,16 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
         } else {
             return gradients.clone();
         };
+        let epsilon = T::from(1e-8).expect("epsilon convert");
+
+        let vec_norm =
+            |v: &Array1<T>| -> T { v.iter().fold(T::zero(), |acc, &g| acc + g * g).sqrt() };
+
+        // Overall magnitude that must survive the re-balancing.
+        let orig_norm = vec_norm(gradients);
+        if orig_norm <= epsilon {
+            return gradients.clone();
+        }
 
         let mut normalised = gradients.clone();
         for ch in 0..num_channels {
@@ -194,7 +210,6 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
                 start + chunk_size
             };
 
-            // Compute norm of this channel slice
             let channel_norm = {
                 let mut sum_sq = T::zero();
                 for i in start..end {
@@ -203,12 +218,18 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
                 sum_sq.sqrt()
             };
 
-            let epsilon = T::from(1e-8).expect("epsilon convert");
             if channel_norm > epsilon {
                 for i in start..end {
-                    normalised[i] = normalised[i] / (channel_norm + epsilon);
+                    normalised[i] = normalised[i] / channel_norm;
                 }
             }
+        }
+
+        // Restore the original overall magnitude.
+        let new_norm = vec_norm(&normalised);
+        if new_norm > epsilon {
+            let scale = orig_norm / new_norm;
+            normalised.mapv_inplace(|v| v * scale);
         }
         normalised
     }
@@ -402,6 +423,28 @@ mod tests {
             ratio < 100.0,
             "channel normalization should balance updates, ratio={}",
             ratio
+        );
+    }
+
+    /// F77 regression: with channel normalization enabled the optimizer must
+    /// still converge. The old unit-norm-per-channel scheme discarded the
+    /// gradient magnitude, so the step size never shrank and the iterate
+    /// oscillated around the optimum instead of reaching it.
+    #[test]
+    fn test_cv_optimizer_channel_normalization_converges() {
+        let mut opt = CVOptimizer::new(0.1_f64)
+            .with_channel_normalization(true)
+            .with_momentum(0.0);
+        // Minimise f(x) = ||x||^2 (grad = 2x); optimum at 0.
+        let mut x = Array1::from_vec(vec![1.0_f64; 8]);
+        for _ in 0..300 {
+            let grad = x.mapv(|v| 2.0 * v);
+            x = opt.step(&x, &grad).expect("step should succeed");
+        }
+        let final_norm = l2_norm(&x);
+        assert!(
+            final_norm < 1e-3,
+            "channel-normalized optimizer must converge, got norm {final_norm}"
         );
     }
 

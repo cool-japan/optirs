@@ -906,22 +906,22 @@ impl ThreadSafeDefragmentationEngine {
     }
 
     pub fn should_defragment(&self) -> bool {
-        let mut engine = self.engine.lock().expect("lock poisoned");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.should_defragment()
     }
 
     pub fn defragment(&self) -> Result<CompactionResult, DefragError> {
-        let mut engine = self.engine.lock().expect("lock poisoned");
+        let mut engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.defragment()
     }
 
     pub fn get_stats(&self) -> DefragStats {
-        let engine = self.engine.lock().expect("lock poisoned");
+        let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.get_stats().clone()
     }
 
     pub fn get_performance_history(&self) -> Vec<DefragPerformance> {
-        let engine = self.engine.lock().expect("lock poisoned");
+        let engine = self.engine.lock().unwrap_or_else(|e| e.into_inner());
         engine.get_performance_history().iter().cloned().collect()
     }
 }

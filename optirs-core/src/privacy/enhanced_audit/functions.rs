@@ -1,17 +1,11 @@
-//! Auto-generated module
-//!
-//! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
+//! Function-pointer type aliases used by the audit system's extension points.
 
-#[allow(dead_code)]
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 use scirs2_core::ndarray::Array1;
-use std::collections::{HashMap, VecDeque};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::types::{
-    AuditConfig, AuditEvent, AuditEventData, AuditEventType, AuditTrail, Axiom,
-    ComplianceAssessment, ComplianceFramework, CryptographicKeys, CryptographicProof,
-    PrivacyContext, ProofRequirements, ProofResult, SystemState, VerificationResult,
+    AuditEvent, Axiom, ComplianceAssessment, CryptographicKeys, CryptographicProof, PrivacyContext,
+    ProofResult, SystemState, VerificationResult,
 };
 
 /// Type alias for verification function
@@ -35,9 +29,24 @@ pub type CryptoProofVerifyFn<T> =
     Box<dyn Fn(&CryptographicProof, &Array1<T>, &CryptographicKeys) -> bool + Send + Sync>;
 /// Type alias for compliance assessment function
 pub type ComplianceAssessmentFn = Box<dyn Fn(&AuditEvent) -> ComplianceAssessment + Send + Sync>;
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::integrity::AuditTrail;
+    use super::super::proofs::unix_timestamp;
+    use super::super::types::{
+        AuditConfig, AuditEvent, AuditEventData, AuditEventType, ComplianceFramework,
+        PrivacyContext, ProofRequirements,
+    };
+    use std::collections::HashMap;
+
+    fn now() -> u64 {
+        match unix_timestamp() {
+            Ok(timestamp) => timestamp,
+            Err(_) => 0,
+        }
+    }
+
     #[test]
     fn test_audit_config() {
         let config = AuditConfig {
@@ -47,27 +56,25 @@ mod tests {
             retention_period_days: 365,
             compliance_frameworks: vec![ComplianceFramework::GDPR, ComplianceFramework::HIPAA],
             proof_requirements: ProofRequirements {
-                zero_knowledge_proofs: true,
-                non_repudiation: true,
+                zero_knowledge_proofs: false,
+                non_repudiation: false,
                 integrity_proofs: true,
                 confidentiality_proofs: false,
                 completeness_proofs: true,
             },
-            encrypt_audit_trail: true,
+            encrypt_audit_trail: false,
             external_audit_integration: false,
         };
         assert!(config.comprehensive_logging);
         assert_eq!(config.compliance_frameworks.len(), 2);
-        assert!(config.proof_requirements.zero_knowledge_proofs);
+        assert!(config.proof_requirements.integrity_proofs);
     }
+
     #[test]
     fn test_audit_event_creation() {
         let event = AuditEvent {
             id: "test_event_1".to_string(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
+            timestamp: now(),
             event_type: AuditEventType::PrivacyBudgetConsumption,
             actor: "test_user".to_string(),
             data: AuditEventData {
@@ -97,15 +104,13 @@ mod tests {
         ));
         assert_eq!(event.privacy_context.epsilon_budget, 1.0);
     }
+
     #[test]
     fn test_audit_trail() {
         let mut trail = AuditTrail::new();
         let event = AuditEvent {
             id: "test_event".to_string(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
+            timestamp: now(),
             event_type: AuditEventType::DataAccess,
             actor: "test_actor".to_string(),
             data: AuditEventData {
@@ -128,8 +133,11 @@ mod tests {
             signature: None,
             compliance_annotations: HashMap::new(),
         };
-        trail.add_event(event).expect("unwrap failed");
-        assert_eq!(trail.events.len(), 1);
-        assert!(trail.chain.verify_integrity());
+        let outcome = trail.add_event(event);
+        assert!(outcome.is_ok(), "add_event failed: {outcome:?}");
+        assert_eq!(trail.len(), 1);
+        // The structural self-check and the event re-derivation must both pass.
+        assert!(trail.chain().verify_integrity());
+        assert!(trail.verify_integrity().is_ok());
     }
 }

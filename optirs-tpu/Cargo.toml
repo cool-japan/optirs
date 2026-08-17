@@ -48,8 +48,14 @@ approx = { workspace = true }
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
 
+# No optional Cargo features: `coordination`, `xla`, and `profiling` used to
+# be declared here but gated zero `cfg(feature = ...)` code anywhere in the
+# crate (every module they were named after — coordination, xla, profiling —
+# was always compiled regardless of which flags were passed). A feature flag
+# that changes nothing is a lie about what a caller can opt in or out of, so
+# rather than retrofit real (and, for `coordination`/`xla`, highly invasive —
+# both underpin nearly every other module) conditional compilation onto
+# already-unconditional core functionality, the dead flags are removed. If
+# genuine optionality is wanted later, add a feature and real `cfg(feature =
+# ...)` gates together, in the same change.
 [features]
-default = ["coordination"]
-coordination = []
-xla = []
-profiling = []

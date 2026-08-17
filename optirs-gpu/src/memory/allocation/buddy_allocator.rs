@@ -727,27 +727,27 @@ impl ThreadSafeBuddyAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<*mut u8, BuddyError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.allocate(size)
     }
 
     pub fn deallocate(&self, ptr: *mut u8) -> Result<(), BuddyError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.deallocate(ptr)
     }
 
     pub fn get_stats(&self) -> BuddyStats {
-        let allocator = self.allocator.lock().expect("lock poisoned");
+        let allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.get_stats().clone()
     }
 
     pub fn get_memory_usage(&self) -> MemoryUsage {
-        let allocator = self.allocator.lock().expect("lock poisoned");
+        let allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.get_memory_usage()
     }
 
     pub fn defragment(&self) -> usize {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.defragment()
     }
 }

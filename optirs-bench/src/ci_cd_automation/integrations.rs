@@ -800,24 +800,45 @@ impl GitHubClient {
         Ok(())
     }
 
-    /// Send notification to GitHub
+    /// Send notification to GitHub.
+    ///
+    /// Every GitHub REST call returns a [`DeliveryOutcome`]; a reachable-but-
+    /// rejecting API (401/403/404/5xx) surfaces as `Ok(DeliveryOutcome { status:
+    /// Failed, .. })` rather than a transport `Err`. This method therefore
+    /// inspects each outcome and returns an honest `Err` when the API rejected
+    /// the request -- it never reports success for a call GitHub refused.
     pub fn send_notification(&mut self, notification: &IntegrationNotification) -> Result<()> {
         match &notification.notification_type {
             NotificationType::TestCompletion | NotificationType::TestFailure => {
                 if self.config.create_status_checks {
-                    self.create_status_check(notification)?;
+                    let outcome = self.create_status_check(notification)?;
+                    Self::require_delivered(&outcome, "GitHub status check")?;
                 }
                 if self.config.create_pr_comments {
-                    self.create_pr_comment(notification)?;
+                    let outcome = self.create_pr_comment(notification)?;
+                    Self::require_delivered(&outcome, "GitHub PR comment")?;
                 }
             }
             NotificationType::PerformanceRegression if self.config.create_regression_issues => {
-                self.create_issue(notification)?;
+                let outcome = self.create_issue(notification)?;
+                Self::require_delivered(&outcome, "GitHub issue")?;
             }
             _ => {}
         }
 
         Ok(())
+    }
+
+    /// Turn a non-success [`DeliveryOutcome`] into an honest `Err`.
+    fn require_delivered(outcome: &DeliveryOutcome, what: &str) -> Result<()> {
+        if outcome.is_success() {
+            Ok(())
+        } else {
+            Err(OptimError::InvalidConfig(format!(
+                "{what} delivery failed: {}",
+                outcome.detail()
+            )))
+        }
     }
 
     /// Create status check

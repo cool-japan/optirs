@@ -550,45 +550,42 @@ pub mod forward_backward {
             Ok(outputs)
         }
 
-        /// Compute linear layer forward pass
+        /// Compute linear layer forward pass.
+        ///
+        /// Not implemented (F80): a real linear forward pass requires the
+        /// layer's weight matrix and bias, but `ParameterManager` stores
+        /// only optimizer metadata/state, not parameter *values*. The
+        /// previous body multiplied the input by the layer's learning rate
+        /// and returned it as if it were `input @ Wᵀ + b`, i.e. silently
+        /// meaningless numbers. Returning an honest error is preferable to
+        /// fabricating an output.
         fn compute_linear_forward(
             &self,
-            layerid: &LayerId,
-            inputs: &[Array<A, D>],
+            _layer_id: &LayerId,
+            _inputs: &[Array<A, D>],
         ) -> Result<Vec<Array<A, D>>> {
-            // For demonstration, we implement a simple pass-through
-            // In a real implementation, this would multiply by weights and add bias
-            if inputs.is_empty() {
-                return Err(OptimError::InvalidConfig(
-                    "Linear layer requires input".to_string(),
-                ));
-            }
-
-            // Get parameters for this layer
-            let layer_params = self.param_manager.get_parameters_by_layer(layerid);
-
-            // Simple transformation: scale input by learning rate (as a placeholder)
-            let lr =
-                self.param_manager
-                    .get_effective_learning_rate(layer_params.first().ok_or_else(|| {
-                        OptimError::InvalidConfig("No parameters for linear layer".to_string())
-                    })?);
-
-            let outputs: Vec<Array<A, D>> =
-                inputs.iter().map(|input| input.mapv(|x| x * lr)).collect();
-
-            Ok(outputs)
+            Err(OptimError::UnsupportedOperation(
+                "linear layer forward pass is not implemented: this module tracks \
+                 optimizer state, not weight values, so it cannot compute input @ Wᵀ + b"
+                    .to_string(),
+            ))
         }
 
-        /// Compute convolutional layer forward pass
+        /// Compute convolutional layer forward pass.
+        ///
+        /// Not implemented (F80): the previous body simply passed the input
+        /// through unchanged while claiming to convolve. Convolution needs
+        /// stored kernels, which this module does not hold.
         fn compute_conv_forward(
             &self,
             _layer_id: &LayerId,
-            inputs: &[Array<A, D>],
+            _inputs: &[Array<A, D>],
         ) -> Result<Vec<Array<A, D>>> {
-            // Simplified convolution: just pass through
-            // Real implementation would apply convolution kernels
-            Ok(inputs.to_vec())
+            Err(OptimError::UnsupportedOperation(
+                "convolution forward pass is not implemented: no convolution kernels \
+                 are stored in this module"
+                    .to_string(),
+            ))
         }
 
         /// Compute activation forward pass
@@ -679,16 +676,22 @@ pub mod forward_backward {
             Ok(outputs)
         }
 
-        /// Compute pooling forward pass
+        /// Compute pooling forward pass.
+        ///
+        /// Not implemented (F80): the previous body passed the input through
+        /// unchanged while claiming to pool. Real pooling downsamples using a
+        /// window/stride that is not modeled here.
         fn compute_pooling_forward(
             &self,
             _layer_id: &LayerId,
-            inputs: &[Array<A, D>],
+            _inputs: &[Array<A, D>],
             _layer_arch: &LayerArchitecture,
         ) -> Result<Vec<Array<A, D>>> {
-            // Simplified pooling: just pass through
-            // Real implementation would downsample the input
-            Ok(inputs.to_vec())
+            Err(OptimError::UnsupportedOperation(
+                "pooling forward pass is not implemented: downsampling window/stride \
+                 are not modeled in this module"
+                    .to_string(),
+            ))
         }
 
         /// Execute backward pass with hooks
@@ -759,51 +762,40 @@ pub mod forward_backward {
             Ok(clipped_grads)
         }
 
-        /// Compute linear layer backward pass
+        /// Compute linear layer backward pass.
+        ///
+        /// Not implemented (F80): the true input gradient is `grad_output @
+        /// W`, which needs the weight matrix this module does not store. The
+        /// previous body scaled the gradient by a constant `0.9` and
+        /// returned it as if it were the real backprop. To accumulate
+        /// gradients for a parameter update, call
+        /// [`Self::accumulate_gradients`] directly.
         fn compute_linear_backward(
             &mut self,
-            layerid: &LayerId,
-            grad_outputs: &[Array<A, D>],
+            _layer_id: &LayerId,
+            _grad_outputs: &[Array<A, D>],
         ) -> Result<Vec<Array<A, D>>> {
-            if grad_outputs.is_empty() {
-                return Err(OptimError::InvalidConfig(
-                    "Linear layer backward requires gradients".to_string(),
-                ));
-            }
-
-            // Get parameters for this layer
-            let layer_params = self.param_manager.get_parameters_by_layer(layerid);
-
-            // Store gradients for weight update
-            if self.gradient_accumulation {
-                let mut param_grads = HashMap::new();
-                for (i, paramid) in layer_params.iter().enumerate() {
-                    if i < grad_outputs.len() {
-                        param_grads.insert((*paramid).clone(), grad_outputs[i].clone());
-                    }
-                }
-                self.accumulate_gradients(param_grads)?;
-            }
-
-            // Simple gradient transformation: scale by learning rate decay
-            let lr_decay = A::from(0.9).expect("unwrap failed");
-            let grad_inputs: Vec<Array<A, D>> = grad_outputs
-                .iter()
-                .map(|grad| grad.mapv(|x| x * lr_decay))
-                .collect();
-
-            Ok(grad_inputs)
+            Err(OptimError::UnsupportedOperation(
+                "linear layer backward pass is not implemented: computing grad_output @ W \
+                 requires stored weight values this module does not hold"
+                    .to_string(),
+            ))
         }
 
-        /// Compute convolutional layer backward pass
+        /// Compute convolutional layer backward pass.
+        ///
+        /// Not implemented (F80): the previous body passed gradients through
+        /// unchanged. Real backprop needs the stored kernels.
         fn compute_conv_backward(
             &self,
             _layer_id: &LayerId,
-            grad_outputs: &[Array<A, D>],
+            _grad_outputs: &[Array<A, D>],
         ) -> Result<Vec<Array<A, D>>> {
-            // Simplified convolution backward: pass through gradients
-            // Real implementation would compute gradients w.r.t. kernels and input
-            Ok(grad_outputs.to_vec())
+            Err(OptimError::UnsupportedOperation(
+                "convolution backward pass is not implemented: no convolution kernels \
+                 are stored in this module"
+                    .to_string(),
+            ))
         }
 
         /// Compute activation backward pass
@@ -899,16 +891,22 @@ pub mod forward_backward {
             Ok(grad_inputs)
         }
 
-        /// Compute pooling backward pass
+        /// Compute pooling backward pass.
+        ///
+        /// Not implemented (F80): the previous body passed gradients through
+        /// unchanged. Real pooling backprop routes gradients through the
+        /// stored pooling argmax/averaging indices, which are not modeled.
         fn compute_pooling_backward(
             &self,
             _layer_id: &LayerId,
-            grad_outputs: &[Array<A, D>],
+            _grad_outputs: &[Array<A, D>],
             _layer_arch: &LayerArchitecture,
         ) -> Result<Vec<Array<A, D>>> {
-            // Simplified pooling backward: pass through gradients
-            // Real implementation would upsample gradients to match input size
-            Ok(grad_outputs.to_vec())
+            Err(OptimError::UnsupportedOperation(
+                "pooling backward pass is not implemented: pooling indices are not \
+                 modeled in this module"
+                    .to_string(),
+            ))
         }
 
         /// Apply gradient clipping
@@ -1138,8 +1136,16 @@ pub mod architecture_aware {
             weight_type_lr: bool,
         ) -> Result<()> {
             if let Some(clipvalue) = rnn_gradient_clip {
-                // Apply RNN-specific gradient clipping
-                self.apply_rnn_gradient_clipping(A::from(clipvalue).expect("unwrap failed"))?;
+                // Apply RNN-specific gradient clipping (F80). Convert the
+                // clip threshold without panicking: an unrepresentable value
+                // is an honest configuration error, not a crash.
+                let clip = A::from(clipvalue).ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "RNN gradient clip value {clipvalue} is not representable \
+                         in the optimizer's float type"
+                    ))
+                })?;
+                self.apply_rnn_gradient_clipping(clip)?;
             }
 
             if weight_type_lr {

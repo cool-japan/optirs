@@ -176,44 +176,85 @@ fn swap_rows<T: Float>(matrix: &mut Array2<T>, r1: usize, r2: usize) {
 pub struct KFACUtils;
 
 impl KFACUtils {
-    /// Compute K-FAC update for convolutional layers
-    pub fn conv_kfac_update<T: Float + 'static>(
+    /// Compute the K-FAC **weight-gradient statistic** for a convolutional layer
+    /// from already-extracted patches — the same quantity
+    /// [`super::layer_state::KFACLayerState::weight_gradient`] computes for dense
+    /// layers. This is the *un-preconditioned* gradient; feed the result through
+    /// [`super::core::KFAC::apply_update_weight`] (`G⁻¹ · grad · A⁻¹`) to get the
+    /// actual K-FAC parameter update.
+    ///
+    /// `input_patches` is the im2col-style patch matrix `[samples, in_channels * kh *
+    /// kw]` (one row per `(batch element, output spatial location)` pair), optionally
+    /// with one extra trailing bias column, and `output_gradients` is the matching
+    /// per-location output gradient `[samples, out_channels]`; the two must
+    /// therefore share the same row count.
+    ///
+    /// `kernel_size`, `stride` and `padding` describe how the caller produced
+    /// `input_patches` and are accepted as provenance metadata / a light
+    /// consistency check on `input_patches`'s column count. This function has no
+    /// [`super::config::LayerInfo`] to consult, so — unlike the dense path — it
+    /// cannot know whether the caller included a bias column; `kernel_size` is
+    /// therefore checked loosely (with or without one trailing bias column) rather
+    /// than rejected outright. `stride`/`padding` do not otherwise enter the
+    /// computation: the covariance of already-extracted patches doesn't depend on
+    /// how they were extracted. This function does **not** perform patch
+    /// extraction itself — pass already-extracted patches.
+    ///
+    /// The result is `output_gradients^T @ input_patches / samples`, the same
+    /// `[out_features, in_features]` convention used by
+    /// [`super::layer_state::KFACLayerState::weight_gradient`] for dense layers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::OptimError::DimensionMismatch`] when `input_patches`
+    /// and `output_gradients` disagree on the sample count, or
+    /// [`crate::error::OptimError::InvalidParameter`] when `input_patches`'s column
+    /// count is not `kernel_size.0 * kernel_size.1 * in_channels` for any positive
+    /// `in_channels`, with or without one trailing bias column.
+    pub fn conv_kfac_update<T: Float + scirs2_core::ndarray::ScalarOperand + 'static>(
         input_patches: &Array2<T>,
         output_gradients: &Array2<T>,
         kernel_size: (usize, usize),
-        stride: (usize, usize),
-        padding: (usize, usize),
+        _stride: (usize, usize),
+        _padding: (usize, usize),
     ) -> Result<Array2<T>> {
-        // Simplified convolution K-FAC update
-        // In practice, this would involve more complex patch extraction and reshaping
         let batch_size = input_patches.nrows();
         let input_dim = input_patches.ncols();
         let output_dim = output_gradients.ncols();
 
-        // Create a placeholder update matrix
-        let mut update = Array2::zeros((kernel_size.0 * kernel_size.1, output_dim));
-
-        // Simple averaging across batch
-        if batch_size > 0 {
-            let scale = T::one() / T::from(batch_size).unwrap_or_else(|| T::zero());
-            for i in 0..update.nrows() {
-                for j in 0..update.ncols() {
-                    let input_idx = i % input_dim;
-                    let output_idx = j % output_dim;
-
-                    let mut sum = T::zero();
-                    for b in 0..batch_size {
-                        if input_idx < input_dim && output_idx < output_dim {
-                            sum = sum
-                                + input_patches[[b, input_idx]] * output_gradients[[b, output_idx]];
-                        }
-                    }
-                    update[[i, j]] = sum * scale;
-                }
-            }
+        if batch_size != output_gradients.nrows() {
+            return Err(crate::error::OptimError::DimensionMismatch(format!(
+                "conv_kfac_update: input_patches has {} samples but output_gradients has {}",
+                batch_size,
+                output_gradients.nrows()
+            )));
         }
 
-        Ok(update)
+        let patch_size = kernel_size.0.saturating_mul(kernel_size.1);
+        // `input_dim` must be `patch_size * in_channels` for some positive
+        // `in_channels` — i.e. a positive multiple of `patch_size` — optionally
+        // plus one trailing bias column (`homogeneous_input`'s convention
+        // elsewhere in this module; see `KFACLayerState::homogeneous_input`).
+        let without_bias_ok = patch_size > 0 && input_dim > 0 && input_dim % patch_size == 0;
+        let with_bias_ok = patch_size > 0 && input_dim > 0 && (input_dim - 1) % patch_size == 0;
+        if !(without_bias_ok || with_bias_ok) {
+            return Err(crate::error::OptimError::InvalidParameter(format!(
+                "conv_kfac_update: input_patches has {input_dim} columns, which is not \
+                 kernel_size {}x{} ({patch_size}) times a positive channel count, with or \
+                 without a trailing bias column",
+                kernel_size.0, kernel_size.1
+            )));
+        }
+
+        if batch_size == 0 {
+            return Ok(Array2::zeros((output_dim, input_dim)));
+        }
+
+        // E[grad_output (x) patch], the Kronecker-factored weight-gradient
+        // statistic, in the same [out_features, in_features] convention as the
+        // dense-layer path (`KFACLayerState::weight_gradient`).
+        let scale = T::one() / T::from(batch_size).unwrap_or_else(T::one);
+        Ok(output_gradients.t().dot(input_patches) * scale)
     }
 
     /// Compute batch normalization statistics for K-FAC
@@ -476,6 +517,93 @@ impl<T: Float + Debug + Send + Sync + 'static> PartialOrd for OrderedFloat<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test: `conv_kfac_update` used to reshape its result to
+    /// `(kernel_size.0 * kernel_size.1, output_dim)` and fill it via
+    /// `i % input_dim` / `j % output_dim` wraparound indexing — a matrix of the
+    /// wrong shape holding a value that is not any real statistic of the inputs.
+    /// The correct result is the plain outer-product average
+    /// `output_gradients^T @ input_patches / batch`, shaped `(output_dim,
+    /// input_dim)`, matching `KFACLayerState::weight_gradient`'s convention.
+    #[test]
+    fn conv_kfac_update_matches_dense_outer_product_convention() {
+        // 2 samples, in_channels * kh * kw = 1 * 2 * 2 = 4, out_channels = 3.
+        let patches = Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+            .expect("valid shape");
+        let grads = Array2::from_shape_vec((2, 3), vec![1.0, 0.0, -1.0, 0.5, 0.5, 0.5])
+            .expect("valid shape");
+
+        let update = KFACUtils::conv_kfac_update(&patches, &grads, (2, 2), (1, 1), (0, 0))
+            .expect("conv_kfac_update should succeed");
+
+        // Shape must be [out_channels, input_dim], not [kh*kw, out_channels].
+        assert_eq!(update.dim(), (3, 4));
+
+        let expected = grads.t().dot(&patches) / 2.0;
+        for (actual, expected) in update.iter().zip(expected.iter()) {
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn conv_kfac_update_rejects_column_count_inconsistent_with_kernel_size() {
+        // 7 columns cannot come from any positive channel count with a 2x2 kernel,
+        // with or without a trailing bias column: 7 % 4 == 3 and (7-1) % 4 == 2.
+        let patches = Array2::<f64>::zeros((2, 7));
+        let grads = Array2::<f64>::zeros((2, 3));
+
+        let result = KFACUtils::conv_kfac_update(&patches, &grads, (2, 2), (1, 1), (0, 0));
+        assert!(result.is_err());
+    }
+
+    /// Regression test: the column-count check must not reject the bias-augmented
+    /// case. `KFACLayerState::homogeneous_input` appends exactly one trailing bias
+    /// column elsewhere in this module (see the F12 covariance tests), so
+    /// `conv_kfac_update` must accept `in_channels * kh * kw + 1` columns too, not
+    /// just an exact multiple of `kh * kw`.
+    #[test]
+    fn conv_kfac_update_accepts_a_trailing_bias_column() {
+        // in_channels * kh * kw = 1 * 2 * 2 = 4, plus one bias column = 5.
+        let patches = Array2::from_shape_vec(
+            (2, 5),
+            vec![1.0, 2.0, 3.0, 4.0, 1.0, 5.0, 6.0, 7.0, 8.0, 1.0],
+        )
+        .expect("valid shape");
+        let grads = Array2::from_shape_vec((2, 3), vec![1.0, 0.0, -1.0, 0.5, 0.5, 0.5])
+            .expect("valid shape");
+
+        let update = KFACUtils::conv_kfac_update(&patches, &grads, (2, 2), (1, 1), (0, 0))
+            .expect("bias-augmented patches should be accepted");
+        assert_eq!(update.dim(), (3, 5));
+
+        let expected = grads.t().dot(&patches) / 2.0;
+        for (actual, expected) in update.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn conv_kfac_update_rejects_sample_count_mismatch() {
+        let patches = Array2::<f64>::zeros((2, 4));
+        let grads = Array2::<f64>::zeros((3, 3)); // wrong row count
+
+        let result = KFACUtils::conv_kfac_update(&patches, &grads, (2, 2), (1, 1), (0, 0));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn conv_kfac_update_empty_batch_is_zero_of_correct_shape() {
+        let patches = Array2::<f64>::zeros((0, 4));
+        let grads = Array2::<f64>::zeros((0, 3));
+
+        let update = KFACUtils::conv_kfac_update(&patches, &grads, (2, 2), (1, 1), (0, 0))
+            .expect("empty batch should succeed");
+        assert_eq!(update.dim(), (3, 4));
+        assert!(update.iter().all(|&x| x == 0.0));
+    }
 
     #[test]
     fn test_trace_computation() {

@@ -524,14 +524,14 @@ where
     })
 }
 
-/// Convenience wrapper computing occupancy for a [`crate::kernels::LaunchConfig`].
+/// Convenience wrapper computing occupancy for a [`crate::backends::LaunchConfig`].
 ///
 /// The total threads per block is the product of the configured block
 /// dimensions, and the per-block shared memory is taken from the launch config's
 /// `shared_memory_size`. `registers_per_thread` must be supplied by the caller
 /// (it is a property of the compiled kernel, not of the launch geometry).
 pub fn occupancy_for_launch(
-    config: &crate::kernels::LaunchConfig,
+    config: &crate::backends::LaunchConfig,
     registers_per_thread: u32,
     limits: &SmResourceLimits,
 ) -> Result<OccupancyResult, GpuOptimError> {
@@ -832,7 +832,7 @@ mod tests {
     #[test]
     fn occupancy_for_launch_matches_direct_calculation() {
         let limits = SmResourceLimits::sm_80();
-        let config = crate::kernels::LaunchConfig {
+        let config = crate::backends::LaunchConfig {
             grid_size: (128, 1, 1),
             block_size: (256, 1, 1),
             shared_memory_size: 0,

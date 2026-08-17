@@ -61,6 +61,9 @@ pub struct BaseOptimizerState<A: Float + std::fmt::Debug> {
     pub grad_norm_history: Vec<A>,
     /// Parameter change norms history
     pub param_change_history: Vec<A>,
+    /// Momentum buffer (SGD-with-momentum velocity), one entry per
+    /// parameter, lazily sized to the incoming gradient on the first step.
+    pub momentum_buffer: Vec<A>,
     /// Custom state data
     pub custom_state: HashMap<String, StateValue>,
 }
@@ -806,8 +809,210 @@ impl<A: Float + std::fmt::Debug + Send + Sync> BaseOptimizerState<A> {
             lr_history: Vec::new(),
             grad_norm_history: Vec::new(),
             param_change_history: Vec::new(),
+            momentum_buffer: Vec::new(),
             custom_state: HashMap::new(),
         }
+    }
+}
+
+impl<A: Float + Debug + Send + Sync + 'static> OptimizerPlugin<A> for BaseOptimizerPlugin<A> {
+    /// SGD with momentum, weight decay, and L2 gradient-norm clipping,
+    /// driven entirely by `self.config` (`OptimizerConfig`). This is the
+    /// SDK's documented base class for plugin authors: it must itself be a
+    /// working, registrable optimizer -- not merely a field-storage struct
+    /// -- since `BaseOptimizerPlugin` is re-exported at the crate root and
+    /// used directly wherever a caller needs a plain baseline.
+    fn step(&mut self, params: &Array1<A>, gradients: &Array1<A>) -> Result<Array1<A>> {
+        if params.len() != gradients.len() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "parameter vector has {} elements but gradient vector has {}",
+                params.len(),
+                gradients.len()
+            )));
+        }
+        if params.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "cannot step an optimizer over zero parameters".to_string(),
+            ));
+        }
+
+        let lr = A::from(self.config.learning_rate).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "learning rate {} could not be represented in the parameter type",
+                self.config.learning_rate
+            ))
+        })?;
+        let weight_decay = A::from(self.config.weight_decay).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "weight decay {} could not be represented in the parameter type",
+                self.config.weight_decay
+            ))
+        })?;
+        let momentum = A::from(self.config.momentum).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "momentum {} could not be represented in the parameter type",
+                self.config.momentum
+            ))
+        })?;
+
+        // Decoupled weight decay (params contribute to the effective
+        // gradient before clipping/momentum, matching standard SGD-with-
+        // weight-decay semantics).
+        let mut effective_grad: Vec<A> = gradients
+            .iter()
+            .zip(params.iter())
+            .map(|(&g, &p)| g + weight_decay * p)
+            .collect();
+
+        // Optional global-norm gradient clipping.
+        let grad_norm = effective_grad
+            .iter()
+            .fold(A::zero(), |acc, &g| acc + g * g)
+            .sqrt();
+        if let Some(clip) = self.config.gradient_clip {
+            let clip_a = A::from(clip).ok_or_else(|| {
+                OptimError::InvalidConfig(format!(
+                    "gradient clip {clip} could not be represented in the parameter type"
+                ))
+            })?;
+            if clip_a > A::zero() && grad_norm > clip_a {
+                let scale = clip_a / grad_norm;
+                for g in &mut effective_grad {
+                    *g = *g * scale;
+                }
+            }
+        }
+
+        // Lazily (re)size the momentum buffer to match the incoming
+        // parameter count -- `initialize()` may have been called with a
+        // different `paramshape`, or never called at all.
+        if self.state.momentum_buffer.len() != params.len() {
+            self.state.momentum_buffer = vec![A::zero(); params.len()];
+        }
+
+        let mut new_params = Array1::<A>::zeros(params.len());
+        let mut change_sq = A::zero();
+        for i in 0..params.len() {
+            let velocity = momentum * self.state.momentum_buffer[i] + effective_grad[i];
+            self.state.momentum_buffer[i] = velocity;
+            let delta = lr * velocity;
+            let updated = params[i] - delta;
+            new_params[i] = updated;
+            change_sq = change_sq + delta * delta;
+        }
+
+        self.state.step_count += 1;
+        self.state.param_count = params.len();
+        self.state.lr_history.push(lr);
+        self.state.grad_norm_history.push(grad_norm);
+        self.state.param_change_history.push(change_sq.sqrt());
+
+        for handler in &mut self.event_handlers {
+            let params_f64 = Array1::from_iter(params.iter().map(|p| p.to_f64().unwrap_or(0.0)));
+            let grad_f64 = Array1::from_iter(gradients.iter().map(|g| g.to_f64().unwrap_or(0.0)));
+            handler.on_step(self.state.step_count, &params_f64, &grad_f64);
+        }
+
+        Ok(new_params)
+    }
+
+    fn name(&self) -> &str {
+        &self.info.name
+    }
+
+    fn version(&self) -> &str {
+        &self.info.version
+    }
+
+    fn plugin_info(&self) -> PluginInfo {
+        self.info.clone()
+    }
+
+    fn capabilities(&self) -> PluginCapabilities {
+        self.capabilities.clone()
+    }
+
+    fn initialize(&mut self, paramshape: &[usize]) -> Result<()> {
+        if paramshape.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "cannot initialize with zero parameter groups".to_string(),
+            ));
+        }
+        let total: usize = paramshape.iter().product();
+        self.state = BaseOptimizerState::new();
+        self.state.param_count = total;
+        self.state.momentum_buffer = vec![A::zero(); total];
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        let param_count = self.state.param_count;
+        self.state = BaseOptimizerState::new();
+        self.state.param_count = param_count;
+        self.state.momentum_buffer = vec![A::zero(); param_count];
+        Ok(())
+    }
+
+    fn get_config(&self) -> OptimizerConfig {
+        self.config.clone()
+    }
+
+    fn set_config(&mut self, config: OptimizerConfig) -> Result<()> {
+        self.config = config;
+        Ok(())
+    }
+
+    fn get_state(&self) -> Result<OptimizerState> {
+        let mut state_vectors = HashMap::new();
+        state_vectors.insert(
+            "momentum_buffer".to_string(),
+            self.state
+                .momentum_buffer
+                .iter()
+                .map(|v| v.to_f64().unwrap_or(0.0))
+                .collect(),
+        );
+        Ok(OptimizerState {
+            state_vectors,
+            step_count: self.state.step_count,
+            custom_state: self.state.custom_state.clone(),
+        })
+    }
+
+    fn set_state(&mut self, state: OptimizerState) -> Result<()> {
+        self.state.step_count = state.step_count;
+        self.state.custom_state = state.custom_state;
+        if let Some(buf) = state.state_vectors.get("momentum_buffer") {
+            self.state.momentum_buffer = buf
+                .iter()
+                .map(|&v| A::from(v).unwrap_or_else(A::zero))
+                .collect();
+            self.state.param_count = self.state.momentum_buffer.len();
+        }
+        Ok(())
+    }
+
+    fn clone_plugin(&self) -> Box<dyn OptimizerPlugin<A>> {
+        Box::new(BaseOptimizerPlugin {
+            info: self.info.clone(),
+            capabilities: self.capabilities.clone(),
+            config: self.config.clone(),
+            state: self.state.clone(),
+            metrics: self.metrics.clone(),
+            memory_usage: self.memory_usage.clone(),
+            // Event handlers are per-instance observers, not cloneable
+            // state; a clone starts with none attached, matching the
+            // semantics of every other plugin's `clone_plugin`.
+            event_handlers: Vec::new(),
+        })
+    }
+
+    fn memory_usage(&self) -> MemoryUsage {
+        self.memory_usage.clone()
+    }
+
+    fn performance_metrics(&self) -> PerformanceMetrics {
+        self.metrics.clone()
     }
 }
 
@@ -845,7 +1050,7 @@ macro_rules! create_optimizer_plugin {
         pub struct $name<A: Float> {
             config: OptimizerConfig,
             state: OptimizerState,
-            phantom: std::marker::PhantomData<A>,
+            _phantom: std::marker::PhantomData<A>,
         }
 
         impl<A: Float + Send + Sync> $name<A> {
@@ -855,6 +1060,12 @@ macro_rules! create_optimizer_plugin {
                     state: OptimizerState::default(),
                     _phantom: std::marker::PhantomData,
                 }
+            }
+        }
+
+        impl<A: Float + Send + Sync> Default for $name<A> {
+            fn default() -> Self {
+                Self::new()
             }
         }
 
@@ -880,6 +1091,16 @@ macro_rules! create_optimizer_plugin {
             }
 
             fn initialize(&mut self, paramshape: &[usize]) -> Result<()> {
+                if paramshape.is_empty() {
+                    return Err($crate::error::OptimError::InvalidConfig(
+                        "cannot initialize a plugin optimizer with zero parameter groups"
+                            .to_string(),
+                    ));
+                }
+                // A fresh initialization starts a fresh optimization run:
+                // reset the step counter so re-initializing an existing
+                // instance for a new run does not inherit a stale count.
+                self.state.step_count = 0;
                 Ok(())
             }
 
@@ -907,7 +1128,11 @@ macro_rules! create_optimizer_plugin {
             }
 
             fn clone_plugin(&self) -> Box<dyn OptimizerPlugin<A>> {
-                Box::new(Self::new())
+                Box::new(Self {
+                    config: self.config.clone(),
+                    state: self.state.clone(),
+                    _phantom: std::marker::PhantomData,
+                })
             }
         }
     };
@@ -916,6 +1141,158 @@ macro_rules! create_optimizer_plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Compile-time exercise of `create_optimizer_plugin!`, kept inside the
+    // test module (not at module scope) so the generated `pub struct` never
+    // becomes part of the shipped public API: the macro was invoked nowhere
+    // in the workspace, so a field-name typo (`phantom` in the struct vs
+    // `_phantom` in the constructor) went uncaught until any real user
+    // tried to expand it. `use super::*` above still brings in the parent
+    // module's `use super::core::*`, so the expansion resolves normally.
+    //
+    // The closure intentionally avoids naming the impl's generic parameter
+    // `A` (macro hygiene keeps a bare `A` written at this call site in a
+    // distinct context from the `A` the macro binds in `impl<A: ...>`); its
+    // parameter and return types are inferred entirely from the immediate
+    // call `$step_fn(self, params, gradients)` inside a `-> Result<Array1<A>>`
+    // body.
+    create_optimizer_plugin!(MacroGeneratedSgd, |_this, params, gradients| {
+        Ok(params - gradients)
+    });
+
+    #[test]
+    fn test_macro_generated_plugin_compiles_and_steps() {
+        // Exercises the `create_optimizer_plugin!` expansion end-to-end:
+        // construction, `initialize`, `step`, and `clone_plugin` all need
+        // the struct's field names (`_phantom`, not `phantom`) to agree
+        // between the struct definition and the constructor for this to
+        // compile at all.
+        let mut plugin: MacroGeneratedSgd<f64> = MacroGeneratedSgd::new();
+        plugin.initialize(&[3]).expect("initialize should succeed");
+
+        let params = Array1::from(vec![1.0_f64, 2.0, 3.0]);
+        let grads = Array1::from(vec![0.1_f64, 0.2, 0.3]);
+        let updated = plugin.step(&params, &grads).expect("step should succeed");
+        assert_eq!(updated.len(), 3);
+
+        // clone_plugin must preserve config/state, not silently reset to a
+        // fresh instance.
+        plugin
+            .set_config(OptimizerConfig {
+                learning_rate: 0.5,
+                ..OptimizerConfig::default()
+            })
+            .expect("set_config should succeed");
+        let cloned = plugin.clone_plugin();
+        assert_eq!(cloned.get_config().learning_rate, 0.5);
+    }
+
+    #[test]
+    fn test_macro_generated_plugin_rejects_empty_paramshape() {
+        let mut plugin: MacroGeneratedSgd<f64> = MacroGeneratedSgd::new();
+        assert!(plugin.initialize(&[]).is_err());
+    }
+
+    // F73 regression: `BaseOptimizerPlugin` previously implemented only
+    // `Debug` -- there was no `impl OptimizerPlugin<A> for
+    // BaseOptimizerPlugin<A>` at all, so the SDK's documented base class
+    // (re-exported at the crate root) could never be registered or used
+    // anywhere an `OptimizerPlugin` was expected. These exercise the trait
+    // impl through the trait itself (`&mut dyn OptimizerPlugin<f64>`), not
+    // just inherent methods, so a future regression back to "no impl" is a
+    // compile error here, not a silently-vanished capability.
+    fn base_plugin() -> BaseOptimizerPlugin<f64> {
+        BaseOptimizerPlugin::new(
+            create_plugin_info("TestBase", "0.1.0", "test"),
+            create_basic_capabilities(),
+        )
+    }
+
+    #[test]
+    fn test_base_optimizer_plugin_implements_the_trait() {
+        let mut owned = base_plugin();
+        let plugin: &mut dyn OptimizerPlugin<f64> = &mut owned;
+        plugin.initialize(&[3]).expect("initialize should succeed");
+
+        let params = Array1::from(vec![1.0_f64, 2.0, 3.0]);
+        let grads = Array1::from(vec![0.1_f64, 0.2, 0.3]);
+        let updated = plugin.step(&params, &grads).expect("step should succeed");
+        assert_eq!(updated.len(), 3);
+        // Plain gradient descent moves parameters opposite the gradient.
+        for (u, p) in updated.iter().zip(params.iter()) {
+            assert!(u < p, "expected descent step to reduce each parameter");
+        }
+    }
+
+    #[test]
+    fn test_base_optimizer_plugin_rejects_dimension_mismatch() {
+        let mut plugin = base_plugin();
+        plugin.initialize(&[3]).expect("initialize should succeed");
+        let params = Array1::from(vec![1.0_f64, 2.0, 3.0]);
+        let grads = Array1::from(vec![0.1_f64, 0.2]);
+        assert!(plugin.step(&params, &grads).is_err());
+    }
+
+    #[test]
+    fn test_base_optimizer_plugin_gradient_clipping_bounds_update_norm() {
+        let mut plugin = base_plugin();
+        plugin
+            .set_config(OptimizerConfig {
+                learning_rate: 1.0,
+                weight_decay: 0.0,
+                momentum: 0.0,
+                gradient_clip: Some(1.0),
+                ..OptimizerConfig::default()
+            })
+            .expect("set_config should succeed");
+        plugin.initialize(&[2]).expect("initialize should succeed");
+
+        let params = Array1::from(vec![0.0_f64, 0.0]);
+        // Unclipped gradient norm is 100 * sqrt(2) >> clip of 1.0.
+        let grads = Array1::from(vec![100.0_f64, 100.0]);
+        let updated = plugin.step(&params, &grads).expect("step should succeed");
+        let step_norm =
+            ((updated[0] - params[0]).powi(2) + (updated[1] - params[1]).powi(2)).sqrt();
+        assert!(
+            step_norm <= 1.0 + 1e-9,
+            "clipped step norm should not exceed the configured clip value, got {step_norm}"
+        );
+    }
+
+    #[test]
+    fn test_base_optimizer_plugin_state_round_trips() {
+        let mut plugin = base_plugin();
+        plugin.initialize(&[2]).expect("initialize should succeed");
+        let params = Array1::from(vec![1.0_f64, 1.0]);
+        let grads = Array1::from(vec![0.5_f64, 0.5]);
+        plugin.step(&params, &grads).expect("step should succeed");
+
+        let saved = plugin.get_state().expect("get_state should succeed");
+        assert_eq!(saved.step_count, 1);
+
+        let mut restored = base_plugin();
+        restored.set_state(saved).expect("set_state should succeed");
+        assert_eq!(restored.get_state().unwrap().step_count, 1);
+    }
+
+    #[test]
+    fn test_base_optimizer_plugin_clone_preserves_config_and_state() {
+        let mut plugin = base_plugin();
+        plugin
+            .set_config(OptimizerConfig {
+                learning_rate: 0.25,
+                ..OptimizerConfig::default()
+            })
+            .expect("set_config should succeed");
+        plugin.initialize(&[2]).expect("initialize should succeed");
+        let params = Array1::from(vec![1.0_f64, 1.0]);
+        let grads = Array1::from(vec![0.5_f64, 0.5]);
+        plugin.step(&params, &grads).expect("step should succeed");
+
+        let cloned = plugin.clone_plugin();
+        assert_eq!(cloned.get_config().learning_rate, 0.25);
+        assert_eq!(cloned.get_state().unwrap().step_count, 1);
+    }
 
     #[test]
     fn test_plugin_template_creation() {

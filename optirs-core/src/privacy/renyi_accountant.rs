@@ -855,6 +855,157 @@ mod tests {
     }
 
     #[test]
+    fn test_kernel_reproduces_the_published_tensorflow_privacy_reference() {
+        // EXTERNAL validation of the sampled-Gaussian RDP kernel against a
+        // number published by an independent implementation.
+        //
+        // The TensorFlow Privacy classification tutorial reports, for
+        // `N = 60000, batch_size = 250, noise_multiplier = 1.3, epochs = 15`
+        // (so `q = 250 / 60000` and `T = 15 * 60000 / 250 = 3600`) at
+        // `delta = 1e-5`:
+        //
+        // > DP-SGD with sampling rate = 0.417% and noise_multiplier = 1.3
+        // > iterated over 3600 steps satisfies differential privacy with
+        // > eps = 1.18.
+        //
+        // TF Privacy's `get_privacy_spent` applies the *classic* Mironov
+        // (2017) conversion `rdp + ln(1/delta) / (alpha - 1)`, so that
+        // conversion is applied here explicitly instead of calling
+        // `to_epsilon_delta` (which uses the strictly tighter Canonne-Kamath-
+        // Steinke bound and would land at 0.9422, below the published value).
+        //
+        // Matching 1.18 to four significant figures is what makes every other
+        // pinned constant in this module a real golden value rather than a
+        // restatement of our own arithmetic.
+        let orders: Vec<f64> = (2..=64).map(f64::from).collect();
+        let mut accountant = RenyiAccountant::new(orders).expect("integer orders are valid");
+        accountant
+            .add_subsampled_gaussian(1.3, 250.0 / 60_000.0, 3600)
+            .expect("composition");
+
+        let spend = accountant.current_spend();
+        let log_inv_delta = (1.0_f64 / 1.0e-5).ln();
+        let mut best = f64::INFINITY;
+        let mut best_order = 0.0;
+        for (order, rdp) in spend.orders.iter().zip(spend.epsilons.iter()) {
+            let candidate = rdp + log_inv_delta / (order - 1.0);
+            if candidate < best {
+                best = candidate;
+                best_order = *order;
+            }
+        }
+
+        assert!(
+            approx_eq(best, 1.179_900_673_983, 1.0e-9),
+            "classic-conversion epsilon must reproduce the published TF Privacy \
+             value 1.18, got {best} at alpha={best_order}"
+        );
+        assert_eq!(best_order, 17.0, "TF Privacy also selects alpha = 17");
+
+        // The crate's own (tighter) conversion must sit strictly below the
+        // classic one and therefore remain a valid guarantee.
+        let tight = accountant.to_epsilon_delta(1.0e-5).expect("conversion");
+        assert!(
+            tight.epsilon < best,
+            "CKS conversion must be tighter than the classic one: {} vs {best}",
+            tight.epsilon
+        );
+    }
+
+    #[test]
+    fn test_per_step_rdp_matches_quadrature_validated_golden_values() {
+        // Golden per-step RDP values for the sampled Gaussian mechanism.
+        //
+        // Provenance: each value was cross-checked against a direct Simpson
+        // quadrature of the Renyi divergence integral
+        //
+        //     exp((alpha - 1) * rdp)
+        //       = E_{x ~ N(0, sigma^2)} [ ((1 - q) + q e^{(2x - 1)/(2 sigma^2)})^alpha ]
+        //
+        // which shares no code path with the binomial expansion implemented
+        // here; agreement was better than 1e-12 relative in every case.
+        let cases: [(f64, f64, f64, f64); 5] = [
+            (2.0, 1.0, 0.01, 1.718_134_220_745_140_6e-4),
+            (8.0, 1.0, 0.01, 8.936_439_076_060_275e-4),
+            (16.0, 1.0, 0.01, 3.087_850_783_696_245),
+            (12.0, 1.1, 256.0 / 60_000.0, 1.557_401_620_924_204_6e-4),
+            (24.0, 2.0, 0.01, 3.663_592_275_686_629e-4),
+        ];
+
+        for (alpha, sigma, q, expected) in cases {
+            let actual = rdp_subsampled_gaussian_step(alpha, sigma, q).expect("valid parameters");
+            let relative = (actual - expected).abs() / expected;
+            assert!(
+                relative < 1.0e-12,
+                "rdp(alpha={alpha}, sigma={sigma}, q={q}) = {actual}, expected {expected} \
+                 (relative error {relative:e})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_kernel_converges_to_the_pure_gaussian_closed_form() {
+        // As q -> 1 the sampled Gaussian *is* the Gaussian mechanism, whose
+        // RDP has the closed form alpha / (2 sigma^2) (Mironov 2017,
+        // Proposition 7). The binomial expansion must converge to it, which
+        // pins the kernel against a formula it does not share any code with.
+        for sigma in [0.5_f64, 1.0, 1.1, 2.0] {
+            for alpha in [2.0_f64, 4.0, 8.0, 16.0, 32.0] {
+                let closed_form = alpha / (2.0 * sigma * sigma);
+                let expansion =
+                    rdp_subsampled_gaussian_step(alpha, sigma, 1.0 - 1.0e-10).expect("valid");
+                let relative = (expansion - closed_form).abs() / closed_form;
+                assert!(
+                    relative < 1.0e-8,
+                    "expansion {expansion} must converge to {closed_form} \
+                     (sigma={sigma}, alpha={alpha}, relative error {relative:e})"
+                );
+
+                // Exactly q = 1 takes the closed-form branch.
+                let exact = rdp_subsampled_gaussian_step(alpha, sigma, 1.0).expect("valid");
+                assert!(approx_eq(exact, closed_form, 1.0e-12));
+            }
+        }
+    }
+
+    #[test]
+    fn test_golden_epsilon_for_the_canonical_dp_sgd_configuration() {
+        // Pinned epsilon for sigma = 1.0, q = 0.01, delta = 1e-5 over the
+        // canonical [`DEFAULT_ALPHAS`] grid with the CKS conversion.
+        //
+        // These constants pin *this crate's* configuration (integer-order
+        // bound with `ceil` for fractional alphas, DEFAULT_ALPHAS grid, CKS
+        // conversion). They are not published Opacus/TF-Privacy outputs -- the
+        // external anchor is
+        // `test_kernel_reproduces_the_published_tensorflow_privacy_reference`,
+        // which validates the underlying kernel; these values then follow from
+        // it by composition and conversion.
+        let expected: [(usize, f64, f64); 4] = [
+            (1, 0.956_281_055_679, 10.0),
+            (10, 1.064_496_195_732, 9.0),
+            (100, 1.224_845_779_636, 9.0),
+            (1000, 2.107_753_075_452, 8.0),
+        ];
+
+        for (steps, epsilon, order) in expected {
+            let mut accountant = RenyiAccountant::with_default_orders();
+            accountant
+                .add_subsampled_gaussian(1.0, 0.01, steps)
+                .expect("composition");
+            let result = accountant.to_epsilon_delta(1.0e-5).expect("conversion");
+            assert!(
+                approx_eq(result.epsilon, epsilon, 1.0e-9),
+                "T={steps}: epsilon {} must equal the golden value {epsilon}",
+                result.epsilon
+            );
+            assert_eq!(
+                result.best_order, order,
+                "T={steps}: optimal Renyi order changed"
+            );
+        }
+    }
+
+    #[test]
     fn test_small_q_uses_exact_expansion_not_a_shortcut() {
         // Regression for the deleted "small q" analytical shortcut, which
         // returned q^2 * alpha / (2 sigma^2) below q = 1e-6 and under-reported

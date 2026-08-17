@@ -79,7 +79,6 @@ use scirs2_core::numeric::Float;
 
 pub mod backends;
 pub mod kernel_fusion;
-pub mod kernels;
 pub mod memory;
 pub mod mixed_precision;
 pub mod multi_gpu;

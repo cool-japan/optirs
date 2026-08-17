@@ -996,10 +996,35 @@ impl RuntimeIntegration {
         Ok(executable)
     }
 
-    /// Create binary representation
-    fn create_binary(&self, _executable_id: &str) -> Result<Vec<u8>> {
-        // Binary creation logic
-        Ok(vec![0xDE, 0xAD, 0xBE, 0xEF]) // Placeholder binary
+    /// Serialize a loaded executable into a self-describing binary container.
+    ///
+    /// The container carries the real compiled code produced by the backend
+    /// (the executable's `binary` bytes) framed with a magic tag, a version, the
+    /// executable id and length prefixes, so it can be round-tripped/inspected.
+    /// It is not a fixed placeholder — a caller must first `load_executable`.
+    fn create_binary(&self, executable_id: &str) -> Result<Vec<u8>> {
+        let executable = self
+            .executable_manager
+            .get_executable(executable_id)
+            .ok_or_else(|| {
+                OptimError::from(format!(
+                    "cannot create binary: executable {executable_id} is not loaded"
+                ))
+            })?;
+
+        let id_bytes = executable_id.as_bytes();
+        let code = &executable.binary;
+        let mut binary = Vec::with_capacity(16 + id_bytes.len() + code.len());
+        // Container magic + version so the payload is identifiable/parseable.
+        binary.extend_from_slice(b"TPUX");
+        binary.extend_from_slice(&1u32.to_le_bytes());
+        // Length-prefixed executable id.
+        binary.extend_from_slice(&(id_bytes.len() as u32).to_le_bytes());
+        binary.extend_from_slice(id_bytes);
+        // Length-prefixed compiled code (the real serialized program).
+        binary.extend_from_slice(&(code.len() as u64).to_le_bytes());
+        binary.extend_from_slice(code);
+        Ok(binary)
     }
 }
 
@@ -1062,6 +1087,11 @@ impl ExecutableManager {
         let id = executable.id.clone();
         self.executables.insert(id.clone(), executable);
         Ok(id)
+    }
+
+    /// Look up a previously loaded executable by id.
+    pub fn get_executable(&self, id: &str) -> Option<&TPUExecutable> {
+        self.executables.get(id)
     }
 }
 
@@ -1226,5 +1256,76 @@ mod tests {
             assert!(matches!(device.state, DeviceState::Available));
             assert_eq!(device.version, TPUVersion::V4);
         }
+    }
+
+    #[test]
+    fn test_create_binary_serializes_real_code_not_placeholder() {
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
+
+        let tpu_config = TPUConfig {
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Single,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
+        };
+
+        let kernel = "tpu.matmul %a, %b -> %c";
+        let code = GeneratedCode {
+            kernel_code: kernel.to_string(),
+            init_code: String::new(),
+            cleanup_code: String::new(),
+            memory_code: String::new(),
+        };
+
+        let mut runtime = RuntimeIntegration::new(tpu_config.clone());
+        let binary = runtime
+            .integrate(code, &tpu_config)
+            .expect("integration should produce a binary");
+
+        // Not the old 4-byte placeholder.
+        assert_ne!(binary, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        // Real self-describing container carrying the actual kernel code.
+        assert!(
+            binary.starts_with(b"TPUX"),
+            "binary must carry container magic"
+        );
+        assert!(
+            binary.windows(kernel.len()).any(|w| w == kernel.as_bytes()),
+            "binary must embed the real compiled kernel code"
+        );
+    }
+
+    #[test]
+    fn test_create_binary_missing_executable_errors() {
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
+
+        let tpu_config = TPUConfig {
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Single,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
+        };
+
+        let runtime = RuntimeIntegration::new(tpu_config);
+        assert!(
+            runtime.create_binary("never_loaded").is_err(),
+            "create_binary must fail for an unloaded executable id"
+        );
     }
 }

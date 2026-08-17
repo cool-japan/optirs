@@ -1306,6 +1306,18 @@ impl<
         &self.metrics
     }
 
+    /// Borrow the policy network (e.g. to roll out the current policy between
+    /// updates). The optimizer applies updates in place, so this always reflects
+    /// the latest parameters.
+    pub fn policy_network(&self) -> &P {
+        &self.policy_network
+    }
+
+    /// Borrow the value network, when one is configured.
+    pub fn value_network(&self) -> Option<&V> {
+        self.value_network.as_ref()
+    }
+
     /// Add trajectory to buffer
     pub fn add_trajectory(&mut self, trajectory: TrajectoryBatch<T>) {
         self.trajectory_buffer.push(trajectory);

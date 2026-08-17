@@ -791,6 +791,13 @@ fn chunk_bounds(len: usize, parts: usize) -> Vec<(usize, usize)> {
 ///
 /// Returns the number of bytes actually moved, so callers can report measured
 /// rather than invented bandwidth.
+///
+/// `source` is used for modular-ring arithmetic (`(source + rank_count - step)
+/// % rank_count`, `(source + 1) % rank_count`) as well as indexing, in both
+/// phases below, so `.iter().enumerate()` would still need the plain index
+/// alongside the item; range loops read more directly here than threading the
+/// same value through both the enumeration and the arithmetic.
+#[allow(clippy::needless_range_loop)]
 pub fn ring_all_reduce(
     ranks: &mut [Vec<f64>],
     op: ReductionOp,

@@ -2,7 +2,7 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use super::meta_learning::MetaState;
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
@@ -81,8 +81,18 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         })
     }
 
-    /// Update state with optimization step
+    /// Update state with optimization step.
+    ///
+    /// `update` need not already match `current_parameters`'s length: the
+    /// meta-learned update network produces one "layer's worth" of update
+    /// (`model_dimension` elements), which is applied identically to every
+    /// transformer-layer segment of the (`model_dimension *
+    /// num_transformer_layers`)-sized parameter vector. See
+    /// [`Self::project_update`].
     pub fn update_with_step(&mut self, update: &Array1<T>, loss: Option<T>) -> Result<()> {
+        let projected = Self::project_update(update, self.current_parameters.len())?;
+        let update = &projected;
+
         // Apply parameter update
         self.current_parameters = &self.current_parameters + update;
 
@@ -106,6 +116,36 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         self.last_updated = std::time::Instant::now();
 
         Ok(())
+    }
+
+    /// Reconcile an update vector's length with the parameter vector it must
+    /// be added to.
+    ///
+    /// * If the lengths already match, the update is used as-is.
+    /// * If `target_len` is an exact multiple of `update.len()` (the normal
+    ///   case: a per-layer update tiled across every transformer layer), the
+    ///   update is repeated to fill `target_len`.
+    /// * Any other mismatch is a genuine configuration inconsistency and is
+    ///   reported as an error instead of panicking inside the `ndarray`
+    ///   addition (`current_parameters + update` panics on shape mismatch).
+    fn project_update(update: &Array1<T>, target_len: usize) -> Result<Array1<T>> {
+        let update_len = update.len();
+        if update_len == target_len {
+            return Ok(update.clone());
+        }
+        if update_len == 0 || !target_len.is_multiple_of(update_len) {
+            return Err(OptimError::InvalidConfig(format!(
+                "optimizer update has {update_len} elements, which cannot be \
+                 tiled to fill the {target_len}-element parameter vector \
+                 (expected {update_len} to evenly divide {target_len})"
+            )));
+        }
+        let repeats = target_len / update_len;
+        let mut tiled = Vec::with_capacity(target_len);
+        for _ in 0..repeats {
+            tiled.extend(update.iter().copied());
+        }
+        Ok(Array1::from_vec(tiled))
     }
 
     /// Create state snapshot
@@ -1364,6 +1404,57 @@ mod tests {
         let result = state.update_with_step(&update, Some(1.5));
         assert!(result.is_ok());
         assert_eq!(state.version, 1);
+    }
+
+    /// F3 regression: on any config where `num_transformer_layers != 1` (the
+    /// default is 6), `current_parameters.len() == model_dimension *
+    /// num_transformer_layers` while the update network only ever produces
+    /// `model_dimension` elements. Adding the two mismatched-length arrays
+    /// directly used to panic inside `ndarray`'s `Add`; the update must
+    /// instead be tiled across every layer segment without panicking.
+    #[test]
+    fn test_update_with_step_tiles_per_layer_update_on_default_config() {
+        let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        assert_ne!(
+            config.num_transformer_layers, 1,
+            "test is only meaningful when layers > 1"
+        );
+        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let total_len = state.current_parameters.len();
+        assert_eq!(
+            total_len,
+            config.model_dimension * config.num_transformer_layers
+        );
+
+        // Exactly what the adaptation network actually produces: one layer's
+        // worth of update, not the full parameter length.
+        let per_layer_update = Array1::<f32>::from_elem(config.model_dimension, 0.5);
+        let result = state.update_with_step(&per_layer_update, Some(1.0));
+        assert!(
+            result.is_ok(),
+            "a per-layer update must not panic or error on the default config: {result:?}"
+        );
+
+        // Every layer segment must have received the same per-layer update.
+        for layer in 0..config.num_transformer_layers {
+            let start = layer * config.model_dimension;
+            let segment = &state.current_parameters.as_slice().expect("contiguous")
+                [start..start + config.model_dimension];
+            for &v in segment {
+                approx::assert_abs_diff_eq!(v, 0.5, epsilon = 1e-6);
+            }
+        }
+    }
+
+    /// F3 regression: a genuinely incompatible update length (one that cannot
+    /// be tiled onto the parameter vector) must be a typed error, not a panic.
+    #[test]
+    fn test_update_with_step_rejects_untileable_length() {
+        let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let bad_update = Array1::<f32>::ones(state.current_parameters.len() + 3);
+        let result = state.update_with_step(&bad_update, None);
+        assert!(result.is_err(), "an untileable update length must error");
     }
 
     #[test]

@@ -1300,20 +1300,18 @@ impl DependencyGraph {
                     .iter()
                     .find(|op| op.output == input_operand)
                 {
-                    self.dependencies
-                        .get_mut(&operation.id)
-                        .expect("unwrap failed")
-                        .push(producer_op.id);
-
-                    self.dependents
-                        .get_mut(&producer_op.id)
-                        .expect("unwrap failed")
-                        .push(operation.id);
-
-                    *self
-                        .in_degrees
-                        .get_mut(&operation.id)
-                        .expect("unwrap failed") += 1;
+                    // All three maps are pre-populated for every operation id
+                    // in the loop above, so these entries are always present;
+                    // guard with `if let` to avoid panicking regardless.
+                    if let Some(deps) = self.dependencies.get_mut(&operation.id) {
+                        deps.push(producer_op.id);
+                    }
+                    if let Some(dependents) = self.dependents.get_mut(&producer_op.id) {
+                        dependents.push(operation.id);
+                    }
+                    if let Some(in_degree) = self.in_degrees.get_mut(&operation.id) {
+                        *in_degree += 1;
+                    }
                 }
             }
         }
@@ -1351,13 +1349,122 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Critica
         }
     }
 
+    /// Per-operation latency proxy used to weight the critical path.
+    ///
+    /// Uses the measured `execution_time_us` when available, otherwise a
+    /// type-based estimate consistent with the scheduler's own cost model.
+    fn operation_cost(operation: &XLAOperation<T>) -> f64 {
+        if operation.performance.execution_time_us > 0 {
+            operation.performance.execution_time_us as f64
+        } else {
+            match &operation.op_type {
+                OperationType::Add | OperationType::Multiply | OperationType::Subtract => 10.0,
+                OperationType::Dot | OperationType::DotGeneral => 100.0,
+                OperationType::Convolution(_) => 500.0,
+                OperationType::Reduce(_) => 50.0,
+                _ => 20.0,
+            }
+        }
+    }
+
+    /// Compute, for every operation, the length of the longest (most costly)
+    /// dependency path from that operation to a sink — its critical-path
+    /// length. Higher values must be scheduled earlier because they gate the
+    /// largest amount of remaining work.
+    ///
+    /// This is a real DAG longest-path: operations are ordered topologically
+    /// (Kahn's algorithm over the actual dependency graph) and relaxed in
+    /// reverse, so `lp[node] = cost(node) + max(lp[successor])`.
     pub fn compute_critical_paths(
         &mut self,
-        _computation: &XLAComputation<T>,
-        _dependency_graph: &DependencyGraph,
+        computation: &XLAComputation<T>,
+        dependency_graph: &DependencyGraph,
     ) -> Result<HashMap<OperationId, f64>> {
-        // Simplified critical path computation
-        Ok(self.critical_path_lengths.clone())
+        // Per-operation cost.
+        let mut cost: HashMap<OperationId, f64> =
+            HashMap::with_capacity(computation.operations.len());
+        for op in &computation.operations {
+            cost.insert(op.id, Self::operation_cost(op));
+        }
+
+        // Topological order (sources first) via Kahn's algorithm.
+        let mut in_degrees = dependency_graph.in_degrees.clone();
+        let mut ready: VecDeque<OperationId> = in_degrees
+            .iter()
+            .filter(|(_, &d)| d == 0)
+            .map(|(&id, _)| id)
+            .collect();
+        let mut topo_order: Vec<OperationId> = Vec::with_capacity(in_degrees.len());
+        while let Some(node) = ready.pop_front() {
+            topo_order.push(node);
+            if let Some(succs) = dependency_graph.dependents.get(&node) {
+                for &succ in succs {
+                    if let Some(d) = in_degrees.get_mut(&succ) {
+                        *d = d.saturating_sub(1);
+                        if *d == 0 {
+                            ready.push_back(succ);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Relax in reverse topological order: longest path to a sink.
+        let mut lp: HashMap<OperationId, f64> = HashMap::with_capacity(cost.len());
+        for &node in topo_order.iter().rev() {
+            let node_cost = *cost.get(&node).unwrap_or(&0.0);
+            let mut best_succ = 0.0f64;
+            if let Some(succs) = dependency_graph.dependents.get(&node) {
+                for &succ in succs {
+                    if let Some(&v) = lp.get(&succ) {
+                        best_succ = best_succ.max(v);
+                    }
+                }
+            }
+            lp.insert(node, node_cost + best_succ);
+        }
+
+        // Nodes excluded from the topological order (e.g. inside a cycle) still
+        // receive their own cost as an honest lower bound.
+        for op in &computation.operations {
+            lp.entry(op.id)
+                .or_insert_with(|| *cost.get(&op.id).unwrap_or(&0.0));
+        }
+
+        // Trace the actual critical path: start at the source with the largest
+        // length, then follow the most-costly successor at each step.
+        let mut critical_ops: Vec<OperationId> = Vec::new();
+        let start = lp
+            .iter()
+            .filter(|(id, _)| dependency_graph.in_degrees.get(id).copied().unwrap_or(0) == 0)
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(&id, _)| id);
+        if let Some(start) = start {
+            let mut visited: HashSet<OperationId> = HashSet::new();
+            let mut current = start;
+            while visited.insert(current) {
+                critical_ops.push(current);
+                let next = dependency_graph.dependents.get(&current).and_then(|succs| {
+                    succs
+                        .iter()
+                        .filter(|s| lp.contains_key(*s))
+                        .max_by(|a, b| {
+                            lp.get(*a)
+                                .unwrap_or(&0.0)
+                                .total_cmp(lp.get(*b).unwrap_or(&0.0))
+                        })
+                        .copied()
+                });
+                match next {
+                    Some(n) => current = n,
+                    None => break,
+                }
+            }
+        }
+
+        self.critical_operations = critical_ops;
+        self.critical_path_lengths = lp.clone();
+        Ok(lp)
     }
 }
 

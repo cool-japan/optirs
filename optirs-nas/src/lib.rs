@@ -1,31 +1,39 @@
 //! # OptiRS NAS - Neural Architecture Search
 //!
 //! **Version:** 0.3.2
-//! **Status:** Research Phase (Early Development)
+//! **Status:** Research-grade implementations; APIs may still change between releases
 //!
-//! ⚠️ **Warning:** This crate is in early research phase. APIs are unstable and may change
-//! significantly. Not recommended for production use.
+//! ⚠️ **Warning:** Architecture search is compute-heavy and the search-space / objective
+//! APIs are still evolving. Validate a discovered architecture against your own baselines
+//! before relying on it in production.
 //!
 //! `optirs-nas` provides neural architecture search and automated optimizer discovery
 //! built on [SciRS2](https://github.com/cool-japan/scirs).
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
-//! - `optirs-core` 0.1.0 - Core optimizers
+//! - `scirs2-core` 0.6.5 - required foundation (arrays, RNG, numeric traits)
 //!
-//! ## Implementation Status (v0.1.0)
+//! This crate has **no intra-workspace dependencies**: `optirs-core` and
+//! `optirs-learned` were declared once but never referenced, and were removed so
+//! `optirs-nas` builds and tests standalone. The benchmark harness in
+//! [`evaluation::benchmark`] implements its optimizer update rules directly, which
+//! also makes NAS scores reproducible independently of sibling-crate changes.
 //!
-//! - 🚧 Bayesian optimization (in development)
-//! - 🚧 Evolutionary algorithms (planned)
-//! - 🚧 RL-based search (planned)
-//! - 🚧 Multi-objective optimization (in development)
-//! - 📝 Research framework only
-//! - 📝 No production-ready implementations yet
+//! ## Implementation Status (v0.3.2)
 //!
-//! ## Status: Research Phase
-//!
-//! This crate implements state-of-the-art architecture search algorithms.
+//! - ✅ Bayesian optimization ([`search_strategies::bayesian`] - Gaussian-process surrogate search)
+//! - ✅ Hyperparameter search ([`hyperparameter`] - grid enumeration, TPE, a GP-free
+//!   kernel-regression surrogate, and evolutionary search)
+//! - ✅ Evolutionary algorithms ([`search_strategies::evolutionary`] - population-based search)
+//! - ✅ RL-based search ([`search_strategies::rl_search`] - neural-controller sampling)
+//! - ✅ Differentiable search ([`search_strategies::differentiable`] - DARTS-style gradient search)
+//! - ✅ Multi-objective optimization ([`multi_objective`] - NSGA-II, weighted-sum, Pareto frontier)
+//! - ✅ Hardware-aware cost modeling ([`hardware_cost`] - latency/memory/energy estimation)
+//! - ✅ AutoML pipeline coordination ([`automl_pipeline`]), cross-domain transfer, few-shot and
+//!   progressive search
+//! - 📝 Real, tested algorithms throughout - still labeled research-grade because search-space
+//!   and objective APIs may change across releases
 //!
 //! ## Features
 //!
@@ -53,28 +61,70 @@
 //! - **Energy Consumption** - Optimize for mobile/edge devices
 //! - **Cost Optimization** - Minimize cloud compute costs
 //!
-//! ## Example Usage (Future)
+//! ## Example Usage
 //!
-//! ```rust,ignore
-//! use optirs_nas::{NASEngine, SearchConfig, SearchStrategy};
+//! The engine type is [`nas_engine::NeuralArchitectureSearch`], configured with a
+//! [`nas_engine::NASConfig`]. This example compiles and runs as a doctest, so it
+//! cannot drift away from the real API.
 //!
-//! // Configure architecture search
-//! let config = SearchConfig {
-//!     search_budget: 1000,
-//!     objectives: vec!["accuracy", "latency", "memory"],
-//!     strategy: SearchStrategy::BayesianOptimization,
+//! ```rust
+//! use optirs_nas::nas_engine::{
+//!     create_minimal_nas_config, NeuralArchitectureSearch, SearchStrategyType,
 //! };
 //!
-//! let mut engine = NASEngine::new(config)?;
+//! # fn main() -> Result<(), optirs_nas::error::OptimError> {
+//! // A small, ready-made configuration: a populated search space, a Random
+//! // strategy and a tiny budget.
+//! let mut config = create_minimal_nas_config::<f64>();
+//! config.search_strategy = SearchStrategyType::Evolutionary;
+//! config.search_budget = 2;
+//! config.population_size = 4;
 //!
-//! // Define search space
-//! let space = engine.optimizer_search_space()?;
+//! let mut engine = NeuralArchitectureSearch::new(config)?;
+//! // The engine reports which strategy is *actually* running, not just what was
+//! // requested.
+//! assert_eq!(engine.search_strategy_name(), "EvolutionaryStrategy");
 //!
-//! // Run search
-//! let best_architecture = engine.search(&space, &dataset)?;
+//! // A short search: two generations against the built-in evaluator.
+//! let results = engine.run_search()?;
+//! assert!(!results.search_history.is_empty());
+//! # Ok(())
+//! # }
+//! ```
 //!
-//! // Use discovered optimizer
-//! let optimizer = best_architecture.instantiate()?;
+//! Hyperparameter search is independent of the engine and can be driven directly:
+//!
+//! ```rust
+//! use optirs_nas::hyperparameter::{
+//!     DistributionType, HyperparameterOptimizer, HyperparameterSpace,
+//!     OptimizationStrategy, ParameterRange,
+//! };
+//!
+//! # fn main() -> Result<(), optirs_nas::error::OptimError> {
+//! let mut space: HyperparameterSpace<f64> = HyperparameterSpace::new();
+//! space.add_parameter(
+//!     "learning_rate".to_string(),
+//!     ParameterRange {
+//!         name: "learning_rate".to_string(),
+//!         min_value: 1e-5,
+//!         max_value: 1e-1,
+//!         distribution: DistributionType::Uniform,
+//!         log_scale: true,
+//!         discrete_values: None,
+//!     },
+//! );
+//!
+//! // Grid search enumerates the grid; it does not sample at random.
+//! let mut optimizer =
+//!     HyperparameterOptimizer::with_seed(space, OptimizationStrategy::Grid, 7);
+//! optimizer.set_grid_resolution(4);
+//! assert_eq!(optimizer.grid_size(), Some(4));
+//!
+//! let suggestion = optimizer.suggest_configuration()?;
+//! let learning_rate = suggestion.parameters["learning_rate"];
+//! assert!((1e-5..=1e-1).contains(&learning_rate));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Supported Search Spaces
@@ -94,11 +144,22 @@
 //!
 //! ## Architecture
 //!
-//! Built exclusively on SciRS2:
-//! - **NAS**: `scirs2_core::neural_architecture_search`
-//! - **Quantum Opt**: `scirs2_core::quantum_optimization`
-//! - **Parallel**: `scirs2_core::parallel::LoadBalancer`
-//! - **Search Space**: `scirs2_core::neural_architecture_search::SearchSpace`
+//! Every algorithm in this crate is implemented here; `scirs2-core` supplies the
+//! numeric substrate only:
+//!
+//! - **Arrays**: `scirs2_core::ndarray` ([`scirs2_core::ndarray::Array1`] / `Array2` / `Array3`)
+//! - **Numeric traits**: `scirs2_core::numeric` ([`scirs2_core::numeric::Float`], `NumCast`)
+//! - **RNG**: `scirs2_core::random` (`Random`, `Rng`)
+//!
+//! The search machinery itself lives in this crate:
+//! - **Search space**: [`nas_engine::SearchSpaceConfig`]
+//! - **Engine**: [`nas_engine::NeuralArchitectureSearch`]
+//! - **Strategies**: [`search_strategies`]
+//! - **Multi-objective**: [`multi_objective`]
+//!
+//! (Earlier revisions of this document referenced
+//! `scirs2_core::neural_architecture_search` and
+//! `scirs2_core::quantum_optimization`; neither module exists.)
 //!
 //! ## References
 //!

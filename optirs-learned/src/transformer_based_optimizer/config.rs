@@ -356,6 +356,12 @@ pub struct MetaLearningConfig<
     pub num_support: usize,
     /// Number of query examples
     pub num_query: usize,
+    /// Heavy-ball momentum coefficient for the **outer** (meta) loop.
+    ///
+    /// `None` (the default) means plain SGD. Setting it activates the momentum
+    /// branch of `MetaOptimizer::update`, which was previously unreachable
+    /// because the momentum field was hardcoded to `None`.
+    pub meta_momentum: Option<T>,
 }
 
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
@@ -371,6 +377,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             first_order: false,
             num_support: 5,
             num_query: 15,
+            meta_momentum: None,
         }
     }
 }

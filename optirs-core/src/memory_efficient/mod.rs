@@ -8,6 +8,48 @@ use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::ops::{AddAssign, MulAssign, SubAssign};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Process-wide running total of bytes currently tracked by every
+/// [`gradient_checkpointing::MemoryTracker`] in this process (F82).
+///
+/// This is what turns the module-level [`adaptive::get_memory_usage_ratio`]
+/// from a hardcoded `0.5` placeholder into a real measurement: each
+/// tracker feeds its allocations/deallocations here, so the stateless
+/// ratio function reports actual tracked bytes over the real system-memory
+/// budget instead of a fabricated constant.
+static GLOBAL_TRACKED_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// Best-effort total physical system memory in bytes, read from the OS via
+/// a dependency-free (pure-Rust) path where one exists.
+///
+/// On Linux this parses `/proc/meminfo`; on platforms without a
+/// FFI-free API it falls back to a conservative 8 GiB. It is only ever
+/// used as the denominator of a usage ratio, so an approximate value
+/// degrades gracefully rather than producing a wrong absolute figure.
+fn total_system_memory_bytes() -> usize {
+    const FALLBACK: usize = 8 * 1024 * 1024 * 1024;
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
+            for line in contents.lines() {
+                if let Some(rest) = line.strip_prefix("MemTotal:") {
+                    // Format: `MemTotal:       16384000 kB`
+                    if let Some(kb) = rest
+                        .split_whitespace()
+                        .next()
+                        .and_then(|value| value.parse::<usize>().ok())
+                    {
+                        return kb.saturating_mul(1024);
+                    }
+                }
+            }
+        }
+    }
+
+    FALLBACK
+}
 
 /// Trait for in-place parameter updates
 pub trait InPlaceOptimizer<A: Float + ScalarOperand + Debug, D: Dimension> {
@@ -770,6 +812,26 @@ pub mod gradient_checkpointing {
         }
     }
 
+    impl<A: Float, D: Dimension> Drop for GradientCheckpointer<A, D> {
+        /// Withdraw this checkpointer's tracked bytes from the process-wide
+        /// `GLOBAL_TRACKED_BYTES` counter when it goes out of scope.
+        ///
+        /// Without this, any checkpointer dropped without an explicit
+        /// `clear_checkpoints()` call first leaks its `allocated_bytes`
+        /// contribution into the global counter permanently: since
+        /// `adaptive::get_memory_usage_ratio` (F82) derives its numerator
+        /// from that counter, a long-running process that creates and drops
+        /// many checkpointers would see the reported ratio climb toward 1.0
+        /// forever regardless of real memory pressure, silently defeating
+        /// `CheckpointStrategy::MemoryAware`. `MemoryTracker::reset` is
+        /// idempotent (subtracts exactly `allocated_bytes`, which is 0 after
+        /// the first call), so this is safe even if `clear_checkpoints` already
+        /// ran.
+        fn drop(&mut self) {
+            self.memory_tracker.reset();
+        }
+    }
+
     /// Memory usage tracking
     #[derive(Debug, Clone)]
     pub struct MemoryTracker {
@@ -798,11 +860,16 @@ pub mod gradient_checkpointing {
         pub fn add_allocation(&mut self, bytes: usize) {
             self.allocated_bytes += bytes;
             self.peak_bytes = self.peak_bytes.max(self.allocated_bytes);
+            // Feed the process-wide counter that backs the module-level
+            // `get_memory_usage_ratio` (F82).
+            super::GLOBAL_TRACKED_BYTES.fetch_add(bytes, super::Ordering::Relaxed);
         }
 
         /// Remove an allocation
         pub fn remove_allocation(&mut self, bytes: usize) {
-            self.allocated_bytes = self.allocated_bytes.saturating_sub(bytes);
+            let removed = bytes.min(self.allocated_bytes);
+            self.allocated_bytes -= removed;
+            super::GLOBAL_TRACKED_BYTES.fetch_sub(removed, super::Ordering::Relaxed);
         }
 
         /// Get current memory usage
@@ -825,15 +892,18 @@ pub mod gradient_checkpointing {
 
         /// Reset memory tracking
         pub fn reset(&mut self) {
+            // Withdraw this tracker's contribution from the process-wide
+            // counter before clearing local state (F82).
+            super::GLOBAL_TRACKED_BYTES.fetch_sub(self.allocated_bytes, super::Ordering::Relaxed);
             self.allocated_bytes = 0;
             self.peak_bytes = 0;
         }
 
-        /// Estimate total system memory (simplified)
+        /// Estimate total physical system memory, reading the real value
+        /// from the OS where a pure-Rust path exists (see
+        /// [`super::total_system_memory_bytes`]).
         fn estimate_system_memory() -> usize {
-            // This is a simplified estimation
-            // In a real implementation, you would use system APIs
-            8 * 1024 * 1024 * 1024 // Assume 8GB
+            super::total_system_memory_bytes()
         }
     }
 
@@ -1098,12 +1168,23 @@ pub mod adaptive {
             .sum()
     }
 
-    /// Get approximate system memory usage ratio
+    /// Get the current memory-usage ratio in `[0, 1]` (F82).
+    ///
+    /// This reports the process-wide total of bytes currently tracked by
+    /// every [`super::gradient_checkpointing::MemoryTracker`] divided by the
+    /// real system-memory budget (see
+    /// [`super::total_system_memory_bytes`]). It replaces the previous
+    /// hardcoded `0.5` placeholder: the numerator is the actual sum of
+    /// tracked tensor bytes, so the value now moves with real allocations
+    /// instead of being a fabricated constant.
     pub fn get_memory_usage_ratio() -> f64 {
-        // This is a simplified estimation
-        // In a real implementation, you would use system APIs
-        // to get actual memory information
-        0.5 // Placeholder: assume 50% memory usage
+        let tracked = super::GLOBAL_TRACKED_BYTES.load(super::Ordering::Relaxed);
+        let total = super::total_system_memory_bytes();
+        if total == 0 {
+            0.0
+        } else {
+            (tracked as f64 / total as f64).clamp(0.0, 1.0)
+        }
     }
 }
 
@@ -1316,6 +1397,77 @@ mod tests {
         // Should be roughly 300 * size_of::<f64>()
         let expected_size = 300 * std::mem::size_of::<f64>();
         assert_eq!(estimated_size, expected_size);
+    }
+
+    /// F82: `get_memory_usage_ratio` must reflect real tracked bytes, not a
+    /// hardcoded `0.5`. Tracking a known allocation must raise the ratio,
+    /// and releasing it must return the ratio to its prior value.
+    #[test]
+    fn memory_usage_ratio_reflects_tracked_bytes() {
+        use gradient_checkpointing::MemoryTracker;
+
+        let before = adaptive::get_memory_usage_ratio();
+        assert!(
+            (0.0..=1.0).contains(&before),
+            "ratio out of range: {before}"
+        );
+
+        let mut tracker = MemoryTracker::new();
+        let bytes = 256 * 1024 * 1024; // 256 MiB
+        tracker.add_allocation(bytes);
+
+        let during = adaptive::get_memory_usage_ratio();
+        assert!(
+            during > before,
+            "ratio did not rise with tracked bytes (F82 regression): \
+             before={before}, during={during}"
+        );
+        assert!((0.0..=1.0).contains(&during));
+
+        tracker.remove_allocation(bytes);
+        let after = adaptive::get_memory_usage_ratio();
+        assert!(
+            (after - before).abs() < 1e-9,
+            "tracked bytes were not released (F82 regression): \
+             before={before}, after={after}"
+        );
+    }
+
+    /// Regression (found while implementing F82): a `GradientCheckpointer`
+    /// dropped *without* an explicit `clear_checkpoints()` call must still
+    /// release its tracked bytes from the process-wide counter, or
+    /// `adaptive::get_memory_usage_ratio` leaks upward forever across the
+    /// lifetime of the process (defeating `CheckpointStrategy::MemoryAware`
+    /// for every checkpointer created afterward).
+    #[test]
+    fn dropping_checkpointer_releases_tracked_bytes() {
+        let before = adaptive::get_memory_usage_ratio();
+
+        {
+            let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
+                f64,
+                scirs2_core::ndarray::Ix1,
+            > = gradient_checkpointing::GradientCheckpointer::new(
+                gradient_checkpointing::CheckpointStrategy::Uniform { interval: 1 },
+            );
+            checkpointer.set_max_depth(4);
+            let activation = Array::from_vec(vec![1.0_f64; 1_000_000]); // ~8 MB
+            checkpointer.store_checkpoint(0, activation);
+
+            let during = adaptive::get_memory_usage_ratio();
+            assert!(
+                during > before,
+                "ratio did not rise with a stored checkpoint: before={before}, during={during}"
+            );
+            // `checkpointer` drops here without calling `clear_checkpoints()`.
+        }
+
+        let after = adaptive::get_memory_usage_ratio();
+        assert!(
+            (after - before).abs() < 1e-9,
+            "GradientCheckpointer leaked tracked bytes on drop (regression): \
+             before={before}, after={after}"
+        );
     }
 
     #[test]

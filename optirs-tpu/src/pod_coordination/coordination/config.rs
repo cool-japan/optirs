@@ -76,6 +76,19 @@ pub struct PodCoordinationConfig {
     pub load_balancing_strategy: LoadBalancingStrategy,
     pub memory_management: MemoryManagementStrategy,
     pub adaptive_optimization: bool,
+
+    /// Nominal per-device capability spec (compute cores, memory, peak
+    /// TOPS, ...) forwarded to the real [`crate::coordination::PodCoordinator`]
+    /// that [`super::coordinator::TPUPodCoordinator`] delegates to.
+    ///
+    /// Defaults to the same TPU v4-shaped spec as
+    /// [`crate::coordination::DeviceCapabilities::default`] so existing
+    /// callers that never set this field see no behavior change; set it
+    /// explicitly to model a different TPU generation. Without this field,
+    /// every pod built through this config would silently report v4
+    /// hardware regardless of what was actually being modelled -- the same
+    /// hardcoded-capability bug fixed for `coordination::PodConfig` itself.
+    pub device_capabilities: crate::coordination::DeviceCapabilities,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -29,7 +29,7 @@ use optimization::{MemoryPlanner, OptimizationPipeline, PerformanceAnalyzer};
 
 // Re-export for public API
 pub use execution::{ReferenceExecutor, ValueMap};
-pub use frontend::XLAComputation;
+pub use frontend::{ComputationId, XLAComputation};
 
 /// XLA Compiler for TPU optimization
 pub struct XLACompiler<T: Float + Debug + Send + Sync + 'static> {
@@ -401,7 +401,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
 
     /// Get cached computation
     fn get_cached_computation(&self, hash: &str) -> Result<Option<CachedComputation>> {
-        let cache = self.compilation_cache.read().expect("lock poisoned");
+        let cache = self
+            .compilation_cache
+            .read()
+            .map_err(|_| OptimError::from("compilation cache lock poisoned".to_string()))?;
         Ok(cache.cache.get(hash).cloned())
     }
 
@@ -412,7 +415,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLAComp
         binary: Vec<u8>,
         metadata: CompilationMetadata,
     ) -> Result<()> {
-        let mut cache = self.compilation_cache.write().expect("lock poisoned");
+        let mut cache = self
+            .compilation_cache
+            .write()
+            .map_err(|_| OptimError::from("compilation cache lock poisoned".to_string()))?;
 
         let binary_size = binary.len();
         let cached_comp = CachedComputation {

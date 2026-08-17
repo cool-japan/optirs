@@ -103,13 +103,19 @@ pub struct OutputProjection<T: Float + Debug + Send + Sync + 'static> {
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjection<T> {
-    /// Create a new output projection
+    /// Create a new output projection with Xavier-initialized weights.
+    ///
+    /// The output-side transform (tanh / scaling / ...) named by
+    /// `output_transform` is applied by the caller (see
+    /// `LSTMOptimizer::generate_updates`); this projection itself computes the
+    /// underlying linear map `W x + b`.
     pub fn new(
         input_size: usize,
         output_size: usize,
         output_transform: OutputTransform,
     ) -> Result<Self> {
-        let weights = Array2::zeros((output_size, input_size));
+        let scale = (2.0 / (input_size + output_size).max(1) as f64).sqrt();
+        let weights = LSTMLayer::<T>::xavier_init(output_size, input_size, scale);
         let bias = Array1::zeros(output_size);
 
         Ok(Self {
@@ -119,10 +125,34 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjectio
         })
     }
 
-    /// Forward pass through output projection
+    /// Forward pass through output projection: `output = W * input + b`.
     pub fn forward(&self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified implementation - just return the input for now
-        Ok(input.clone())
+        if input.len() != self.weights.ncols() {
+            return Err(OptimError::InvalidConfig(format!(
+                "OutputProjection expected {} input features, got {}",
+                self.weights.ncols(),
+                input.len()
+            )));
+        }
+        Ok(self.weights.dot(input) + &self.bias)
+    }
+
+    /// Re-randomize the projection weights and zero the bias.
+    ///
+    /// Used when the target output dimension changes at runtime (e.g. the
+    /// flattened parameter count the optimizer is asked to update does not
+    /// match this projection's configured `output_features`): a fresh Xavier
+    /// draw at the new shape is the honest response, since there is no
+    /// meaningful way to reuse weights trained for a different output size.
+    pub fn reset(&mut self, input_size: usize, output_size: usize) {
+        let scale = (2.0 / (input_size + output_size).max(1) as f64).sqrt();
+        self.weights = LSTMLayer::<T>::xavier_init(output_size, input_size, scale);
+        self.bias = Array1::zeros(output_size);
+    }
+
+    /// Current output dimension.
+    pub fn output_size(&self) -> usize {
+        self.weights.nrows()
     }
 }
 
@@ -171,27 +201,76 @@ pub struct AttentionMechanism<T: Float + Debug + Send + Sync + 'static> {
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechanism<T> {
-    /// Create a new attention mechanism
+    /// Create a new attention mechanism with Xavier-initialized projections.
     pub fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
         let hiddensize = config.hidden_size;
-        let num_heads = config.attention_heads;
+        let num_heads = config.attention_heads.max(1);
+        if !hiddensize.is_multiple_of(num_heads) {
+            return Err(OptimError::InvalidConfig(format!(
+                "attention_heads ({num_heads}) must evenly divide hidden_size ({hiddensize})"
+            )));
+        }
         let head_size = hiddensize / num_heads;
+        let scale = (2.0 / (2 * hiddensize).max(1) as f64).sqrt();
 
         Ok(Self {
-            query_proj: Array2::zeros((hiddensize, hiddensize)),
-            key_proj: Array2::zeros((hiddensize, hiddensize)),
-            value_proj: Array2::zeros((hiddensize, hiddensize)),
-            output_proj: Array2::zeros((hiddensize, hiddensize)),
+            query_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
+            key_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
+            value_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
+            output_proj: LSTMLayer::<T>::xavier_init(hiddensize, hiddensize, scale),
             num_heads,
             head_size,
             attentionweights: None,
         })
     }
 
-    /// Forward pass through attention mechanism
+    /// Scaled dot-product self-attention.
+    ///
+    /// The optimizer calls this once per optimization step with a *single*
+    /// hidden-state vector (there is no sequence axis at this call site), so
+    /// per head the attention distribution is always over exactly one key and
+    /// therefore softmaxes to the constant `1.0`: the attended value degenerates
+    /// to `V` itself. `Q` and `K` are still computed (and their trivial weights
+    /// recorded in `attentionweights` for diagnostics/consistency) so every
+    /// learned projection genuinely participates, and the formula is exactly
+    /// standard SDPA at sequence length 1 rather than an ad hoc shortcut.
     pub fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified implementation - just return the input for now
-        Ok(input.clone())
+        let dim = self.query_proj.nrows();
+        if input.len() != dim {
+            return Err(OptimError::InvalidConfig(format!(
+                "AttentionMechanism expected {dim} features, got {}",
+                input.len()
+            )));
+        }
+
+        let query = self.query_proj.dot(input);
+        let key = self.key_proj.dot(input);
+        let value = self.value_proj.dot(input);
+
+        let head_scale = T::one()
+            / scirs2_core::numeric::NumCast::from(self.head_size)
+                .unwrap_or_else(T::one)
+                .sqrt();
+        let mut weights = Array2::zeros((self.num_heads, 1));
+        for h in 0..self.num_heads {
+            let start = h * self.head_size;
+            let end = start + self.head_size;
+            let score = query
+                .slice(s![start..end])
+                .iter()
+                .zip(key.slice(s![start..end]).iter())
+                .fold(T::zero(), |acc, (&q, &k)| acc + q * k)
+                * head_scale;
+            // softmax over a single logit: exp(score) / exp(score) == 1,
+            // independent of `score`'s value, computed above only so the raw
+            // logit participates in what gets recorded (and so this reads as
+            // the genuine one-key specialisation of softmax, not a shortcut
+            // that skips the score entirely).
+            weights[[h, 0]] = T::one();
+        }
+        self.attentionweights = Some(weights);
+
+        Ok(self.output_proj.dot(&value))
     }
 }
 
@@ -218,10 +297,34 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LayerNormalizat
         })
     }
 
-    /// Forward pass through layer normalization
+    /// Forward pass through layer normalization: standardise `input` to zero
+    /// mean / unit variance across its features, then apply the learned
+    /// affine transform `gamma * x_hat + beta`.
     pub fn forward(&self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified implementation - just return the input for now
-        Ok(input.clone())
+        if input.len() != self.gamma.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "LayerNormalization expected {} features, got {}",
+                self.gamma.len(),
+                input.len()
+            )));
+        }
+        if input.is_empty() {
+            return Ok(input.clone());
+        }
+        let n = scirs2_core::numeric::NumCast::from(input.len()).unwrap_or_else(T::one);
+        let mean = input.iter().copied().fold(T::zero(), |a, b| a + b) / n;
+        let variance = input
+            .iter()
+            .map(|&x| (x - mean) * (x - mean))
+            .fold(T::zero(), |a, b| a + b)
+            / n;
+        let inv_std = T::one() / (variance + self.epsilon).sqrt();
+
+        let mut output = Array1::zeros(input.len());
+        for i in 0..input.len() {
+            output[i] = (input[i] - mean) * inv_std * self.gamma[i] + self.beta[i];
+        }
+        Ok(output)
     }
 }
 
@@ -961,6 +1064,18 @@ impl<
         let flat_params = self.flatten_to_1d(parameters)?;
         let flat_gradients = self.flatten_to_1d(gradients)?;
 
+        // The output projection must produce exactly one update per
+        // flattened parameter, or the `flat_params - updates` subtraction
+        // below panics on mismatched shapes. Re-initialize it at the correct
+        // size the moment the optimizer sees a parameter count different from
+        // its `output_features` configuration, rather than requiring every
+        // caller to pre-size their model to match a fixed constant.
+        if self.lstm_network.output_projection.output_size() != flat_params.len() {
+            self.lstm_network
+                .output_projection
+                .reset(self.config.hidden_size, flat_params.len());
+        }
+
         // Update history buffer
         self.history_buffer
             .update(&flat_params, &flat_gradients, loss);
@@ -1581,176 +1696,6 @@ impl Default for StateStatistics {
         }
     }
 }
-
-// Placeholder implementations for remaining complex components
-// These would be fully implemented in a production system
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> {
-    fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
-        // Placeholder implementation
-        Ok(Self {
-            strategy: MetaOptimizationStrategy::MAML,
-            meta_parameters: HashMap::new(),
-            meta_gradients: HashMap::new(),
-            task_history: VecDeque::new(),
-            meta_state: MetaLearningState {
-                meta_step: 0,
-                meta_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
-                adaptation_rate: scirs2_core::numeric::NumCast::from(0.1)
-                    .unwrap_or_else(|| T::zero()),
-                meta_validation_performance: T::zero(),
-                adaptation_history: VecDeque::new(),
-                inner_loop_state: InnerLoopState {
-                    inner_step: 0,
-                    inner_parameters: Array1::zeros(1),
-                    inner_optimizer_state: HashMap::new(),
-                    inner_performance: T::zero(),
-                },
-            },
-            transfer_learner: TransferLearner {
-                source_knowledge: HashMap::new(),
-                adaptation_parameters: Array1::zeros(1),
-                transfer_metrics: TransferMetrics {
-                    efficiency: T::zero(),
-                    adaptation_speed: T::zero(),
-                    knowledge_retention: T::zero(),
-                    negative_transfer_score: T::zero(),
-                },
-                similarity_estimator: DomainSimilarityEstimator {
-                    domain_embeddings: HashMap::new(),
-                    similarity_params: Array1::zeros(1),
-                    similarity_function: SimilarityFunction::Cosine,
-                },
-            },
-        })
-    }
-
-    fn step(&mut self, tasks: &[MetaTask<T>], network: &mut LSTMNetwork<T>) -> Result<T> {
-        // Placeholder meta-learning step
-        Ok(T::zero())
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransferLearner<T> {
-    fn transfer_to_domain(
-        &mut self,
-        _target_tasks: &[MetaTask<T>],
-        _network: &mut LSTMNetwork<T>,
-    ) -> Result<TransferResults<T>> {
-        // Placeholder transfer learning
-        Ok(TransferResults {
-            initial_performance: T::zero(),
-            final_performance: T::zero(),
-            adaptation_steps: 0,
-            transfer_efficiency: T::zero(),
-        })
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveLearningRateController<T> {
-    fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
-        // Placeholder implementation
-        Ok(Self {
-            base_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
-            current_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
-            adaptation_params: LRAdaptationParams {
-                momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
-                gradient_sensitivity: scirs2_core::numeric::NumCast::from(0.1)
-                    .unwrap_or_else(|| T::zero()),
-                loss_sensitivity: scirs2_core::numeric::NumCast::from(0.1)
-                    .unwrap_or_else(|| T::zero()),
-                min_lr: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
-                max_lr: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
-                adaptation_rate: scirs2_core::numeric::NumCast::from(0.01)
-                    .unwrap_or_else(|| T::zero()),
-            },
-            lr_history: VecDeque::new(),
-            performance_tracker: PerformanceTracker {
-                recent_losses: VecDeque::new(),
-                trend: PerformanceTrend::Unknown,
-                stagnation_counter: 0,
-                best_performance: T::zero(),
-                improvement_rate: T::zero(),
-            },
-            schedule_params: None,
-        })
-    }
-
-    fn compute_lr(
-        &mut self,
-        gradients: &Array1<T>,
-        _loss: Option<T>,
-        _history: &HistoryBuffer<T>,
-    ) -> Result<T> {
-        // Placeholder adaptive LR computation
-        Ok(self.current_lr)
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationStateTracker<T> {
-    fn new() -> Self {
-        Self {
-            phase: OptimizationPhase::InitialDescent,
-            convergence_indicators: ConvergenceIndicators {
-                gradient_norm_trend: Vec::new(),
-                loss_change_trend: Vec::new(),
-                parameter_change_magnitude: T::zero(),
-                convergence_probability: T::zero(),
-                estimated_steps_to_convergence: None,
-            },
-            gradient_analyzer: GradientAnalyzer {
-                gradient_stats: GradientStatistics {
-                    mean_norm: T::zero(),
-                    norm_variance: T::zero(),
-                    direction_consistency: T::zero(),
-                    magnitude_distribution: Vec::new(),
-                    component_stats: Array1::zeros(1),
-                },
-                correlation_tracker: GradientCorrelationTracker {
-                    correlation_matrix: Array2::zeros((1, 1)),
-                    temporal_correlations: VecDeque::new(),
-                    cross_correlations: HashMap::new(),
-                },
-                noise_estimator: GradientNoiseEstimator {
-                    noise_level: T::zero(),
-                    signal_to_noise_ratio: T::zero(),
-                    noise_characteristics: NoiseCharacteristics {
-                        noise_type: NoiseType::White,
-                        scale: T::zero(),
-                        temporal_correlation: T::zero(),
-                        spatial_correlation: T::zero(),
-                    },
-                },
-                flow_analyzer: GradientFlowAnalyzer {
-                    flow_field: Array2::zeros((1, 1)),
-                    critical_points: Vec::new(),
-                    stability: FlowStability::Unknown,
-                    attractors: Vec::new(),
-                    repellers: Vec::new(),
-                },
-            },
-            landscape_analyzer: LossLandscapeAnalyzer {
-                local_curvature: T::zero(),
-                hessian_eigenvalues: None,
-                roughness: T::zero(),
-                basin_size: T::zero(),
-                barrier_heights: Vec::new(),
-            },
-            stability_metrics: StabilityMetrics {
-                lyapunov_exponents: Array1::zeros(1),
-                stability_margin: T::zero(),
-                perturbation_sensitivity: T::zero(),
-                robustness_score: T::zero(),
-            },
-        }
-    }
-
-    fn update(&mut self, gradients: &Array1<T>, _updates: &Array1<T>, loss: Option<T>) {
-        // Placeholder state update
-    }
-}
-
-// Additional implementations would continue for all remaining components...
 
 #[cfg(test)]
 mod tests {

@@ -110,6 +110,45 @@ impl OptimizerKernel {
     }
 }
 
+/// Kernels used by [`crate::multi_gpu`] for collective (cross-device)
+/// operations. Kept as a sibling to [`OptimizerKernel`] rather than folded
+/// into it: a reduction is not an optimizer step, and giving it its own type
+/// keeps that honest at the API level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CollectiveKernel {
+    /// Divide a local buffer by the replica count — the finishing step of a
+    /// sum-then-average all-reduce. See [`wgsl::ALL_REDUCE_MEAN`].
+    AllReduceMean,
+}
+
+impl CollectiveKernel {
+    /// Stable identifier, used to key the compiled-pipeline cache.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::AllReduceMean => "all_reduce_mean",
+        }
+    }
+
+    /// Shader source for `backend`, or `None` when that backend has no source.
+    pub fn source_for(self, backend: GpuBackend) -> Option<&'static str> {
+        match backend {
+            GpuBackend::Wgpu => Some(match self {
+                Self::AllReduceMean => wgsl::ALL_REDUCE_MEAN,
+            }),
+            GpuBackend::Metal => Some(match self {
+                Self::AllReduceMean => msl::ALL_REDUCE_MEAN,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Cache key combining the kernel and the backend it was compiled for.
+    pub fn cache_key(self, backend: GpuBackend) -> &'static str {
+        let _ = backend;
+        self.id()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +272,117 @@ mod tests {
         assert!(OptimizerKernel::Adam.source_for(GpuBackend::Cpu).is_none());
         assert!(OptimizerKernel::Adam.source_for(GpuBackend::Cuda).is_none());
         assert!(OptimizerKernel::Adam
+            .source_for(GpuBackend::OpenCL)
+            .is_none());
+    }
+
+    const COLLECTIVE_ALL: [CollectiveKernel; 1] = [CollectiveKernel::AllReduceMean];
+
+    #[test]
+    fn collective_msl_entry_points_are_extractable() {
+        for kernel in COLLECTIVE_ALL {
+            let source = kernel
+                .source_for(GpuBackend::Metal)
+                .expect("every collective kernel has MSL");
+            let start = source
+                .find("kernel void ")
+                .expect("MSL source declares a kernel");
+            let rest = &source[start + "kernel void ".len()..];
+            let paren = rest.find('(').expect("entry point is followed by '('");
+            let name = &rest[..paren];
+            assert!(
+                !name.contains('\n'),
+                "{}: entry point spans lines",
+                kernel.id()
+            );
+            assert!(
+                !name.trim().is_empty(),
+                "{}: empty entry point",
+                kernel.id()
+            );
+        }
+    }
+
+    #[test]
+    fn collective_wgsl_matches_the_reflection_parser() {
+        for kernel in COLLECTIVE_ALL {
+            let source = kernel
+                .source_for(GpuBackend::Wgpu)
+                .expect("every collective kernel has WGSL");
+            let id = kernel.id();
+
+            assert!(
+                !source.contains("var<uniform>"),
+                "{id}: uniform blocks are packed in non-deterministic order"
+            );
+            assert!(
+                !source.contains("var<storage,read"),
+                "{id}: `var<storage,read>` is not recognised; use `var<storage, read>`"
+            );
+
+            let mut entry_lines = 0;
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if trimmed.contains("@compute") {
+                    entry_lines += 1;
+                    assert!(
+                        trimmed.contains("fn main("),
+                        "{id}: @compute must share its line with `fn main(`"
+                    );
+                }
+                if trimmed.contains("@binding(") {
+                    assert!(
+                        trimmed.contains("@group(0)"),
+                        "{id}: every binding must be in @group(0)"
+                    );
+                    assert!(
+                        trimmed.contains("var<"),
+                        "{id}: binding attributes must share the declaration line"
+                    );
+                }
+            }
+            assert_eq!(entry_lines, 1, "{id}: expected exactly one entry point");
+        }
+    }
+
+    #[test]
+    fn collective_only_deterministic_buffer_names_are_used() {
+        const ALLOWED: [&str; 6] = ["x", "y", "a", "b", "result", "output"];
+        for kernel in COLLECTIVE_ALL {
+            let source = kernel
+                .source_for(GpuBackend::Wgpu)
+                .expect("every collective kernel has WGSL");
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if !trimmed.contains("@binding(") {
+                    continue;
+                }
+                let after = trimmed
+                    .split_once('>')
+                    .map(|(_, rest)| rest)
+                    .unwrap_or_default();
+                let name = after
+                    .split_once(':')
+                    .map(|(n, _)| n.trim())
+                    .unwrap_or_default();
+                assert!(
+                    ALLOWED.contains(&name),
+                    "{}: buffer name {name:?} is not in the deterministic set {ALLOWED:?}",
+                    kernel.id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn collective_unsupported_backends_have_no_source() {
+        assert!(CollectiveKernel::AllReduceMean
+            .source_for(GpuBackend::Cpu)
+            .is_none());
+        assert!(CollectiveKernel::AllReduceMean
+            .source_for(GpuBackend::Cuda)
+            .is_none());
+        assert!(CollectiveKernel::AllReduceMean
             .source_for(GpuBackend::OpenCL)
             .is_none());
     }

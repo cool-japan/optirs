@@ -49,4 +49,12 @@ wasm = [
     "dep:console_error_panic_hook",
     "dep:getrandom",
 ]
-webgpu = ["wasm"]
+# `navigator.gpu` and the WebGPU interfaces are still a W3C "unstable" API in
+# web-sys (typed bindings need per-type crate features *and* a
+# `--cfg=web_sys_unstable_apis` RUSTFLAG most consumers won't have set), so
+# `src/webgpu.rs` reaches them dynamically via `js_sys::Reflect` instead.
+# `Navigator` (stable) is the only extra web-sys type actually needed.
+webgpu = [
+    "wasm",
+    "web-sys/Navigator",
+]

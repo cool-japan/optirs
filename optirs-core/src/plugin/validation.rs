@@ -1496,9 +1496,10 @@ impl<A: Float + Debug + Send + Sync + 'static> ValidationTestSuite<A>
 {
     fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
         let start_time = Instant::now();
-        let mut test_results = Vec::new();
-        test_results.push(self.test_config_roundtrip(plugin));
-        test_results.push(self.test_step_output_finite(plugin));
+        let test_results = vec![
+            self.test_config_roundtrip(plugin),
+            self.test_step_output_finite(plugin),
+        ];
 
         let passed_tests = test_results.iter().filter(|r| r.passed).count();
         let total_tests = test_results.len();

@@ -5,10 +5,76 @@
 
 use crate::error::Result;
 use std::collections::HashMap;
+use std::net::{SocketAddr, TcpStream};
+use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
 use super::config::*;
 use super::types::*;
+
+/// Best-effort GPU detection, cached for the process lifetime.
+///
+/// Returns `true` only if a GPU is actually detected; never hardcodes availability.
+fn gpu_available() -> bool {
+    static GPU_CACHE: OnceLock<bool> = OnceLock::new();
+    *GPU_CACHE.get_or_init(probe_gpu)
+}
+
+/// Probe for a usable GPU using dependency-free detector commands / device nodes.
+fn probe_gpu() -> bool {
+    // NVIDIA GPUs: `nvidia-smi -L` lists each detected device.
+    if let Ok(output) = Command::new("nvidia-smi").arg("-L").output() {
+        if output.status.success() && !output.stdout.is_empty() {
+            return true;
+        }
+    }
+
+    // Linux NVIDIA device node (present when the kernel driver is loaded).
+    if std::path::Path::new("/dev/nvidia0").exists() {
+        return true;
+    }
+
+    // macOS: `system_profiler SPDisplaysDataType` reports the display/GPU chipset.
+    if cfg!(target_os = "macos") {
+        if let Ok(output) = Command::new("system_profiler")
+            .arg("SPDisplaysDataType")
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if text.contains("Chipset Model") || text.contains("Metal") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Best-effort network connectivity probe, cached for the process lifetime.
+///
+/// Returns `true` only if a short TCP connect to a well-known host succeeds; a
+/// failure or timeout yields `false`. Never hardcodes availability.
+fn network_available() -> bool {
+    static NET_CACHE: OnceLock<bool> = OnceLock::new();
+    *NET_CACHE.get_or_init(probe_network)
+}
+
+/// Probe real connectivity by attempting a short, timeout-bounded TCP connect to
+/// well-known DNS resolvers. IP literals are used so no DNS lookup is required.
+fn probe_network() -> bool {
+    let timeout = Duration::from_millis(300);
+    for candidate in ["1.1.1.1:53", "8.8.8.8:53"] {
+        if let Ok(addr) = candidate.parse::<SocketAddr>() {
+            if TcpStream::connect_timeout(&addr, timeout).is_ok() {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 /// Platform resource manager
 #[derive(Debug)]

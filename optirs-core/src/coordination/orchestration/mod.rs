@@ -26,6 +26,7 @@ pub use experiment_manager::{
 };
 
 pub use checkpoint_manager::{
-    Checkpoint, CheckpointConfiguration, CheckpointManager, CheckpointMetadata, RecoveryManager,
-    RecoveryStrategy,
+    Checkpoint, CheckpointConfiguration, CheckpointManager, CheckpointMetadata, CheckpointStorage,
+    InMemoryCheckpointStorage, RecoveryManager, RecoveryOptions, RecoveryStrategy, RecoveryTarget,
+    StateType, ValidationRule,
 };

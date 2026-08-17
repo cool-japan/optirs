@@ -198,6 +198,21 @@ pub enum LayerType {
     Attention,
 }
 
+/// Machine-precision-aware central-difference step for a derivative of the
+/// given `order`.
+///
+/// A central stencil for the `order`-th derivative has truncation error
+/// `O(h²)` and roundoff error `O(ε_mach / h^order)`; balancing the two gives
+/// the optimum `h ≈ ε_mach^{1/(order+2)}`. Deriving the step from
+/// [`Float::epsilon`] adapts it to `T`'s precision (e.g. ~6e-6 for an `f64`
+/// first derivative, ~5e-3 for `f32`), unlike a single hard-coded constant
+/// which is far too small for `f32` and for high-order stencils.
+fn central_step<T: Float>(order: usize) -> T {
+    let eps_mach = T::epsilon();
+    let denom = T::from(order + 2).unwrap_or_else(|| T::from(3usize).unwrap_or_else(T::one));
+    eps_mach.powf(T::one() / denom)
+}
+
 impl<
         T: Float
             + Debug
@@ -252,6 +267,21 @@ impl<
     /// Set finite difference epsilon for numerical verification
     pub fn set_finite_diff_eps(&mut self, eps: T) {
         self.finite_diff_eps = eps;
+    }
+
+    /// Central-difference step for a derivative of the given `order`.
+    ///
+    /// Returns the coarser of the machine-precision-optimal step
+    /// ([`central_step`]) and any user-configured `finite_diff_eps`, so an
+    /// explicit override can only *widen* the step, never sharpen it into the
+    /// roundoff-dominated regime.
+    fn fd_step(&self, order: usize) -> T {
+        let machine = central_step::<T>(order);
+        if self.finite_diff_eps > machine {
+            self.finite_diff_eps
+        } else {
+            machine
+        }
     }
 
     /// Compute Hessian matrix using forward-over-reverse mode
@@ -353,14 +383,15 @@ impl<
     ) -> Result<Array2<T>> {
         let n = point.len();
         let mut hessian = Array2::zeros((n, n));
+        let h = self.fd_step(2);
 
         // Compute second derivatives using finite differences
         for i in 0..n {
             let mut x_plus = point.clone();
             let mut x_minus = point.clone();
 
-            x_plus[i] = x_plus[i] + self.finite_diff_eps;
-            x_minus[i] = x_minus[i] - self.finite_diff_eps;
+            x_plus[i] = x_plus[i] + h;
+            x_minus[i] = x_minus[i] - h;
 
             let f_plus = function(&x_plus);
             let f_center = function(point);
@@ -370,7 +401,7 @@ impl<
             let second_deriv = (f_plus
                 - scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * f_center
                 + f_minus)
-                / (self.finite_diff_eps * self.finite_diff_eps);
+                / (h * h);
 
             hessian[[i, i]] = second_deriv;
         }
@@ -661,8 +692,9 @@ impl<
         let function_copy = function;
 
         let hvp_fn = move |v: &Array1<T>| -> Result<Array1<T>> {
-            // Use finite differences as a fallback to avoid borrow conflicts
-            let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
+            // Use finite differences as a fallback to avoid borrow conflicts.
+            // Differencing the gradient is a second-order quantity.
+            let eps = central_step::<T>(2);
             let mut hvp = Array1::zeros(v.len());
 
             for i in 0..v.len() {
@@ -693,7 +725,7 @@ impl<
     where
         F: Fn(&Array1<T>) -> T,
     {
-        let eps = scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero());
+        let eps = central_step::<T>(1);
         let mut gradient = Array1::zeros(point.len());
 
         for i in 0..point.len() {
@@ -722,17 +754,17 @@ impl<
     ) -> Result<Array1<T>> {
         let n = point.len();
         let mut gradient = Array1::zeros(n);
+        let h = self.fd_step(1);
 
         for i in 0..n {
             let mut x_plus = point.clone();
             let mut x_minus = point.clone();
 
-            x_plus[i] = x_plus[i] + self.finite_diff_eps;
-            x_minus[i] = x_minus[i] - self.finite_diff_eps;
+            x_plus[i] = x_plus[i] + h;
+            x_minus[i] = x_minus[i] - h;
 
             gradient[i] = (function(&x_plus) - function(&x_minus))
-                / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
-                    * self.finite_diff_eps);
+                / (scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()) * h);
         }
 
         Ok(gradient)
@@ -744,7 +776,8 @@ impl<
         point: &Array1<T>,
         direction: &Array1<T>,
     ) -> Result<Array1<T>> {
-        let eps = self.finite_diff_eps;
+        // Differencing the gradient approximates a second-order quantity.
+        let eps = self.fd_step(2);
         let point_plus = point + &(direction * eps);
         let point_minus = point - &(direction * eps);
 
@@ -817,6 +850,18 @@ impl<
         Ok(hessian)
     }
 
+    /// Third partial derivative ∂³f/∂xᵢ∂xⱼ∂xₖ by central finite differences.
+    ///
+    /// The correct stencil depends on how many of `(i, j, k)` coincide, so
+    /// three cases are handled separately (all previously collapsed into one
+    /// wrong two-point formula that was off by `~1/h²`):
+    ///
+    /// * all equal — pure ∂³/∂xᵢ³:
+    ///   `[f(x+2h) − 2f(x+h) + 2f(x−h) − f(x−2h)] / (2h³)`.
+    /// * all distinct — fully mixed:
+    ///   `Σ_{s∈{±1}³} sᵢsⱼsₖ · f(x + h(sᵢeᵢ+sⱼeⱼ+sₖeₖ)) / (8h³)`.
+    /// * exactly two equal — semi-mixed ∂³/∂x_r²∂x_s:
+    ///   a central second difference in `r` differenced once in `s`.
     fn compute_third_partial(
         &self,
         function: &impl Fn(&Array1<T>) -> T,
@@ -825,28 +870,66 @@ impl<
         j: usize,
         k: usize,
     ) -> Result<T> {
-        let eps = self.finite_diff_eps;
+        let n = point.len();
+        if i >= n || j >= n || k >= n {
+            return Err(OptimError::InvalidConfig(
+                "third-derivative index out of range".to_string(),
+            ));
+        }
+        let h = self.fd_step(3);
+        let two: T = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
+        let eight: T = scirs2_core::numeric::NumCast::from(8.0).unwrap_or_else(|| T::zero());
+        let h3 = h * h * h;
 
-        // Use finite differences to approximate third derivative
-        // This is simplified - real implementation would be more sophisticated
-        let mut x_ppp = point.clone();
-        x_ppp[i] = x_ppp[i] + eps;
-        x_ppp[j] = x_ppp[j] + eps;
-        x_ppp[k] = x_ppp[k] + eps;
+        // Evaluate `f` at `point` shifted by integer multiples of `h`.
+        let shifted = |shifts: &[(usize, i32)]| -> T {
+            let mut x = point.clone();
+            for &(coord, mult) in shifts {
+                let step: T =
+                    scirs2_core::numeric::NumCast::from(mult).unwrap_or_else(|| T::zero());
+                x[coord] = x[coord] + step * h;
+            }
+            function(&x)
+        };
 
-        let mut x_mmm = point.clone();
-        x_mmm[i] = x_mmm[i] - eps;
-        x_mmm[j] = x_mmm[j] - eps;
-        x_mmm[k] = x_mmm[k] - eps;
+        let all_same = i == j && j == k;
+        let all_distinct = i != j && j != k && i != k;
 
-        // Simplified third derivative approximation
-        let third_deriv = (function(&x_ppp) - function(&x_mmm))
-            / (scirs2_core::numeric::NumCast::from(8.0).unwrap_or_else(|| T::zero())
-                * eps
-                * eps
-                * eps);
+        let value = if all_same {
+            let a = shifted(&[(i, 2)]);
+            let b = shifted(&[(i, 1)]);
+            let c = shifted(&[(i, -1)]);
+            let d = shifted(&[(i, -2)]);
+            (a - two * b + two * c - d) / (two * h3)
+        } else if all_distinct {
+            let mut acc = T::zero();
+            for &si in &[1i32, -1] {
+                for &sj in &[1i32, -1] {
+                    for &sk in &[1i32, -1] {
+                        let sign: T = scirs2_core::numeric::NumCast::from(si * sj * sk)
+                            .unwrap_or_else(|| T::zero());
+                        acc = acc + sign * shifted(&[(i, si), (j, sj), (k, sk)]);
+                    }
+                }
+            }
+            acc / (eight * h3)
+        } else {
+            // Exactly two coincide: `r` is the repeated index, `s` the distinct.
+            let (r, s) = if i == j {
+                (i, k)
+            } else if i == k {
+                (i, j)
+            } else {
+                (j, i)
+            };
+            let d2_plus =
+                shifted(&[(r, 1), (s, 1)]) - two * shifted(&[(s, 1)]) + shifted(&[(r, -1), (s, 1)]);
+            let d2_minus = shifted(&[(r, 1), (s, -1)]) - two * shifted(&[(s, -1)])
+                + shifted(&[(r, -1), (s, -1)]);
+            (d2_plus - d2_minus) / (two * h3)
+        };
 
-        Ok(third_deriv)
+        Ok(value)
     }
 
     fn mixed_partial_forward_over_reverse(
@@ -883,6 +966,14 @@ impl<
         self.mixed_partial_finite_difference(function, point, variables, orders)
     }
 
+    /// Mixed partial derivative by central finite differences, supporting every
+    /// combination with `total_order ≤ 3` (previously only the two-variable
+    /// second order was handled and all other cases silently returned `0`).
+    ///
+    /// `(variables, orders)` is expanded into a flat multi-index; order-1 and
+    /// order-2 cases use their own central stencils and order-3 delegates to
+    /// [`Self::compute_third_partial`], which picks the right stencil for the
+    /// index-coincidence pattern.
     fn mixed_partial_finite_difference(
         &self,
         function: &impl Fn(&Array1<T>) -> T,
@@ -890,47 +981,76 @@ impl<
         variables: &[usize],
         orders: &[usize],
     ) -> Result<T> {
-        // Simple finite difference approximation for mixed partials
-        let eps = self.finite_diff_eps;
         let total_order: usize = orders.iter().sum();
-
         if total_order > 3 {
             return Err(OptimError::InvalidConfig(
-                "Mixed partial order too high".to_string(),
+                "Mixed partial order too high (finite differences support order <= 3)".to_string(),
             ));
         }
+        let n = point.len();
+        for &v in variables {
+            if v >= n {
+                return Err(OptimError::InvalidConfig(
+                    "mixed-partial variable index out of range".to_string(),
+                ));
+            }
+        }
 
-        // For second-order mixed partial ∂²f/∂x∂y
-        if total_order == 2 && variables.len() == 2 {
-            let i = variables[0];
-            let j = variables[1];
+        // Expand into a flat list that repeats each variable `order` times.
+        let mut flat: Vec<usize> = Vec::with_capacity(total_order);
+        for (&v, &o) in variables.iter().zip(orders.iter()) {
+            for _ in 0..o {
+                flat.push(v);
+            }
+        }
 
-            let mut x_pp = point.clone();
-            x_pp[i] = x_pp[i] + eps;
-            x_pp[j] = x_pp[j] + eps;
+        let two: T = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
 
-            let mut x_pm = point.clone();
-            x_pm[i] = x_pm[i] + eps;
-            x_pm[j] = x_pm[j] - eps;
-
-            let mut x_mp = point.clone();
-            x_mp[i] = x_mp[i] - eps;
-            x_mp[j] = x_mp[j] + eps;
-
-            let mut x_mm = point.clone();
-            x_mm[i] = x_mm[i] - eps;
-            x_mm[j] = x_mm[j] - eps;
-
-            let mixed_partial = (function(&x_pp) - function(&x_pm) - function(&x_mp)
-                + function(&x_mm))
-                / (scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero())
-                    * eps
-                    * eps);
-
-            Ok(mixed_partial)
-        } else {
-            // Fallback for other cases
-            Ok(T::zero())
+        match flat.as_slice() {
+            [] => Ok(function(point)),
+            &[i] => {
+                let h = self.fd_step(1);
+                let mut xp = point.clone();
+                let mut xm = point.clone();
+                xp[i] = xp[i] + h;
+                xm[i] = xm[i] - h;
+                Ok((function(&xp) - function(&xm)) / (two * h))
+            }
+            &[i, j] => {
+                let h = self.fd_step(2);
+                if i == j {
+                    // ∂²f/∂xᵢ² central second difference.
+                    let mut xp = point.clone();
+                    let mut xm = point.clone();
+                    xp[i] = xp[i] + h;
+                    xm[i] = xm[i] - h;
+                    Ok((function(&xp) - two * function(point) + function(&xm)) / (h * h))
+                } else {
+                    // ∂²f/∂xᵢ∂xⱼ four-point stencil.
+                    let four: T =
+                        scirs2_core::numeric::NumCast::from(4.0).unwrap_or_else(|| T::zero());
+                    let mut x_pp = point.clone();
+                    x_pp[i] = x_pp[i] + h;
+                    x_pp[j] = x_pp[j] + h;
+                    let mut x_pm = point.clone();
+                    x_pm[i] = x_pm[i] + h;
+                    x_pm[j] = x_pm[j] - h;
+                    let mut x_mp = point.clone();
+                    x_mp[i] = x_mp[i] - h;
+                    x_mp[j] = x_mp[j] + h;
+                    let mut x_mm = point.clone();
+                    x_mm[i] = x_mm[i] - h;
+                    x_mm[j] = x_mm[j] - h;
+                    Ok(
+                        (function(&x_pp) - function(&x_pm) - function(&x_mp) + function(&x_mm))
+                            / (four * h * h),
+                    )
+                }
+            }
+            &[i, j, k] => self.compute_third_partial(function, point, i, j, k),
+            _ => Err(OptimError::InvalidConfig(
+                "unsupported mixed-partial structure".to_string(),
+            )),
         }
     }
 
@@ -1258,36 +1378,42 @@ impl<
         self.hessian_forward_over_reverse(log_likelihood, point, &HessianConfig::default())
     }
 
+    /// Solve `A x = rhs` for a symmetric positive-(semi)definite `A` (e.g. a
+    /// Fisher information matrix) using Conjugate Gradient.
+    ///
+    /// A small Tikhonov ridge proportional to the mean absolute diagonal keeps
+    /// the operator strictly positive definite despite finite-difference noise,
+    /// which replaces the previous diagonal-only approximation that solved the
+    /// system correctly only when `A` was already diagonal.
     fn solve_linear_system(&self, matrix: &Array2<T>, rhs: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified linear system solver
-        // In practice, would use more sophisticated methods like LU decomposition
         let n = matrix.nrows();
         if n != rhs.len() || n != matrix.ncols() {
             return Err(OptimError::InvalidConfig(
                 "Matrix dimension mismatch".to_string(),
             ));
         }
-
-        // Use pseudo-inverse for now (simplified)
-        // result = matrix^(-1) * rhs
-        let mut result = Array1::zeros(n);
-
-        // Simplified diagonal approximation
-        for i in 0..n {
-            if matrix[[i, i]].abs()
-                > scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero())
-            {
-                result[i] = rhs[i] / matrix[[i, i]];
-            } else {
-                result[i] = rhs[i];
-            }
+        if n == 0 {
+            return Ok(Array1::zeros(0));
         }
 
-        Ok(result)
+        let mut diag_sum = T::zero();
+        for i in 0..n {
+            diag_sum = diag_sum + matrix[[i, i]].abs();
+        }
+        let n_t: T = scirs2_core::numeric::NumCast::from(n).unwrap_or_else(|| T::one());
+        let ridge_scale: T = scirs2_core::numeric::NumCast::from(1e-8).unwrap_or_else(|| T::zero());
+        let ridge_floor: T =
+            scirs2_core::numeric::NumCast::from(1e-12).unwrap_or_else(|| T::zero());
+        let ridge = (diag_sum / n_t) * ridge_scale + ridge_floor;
+
+        let hvp = |v: &Array1<T>| -> Result<Array1<T>> { Ok(matrix.dot(v) + &(v * ridge)) };
+
+        let tolerance: T = scirs2_core::numeric::NumCast::from(1e-10).unwrap_or_else(|| T::zero());
+        self.conjugate_gradient_solve(hvp, rhs, 2 * n + 50, tolerance)
     }
 
     fn conjugate_gradient_solve<F>(
-        &mut self,
+        &self,
         mut hvp_fn: F,
         rhs: &Array1<T>,
         max_iterations: usize,
@@ -1304,7 +1430,12 @@ impl<
 
         for _iter in 0..max_iterations {
             let ap = hvp_fn(&p)?;
-            let alpha = rsold / p.dot(&ap);
+            let denom = p.dot(&ap);
+            // Guard against a breakdown (curvature ~0) that would divide by zero.
+            if denom.abs() <= T::epsilon() {
+                break;
+            }
+            let alpha = rsold / denom;
 
             x = x + &p * alpha;
             r = r - &ap * alpha;
@@ -1642,5 +1773,92 @@ mod tests {
 
         approx::assert_abs_diff_eq!(hv[0], 3.0, epsilon = 1e-3);
         approx::assert_abs_diff_eq!(hv[1], 4.0, epsilon = 1e-3);
+    }
+
+    /// F29 regression: third derivatives must be numerically correct (the old
+    /// two-point formula was wrong by a factor of ~1/h², i.e. ~1e10 for f64).
+    ///
+    /// f(x) = x0³ + x0·x1·x2 + x0²·x1 exercises the pure, fully-mixed and
+    /// semi-mixed stencils simultaneously:
+    /// * ∂³/∂x0³        = 6
+    /// * ∂³/∂x0∂x1∂x2   = 1
+    /// * ∂³/∂x0²∂x1      = 2
+    #[test]
+    fn test_third_order_derivatives_are_accurate() {
+        let mut engine = HigherOrderEngine::<f64>::new(3);
+        let function =
+            |x: &Array1<f64>| x[0] * x[0] * x[0] + x[0] * x[1] * x[2] + x[0] * x[0] * x[1];
+        let point = Array1::from_vec(vec![0.7, -0.4, 1.3]);
+
+        let tensor = engine
+            .third_order_derivatives(function, &point)
+            .expect("third order");
+
+        approx::assert_abs_diff_eq!(tensor.data[[0, 0, 0]], 6.0, epsilon = 1e-3);
+        approx::assert_abs_diff_eq!(tensor.data[[0, 1, 2]], 1.0, epsilon = 1e-3);
+        approx::assert_abs_diff_eq!(tensor.data[[0, 0, 1]], 2.0, epsilon = 1e-3);
+        // Symmetry of the mixed third derivative.
+        approx::assert_abs_diff_eq!(tensor.data[[2, 1, 0]], 1.0, epsilon = 1e-3);
+    }
+
+    /// F90 regression: mixed partials of order 1 and 3 used to silently return
+    /// 0 for everything but the two-variable second order.
+    #[test]
+    fn test_mixed_partial_supports_orders_one_and_three() {
+        let mut engine = HigherOrderEngine::<f64>::new(3);
+        let point = Array1::from_vec(vec![0.5, -0.3, 0.9]);
+
+        // Order 1: ∂/∂x0 (3x0 + x1²) = 3.
+        let g = |x: &Array1<f64>| 3.0 * x[0] + x[1] * x[1];
+        let d1 = engine
+            .mixed_partial(g, &point, &[0], &[1], MixedPartialMethod::FiniteDifference)
+            .expect("order 1");
+        approx::assert_abs_diff_eq!(d1.value, 3.0, epsilon = 1e-6);
+
+        // Order 3 (pure): ∂³/∂x0³ x0³ = 6.
+        let cube = |x: &Array1<f64>| x[0] * x[0] * x[0];
+        let d3 = engine
+            .mixed_partial(
+                cube,
+                &point,
+                &[0],
+                &[3],
+                MixedPartialMethod::FiniteDifference,
+            )
+            .expect("order 3 pure");
+        approx::assert_abs_diff_eq!(d3.value, 6.0, epsilon = 1e-3);
+
+        // Order 3 (fully mixed): ∂³/∂x0∂x1∂x2 (x0·x1·x2) = 1.
+        let prod = |x: &Array1<f64>| x[0] * x[1] * x[2];
+        let d3m = engine
+            .mixed_partial(
+                prod,
+                &point,
+                &[0, 1, 2],
+                &[1, 1, 1],
+                MixedPartialMethod::FiniteDifference,
+            )
+            .expect("order 3 mixed");
+        approx::assert_abs_diff_eq!(d3m.value, 1.0, epsilon = 1e-3);
+    }
+
+    /// F30 regression: `solve_linear_system` must solve a genuinely dense SPD
+    /// system, not merely divide by the diagonal.
+    #[test]
+    fn test_solve_linear_system_dense_spd() {
+        let engine = HigherOrderEngine::<f64>::new(2);
+        // A = [[4, 1], [1, 3]] (SPD, non-diagonal); b = [1, 2].
+        let a = Array2::from_shape_vec((2, 2), vec![4.0, 1.0, 1.0, 3.0]).expect("matrix");
+        let b = Array1::from_vec(vec![1.0, 2.0]);
+
+        let x = engine.solve_linear_system(&a, &b).expect("solve");
+
+        // Exact solution A^{-1} b = [1/11, 7/11].
+        approx::assert_abs_diff_eq!(x[0], 1.0 / 11.0, epsilon = 1e-6);
+        approx::assert_abs_diff_eq!(x[1], 7.0 / 11.0, epsilon = 1e-6);
+
+        // Residual A x - b must be ~0 (a diagonal solve would leave it large).
+        let residual = a.dot(&x) - &b;
+        assert!(residual.dot(&residual).sqrt() < 1e-6);
     }
 }

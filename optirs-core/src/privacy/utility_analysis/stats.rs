@@ -143,6 +143,10 @@ pub(crate) fn z_for_power(power: f64) -> Result<f64> {
 /// Numerical Recipes / Boost coefficient set); the relative error is below
 /// `2e-10` for real arguments `x > 0`.
 pub(crate) fn ln_gamma(x: f64) -> f64 {
+    // The Lanczos g=7 coefficients are written to full published precision; the
+    // trailing digits beyond f64's mantissa are intentional and harmless (they
+    // round to the same bits), so silence clippy's excessive-precision lint.
+    #[allow(clippy::excessive_precision)]
     const COEFFS: [f64; 9] = [
         0.999_999_999_999_809_93,
         676.520_368_121_885_1,

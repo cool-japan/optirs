@@ -22,6 +22,12 @@
 // multiplier mid-training opens a new segment; it never rewrites the cost of
 // steps already taken.
 
+// `!(x > 0)` is used deliberately over `x <= 0` in privacy-parameter validation:
+// it rejects NaN (whose comparisons are all `false`), which `x <= 0` would let
+// through. A NaN epsilon silently voiding the DP guarantee is exactly the failure
+// this spelling prevents.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use scirs2_core::ndarray::{Array, ArrayBase, Data, DataMut, Dimension, Zip};
 use scirs2_core::numeric::Float;
 use std::cmp::Ordering;

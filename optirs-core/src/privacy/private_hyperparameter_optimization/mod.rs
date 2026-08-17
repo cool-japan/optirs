@@ -1,44 +1,55 @@
-//! Auto-generated module structure
+//! Differentially private hyperparameter optimization.
+//!
+//! # Module layout
+//!
+//! | module | responsibility |
+//! |---|---|
+//! | [`types`] | configuration, budget accounting and the optimizer entry point |
+//! | [`selection`] | the private selection mechanisms and noisy statistics |
+//! | [`gaussian_process`] | the GP surrogate and acquisition function |
+//! | [`random_search`] | `NoisyOptimizer` for random search |
+//! | [`bayesian_optimization`] | `NoisyOptimizer` for Bayesian optimization |
+//! | [`functions`] | the `NoisyOptimizer` trait and function aliases |
+//! | [`trait_impls`] | the `Default` impls |
+//!
+//! # 0.3.2 notes
+//!
+//! Hyperparameter *selection* is now differentially private. Previously
+//! `HyperparameterNoiseMechanism` was stored and never matched on: the choice
+//! was the exact argmax over utilities computed from the private data, which is
+//! precisely what private HPO exists to avoid.
+//!
+//! Behavioural and API changes:
+//!
+//! * [`types::PrivateHyperparameterOptimizer::new`] rejects a configuration with
+//!   `private_model_selection: true` that declares no objective sensitivity.
+//! * [`types::PrivateHPOResults`] gained `selection`, which records whether the
+//!   returned configuration was chosen privately, by which mechanism, and at
+//!   what cost.
+//! * [`types::SelectionParameters`] gained `delta` (needed to calibrate Gaussian
+//!   selection).
+//! * `PrivateResultsAggregator::aggregate_results` takes `&mut self`, because
+//!   selecting now spends budget.
+//! * The 16 `*_traits.rs` shells were collapsed into [`trait_impls`]; the two
+//!   that held real `NoisyOptimizer` implementations were renamed to
+//!   [`random_search`] and [`bayesian_optimization`].
 
-pub mod acquisitionfunction_traits;
-pub mod adaptivebudgetcontroller_traits;
-pub mod anomalydetector_traits;
-pub mod bootstrapestimator_traits;
-pub mod confidenceestimation_traits;
+pub mod bayesian_optimization;
 pub mod functions;
-pub mod gaussianprocessmodel_traits;
-pub mod kernelfunction_traits;
-pub mod objectivenoisemechanism_traits;
-pub mod objectivesensitivityanalyzer_traits;
-pub mod privatebayesianoptimization_traits;
-pub mod privatecrossvalidation_traits;
-pub mod privatefoldaggregation_traits;
-pub mod privaterandomsearch_traits;
-pub mod resultvalidator_traits;
-pub mod samplebasedsensitivityestimator_traits;
-pub mod searchstrategy_traits;
-pub mod selectionmechanism_traits;
+pub mod gaussian_process;
+pub mod random_search;
+pub mod selection;
+pub mod trait_impls;
 pub mod types;
-pub mod utilityfunction_traits;
 
-// Re-export all types
-pub use acquisitionfunction_traits::*;
-pub use adaptivebudgetcontroller_traits::*;
-pub use anomalydetector_traits::*;
-pub use bootstrapestimator_traits::*;
-pub use confidenceestimation_traits::*;
 pub use functions::*;
-pub use gaussianprocessmodel_traits::*;
-pub use kernelfunction_traits::*;
-pub use objectivenoisemechanism_traits::*;
-pub use objectivesensitivityanalyzer_traits::*;
-pub use privatebayesianoptimization_traits::*;
-pub use privatecrossvalidation_traits::*;
-pub use privatefoldaggregation_traits::*;
-pub use privaterandomsearch_traits::*;
-pub use resultvalidator_traits::*;
-pub use samplebasedsensitivityestimator_traits::*;
-pub use searchstrategy_traits::*;
-pub use selectionmechanism_traits::*;
+pub use gaussian_process::{
+    encode_configuration, ConfigurationEncoding, ExpectedImprovement, GaussianProcessFit,
+};
+pub use selection::{
+    exponential_mechanism_index, exponential_mechanism_probabilities, gaussian_sigma,
+    laplace_sample, mechanism_name, noisy_summary_statistics, report_noisy_max_gaussian,
+    report_noisy_max_gumbel, report_noisy_max_laplace, summary_mean_noise_scale, SelectionOutcome,
+    OBJECTIVE_SENSITIVITY_KEY,
+};
 pub use types::*;
-pub use utilityfunction_traits::*;

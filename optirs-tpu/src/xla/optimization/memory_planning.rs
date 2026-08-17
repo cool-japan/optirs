@@ -893,23 +893,39 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> MemoryP
         operand_id: OperandId,
         computation: &XLAComputation<T>,
     ) -> Result<BufferLifetime> {
-        // Find first and last use of operand
+        // Find first and last use of operand, tracking both the operation id
+        // (for reporting) and the operation's position in the schedule (for the
+        // live range). Positions are the natural unit for overlap tests: two
+        // buffers whose [first, last] position intervals are disjoint can share
+        // the same memory.
         let mut first_use = None;
         let mut last_use = None;
+        let mut first_index = None;
+        let mut last_index = None;
 
-        for operation in &computation.operations {
+        for (index, operation) in computation.operations.iter().enumerate() {
             if operation.inputs.contains(&operand_id) || operation.output == operand_id {
                 if first_use.is_none() {
                     first_use = Some(operation.id);
+                    first_index = Some(index);
                 }
                 last_use = Some(operation.id);
+                last_index = Some(index);
             }
         }
+
+        // A per-operand live range: the closed interval of schedule positions in
+        // which this operand is live. An operand that is never referenced
+        // collapses to (0, 0) rather than spanning the whole program.
+        let live_range = match (first_index, last_index) {
+            (Some(first), Some(last)) => (first, last),
+            _ => (0, 0),
+        };
 
         Ok(BufferLifetime {
             first_use: first_use.unwrap_or(super::super::frontend::graph_capture::OperationId(0)),
             last_use: last_use.unwrap_or(super::super::frontend::graph_capture::OperationId(0)),
-            live_range: (0, computation.operations.len()),
+            live_range,
             reuse_opportunities: vec![],
         })
     }
@@ -1079,7 +1095,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> BufferM
         let mut allocations = HashMap::new();
 
         for (operand_id, operand_info) in &analysis.operand_info {
-            let allocation = self.allocator.allocate(operand_info.size, 32)?;
+            let mut allocation = self.allocator.allocate(operand_info.size, 32)?;
+            // The allocator has no visibility into liveness, so stamp the real
+            // per-operand lifetime (first/last use and live range) onto the
+            // allocation here, where the analysis is available.
+            allocation.lifetime = operand_info.lifetime.clone();
             allocations.insert(*operand_id, allocation);
         }
 
@@ -1102,46 +1122,155 @@ impl MemoryAllocator {
     }
 
     pub fn allocate(&mut self, size: usize, alignment: usize) -> Result<BufferAllocation> {
-        let aligned_size = (size + alignment - 1) & !(alignment - 1);
+        if alignment == 0 || (alignment & (alignment - 1)) != 0 {
+            return Err(OptimError::InvalidArgument(
+                scirs2_core::error::ErrorContext::new(format!(
+                    "Allocation alignment must be a non-zero power of two, got {alignment}"
+                )),
+            ));
+        }
 
-        // Find suitable free region
-        if let Some((&address, &region_size)) = self
-            .free_regions
-            .iter()
-            .find(|(_, &region_size)| region_size >= aligned_size)
-        {
-            // Remove from free regions
-            self.free_regions.remove(&address);
+        // Round the request up to the alignment boundary. Every free region in
+        // this allocator starts at an alignment-friendly address (0 initially,
+        // and every split leaves the remainder at `address + aligned_size`),
+        // so an aligned size is sufficient to guarantee an aligned address.
+        let aligned_size = (size.max(1) + alignment - 1) & !(alignment - 1);
 
-            // Add to allocated regions
-            self.allocated_regions.insert(address, aligned_size);
-            self.current_usage += aligned_size;
+        // Pick a free region honoring the configured allocation strategy.
+        let address = self.select_region(aligned_size).ok_or_else(|| {
+            OptimError::AllocationError(scirs2_core::error::ErrorContext::new(format!(
+                "Out of memory: cannot allocate {aligned_size} bytes (usage {}/{})",
+                self.current_usage, self.total_capacity
+            )))
+        })?;
 
-            // Add remainder back to free regions
-            if region_size > aligned_size {
-                self.free_regions
-                    .insert(address + aligned_size, region_size - aligned_size);
+        // Remove the chosen region; it must be present because `select_region`
+        // just returned it from the same map.
+        let region_size = self.free_regions.remove(&address).ok_or_else(|| {
+            OptimError::InvalidState(scirs2_core::error::ErrorContext::new(format!(
+                "Selected free region at address {address} vanished from the free list"
+            )))
+        })?;
+
+        // Record the allocation and return any unused tail to the free list.
+        self.allocated_regions.insert(address, aligned_size);
+        self.current_usage += aligned_size;
+
+        if region_size > aligned_size {
+            self.free_regions
+                .insert(address + aligned_size, region_size - aligned_size);
+        }
+
+        Ok(BufferAllocation {
+            buffer_id: format!("buf_{}", address),
+            address,
+            size: aligned_size,
+            alignment,
+            lifetime: BufferLifetime {
+                first_use: super::super::frontend::graph_capture::OperationId(0),
+                last_use: super::super::frontend::graph_capture::OperationId(0),
+                live_range: (0, 0),
+                reuse_opportunities: vec![],
+            },
+            access_pattern: AccessPattern::Sequential,
+        })
+    }
+
+    /// Select the address of a free region that can hold `needed` bytes,
+    /// according to the configured [`AllocationStrategy`].
+    ///
+    /// * `FirstFit` (and the strategies not otherwise specialized) return the
+    ///   lowest-address region that fits — `free_regions` iterates in ascending
+    ///   address order, so the first match is the first fit.
+    /// * `BestFit` returns the smallest fitting region (ties broken by lowest
+    ///   address), minimizing leftover fragmentation.
+    /// * `WorstFit` returns the largest fitting region (ties broken by lowest
+    ///   address), keeping the remainder large.
+    fn select_region(&self, needed: usize) -> Option<usize> {
+        let mut chosen: Option<(usize, usize)> = None; // (address, size)
+
+        for (&address, &size) in self.free_regions.iter() {
+            if size < needed {
+                continue;
             }
 
-            Ok(BufferAllocation {
-                buffer_id: format!("buf_{}", address),
-                address,
-                size: aligned_size,
-                alignment,
-                lifetime: BufferLifetime {
-                    first_use: super::super::frontend::graph_capture::OperationId(0),
-                    last_use: super::super::frontend::graph_capture::OperationId(0),
-                    live_range: (0, 0),
-                    reuse_opportunities: vec![],
-                },
-                access_pattern: AccessPattern::Sequential,
-            })
-        } else {
-            Err(OptimError::from(format!(
-                "Out of memory: Cannot allocate {} bytes",
-                aligned_size
-            )))
+            match self.strategy {
+                // Lowest address wins; iteration is ascending so the first fit
+                // is the answer immediately.
+                AllocationStrategy::FirstFit
+                | AllocationStrategy::Linear
+                | AllocationStrategy::BuddySystem
+                | AllocationStrategy::PoolBased => return Some(address),
+
+                // Smallest fitting region. `<` (not `<=`) keeps the earliest
+                // (lowest-address) region on a size tie.
+                AllocationStrategy::BestFit => {
+                    if chosen.map(|(_, best)| size < best).unwrap_or(true) {
+                        chosen = Some((address, size));
+                    }
+                }
+
+                // Largest fitting region, lowest address on a size tie.
+                AllocationStrategy::WorstFit => {
+                    if chosen.map(|(_, best)| size > best).unwrap_or(true) {
+                        chosen = Some((address, size));
+                    }
+                }
+            }
         }
+
+        chosen.map(|(address, _)| address)
+    }
+
+    /// Return a previously allocated region (identified by its start address)
+    /// to the free list, coalescing it with any adjacent free regions.
+    pub fn deallocate(&mut self, address: usize) -> Result<()> {
+        let size = self.allocated_regions.remove(&address).ok_or_else(|| {
+            OptimError::InvalidArgument(scirs2_core::error::ErrorContext::new(format!(
+                "Cannot free address {address}: it is not an active allocation"
+            )))
+        })?;
+
+        self.current_usage = self.current_usage.saturating_sub(size);
+        self.insert_free_region(address, size);
+        Ok(())
+    }
+
+    /// Free the region described by a [`BufferAllocation`].
+    ///
+    /// Convenience wrapper over [`Self::deallocate`] for callers that hold the
+    /// allocation record rather than a bare address.
+    pub fn free(&mut self, allocation: &BufferAllocation) -> Result<()> {
+        self.deallocate(allocation.address)
+    }
+
+    /// Insert `[address, address + size)` into the free list, merging it with a
+    /// directly preceding and/or directly following free region so that
+    /// fragmentation created by allocation splits is reclaimed.
+    ///
+    /// The free list is kept maximally coalesced as an invariant, so at most one
+    /// neighbor can be adjacent on each side.
+    fn insert_free_region(&mut self, address: usize, size: usize) {
+        let mut start = address;
+        let mut end = address + size;
+
+        // Coalesce with the region immediately preceding `start`, if it ends
+        // exactly where this one begins.
+        if let Some((&prev_addr, &prev_size)) = self.free_regions.range(..start).next_back() {
+            if prev_addr + prev_size == start {
+                self.free_regions.remove(&prev_addr);
+                start = prev_addr;
+            }
+        }
+
+        // Coalesce with the region immediately following, i.e. the one starting
+        // exactly at the current end.
+        if let Some(&next_size) = self.free_regions.get(&end) {
+            self.free_regions.remove(&end);
+            end += next_size;
+        }
+
+        self.free_regions.insert(start, end - start);
     }
 }
 
@@ -1288,5 +1417,185 @@ mod tests {
         assert_eq!(allocation.size, 256);
         assert_eq!(allocation.alignment, 32);
         assert!(allocator.current_usage >= 256);
+    }
+
+    /// Shared TPU config for planner-level tests.
+    fn test_tpu_config() -> crate::main_types::TPUConfig {
+        use crate::main_types::{PodTopology, TPUConfig, TPUVersion};
+
+        TPUConfig {
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
+        }
+    }
+
+    /// (a) A freed hole is reused: allocate two buffers, free the first, then a
+    /// third allocation that fits the hole lands back at the freed address.
+    #[test]
+    fn freed_region_is_reused() {
+        let mut allocator = MemoryAllocator::new(AllocationStrategy::FirstFit, 1024);
+
+        let first = allocator.allocate(128, 32).expect("first allocation");
+        let _second = allocator.allocate(128, 32).expect("second allocation");
+        assert_eq!(first.address, 0);
+
+        allocator.deallocate(first.address).expect("free first");
+
+        // The freed hole at address 0 is the lowest-address region that fits.
+        let third = allocator.allocate(128, 32).expect("third allocation");
+        assert_eq!(
+            third.address, first.address,
+            "third allocation must reuse the freed hole"
+        );
+    }
+
+    /// (b) Adjacent freed regions coalesce: after freeing two neighbors, a
+    /// single allocation as large as their sum succeeds (which is impossible if
+    /// the two holes were left fragmented).
+    #[test]
+    fn adjacent_frees_coalesce() {
+        let mut allocator = MemoryAllocator::new(AllocationStrategy::FirstFit, 256);
+
+        let a = allocator.allocate(128, 32).expect("alloc a");
+        let b = allocator.allocate(128, 32).expect("alloc b");
+        assert_eq!(a.address, 0);
+        assert_eq!(b.address, 128);
+
+        // Without coalescing the free list would be {0:128, 128:128} and a
+        // 256-byte request would fail.
+        allocator.deallocate(a.address).expect("free a");
+        allocator.deallocate(b.address).expect("free b");
+
+        let big = allocator
+            .allocate(256, 32)
+            .expect("coalesced region must satisfy the full-size request");
+        assert_eq!(big.address, 0);
+        assert_eq!(big.size, 256);
+    }
+
+    /// Carve a free list with two differently sized holes at known addresses.
+    /// During carving there is always exactly one free region, so every
+    /// strategy carves identically; only the final placement differs.
+    fn carve_two_holes(strategy: AllocationStrategy) -> MemoryAllocator {
+        let mut allocator = MemoryAllocator::new(strategy, 1024);
+
+        let hole_big = allocator.allocate(256, 32).expect("carve big");
+        let _keep1 = allocator.allocate(32, 32).expect("keep 1");
+        let hole_small = allocator.allocate(64, 32).expect("carve small");
+        let _keep2 = allocator.allocate(32, 32).expect("keep 2");
+
+        allocator
+            .deallocate(hole_big.address)
+            .expect("free big hole");
+        allocator
+            .deallocate(hole_small.address)
+            .expect("free small hole");
+
+        // Free list is now {0: 256, 288: 64, 384: 640}.
+        allocator
+    }
+
+    /// (c) FirstFit, BestFit and WorstFit pick different regions for the same
+    /// request against an identical crafted free list.
+    #[test]
+    fn strategies_pick_different_regions() {
+        // FirstFit: lowest-address fitting region -> the big hole at 0.
+        let mut first_fit = carve_two_holes(AllocationStrategy::FirstFit);
+        let a = first_fit.allocate(64, 32).expect("first-fit alloc");
+        assert_eq!(a.address, 0);
+
+        // BestFit: tightest fitting region -> the exact-size hole at 288.
+        let mut best_fit = carve_two_holes(AllocationStrategy::BestFit);
+        let b = best_fit.allocate(64, 32).expect("best-fit alloc");
+        assert_eq!(b.address, 288);
+
+        // WorstFit: largest fitting region -> the 640-byte tail at 384.
+        let mut worst_fit = carve_two_holes(AllocationStrategy::WorstFit);
+        let c = worst_fit.allocate(64, 32).expect("worst-fit alloc");
+        assert_eq!(c.address, 384);
+
+        assert_ne!(a.address, b.address);
+        assert_ne!(a.address, c.address);
+        assert_ne!(b.address, c.address);
+    }
+
+    /// (d) `live_range` is per-operand (a real [first_use, last_use] interval of
+    /// schedule positions), not the old hardcoded whole-program (0, ops.len()).
+    #[test]
+    fn live_range_is_per_operand() {
+        use crate::xla::frontend::graph_capture::test_support::{add_op, shape};
+        use crate::xla::frontend::graph_capture::ComputationGraphBuilder;
+
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("live_range");
+
+        // Schedule positions: 0=Param a, 1=Param b, 2=Add(a,b)->c, 3=Negate(c)->d.
+        let a = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            shape(&[4]),
+        );
+        let b = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            shape(&[4]),
+        );
+        let c = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Add,
+            vec![a, b],
+            shape(&[4]),
+        );
+        let d = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Negate,
+            vec![c],
+            shape(&[4]),
+        );
+
+        let planner: MemoryPlanner<f32> = MemoryPlanner::new(test_tpu_config());
+        let analysis = planner
+            .analyze_memory_requirements(&comp)
+            .expect("memory analysis");
+
+        let ops = comp.operations.len();
+        let live_range = |id| {
+            analysis
+                .operand_info
+                .get(&id)
+                .map(|info| info.lifetime.live_range)
+                .expect("operand info present")
+        };
+
+        // Each operand gets its own [first_use, last_use] position interval.
+        assert_eq!(live_range(a), (0, 2));
+        assert_eq!(live_range(b), (1, 2));
+        assert_eq!(live_range(c), (2, 3));
+        assert_eq!(live_range(d), (3, 3));
+
+        // Regression: nothing is the old whole-program (0, ops.len()) range.
+        for id in [a, b, c, d] {
+            assert_ne!(
+                live_range(id),
+                (0, ops),
+                "live_range must be per-operand, not whole-program"
+            );
+        }
     }
 }

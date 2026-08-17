@@ -67,17 +67,34 @@ impl<
     > OptimizationSequenceProcessor<T>
 {
     /// Create new sequence processor
+    ///
+    /// # Errors
+    /// Returns `Err` when `config.sequence_length` is zero. The derived window
+    /// size (`sequence_length / 2`) and stride (`window_size - overlap`) must
+    /// both be at least one: a zero stride makes `Iterator::step_by` panic, and
+    /// `window_size - window_overlap` would underflow in release builds. The
+    /// window is therefore floored at 1 and the overlap is kept strictly below
+    /// it.
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let strategy = SequenceProcessingStrategy::SlidingWindow;
         let max_sequence_length = config.sequence_length;
-        let window_size = max_sequence_length / 2;
-        let window_overlap = window_size / 4;
+        if max_sequence_length == 0 {
+            return Err(crate::error::OptimError::InvalidConfig(
+                "sequence_length must be greater than 0".to_string(),
+            ));
+        }
+        let window_size = (max_sequence_length / 2).max(1);
+        // Overlap must stay strictly below the window so the stride is >= 1.
+        let window_overlap = (window_size / 4).min(window_size - 1);
         let model_dimension = config.model_dimension;
 
         let sequence_buffer = SequenceBuffer::new(1000, model_dimension)?;
         let statistics = SequenceStatistics::new();
         let preprocessor = SequencePreprocessor::new(model_dimension)?;
-        let chunking = ChunkingStrategy::new(max_sequence_length, window_size)?;
+        let chunking = ChunkingStrategy::new(
+            max_sequence_length,
+            window_size.min(max_sequence_length.saturating_sub(1)),
+        )?;
 
         Ok(Self {
             strategy,
@@ -140,9 +157,11 @@ impl<
             return self.combine_sequences(gradient_history, parameter_history, loss_history);
         }
 
-        // Process in overlapping windows
+        // Process in overlapping windows. `saturating_sub` plus `.max(1)` keeps
+        // the stride positive even if the window/overlap pair is ever mutated
+        // into an inconsistent state: `step_by(0)` panics.
         let mut processed_chunks = Vec::new();
-        let step_size = self.window_size - self.window_overlap;
+        let step_size = self.window_size.saturating_sub(self.window_overlap).max(1);
 
         for start in (0..sequence_length).step_by(step_size) {
             let end = (start + self.window_size).min(sequence_length);
@@ -294,11 +313,13 @@ impl<
         let sequence_length = trajectory.gradient_sequence.shape()[0];
         let mut sequences = Vec::new();
 
-        // Create overlapping sequences for training
-        for start in (0..sequence_length).step_by(self.window_size / 2) {
+        // Create overlapping sequences for training. The stride is floored at 1
+        // because `step_by(0)` panics, which it did for any window size < 2.
+        let stride = (self.window_size / 2).max(1);
+        for start in (0..sequence_length).step_by(stride) {
             let end = (start + self.window_size).min(sequence_length);
 
-            if end - start < self.window_size / 2 {
+            if end - start < stride {
                 break; // Skip sequences that are too short
             }
 
@@ -471,15 +492,20 @@ impl<
         let window_size = 5;
         let threshold = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
-        for i in window_size..losses.len() - window_size {
-            let before_mean = losses
-                .slice(s![i - window_size..i])
-                .mean()
-                .expect("unwrap failed");
-            let after_mean = losses
-                .slice(s![i..i + window_size])
-                .mean()
-                .expect("unwrap failed");
+        // `losses.len() - window_size` underflowed (usize) for any trajectory
+        // shorter than 2*window_size, producing a huge upper bound and an
+        // out-of-bounds slice panic. Bail out instead when there is not enough
+        // history on both sides of a candidate change point.
+        let last_candidate = losses.len().saturating_sub(window_size);
+        for i in window_size..last_candidate {
+            let before_mean = match losses.slice(s![i - window_size..i]).mean() {
+                Some(m) => m,
+                None => continue,
+            };
+            let after_mean = match losses.slice(s![i..i + window_size]).mean() {
+                Some(m) => m,
+                None => continue,
+            };
 
             if (before_mean - after_mean).abs() > threshold {
                 change_points.push(i);
@@ -792,7 +818,22 @@ pub struct ChunkingStrategy<
 impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
     ChunkingStrategy<T>
 {
+    /// # Errors
+    /// Returns `Err` when `max_chunk_size` is zero or `overlap_size` is not
+    /// strictly smaller than it — either would make the chunking stride
+    /// (`max_chunk_size - overlap_size`) zero or underflow, and a zero stride
+    /// makes `Iterator::step_by` panic.
     pub fn new(max_chunk_size: usize, overlap_size: usize) -> Result<Self> {
+        if max_chunk_size == 0 {
+            return Err(crate::error::OptimError::InvalidConfig(
+                "max_chunk_size must be greater than 0".to_string(),
+            ));
+        }
+        if overlap_size >= max_chunk_size {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "overlap_size ({overlap_size}) must be smaller than max_chunk_size ({max_chunk_size})"
+            )));
+        }
         Ok(Self {
             max_chunk_size,
             overlap_size,
@@ -809,7 +850,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
             return Ok(chunks);
         }
 
-        let step_size = self.max_chunk_size - self.overlap_size;
+        let step_size = self.max_chunk_size.saturating_sub(self.overlap_size).max(1);
 
         for start in (0..sequence_length).step_by(step_size) {
             let end = (start + self.max_chunk_size).min(sequence_length);

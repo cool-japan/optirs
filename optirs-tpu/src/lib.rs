@@ -1,103 +1,77 @@
 //! # OptiRS TPU - TPU Coordination and Pod Management
 //!
 //! **Version:** 0.3.2
-//! **Status:** Coming Soon (Framework Only)
+//! **Status:** Working CPU-reference implementation; no vendor TPU runtime
 //!
-//! ⚠️ **Warning:** This crate is under active development. No functional implementation yet.
-//! Type definitions and architecture planning only.
+//! `optirs-tpu` provides TPU-style coordination, pod management, and an XLA-shaped
+//! compilation pipeline for OptiRS, built on
+//! [SciRS2](https://github.com/cool-japan/scirs)'s abstractions.
 //!
-//! `optirs-tpu` provides TPU coordination, pod management, and XLA integration for OptiRS,
-//! built on [SciRS2](https://github.com/cool-japan/scirs)'s distributed computing abstractions.
+//! ⚠️ **Hardware note:** there is no Google TPU (or other XLA vendor) runtime linked
+//! into this crate — that is proprietary and not distributable as pure Rust. Every
+//! algorithm below (graph optimization, shape inference, checkpointing, ...) is a
+//! real implementation that runs and is tested on the CPU reference executor;
+//! [`tpu_backend`] and [`fault_tolerance`] document, function by function, exactly
+//! where a real vendor runtime would be required and return an explicit
+//! [`error::TpuError`]/[`error::OptimError`] there instead of a fabricated result.
 //!
-//! ## Dependencies
+//! ## What is real today
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
-//! - `optirs-core` 0.1.0 - Core optimizers
+//! - **[`TPUOptimizer`]** wraps any [`optirs_core::Optimizer`] (also implementing
+//!   that trait itself) and drives it through a compile → execute → profile
+//!   pipeline; `tpu_step` performs the real update, not a stub.
+//! - **XLA-shaped compiler pipeline** ([`xla`]): a genuine computation-graph
+//!   builder with producer/consumer dependency tracking, dead-code elimination
+//!   (with a fail-safe against deleting undeclared-output graphs), constant
+//!   folding, common-subexpression elimination, kernel-fusion legality checks,
+//!   a real (non-bump) memory allocator with free/coalescing, and shape
+//!   inference for reshape/convolution/dot/broadcast.
+//! - **[`coordination::PodCoordinator`]**: device/channel topology, barrier
+//!   synchronization, load balancing, and fault detection over real in-process
+//!   state (no `sleep`-and-report-success placeholders).
+//! - **[`fault_tolerance`]**: checkpoints are serialized to disk with a SHA-256
+//!   integrity hash and verified on restore; rollback and replication go through
+//!   that same verified path.
+//! - **[`synchronization`]**: barriers with a correctly-signaled condvar predicate,
+//!   plus ring all-reduce/broadcast/reduce-scatter collectives.
 //!
-//! ## Implementation Status (v0.1.0)
+//! ## What is not implemented
 //!
-//! - 📝 Type definitions only
-//! - 📝 Architecture planning
-//! - 📝 Module structure defined
-//! - 🚧 Implementation coming in future releases
-//! - 🚧 TPU pod coordination (planned)
-//! - 🚧 XLA integration (planned)
+//! - Executing on real TPU silicon (needs a vendor runtime — see the hardware
+//!   note above).
+//! - Cross-device workload migration (`fault_tolerance::migrate_workload`
+//!   returns `Err` rather than fabricate a live migration).
+//! - Some [`pod_coordination`] submodules (e.g. NTP-style clock offset
+//!   estimation) are configuration scaffolding for a future wave; consult each
+//!   module's doc comments for its individual status.
 //!
-//! ## Status: Coming Soon
-//!
-//! This crate is under active development for large-scale distributed training.
-//!
-//! ## Planned Features
-//!
-//! ### TPU Pod Coordination
-//! - **Pod Management** - Coordinate TPU pods (v2, v3, v4, v5)
-//! - **Synchronization** - Efficient all-reduce and parameter averaging
-//! - **Fault Tolerance** - Automatic recovery from TPU failures
-//! - **Load Balancing** - Optimal workload distribution
-//!
-//! ### XLA Integration
-//! - **XLA Compilation** - Just-in-time compilation for TPUs
-//! - **Optimization Passes** - Advanced compiler optimizations
-//! - **Kernel Fusion** - Fused operations for maximum throughput
-//! - **Memory Layout** - Optimal memory access patterns
-//!
-//! ### Distributed Training
-//! - **Data Parallelism** - Distribute data across TPU cores
-//! - **Model Parallelism** - Partition large models across TPUs
-//! - **Pipeline Parallelism** - Layer-wise parallel execution
-//! - **Hybrid Parallelism** - Combine all strategies
-//!
-//! ### Performance
-//! - **Linear Scaling** - Near-perfect scaling to thousands of cores
-//! - **Ultra-Low Latency** - Sub-millisecond synchronization
-//! - **High Throughput** - Process millions of examples per second
-//! - **Fault Tolerance** - Automatic checkpoint and resume
-//!
-//! ## Example Usage (Future)
+//! ## Example
 //!
 //! ```rust,ignore
-//! use optirs_tpu::{TpuPodCoordinator, TpuConfig};
-//! use optirs::prelude::*;
+//! use optirs_core::optimizers::SGD;
+//! use optirs_tpu::{TPUConfig, TPUOptimizer};
 //!
-//! // Initialize TPU pod
-//! let config = TpuConfig {
-//!     pod_size: 8,  // 8 TPU cores
-//!     use_xla: true,
-//!     fault_tolerance: true,
-//! };
+//! let base_optimizer = SGD::new(0.01f32);
+//! let mut tpu_opt = TPUOptimizer::new(base_optimizer, TPUConfig::default())?;
 //!
-//! let mut coordinator = TpuPodCoordinator::new(config)?;
-//!
-//! // Create distributed optimizer
-//! let optimizer = Adam::new(0.001);
-//! let mut tpu_opt = coordinator.wrap_optimizer(optimizer)?;
-//!
-//! // Training automatically distributed across TPU pod
-//! let params = coordinator.distribute_parameters(&params)?;
-//! let grads = coordinator.compute_gradients(&data)?;
-//! let updated = tpu_opt.step(&params, &grads)?;
+//! // Runs the real compile/execute pipeline on the CPU reference backend.
+//! let updated = tpu_opt.tpu_step(&params, &grads)?;
+//! # Ok::<(), optirs_tpu::error::OptimError>(())
 //! ```
 //!
 //! ## Architecture
 //!
-//! Built exclusively on SciRS2:
-//! - **Distributed**: `scirs2_core::distributed::ClusterManager`
-//! - **AllReduce**: `scirs2_core::advanced_distributed_computing::AllReduce`
-//! - **Scheduler**: `scirs2_core::distributed::JobScheduler`
-//! - **JIT**: `scirs2_core::jit::JitCompiler` for XLA
-//! - **Arrays**: `scirs2_core::array_protocol::DistributedArray`
-//!
-//! ## Use Cases
-//!
-//! - **Foundation Models** - Train 100B+ parameter models
-//! - **Large-Scale RL** - Distributed reinforcement learning
-//! - **Scientific Computing** - Massive-scale simulations
-//! - **Research** - State-of-the-art model training
+//! Built on SciRS2 abstractions:
+//! - **Numeric**: `scirs2_core::ndarray`, `scirs2_core::numeric::Float`
+//! - **Errors**: `scirs2_core::error::CoreError` (re-exported here as [`error::OptimError`])
 //!
 //! ## Contributing
 //!
-//! TPU development follows SciRS2 integration guidelines.
-//! All distributed operations must use `scirs2_core::distributed` abstractions.
+//! Match the existing standard: no fabricated success values or hardcoded
+//! placeholder outputs. Where a capability genuinely requires hardware or a
+//! vendor runtime this crate does not have, return a descriptive `Err` rather
+//! than simulate one — see `FaultToleranceManager::migrate_workload` in
+//! [`fault_tolerance`] for the pattern.
 
 pub mod coordination;
 pub mod error;
@@ -107,7 +81,6 @@ pub mod pod_coordination;
 pub mod synchronization;
 pub mod tpu_backend;
 pub mod xla;
-pub mod xla_compilation;
 
 // Re-export main types from mod.rs
 mod main_types;

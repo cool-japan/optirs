@@ -1,7 +1,7 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
 //! **Version:** 0.3.2
-//! **Release Date:** 2026-03-27 (Stable Release)
+//! **Release Date:** 2026-08-17
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -13,16 +13,22 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
+//! - `scirs2-core` 0.6.5 - Required foundation
 //!
-//! ## Sub-Crate Status (v0.1.0)
+//! ## Sub-Crate Status (v0.3.2)
 //!
-//! - ✅ `optirs-core` - Production Ready (19 optimizers, SIMD, parallel, metrics)
-//! - ✅ `optirs-bench` - Production Ready (comprehensive benchmarking and profiling)
-//! - 🚧 `optirs-gpu` - Framework Ready (GPU kernels in development)
-//! - 🔬 `optirs-learned` - Research Phase (meta-learning and learned optimizers)
-//! - 🔬 `optirs-nas` - Research Phase (neural architecture search)
-//! - 📝 `optirs-tpu` - Framework Ready (TPU coordination planning stage)
+//! - ✅ `optirs-core` - Stable, production-ready (19 optimizers, SIMD, parallel, metrics)
+//! - ✅ `optirs-bench` - Available (benchmarking, profiling, regression detection)
+//! - 🚧 `optirs-gpu` - Real GPU compute path (Metal backend live end-to-end; WebGPU
+//!   kernels implemented but blocked on an upstream `scirs2-core` adapter-probe bug;
+//!   OpenCL is context-only; CUDA/ROCm have no backend) plus a fully-tested CPU
+//!   library of GPU-aware algorithms
+//! - 🔬 `optirs-learned` - Research-grade learned optimizers and meta-learning (real,
+//!   tested implementations; APIs may still change)
+//! - 🔬 `optirs-nas` - Research-grade neural architecture search (real, tested
+//!   implementations; APIs may still change)
+//! - 📝 `optirs-tpu` - Working CPU-reference implementation of TPU-style coordination
+//!   and an XLA-shaped compiler; no vendor TPU runtime is linked (proprietary hardware)
 //!
 //! ## Quick Start
 //!
@@ -30,7 +36,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-core = "0.3.1"
+//! optirs-core = "0.3.2"
 //! ```
 //!
 //! Basic usage:
@@ -57,7 +63,7 @@
 //!
 //! ### Core Optimizers (`optirs-core`)
 //!
-//! 16 state-of-the-art optimizers with performance optimizations:
+//! 19 state-of-the-art optimizers with performance optimizations:
 //!
 //! - **First-Order**: SGD, Adam, AdamW, RMSprop, Adagrad, LAMB, LARS, Lion, RAdam, SAM
 //! - **SIMD-Accelerated**: SimdSGD (2-4x faster for large arrays)
@@ -73,38 +79,50 @@
 //! - **GPU Framework** - 10-50x potential speedup with GPU acceleration
 //! - **Production Metrics** - Real-time monitoring with minimal overhead
 //!
-//! ### GPU Acceleration (`optirs-gpu`) [Coming Soon]
+//! ### GPU Acceleration (`optirs-gpu`)
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-gpu = { version = "0.1.0", features = ["cuda"] }
+//! optirs-gpu = { version = "0.3.2", features = ["metal"] }
 //! ```
 //!
-//! - **Multi-Backend**: CUDA, Metal, OpenCL, WebGPU
-//! - **Tensor Cores**: Mixed-precision training support
-//! - **Memory Management**: Advanced GPU memory pools
-//! - **Multi-GPU**: Distributed optimization across GPUs
+//! - **Metal**: real compute shaders (MSL pipelines, buffers, dispatch, readback) run
+//!   Adam, AdamW, SGD, RMSprop, Adagrad and LAMB end-to-end today
+//! - **WebGPU**: WGSL kernels are implemented, but blocked on an upstream `scirs2-core`
+//!   adapter-probe bug; **OpenCL**: context creation only, no kernels shipped yet;
+//!   **CUDA / ROCm**: no backend (`scirs2-core` 0.6.x dropped its CUDA backend)
+//! - **Tensor Cores**: real mixed-precision tiled GEMM on the wgpu path
+//! - **Memory Management**: CPU-side GPU memory pool models (arena/buddy/slab allocators)
+//! - **Multi-GPU**: single-device reduction kernels; true cross-device collectives
+//!   return an explicit `UnsupportedOperation` error rather than a fabricated result
 //!
-//! ### TPU Coordination (`optirs-tpu`) [Coming Soon]
+//! ### TPU Coordination (`optirs-tpu`)
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-tpu = "0.1.0"
+//! optirs-tpu = "0.3.2"
 //! ```
 //!
-//! - **Pod Management**: TPU pod coordination
-//! - **XLA Integration**: Compiler optimizations
-//! - **Fault Tolerance**: Robust hardware failure handling
-//! - **Large-Scale**: Distributed training for massive models
+//! A working CPU-reference implementation - no vendor TPU runtime is linked (that is
+//! proprietary and not distributable as pure Rust); every path below runs and is tested
+//! on the CPU executor, and returns an explicit error where real TPU silicon would be
+//! required instead of a fabricated result.
 //!
-//! ### Learned Optimizers (`optirs-learned`) [Research Phase]
+//! - **Pod Management**: device/channel topology, barrier sync, load balancing, fault detection
+//! - **XLA-shaped Compiler**: graph builder, dead-code elimination, constant folding,
+//!   common-subexpression elimination, kernel-fusion legality checks, a real allocator,
+//!   shape inference
+//! - **Fault Tolerance**: checkpoints serialized with a SHA-256 integrity hash, verified on restore
+//! - **Collectives**: ring all-reduce / broadcast / reduce-scatter
+//!
+//! ### Learned Optimizers (`optirs-learned`) [Research-Grade]
 //!
 //! - **Transformer-based**: Self-attention optimization
 //! - **LSTM**: Recurrent optimizer networks
 //! - **Meta-Learning**: Learning to optimize across tasks
 //! - **Few-Shot**: Rapid adaptation to new problems
 //!
-//! ### Neural Architecture Search (`optirs-nas`) [Research Phase]
+//! ### Neural Architecture Search (`optirs-nas`) [Research-Grade]
 //!
 //! - **Search Strategies**: Bayesian, evolutionary, RL-based
 //! - **Multi-Objective**: Balance accuracy, efficiency, resources
@@ -214,8 +232,10 @@
 //!
 //! ## Performance
 //!
-//! - **549 unit tests** + **54 doc tests** = **603 total tests**
-//! - **Zero clippy warnings** - Production quality
+//! - **2,998 unit/integration tests** + **110 doc tests** = **3,108 total tests**
+//!   workspace-wide, `--all-features` (`cargo nextest run` + `cargo test --doc`,
+//!   verified 2026-08-17): 3,098 passed, 14 skipped/ignored, 0 failed
+//! - `cargo check --workspace --all-features --all-targets` is clean
 //! - **Comprehensive benchmarks** - Using Criterion.rs
 //! - **Statistical analysis** - For reliable performance metrics
 //!

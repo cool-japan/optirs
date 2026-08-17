@@ -70,59 +70,60 @@ pub trait GpuMemoryBackend {
 pub struct GpuBackendFactory;
 
 impl GpuBackendFactory {
-    /// Detect available GPU vendors
+    /// Detect available GPU vendors.
+    ///
+    /// This used to unconditionally claim NVIDIA *and* AMD *and* Intel were
+    /// all present on every Linux/Windows machine (and Intel on every Mac,
+    /// which is simply false on Apple Silicon). It now either asks something
+    /// real or reports honestly empty instead of guessing:
+    ///
+    /// * **macOS**: every system has at least one Metal-capable device, so
+    ///   this opens a real [`scirs2_core::gpu::GpuContext`] on the `Metal`
+    ///   backend and reports `Apple` only if that actually succeeds. It never
+    ///   claims `Intel`: most Macs sold since 2020 have none.
+    /// * **Linux**: reads real PCI vendor IDs from `/sys/bus/pci/devices`
+    ///   (no FFI, no root required) via the private `detect_pci_display_vendors`
+    ///   helper below.
+    /// * **Everywhere else** (including Windows): this crate has no
+    ///   dependency-free way to query real vendor hardware, so it reports an
+    ///   empty list rather than a fabricated one.
     pub fn detect_available_vendors() -> Vec<GpuVendor> {
-        let mut vendors = Vec::new();
+        #[cfg(target_os = "macos")]
+        {
+            match scirs2_core::gpu::GpuContext::new(scirs2_core::gpu::GpuBackend::Metal) {
+                Ok(_) => vec![GpuVendor::Apple],
+                Err(_) => Vec::new(),
+            }
+        }
 
-        // Simulate vendor detection
         #[cfg(target_os = "linux")]
         {
-            vendors.push(GpuVendor::Nvidia);
-            vendors.push(GpuVendor::Amd);
-            vendors.push(GpuVendor::Intel);
+            detect_pci_display_vendors(std::path::Path::new("/sys/bus/pci/devices"))
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            vendors.push(GpuVendor::Nvidia);
-            vendors.push(GpuVendor::Amd);
-            vendors.push(GpuVendor::Intel);
+            Vec::new()
         }
-
-        #[cfg(target_os = "macos")]
-        {
-            vendors.push(GpuVendor::Apple);
-            vendors.push(GpuVendor::Intel); // Intel Macs
-        }
-
-        vendors
     }
 
-    /// Get preferred vendor based on platform
+    /// The first vendor from [`Self::detect_available_vendors`] this crate
+    /// has a backend for, preferring the one most likely to work on the
+    /// current platform. `Unknown` when detection found nothing — never a
+    /// fabricated guess.
     pub fn get_preferred_vendor() -> GpuVendor {
-        #[cfg(target_os = "macos")]
-        {
-            GpuVendor::Apple
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
-        {
-            // Prefer NVIDIA for CUDA support, then AMD, then Intel
-            let vendors = Self::detect_available_vendors();
-            if vendors.contains(&GpuVendor::Nvidia) {
-                return GpuVendor::Nvidia;
-            } else if vendors.contains(&GpuVendor::Amd) {
-                return GpuVendor::Amd;
-            } else if vendors.contains(&GpuVendor::Intel) {
-                return GpuVendor::Intel;
+        let vendors = Self::detect_available_vendors();
+        for candidate in [
+            GpuVendor::Apple,
+            GpuVendor::Nvidia,
+            GpuVendor::Amd,
+            GpuVendor::Intel,
+        ] {
+            if vendors.contains(&candidate) {
+                return candidate;
             }
-            GpuVendor::Unknown
         }
-
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-        {
-            GpuVendor::Unknown
-        }
+        GpuVendor::Unknown
     }
 
     /// Create backend configuration for vendor
@@ -135,6 +136,47 @@ impl GpuBackendFactory {
             GpuVendor::Unknown => VendorConfig::Cuda(CudaConfig::default()), // Fallback
         }
     }
+}
+
+/// Parse a `/sys/bus/pci/devices`-shaped directory tree for real GPU vendor
+/// IDs: for every device directory whose `class` file starts with `0x03`
+/// (the PCI "display controller" class), read `vendor` and map the standard
+/// PCI vendor ID to a [`GpuVendor`]. Takes the root as a parameter so the
+/// parsing logic is unit-testable against a fake tree without touching the
+/// real `/sys` (which is kernel-owned and cannot be written to by a test).
+///
+/// A missing or unreadable root (non-Linux, sandboxed, containerized without
+/// `/sys` mounted, ...) returns an empty list — the honest "detection is not
+/// possible here" answer, not a guess.
+fn detect_pci_display_vendors(pci_root: &std::path::Path) -> Vec<GpuVendor> {
+    const DISPLAY_CLASS_PREFIX: &str = "0x03";
+    const NVIDIA_VENDOR_ID: &str = "0x10de";
+    const AMD_VENDOR_ID: &str = "0x1002";
+    const INTEL_VENDOR_ID: &str = "0x8086";
+
+    let Ok(entries) = std::fs::read_dir(pci_root) else {
+        return Vec::new();
+    };
+
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let device_dir = entry.path();
+        let class = std::fs::read_to_string(device_dir.join("class")).unwrap_or_default();
+        if !class.trim().starts_with(DISPLAY_CLASS_PREFIX) {
+            continue;
+        }
+        let vendor_id = std::fs::read_to_string(device_dir.join("vendor")).unwrap_or_default();
+        let vendor = match vendor_id.trim() {
+            NVIDIA_VENDOR_ID => GpuVendor::Nvidia,
+            AMD_VENDOR_ID => GpuVendor::Amd,
+            INTEL_VENDOR_ID => GpuVendor::Intel,
+            _ => continue,
+        };
+        if !found.contains(&vendor) {
+            found.push(vendor);
+        }
+    }
+    found
 }
 
 /// Unified configuration for all vendors
@@ -350,16 +392,98 @@ impl From<MetalError> for UnifiedGpuError {
 mod tests {
     use super::*;
 
+    /// Regression test for F27: `detect_available_vendors` must not claim
+    /// vendors it has no evidence for. On macOS specifically, it must never
+    /// claim `Intel` unconditionally — most Macs sold since 2020 (Apple
+    /// Silicon) have no Intel GPU at all.
     #[test]
     fn test_vendor_detection() {
         let vendors = GpuBackendFactory::detect_available_vendors();
-        assert!(!vendors.is_empty());
+        // No duplicates, and every entry must be a vendor this platform's
+        // detector can actually justify.
+        let mut seen = Vec::new();
+        for vendor in &vendors {
+            assert!(
+                !seen.contains(vendor),
+                "duplicate vendor reported: {vendor:?}"
+            );
+            seen.push(vendor.clone());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                !vendors.contains(&GpuVendor::Intel),
+                "macOS detection must never assume Intel — most Macs have none"
+            );
+            assert!(
+                !vendors.contains(&GpuVendor::Nvidia) && !vendors.contains(&GpuVendor::Amd),
+                "macOS PCI vendors are not detected by this code path"
+            );
+        }
     }
 
     #[test]
     fn test_preferred_vendor() {
-        let vendor = GpuBackendFactory::get_preferred_vendor();
-        assert_ne!(vendor, GpuVendor::Unknown);
+        // Must be self-consistent with detection: `Unknown` is legitimate
+        // when nothing was detected (e.g. a sandboxed Linux CI runner with no
+        // `/sys/bus/pci/devices`), so this only asserts internal consistency,
+        // not "always finds something" (that was the fabrication).
+        let vendors = GpuBackendFactory::detect_available_vendors();
+        let preferred = GpuBackendFactory::get_preferred_vendor();
+        if preferred != GpuVendor::Unknown {
+            assert!(
+                vendors.contains(&preferred),
+                "preferred vendor {preferred:?} was not among the detected vendors {vendors:?}"
+            );
+        }
+    }
+
+    /// The PCI-parsing logic itself, exercised against a fake sysfs tree
+    /// (never the real `/sys`, which is kernel-owned) so it is verified on
+    /// every platform this test suite runs on, not just Linux.
+    #[test]
+    fn detect_pci_display_vendors_reads_real_vendor_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "optirs_gpu_pci_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).expect("create fake pci root");
+
+        let make_device = |name: &str, class: &str, vendor: &str| {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).expect("create fake device dir");
+            std::fs::write(dir.join("class"), class).expect("write class");
+            std::fs::write(dir.join("vendor"), vendor).expect("write vendor");
+        };
+
+        // A real NVIDIA display controller.
+        make_device("0000:01:00.0", "0x030000\n", "0x10de\n");
+        // A real AMD display controller.
+        make_device("0000:02:00.0", "0x030000\n", "0x1002\n");
+        // A non-display NVIDIA device (e.g. an audio codec on the same
+        // card) must NOT count as a display vendor.
+        make_device("0000:01:00.1", "0x040300\n", "0x10de\n");
+        // A display controller from an unrecognised vendor must be ignored,
+        // not misattributed.
+        make_device("0000:03:00.0", "0x030000\n", "0x1234\n");
+
+        let found = detect_pci_display_vendors(&root);
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(found.len(), 2, "expected exactly NVIDIA and AMD: {found:?}");
+        assert!(found.contains(&GpuVendor::Nvidia));
+        assert!(found.contains(&GpuVendor::Amd));
+        assert!(!found.contains(&GpuVendor::Intel));
+    }
+
+    #[test]
+    fn detect_pci_display_vendors_missing_root_is_empty_not_an_error() {
+        let missing = std::env::temp_dir().join("optirs_gpu_pci_test_does_not_exist_at_all");
+        assert!(detect_pci_display_vendors(&missing).is_empty());
     }
 
     #[test]

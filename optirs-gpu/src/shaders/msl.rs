@@ -209,6 +209,25 @@ kernel void optirs_adagrad(
 }
 "#;
 
+/// Local reduction step for multi-GPU all-reduce-mean. See
+/// [`super::wgsl::ALL_REDUCE_MEAN`].
+pub const ALL_REDUCE_MEAN: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void optirs_all_reduce_mean(
+    device float* x [[buffer(0)]],
+    device const float* y [[buffer(1)]],
+    uint idx [[thread_position_in_grid]])
+{
+    uint n = as_type<uint>(y[0]);
+    if (idx >= n) { return; }
+
+    uint num_gpus = as_type<uint>(y[1]);
+    x[idx] = x[idx] / float(num_gpus);
+}
+"#;
+
 /// Two-phase LAMB with a threadgroup norm reduction. See [`super::wgsl::LAMB`].
 pub const LAMB: &str = r#"
 #include <metal_stdlib>

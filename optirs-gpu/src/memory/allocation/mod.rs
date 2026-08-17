@@ -722,7 +722,7 @@ impl ThreadSafeUnifiedAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, AllocationError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.allocate(
             size,
             AllocatorType::Strategy(strategies::AllocationStrategy::FirstFit),
@@ -731,17 +731,17 @@ impl ThreadSafeUnifiedAllocator {
     }
 
     pub fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<(), AllocationError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.deallocate(ptr, size)
     }
 
     pub fn get_stats(&self) -> UnifiedStats {
-        let allocator = self.allocator.lock().expect("lock poisoned");
+        let allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.get_stats().clone()
     }
 
     pub fn garbage_collect(&self) -> GarbageCollectionResult {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.garbage_collect()
     }
 }

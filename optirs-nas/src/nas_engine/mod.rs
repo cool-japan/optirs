@@ -83,6 +83,13 @@ pub mod config;
 pub mod engine;
 pub mod resources;
 pub mod results;
+/// Engine-side adapters exposing the real `crate::search_strategies`
+/// implementations through the engine's own `SearchStrategy` trait.
+///
+/// Crate-internal: the adapters are an implementation detail of
+/// [`engine::NeuralArchitectureSearch::new`], which picks one per
+/// [`config::SearchStrategyType`].
+pub(crate) mod strategy_adapters;
 
 // Re-export core types for convenience
 pub use config::*;

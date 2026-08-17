@@ -56,25 +56,49 @@ fn scan_directory(directory: &str) -> Vec<String> {
 fn scan_file(path: &Path, file_name: &str) -> Vec<String> {
     let mut issues = Vec::new();
 
-    // Check for common security patterns
+    // Check for common security patterns, line by line, so every finding
+    // carries a real location and comments do not trigger false positives.
     if file_name.ends_with(".rs") {
         if let Ok(content) = fs::read_to_string(path) {
-            // Check for unsafe blocks
-            if content.contains("unsafe") {
-                issues.push(format!("Unsafe code found in: {}", path.display()));
-            }
+            for (index, line) in content.lines().enumerate() {
+                let line_number = index + 1;
+                // Ignore anything after a `//` line comment: findings that live
+                // only in comments are not real code issues.
+                let code = line.split("//").next().unwrap_or(line);
 
-            // Check for unwrap() calls
-            if content.contains(".unwrap()") {
-                issues.push(format!(
-                    "Potential panic with unwrap() in: {}",
-                    path.display()
-                ));
-            }
+                if contains_keyword(code, "unsafe") {
+                    issues.push(format!("Unsafe code at {}:{}", path.display(), line_number));
+                }
 
-            // Check for debug prints
-            if content.contains("println!") && content.contains("password") {
-                issues.push(format!("Potential password logging in: {}", path.display()));
+                if code.contains(".unwrap()") {
+                    issues.push(format!(
+                        "Potential panic with unwrap() at {}:{}",
+                        path.display(),
+                        line_number
+                    ));
+                }
+
+                // Password logging: the print/log call and the word "password"
+                // must appear on the same line to be reported.
+                let lowered = code.to_ascii_lowercase();
+                let logs = [
+                    "println!",
+                    "print!",
+                    "eprintln!",
+                    "eprint!",
+                    "log::",
+                    "debug!",
+                    "info!",
+                ]
+                .iter()
+                .any(|m| code.contains(m));
+                if logs && lowered.contains("password") {
+                    issues.push(format!(
+                        "Potential password logging at {}:{}",
+                        path.display(),
+                        line_number
+                    ));
+                }
             }
         }
     }
@@ -86,4 +110,27 @@ fn scan_file(path: &Path, file_name: &str) -> Vec<String> {
     }
 
     issues
+}
+
+/// Return true when `keyword` appears in `text` as a standalone identifier
+/// (bounded by non-identifier characters), avoiding matches inside longer
+/// words such as `unsafely` or `get_unsafe_ptr`.
+fn contains_keyword(text: &str, keyword: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(keyword) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || !is_ident_byte(bytes[abs - 1]);
+        let after_index = abs + keyword.len();
+        let after_ok = after_index >= bytes.len() || !is_ident_byte(bytes[after_index]);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + keyword.len();
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }

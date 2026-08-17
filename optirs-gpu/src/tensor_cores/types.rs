@@ -10,11 +10,10 @@
 ))]
 use crate::memory::vendors::cuda_backend::CudaStream;
 use crate::GpuOptimError;
-use scirs2_core::gpu::{GpuContext, GpuKernel};
+use scirs2_core::gpu::GpuContext;
 use scirs2_core::ndarray::{Array, Array2, Dimension};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
-use std::sync::Arc;
 
 use std::collections::HashMap;
 
@@ -35,16 +34,27 @@ pub struct AdamParams<T: Float> {
     pub step: i32,
 }
 impl<T: Float> AdamParams<T> {
-    /// Create new Adam parameters with default values
-    pub fn new(lr: T) -> Self {
-        Self {
+    /// Create new Adam parameters with the usual default hyper-parameters.
+    ///
+    /// Returns [`GpuOptimError::InvalidState`] if the target float type cannot
+    /// represent one of the default constants — which never happens for `f32`
+    /// or `f64`, but is reported honestly instead of panicking.
+    pub fn new(lr: T) -> Result<Self, GpuOptimError> {
+        let cvt = |value: f64| {
+            T::from(value).ok_or_else(|| {
+                GpuOptimError::InvalidState(format!(
+                    "cannot represent {value} in the target float type"
+                ))
+            })
+        };
+        Ok(Self {
             lr,
-            beta1: T::from(0.9).expect("unwrap failed"),
-            beta2: T::from(0.999).expect("unwrap failed"),
-            eps: T::from(1e-8).expect("unwrap failed"),
-            weight_decay: T::from(0.0).expect("unwrap failed"),
+            beta1: cvt(0.9)?,
+            beta2: cvt(0.999)?,
+            eps: cvt(1e-8)?,
+            weight_decay: cvt(0.0)?,
             step: 0,
-        }
+        })
     }
 }
 /// Resource requirements for workload
@@ -85,28 +95,40 @@ pub struct SparseTensorCoreMatrix<T: Float + Debug + Send + Sync + 'static> {
     sparsity_ratio: f32,
 }
 impl<T: Float + Debug + Send + Sync + 'static> SparseTensorCoreMatrix<T> {
-    /// Create sparse matrix from dense matrix using 2:4 structured sparsity
+    /// Create sparse matrix from dense matrix using 2:4 structured sparsity.
+    ///
+    /// Each contiguous group of four columns keeps its (up to) two
+    /// largest-magnitude entries. `values[i]` and `metadata[i]` are parallel:
+    /// `metadata[i]` is the in-group column offset (`0..=3`) of `values[i]`, and
+    /// the kept pair is stored in ascending column order so the layout is
+    /// canonical and round-trips through [`to_dense`](Self::to_dense). The
+    /// magnitude comparison is NaN-safe (NaNs sort as equal rather than
+    /// panicking).
     pub fn from_dense(dense: &Array2<T>) -> Self {
         let (m, n) = dense.dim();
         let mut values = Vec::new();
         let mut metadata = Vec::new();
         for row in 0..m {
             for col_group in (0..n).step_by(4) {
-                let mut group_values = Vec::new();
-                let mut group_indices = Vec::new();
-                for offset in 0..4 {
-                    if col_group + offset < n {
-                        group_values.push(dense[[row, col_group + offset]]);
-                        group_indices.push(offset);
-                    }
-                }
-                let mut indexed_values: Vec<(usize, T)> =
-                    group_indices.into_iter().zip(group_values).collect();
-                indexed_values
-                    .sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).expect("unwrap failed"));
-                for &(idx, val) in indexed_values.iter().take(2) {
+                let mut indexed_values: Vec<(usize, T)> = (0..4)
+                    .filter(|offset| col_group + offset < n)
+                    .map(|offset| (offset, dense[[row, col_group + offset]]))
+                    .collect();
+                // Keep the (up to) two largest-magnitude entries — that is what
+                // 2:4 structured pruning means. NaN-safe: a failed comparison
+                // orders the pair as equal instead of panicking.
+                indexed_values.sort_by(|a, b| {
+                    b.1.abs()
+                        .partial_cmp(&a.1.abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                indexed_values.truncate(2);
+                // Emit in ascending column order for a canonical, reconstructable
+                // metadata stream.
+                indexed_values.sort_by_key(|&(offset, _)| offset);
+                for (offset, val) in indexed_values {
                     values.push(val);
-                    metadata.push(idx as u8);
+                    metadata.push(offset as u8);
                 }
             }
         }
@@ -118,6 +140,31 @@ impl<T: Float + Debug + Send + Sync + 'static> SparseTensorCoreMatrix<T> {
             dense_n: n,
             sparsity_ratio,
         }
+    }
+
+    /// Reconstruct the pruned dense matrix (pruned entries become zero).
+    ///
+    /// Mirrors [`from_dense`](Self::from_dense)'s grouping exactly, so
+    /// `from_dense(&a).to_dense()` reproduces `a` with every non-kept entry
+    /// zeroed — the check that proves the `values`/`metadata` pair is usable.
+    pub fn to_dense(&self) -> Array2<T> {
+        let mut dense = Array2::zeros((self.dense_m, self.dense_n));
+        let mut cursor = 0;
+        for row in 0..self.dense_m {
+            for col_group in (0..self.dense_n).step_by(4) {
+                let group_len = (self.dense_n - col_group).min(4);
+                let kept = group_len.min(2);
+                for _ in 0..kept {
+                    if cursor >= self.values.len() {
+                        return dense;
+                    }
+                    let offset = self.metadata[cursor] as usize;
+                    dense[[row, col_group + offset]] = self.values[cursor];
+                    cursor += 1;
+                }
+            }
+        }
+        dense
     }
     /// Get dense shape
     pub fn denseshape(&self) -> (usize, usize) {
@@ -202,6 +249,66 @@ impl MixedPrecisionTrainer {
     pub fn get_loss_scale(&self) -> f32 {
         self.loss_scale
     }
+
+    /// Multiply `values` by the current loss scale in place.
+    ///
+    /// This is the forward half of AMP loss scaling: the loss (or its
+    /// gradients) is scaled up before the reduced-precision backward pass so
+    /// that small gradients survive `binary16` rounding.
+    pub fn scale(&self, values: &mut [f32]) {
+        for value in values.iter_mut() {
+            *value *= self.loss_scale;
+        }
+    }
+
+    /// Divide `grads` by the current loss scale and report whether the scaled
+    /// gradients overflowed (contained a non-finite value).
+    ///
+    /// On overflow the step must be discarded; either way the loss-scale
+    /// schedule is advanced through [`update_loss_scale`](Self::update_loss_scale)
+    /// so the scale grows on healthy runs and backs off after an overflow.
+    /// Returns `true` when an overflow was detected.
+    pub fn unscale_and_check(&mut self, grads: &mut [f32]) -> bool {
+        let inv_scale = if self.loss_scale != 0.0 {
+            1.0 / self.loss_scale
+        } else {
+            1.0
+        };
+        let mut overflow = false;
+        for grad in grads.iter_mut() {
+            if !grad.is_finite() {
+                overflow = true;
+            }
+            *grad *= inv_scale;
+        }
+        self.update_loss_scale(overflow);
+        overflow
+    }
+
+    /// Cast an `f32` slice to IEEE-754 `binary16` bit patterns, saturating to
+    /// the `binary16` finite range first.
+    ///
+    /// Delegates the conversion to [`crate::mixed_precision`], the crate's
+    /// single real `binary16` implementation, rather than reimplementing it.
+    pub fn cast_to_f16(&self, values: &[f32]) -> Vec<u16> {
+        values
+            .iter()
+            .map(|&v| {
+                crate::mixed_precision::f32_to_f16_bits(
+                    crate::mixed_precision::saturate_to_f16_range(v),
+                )
+            })
+            .collect()
+    }
+
+    /// Cast `binary16` bit patterns back to `f32`.
+    pub fn cast_from_f16(&self, bits: &[u16]) -> Vec<f32> {
+        bits.iter()
+            .copied()
+            .map(crate::mixed_precision::f16_bits_to_f32)
+            .collect()
+    }
+
     /// Select optimal precision for current operation
     pub fn select_optimal_precision(
         &self,
@@ -356,6 +463,31 @@ pub struct HardwareUtilizationState {
     /// Power consumption (Watts)
     pub power_consumption: f32,
 }
+
+impl HardwareUtilizationState {
+    /// Conservative "assume nothing is under load" baseline.
+    ///
+    /// `scirs2-core` 0.6.x exposes no NVML/real device-telemetry API — even
+    /// its own [`scirs2_core::gpu::GpuContext::get_available_memory`] is a
+    /// documented placeholder — so this crate has no way to *measure* GPU
+    /// utilization, temperature or power. Rather than fabricate plausible
+    /// numbers, [`TensorCoreOptimizer::adaptive_tensor_core_scheduling`] uses
+    /// this all-idle baseline by default; callers with a real telemetry
+    /// source (e.g. `nvidia-smi`/NVML polled out of band) can supply actual
+    /// measurements through
+    /// [`TensorCoreOptimizer::adaptive_tensor_core_scheduling_with_state`]
+    /// instead.
+    pub fn unknown_baseline() -> Self {
+        Self {
+            gpu_utilization: 0.0,
+            memory_utilization: 0.0,
+            tensor_core_utilization: 0.0,
+            bandwidth_utilization: 0.0,
+            temperature: 25.0, // ambient room temperature, not a measurement
+            power_consumption: 0.0,
+        }
+    }
+}
 /// Tensor core capability information
 #[derive(Debug, Clone)]
 pub struct TensorCoreInfo {
@@ -376,81 +508,37 @@ pub struct TensorCorePerformanceResult {
     pub memory_bandwidth_gb_s: f64,
     pub tensor_core_utilization: f64,
 }
-/// Tensor core enhanced optimizer
+/// Tensor core enhanced optimizer.
+///
+/// The struct carries no device handle: literal NVIDIA tensor-core execution is
+/// not reachable through `scirs2-core` on any backend this crate can open, so
+/// the real work this type does is CPU-side planning — matrix-layout
+/// optimization, precision selection and loss scaling. The WMMA GEMM entry
+/// points (`tensor_core_gemm`, `fused_adam_tensor_core`, ...) report
+/// [`GpuOptimError::UnsupportedOperation`] rather than fabricating a result.
 pub struct TensorCoreOptimizer {
-    /// GPU context
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    context: Arc<GpuContext>,
     /// Tensor core configuration
     config: TensorCoreConfig,
-    /// Compiled tensor core kernels
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    kernels: TensorCoreKernels,
-    /// Stream for asynchronous execution
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    stream: CudaStream,
-    /// Compute capability of the device
+    /// Compute capability of the device. Always `(0, 0)`: `scirs2-core` 0.6.x
+    /// exposes no NVIDIA compute-capability probe, so no tensor-core hardware is
+    /// ever detected and every capability query is honestly negative.
     compute_capability: (u32, u32),
     /// Matrix layout optimization cache
     layout_cache: std::collections::HashMap<(usize, usize, usize), OptimalLayout>,
 }
 impl TensorCoreOptimizer {
-    /// Create new tensor core optimizer
+    /// Create a new tensor core optimizer.
+    ///
+    /// Construction always succeeds. The CPU-side planning helpers are fully
+    /// functional; the device GEMM paths return
+    /// [`GpuOptimError::UnsupportedOperation`] because no reachable backend
+    /// exposes NVIDIA tensor cores.
     pub fn new(config: TensorCoreConfig) -> Result<Self, GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            Err(GpuOptimError::UnsupportedOperation(
-                "Tensor core optimizer not yet fully implemented".to_string(),
-            ))
-        }
-        #[cfg(not(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        )))]
-        {
-            Ok(Self {
-                config,
-                compute_capability: (0, 0),
-                layout_cache: std::collections::HashMap::new(),
-            })
-        }
-    }
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    fn compile_kernels(
-        _context: &GpuContext,
-        _config: &TensorCoreConfig,
-        _compute_capability: (u32, u32),
-    ) -> Result<TensorCoreKernels, GpuOptimError> {
-        Err(GpuOptimError::UnsupportedOperation(
-            "Tensor core kernel compilation not yet implemented".to_string(),
-        ))
+        Ok(Self {
+            config,
+            compute_capability: (0, 0),
+            layout_cache: std::collections::HashMap::new(),
+        })
     }
     /// Optimize matrix layout for tensor core operations
     pub fn optimize_layout(&mut self, m: usize, n: usize, k: usize) -> OptimalLayout {
@@ -835,12 +923,32 @@ impl TensorCoreOptimizer {
             alignment,
         })
     }
-    /// Adaptive tensor core scheduling based on hardware utilization
+    /// Adaptive tensor core scheduling using the honest all-idle baseline
+    /// (see [`HardwareUtilizationState::unknown_baseline`]: this crate has no
+    /// way to measure real GPU utilization). To schedule against real
+    /// telemetry, use
+    /// [`Self::adaptive_tensor_core_scheduling_with_state`] instead.
     pub fn adaptive_tensor_core_scheduling<T: Float + Debug + Send + Sync + 'static>(
         &mut self,
         workload: &TensorCoreWorkload<T>,
     ) -> Result<SchedulingPlan, GpuOptimError> {
-        let hardware_state = self.query_hardware_utilization()?;
+        self.adaptive_tensor_core_scheduling_with_state(
+            workload,
+            HardwareUtilizationState::unknown_baseline(),
+        )
+    }
+
+    /// Adaptive tensor core scheduling against an explicit hardware state.
+    ///
+    /// The scheduling heuristics (priority ordering, stream assignment,
+    /// precision selection, layout-change cost/benefit) are real and operate
+    /// on whatever `hardware_state` says; this crate simply has no sensor of
+    /// its own to produce that state, so the caller supplies it.
+    pub fn adaptive_tensor_core_scheduling_with_state<T: Float + Debug + Send + Sync + 'static>(
+        &mut self,
+        workload: &TensorCoreWorkload<T>,
+        hardware_state: HardwareUtilizationState,
+    ) -> Result<SchedulingPlan, GpuOptimError> {
         let optimal_config = self.compute_optimal_scheduling(workload, &hardware_state)?;
         Ok(SchedulingPlan {
             operation_order: optimal_config.operation_order,
@@ -849,40 +957,6 @@ impl TensorCoreOptimizer {
             precision_assignments: optimal_config.precision_assignments,
             estimated_performance: optimal_config.estimated_performance,
         })
-    }
-    fn query_hardware_utilization(&self) -> Result<HardwareUtilizationState, GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            Ok(HardwareUtilizationState {
-                gpu_utilization: 75.0,
-                memory_utilization: 60.0,
-                tensor_core_utilization: 45.0,
-                bandwidth_utilization: 70.0,
-                temperature: 65.0,
-                power_consumption: 200.0,
-            })
-        }
-        #[cfg(not(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        )))]
-        {
-            Ok(HardwareUtilizationState {
-                gpu_utilization: 0.0,
-                memory_utilization: 0.0,
-                tensor_core_utilization: 0.0,
-                bandwidth_utilization: 0.0,
-                temperature: 25.0,
-                power_consumption: 0.0,
-            })
-        }
     }
     fn compute_optimal_scheduling<T: Float + Debug + Send + Sync + 'static>(
         &self,
@@ -1172,28 +1246,6 @@ pub struct TensorCoreConfig {
     /// Enable asynchronous execution
     pub async_execution: bool,
 }
-#[cfg(any(
-    feature = "cuda",
-    feature = "metal",
-    feature = "opencl",
-    feature = "wgpu"
-))]
-struct TensorCoreKernels {
-    /// FP16 tensor core GEMM kernel
-    fp16_gemm: GpuKernel,
-    /// BF16 tensor core GEMM kernel
-    bf16_gemm: GpuKernel,
-    /// TF32 tensor core GEMM kernel
-    tf32_gemm: GpuKernel,
-    /// FP8 tensor core GEMM kernel (Hopper)
-    fp8_gemm: Option<GpuKernel>,
-    /// Sparse tensor core GEMM kernel
-    sparse_gemm: GpuKernel,
-    /// Fused Adam update with tensor cores
-    fused_adam_tc: GpuKernel,
-    /// Fused LAMB update with tensor cores
-    fused_lamb_tc: GpuKernel,
-}
 /// Optimal configuration computed by scheduling
 #[derive(Debug, Clone)]
 pub struct OptimalSchedulingConfig {
@@ -1207,103 +1259,6 @@ pub struct OptimalSchedulingConfig {
     pub precision_assignments: Vec<TensorCorePrecision>,
     /// Estimated performance
     pub estimated_performance: PerformanceEstimate,
-}
-/// Stream pool for managing CUDA streams
-#[derive(Debug)]
-pub struct StreamPool {
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    streams: Vec<CudaStream>,
-    #[cfg(not(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    )))]
-    _phantom: std::marker::PhantomData<()>,
-    current_stream: usize,
-    num_streams: usize,
-}
-impl StreamPool {
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    pub fn new(_context: &GpuContext, numstreams: usize) -> Result<Self, GpuOptimError> {
-        let mut streams = Vec::with_capacity(numstreams);
-        for i in 0..numstreams {
-            use crate::memory::vendors::cuda_backend::CudaStreamFlags;
-            use std::time::Instant;
-            streams.push(CudaStream {
-                handle: std::ptr::null_mut(),
-                id: i as u32,
-                priority: 0,
-                flags: CudaStreamFlags::default(),
-                created_at: Instant::now(),
-                operations: std::collections::VecDeque::new(),
-            });
-        }
-        Ok(Self {
-            streams,
-            current_stream: 0,
-            num_streams: numstreams,
-        })
-    }
-    #[cfg(not(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    )))]
-    pub fn new(_context: &GpuContext, numstreams: usize) -> Result<Self, GpuOptimError> {
-        Ok(Self {
-            _phantom: std::marker::PhantomData,
-            current_stream: 0,
-            num_streams: numstreams,
-        })
-    }
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    pub fn get_stream(&mut self, index: usize) -> &CudaStream {
-        &self.streams[index % self.num_streams]
-    }
-    #[cfg(not(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    )))]
-    pub fn get_stream(&mut self, index: usize) -> &() {
-        &()
-    }
-    #[cfg(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    ))]
-    pub fn synchronize_all(&self) -> Result<(), GpuOptimError> {
-        Ok(())
-    }
-    #[cfg(not(any(
-        feature = "cuda",
-        feature = "metal",
-        feature = "opencl",
-        feature = "wgpu"
-    )))]
-    pub fn synchronize_all(&self) -> Result<(), GpuOptimError> {
-        Ok(())
-    }
 }
 /// Batch operation for tensor cores
 #[derive(Debug)]

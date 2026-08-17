@@ -916,32 +916,32 @@ impl ThreadSafeArena {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, ArenaError> {
-        let mut arena = self.arena.lock().expect("lock poisoned");
+        let mut arena = self.arena.lock().unwrap_or_else(|e| e.into_inner());
         arena.allocate(size)
     }
 
     pub fn reset(&self) {
-        let mut arena = self.arena.lock().expect("lock poisoned");
+        let mut arena = self.arena.lock().unwrap_or_else(|e| e.into_inner());
         arena.reset();
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointHandle, ArenaError> {
-        let mut arena = self.arena.lock().expect("lock poisoned");
+        let mut arena = self.arena.lock().unwrap_or_else(|e| e.into_inner());
         arena.checkpoint()
     }
 
     pub fn rollback(&self, handle: CheckpointHandle) -> Result<(), ArenaError> {
-        let mut arena = self.arena.lock().expect("lock poisoned");
+        let mut arena = self.arena.lock().unwrap_or_else(|e| e.into_inner());
         arena.rollback(handle)
     }
 
     pub fn get_usage(&self) -> ArenaUsage {
-        let arena = self.arena.lock().expect("lock poisoned");
+        let arena = self.arena.lock().unwrap_or_else(|e| e.into_inner());
         arena.get_usage()
     }
 
     pub fn get_stats(&self) -> ArenaStats {
-        let arena = self.arena.lock().expect("lock poisoned");
+        let arena = self.arena.lock().unwrap_or_else(|e| e.into_inner());
         arena.get_stats().clone()
     }
 }

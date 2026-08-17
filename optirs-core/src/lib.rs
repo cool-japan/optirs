@@ -8,7 +8,7 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
+//! - `scirs2-core` 0.6.5 - Required foundation
 //!
 //! ## Quick Start
 //!

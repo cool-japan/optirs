@@ -11,7 +11,8 @@
     "build:nodejs": "bash build-wasm.sh nodejs",
     "build:bundler": "bash build-wasm.sh bundler",
     "build:all": "bash build-wasm.sh all",
-    "test": "wasm-pack test --node --features wasm"
+    "test": "wasm-pack test --node --features wasm",
+    "test:webgpu": "wasm-pack test --node --features webgpu"
   },
   "repository": {
     "type": "git",

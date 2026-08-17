@@ -37,11 +37,13 @@
 //!     ..Default::default()
 //! };
 //!
-//! // Initialize TPU pod coordinator
-//! let coordinator = TPUPodCoordinator::<f32>::new(config)?;
-//!
-//! // The coordinator is now ready for use with pod coordination operations
-//! // Additional methods would be called here for actual batch processing
+//! // Initialize TPU pod coordinator -- this wraps and delegates to the
+//! // real, tested `coordination::PodCoordinator`, so `start`/
+//! // `submit_workload`/`synchronize_devices` below all perform genuine
+//! // device/barrier/load-balancer operations, not placeholders.
+//! let mut coordinator = TPUPodCoordinator::<f32>::new(config)?;
+//! coordinator.start()?;
+//! coordinator.synchronize_devices("startup-barrier")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -446,6 +448,7 @@ pub mod utils {
             load_balancing_strategy: LoadBalancingStrategy::Dynamic,
             memory_management: MemoryManagementStrategy::DynamicPartitioning,
             adaptive_optimization: true,
+            device_capabilities: crate::coordination::DeviceCapabilities::default(),
         }
     }
 

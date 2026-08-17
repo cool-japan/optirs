@@ -4,11 +4,54 @@
 // including failure detection, recovery strategies, redundancy management, and checkpointing.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::DeviceId;
 use crate::error::{OptimError, Result};
 use scirs2_core::error::ErrorContext;
+
+/// Compute the SHA-256 hex digest of `bytes`.
+///
+/// Used to fingerprint checkpoint payloads so restores can detect corruption.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Serializable snapshot persisted to disk for a checkpoint.
+///
+/// Real TPU program/optimizer state requires the vendor runtime; without
+/// hardware the honest persistable state is the coordination bookkeeping:
+/// the monitored device roster, the checkpoint identity/type, and metadata.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CheckpointPayload {
+    /// Logical checkpoint identifier.
+    checkpoint_id: String,
+    /// Wall-clock creation time, milliseconds since the UNIX epoch.
+    created_at_unix_millis: u128,
+    /// Checkpoint kind, e.g. `"Full"`.
+    checkpoint_type: String,
+    /// Monitored device ids captured in this checkpoint.
+    device_ids: Vec<usize>,
+    /// Free-form metadata.
+    metadata: HashMap<String, String>,
+}
+
+/// On-disk record for a persisted checkpoint: where it lives and its content
+/// hash, so a restore can locate the payload and verify its integrity.
+#[derive(Debug, Clone)]
+struct CheckpointRecord {
+    /// Path to the serialized payload on disk.
+    path: PathBuf,
+    /// SHA-256 hex digest of the payload bytes, recorded at creation time.
+    sha256: String,
+    /// Serialized payload size in bytes.
+    size_bytes: usize,
+}
 
 /// Types of failures
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,7 +229,8 @@ pub enum ConsistencyLevel {
 /// Type aliases for managers
 type HeartbeatManager = HashMap<DeviceId, Instant>;
 type RedundancyManager = HashMap<String, f64>;
-type CheckpointingSystem = HashMap<String, Vec<u8>>;
+/// Index of persisted checkpoints, keyed by checkpoint id.
+type CheckpointingSystem = HashMap<String, CheckpointRecord>;
 type RollbackManager = HashMap<String, Vec<u8>>;
 
 /// Fault tolerance statistics
@@ -462,31 +506,70 @@ impl FaultToleranceManager {
     ///
     /// Returns the ids of the replica entries created.
     fn replicate_checkpoint(&mut self, checkpoint_id: &str) -> Result<Vec<String>> {
-        let data = self
+        let source = self
             .checkpointing_system
             .get(checkpoint_id)
+            .cloned()
             .ok_or_else(|| {
                 OptimError::InvalidState(ErrorContext::new(format!(
                     "cannot replicate checkpoint {checkpoint_id}: not found"
                 )))
-            })?
-            .clone();
+            })?;
 
+        // Read the source payload once and confirm it still matches the hash
+        // recorded at creation time before propagating copies.
+        let data = std::fs::read(&source.path).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to read checkpoint {} for replication: {e}",
+                source.path.display()
+            )))
+        })?;
+        if sha256_hex(&data) != source.sha256 {
+            return Err(OptimError::ComputationError(ErrorContext::new(format!(
+                "source checkpoint {checkpoint_id} is corrupt; refusing to replicate"
+            ))));
+        }
+
+        let dir = Path::new(&self.checkpoint_config.storage_path);
         let factor = self.redundancy_config.replication_factor.max(1);
         let mut replicas = Vec::with_capacity(factor);
         for i in 0..factor {
             let replica_id = format!("{checkpoint_id}.replica{i}");
-            self.checkpointing_system
-                .insert(replica_id.clone(), data.clone());
-            // Verify the replica round-trips the source bytes.
-            match self.checkpointing_system.get(&replica_id) {
-                Some(copy) if *copy == data => replicas.push(replica_id),
-                _ => {
-                    return Err(OptimError::ComputationError(ErrorContext::new(format!(
-                        "checkpoint replica {replica_id} failed integrity verification"
-                    ))));
-                }
+            let replica_path = dir.join(format!("{replica_id}.ckpt"));
+            std::fs::write(&replica_path, &data).map_err(|e| {
+                OptimError::ComputationError(ErrorContext::new(format!(
+                    "failed to write checkpoint replica {}: {e}",
+                    replica_path.display()
+                )))
+            })?;
+            // Verify the replica round-trips the source bytes and hash.
+            let copy = std::fs::read(&replica_path).map_err(|e| {
+                OptimError::ComputationError(ErrorContext::new(format!(
+                    "failed to read back checkpoint replica {}: {e}",
+                    replica_path.display()
+                )))
+            })?;
+            if copy != data || sha256_hex(&copy) != source.sha256 {
+                return Err(OptimError::ComputationError(ErrorContext::new(format!(
+                    "checkpoint replica {replica_id} failed integrity verification"
+                ))));
             }
+            let replica_hash_path = dir.join(format!("{replica_id}.sha256"));
+            std::fs::write(&replica_hash_path, source.sha256.as_bytes()).map_err(|e| {
+                OptimError::ComputationError(ErrorContext::new(format!(
+                    "failed to write replica hash {}: {e}",
+                    replica_hash_path.display()
+                )))
+            })?;
+            self.checkpointing_system.insert(
+                replica_id.clone(),
+                CheckpointRecord {
+                    path: replica_path,
+                    sha256: source.sha256.clone(),
+                    size_bytes: data.len(),
+                },
+            );
+            replicas.push(replica_id);
         }
         Ok(replicas)
     }
@@ -559,9 +642,10 @@ impl FaultToleranceManager {
         failure: &FailureInfo,
         recovery_action: &RecoveryAction,
     ) -> Result<()> {
-        println!(
-            "Initiating recovery for device {:?} using strategy {:?}",
-            failure.device_id, recovery_action.action_type
+        log::info!(
+            "initiating recovery for device {:?} using strategy {:?}",
+            failure.device_id,
+            recovery_action.action_type
         );
 
         match recovery_action.action_type {
@@ -666,51 +750,149 @@ impl FaultToleranceManager {
         Ok(())
     }
 
-    /// Create checkpoint
+    /// Create a checkpoint by serializing the current coordination state to
+    /// disk under [`CheckpointConfig::storage_path`] and recording a SHA-256
+    /// content hash for later integrity verification.
+    ///
+    /// The payload is the honest, hardware-free snapshot: the monitored device
+    /// roster plus checkpoint identity/type. Real TPU program and optimizer
+    /// state requires the vendor runtime, which is not present.
     pub async fn create_checkpoint(&mut self, checkpoint_id: String) -> Result<CheckpointInfo> {
-        let checkpoint_info = CheckpointInfo {
+        let created_at = Instant::now();
+        let devices: Vec<DeviceId> = self
+            .failure_detector
+            .get_monitored_devices()
+            .iter()
+            .cloned()
+            .collect();
+
+        let created_at_unix_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| {
+                OptimError::InvalidState(ErrorContext::new(format!(
+                    "system clock is before the UNIX epoch: {e}"
+                )))
+            })?
+            .as_millis();
+
+        let payload = CheckpointPayload {
             checkpoint_id: checkpoint_id.clone(),
-            created_at: Instant::now(),
-            size_bytes: 1024 * 1024, // 1MB simulated size
-            devices: self
-                .failure_detector
-                .get_monitored_devices()
-                .iter()
-                .cloned()
-                .collect(),
+            created_at_unix_millis,
+            checkpoint_type: format!("{:?}", CheckpointType::Full),
+            device_ids: devices.iter().map(|d| d.0).collect(),
+            metadata: HashMap::new(),
+        };
+
+        // Serialize the real state and fingerprint it.
+        let bytes = serde_json::to_vec(&payload).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to serialize checkpoint {checkpoint_id}: {e}"
+            )))
+        })?;
+        let sha256 = sha256_hex(&bytes);
+        let size_bytes = bytes.len();
+
+        // Persist the payload and a sidecar hash under the configured path.
+        let dir = Path::new(&self.checkpoint_config.storage_path);
+        std::fs::create_dir_all(dir).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to create checkpoint directory {}: {e}",
+                dir.display()
+            )))
+        })?;
+        let path = dir.join(format!("{checkpoint_id}.ckpt"));
+        std::fs::write(&path, &bytes).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to write checkpoint {}: {e}",
+                path.display()
+            )))
+        })?;
+        let hash_path = dir.join(format!("{checkpoint_id}.sha256"));
+        std::fs::write(&hash_path, sha256.as_bytes()).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to write checkpoint hash {}: {e}",
+                hash_path.display()
+            )))
+        })?;
+
+        self.checkpointing_system.insert(
+            checkpoint_id.clone(),
+            CheckpointRecord {
+                path,
+                sha256: sha256.clone(),
+                size_bytes,
+            },
+        );
+        self.last_checkpoint_id = Some(checkpoint_id.clone());
+
+        let checkpoint_info = CheckpointInfo {
+            checkpoint_id,
+            created_at,
+            size_bytes,
+            devices,
             checkpoint_type: CheckpointType::Full,
             metadata: HashMap::new(),
         };
 
-        // Checkpoint payload: device roster snapshot serialized as bytes. Real
-        // program state requires the TPU runtime; the device set is what is
-        // available to persist without hardware.
-        let checkpoint_data = checkpoint_info
-            .devices
-            .iter()
-            .flat_map(|d| format!("{d:?};").into_bytes())
-            .collect::<Vec<u8>>();
-        self.checkpointing_system
-            .insert(checkpoint_id.clone(), checkpoint_data);
-        self.last_checkpoint_id = Some(checkpoint_id);
-
-        log::info!("created checkpoint: {}", checkpoint_info.checkpoint_id);
+        log::info!(
+            "created checkpoint {} ({} bytes, sha256={})",
+            checkpoint_info.checkpoint_id,
+            size_bytes,
+            sha256
+        );
         Ok(checkpoint_info)
     }
 
-    /// Restore from checkpoint
+    /// Restore from a checkpoint: load the serialized payload back from disk,
+    /// verify it against the SHA-256 recorded at creation time, then apply the
+    /// restored state (re-establishing the monitored device roster).
+    ///
+    /// A corrupted or truncated checkpoint fails loudly rather than silently
+    /// "succeeding".
     pub async fn restore_checkpoint(&mut self, checkpoint_id: &str) -> Result<()> {
-        if self.checkpointing_system.contains_key(checkpoint_id) {
-            println!("Restoring from checkpoint: {}", checkpoint_id);
-            // In a real implementation, this would restore system state
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            Ok(())
-        } else {
-            Err(OptimError::ComputationError(ErrorContext::new(format!(
-                "Checkpoint {} not found",
-                checkpoint_id
-            ))))
+        let record = self
+            .checkpointing_system
+            .get(checkpoint_id)
+            .cloned()
+            .ok_or_else(|| {
+                OptimError::ComputationError(ErrorContext::new(format!(
+                    "Checkpoint {checkpoint_id} not found"
+                )))
+            })?;
+
+        let bytes = std::fs::read(&record.path).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to read checkpoint {}: {e}",
+                record.path.display()
+            )))
+        })?;
+
+        // Integrity check against the recorded hash.
+        let actual = sha256_hex(&bytes);
+        if actual != record.sha256 {
+            return Err(OptimError::ComputationError(ErrorContext::new(format!(
+                "checkpoint {checkpoint_id} failed integrity check: expected sha256 {}, got {}",
+                record.sha256, actual
+            ))));
         }
+
+        let payload: CheckpointPayload = serde_json::from_slice(&bytes).map_err(|e| {
+            OptimError::ComputationError(ErrorContext::new(format!(
+                "failed to deserialize checkpoint {checkpoint_id}: {e}"
+            )))
+        })?;
+
+        // Apply the restored state: re-establish the monitored device roster.
+        for &device in &payload.device_ids {
+            self.failure_detector.add_device(DeviceId(device));
+        }
+
+        log::info!(
+            "restored checkpoint {checkpoint_id} ({} device(s), {} bytes)",
+            payload.device_ids.len(),
+            bytes.len()
+        );
+        Ok(())
     }
 
     /// Set recovery strategy for failure type
@@ -758,7 +940,7 @@ impl FaultToleranceManager {
     /// Complete recovery for device
     pub fn complete_recovery(&mut self, device_id: DeviceId) -> Result<()> {
         if self.active_recoveries.remove(&device_id).is_some() {
-            println!("Recovery completed for device {:?}", device_id);
+            log::info!("recovery completed for device {device_id:?}");
             // Re-add device to monitoring if it was isolated
             self.failure_detector.add_device(device_id);
             Ok(())
@@ -851,23 +1033,132 @@ mod tests {
         assert!(manager.is_ok());
     }
 
+    /// Build a checkpoint config pointing at a unique temporary directory so
+    /// tests never collide or pollute a shared path.
+    fn temp_checkpoint_config(tag: &str) -> CheckpointConfig {
+        let mut dir = std::env::temp_dir();
+        let unique = format!(
+            "optirs_tpu_ckpt_{tag}_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        dir.push(unique);
+        CheckpointConfig {
+            storage_path: dir.to_string_lossy().into_owned(),
+            ..CheckpointConfig::default()
+        }
+    }
+
+    fn test_manager(tag: &str) -> FaultToleranceManager {
+        FaultToleranceManager::new(
+            DetectionConfig::default(),
+            RedundancyConfig::default(),
+            temp_checkpoint_config(tag),
+        )
+        .expect("manager construction should succeed")
+    }
+
     #[tokio::test]
     async fn test_checkpoint_creation() {
-        let detection_config = DetectionConfig::default();
-        let redundancy_config = RedundancyConfig::default();
-        let checkpoint_config = CheckpointConfig::default();
+        let mut manager = test_manager("creation");
+        manager.monitor_device(DeviceId(3));
+        manager.monitor_device(DeviceId(7));
 
-        let mut manager =
-            FaultToleranceManager::new(detection_config, redundancy_config, checkpoint_config)
-                .expect("unwrap failed");
-
-        let checkpoint_info = manager
+        let info = manager
             .create_checkpoint("test_checkpoint".to_string())
-            .await;
-        assert!(checkpoint_info.is_ok());
-        assert_eq!(
-            checkpoint_info.expect("unwrap failed").checkpoint_id,
-            "test_checkpoint"
+            .await
+            .expect("checkpoint creation should succeed");
+
+        assert_eq!(info.checkpoint_id, "test_checkpoint");
+        // Real serialized size, not a fabricated constant.
+        assert!(info.size_bytes > 0);
+        assert_ne!(info.size_bytes, 1024 * 1024);
+
+        // The payload and its sidecar hash must actually exist on disk.
+        let record = manager
+            .checkpointing_system
+            .get("test_checkpoint")
+            .expect("record should be indexed");
+        assert!(record.path.exists(), "checkpoint file must be written");
+        assert_eq!(record.size_bytes, info.size_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_restore_roundtrip() {
+        let mut manager = test_manager("roundtrip");
+        manager.monitor_device(DeviceId(11));
+        manager.monitor_device(DeviceId(12));
+
+        manager
+            .create_checkpoint("roundtrip".to_string())
+            .await
+            .expect("create should succeed");
+
+        // Restore verifies the on-disk hash and re-applies device roster.
+        manager
+            .restore_checkpoint("roundtrip")
+            .await
+            .expect("restore of a valid checkpoint should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_restore_missing_checkpoint_errors() {
+        let mut manager = test_manager("missing");
+        let err = manager.restore_checkpoint("does_not_exist").await;
+        assert!(err.is_err(), "restoring an unknown checkpoint must fail");
+    }
+
+    #[tokio::test]
+    async fn test_restore_detects_corruption() {
+        let mut manager = test_manager("corruption");
+        manager.monitor_device(DeviceId(1));
+        manager
+            .create_checkpoint("corrupt_me".to_string())
+            .await
+            .expect("create should succeed");
+
+        // Tamper with the on-disk payload; the recorded hash no longer matches.
+        let path = manager
+            .checkpointing_system
+            .get("corrupt_me")
+            .expect("record")
+            .path
+            .clone();
+        std::fs::write(&path, b"tampered-bytes").expect("overwrite payload");
+
+        let result = manager.restore_checkpoint("corrupt_me").await;
+        assert!(
+            result.is_err(),
+            "a corrupted checkpoint must fail the integrity check"
         );
+    }
+
+    #[tokio::test]
+    async fn test_replicate_data_creates_verified_replicas() {
+        let mut manager = test_manager("replicate");
+        manager.monitor_device(DeviceId(5));
+        manager
+            .create_checkpoint("primary".to_string())
+            .await
+            .expect("create should succeed");
+
+        // replicate_data replicates the newest checkpoint with hash verification.
+        manager
+            .replicate_data(DeviceId(5))
+            .await
+            .expect("replication should succeed");
+
+        let factor = manager.redundancy_config.replication_factor.max(1);
+        for i in 0..factor {
+            let replica_id = format!("primary.replica{i}");
+            let record = manager
+                .checkpointing_system
+                .get(&replica_id)
+                .expect("replica should be indexed");
+            assert!(record.path.exists(), "replica file must exist on disk");
+        }
     }
 }

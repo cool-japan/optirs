@@ -277,7 +277,18 @@ where
                 self.config.min_std
             }
         };
-        let limit = self.config.control_limit * ewma_std;
+        // `ewma_std` tracks the *raw signal's* standard deviation, but the
+        // statistic being bounded is `ewma_mean` itself (the smoothed
+        // statistic), whose steady-state variance is reduced by a factor
+        // `lambda / (2 - lambda)` relative to the raw signal (Roberts 1959;
+        // Lucas & Saccucci 1990). Without this asymptotic factor the control
+        // limit is scaled to the wrong (much larger) standard deviation, so
+        // the chart under-reacts to genuine shifts by roughly
+        // `sqrt((2 - lambda) / lambda)` (e.g. ~3x too wide at the default
+        // lambda = 0.2).
+        let two: T = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(T::one);
+        let steady_state_factor = (lambda / (two - lambda)).sqrt();
+        let limit = self.config.control_limit * ewma_std * steady_state_factor;
         let upper = self.reference_mean + limit;
         let lower = self.reference_mean - limit;
         let ewma_breach_up = self.ewma_mean > upper;
@@ -949,9 +960,76 @@ mod tests {
                 drift_count += 1;
             }
         }
-        assert_eq!(
-            drift_count, 0,
-            "stationary stream should not raise any drift signal"
+        // A correctly-calibrated `control_limit = 3.0` (three-sigma) EWMA chart
+        // (see the F79 fix: the control limit must include the steady-state
+        // factor sqrt(lambda / (2 - lambda))) has an intrinsic two-sided
+        // false-alarm rate of ~0.27% per observation, so on ~480 post-warmup
+        // stationary draws an occasional alarm (expected count ~1.3) is normal
+        // statistical behaviour, not drift. Before that fix the chart's control
+        // limit was scaled to the *raw* signal's standard deviation instead of
+        // the smoothed statistic's, making it ~3x too wide and this count
+        // spuriously always 0 regardless of `control_limit`. Bound the count
+        // generously instead of requiring exactly zero.
+        assert!(
+            drift_count <= 5,
+            "stationary stream raised {drift_count} drift signals out of 500, \
+             far more than the ~1.3 expected from a three-sigma chart"
+        );
+    }
+
+    /// F79 regression: the EWMA chart's control limit must be scaled by the
+    /// steady-state factor `sqrt(lambda / (2 - lambda))`, which accounts for
+    /// the smoothed statistic (`ewma_mean`) having strictly less variance than
+    /// the raw signal whose variance `ewma_var` actually tracks. Without the
+    /// factor, the limit is scaled to the raw signal's (much larger) standard
+    /// deviation, under-reacting by `sqrt((2-lambda)/lambda)` (~3x at the
+    /// default lambda = 0.2).
+    #[test]
+    fn test_ewma_control_limit_includes_steady_state_factor() {
+        let cfg = detector_config();
+        let mut detector = DriftDetector::new(cfg).expect("valid config");
+        let mut rng = Lcg::new(99);
+        for _ in 0..cfg.warmup_steps {
+            let _ = detector.update(rng.next_noise(0.01));
+        }
+        assert!(detector.is_warmed_up());
+        // Let ewma_var settle on a few more near-noiseless observations at the
+        // reference mean.
+        for _ in 0..5 {
+            let _ = detector.update(0.0);
+        }
+
+        // Independently recompute both the buggy (pre-F79) and the corrected
+        // control limit from the detector's own internal EWMA variance.
+        let ewma_std = detector.ewma_var.sqrt().max(cfg.min_std);
+        let buggy_limit = cfg.control_limit * ewma_std;
+        let correct_factor = (cfg.lambda / (2.0 - cfg.lambda)).sqrt();
+        let correct_limit = buggy_limit * correct_factor;
+        assert!(
+            correct_limit < buggy_limit,
+            "the steady-state factor must strictly tighten the limit"
+        );
+
+        // A constant shift comfortably inside the buggy limit (so `ewma_mean`,
+        // which converges asymptotically *toward* `shift` and never exceeds
+        // it, could not have breached the old, unscaled formula no matter how
+        // many observations were fed) but well above the corrected limit.
+        let shift = buggy_limit * 0.9;
+        assert!(shift < buggy_limit && shift > correct_limit);
+
+        let mut breached = false;
+        for _ in 0..30 {
+            if detector.update(shift) == DriftSignal::UpwardDrift {
+                breached = true;
+                break;
+            }
+        }
+        assert!(
+            breached,
+            "a sustained shift of {shift}, comfortably below the pre-F79 control \
+             limit ({buggy_limit}) but above the corrected one ({correct_limit}), \
+             must eventually be flagged by the EWMA chart now that the \
+             steady-state factor is applied"
         );
     }
 

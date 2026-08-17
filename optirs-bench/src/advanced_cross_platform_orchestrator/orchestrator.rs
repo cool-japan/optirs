@@ -6,7 +6,9 @@
 use crate::ci_cd_automation::{CiCdAutomation, CiCdAutomationConfig};
 use crate::error::{OptimError, Result};
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, SystemTime};
+use std::process::Stdio;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::process::Command as AsyncCommand;
 
 use super::aggregator::ResultAggregator;
 use super::cloud::{
@@ -23,6 +25,11 @@ use crate::cross_platform_tester::{
     PlatformTarget as CrossPlatformTarget, RecommendationPriority, RecommendationType,
 };
 
+/// Key under which a test result carries its declared target platform (as a serde
+/// JSON encoding of `PlatformTarget`) inside `TestResult::platform_details`. This is
+/// the authoritative, declared platform metadata — never guessed from the test name.
+const PLATFORM_DETAIL_KEY: &str = "target_platform";
+
 /// Convert between PlatformTarget types
 fn convert_platform_target(platform: &PlatformTarget) -> CrossPlatformTarget {
     match platform {
@@ -33,6 +40,345 @@ fn convert_platform_target(platform: &PlatformTarget) -> CrossPlatformTarget {
         PlatformTarget::MacOSAarch64 => CrossPlatformTarget::MacOSArm64,
         _ => CrossPlatformTarget::LinuxX64, // Default fallback
     }
+}
+
+/// Outcome of one real process invocation performed by the orchestrator.
+///
+/// Every field is measured from the spawned child: nothing here is simulated.
+#[derive(Debug, Clone)]
+struct CommandOutcome {
+    /// Full command line that was executed (program plus arguments).
+    command_line: String,
+    /// Process exit code, when the platform reported one.
+    exit_code: Option<i32>,
+    /// Whether the process exited successfully (status code 0).
+    success: bool,
+    /// Captured standard output.
+    stdout: String,
+    /// Captured standard error.
+    stderr: String,
+    /// Wall-clock duration of the invocation.
+    duration: Duration,
+    /// Whether the invocation was aborted because it exceeded its timeout.
+    timed_out: bool,
+}
+
+/// Where a matrix entry's scenario commands are executed.
+#[derive(Debug)]
+enum ExecutionTarget<'a> {
+    /// Directly on the host running the orchestrator.
+    Local,
+    /// Inside an already provisioned container, through the container runtime.
+    Container(&'a ContainerInfo),
+    /// On a provisioned cloud instance, over its configured SSH access.
+    Cloud(&'a CloudInstance),
+}
+
+/// Resolved SSH access details for a provisioned cloud instance.
+#[derive(Debug, Clone)]
+struct SshAccess {
+    host: String,
+    user: String,
+    port: Option<u16>,
+    identity_file: Option<String>,
+}
+
+/// A target that has passed its reachability pre-flight and can actually run
+/// commands. Constructing one is the only way to reach [`run_process`], so a
+/// scenario can never be "executed" against an unreachable target.
+#[derive(Debug)]
+enum ResolvedTarget {
+    Local,
+    Container {
+        runtime: String,
+        container_id: String,
+        windows: bool,
+    },
+    Cloud(SshAccess),
+}
+
+/// Identify the platform this process is currently running on.
+///
+/// Returns `None` for OS/architecture combinations that have no
+/// [`PlatformTarget`] mapping. `None` is deliberate: silently falling back to a
+/// default platform would reintroduce exactly the "guessed metadata" class of
+/// bug that the declared-platform metadata was introduced to remove.
+fn host_platform() -> Option<PlatformTarget> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some(PlatformTarget::LinuxX86_64),
+        ("linux", "aarch64") => Some(PlatformTarget::LinuxAarch64),
+        ("linux", "mips64") => Some(PlatformTarget::LinuxMips64),
+        ("linux", "powerpc64") => Some(PlatformTarget::LinuxPowerPC64),
+        ("linux", "s390x") => Some(PlatformTarget::LinuxS390X),
+        ("windows", "x86_64") => Some(PlatformTarget::WindowsX86_64),
+        ("macos", "x86_64") => Some(PlatformTarget::MacOSX86_64),
+        ("macos", "aarch64") => Some(PlatformTarget::MacOSAarch64),
+        ("freebsd", "x86_64") => Some(PlatformTarget::FreeBSDX86_64),
+        ("openbsd", "x86_64") => Some(PlatformTarget::OpenBSDX86_64),
+        ("netbsd", "x86_64") => Some(PlatformTarget::NetBSDX86_64),
+        ("solaris", "x86_64") | ("illumos", "x86_64") => Some(PlatformTarget::SolarisX86_64),
+        _ => None,
+    }
+}
+
+/// Whether a platform target uses the Windows command interpreter.
+fn is_windows_platform(platform: &PlatformTarget) -> bool {
+    matches!(platform, PlatformTarget::WindowsX86_64)
+}
+
+/// Shell wrapper used to execute a scenario command string.
+fn shell_invocation(windows: bool, command: &str) -> (String, Vec<String>) {
+    if windows {
+        (
+            "cmd".to_string(),
+            vec!["/C".to_string(), command.to_string()],
+        )
+    } else {
+        (
+            "sh".to_string(),
+            vec!["-c".to_string(), command.to_string()],
+        )
+    }
+}
+
+/// Render an optimization level as a stable lowercase identifier for the
+/// environment handed to executed commands.
+fn optimization_level_to_string(level: &OptimizationLevel) -> String {
+    match level {
+        OptimizationLevel::Debug => "debug".to_string(),
+        OptimizationLevel::Release => "release".to_string(),
+        OptimizationLevel::ReleaseLTO => "release-lto".to_string(),
+        OptimizationLevel::MinSize => "min-size".to_string(),
+        OptimizationLevel::Custom(name) => name.clone(),
+    }
+}
+
+/// Environment variables handed to every command the orchestrator runs, so the
+/// executed scenario can adapt to the matrix entry it belongs to. All values are
+/// taken verbatim from the execution context; none are invented.
+fn scenario_environment(context: &TestExecutionContext) -> Vec<(String, String)> {
+    vec![
+        (
+            "OPTIRS_EXECUTION_ID".to_string(),
+            context.execution_id.clone(),
+        ),
+        (
+            "OPTIRS_TARGET_PLATFORM".to_string(),
+            context.platform.to_string(),
+        ),
+        (
+            "OPTIRS_RUST_VERSION".to_string(),
+            context.rust_version.clone(),
+        ),
+        (
+            "OPTIRS_BUILD_PROFILE".to_string(),
+            context.build_profile.clone(),
+        ),
+        ("OPTIRS_FEATURES".to_string(), context.features.join(",")),
+        (
+            "OPTIRS_OPTIMIZATION".to_string(),
+            optimization_level_to_string(&context.optimization),
+        ),
+    ]
+}
+
+/// Spawn `program` with `args` and wait for it, capturing the real exit status,
+/// stdout and stderr.
+///
+/// Failing to spawn the program (for example because a container runtime or an
+/// `ssh` client is not installed) is reported as
+/// [`OptimError::ResourceUnavailable`] — the command genuinely could not be run,
+/// which is a different thing from a test that ran and failed. Exceeding
+/// `timeout` kills the child (via `kill_on_drop`) and is reported through
+/// [`CommandOutcome::timed_out`].
+async fn run_process(
+    program: &str,
+    args: &[String],
+    envs: &[(String, String)],
+    timeout: Duration,
+) -> Result<CommandOutcome> {
+    let command_line = if args.is_empty() {
+        program.to_string()
+    } else {
+        format!("{} {}", program, args.join(" "))
+    };
+
+    let mut command = AsyncCommand::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+
+    let started = Instant::now();
+    let child = command.spawn().map_err(|e| {
+        OptimError::ResourceUnavailable(format!(
+            "cannot execute '{}': failed to spawn '{}' ({})",
+            command_line, program, e
+        ))
+    })?;
+
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(Ok(output)) => Ok(CommandOutcome {
+            command_line,
+            exit_code: output.status.code(),
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            duration: started.elapsed(),
+            timed_out: false,
+        }),
+        Ok(Err(e)) => Err(OptimError::ExecutionError(format!(
+            "failed while waiting for '{}': {}",
+            command_line, e
+        ))),
+        Err(_) => Ok(CommandOutcome {
+            command_line,
+            exit_code: None,
+            success: false,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration: started.elapsed(),
+            timed_out: true,
+        }),
+    }
+}
+
+/// Parse the leading numeric value (and its unit token) out of the text that
+/// follows a metric label.
+fn parse_value_after(rest: &str) -> Option<(f64, String)> {
+    let trimmed =
+        rest.trim_start_matches(|c: char| matches!(c, ':' | '=' | '[' | '(') || c.is_whitespace());
+
+    let mut number_end = 0usize;
+    for (idx, ch) in trimmed.char_indices() {
+        let acceptable = ch.is_ascii_digit() || ch == '.' || ((ch == '-' || ch == '+') && idx == 0);
+        if acceptable {
+            number_end = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if number_end == 0 {
+        return None;
+    }
+
+    let value: f64 = trimmed[..number_end].parse().ok()?;
+    let unit: String = trimmed[number_end..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic() || *c == '%' || *c == '/' || *c == 'µ')
+        .collect();
+    Some((value, unit))
+}
+
+/// Find the value attached to the first of `labels` that occurs in `line` at a
+/// word boundary. `line` must already be lowercased.
+fn extract_labelled_value(line: &str, labels: &[&str]) -> Option<(f64, String)> {
+    for label in labels {
+        let mut search_from = 0usize;
+        while let Some(offset) = line[search_from..].find(label) {
+            let start = search_from + offset;
+            let after = start + label.len();
+            let boundary_ok = start == 0
+                || !matches!(line.as_bytes()[start - 1], b'a'..=b'z' | b'0'..=b'9' | b'_');
+            if boundary_ok {
+                if let Some(parsed) = parse_value_after(&line[after..]) {
+                    return Some(parsed);
+                }
+            }
+            search_from = after;
+        }
+    }
+    None
+}
+
+/// Convert a duration value expressed in `unit` to seconds.
+fn scale_seconds(value: f64, unit: &str) -> f64 {
+    match unit {
+        "ns" | "nsec" | "nanos" | "nanoseconds" => value * 1e-9,
+        "us" | "µs" | "usec" | "micros" | "microseconds" => value * 1e-6,
+        "ms" | "msec" | "millis" | "milliseconds" => value * 1e-3,
+        "m" | "min" | "mins" | "minutes" => value * 60.0,
+        _ => value,
+    }
+}
+
+/// Convert a memory value expressed in `unit` to bytes.
+fn scale_bytes(value: f64, unit: &str) -> usize {
+    let scaled = match unit {
+        "kb" => value * 1e3,
+        "kib" | "k" => value * 1024.0,
+        "mb" => value * 1e6,
+        "mib" | "m" => value * 1024.0 * 1024.0,
+        "gb" => value * 1e9,
+        "gib" | "g" => value * 1024.0 * 1024.0 * 1024.0,
+        _ => value,
+    };
+    if scaled.is_finite() && scaled > 0.0 {
+        scaled as usize
+    } else {
+        0
+    }
+}
+
+/// Convert a throughput value expressed in `unit` to operations per second.
+fn scale_throughput(value: f64, unit: &str) -> f64 {
+    match unit {
+        "kops/s" | "kops" | "k/s" => value * 1e3,
+        "mops/s" | "mops" | "m/s" => value * 1e6,
+        "gops/s" | "gops" => value * 1e9,
+        _ => value,
+    }
+}
+
+/// Parse real performance metrics out of a command's standard output.
+///
+/// Only values that are actually present in the output are recorded; every other
+/// field stays at zero, which by convention means "not measured" — never a
+/// fabricated default. Recognised forms are `label: value unit` and
+/// `label=value unit` (case-insensitive), with the value optionally wrapped in
+/// `[`/`(` as criterion prints it. When a label appears on several lines the
+/// last matching line wins, because summary lines are conventionally printed
+/// last. Labels fused with their unit (`execution_time_ms: 12`) are not
+/// recognised and are left unmeasured rather than guessed.
+fn parse_metrics_from_output(output: &str) -> PerformanceMetrics {
+    let mut metrics = PerformanceMetrics::default();
+
+    for line in output.lines() {
+        let lower = line.to_ascii_lowercase();
+
+        if let Some((value, unit)) = extract_labelled_value(
+            &lower,
+            &["throughput", "ops_per_sec", "operations_per_second"],
+        ) {
+            metrics.throughput = scale_throughput(value, &unit);
+        }
+        if let Some((value, unit)) =
+            extract_labelled_value(&lower, &["latency", "duration", "time"])
+        {
+            metrics.latency = scale_seconds(value, &unit);
+        }
+        if let Some((value, unit)) =
+            extract_labelled_value(&lower, &["peak_memory", "memory_usage", "memory", "rss"])
+        {
+            metrics.memory_usage = scale_bytes(value, &unit);
+        }
+        if let Some((value, _unit)) = extract_labelled_value(&lower, &["cpu_usage", "cpu"]) {
+            metrics.cpu_usage = value;
+        }
+        if let Some((value, _unit)) =
+            extract_labelled_value(&lower, &["energy_consumption", "energy"])
+        {
+            metrics.energy_consumption = Some(value);
+        }
+    }
+
+    metrics
 }
 
 /// Advanced cross-platform testing orchestrator
@@ -179,10 +525,11 @@ impl CrossPlatformOrchestrator {
             .filter(|r| matches!(r.status, TestStatus::Failed))
             .count();
 
-        // Create platform results map
+        // Create platform results map using the declared platform metadata carried on
+        // each result (not a parse of the test name, which never matched).
         let mut platform_results = HashMap::new();
         for result in &results {
-            if let Ok(platform) = serde_json::from_str::<PlatformTarget>(&result.test_name) {
+            if let Some(platform) = self.extract_platform_from_result(result) {
                 platform_results.insert(platform, result.clone());
             }
         }
@@ -261,33 +608,61 @@ impl CrossPlatformOrchestrator {
 
             if self.config.enable_cloud_testing {
                 if let Some(provider) = self.find_provider_for_platform(&entry.platform) {
-                    let instance = provider.provision_instance(&entry.platform).await?;
-                    let allocation = ResourceAllocation {
-                        id: allocation_id.clone(),
-                        platform: entry.platform.clone(),
-                        resource_type: AllocatedResourceType::CloudInstance(instance),
-                        allocated_at: SystemTime::now(),
-                        estimated_completion: SystemTime::now() + entry.estimated_duration,
-                        status: AllocationStatus::Allocated,
-                        usage: ResourceUsage::default(),
-                    };
-                    allocations.insert(allocation_id, allocation);
+                    // Cloud provisioning depends on external SDKs/credentials. When
+                    // they are unavailable we skip that platform (it is reported as
+                    // untested in the summary) rather than aborting the whole run.
+                    match provider.provision_instance(&entry.platform).await {
+                        Ok(instance) => {
+                            let allocation = ResourceAllocation {
+                                id: allocation_id.clone(),
+                                platform: entry.platform.clone(),
+                                resource_type: AllocatedResourceType::CloudInstance(instance),
+                                allocated_at: SystemTime::now(),
+                                estimated_completion: SystemTime::now() + entry.estimated_duration,
+                                status: AllocationStatus::Allocated,
+                                usage: ResourceUsage::default(),
+                            };
+                            allocations.insert(allocation_id, allocation);
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "skipping platform {}: cloud provisioning unavailable: {}",
+                                platform_target_to_string(&entry.platform),
+                                e
+                            );
+                        }
+                    }
                 }
             } else if self.config.enable_container_testing {
-                let container = self
+                // Container creation shells out to a real runtime (docker/podman).
+                // If the daemon is not reachable, skip this platform with a warning
+                // instead of failing the entire matrix — the run still returns a
+                // summary describing what could and could not be exercised.
+                match self
                     .container_manager
                     .create_container_for_platform(&entry.platform)
-                    .await?;
-                let allocation = ResourceAllocation {
-                    id: allocation_id.clone(),
-                    platform: entry.platform.clone(),
-                    resource_type: AllocatedResourceType::Container(container),
-                    allocated_at: SystemTime::now(),
-                    estimated_completion: SystemTime::now() + entry.estimated_duration,
-                    status: AllocationStatus::Allocated,
-                    usage: ResourceUsage::default(),
-                };
-                allocations.insert(allocation_id, allocation);
+                    .await
+                {
+                    Ok(container) => {
+                        let allocation = ResourceAllocation {
+                            id: allocation_id.clone(),
+                            platform: entry.platform.clone(),
+                            resource_type: AllocatedResourceType::Container(container),
+                            allocated_at: SystemTime::now(),
+                            estimated_completion: SystemTime::now() + entry.estimated_duration,
+                            status: AllocationStatus::Allocated,
+                            usage: ResourceUsage::default(),
+                        };
+                        allocations.insert(allocation_id, allocation);
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "skipping platform {}: container runtime unavailable: {}",
+                            platform_target_to_string(&entry.platform),
+                            e
+                        );
+                    }
+                }
             } else {
                 // Local testing
                 let allocation = ResourceAllocation {
@@ -327,17 +702,49 @@ impl CrossPlatformOrchestrator {
                 );
                 if let Some(allocation) = allocations.get(&allocation_id) {
                     let handle = self.execute_matrix_entry(entry, allocation).await;
-                    handles.push(handle);
+                    handles.push((entry, handle));
                 }
             }
 
-            // Collect results from this batch
-            for handle in handles {
-                results.push(handle?);
+            // Collect results from this batch. An entry whose execution
+            // environment turned out to be unusable is recorded as a skipped
+            // result carrying the real reason, mirroring the graceful
+            // per-platform skip already applied during allocation, so one
+            // unreachable runtime does not abort the whole matrix.
+            for (entry, handle) in handles {
+                results.push(self.result_or_skip(entry, handle));
             }
         }
 
         Ok(results)
+    }
+
+    /// Convert a failed entry execution into an honest skipped result.
+    ///
+    /// The error is preserved verbatim in `error_message`; the status is
+    /// `Skipped` (never `Passed`, and never `Failed`, which would misattribute
+    /// an environment problem to the code under test).
+    fn result_or_skip(&self, entry: &TestMatrixEntry, outcome: Result<TestResult>) -> TestResult {
+        match outcome {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!(
+                    "skipping matrix entry {} on {}: {}",
+                    entry.id,
+                    platform_target_to_string(&entry.platform),
+                    e
+                );
+                TestResult {
+                    test_name: entry.id.clone(),
+                    status: TestStatus::Skipped,
+                    execution_time: Duration::from_secs(0),
+                    performance_metrics: PerformanceMetrics::default(),
+                    error_message: Some(e.to_string()),
+                    platform_details: self.platform_details_for(&entry.platform),
+                    numerical_results: None,
+                }
+            }
+        }
     }
 
     /// Execute tests sequentially
@@ -355,8 +762,8 @@ impl CrossPlatformOrchestrator {
                 entry.priority
             );
             if let Some(allocation) = allocations.get(&allocation_id) {
-                let result = self.execute_matrix_entry(entry, allocation).await?;
-                results.push(result);
+                let outcome = self.execute_matrix_entry(entry, allocation).await;
+                results.push(self.result_or_skip(entry, outcome));
             }
         }
 
@@ -398,73 +805,421 @@ impl CrossPlatformOrchestrator {
         result
     }
 
-    /// Execute test on cloud instance
+    /// Execute the matrix entry's scenario commands on a provisioned cloud
+    /// instance.
+    ///
+    /// Commands run over the instance's configured access method (an SSH login
+    /// described by `CloudInstance::config` plus its addresses). When no access
+    /// method is configured — no reachable host, or no login user — this returns
+    /// an honest error: the test genuinely could not be executed, and reporting
+    /// `Passed` would fabricate a result.
     async fn execute_cloud_test(
         &self,
         context: &TestExecutionContext,
         instance: &CloudInstance,
     ) -> Result<TestResult> {
-        // Simulate cloud test execution
-        log::info!("Executing cloud test on instance {}", instance.instance_id);
-
-        // Basic simulation of test execution
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        Ok(TestResult {
-            test_name: context.execution_id.clone(),
-            status: TestStatus::Passed,
-            execution_time: SystemTime::now()
-                .duration_since(context.start_time)
-                .unwrap_or_default(),
-            performance_metrics: PerformanceMetrics::default(),
-            error_message: None,
-            platform_details: HashMap::new(),
-            numerical_results: None,
-        })
+        self.execute_scenarios(context, ExecutionTarget::Cloud(instance))
+            .await
     }
 
-    /// Execute test in container
+    /// Execute the matrix entry's scenario commands inside a provisioned
+    /// container, through the configured container runtime (`docker exec` /
+    /// `podman exec`).
+    ///
+    /// The container is inspected first: if the runtime is not installed, the
+    /// daemon is unreachable, or the container is not running, this returns
+    /// [`OptimError::ResourceUnavailable`] instead of pretending the test ran.
     async fn execute_container_test(
         &self,
         context: &TestExecutionContext,
         container: &ContainerInfo,
     ) -> Result<TestResult> {
-        // Simulate container test execution
-        log::info!("Executing container test in {}", container.container_id);
+        self.execute_scenarios(context, ExecutionTarget::Container(container))
+            .await
+    }
 
-        // Basic simulation of test execution
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    /// Execute the matrix entry's scenario commands directly on this host.
+    ///
+    /// A matrix entry targeting a different platform than the host cannot be run
+    /// locally; it is reported as [`TestStatus::PlatformNotSupported`] rather
+    /// than being silently "passed" on the wrong platform.
+    async fn execute_local_test(&self, context: &TestExecutionContext) -> Result<TestResult> {
+        self.execute_scenarios(context, ExecutionTarget::Local)
+            .await
+    }
 
-        Ok(TestResult {
+    /// Resolve the concrete commands a matrix entry has to run.
+    ///
+    /// Each of the entry's scenario names is looked up in the configured test
+    /// scenarios. An unknown scenario name is a configuration error and is
+    /// reported as such — guessing a command would be worse than failing.
+    fn resolve_scenario_commands(
+        &self,
+        context: &TestExecutionContext,
+    ) -> Result<Vec<(String, String, Duration)>> {
+        let mut resolved = Vec::new();
+
+        for scenario_name in &context.scenarios {
+            let scenario = self
+                .config
+                .matrix_config
+                .test_scenarios
+                .iter()
+                .find(|candidate| &candidate.name == scenario_name)
+                .ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "test scenario '{}' referenced by execution {} is not defined in the \
+                         orchestrator's matrix configuration",
+                        scenario_name, context.execution_id
+                    ))
+                })?;
+
+            let timeout = self.effective_timeout(scenario.timeout);
+            for command in &scenario.commands {
+                resolved.push((scenario_name.clone(), command.clone(), timeout));
+            }
+        }
+
+        Ok(resolved)
+    }
+
+    /// Clamp a scenario timeout to the configured maximum test duration, and
+    /// substitute the maximum when a scenario declares no timeout at all.
+    fn effective_timeout(&self, scenario_timeout: Duration) -> Duration {
+        let max_duration = self.config.resource_limits.max_test_duration;
+        if scenario_timeout.is_zero() {
+            max_duration
+        } else if max_duration.is_zero() {
+            scenario_timeout
+        } else {
+            scenario_timeout.min(max_duration)
+        }
+    }
+
+    /// Build a `TestResult` for an entry that was not executed, carrying the
+    /// honest reason. Never used for `Passed`.
+    fn non_executed_result(
+        &self,
+        context: &TestExecutionContext,
+        status: TestStatus,
+        reason: String,
+    ) -> TestResult {
+        TestResult {
             test_name: context.execution_id.clone(),
-            status: TestStatus::Passed,
+            status,
             execution_time: SystemTime::now()
                 .duration_since(context.start_time)
                 .unwrap_or_default(),
             performance_metrics: PerformanceMetrics::default(),
-            error_message: None,
-            platform_details: HashMap::new(),
+            error_message: Some(reason),
+            platform_details: self.platform_details_for(&context.platform),
             numerical_results: None,
+        }
+    }
+
+    /// Verify that the container is actually reachable and running before any
+    /// command is dispatched into it.
+    ///
+    /// This is what separates "the test failed" from "the test never ran": a
+    /// missing runtime binary, an unreachable daemon or a stopped container all
+    /// produce [`OptimError::ResourceUnavailable`], never a test status.
+    async fn ensure_container_running(&self, container: &ContainerInfo) -> Result<()> {
+        let runtime = self.container_manager.runtime_binary().to_string();
+        let args = vec![
+            "inspect".to_string(),
+            "--format".to_string(),
+            "{{.State.Running}}".to_string(),
+            container.container_id.clone(),
+        ];
+
+        let outcome = run_process(&runtime, &args, &[], Duration::from_secs(60)).await?;
+
+        if outcome.timed_out {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "'{} inspect {}' timed out; the container runtime is not responding",
+                runtime, container.container_id
+            )));
+        }
+        if !outcome.success {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "container '{}' cannot be inspected with '{}': {}",
+                container.container_id,
+                runtime,
+                outcome.stderr.trim()
+            )));
+        }
+        if outcome.stdout.trim() != "true" {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "container '{}' is not running (runtime '{}' reports state '{}'), so no test \
+                 command can be executed inside it",
+                container.container_id,
+                runtime,
+                outcome.stdout.trim()
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Resolve the SSH access configured for a provisioned cloud instance.
+    ///
+    /// The host is taken from `ssh_host`, the public address, or the private
+    /// address (in that order); the login user from `ssh_user`/`username`. Both
+    /// are mandatory: without them the instance has no configured access method
+    /// and no test can be executed on it.
+    fn resolve_ssh_access(instance: &CloudInstance) -> Result<SshAccess> {
+        if !matches!(instance.status, CloudInstanceStatus::Running) {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "cloud instance {} (provider {}) is in state {:?}, not Running; no test command \
+                 can be executed on it",
+                instance.instance_id, instance.provider, instance.status
+            )));
+        }
+
+        let host = instance
+            .config
+            .get("ssh_host")
+            .cloned()
+            .or_else(|| instance.public_ip.clone())
+            .or_else(|| instance.private_ip.clone())
+            .ok_or_else(|| {
+                OptimError::UnsupportedOperation(format!(
+                    "cloud instance {} (provider {}) has no reachable address: set 'ssh_host' in \
+                     its configuration, or provide a public/private IP",
+                    instance.instance_id, instance.provider
+                ))
+            })?;
+
+        let user = instance
+            .config
+            .get("ssh_user")
+            .or_else(|| instance.config.get("username"))
+            .cloned()
+            .ok_or_else(|| {
+                OptimError::UnsupportedOperation(format!(
+                    "cloud instance {} (provider {}) has no configured access method: set \
+                     'ssh_user' in its configuration to execute tests over SSH",
+                    instance.instance_id, instance.provider
+                ))
+            })?;
+
+        let port = instance
+            .config
+            .get("ssh_port")
+            .and_then(|value| value.parse::<u16>().ok());
+
+        let identity_file = instance
+            .config
+            .get("ssh_key")
+            .or_else(|| instance.config.get("ssh_identity_file"))
+            .cloned();
+
+        Ok(SshAccess {
+            host,
+            user,
+            port,
+            identity_file,
         })
     }
 
-    /// Execute test locally
-    async fn execute_local_test(&self, context: &TestExecutionContext) -> Result<TestResult> {
-        // Simulate local test execution
-        log::info!("Executing local test {}", context.execution_id);
+    /// Turn a scenario command string into the concrete program and arguments
+    /// used to execute it on the resolved target.
+    fn build_invocation(
+        target: &ResolvedTarget,
+        platform: &PlatformTarget,
+        command: &str,
+        envs: &[(String, String)],
+    ) -> (String, Vec<String>) {
+        match target {
+            ResolvedTarget::Local => shell_invocation(is_windows_platform(platform), command),
+            ResolvedTarget::Container {
+                runtime,
+                container_id,
+                windows,
+            } => {
+                let mut args = vec!["exec".to_string()];
+                for (key, value) in envs {
+                    args.push("-e".to_string());
+                    args.push(format!("{}={}", key, value));
+                }
+                args.push(container_id.clone());
+                let (shell, shell_args) = shell_invocation(*windows, command);
+                args.push(shell);
+                args.extend(shell_args);
+                (runtime.clone(), args)
+            }
+            ResolvedTarget::Cloud(access) => {
+                // Environment variables are intentionally NOT injected here: `ssh`
+                // does not forward them without server-side `AcceptEnv`, and
+                // splicing assignments into the remote command string would be a
+                // quoting hazard. The remote side sees its own environment.
+                let mut args = vec![
+                    "-o".to_string(),
+                    "BatchMode=yes".to_string(),
+                    "-o".to_string(),
+                    "StrictHostKeyChecking=accept-new".to_string(),
+                ];
+                if let Some(identity) = &access.identity_file {
+                    args.push("-i".to_string());
+                    args.push(identity.clone());
+                }
+                if let Some(port) = access.port {
+                    args.push("-p".to_string());
+                    args.push(port.to_string());
+                }
+                args.push(format!("{}@{}", access.user, access.host));
+                args.push(command.to_string());
+                ("ssh".to_string(), args)
+            }
+        }
+    }
 
-        // Basic simulation of test execution
-        tokio::time::sleep(Duration::from_millis(25)).await;
+    /// Execute every command of the entry's scenarios on `target` and map the
+    /// real process results onto a [`TestResult`].
+    ///
+    /// Commands run in order and stop at the first non-zero exit or timeout, the
+    /// same way a shell-based CI step behaves. The resulting status is derived
+    /// only from measured facts: exit codes, timeouts, and the metrics actually
+    /// printed by the commands.
+    async fn execute_scenarios(
+        &self,
+        context: &TestExecutionContext,
+        target: ExecutionTarget<'_>,
+    ) -> Result<TestResult> {
+        let commands = self.resolve_scenario_commands(context)?;
+        if commands.is_empty() {
+            return Ok(self.non_executed_result(
+                context,
+                TestStatus::Skipped,
+                format!(
+                    "no test commands are configured for scenarios [{}]; nothing was executed",
+                    context.scenarios.join(", ")
+                ),
+            ));
+        }
+
+        // Reachability pre-flight. A target we cannot reach yields an honest
+        // error (cloud/container) or an explicit not-supported status (local on a
+        // foreign platform) — never a fabricated pass.
+        let resolved = match &target {
+            ExecutionTarget::Local => {
+                let host = host_platform();
+                if host.as_ref() != Some(&context.platform) {
+                    return Ok(self.non_executed_result(
+                        context,
+                        TestStatus::PlatformNotSupported,
+                        format!(
+                            "local execution cannot run a {} test: this host is {}-{}",
+                            context.platform,
+                            std::env::consts::OS,
+                            std::env::consts::ARCH
+                        ),
+                    ));
+                }
+                ResolvedTarget::Local
+            }
+            ExecutionTarget::Container(container) => {
+                self.ensure_container_running(container).await?;
+                ResolvedTarget::Container {
+                    runtime: self.container_manager.runtime_binary().to_string(),
+                    container_id: container.container_id.clone(),
+                    windows: is_windows_platform(&container.platform),
+                }
+            }
+            ExecutionTarget::Cloud(instance) => {
+                ResolvedTarget::Cloud(Self::resolve_ssh_access(instance)?)
+            }
+        };
+
+        let envs = scenario_environment(context);
+        let mut aggregated_stdout = String::new();
+        let mut aggregated_stderr = String::new();
+        let mut executed = 0usize;
+        let mut status = TestStatus::Passed;
+        let mut error_message = None;
+        let mut last_exit_code = None;
+
+        for (scenario_name, command, timeout) in &commands {
+            let (program, args) =
+                Self::build_invocation(&resolved, &context.platform, command, &envs);
+            log::info!(
+                "executing scenario '{}' for {}: {} {}",
+                scenario_name,
+                context.execution_id,
+                program,
+                args.join(" ")
+            );
+
+            let outcome = run_process(&program, &args, &envs, *timeout).await?;
+            executed += 1;
+            aggregated_stdout.push_str(&outcome.stdout);
+            aggregated_stderr.push_str(&outcome.stderr);
+            last_exit_code = outcome.exit_code;
+
+            if outcome.timed_out {
+                status = TestStatus::Timeout;
+                error_message = Some(format!(
+                    "scenario '{}' command '{}' exceeded its {:?} timeout and was terminated",
+                    scenario_name, command, timeout
+                ));
+                break;
+            }
+            if !outcome.success {
+                status = TestStatus::Failed;
+                error_message = Some(format!(
+                    "scenario '{}' command '{}' exited with status {}: {}",
+                    scenario_name,
+                    command,
+                    outcome
+                        .exit_code
+                        .map(|code| code.to_string())
+                        .unwrap_or_else(|| "signal".to_string()),
+                    outcome.stderr.trim()
+                ));
+                break;
+            }
+        }
+
+        let mut platform_details = self.platform_details_for(&context.platform);
+        platform_details.insert("commands_total".to_string(), commands.len().to_string());
+        platform_details.insert("commands_executed".to_string(), executed.to_string());
+        if let Some(code) = last_exit_code {
+            platform_details.insert("last_exit_code".to_string(), code.to_string());
+        }
+        match &resolved {
+            ResolvedTarget::Local => {
+                platform_details.insert("execution_target".to_string(), "local".to_string());
+            }
+            ResolvedTarget::Container {
+                runtime,
+                container_id,
+                ..
+            } => {
+                platform_details.insert("execution_target".to_string(), "container".to_string());
+                platform_details.insert("container_runtime".to_string(), runtime.clone());
+                platform_details.insert("container_id".to_string(), container_id.clone());
+            }
+            ResolvedTarget::Cloud(access) => {
+                platform_details.insert("execution_target".to_string(), "cloud".to_string());
+                platform_details.insert("ssh_host".to_string(), access.host.clone());
+            }
+        }
+        if !aggregated_stderr.trim().is_empty() {
+            platform_details.insert(
+                "stderr_bytes".to_string(),
+                aggregated_stderr.len().to_string(),
+            );
+        }
 
         Ok(TestResult {
             test_name: context.execution_id.clone(),
-            status: TestStatus::Passed,
+            status,
             execution_time: SystemTime::now()
                 .duration_since(context.start_time)
                 .unwrap_or_default(),
-            performance_metrics: PerformanceMetrics::default(),
-            error_message: None,
-            platform_details: HashMap::new(),
+            performance_metrics: parse_metrics_from_output(&aggregated_stdout),
+            error_message,
+            platform_details,
             numerical_results: None,
         })
     }
@@ -484,7 +1239,7 @@ impl CrossPlatformOrchestrator {
         let mut platform_results: HashMap<PlatformTarget, Vec<&TestResult>> = HashMap::new();
         for result in results {
             // Extract platform from test name (simplified)
-            if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
+            if let Some(platform) = self.extract_platform_from_result(result) {
                 platform_results.entry(platform).or_default().push(result);
             }
         }
@@ -518,17 +1273,28 @@ impl CrossPlatformOrchestrator {
         })
     }
 
-    /// Extract platform from test name (simplified implementation)
-    fn extract_platform_from_test_name(&self, test_name: &str) -> Option<PlatformTarget> {
-        if test_name.contains("linux") {
-            Some(PlatformTarget::LinuxX86_64)
-        } else if test_name.contains("windows") {
-            Some(PlatformTarget::WindowsX86_64)
-        } else if test_name.contains("macos") {
-            Some(PlatformTarget::MacOSX86_64)
-        } else {
-            None
+    /// Build the `platform_details` map for a test result, recording the declared
+    /// target platform as authoritative metadata (serde JSON encoding). Downstream
+    /// analysis reads this back instead of guessing the platform from the test name.
+    fn platform_details_for(&self, platform: &PlatformTarget) -> HashMap<String, String> {
+        let mut details = HashMap::new();
+        if let Ok(encoded) = serde_json::to_string(platform) {
+            details.insert(PLATFORM_DETAIL_KEY.to_string(), encoded);
         }
+        details
+    }
+
+    /// Recover the declared target platform from a test result's metadata.
+    ///
+    /// The platform comes from the test case's declared platform (carried in
+    /// `platform_details`), NOT from a substring guess over the test name. If the
+    /// metadata is absent or unparseable, returns `None` honestly rather than
+    /// fabricating a platform.
+    fn extract_platform_from_result(&self, result: &TestResult) -> Option<PlatformTarget> {
+        result
+            .platform_details
+            .get(PLATFORM_DETAIL_KEY)
+            .and_then(|encoded| serde_json::from_str::<PlatformTarget>(encoded).ok())
     }
 
     /// Generate performance comparisons
@@ -542,7 +1308,7 @@ impl CrossPlatformOrchestrator {
         let mut platform_metrics: HashMap<PlatformTarget, Vec<&PerformanceMetrics>> =
             HashMap::new();
         for result in results {
-            if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
+            if let Some(platform) = self.extract_platform_from_result(result) {
                 platform_metrics
                     .entry(platform)
                     .or_default()
@@ -570,7 +1336,7 @@ impl CrossPlatformOrchestrator {
 
         // Simplified trend analysis
         for result in results {
-            if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
+            if let Some(platform) = self.extract_platform_from_result(result) {
                 let trend = match result.status {
                     TestStatus::Passed => TrendDirection::Stable,
                     TestStatus::Failed => TrendDirection::Degrading,
@@ -625,7 +1391,7 @@ impl CrossPlatformOrchestrator {
 
         for result in results {
             if matches!(result.status, TestStatus::Failed) {
-                if let Some(platform) = self.extract_platform_from_test_name(&result.test_name) {
+                if let Some(platform) = self.extract_platform_from_result(result) {
                     *issues_by_platform.entry(platform).or_insert(0) += 1;
                 }
             }
@@ -824,21 +1590,386 @@ mod tests {
     }
 
     #[test]
-    fn test_platform_extraction() {
+    fn test_platform_from_declared_metadata() {
+        // Regression (F82): the target platform must come from the test case's declared
+        // platform metadata (carried in `platform_details`), never from a substring of
+        // the test name.
         let config = OrchestratorConfig::default();
         let orchestrator = CrossPlatformOrchestrator::new(config).expect("unwrap failed");
 
+        // A result whose declared platform is Windows round-trips back to Windows,
+        // even though its test name contains no platform hint.
+        let details = orchestrator.platform_details_for(&PlatformTarget::WindowsX86_64);
+        let declared = TestResult {
+            test_name: "opaque_execution_id".to_string(),
+            status: TestStatus::Passed,
+            execution_time: Duration::from_secs(0),
+            performance_metrics: PerformanceMetrics::default(),
+            error_message: None,
+            platform_details: details,
+            numerical_results: None,
+        };
         assert_eq!(
-            orchestrator.extract_platform_from_test_name("test_linux_build"),
-            Some(PlatformTarget::LinuxX86_64)
-        );
-        assert_eq!(
-            orchestrator.extract_platform_from_test_name("test_windows_build"),
+            orchestrator.extract_platform_from_result(&declared),
             Some(PlatformTarget::WindowsX86_64)
         );
-        assert_eq!(
-            orchestrator.extract_platform_from_test_name("test_unknown_build"),
-            None
+
+        // A result WITHOUT declared metadata returns None honestly — the name contains
+        // "linux" but that must NOT be used to guess the platform.
+        let bare = TestResult {
+            test_name: "test_linux_build".to_string(),
+            status: TestStatus::Passed,
+            execution_time: Duration::from_secs(0),
+            performance_metrics: PerformanceMetrics::default(),
+            error_message: None,
+            platform_details: HashMap::new(),
+            numerical_results: None,
+        };
+        assert_eq!(orchestrator.extract_platform_from_result(&bare), None);
+    }
+
+    /// Build an orchestrator whose matrix declares a single scenario running
+    /// `commands`, with local execution selected.
+    fn orchestrator_with_scenario(name: &str, commands: Vec<String>) -> CrossPlatformOrchestrator {
+        let mut config = OrchestratorConfig {
+            enable_cloud_testing: false,
+            enable_container_testing: false,
+            ..Default::default()
+        };
+        config.matrix_config.test_scenarios = vec![TestScenario {
+            name: name.to_string(),
+            commands,
+            category: TestCategory::Functionality,
+            timeout: Duration::from_secs(60),
+            expected_results: HashMap::new(),
+        }];
+        CrossPlatformOrchestrator::new(config).expect("orchestrator construction succeeds")
+    }
+
+    fn context_for(platform: PlatformTarget, scenario: &str) -> TestExecutionContext {
+        TestExecutionContext {
+            execution_id: format!("exec_{}", scenario),
+            platform,
+            rust_version: "stable".to_string(),
+            features: vec!["default".to_string()],
+            optimization: OptimizationLevel::Debug,
+            build_profile: "test".to_string(),
+            scenarios: vec![scenario.to_string()],
+            start_time: SystemTime::now(),
+            expected_duration: Duration::from_secs(60),
+        }
+    }
+
+    fn container_for(id: &str) -> ContainerInfo {
+        ContainerInfo {
+            container_id: id.to_string(),
+            name: id.to_string(),
+            image: "ubuntu:22.04".to_string(),
+            platform: PlatformTarget::LinuxX86_64,
+            status: ContainerStatus::Running,
+            ports: vec![],
+            resource_usage: ContainerStats::default(),
+            created_at: SystemTime::now(),
+            started_at: Some(SystemTime::now()),
+        }
+    }
+
+    fn cloud_instance_with(
+        status: CloudInstanceStatus,
+        config: HashMap<String, String>,
+        public_ip: Option<String>,
+    ) -> CloudInstance {
+        CloudInstance {
+            instance_id: "i-testinstance".to_string(),
+            provider: "test".to_string(),
+            instance_type: "t3.micro".to_string(),
+            platform: PlatformTarget::LinuxX86_64,
+            status,
+            public_ip,
+            private_ip: None,
+            launch_time: SystemTime::now(),
+            cost_per_hour: 0.0,
+            config,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_execution_maps_real_exit_status() {
+        // Regression (FC1): execute_local_test must really run the scenario's
+        // command and derive the status from its exit code, instead of sleeping
+        // and reporting a fabricated `Passed`.
+        let Some(host) = host_platform() else {
+            // Unmapped host: the local path honestly refuses to run, which the
+            // dedicated foreign-platform test already covers.
+            return;
+        };
+
+        let orchestrator = orchestrator_with_scenario("ok", vec!["exit 0".to_string()]);
+        let passed = orchestrator
+            .execute_local_test(&context_for(host.clone(), "ok"))
+            .await
+            .expect("local execution succeeds");
+        assert!(
+            matches!(passed.status, TestStatus::Passed),
+            "a command exiting 0 must be reported as Passed, got {:?}",
+            passed.status
         );
+        assert_eq!(passed.error_message, None);
+        assert_eq!(
+            passed.platform_details.get("last_exit_code"),
+            Some(&"0".to_string())
+        );
+        assert_eq!(
+            passed.platform_details.get("execution_target"),
+            Some(&"local".to_string())
+        );
+
+        let orchestrator = orchestrator_with_scenario("bad", vec!["exit 3".to_string()]);
+        let failed = orchestrator
+            .execute_local_test(&context_for(host.clone(), "bad"))
+            .await
+            .expect("local execution succeeds");
+        assert!(
+            matches!(failed.status, TestStatus::Failed),
+            "a command exiting non-zero must be reported as Failed, got {:?}",
+            failed.status
+        );
+        assert_eq!(
+            failed.platform_details.get("last_exit_code"),
+            Some(&"3".to_string())
+        );
+        assert!(failed
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("exited with status 3")));
+    }
+
+    #[tokio::test]
+    async fn test_local_execution_stops_at_first_failing_command() {
+        let Some(host) = host_platform() else {
+            return;
+        };
+
+        let orchestrator =
+            orchestrator_with_scenario("chain", vec!["exit 1".to_string(), "exit 0".to_string()]);
+        let result = orchestrator
+            .execute_local_test(&context_for(host, "chain"))
+            .await
+            .expect("local execution succeeds");
+
+        assert!(matches!(result.status, TestStatus::Failed));
+        assert_eq!(
+            result.platform_details.get("commands_total"),
+            Some(&"2".to_string())
+        );
+        assert_eq!(
+            result.platform_details.get("commands_executed"),
+            Some(&"1".to_string()),
+            "execution must stop at the first failing command"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_local_execution_refuses_foreign_platform() {
+        // A matrix entry for a platform this host is not cannot be run locally;
+        // it must be reported as PlatformNotSupported, never silently passed.
+        let foreign = match host_platform() {
+            Some(PlatformTarget::Custom(_)) | None => PlatformTarget::LinuxS390X,
+            Some(PlatformTarget::LinuxS390X) => PlatformTarget::WindowsX86_64,
+            Some(_) => PlatformTarget::LinuxS390X,
+        };
+
+        let orchestrator = orchestrator_with_scenario("foreign", vec!["exit 0".to_string()]);
+        let result = orchestrator
+            .execute_local_test(&context_for(foreign, "foreign"))
+            .await
+            .expect("local execution returns a result");
+
+        assert!(
+            matches!(result.status, TestStatus::PlatformNotSupported),
+            "a foreign target platform must not be reported as Passed, got {:?}",
+            result.status
+        );
+        assert!(result.error_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_container_execution_without_reachable_runtime_is_error() {
+        // Regression (FC1): the container path must actually reach the container
+        // runtime. Whether the runtime binary is missing, its daemon is down, or
+        // the container does not exist, the result is an honest
+        // ResourceUnavailable — not a fabricated `Passed`, and not `Failed`
+        // (which would blame the code under test for an infrastructure problem).
+        let orchestrator = orchestrator_with_scenario("unit", vec!["exit 0".to_string()]);
+        let container = container_for("optirs_nonexistent_container_for_tests");
+
+        let error = orchestrator
+            .execute_container_test(
+                &context_for(PlatformTarget::LinuxX86_64, "unit"),
+                &container,
+            )
+            .await
+            .expect_err("an unreachable container must not produce a test result");
+
+        assert!(
+            matches!(error, OptimError::ResourceUnavailable(_)),
+            "expected ResourceUnavailable for an unreachable container runtime, got {:?}",
+            error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cloud_execution_without_access_method_is_error() {
+        // Regression (FC1): a provisioned instance with no configured access
+        // method cannot run anything. Returning `Passed` would fabricate a
+        // result, so an honest error is required.
+        let orchestrator = orchestrator_with_scenario("unit", vec!["exit 0".to_string()]);
+        let context = context_for(PlatformTarget::LinuxX86_64, "unit");
+
+        let no_address = cloud_instance_with(
+            CloudInstanceStatus::Running,
+            HashMap::new(),
+            None, // no public IP either
+        );
+        let error = orchestrator
+            .execute_cloud_test(&context, &no_address)
+            .await
+            .expect_err("an instance with no address must not produce a test result");
+        assert!(matches!(error, OptimError::UnsupportedOperation(_)));
+
+        // Reachable address but no login user is still "no access method".
+        let no_user = cloud_instance_with(
+            CloudInstanceStatus::Running,
+            HashMap::new(),
+            Some("203.0.113.10".to_string()),
+        );
+        let error = orchestrator
+            .execute_cloud_test(&context, &no_user)
+            .await
+            .expect_err("an instance with no ssh user must not produce a test result");
+        assert!(matches!(error, OptimError::UnsupportedOperation(_)));
+
+        // A non-running instance is an unavailable resource.
+        let mut config = HashMap::new();
+        config.insert("ssh_user".to_string(), "runner".to_string());
+        let pending = cloud_instance_with(
+            CloudInstanceStatus::Pending,
+            config,
+            Some("203.0.113.10".to_string()),
+        );
+        let error = orchestrator
+            .execute_cloud_test(&context, &pending)
+            .await
+            .expect_err("a non-running instance must not produce a test result");
+        assert!(matches!(error, OptimError::ResourceUnavailable(_)));
+    }
+
+    #[test]
+    fn test_ssh_invocation_uses_configured_access() {
+        let mut config = HashMap::new();
+        config.insert("ssh_user".to_string(), "runner".to_string());
+        config.insert("ssh_port".to_string(), "2222".to_string());
+        config.insert("ssh_key".to_string(), "/keys/id_ed25519".to_string());
+        let instance = cloud_instance_with(
+            CloudInstanceStatus::Running,
+            config,
+            Some("203.0.113.10".to_string()),
+        );
+
+        let access = CrossPlatformOrchestrator::resolve_ssh_access(&instance)
+            .expect("configured access resolves");
+        assert_eq!(access.user, "runner");
+        assert_eq!(access.host, "203.0.113.10");
+        assert_eq!(access.port, Some(2222));
+
+        let (program, args) = CrossPlatformOrchestrator::build_invocation(
+            &ResolvedTarget::Cloud(access),
+            &PlatformTarget::LinuxX86_64,
+            "cargo test",
+            &[],
+        );
+        assert_eq!(program, "ssh");
+        assert!(args.contains(&"runner@203.0.113.10".to_string()));
+        assert!(args.contains(&"cargo test".to_string()));
+        assert!(args.contains(&"/keys/id_ed25519".to_string()));
+        assert!(args.contains(&"2222".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_run_process_missing_program_is_resource_unavailable() {
+        // Spawning a program that does not exist is a capability problem, not a
+        // test failure, and must surface as ResourceUnavailable.
+        let error = run_process(
+            "optirs_definitely_missing_binary_for_tests",
+            &[],
+            &[],
+            Duration::from_secs(5),
+        )
+        .await
+        .expect_err("spawning a missing binary must fail");
+        assert!(matches!(error, OptimError::ResourceUnavailable(_)));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_scenario_is_configuration_error() {
+        let orchestrator = orchestrator_with_scenario("known", vec!["exit 0".to_string()]);
+        let context = context_for(PlatformTarget::LinuxX86_64, "unknown_scenario");
+        let error = orchestrator
+            .execute_local_test(&context)
+            .await
+            .expect_err("an undefined scenario must not silently pass");
+        assert!(matches!(error, OptimError::InvalidConfig(_)));
+    }
+
+    #[tokio::test]
+    async fn test_scenario_without_commands_is_skipped_not_passed() {
+        let orchestrator = orchestrator_with_scenario("empty", vec![]);
+        let result = orchestrator
+            .execute_local_test(&context_for(PlatformTarget::LinuxX86_64, "empty"))
+            .await
+            .expect("an empty scenario returns a result");
+        assert!(
+            matches!(result.status, TestStatus::Skipped),
+            "a scenario with no commands must be Skipped, not Passed"
+        );
+        assert!(result.error_message.is_some());
+    }
+
+    #[test]
+    fn test_parse_metrics_from_output_uses_real_units() {
+        // Metrics come from what the command actually printed, with correct unit
+        // conversion; anything absent stays at zero (= not measured).
+        let output = "\
+throughput: 2500 ops/s
+latency: 1.5 ms
+peak_memory: 128 MiB
+cpu: 42.5%
+";
+        let metrics = parse_metrics_from_output(output);
+        assert!((metrics.throughput - 2500.0).abs() < 1e-9);
+        assert!(
+            (metrics.latency - 0.0015).abs() < 1e-12,
+            "1.5 ms must become 0.0015 s, got {}",
+            metrics.latency
+        );
+        assert_eq!(metrics.memory_usage, 128 * 1024 * 1024);
+        assert!((metrics.cpu_usage - 42.5).abs() < 1e-9);
+        assert_eq!(metrics.energy_consumption, None);
+
+        // Nothing recognisable: every field stays at the "not measured" zero
+        // rather than acquiring an invented default.
+        let empty = parse_metrics_from_output("running 3 tests\nall good\n");
+        assert_eq!(empty.throughput, 0.0);
+        assert_eq!(empty.latency, 0.0);
+        assert_eq!(empty.memory_usage, 0);
+        assert_eq!(empty.cpu_usage, 0.0);
+
+        // A `timestamp:` prefix must not be mistaken for a `time:` metric.
+        let decoy = parse_metrics_from_output("timestamp: 1700000000\n");
+        assert_eq!(decoy.latency, 0.0);
+
+        // The last matching line wins, and criterion-style brackets parse.
+        let repeated = parse_metrics_from_output("time: 5 s\ntime: [250.0 ms 251.0 ms]\n");
+        assert!((repeated.latency - 0.25).abs() < 1e-12);
     }
 }

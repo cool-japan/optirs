@@ -34,6 +34,36 @@ pub struct AdaptiveBuffer<A: Float + Send + Sync> {
     last_processing: Instant,
     /// Size change tracking
     size_change_log: VecDeque<SizeChangeEvent>,
+    /// Running per-feature statistics backing the relevance score.
+    feature_statistics: RunningFeatureStatistics<A>,
+}
+
+/// Per-item processing time assumed only until a real latency or throughput
+/// measurement exists.
+const DEFAULT_EXPECTED_PROCESSING_TIME: Duration = Duration::from_millis(100);
+
+/// Smoothing factor for the processing-latency moving average.
+const LATENCY_SMOOTHING: f64 = 0.1;
+
+/// Welford accumulators for the buffer's per-feature distribution.
+#[derive(Debug, Clone)]
+struct RunningFeatureStatistics<A: Float + Send + Sync> {
+    /// Running per-coordinate mean.
+    means: Vec<A>,
+    /// Running per-coordinate sum of squared deviations.
+    m2: Vec<A>,
+    /// Number of observations folded in.
+    sample_count: usize,
+}
+
+impl<A: Float + Send + Sync> Default for RunningFeatureStatistics<A> {
+    fn default() -> Self {
+        Self {
+            means: Vec::new(),
+            m2: Vec::new(),
+            sample_count: 0,
+        }
+    }
 }
 
 /// Data point with priority information for buffering
@@ -493,6 +523,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             statistics,
             last_processing: Instant::now(),
             size_change_log: VecDeque::with_capacity(100),
+            feature_statistics: RunningFeatureStatistics::default(),
         })
     }
 
@@ -521,15 +552,21 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         // Calculate priority score for the data point
         let priority_score = self.calculate_priority_score(&data_point)?;
 
-        // Calculate freshness and relevance scores
+        // Calculate freshness and relevance scores. Relevance is measured
+        // against the statistics of the points seen *before* this one, so the
+        // point cannot make itself look typical.
         let freshness_score = self.calculate_freshness_score(&data_point);
         let relevance_score = self.calculate_relevance_score(&data_point)?;
+        self.update_feature_statistics(&data_point);
 
         let prioritized_point = PrioritizedDataPoint {
             data_point,
             priority_score,
             buffer_timestamp: Instant::now(),
-            expected_processing_time: Duration::from_millis(100), // Estimated
+            // Real estimate from the measured average processing latency,
+            // falling back to the observed throughput when no latency has been
+            // recorded yet.
+            expected_processing_time: self.estimated_processing_time(),
             freshness_score,
             relevance_score,
         };
@@ -622,11 +659,150 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         A::from(freshness.max(0.0)).expect("unwrap failed")
     }
 
-    /// Calculates relevance score for current model context
-    fn calculate_relevance_score(&self, _data_point: &StreamingDataPoint<A>) -> Result<A, String> {
-        // Simplified relevance calculation
-        // In practice, this would consider current model parameters, recent performance, etc.
-        Ok(A::from(0.7).expect("unwrap failed")) // Default moderate relevance
+    /// Calculates how relevant a data point is to what the buffer currently
+    /// holds.
+    ///
+    /// B1: this used to `return Ok(0.7)` for every point, so relevance
+    /// contributed a constant to the priority score and therefore had no effect
+    /// on ordering whatsoever.
+    ///
+    /// Relevance is now a real, bounded function of two measurable properties:
+    ///
+    /// - **Typicality**: the Mahalanobis-style standardised distance of the
+    ///   point's features from the buffer's running per-feature mean and
+    ///   standard deviation. A point that looks like the recent stream is
+    ///   relevant to the model currently being fitted; one many sigmas away is
+    ///   less so (novelty is scored separately, by
+    ///   `calculate_novelty_score`, and combined with a different weight).
+    /// - **Supervision**: a labelled point supports a gradient step while an
+    ///   unlabelled one cannot, so it is genuinely more relevant.
+    ///
+    /// With no history yet there is nothing to be relevant *to*, so the point's
+    /// own quality score is used as the only available estimate.
+    fn calculate_relevance_score(&self, data_point: &StreamingDataPoint<A>) -> Result<A, String> {
+        let supervision_bonus = if data_point.target.is_some() {
+            A::from(0.2).ok_or_else(|| "0.2 is not representable".to_string())?
+        } else {
+            A::zero()
+        };
+
+        let statistics = &self.feature_statistics;
+        if statistics.sample_count < 2 || statistics.means.is_empty() {
+            return Ok((data_point.quality_score + supervision_bonus).min(A::one()));
+        }
+
+        let count = A::from(statistics.sample_count)
+            .ok_or_else(|| "sample count is not representable".to_string())?;
+        let mut squared_z_total = A::zero();
+        let mut compared = 0usize;
+        for (index, &value) in data_point.features.iter().enumerate() {
+            let Some(&mean) = statistics.means.get(index) else {
+                continue;
+            };
+            let Some(&m2) = statistics.m2.get(index) else {
+                continue;
+            };
+            let variance = m2 / count;
+            if variance <= A::zero() {
+                continue;
+            }
+            let z = (value - mean) / variance.sqrt();
+            squared_z_total = squared_z_total + z * z;
+            compared += 1;
+        }
+
+        if compared == 0 {
+            return Ok((data_point.quality_score + supervision_bonus).min(A::one()));
+        }
+
+        let compared_count =
+            A::from(compared).ok_or_else(|| "compared count is not representable".to_string())?;
+        // Root-mean-square z score across the compared coordinates.
+        let rms_z = (squared_z_total / compared_count).sqrt();
+        // Map [0, inf) monotonically onto (0, 1]: a point sitting on the mean
+        // scores 1, a 1-sigma point 0.5, a 3-sigma point 0.25.
+        let typicality = A::one() / (A::one() + rms_z);
+
+        Ok((typicality + supervision_bonus).min(A::one()))
+    }
+
+    /// Folds a data point into the running per-feature statistics that back the
+    /// relevance score.
+    fn update_feature_statistics(&mut self, data_point: &StreamingDataPoint<A>) {
+        let statistics = &mut self.feature_statistics;
+        if statistics.means.len() < data_point.features.len() {
+            statistics
+                .means
+                .resize(data_point.features.len(), A::zero());
+            statistics.m2.resize(data_point.features.len(), A::zero());
+        }
+        statistics.sample_count = statistics.sample_count.saturating_add(1);
+        let Some(count) = A::from(statistics.sample_count) else {
+            return;
+        };
+
+        // Welford update per coordinate.
+        for (index, &value) in data_point.features.iter().enumerate() {
+            if value.is_nan() {
+                continue;
+            }
+            let mean = statistics.means[index];
+            let delta = value - mean;
+            let new_mean = mean + delta / count;
+            statistics.means[index] = new_mean;
+            statistics.m2[index] = statistics.m2[index] + delta * (value - new_mean);
+        }
+    }
+
+    /// Number of data points folded into the relevance statistics.
+    pub fn feature_statistics_sample_count(&self) -> usize {
+        self.feature_statistics.sample_count
+    }
+
+    /// Per-item processing time expected from the measured average latency.
+    ///
+    /// Falls back to the observed throughput's reciprocal, and only then to a
+    /// documented default when neither has been measured yet.
+    fn estimated_processing_time(&self) -> Duration {
+        if self.statistics.avg_processing_latency > Duration::ZERO {
+            return self.statistics.avg_processing_latency;
+        }
+        let throughput = self
+            .statistics
+            .throughput_stats
+            .avg_throughput
+            .to_f64()
+            .unwrap_or(0.0);
+        if throughput > 0.0 {
+            return Duration::from_secs_f64(1.0 / throughput);
+        }
+        DEFAULT_EXPECTED_PROCESSING_TIME
+    }
+
+    /// Average processing latency measured over recent batches.
+    pub fn average_processing_latency(&self) -> Duration {
+        self.statistics.avg_processing_latency
+    }
+
+    /// Folds a real, measured batch processing duration into the buffer's
+    /// latency statistics.
+    ///
+    /// B2: `statistics.avg_processing_latency` was initialised to
+    /// `Duration::ZERO` and never written by anything, so the
+    /// `avg_processing_latency > 500ms` branch in
+    /// `calculate_optimal_batch_size` was unreachable dead code and the buffer
+    /// never shrank its batches under load.
+    pub fn record_processing_duration(&mut self, duration: Duration) {
+        let previous = self.statistics.avg_processing_latency;
+        self.statistics.avg_processing_latency = if previous == Duration::ZERO {
+            duration
+        } else {
+            // Exponential moving average with the same smoothing factor used
+            // for throughput, so the two statistics track at the same rate.
+            let smoothed = LATENCY_SMOOTHING * duration.as_secs_f64()
+                + (1.0 - LATENCY_SMOOTHING) * previous.as_secs_f64();
+            Duration::from_secs_f64(smoothed.max(0.0))
+        };
     }
 
     /// Gets a batch of data for processing
@@ -740,13 +916,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
         // Analyze trend if we have enough data
         if trend.recent_changes.len() >= 10 {
             let recent: Vec<A> = trend.recent_changes.iter().cloned().collect();
-            let first_half_avg = recent.iter().take(recent.len() / 2).cloned().sum::<A>()
-                / A::from(recent.len() / 2).expect("unwrap failed");
-            let second_half_avg = recent.iter().skip(recent.len() / 2).cloned().sum::<A>()
-                / A::from(recent.len() - recent.len() / 2).expect("unwrap failed");
+            let half = recent.len() / 2;
+            let first_count =
+                A::from(half).ok_or_else(|| "half-window size is not representable".to_string())?;
+            let second_count = A::from(recent.len() - half)
+                .ok_or_else(|| "half-window size is not representable".to_string())?;
+            let first_half_avg = recent.iter().take(half).cloned().sum::<A>() / first_count;
+            let second_half_avg = recent.iter().skip(half).cloned().sum::<A>() / second_count;
 
             let change = second_half_avg - first_half_avg;
-            let change_threshold = A::from(0.05).expect("unwrap failed"); // 5% change threshold
+            let change_threshold =
+                A::from(0.05).ok_or_else(|| "0.05 is not representable".to_string())?; // 5% change threshold
 
             trend.trend_direction = if change > change_threshold {
                 TrendDirection::Improving
@@ -757,7 +937,43 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             };
 
             trend.trend_magnitude = change.abs();
-            trend.confidence = A::from(0.8).expect("unwrap failed"); // Simplified confidence
+
+            // B3: confidence used to be the constant 0.8, which made it useless
+            // for deciding whether to act on the trend. It is now Welch's
+            // two-sample t statistic for "the two halves have different means",
+            // mapped monotonically into [0, 1): a large, consistent shift
+            // relative to the within-half spread gives high confidence, while a
+            // shift that is small compared to the noise gives low confidence.
+            let variance_of = |values: &[A], count: A, mean: A| -> A {
+                if values.len() < 2 {
+                    return A::zero();
+                }
+                let denominator = count - A::one();
+                if denominator <= A::zero() {
+                    return A::zero();
+                }
+                values
+                    .iter()
+                    .fold(A::zero(), |acc, &v| acc + (v - mean) * (v - mean))
+                    / denominator
+            };
+            let first_slice = &recent[..half];
+            let second_slice = &recent[half..];
+            let first_variance = variance_of(first_slice, first_count, first_half_avg);
+            let second_variance = variance_of(second_slice, second_count, second_half_avg);
+            let standard_error =
+                (first_variance / first_count + second_variance / second_count).sqrt();
+
+            trend.confidence = if standard_error > A::zero() {
+                let t_statistic = (change / standard_error).abs();
+                t_statistic / (A::one() + t_statistic)
+            } else if change.abs() > A::zero() {
+                // Zero within-half variance and a non-zero shift is a perfectly
+                // clean step change.
+                A::one()
+            } else {
+                A::zero()
+            };
         }
 
         Ok(())
@@ -978,10 +1194,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + std::fmt::Debug
             return Ok(None);
         }
 
-        // Calculate average processing time
+        // Calculate average processing time.
+        //
+        // B2: this used `p.timestamp.elapsed()` — the *age* of each snapshot,
+        // which grows without bound the longer the process runs. Every stream
+        // therefore looked slower and slower until the "reduce buffer size"
+        // branch latched permanently. `processing_duration` is the measured cost
+        // of the step that produced the snapshot, which is what this decision
+        // actually needs.
         let avg_processing_time = recent_performance
             .iter()
-            .map(|p| p.timestamp.elapsed().as_millis() as f64)
+            .map(|p| p.processing_duration.as_secs_f64() * 1000.0)
             .sum::<f64>()
             / recent_performance.len() as f64;
 
@@ -1204,4 +1427,249 @@ pub struct BufferDiagnostics {
     pub total_processed: u64,
     pub total_discarded: u64,
     pub size_changes: usize,
+}
+
+#[cfg(test)]
+mod buffering_regression_tests {
+    use super::super::performance::DataStatistics;
+    use super::super::resource_management::ResourceUsage;
+    use super::*;
+    use scirs2_core::ndarray::Array1;
+
+    fn point(features: Vec<f64>, target: Option<f64>) -> StreamingDataPoint<f64> {
+        StreamingDataPoint {
+            features: Array1::from_vec(features),
+            target: target.map(|t| Array1::from_vec(vec![t])),
+            timestamp: Instant::now(),
+            source_id: None,
+            quality_score: 1.0,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn buffer() -> AdaptiveBuffer<f64> {
+        AdaptiveBuffer::new(&StreamingConfig::default()).expect("buffer")
+    }
+
+    fn snapshot_with(processing: Duration) -> PerformanceSnapshot<f64> {
+        PerformanceSnapshot {
+            timestamp: Instant::now(),
+            processing_duration: processing,
+            loss: 1.0,
+            accuracy: None,
+            convergence_rate: None,
+            gradient_norm: None,
+            parameter_update_magnitude: None,
+            data_statistics: DataStatistics::default(),
+            resource_usage: ResourceUsage::default(),
+            custom_metrics: HashMap::new(),
+        }
+    }
+
+    /// B1: `calculate_relevance_score` returned the constant `0.7` for every
+    /// point, so relevance carried zero information. It must now discriminate: a
+    /// point sitting on the buffer's running mean is more relevant than one many
+    /// standard deviations away.
+    #[test]
+    fn relevance_score_discriminates_typical_from_atypical_points() {
+        let mut buffer = buffer();
+
+        // Establish a tight distribution around 10.0.
+        for i in 0..40 {
+            let value = 10.0 + 0.1 * ((i % 5) as f64 - 2.0);
+            buffer.update_feature_statistics(&point(vec![value], None));
+        }
+        assert_eq!(buffer.feature_statistics_sample_count(), 40);
+
+        let typical = buffer
+            .calculate_relevance_score(&point(vec![10.0], None))
+            .expect("typical");
+        let atypical = buffer
+            .calculate_relevance_score(&point(vec![10_000.0], None))
+            .expect("atypical");
+
+        assert!(
+            typical > atypical,
+            "B1 regression: relevance did not discriminate \
+             (typical={typical}, atypical={atypical})"
+        );
+        assert!(
+            (typical - 0.7).abs() > 1e-9 || (atypical - 0.7).abs() > 1e-9,
+            "B1 regression: both scores are still the hard-coded 0.7"
+        );
+        assert!(
+            atypical < 0.1,
+            "a 100-sigma point should score near zero relevance, got {atypical}"
+        );
+    }
+
+    /// B1: a labelled point can support a gradient step and an unlabelled one
+    /// cannot, so supervision must raise relevance.
+    #[test]
+    fn relevance_score_rewards_labelled_points() {
+        let mut buffer = buffer();
+        for i in 0..40 {
+            let value = 10.0 + 0.1 * ((i % 5) as f64 - 2.0);
+            buffer.update_feature_statistics(&point(vec![value], None));
+        }
+
+        // Use an off-centre value so neither score saturates at the 1.0 clamp.
+        let unlabelled = buffer
+            .calculate_relevance_score(&point(vec![10.6], None))
+            .expect("unlabelled");
+        let labelled = buffer
+            .calculate_relevance_score(&point(vec![10.6], Some(1.0)))
+            .expect("labelled");
+        assert!(
+            labelled > unlabelled,
+            "a labelled point must be at least as relevant \
+             (labelled={labelled}, unlabelled={unlabelled})"
+        );
+    }
+
+    /// B2: `compute_size_adaptation` measured "processing time" as
+    /// `snapshot.timestamp.elapsed()` — the snapshot's *age*. Age grows without
+    /// bound as the process runs, so after a while every stream looked slower
+    /// than one second per batch and the "shrink the buffer" branch latched
+    /// permanently. Snapshots that took 1ms each must produce no shrink request
+    /// no matter how old they are.
+    #[test]
+    fn size_adaptation_uses_measured_processing_time_not_snapshot_age() {
+        let config = StreamingConfig::default();
+        let mut tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
+        for _ in 0..10 {
+            tracker
+                .add_performance(snapshot_with(Duration::from_millis(1)))
+                .expect("add_performance");
+        }
+        // Let the snapshots visibly age; under the bug this is what was measured.
+        std::thread::sleep(Duration::from_millis(60));
+
+        let mut buffer = buffer();
+        // Fill past 30% utilisation so the "grow" branch is not taken either.
+        for i in 0..200 {
+            buffer
+                .add_batch(vec![point(vec![i as f64], None)])
+                .expect("add_batch");
+        }
+
+        let adaptation = buffer
+            .compute_size_adaptation(&tracker)
+            .expect("compute_size_adaptation");
+        if let Some(adaptation) = adaptation {
+            assert!(
+                adaptation.magnitude > 0.0,
+                "B2 regression: a 1ms-per-batch workload produced a shrink \
+                 request (magnitude={}), which can only come from reading \
+                 snapshot age as processing time",
+                adaptation.magnitude
+            );
+        }
+    }
+
+    /// B2: a genuinely slow workload must still be caught, so the fix does not
+    /// simply blind the detector.
+    #[test]
+    fn size_adaptation_still_shrinks_for_genuinely_slow_processing() {
+        let config = StreamingConfig::default();
+        let mut tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
+        for _ in 0..10 {
+            tracker
+                .add_performance(snapshot_with(Duration::from_millis(1500)))
+                .expect("add_performance");
+        }
+
+        let buffer = buffer();
+        let adaptation = buffer
+            .compute_size_adaptation(&tracker)
+            .expect("compute_size_adaptation")
+            .expect("a 1.5s-per-batch workload must request a smaller buffer");
+        assert!(
+            adaptation.magnitude < 0.0,
+            "expected a shrink request, got magnitude {}",
+            adaptation.magnitude
+        );
+    }
+
+    /// B2: `statistics.avg_processing_latency` was initialised to
+    /// `Duration::ZERO` and never written by anything, making the
+    /// `> 500ms` branch of `calculate_optimal_batch_size` unreachable.
+    #[test]
+    fn processing_latency_is_recorded_and_shrinks_the_batch_size() {
+        let mut buffer = buffer();
+        assert_eq!(
+            buffer.average_processing_latency(),
+            Duration::ZERO,
+            "no latency should be claimed before any measurement"
+        );
+
+        for i in 0..200 {
+            buffer
+                .add_batch(vec![point(vec![i as f64], None)])
+                .expect("add_batch");
+        }
+        let fast_batch = buffer
+            .calculate_optimal_batch_size()
+            .expect("calculate_optimal_batch_size");
+
+        // Report a genuinely slow batch several times so the EMA clears 500ms.
+        for _ in 0..40 {
+            buffer.record_processing_duration(Duration::from_millis(2000));
+        }
+        assert!(
+            buffer.average_processing_latency() > Duration::from_millis(500),
+            "B2 regression: recorded latency did not reach the statistics \
+             (got {:?})",
+            buffer.average_processing_latency()
+        );
+
+        let slow_batch = buffer
+            .calculate_optimal_batch_size()
+            .expect("calculate_optimal_batch_size");
+        assert!(
+            slow_batch < fast_batch,
+            "B2 regression: the slow-processing branch is still unreachable \
+             ({fast_batch} -> {slow_batch})"
+        );
+    }
+
+    /// B3: `trend.confidence` was the constant `0.8`, so no caller could tell a
+    /// clean step change from pure noise. A clean, low-noise step must now score
+    /// high confidence and a noisy no-op must score low.
+    #[test]
+    fn quality_trend_confidence_reflects_the_real_fit() {
+        // Clean step: first half at 0.2, second half at 0.9, no within-half noise.
+        let mut clean = buffer();
+        for i in 0..10 {
+            let quality = if i < 5 { 0.2 } else { 0.9 };
+            clean
+                .update_quality_trend(quality)
+                .expect("update_quality_trend");
+        }
+        let clean_confidence = clean.get_quality_metrics().quality_trend.confidence;
+
+        // Noisy, trendless series alternating around the same mean.
+        let mut noisy = buffer();
+        for i in 0..10 {
+            let quality = if i % 2 == 0 { 0.1 } else { 0.9 };
+            noisy
+                .update_quality_trend(quality)
+                .expect("update_quality_trend");
+        }
+        let noisy_confidence = noisy.get_quality_metrics().quality_trend.confidence;
+
+        assert!(
+            clean_confidence > noisy_confidence,
+            "B3 regression: confidence did not distinguish a clean step from \
+             noise (clean={clean_confidence}, noisy={noisy_confidence})"
+        );
+        assert!(
+            (clean_confidence - 0.8).abs() > 1e-9 || (noisy_confidence - 0.8).abs() > 1e-9,
+            "B3 regression: both confidences are still the hard-coded 0.8"
+        );
+        assert_eq!(
+            clean.get_quality_metrics().quality_trend.trend_direction,
+            TrendDirection::Improving
+        );
+    }
 }

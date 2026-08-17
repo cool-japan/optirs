@@ -5,6 +5,7 @@
 // CI/CD integration and continuous performance monitoring.
 
 use crate::error::{OptimError, Result};
+use crate::regression_tester::distributions;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -843,7 +844,7 @@ impl PerformanceRegressionDetector {
         }
 
         let first = values[0];
-        let last = *values.last().expect("unwrap failed");
+        let last = values.last().copied().unwrap_or(first);
         let max_value = values.iter().fold(f64::NEG_INFINITY, |acc, &x| acc.max(x));
         let min_value = values.iter().fold(f64::INFINITY, |acc, &x| acc.min(x));
 
@@ -854,19 +855,15 @@ impl PerformanceRegressionDetector {
         ((last - first).abs() / (max_value - min_value)).clamp(0.0, 1.0)
     }
 
-    /// Calculate trend statistical significance
+    /// Calculate trend statistical significance in `[0, 1]` (higher == more
+    /// confident that a monotonic trend is present).
+    ///
+    /// Uses the Mann-Kendall trend test, whose p-value is scale-invariant.
+    /// The previous formula divided a dimensionless strength by a raw-unit
+    /// standard deviation, so its result depended on the measurement units
+    /// (e.g. nanoseconds vs seconds) rather than on the strength of the trend.
     fn calculate_trend_significance(&self, values: &[f64]) -> f64 {
-        // Simplified significance calculation
-        // In practice, would use proper statistical tests
-        if values.len() < 5 {
-            return 0.0;
-        }
-
-        let variance = self.calculate_variance(values);
-        let strength = self.calculate_trend_strength(values);
-
-        // Higher variance reduces significance, higher strength increases it
-        (strength / (1.0 + variance.sqrt())).clamp(0.0, 1.0)
+        mann_kendall_trend_significance(values)
     }
 
     /// Calculate variance of values
@@ -1329,9 +1326,29 @@ impl PerformanceDatabase {
     }
 }
 
+/// Scale-invariant trend significance in `[0, 1]` (higher == more confident a
+/// monotonic trend is present), computed with the rank-based Mann-Kendall test.
+///
+/// Rank-based so the result depends on the strength of the trend, not the
+/// measurement units (nanoseconds vs seconds give the same value). Shared by
+/// [`PerformanceRegressionDetector`] and [`StatisticalAnalyzer`] so both agree.
+fn mann_kendall_trend_significance(values: &[f64]) -> f64 {
+    let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    match distributions::mann_kendall(&finite) {
+        Some(result) if result.p_value.is_finite() => (1.0 - result.p_value).clamp(0.0, 1.0),
+        _ => 0.0,
+    }
+}
+
 impl StatisticalAnalyzer {
     fn new(config: StatisticalConfig) -> Self {
         Self { config }
+    }
+
+    /// Scale-invariant Mann-Kendall trend significance for `values` (see
+    /// [`mann_kendall_trend_significance`]).
+    fn calculate_trend_significance(&self, values: &[f64]) -> f64 {
+        mann_kendall_trend_significance(values)
     }
 
     fn perform_regression_test(
@@ -1356,14 +1373,55 @@ impl StatisticalAnalyzer {
         })
     }
 
+    /// Two-sided p-value for the hypothesis that the current `values` differ
+    /// from the `baseline` metric.
+    ///
+    /// A p-value requires a reference distribution to test against. When a
+    /// baseline carries dispersion and sample-size information a two-sample
+    /// Welch t-test is used; otherwise a one-sample t-test against the baseline
+    /// point value is used. Without a usable baseline there is no null
+    /// hypothesis to reject, so the honest result is `1.0` (no evidence of a
+    /// regression) rather than a fabricated fixed value.
     fn calculate_p_value(
         &self,
         values: &[f64],
-        _baseline: Option<&MetricValue>,
+        baseline: Option<&MetricValue>,
         _test_type: &StatisticalTest,
     ) -> f64 {
-        // Simplified - would implement actual statistical tests
-        0.05
+        let Some(baseline) = baseline else {
+            return 1.0;
+        };
+        let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+        if finite.len() < 2 || !baseline.value.is_finite() {
+            return 1.0;
+        }
+
+        let result = match (baseline.std_dev, baseline.sample_count) {
+            (Some(std_dev), n) if n >= 2 && std_dev.is_finite() => {
+                match (
+                    distributions::mean(&finite),
+                    distributions::sample_variance(&finite),
+                ) {
+                    (Some(current_mean), Some(current_variance)) => {
+                        distributions::welch_t_test_summary(
+                            current_mean,
+                            current_variance,
+                            finite.len(),
+                            baseline.value,
+                            std_dev * std_dev,
+                            n,
+                        )
+                    }
+                    _ => None,
+                }
+            }
+            _ => distributions::one_sample_t_test(&finite, baseline.value),
+        };
+
+        match result {
+            Some(test) if test.p_value.is_finite() => test.p_value.clamp(0.0, 1.0),
+            _ => 1.0,
+        }
     }
 
     fn calculate_effect_size(&self, values: &[f64], baseline: Option<&MetricValue>) -> f64 {
@@ -1707,5 +1765,64 @@ mod tests {
         let report = detector.export_for_ci_cd().expect("unwrap failed");
         assert!(matches!(report.status, CiCdStatus::Passed));
         assert_eq!(report.regression_count, 0);
+    }
+
+    #[test]
+    fn test_calculate_p_value_is_real_not_constant() {
+        let analyzer = StatisticalAnalyzer::new(StatisticalConfig::default());
+
+        // No baseline: no null hypothesis -> honest 1.0 (never the old 0.05).
+        let no_baseline =
+            analyzer.calculate_p_value(&[10.0, 10.1, 9.9], None, &StatisticalTest::MannWhitneyU);
+        assert!((no_baseline - 1.0).abs() < 1e-9);
+
+        let baseline = MetricValue {
+            value: 10.0,
+            std_dev: Some(0.1),
+            sample_count: 10,
+            min_value: 9.8,
+            max_value: 10.2,
+            percentiles: None,
+        };
+
+        // Sample tightly clustered around the baseline -> large p-value.
+        let close = analyzer.calculate_p_value(
+            &[10.0, 10.02, 9.98, 10.01, 9.99],
+            Some(&baseline),
+            &StatisticalTest::MannWhitneyU,
+        );
+        assert!(close > 0.1, "p-value for a matching sample was {close}");
+
+        // Sample far from the baseline (a real regression) -> tiny p-value.
+        let far = analyzer.calculate_p_value(
+            &[12.0, 12.1, 11.9, 12.05, 11.95],
+            Some(&baseline),
+            &StatisticalTest::MannWhitneyU,
+        );
+        assert!(far < 0.01, "p-value for a clear regression was {far}");
+        assert!(far < close);
+    }
+
+    #[test]
+    fn test_calculate_trend_significance_is_scale_invariant() {
+        let analyzer = StatisticalAnalyzer::new(StatisticalConfig::default());
+
+        let increasing = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let sig_small = analyzer.calculate_trend_significance(&increasing);
+
+        // Same monotonic trend, scaled by 1e9 (e.g. seconds -> nanoseconds):
+        // significance must be identical because Mann-Kendall is rank-based.
+        let scaled: Vec<f64> = increasing.iter().map(|v| v * 1e9).collect();
+        let sig_scaled = analyzer.calculate_trend_significance(&scaled);
+        assert!((sig_small - sig_scaled).abs() < 1e-9);
+        assert!(
+            sig_small > 0.9,
+            "monotonic trend significance was {sig_small}"
+        );
+
+        // A flat, noisy series has no significant trend.
+        let flat = vec![5.0, 4.9, 5.1, 5.0, 4.95, 5.05, 5.0, 4.98];
+        let sig_flat = analyzer.calculate_trend_significance(&flat);
+        assert!(sig_flat < sig_small);
     }
 }

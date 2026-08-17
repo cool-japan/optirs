@@ -66,18 +66,26 @@ approx = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-# The default build enables every search strategy. Individual strategies can be
-# switched off by using `--no-default-features` and re-enabling only what is
-# needed; each flag gates the corresponding module in `search_strategies`.
-default = ["bayesian", "evolutionary", "reinforcement", "progressive", "multi_objective"]
-
-# Bayesian optimization with a Gaussian-process surrogate.
-bayesian = []
-# Population-based evolutionary architecture search.
-evolutionary = []
-# Reinforcement-learning controller (LSTM + REINFORCE).
-reinforcement = []
-# Progressive (staged complexity) search.
-progressive = []
-# Multi-objective search (NSGA-II and friends).
-multi_objective = []
+# This crate deliberately declares NO optional features.
+#
+# It previously declared `bayesian`, `evolutionary`, `reinforcement`,
+# `progressive` and `multi_objective` (all in `default`), documented as gating
+# "the corresponding module in `search_strategies`". Not one `cfg(feature = ...)`
+# existed anywhere in the crate: every flag was inert, so `--no-default-features`
+# built exactly the same code as the default build and the documentation was
+# simply false. Removing them is the honest resolution — a flag that gates nothing
+# is worse than no flag, because it tells users they can trim the build when they
+# cannot.
+#
+# Real gating is not a drop-in change and is not being pretended at here: the
+# engine holds a `multi_objective::ParetoFront` field, `nas_engine::results`
+# re-exports it, and `nas_engine::engine` dispatches to every strategy through
+# `strategy_adapters`. Gating those modules means cfg-ing struct fields, trait
+# objects and dispatch arms across `nas_engine/`, and yields 2^5 build
+# configurations that nothing in CI exercises. If per-strategy builds are wanted,
+# that refactor should land together with the cfg matrix that proves it works.
+#
+# The `learned_integration` feature is likewise gone: it pulled in `optirs-learned`
+# with no module behind it (see the dependency comment above — that removal, and
+# the removal of the unused `optirs-core` dependency, must not be reverted).
+default = []

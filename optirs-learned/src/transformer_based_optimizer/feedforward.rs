@@ -4,6 +4,7 @@ use super::layers::ActivationLayer;
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, Axis};
 use scirs2_core::numeric::Float;
+use scirs2_core::random::Rng;
 use std::fmt::Debug;
 
 /// Activations cached by [`FeedForwardNetwork::forward_with_cache`] so the
@@ -217,10 +218,16 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     }
 
     /// Fill the weights with a fresh Xavier/Glorot uniform draw.
+    ///
+    /// The generator handle is acquired **once** for the whole matrix. Calling
+    /// the free `random()` function per element re-entered the thread-local
+    /// generator ~25M times when building a default-configuration optimizer,
+    /// which dominated construction time.
     fn randomize_xavier(&mut self) {
         let bound = (6.0 / (self.input_dim + self.output_dim).max(1) as f64).sqrt();
+        let mut rng = scirs2_core::random::thread_rng();
         for elem in self.weight.iter_mut() {
-            let sample = scirs2_core::random::random::<f64>() * 2.0 - 1.0;
+            let sample = rng.random::<f64>() * 2.0 - 1.0;
             *elem =
                 scirs2_core::numeric::NumCast::from(sample * bound).unwrap_or_else(|| T::zero());
         }
@@ -236,8 +243,9 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
 
         let scale = (2.0 / input_dim as f64).sqrt();
         let mut weight = Array2::zeros((input_dim, output_dim));
+        let mut rng = scirs2_core::random::thread_rng();
         for elem in weight.iter_mut() {
-            let sample = scirs2_core::random::random::<f64>() * 2.0 - 1.0;
+            let sample = rng.random::<f64>() * 2.0 - 1.0;
             *elem =
                 scirs2_core::numeric::NumCast::from(sample * scale).unwrap_or_else(|| T::zero());
         }

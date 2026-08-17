@@ -8,8 +8,8 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
-//! - `optirs-core` 0.1.0 - Core optimizers
+//! - `scirs2-core` 0.6.5 - Required foundation
+//! - `optirs-core` 0.3.2 - Core optimizers
 //!
 //! ## Features
 //!

@@ -307,12 +307,24 @@ impl<
         _roundplan: &FederatedRoundPlan,
     ) -> Result<Array1<T>> {
         if self.config.secure_aggregation.enabled {
-            // Placeholder for secure aggregation
-            self.simple_aggregate(clientupdates)
-        } else {
-            // Simple averaging
-            self.simple_aggregate(clientupdates)
+            // The cryptographic secure-aggregation path is not wired into this
+            // coordinator yet (the `secure_aggregator` field and the round's
+            // `aggregation_plan` masking seeds are unused). Returning an honest
+            // error is mandatory: silently falling back to plaintext averaging
+            // here would hand the caller an unmasked mean while the API contract
+            // promises masked aggregation — the exact confidentiality lie this
+            // module exists to prevent. For plaintext averaging, disable
+            // `secure_aggregation`; for real masking use
+            // `privacy::secure_aggregation::SecureAggregator`.
+            return Err(OptimError::UnsupportedOperation(
+                "secure aggregation is enabled but not implemented in \
+                 FederatedPrivacyCoordinator; disable it for plaintext averaging \
+                 or use privacy::secure_aggregation::SecureAggregator"
+                    .to_string(),
+            ));
         }
+        // Plaintext averaging (secure aggregation disabled).
+        self.simple_aggregate(clientupdates)
     }
 
     /// Simple aggregation (averaging) of client updates
@@ -382,18 +394,38 @@ impl<
         }
     }
 
-    /// Get global privacy budget
+    /// Get the global privacy budget, computed from the real moments accountant.
+    ///
+    /// The consumed `(ε, δ)` after `current_round` rounds comes from
+    /// [`MomentsAccountant::get_privacy_spent`], not a hardcoded constant, so the
+    /// budget-exhaustion check in [`Self::start_federated_round`] fails *closed*
+    /// (rejects new rounds once the budget is spent) rather than fail-open against
+    /// a fixed `0.1`. `estimated_steps_remaining` is derived from the accountant's
+    /// own [`MomentsAccountant::estimate_max_steps`].
     fn get_global_privacy_budget(&self) -> Result<PrivacyBudget> {
         use super::super::AccountingMethod;
-        // Placeholder implementation
+
+        let target_epsilon = self.config.base_config.target_epsilon;
+        let target_delta = self.config.base_config.target_delta;
+
+        let (epsilon_consumed, delta_consumed) = self
+            .global_accountant
+            .get_privacy_spent(self.current_round)?;
+
+        let estimated_steps_remaining = self
+            .global_accountant
+            .estimate_max_steps(target_epsilon)
+            .map(|max_steps| max_steps.saturating_sub(self.current_round))
+            .unwrap_or(0);
+
         Ok(PrivacyBudget {
-            epsilon_consumed: 0.1,
-            delta_consumed: 1e-5,
-            epsilon_remaining: self.config.base_config.target_epsilon - 0.1,
-            delta_remaining: self.config.base_config.target_delta - 1e-5,
+            epsilon_consumed,
+            delta_consumed,
+            epsilon_remaining: (target_epsilon - epsilon_consumed).max(0.0),
+            delta_remaining: (target_delta - delta_consumed).max(0.0),
             steps_taken: self.current_round,
             accounting_method: AccountingMethod::MomentsAccountant,
-            estimated_steps_remaining: 100,
+            estimated_steps_remaining,
         })
     }
 
@@ -500,21 +532,28 @@ impl<
         }
     }
 
-    /// Get current privacy guarantees
+    /// Get current privacy guarantees, computed from the real moments accountant.
+    ///
+    /// Delegates to [`Self::get_global_privacy_budget`]. If the accountant cannot
+    /// produce an analysis (e.g. an invalid configuration), this fails *closed* by
+    /// reporting the budget as fully consumed rather than fabricating a small
+    /// spend, so a caller can never read exhausted state as ample headroom.
     pub fn get_privacy_guarantees(&self) -> PrivacyBudget {
         use super::super::AccountingMethod;
-        // Placeholder implementation
-        PrivacyBudget {
-            epsilon_consumed: 0.1 * self.current_round as f64,
-            delta_consumed: 1e-5 * self.current_round as f64,
-            epsilon_remaining: self.config.base_config.target_epsilon
-                - (0.1 * self.current_round as f64),
-            delta_remaining: self.config.base_config.target_delta
-                - (1e-5 * self.current_round as f64),
-            steps_taken: self.current_round,
-            accounting_method: AccountingMethod::MomentsAccountant,
-            estimated_steps_remaining: 100,
-        }
+
+        self.get_global_privacy_budget().unwrap_or_else(|_| {
+            let target_epsilon = self.config.base_config.target_epsilon;
+            let target_delta = self.config.base_config.target_delta;
+            PrivacyBudget {
+                epsilon_consumed: target_epsilon,
+                delta_consumed: target_delta,
+                epsilon_remaining: 0.0,
+                delta_remaining: 0.0,
+                steps_taken: self.current_round,
+                accounting_method: AccountingMethod::MomentsAccountant,
+                estimated_steps_remaining: 0,
+            }
+        })
     }
 
     /// Get current round number
@@ -944,7 +983,11 @@ impl<T: Float + Debug + Send + Sync + 'static> SecureAggregator<T> {
             ));
         }
 
-        let mut result = updates.values().next().expect("unwrap failed").clone();
+        let mut result = updates
+            .values()
+            .next()
+            .ok_or_else(|| OptimError::InvalidParameter("No updates to aggregate".to_string()))?
+            .clone();
         let mut count = 1;
 
         for update in updates.values().skip(1) {
@@ -1135,5 +1178,85 @@ mod tests {
             .detect_byzantine_clients(&empty, 0)
             .expect("detection");
         assert!(flagged_empty.is_empty());
+    }
+
+    /// F76 regression: the global privacy budget must come from the real moments
+    /// accountant, so consumed ε grows monotonically with the round count instead
+    /// of being the old fabricated `0.1` / `0.1 * round` constant (which made the
+    /// budget-exhaustion check fail *open*).
+    #[test]
+    fn test_global_budget_uses_real_accountant_not_constant() {
+        let config = FederatedPrivacyConfig::default();
+        let mut coord = FederatedPrivacyCoordinator::<f64>::new(config).expect("coordinator");
+
+        // Before any round nothing is consumed.
+        let b0 = coord.get_privacy_guarantees();
+        assert!(b0.epsilon_consumed.is_finite());
+        assert!(
+            b0.epsilon_consumed.abs() < 1e-12,
+            "round 0 consumed = {}",
+            b0.epsilon_consumed
+        );
+        assert!(b0.epsilon_remaining > 0.0);
+
+        // Consumption is strictly increasing in the number of rounds.
+        coord.current_round = 10;
+        let b10 = coord.get_privacy_guarantees();
+        coord.current_round = 50;
+        let b50 = coord.get_privacy_guarantees();
+        assert!(
+            b10.epsilon_consumed > b0.epsilon_consumed,
+            "ε must grow with rounds"
+        );
+        assert!(
+            b50.epsilon_consumed > b10.epsilon_consumed,
+            "ε must be monotone in rounds"
+        );
+        assert!(b50.epsilon_consumed.is_finite());
+        // The old fabricated value was exactly 0.1 * round = 1.0 at round 10; the
+        // real subsampled-Gaussian accounting is far smaller. Guard the constant.
+        assert!(
+            (b10.epsilon_consumed - 1.0).abs() > 1e-6,
+            "must not be the old 0.1*round constant, got {}",
+            b10.epsilon_consumed
+        );
+    }
+
+    /// F77 regression: with secure aggregation enabled but not wired, the
+    /// coordinator must refuse rather than silently return a plaintext mean.
+    #[test]
+    fn test_secure_aggregate_errors_when_enabled_but_unwired() {
+        let mut config = FederatedPrivacyConfig::default();
+        config.secure_aggregation.enabled = true;
+        let mut coord = FederatedPrivacyCoordinator::<f64>::new(config).expect("coordinator");
+
+        let updates = make_updates(&[("a", vec![1.0, 2.0]), ("b", vec![3.0, 4.0])]);
+        let plan = FederatedRoundPlan {
+            round_number: 1,
+            selectedclients: vec!["a".to_string(), "b".to_string()],
+            sampling_probability: 1.0,
+            amplificationfactor: 1.0,
+            client_privacy_allocations: HashMap::new(),
+            aggregation_plan: None,
+            privacy_analysis: RoundPrivacyAnalysis {
+                round_epsilon: 0.0,
+                round_delta: 0.0,
+                cumulative_epsilon: 0.0,
+                cumulative_delta: 0.0,
+                amplification_benefit: 0.0,
+                composition_tightness: 1.0,
+            },
+        };
+
+        let result = coord.secure_aggregate_updates(&updates, &plan);
+        assert!(
+            matches!(result, Err(OptimError::UnsupportedOperation(_))),
+            "secure aggregation enabled but unwired must error, got {result:?}"
+        );
+
+        // With secure aggregation disabled (the default) the plaintext path works.
+        let mut coord2 = FederatedPrivacyCoordinator::<f64>::new(FederatedPrivacyConfig::default())
+            .expect("coordinator");
+        assert!(coord2.secure_aggregate_updates(&updates, &plan).is_ok());
     }
 }

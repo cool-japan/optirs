@@ -1398,6 +1398,18 @@ impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
         })
     }
 
+    /// Register a concrete adaptation algorithm, dispatched to by
+    /// [`Self::adapt_fast`] when its [`FastAdaptationAlgorithm::name`] matches
+    /// the requested [`AdaptationStrategyType`]'s `{:?}` label.
+    pub fn register_algorithm(&mut self, algorithm: Box<dyn FastAdaptationAlgorithm<T>>) {
+        self.algorithms.push(algorithm);
+    }
+
+    /// Number of algorithms currently registered.
+    pub fn algorithm_count(&self) -> usize {
+        self.algorithms.len()
+    }
+
     /// Create from inner learning rate and adaptation steps (convenience)
     pub fn from_params(inner_lr: T, adaptation_steps: usize) -> Result<Self> {
         let _ = (inner_lr, adaptation_steps);
@@ -1414,57 +1426,43 @@ impl<T: Float + Debug + Send + Sync + 'static> FastAdaptationEngine<T> {
         &self.config
     }
 
-    /// Perform fast adaptation
+    /// Perform fast adaptation.
+    ///
+    /// Dispatches to a registered [`FastAdaptationAlgorithm`] whose
+    /// [`FastAdaptationAlgorithm::name`] matches `strategy`'s `{:?}` label
+    /// (registered via [`Self::register_algorithm`]); when none matches -- the
+    /// common case, since the crate ships no built-in algorithms -- falls back
+    /// to `optimizer`'s own [`FewShotOptimizer::adapt_few_shot`], which every
+    /// `FewShotOptimizer` implementation must provide. Either way the
+    /// returned [`AdaptationResult`] reflects what actually happened, not a
+    /// fixed placeholder.
     pub fn adapt_fast(
         &mut self,
-        _optimizer: &mut dyn FewShotOptimizer<T>,
-        _task_data: &TaskData<T>,
-        _strategy: AdaptationStrategyType,
-        _config: &AdaptationConfig,
+        optimizer: &mut dyn FewShotOptimizer<T>,
+        task_data: &TaskData<T>,
+        strategy: AdaptationStrategyType,
+        config: &AdaptationConfig,
     ) -> Result<AdaptationResult<T>> {
-        Ok(AdaptationResult {
-            adapted_state: OptimizerState {
-                parameters: Array1::zeros(1),
-                gradients: Array1::zeros(1),
-                momentum: None,
-                hidden_states: HashMap::new(),
-                memory_buffers: HashMap::new(),
-                step: 0,
-                step_count: 0,
-                loss: None,
-                learning_rate: scirs2_core::numeric::NumCast::from(0.001)
-                    .unwrap_or_else(|| T::one()),
-                metadata: super::StateMetadata {
-                    task_id: None,
-                    optimizer_type: None,
-                    version: "1.0".to_string(),
-                    timestamp: std::time::SystemTime::now(),
-                    checksum: 0,
-                    compression_level: 0,
-                    custom_data: HashMap::new(),
-                },
-            },
-            performance: AdaptationPerformance {
-                query_performance: scirs2_core::numeric::NumCast::from(0.85)
-                    .unwrap_or_else(|| T::zero()),
-                support_performance: scirs2_core::numeric::NumCast::from(0.90)
-                    .unwrap_or_else(|| T::zero()),
-                adaptation_speed: 5,
-                final_loss: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
-                improvement: scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()),
-                stability: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
-            },
-            task_representation: Array1::zeros(128),
-            adaptation_trajectory: Vec::new(),
-            resource_usage: ResourceUsage {
-                total_time: Duration::from_secs(15),
-                peak_memory_mb: scirs2_core::numeric::NumCast::from(256.0)
-                    .unwrap_or_else(|| T::zero()),
-                compute_cost: scirs2_core::numeric::NumCast::from(5.0).unwrap_or_else(|| T::zero()),
-                energy_consumption: scirs2_core::numeric::NumCast::from(0.05)
-                    .unwrap_or_else(|| T::zero()),
-            },
-        })
+        let start = Instant::now();
+        let label = format!("{strategy:?}");
+
+        let mut result =
+            if let Some(algorithm) = self.algorithms.iter_mut().find(|a| a.name() == label) {
+                algorithm.adapt_fast(optimizer, task_data, None)?
+            } else {
+                optimizer.adapt_few_shot(&task_data.support_set, &task_data.query_set, config)?
+            };
+
+        // A delegate that did not learn an explicit task representation still
+        // gets a real one from the optimizer, instead of leaving it empty.
+        if result.task_representation.is_empty() {
+            result.task_representation = optimizer.get_task_representation(task_data)?;
+        }
+        // Wall-clock time for this call (including dispatch overhead)
+        // supersedes whatever -- if anything -- the delegate measured itself.
+        result.resource_usage.total_time = start.elapsed();
+
+        Ok(result)
     }
 }
 
@@ -1655,5 +1653,322 @@ mod tests {
         ));
         assert_eq!(domain_info.characteristics.input_dim, 784);
         assert_eq!(domain_info.constraints.len(), 1);
+    }
+
+    /// A minimal [`FewShotOptimizer`] that records whether it was invoked and
+    /// returns values distinguishable from `FastAdaptationEngine::adapt_fast`'s
+    /// old fabricated constants (0.85 / 0.90 / 5 steps / 0.1 / 0.25 / 0.95), so
+    /// a passing test can only mean the real delegation path ran.
+    struct RecordingOptimizer {
+        adapt_calls: usize,
+    }
+
+    impl FewShotOptimizer<f64> for RecordingOptimizer {
+        fn adapt_few_shot(
+            &mut self,
+            support_set: &SupportSet<f64>,
+            _query_set: &QuerySet<f64>,
+            _adaptation_config: &AdaptationConfig,
+        ) -> Result<AdaptationResult<f64>> {
+            self.adapt_calls += 1;
+            let width = support_set
+                .examples
+                .first()
+                .map(|e| e.features.len())
+                .unwrap_or(1);
+            Ok(AdaptationResult {
+                adapted_state: OptimizerState {
+                    parameters: Array1::zeros(width),
+                    gradients: Array1::zeros(width),
+                    momentum: None,
+                    hidden_states: HashMap::new(),
+                    memory_buffers: HashMap::new(),
+                    step: 1,
+                    step_count: 1,
+                    loss: Some(0.05),
+                    learning_rate: 0.01,
+                    metadata: crate::StateMetadata::default(),
+                },
+                performance: AdaptationPerformance {
+                    query_performance: 0.42,
+                    support_performance: 0.37,
+                    adaptation_speed: 2,
+                    final_loss: 0.05,
+                    improvement: 0.11,
+                    stability: 0.5,
+                },
+                // Deliberately left empty: `adapt_fast` must fall back to
+                // `get_task_representation` rather than leaving it empty.
+                task_representation: Array1::zeros(0),
+                adaptation_trajectory: Vec::new(),
+                resource_usage: ResourceUsage {
+                    // Deliberately a marker value: `adapt_fast` must overwrite
+                    // this with real wall-clock time, not pass it through.
+                    total_time: Duration::from_secs(999),
+                    peak_memory_mb: 1.0,
+                    compute_cost: 1.0,
+                    energy_consumption: 1.0,
+                },
+            })
+        }
+
+        fn get_task_representation(&self, _taskdata: &TaskData<f64>) -> Result<Array1<f64>> {
+            Ok(Array1::from_vec(vec![7.0, 8.0, 9.0]))
+        }
+
+        fn compute_adaptation_loss(
+            &self,
+            _support_set: &SupportSet<f64>,
+            _query_set: &QuerySet<f64>,
+        ) -> Result<f64> {
+            Ok(0.1)
+        }
+
+        fn update_meta_parameters(&mut self, _metagradients: &MetaGradients<f64>) -> Result<()> {
+            Ok(())
+        }
+
+        fn get_transfer_state(&self) -> TransferState<f64> {
+            TransferState {
+                representations: HashMap::new(),
+                meta_parameters: HashMap::new(),
+                task_embeddings: Array2::zeros((1, 1)),
+                transfer_stats: TransferStatistics {
+                    source_performance: 0.0,
+                    target_performance: 0.0,
+                    transfer_efficiency: 0.0,
+                    steps_saved: 0,
+                },
+            }
+        }
+
+        fn load_transfer_state(&mut self, _state: TransferState<f64>) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn make_task_data() -> TaskData<f64> {
+        TaskData {
+            task_id: "t".to_string(),
+            support_set: SupportSet {
+                examples: vec![SupportExample {
+                    features: Array1::from_vec(vec![1.0, 2.0, 3.0]),
+                    target: 0.5,
+                    weight: 1.0,
+                    context: HashMap::new(),
+                    metadata: ExampleMetadata {
+                        source: "test".to_string(),
+                        quality_score: 0.9,
+                        created_at: std::time::SystemTime::now(),
+                    },
+                }],
+                task_metadata: TaskMetadata {
+                    task_name: "test_task".to_string(),
+                    domain: DomainType::Optimization,
+                    difficulty: DifficultyLevel::Easy,
+                    created_at: std::time::SystemTime::now(),
+                },
+                statistics: SupportSetStatistics {
+                    mean: Array1::from_vec(vec![1.0, 2.0, 3.0]),
+                    variance: Array1::from_vec(vec![0.1, 0.1, 0.1]),
+                    size: 1,
+                    diversity_score: 0.8,
+                },
+                temporal_order: None,
+            },
+            query_set: QuerySet {
+                examples: vec![QueryExample {
+                    features: Array1::from_vec(vec![1.0, 2.0, 3.0]),
+                    true_target: Some(0.4),
+                    weight: 1.0,
+                    context: HashMap::new(),
+                }],
+                statistics: QuerySetStatistics {
+                    mean: Array1::from_vec(vec![1.0, 2.0, 3.0]),
+                    variance: Array1::from_vec(vec![0.1, 0.1, 0.1]),
+                    size: 1,
+                },
+                eval_metrics: vec![EvaluationMetric::MSE],
+            },
+            task_params: HashMap::new(),
+            domain_info: DomainInfo {
+                domain_type: DomainType::Optimization,
+                characteristics: DomainCharacteristics {
+                    input_dim: 3,
+                    output_dim: 1,
+                    temporal: false,
+                    stochasticity: 0.0,
+                    noise_level: 0.0,
+                    sparsity: 0.0,
+                },
+                difficulty_level: DifficultyLevel::Easy,
+                constraints: vec![],
+            },
+        }
+    }
+
+    fn make_adaptation_config() -> AdaptationConfig {
+        AdaptationConfig {
+            adaptation_steps: 5,
+            adaptation_lr: 0.01,
+            strategy: AdaptationStrategyType::MAML,
+            early_stopping: None,
+            regularization: RegularizationConfig {
+                l2_strength: 0.0,
+                dropout_rate: 0.0,
+                gradient_clip: None,
+                task_regularization: HashMap::new(),
+            },
+            resource_constraints: ResourceConstraints {
+                max_time: Duration::from_secs(1),
+                max_memory_mb: 64,
+                max_compute_budget: 1.0,
+            },
+        }
+    }
+
+    /// F15 regression: `adapt_fast` must delegate to the real optimizer
+    /// (falling back to `FewShotOptimizer::adapt_few_shot` when, as by
+    /// default, no algorithm is registered) instead of returning fabricated,
+    /// input-independent constants.
+    #[test]
+    fn test_adapt_fast_delegates_instead_of_fabricating() {
+        let mut engine = FastAdaptationEngine::<f64>::new(FastAdaptationConfig {
+            enable_caching: true,
+            enable_prediction: true,
+            max_adaptation_time: Duration::from_secs(1),
+            _performance_threshold: 0.8,
+        })
+        .expect("engine");
+        assert_eq!(
+            engine.algorithm_count(),
+            0,
+            "no algorithm registered by default"
+        );
+
+        let mut optimizer = RecordingOptimizer { adapt_calls: 0 };
+        let task_data = make_task_data();
+        let config = make_adaptation_config();
+
+        let result = engine
+            .adapt_fast(
+                &mut optimizer,
+                &task_data,
+                AdaptationStrategyType::MAML,
+                &config,
+            )
+            .expect("adapt_fast should succeed");
+
+        assert_eq!(
+            optimizer.adapt_calls, 1,
+            "adapt_fast must actually call the optimizer, not ignore it"
+        );
+        // Values from `RecordingOptimizer`, not the old fabricated constants
+        // (query_performance 0.85, support_performance 0.90, adaptation_speed
+        // 5, final_loss 0.1, improvement 0.25, stability 0.95).
+        approx::assert_abs_diff_eq!(result.performance.query_performance, 0.42, epsilon = 1e-12);
+        approx::assert_abs_diff_eq!(
+            result.performance.support_performance,
+            0.37,
+            epsilon = 1e-12
+        );
+        assert_eq!(result.performance.adaptation_speed, 2);
+        // The delegate's parameters (width 3, matching the support example),
+        // not the old hard-coded `Array1::zeros(1)`.
+        assert_eq!(result.adapted_state.parameters.len(), 3);
+        // An empty delegate task representation is filled in from the
+        // optimizer, not left as the old hard-coded `Array1::zeros(128)`.
+        assert_eq!(
+            result.task_representation.as_slice(),
+            Some(&[7.0, 8.0, 9.0][..])
+        );
+        // Real wall-clock time replaces the delegate's marker value.
+        assert!(result.resource_usage.total_time < Duration::from_secs(999));
+    }
+
+    /// F15 regression: a registered algorithm matching the requested strategy
+    /// takes priority over the optimizer fallback.
+    #[test]
+    fn test_adapt_fast_prefers_a_registered_algorithm() {
+        struct AlwaysProto {
+            calls: usize,
+        }
+        impl FastAdaptationAlgorithm<f64> for AlwaysProto {
+            fn adapt_fast(
+                &mut self,
+                _optimizer: &mut dyn FewShotOptimizer<f64>,
+                _task_data: &TaskData<f64>,
+                _target_performance: Option<f64>,
+            ) -> Result<AdaptationResult<f64>> {
+                self.calls += 1;
+                Ok(AdaptationResult {
+                    adapted_state: OptimizerState {
+                        parameters: Array1::zeros(2),
+                        gradients: Array1::zeros(2),
+                        momentum: None,
+                        hidden_states: HashMap::new(),
+                        memory_buffers: HashMap::new(),
+                        step: 0,
+                        step_count: 0,
+                        loss: None,
+                        learning_rate: 0.02,
+                        metadata: crate::StateMetadata::default(),
+                    },
+                    performance: AdaptationPerformance {
+                        query_performance: 0.77,
+                        support_performance: 0.66,
+                        adaptation_speed: 1,
+                        final_loss: 0.2,
+                        improvement: 0.3,
+                        stability: 0.4,
+                    },
+                    task_representation: Array1::from_vec(vec![1.0]),
+                    adaptation_trajectory: Vec::new(),
+                    resource_usage: ResourceUsage {
+                        total_time: Duration::from_secs(0),
+                        peak_memory_mb: 0.0,
+                        compute_cost: 0.0,
+                        energy_consumption: 0.0,
+                    },
+                })
+            }
+
+            fn estimate_adaptation_time(&self, _taskdata: &TaskData<f64>) -> Duration {
+                Duration::from_millis(1)
+            }
+
+            fn name(&self) -> &str {
+                "Prototypical"
+            }
+        }
+
+        let mut engine = FastAdaptationEngine::<f64>::new(FastAdaptationConfig {
+            enable_caching: false,
+            enable_prediction: false,
+            max_adaptation_time: Duration::from_secs(1),
+            _performance_threshold: 0.5,
+        })
+        .expect("engine");
+        engine.register_algorithm(Box::new(AlwaysProto { calls: 0 }));
+        assert_eq!(engine.algorithm_count(), 1);
+
+        let mut optimizer = RecordingOptimizer { adapt_calls: 0 };
+        let task_data = make_task_data();
+        let config = make_adaptation_config();
+
+        let result = engine
+            .adapt_fast(
+                &mut optimizer,
+                &task_data,
+                AdaptationStrategyType::Prototypical,
+                &config,
+            )
+            .expect("adapt_fast should succeed");
+
+        assert_eq!(
+            optimizer.adapt_calls, 0,
+            "the registered algorithm should have been used instead of the optimizer fallback"
+        );
+        approx::assert_abs_diff_eq!(result.performance.query_performance, 0.77, epsilon = 1e-12);
     }
 }

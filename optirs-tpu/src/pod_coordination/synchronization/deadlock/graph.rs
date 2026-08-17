@@ -273,8 +273,8 @@ impl DependencyGraph {
                     let child = children[frame.next_child];
                     frame.next_child += 1;
 
-                    if !indices.contains_key(&child) {
-                        indices.insert(child, index_counter);
+                    if let std::collections::hash_map::Entry::Vacant(entry) = indices.entry(child) {
+                        entry.insert(index_counter);
                         low_links.insert(child, index_counter);
                         index_counter += 1;
                         scc_stack.push(child);

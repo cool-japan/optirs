@@ -9,7 +9,7 @@
 //!
 //! The MSL half is checked by compiling through a real Metal `GpuContext`.
 
-use optirs_gpu::shaders::OptimizerKernel;
+use optirs_gpu::shaders::{CollectiveKernel, OptimizerKernel};
 use scirs2_core::gpu::{GpuBackend, GpuContext};
 
 const ALL: [OptimizerKernel; 6] = [
@@ -20,6 +20,8 @@ const ALL: [OptimizerKernel; 6] = [
     OptimizerKernel::Adagrad,
     OptimizerKernel::Lamb,
 ];
+
+const COLLECTIVE_ALL: [CollectiveKernel; 1] = [CollectiveKernel::AllReduceMean];
 
 /// Compile every WGSL kernel with `naga` + `wgpu`.
 #[cfg(feature = "wgpu")]
@@ -56,6 +58,25 @@ fn wgsl_kernels_compile() {
         );
         eprintln!("WGSL: {} compiled", kernel.id());
     }
+
+    eprintln!(
+        "WGSL: compiling {} collective kernels through naga + wgpu",
+        COLLECTIVE_ALL.len()
+    );
+    for kernel in COLLECTIVE_ALL {
+        let source = kernel
+            .source_for(GpuBackend::Wgpu)
+            .unwrap_or_else(|| panic!("{} has no WGSL source", kernel.id()));
+        let pipeline = try_compile_wgsl(source)
+            .unwrap_or_else(|e| panic!("{} WGSL failed to compile: {e}", kernel.id()));
+        assert_eq!(
+            pipeline.workgroup_size,
+            [optirs_gpu::shaders::WORKGROUP_SIZE as u32, 1, 1],
+            "{} declares an unexpected workgroup size",
+            kernel.id()
+        );
+        eprintln!("WGSL: {} compiled", kernel.id());
+    }
 }
 
 /// Compile every MSL kernel with the real Metal shader compiler.
@@ -72,6 +93,16 @@ fn msl_kernels_compile() {
     eprintln!("MSL: compiling {} kernels through MTLLibrary", ALL.len());
 
     for kernel in ALL {
+        let source = kernel
+            .source_for(GpuBackend::Metal)
+            .unwrap_or_else(|| panic!("{} has no MSL source", kernel.id()));
+        context
+            .execute(|compiler| compiler.compile(source))
+            .unwrap_or_else(|e| panic!("{} MSL failed to compile: {e}", kernel.id()));
+        eprintln!("MSL: {} compiled", kernel.id());
+    }
+
+    for kernel in COLLECTIVE_ALL {
         let source = kernel
             .source_for(GpuBackend::Metal)
             .unwrap_or_else(|| panic!("{} has no MSL source", kernel.id()));

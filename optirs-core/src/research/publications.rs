@@ -4,7 +4,9 @@
 // results, managing bibliographies, and formatting papers for various venues.
 
 use crate::error::Result;
-use crate::research::experiments::{Experiment, ExperimentResult};
+use crate::research::experiments::{
+    Experiment, ExperimentResult, ResourceUsage, RunStatus, TrainingHistory,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -957,56 +959,20 @@ impl Bibliography {
         Ok(())
     }
 
-    /// Parse BibTeX content
+    /// Parse BibTeX content.
+    ///
+    /// Delegates to [`crate::research::citations::parse_bibtex_entries`], a
+    /// brace-depth-aware tokenizer that (unlike a line-oriented scanner)
+    /// correctly captures field values spanning multiple physical lines and
+    /// values containing nested braces.
     pub fn parse_bibtex(&mut self, content: &str) -> Result<()> {
-        // Simplified BibTeX parser
-        // In a real implementation, you'd want a proper BibTeX parser
-        let lines: Vec<&str> = content.lines().collect();
-        let mut current_entry: Option<BibTeXEntry> = None;
-
-        for line in lines {
-            let line = line.trim();
-            if line.starts_with('@') {
-                // Save previous entry
-                if let Some(entry) = current_entry.take() {
-                    self.entries.insert(entry.key.clone(), entry);
-                }
-
-                // Start new entry
-                if let Some(pos) = line.find('{') {
-                    let entry_type = line[1..pos].to_lowercase();
-                    let key_part = &line[pos + 1..];
-                    if let Some(comma_pos) = key_part.find(',') {
-                        let key = key_part[..comma_pos].trim().to_string();
-                        current_entry = Some(BibTeXEntry {
-                            key,
-                            entry_type,
-                            fields: HashMap::new(),
-                        });
-                    }
-                }
-            } else if line.contains('=') && current_entry.is_some() {
-                // Parse field
-                if let Some(eq_pos) = line.find('=') {
-                    let field_name = line[..eq_pos].trim().to_lowercase();
-                    let field_value = line[eq_pos + 1..]
-                        .trim()
-                        .trim_start_matches('{')
-                        .trim_end_matches("},")
-                        .trim_start_matches('"')
-                        .trim_end_matches("\",")
-                        .to_string();
-
-                    if let Some(ref mut entry) = current_entry {
-                        entry.fields.insert(field_name, field_value);
-                    }
-                }
-            }
-        }
-
-        // Save last entry
-        if let Some(entry) = current_entry {
-            self.entries.insert(entry.key.clone(), entry);
+        for (entry_type, key, fields) in crate::research::citations::parse_bibtex_entries(content) {
+            let entry = BibTeXEntry {
+                key: key.clone(),
+                entry_type,
+                fields,
+            };
+            self.entries.insert(key, entry);
         }
 
         Ok(())
@@ -1035,9 +1001,13 @@ impl PublicationGenerator {
         let abstracttext = self.generate_abstract(experiments)?;
         publication.abstracttext = abstracttext;
 
-        // Generate sections
-        for section_template in &template.sections {
-            let section = self.generate_section(section_template, experiments)?;
+        // Generate sections, assigning each its real position in the
+        // template (used for ordering in `generate_latex`/`generate_markdown`)
+        // and its real word count.
+        for (index, section_template) in template.sections.iter().enumerate() {
+            let mut section = self.generate_section(section_template, experiments)?;
+            section.order = index;
+            section.word_count = section.content.split_whitespace().count();
             publication.add_section(section);
         }
 
@@ -1094,9 +1064,12 @@ impl PublicationGenerator {
                 SectionType::Custom(ref name) => name.clone(),
             },
             content,
-            order: 0, // Will be set based on section type
+            // `order`/`word_count` are filled in by the caller
+            // (`generate_from_experiments`), which knows this section's real
+            // position in the template and can see the finished content.
+            order: 0,
             section_type: template.section_type.clone(),
-            word_count: 0, // Will be calculated
+            word_count: 0,
             figures: Vec::new(),
             tables: Vec::new(),
             references: Vec::new(),
@@ -1104,7 +1077,35 @@ impl PublicationGenerator {
     }
 
     fn generate_introduction(&self, experiments: &[Experiment]) -> Result<String> {
-        Ok("This section introduces the research problem and motivation for comparing optimization algorithms.".to_string())
+        let mut content = String::from(
+            "This section introduces the research problem and motivation for comparing optimization algorithms.",
+        );
+
+        let hypotheses: Vec<&str> = experiments
+            .iter()
+            .map(|e| e.hypothesis.as_str())
+            .filter(|h| !h.is_empty())
+            .collect();
+        if !hypotheses.is_empty() {
+            content.push_str("\n\nThis work investigates the following hypotheses:\n\n");
+            for hypothesis in hypotheses {
+                content.push_str(&format!("- {hypothesis}\n"));
+            }
+        }
+
+        let questions: Vec<&str> = experiments
+            .iter()
+            .map(|e| e.metadata.research_question.as_str())
+            .filter(|q| !q.is_empty())
+            .collect();
+        if !questions.is_empty() {
+            content.push_str("\nThe research questions addressed are:\n\n");
+            for question in questions {
+                content.push_str(&format!("- {question}\n"));
+            }
+        }
+
+        Ok(content)
     }
 
     fn generate_methodology(&self, experiments: &[Experiment]) -> Result<String> {
@@ -1149,7 +1150,39 @@ impl PublicationGenerator {
     }
 
     fn generate_conclusion(&self, experiments: &[Experiment]) -> Result<String> {
-        Ok("This section summarizes the key findings and implications of the experimental results.".to_string())
+        let mut content = String::from(
+            "This section summarizes the key findings and implications of the experimental results.",
+        );
+
+        let total_runs: usize = experiments.iter().map(|e| e.results.len()).sum();
+        if total_runs > 0 {
+            let successful_runs = experiments
+                .iter()
+                .flat_map(|e| e.results.iter())
+                .filter(|r| r.status == RunStatus::Success)
+                .count();
+            let optimizer_names: std::collections::BTreeSet<&str> = experiments
+                .iter()
+                .flat_map(|e| e.optimizer_configs.keys())
+                .map(String::as_str)
+                .collect();
+
+            content.push_str(&format!(
+                "\n\nAcross {} experiment(s) and {} run(s), {} completed successfully ({:.1}%).",
+                experiments.len(),
+                total_runs,
+                successful_runs,
+                100.0 * successful_runs as f64 / total_runs as f64
+            ));
+            if !optimizer_names.is_empty() {
+                content.push_str(&format!(
+                    " Optimizers evaluated: {}.",
+                    optimizer_names.into_iter().collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
+
+        Ok(content)
     }
 }
 
@@ -1208,5 +1241,155 @@ mod tests {
         assert!(markdown.contains("## Abstract"));
         assert!(markdown.contains("This is a test abstract."));
         assert!(markdown.contains("**Keywords**: test, paper"));
+    }
+
+    // Regression test for F77: `Bibliography::parse_bibtex` duplicated the
+    // same line-oriented parser as `BibTeXProcessor::parse_bibtex` (and the
+    // same multiline-truncation bug). It now delegates to the shared
+    // brace-depth-aware tokenizer in `research::citations`.
+    #[test]
+    fn test_bibliography_parse_bibtex_handles_multiline_values() {
+        let mut bibliography = Bibliography::new();
+        let bibtex =
+            "@article{multi2024,\n  title = {Spans\nmultiple\nlines},\n  year = {2024},\n}\n";
+
+        bibliography
+            .parse_bibtex(bibtex)
+            .expect("parse should succeed");
+
+        assert_eq!(bibliography.entries.len(), 1);
+        let entry = bibliography
+            .entries
+            .get("multi2024")
+            .expect("entry should be present");
+        assert_eq!(entry.entry_type, "article");
+        assert_eq!(
+            entry.fields.get("title").map(String::as_str),
+            Some("Spans multiple lines")
+        );
+        assert_eq!(entry.fields.get("year").map(String::as_str), Some("2024"));
+    }
+
+    fn minimal_template(section_types: Vec<SectionType>) -> PublicationTemplate {
+        PublicationTemplate {
+            name: "Test Template".to_string(),
+            sections: section_types
+                .into_iter()
+                .map(|section_type| SectionTemplate {
+                    section_type,
+                    template: String::new(),
+                    required_fields: Vec::new(),
+                    target_word_count: None,
+                })
+                .collect(),
+            formatting: FormattingOptions {
+                format: DocumentFormat::Markdown,
+                font_size: 12,
+                line_spacing: 1.0,
+                margins: Margins {
+                    top: 2.5,
+                    bottom: 2.5,
+                    left: 2.5,
+                    right: 2.5,
+                },
+                citation_format: CitationFormat::Numbered,
+                figure_numbering: NumberingStyle::Arabic,
+                table_numbering: NumberingStyle::Arabic,
+            },
+            venue_constraints: VenueConstraints {
+                max_word_count: None,
+                max_page_count: None,
+                required_sections: Vec::new(),
+                forbidden_sections: Vec::new(),
+                max_figures: None,
+                max_tables: None,
+                max_references: None,
+            },
+        }
+    }
+
+    // Regression test for F79: generated sections always had `order: 0` and
+    // `word_count: 0` ("will be set"/"will be calculated" comments that were
+    // never followed through), so every section tied for first place and
+    // reported zero length regardless of actual content.
+    #[test]
+    fn test_generate_from_experiments_sets_real_order_and_word_count() {
+        let generator = PublicationGenerator::new(PathBuf::from("."));
+        let template = minimal_template(vec![
+            SectionType::Introduction,
+            SectionType::Methodology,
+            SectionType::Conclusion,
+        ]);
+
+        let mut experiment = Experiment::new("Adam vs SGD");
+        experiment.hypothesis = "Adam converges faster than SGD on this benchmark".to_string();
+
+        let publication = generator
+            .generate_from_experiments(&[experiment], &template)
+            .expect("generation should succeed");
+
+        assert_eq!(publication.sections.len(), 3);
+        let orders: Vec<usize> = publication.sections.iter().map(|s| s.order).collect();
+        assert_eq!(orders, vec![0, 1, 2], "sections should keep template order");
+
+        for section in &publication.sections {
+            let expected_word_count = section.content.split_whitespace().count();
+            assert_eq!(section.word_count, expected_word_count);
+            assert!(
+                expected_word_count > 0,
+                "generated section content should be non-empty"
+            );
+        }
+
+        // Regression for the "canned prose" half of F79: the introduction
+        // must incorporate the experiment's actual hypothesis, not just a
+        // fixed sentence identical for every publication.
+        let introduction = &publication.sections[0];
+        assert_eq!(introduction.section_type, SectionType::Introduction);
+        assert!(
+            introduction
+                .content
+                .contains("Adam converges faster than SGD on this benchmark"),
+            "introduction should quote the real hypothesis: {:?}",
+            introduction.content
+        );
+    }
+
+    #[test]
+    fn test_generate_conclusion_reports_real_success_rate() {
+        let generator = PublicationGenerator::new(PathBuf::from("."));
+        let mut experiment = Experiment::new("Conclusion Test");
+        experiment.optimizer_configs.insert(
+            "adam".to_string(),
+            crate::unified_api::OptimizerConfig::default(),
+        );
+        experiment.results.push(ExperimentResult {
+            run_id: "run-1".to_string(),
+            optimizer_name: "adam".to_string(),
+            start_time: Utc::now(),
+            end_time: None,
+            status: RunStatus::Success,
+            final_metrics: HashMap::new(),
+            training_history: TrainingHistory {
+                epochs: vec![],
+                train_metrics: HashMap::new(),
+                val_metrics: HashMap::new(),
+                learning_rates: vec![],
+                gradient_norms: vec![],
+                parameter_norms: vec![],
+                step_times: vec![],
+            },
+            resource_usage: ResourceUsage::default(),
+            error_info: None,
+            metadata: HashMap::new(),
+        });
+
+        let conclusion = generator
+            .generate_conclusion(std::slice::from_ref(&experiment))
+            .expect("conclusion generation should succeed");
+
+        assert!(conclusion.contains("1 run(s)"));
+        assert!(conclusion.contains("100.0%"));
+        assert!(conclusion.contains("adam"));
     }
 }

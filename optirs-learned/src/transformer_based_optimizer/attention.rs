@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use crate::error::Result;
 use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
 use scirs2_core::numeric::Float;
+use scirs2_core::random::Rng;
 use std::f64::consts::PI;
 
 /// Multi-head attention mechanism
@@ -77,16 +78,16 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
     }
 
     /// Initialize weight matrix with Xavier initialization
+    ///
+    /// The generator handle is acquired once per matrix rather than per element.
     fn initialize_weights(rows: usize, cols: usize, std: f64) -> Array2<T> {
         let mut weights = Array2::<T>::zeros((rows, cols));
+        let mut rng = scirs2_core::random::thread_rng();
 
-        for i in 0..rows {
-            for j in 0..cols {
-                let random_val = scirs2_core::random::random::<f64>();
-                let scaled_val = (random_val - 0.5) * 2.0 * std;
-                weights[[i, j]] =
-                    scirs2_core::numeric::NumCast::from(scaled_val).unwrap_or_else(|| T::zero());
-            }
+        for elem in weights.iter_mut() {
+            let random_val = rng.random::<f64>();
+            let scaled_val = (random_val - 0.5) * 2.0 * std;
+            *elem = scirs2_core::numeric::NumCast::from(scaled_val).unwrap_or_else(|| T::zero());
         }
 
         weights

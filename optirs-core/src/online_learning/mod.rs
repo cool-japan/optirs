@@ -192,6 +192,9 @@ pub struct OnlineOptimizer<A: Float, D: Dimension> {
     performance_history: VecDeque<A>,
     /// Regret bounds tracking
     regret_bound: A,
+    /// Bounded history of the (possibly adapted) learning rate, used to
+    /// compute a real `lr_stability` metric (F81).
+    lr_history: VecDeque<A>,
 }
 
 /// Lifelong optimizer that learns continuously across tasks
@@ -326,6 +329,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             step_count: 0,
             performance_history: VecDeque::new(),
             regret_bound: A::zero(),
+            lr_history: VecDeque::new(),
         }
     }
 
@@ -369,6 +373,13 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             OnlineLearningStrategy::AdaptiveMultiTask { .. } => {
                 self.adaptive_multitask_update(gradient)?;
             }
+        }
+
+        // Record the (possibly adapted) learning rate for the stability
+        // metric (F81).
+        self.lr_history.push_back(self.current_lr);
+        if self.lr_history.len() > 1000 {
+            self.lr_history.pop_front();
         }
 
         // Update regret bound
@@ -586,12 +597,61 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             A::zero()
         } else {
             self.performance_history.iter().copied().sum::<A>()
-                / A::from(self.performance_history.len()).expect("unwrap failed")
+                / A::from(self.performance_history.len()).unwrap_or_else(A::one)
         };
 
-        let lr_stability = A::from(1.0).expect("unwrap failed"); // Simplified
-        let adaptation_speed = A::from(self.step_count as f64).expect("unwrap failed"); // Simplified
-        let memory_efficiency = A::from(0.8).expect("unwrap failed"); // Simplified
+        // Learning-rate stability (F81): high when the recent learning rate
+        // has low variance, mapped into `(0, 1]` via `1 / (1 + std(lr))`.
+        // Previously a hardcoded `1.0`.
+        let lr_stability = {
+            let n = self.lr_history.len();
+            if n < 2 {
+                A::one()
+            } else {
+                let count = A::from(n).unwrap_or_else(A::one);
+                let mean = self.lr_history.iter().copied().sum::<A>() / count;
+                let variance = self
+                    .lr_history
+                    .iter()
+                    .map(|&lr| (lr - mean) * (lr - mean))
+                    .sum::<A>()
+                    / count;
+                A::one() / (A::one() + variance.sqrt())
+            }
+        };
+
+        // Adaptation speed (F81): mean per-step loss improvement over a
+        // recent window (positive = loss decreasing), clamped at 0.
+        // Previously the raw `step_count`, which is a count, not a speed.
+        let adaptation_speed = {
+            let history_len = self.performance_history.len();
+            let window = 20usize.min(history_len);
+            if window < 2 {
+                A::zero()
+            } else {
+                let first = self.performance_history[history_len - window];
+                let last = self.performance_history[history_len - 1];
+                let steps = A::from(window - 1).unwrap_or_else(A::one);
+                ((first - last) / steps).max(A::zero())
+            }
+        };
+
+        // Memory efficiency (F81): parameter storage as a fraction of the
+        // optimizer's total array storage (parameters + accumulators).
+        // Higher means less auxiliary-state overhead. Previously a hardcoded
+        // `0.8`.
+        let memory_efficiency = {
+            let param_len = self.parameters.len();
+            let mut total = param_len + self.gradient_accumulator.len();
+            if let Some(second_moment) = &self.second_moment_accumulator {
+                total += second_moment.len();
+            }
+            if total == 0 {
+                A::zero()
+            } else {
+                A::from(param_len).unwrap_or_else(A::one) / A::from(total).unwrap_or_else(A::one)
+            }
+        };
 
         OnlinePerformanceMetrics {
             cumulative_regret: self.regret_bound,
@@ -601,6 +661,12 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             memory_efficiency,
         }
     }
+}
+
+/// Euclidean dot product of two equally-shaped arrays. Used by the
+/// Gradient Episodic Memory projection (F81).
+fn array_dot<A: Float + std::iter::Sum, D: Dimension>(a: &Array<A, D>, b: &Array<A, D>) -> A {
+    a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
 impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sync>
@@ -665,9 +731,24 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             .ok_or_else(|| OptimError::InvalidConfig("No current task set".to_string()))?
             .clone();
 
-        // Update task-specific optimizer
+        // For Gradient Episodic Memory, project the incoming gradient onto
+        // the halfspace that does not increase loss on stored past-task
+        // gradients BEFORE it is applied (F81). Other strategies use the raw
+        // gradient. Projecting here (rather than in a no-op after the step)
+        // is what makes the stored replay gradients actually shape learning.
+        let is_gem = matches!(
+            self.strategy,
+            LifelongStrategy::GradientEpisodicMemory { .. }
+        );
+        let effective_gradient = if is_gem {
+            self.project_gradient_gem(gradient)
+        } else {
+            gradient.clone()
+        };
+
+        // Update task-specific optimizer with the effective gradient
         if let Some(optimizer) = self.task_optimizers.get_mut(&task_id) {
-            optimizer.online_update(gradient, loss)?;
+            optimizer.online_update(&effective_gradient, loss)?;
         }
 
         // Track performance
@@ -692,7 +773,10 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 self.apply_meta_learning(gradient)?;
             }
             LifelongStrategy::GradientEpisodicMemory { .. } => {
-                self.apply_gem_constraints(gradient)?;
+                // The projection was already applied above; record this
+                // step's *raw* gradient as an episodic-memory constraint for
+                // future updates to be projected against.
+                self.update_memory_buffer(gradient, loss)?;
             }
         }
 
@@ -720,9 +804,14 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
     /// Update memory buffer with important examples
     fn update_memory_buffer(&mut self, gradient: &Array<A, D>, loss: A) -> Result<()> {
         if let Some(task_id) = &self.current_task {
+            // `input`/`target` are not available at this call site (only the
+            // gradient and loss are passed in), so they are recorded as
+            // empty/zero and intentionally left unused. The `gradient` field
+            // below is the real replay signal consumed by
+            // `project_gradient_gem` (F81).
             let example = MemoryExample {
-                input: Array::zeros(gradient.raw_dim()),  // Placeholder
-                target: Array::zeros(gradient.raw_dim()), // Placeholder
+                input: Array::zeros(gradient.raw_dim()),
+                target: Array::zeros(gradient.raw_dim()),
                 task_id: task_id.clone(),
                 importance: loss,
                 gradient: Some(gradient.clone()),
@@ -776,11 +865,37 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
         Ok(())
     }
 
-    /// Apply Gradient Episodic Memory constraints
-    fn apply_gem_constraints(&mut self, gradient: &Array<A, D>) -> Result<()> {
-        // Simplified GEM implementation
-        // In practice, this would project gradients to satisfy memory constraints
-        Ok(())
+    /// Project `gradient` onto the halfspace that does not increase loss on
+    /// any gradient stored in the episodic memory buffer (Gradient Episodic
+    /// Memory, F81).
+    ///
+    /// For every stored memory gradient `g_mem` that conflicts with the
+    /// incoming gradient (`dot(gradient, g_mem) < 0`), the violating
+    /// component is removed:
+    /// `g <- g - (dot(g, g_mem) / dot(g_mem, g_mem)) * g_mem`.
+    /// Non-conflicting memories and shape-mismatched entries are skipped.
+    ///
+    /// This replaces the previous no-op and makes the replay gradients
+    /// stored in the memory buffer actually influence learning instead of
+    /// being dead data.
+    pub fn project_gradient_gem(&self, gradient: &Array<A, D>) -> Array<A, D> {
+        let mut projected = gradient.clone();
+        for example in &self.memory_buffer.examples {
+            if let Some(memory_gradient) = example.gradient.as_ref() {
+                if memory_gradient.raw_dim() != projected.raw_dim() {
+                    continue;
+                }
+                let dot_gm = array_dot(&projected, memory_gradient);
+                if dot_gm < A::zero() {
+                    let denom = array_dot(memory_gradient, memory_gradient);
+                    if denom > A::zero() {
+                        let scale = dot_gm / denom;
+                        projected = &projected - &memory_gradient.mapv(|g| g * scale);
+                    }
+                }
+            }
+        }
+        projected
     }
 
     /// Compute task similarity
@@ -1045,5 +1160,71 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(optimizer.step_count, 1);
         }
+    }
+
+    /// F81: the GEM projection must remove the component of a new gradient
+    /// that conflicts with a stored past-task gradient, so the previously
+    /// dead replay data actually shapes the update.
+    #[test]
+    fn gem_projection_removes_conflicting_component() {
+        let strategy = LifelongStrategy::GradientEpisodicMemory {
+            memory_per_task: 10,
+            violation_tolerance: 0.0,
+        };
+        let mut opt = LifelongOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(strategy);
+        let params = Array1::from_vec(vec![0.0, 0.0, 0.0]);
+        opt.start_task("t".to_string(), params).expect("start_task");
+
+        // Store a past-task gradient g1 = [1, 0, 0] in episodic memory.
+        let g1 = Array1::from_vec(vec![1.0, 0.0, 0.0]);
+        opt.update_current_task(&g1, 0.5).expect("update");
+
+        // A conflicting new gradient g2 with dot(g2, g1) < 0.
+        let g2 = Array1::from_vec(vec![-1.0, 1.0, 0.0]);
+        let projected = opt.project_gradient_gem(&g2);
+
+        let dot: f64 = projected.iter().zip(g1.iter()).map(|(&x, &y)| x * y).sum();
+        assert!(
+            dot >= -1e-9,
+            "GEM projection did not remove the conflicting component (F81): dot={dot}"
+        );
+    }
+
+    /// F81: `get_performance_metrics` must derive its fields from real state
+    /// instead of returning hardcoded `1.0`/`step_count`/`0.8`.
+    #[test]
+    fn performance_metrics_are_derived_from_state() {
+        let strategy = OnlineLearningStrategy::AdaptiveSGD {
+            initial_lr: 0.01,
+            adaptation_method: LearningRateAdaptation::AdaGrad { epsilon: 1e-8 },
+        };
+        let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+        let mut opt = OnlineOptimizer::new(strategy, params);
+
+        let gradient = Array1::from_vec(vec![0.05, 0.05, 0.05]);
+        let mut loss = 1.0_f64;
+        for _ in 0..30 {
+            opt.online_update(&gradient, loss).expect("update");
+            loss *= 0.9;
+        }
+
+        let metrics = opt.get_performance_metrics();
+        assert!(
+            metrics.adaptation_speed > 0.0,
+            "adaptation_speed not derived from the loss trend (F81): {}",
+            metrics.adaptation_speed
+        );
+        assert!(
+            metrics.lr_stability > 0.0 && metrics.lr_stability <= 1.0,
+            "lr_stability out of range (F81): {}",
+            metrics.lr_stability
+        );
+        // AdaGrad keeps no second-moment array, so memory efficiency is
+        // params / (params + grad_accumulator) = 0.5, not the old 0.8.
+        assert!(
+            (metrics.memory_efficiency - 0.5).abs() < 1e-9,
+            "memory_efficiency not derived from real optimizer state (F81): {}",
+            metrics.memory_efficiency
+        );
     }
 }

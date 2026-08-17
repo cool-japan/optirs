@@ -692,22 +692,30 @@ impl ThreadSafeGpuMemorySystem {
         size: usize,
         alignment: Option<usize>,
     ) -> Result<*mut c_void, GpuMemorySystemError> {
-        let mut system = self.system.lock().expect("lock poisoned");
+        let mut system = self.system.lock().map_err(|_| {
+            GpuMemorySystemError::InternalError("memory system lock poisoned".into())
+        })?;
         system.allocate(size, alignment)
     }
 
     pub fn free(&self, ptr: *mut c_void) -> Result<(), GpuMemorySystemError> {
-        let mut system = self.system.lock().expect("lock poisoned");
+        let mut system = self.system.lock().map_err(|_| {
+            GpuMemorySystemError::InternalError("memory system lock poisoned".into())
+        })?;
         system.free(ptr)
     }
 
     pub fn get_stats(&self) -> SystemStats {
-        let mut system = self.system.lock().expect("lock poisoned");
+        // Infallible accessor: recover the guard even if a previous holder
+        // panicked, rather than propagating the poison as a panic.
+        let mut system = self.system.lock().unwrap_or_else(|e| e.into_inner());
         system.get_stats()
     }
 
     pub fn optimize(&self) -> Result<(), GpuMemorySystemError> {
-        let mut system = self.system.lock().expect("lock poisoned");
+        let mut system = self.system.lock().map_err(|_| {
+            GpuMemorySystemError::InternalError("memory system lock poisoned".into())
+        })?;
         system.optimize()
     }
 }

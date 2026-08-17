@@ -87,8 +87,9 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
     /// Set layer-wise learning rate decay (builder pattern).
     ///
     /// `decay` is the multiplicative factor per layer. For layer `i` (0-indexed
-    /// from the top/output layer), the effective LR is
-    /// `base_lr * decay^(num_layers - 1 - i)`.
+    /// from the top/output layer), the effective LR is `base_lr * decay^i`, so
+    /// the output layer keeps the full LR and progressively deeper layers are
+    /// damped — the standard discriminative fine-tuning schedule.
     pub fn with_layer_wise_decay(mut self, decay: T, num_layers: usize) -> Self {
         self.layer_wise_decay = decay;
         self.num_layers = if num_layers == 0 { 1 } else { num_layers };
@@ -131,10 +132,12 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
     /// Layer 0 is the output (top) layer and gets the highest LR.
     /// Deeper layers get progressively smaller LRs.
     pub fn get_layer_lr(&self, layer_idx: usize) -> T {
+        // Layer 0 (top/output) keeps the full LR (exponent 0); deeper layers
+        // are damped by `decay^layer_idx`.
         let exponent = if layer_idx < self.num_layers {
-            self.num_layers - 1 - layer_idx
+            layer_idx
         } else {
-            0
+            self.num_layers.saturating_sub(1)
         };
         let mut factor = T::one();
         for _ in 0..exponent {
@@ -218,8 +221,8 @@ impl<T: Float + Debug + Send + Sync + 'static> NLPOptimizer<T> {
             } else {
                 start + chunk
             };
-            // Layer 0 = top/output, gets highest LR; deeper layers get decay
-            let exponent = self.num_layers - 1 - layer;
+            // Layer 0 = top/output, keeps the full LR; deeper layers are damped.
+            let exponent = layer;
             let mut factor = T::one();
             for _ in 0..exponent {
                 factor = factor * self.layer_wise_decay;
@@ -359,19 +362,19 @@ mod tests {
     #[test]
     fn test_nlp_optimizer_layer_wise_decay() {
         let opt = NLPOptimizer::new(0.01_f64).with_layer_wise_decay(0.8, 4);
-        // Layer 0 (top): base_lr * 0.8^3
-        // Layer 3 (bottom/deepest): base_lr * 0.8^0 = base_lr
+        // Discriminative fine-tuning: layer 0 (top/output) keeps the full LR,
+        // deeper layers are damped by decay^i.
+        // lr(0) = 0.01 * 0.8^0 = 0.01; lr(3) = 0.01 * 0.8^3 = 0.005120.
         let lr_top = opt.get_layer_lr(0);
         let lr_bottom = opt.get_layer_lr(3);
-        // Actually layer 0 is top (output), gets highest LR => exponent = num_layers-1-0 = 3
-        // layer 3 is deepest, exponent = 0
-        // So lr_top = 0.01 * 0.8^3, lr_bottom = 0.01 * 0.8^0
         assert!(
-            lr_bottom > lr_top,
-            "output layer should have highest LR (index 3), lr_top={}, lr_bottom={}",
-            lr_top,
-            lr_bottom
+            lr_top > lr_bottom,
+            "output (top) layer must have the highest LR, lr_top={lr_top}, lr_bottom={lr_bottom}"
         );
+        approx::assert_abs_diff_eq!(lr_top, 0.01, epsilon = 1e-12);
+        approx::assert_abs_diff_eq!(lr_bottom, 0.01 * 0.8_f64.powi(3), epsilon = 1e-12);
+        // Monotonic non-increasing from top to bottom.
+        assert!(opt.get_layer_lr(1) > opt.get_layer_lr(2));
     }
 
     #[test]

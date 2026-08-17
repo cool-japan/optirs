@@ -103,20 +103,28 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLABack
         let generated_code = self
             .code_generator
             .generate_code(computation, memory_plan)?;
-        self.stats.codegen_time_us = start_time.elapsed().as_micros() as u64;
+        let codegen_duration = start_time.elapsed();
+        self.stats.codegen_time_us = codegen_duration.as_micros() as u64;
 
         // Integrate with runtime
         let runtime_start = std::time::Instant::now();
         let binary = self
             .runtime_manager
             .integrate(generated_code, &self.config.target_tpu)?;
-        self.stats.runtime_integration_time_us = runtime_start.elapsed().as_micros() as u64;
+        let runtime_integration_duration = runtime_start.elapsed();
+        self.stats.runtime_integration_time_us = runtime_integration_duration.as_micros() as u64;
         self.stats.binary_size = binary.len();
 
-        // Set up profiling if enabled
+        // Set up profiling if enabled, and record this compile step's real
+        // measured timings into it -- without this, `profiling_manager`
+        // would only ever hold empty sessions and every later
+        // `export_data()` would report empty files regardless of how much
+        // real compilation work had just happened.
         if self.config.enable_profiling {
             self.profiling_manager
                 .setup_profiling(computation, &binary)?;
+            self.profiling_manager
+                .record_compile_timings(codegen_duration, runtime_integration_duration);
         }
 
         Ok(binary)
