@@ -5,26 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod communication;
-pub mod config;
 pub mod core;
 pub mod device_layout;
 pub mod graph_management;
 pub mod layout;
-pub mod monitoring;
-pub mod network;
 pub mod optimization;
-pub mod power;
 pub mod power_management;
 
 pub use communication::*;
-pub use config::*;
 pub use core::*;
 pub use device_layout::*;
 pub use graph_management::*;
-pub use monitoring::*;
-pub use network::*;
 pub use optimization::*;
-pub use power::*;
 pub use power_management::*;
 
 // Define missing types

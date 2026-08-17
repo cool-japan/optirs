@@ -2,19 +2,40 @@
 //
 // This module provides statistical analyzers for identifying trends, outliers,
 // and patterns in performance data to support regression detection.
+//
+// Both analyzers are NaN-safe: non-finite measurements are filtered out before
+// any ordering or arithmetic happens, so a single corrupted sample can never
+// panic a comparison or poison a percentile.
 
 use crate::error::Result;
+use crate::regression_tester::distributions::{
+    self, linear_regression, sorted_finite, LinearTrend,
+};
 use crate::regression_tester::types::{
-    PerformanceRecord, StatisticalAnalysisResult, StatisticalAnalyzer,
+    PerformanceRecord, StatisticalAnalysisResult, StatisticalAnalyzer, StatisticalTestResult,
 };
 use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
+/// Relative total change (as a fraction of the mean) above which a trend is
+/// called "strong", provided the correlation also supports it.
+const STRONG_RELATIVE_CHANGE: f64 = 0.20;
+/// Relative total change above which a trend is called "moderate".
+const MODERATE_RELATIVE_CHANGE: f64 = 0.05;
+/// Relative total change above which a trend is called "weak".
+const WEAK_RELATIVE_CHANGE: f64 = 0.01;
+
 /// Trend analysis implementation
 ///
 /// Analyzes performance data to detect linear trends that may indicate
 /// gradual performance improvements or degradations over time.
+///
+/// Trend strength is classified from the *relative* total change implied by the
+/// fitted line (`slope * (n - 1) / mean`) rather than from the raw slope. The
+/// raw slope carries the unit of the metric - a slope of "1" is enormous for a
+/// ratio and invisible for a nanosecond timing - so thresholds expressed in raw
+/// units silently mean different things for different metrics.
 #[derive(Debug)]
 pub struct TrendAnalyzer {
     /// Minimum number of data points required for analysis
@@ -30,6 +51,36 @@ impl TrendAnalyzer {
     /// Create a new trend analyzer with custom minimum data points
     pub fn with_min_data_points(min_data_points: usize) -> Self {
         Self { min_data_points }
+    }
+
+    /// Classify a fitted trend into a (direction, strength) pair.
+    fn classify(trend: &LinearTrend) -> (&'static str, &'static str) {
+        let Some(relative_change) = trend.relative_total_change() else {
+            return ("stable", "none");
+        };
+        let correlation = trend.correlation.abs();
+        let magnitude = relative_change.abs();
+
+        let strength = if magnitude > STRONG_RELATIVE_CHANGE && correlation > 0.7 {
+            "strong"
+        } else if magnitude > MODERATE_RELATIVE_CHANGE && correlation > 0.5 {
+            "moderate"
+        } else if magnitude > WEAK_RELATIVE_CHANGE && correlation > 0.3 {
+            "weak"
+        } else {
+            return ("stable", "none");
+        };
+
+        let direction = match (relative_change > 0.0, strength) {
+            (true, "strong") => "strongly increasing",
+            (true, "moderate") => "increasing",
+            (true, _) => "slightly increasing",
+            (false, "strong") => "strongly decreasing",
+            (false, "moderate") => "decreasing",
+            (false, _) => "slightly decreasing",
+        };
+
+        (direction, strength)
     }
 }
 
@@ -53,75 +104,56 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for TrendAnalyzer {
             });
         }
 
-        // Simple linear trend analysis using least squares regression
         let times: Vec<f64> = data
             .iter()
             .map(|r| r.metrics.timing.mean_time_ns as f64)
+            .filter(|value| value.is_finite())
             .collect();
 
-        let n = times.len() as f64;
-        let x_sum: f64 = (0..times.len()).map(|i| i as f64).sum();
-        let y_sum: f64 = times.iter().sum();
-        let xy_sum: f64 = times.iter().enumerate().map(|(i, &y)| i as f64 * y).sum();
-        let x2_sum: f64 = (0..times.len()).map(|i| (i as f64).powi(2)).sum();
-
-        // Calculate slope using least squares formula
-        let slope = if n * x2_sum - x_sum.powi(2) != 0.0 {
-            (n * xy_sum - x_sum * y_sum) / (n * x2_sum - x_sum.powi(2))
-        } else {
-            0.0
+        let Some(trend) = linear_regression(&times) else {
+            return Ok(StatisticalAnalysisResult {
+                summary: "Trend analysis undefined: degenerate or constant series".to_string(),
+                tests: vec![],
+                patterns: vec!["No usable variation in performance data".to_string()],
+                anomalies: vec![],
+            });
         };
 
-        // Calculate correlation coefficient to assess trend strength
-        let mean_x = x_sum / n;
-        let mean_y = y_sum / n;
+        let (trend_direction, trend_strength) = Self::classify(&trend);
+        let relative_change_percent = trend
+            .relative_total_change()
+            .map(|change| change * 100.0)
+            .unwrap_or(0.0);
+        let confidence_interval = trend.slope_confidence_interval(0.95);
 
-        let numerator: f64 = times
-            .iter()
-            .enumerate()
-            .map(|(i, &y)| (i as f64 - mean_x) * (y - mean_y))
-            .sum();
-
-        let denominator_x: f64 = (0..times.len()).map(|i| (i as f64 - mean_x).powi(2)).sum();
-
-        let denominator_y: f64 = times.iter().map(|&y| (y - mean_y).powi(2)).sum();
-
-        let correlation = if denominator_x > 0.0 && denominator_y > 0.0 {
-            numerator / (denominator_x * denominator_y).sqrt()
-        } else {
-            0.0
-        };
-
-        // Determine trend direction and strength
-        let (trend_direction, trend_strength) = match (slope, correlation.abs()) {
-            (s, c) if s > 1.0 && c > 0.7 => ("strongly increasing", "strong"),
-            (s, c) if s > 0.1 && c > 0.5 => ("increasing", "moderate"),
-            (s, c) if s > 0.0 && c > 0.3 => ("slightly increasing", "weak"),
-            (s, c) if s < -1.0 && c > 0.7 => ("strongly decreasing", "strong"),
-            (s, c) if s < -0.1 && c > 0.5 => ("decreasing", "moderate"),
-            (s, c) if s < 0.0 && c > 0.3 => ("slightly decreasing", "weak"),
-            _ => ("stable", "none"),
-        };
-
-        // Calculate relative change
-        let relative_change = if !times.is_empty() && times[0] != 0.0 {
-            ((times[times.len() - 1] - times[0]) / times[0]) * 100.0
-        } else {
-            0.0
-        };
+        let mut patterns = vec![
+            format!("Linear trend: {}", trend_direction),
+            format!("Trend strength: {}", trend_strength),
+            format!("Correlation coefficient: {:.3}", trend.correlation),
+            format!("Relative change: {:.2}%", relative_change_percent),
+            format!("Slope p-value: {:.6}", trend.p_value),
+        ];
+        if let Some((lower, upper)) = confidence_interval {
+            patterns.push(format!("Slope 95% CI: [{:.4}, {:.4}]", lower, upper));
+        }
 
         Ok(StatisticalAnalysisResult {
             summary: format!(
-                "Trend analysis: {} trend with slope {:.2} (correlation: {:.3}, change: {:.2}%)",
-                trend_direction, slope, correlation, relative_change
+                "Trend analysis: {} trend with slope {:.2} (correlation: {:.3}, change: {:.2}%, p = {:.6})",
+                trend_direction, trend.slope, trend.correlation, relative_change_percent, trend.p_value
             ),
-            tests: vec![],
-            patterns: vec![
-                format!("Linear trend: {}", trend_direction),
-                format!("Trend strength: {}", trend_strength),
-                format!("Correlation coefficient: {:.3}", correlation),
-                format!("Relative change: {:.2}%", relative_change),
-            ],
+            tests: vec![StatisticalTestResult {
+                test_name: "ols_slope_t_test".to_string(),
+                test_statistic: trend.t_statistic,
+                p_value: trend.p_value,
+                degrees_of_freedom: Some(trend.sample_count.saturating_sub(2)),
+                conclusion: if trend.p_value < 0.05 {
+                    format!("Slope differs significantly from zero ({})", trend_direction)
+                } else {
+                    "Slope is not significantly different from zero".to_string()
+                },
+            }],
+            patterns,
             anomalies: vec![],
         })
     }
@@ -173,7 +205,13 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
             });
         }
 
-        if data.len() < 3 {
+        let times: Vec<f64> = data
+            .iter()
+            .map(|r| r.metrics.timing.mean_time_ns as f64)
+            .filter(|value| value.is_finite())
+            .collect();
+
+        if times.len() < 3 {
             return Ok(StatisticalAnalysisResult {
                 summary: "Insufficient data for reliable outlier detection".to_string(),
                 tests: vec![],
@@ -182,18 +220,18 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
             });
         }
 
-        let times: Vec<f64> = data
-            .iter()
-            .map(|r| r.metrics.timing.mean_time_ns as f64)
-            .collect();
+        let (Some(mean), Some(std_dev)) = (
+            distributions::mean(&times),
+            distributions::sample_std_dev(&times),
+        ) else {
+            return Ok(StatisticalAnalysisResult {
+                summary: "Outlier analysis undefined for the supplied data".to_string(),
+                tests: vec![],
+                patterns: vec!["No usable variation in performance data".to_string()],
+                anomalies: vec![],
+            });
+        };
 
-        // Calculate statistical measures
-        let mean = times.iter().sum::<f64>() / times.len() as f64;
-        let variance =
-            times.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (times.len() - 1) as f64;
-        let std_dev = variance.sqrt();
-
-        // Prevent division by zero
         if std_dev == 0.0 {
             return Ok(StatisticalAnalysisResult {
                 summary: "No variation in data - all values identical".to_string(),
@@ -203,19 +241,24 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
             });
         }
 
-        // Detect outliers using Z-score method
         let mut outliers = Vec::new();
-        let mut outlier_indices = Vec::new();
-        let mut severe_outliers = 0;
-        let mut moderate_outliers = 0;
+        let mut severe_outliers = 0usize;
+        let mut moderate_outliers = 0usize;
 
-        for (i, &time) in times.iter().enumerate() {
+        for &time in &times {
             let z_score = (time - mean) / std_dev;
             let abs_z_score = z_score.abs();
 
             if abs_z_score > self.z_threshold {
-                outliers.push(A::from(z_score).expect("unwrap failed"));
-                outlier_indices.push(i);
+                // `A::from` fails for values a narrower float cannot hold; skip
+                // such scores rather than panicking on `expect`.
+                let Some(score) = A::from(z_score) else {
+                    continue;
+                };
+                if !score.is_finite() {
+                    continue;
+                }
+                outliers.push(score);
 
                 if abs_z_score > 3.0 {
                     severe_outliers += 1;
@@ -225,19 +268,14 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
             }
         }
 
-        // Calculate additional statistics
         let outlier_percentage = (outliers.len() as f64 / times.len() as f64) * 100.0;
 
-        // Calculate interquartile range (IQR) for additional context
-        let mut sorted_times = times.clone();
-        sorted_times.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
-        let q1_idx = sorted_times.len() / 4;
-        let q3_idx = 3 * sorted_times.len() / 4;
-        let q1 = sorted_times[q1_idx];
-        let q3 = sorted_times[q3_idx];
+        // NaN-safe ordering, then the shared interpolating percentile helper.
+        let sorted_times = sorted_finite(&times);
+        let q1 = distributions::percentile_sorted(&sorted_times, 25.0).unwrap_or(mean);
+        let q3 = distributions::percentile_sorted(&sorted_times, 75.0).unwrap_or(mean);
         let iqr = q3 - q1;
 
-        // Determine outlier severity and patterns
         let severity = if severe_outliers > 0 {
             "severe"
         } else if moderate_outliers > 2 {
@@ -294,53 +332,41 @@ impl<A: Float + Debug + Send + Sync> StatisticalAnalyzer<A> for OutlierAnalyzer 
 }
 
 /// Helper functions for statistical calculations
+///
+/// These are thin, NaN-safe wrappers over
+/// [`crate::regression_tester::distributions`].
 pub mod stats_utils {
-    /// Calculate the median of a sorted slice
-    pub fn median(sorted_data: &[f64]) -> f64 {
-        let len = sorted_data.len();
-        if len == 0 {
-            return 0.0;
-        }
+    use crate::regression_tester::distributions;
 
-        if len.is_multiple_of(2) {
-            (sorted_data[len / 2 - 1] + sorted_data[len / 2]) / 2.0
-        } else {
-            sorted_data[len / 2]
-        }
+    /// Calculate the median of a sorted slice.
+    ///
+    /// Returns `0.0` for an empty slice to preserve the historical contract.
+    pub fn median(sorted_data: &[f64]) -> f64 {
+        distributions::median_sorted(sorted_data).unwrap_or(0.0)
     }
 
-    /// Calculate percentile of sorted data
+    /// Calculate the interpolated percentile (`p` in 0..=100) of sorted data.
     pub fn percentile(sorted_data: &[f64], p: f64) -> f64 {
+        distributions::percentile_sorted(sorted_data, p).unwrap_or(0.0)
+    }
+
+    /// Calculate the median absolute deviation of unsorted data.
+    ///
+    /// Non-finite values are dropped instead of panicking a `partial_cmp`.
+    pub fn mad(data: &[f64]) -> f64 {
+        let sorted_data = distributions::sorted_finite(data);
         if sorted_data.is_empty() {
             return 0.0;
         }
+        let median_value = median(&sorted_data);
 
-        let index = (p / 100.0) * (sorted_data.len() - 1) as f64;
-        let lower = index.floor() as usize;
-        let upper = index.ceil() as usize;
+        let deviations: Vec<f64> = sorted_data
+            .iter()
+            .map(|&x| (x - median_value).abs())
+            .collect();
+        let sorted_deviations = distributions::sorted_finite(&deviations);
 
-        if lower == upper {
-            sorted_data[lower]
-        } else {
-            let weight = index - lower as f64;
-            sorted_data[lower] * (1.0 - weight) + sorted_data[upper] * weight
-        }
-    }
-
-    /// Calculate robust statistics (median absolute deviation)
-    pub fn mad(data: &[f64]) -> f64 {
-        if data.is_empty() {
-            return 0.0;
-        }
-
-        let mut sorted_data = data.to_vec();
-        sorted_data.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
-        let median_val = median(&sorted_data);
-
-        let mut deviations: Vec<f64> = data.iter().map(|&x| (x - median_val).abs()).collect();
-        deviations.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
-
-        median(&deviations)
+        median(&sorted_deviations)
     }
 }
 
@@ -356,8 +382,8 @@ mod tests {
         PerformanceRecord {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
+                .map(|d| d.as_secs())
+                .unwrap_or_default(),
             commit_hash: None,
             branch: None,
             environment: TestEnvironment::default(),
@@ -368,7 +394,7 @@ mod tests {
                     median_time_ns: time_ns,
                     p95_time_ns: time_ns + 50,
                     p99_time_ns: time_ns + 100,
-                    min_time_ns: time_ns - 20,
+                    min_time_ns: time_ns.saturating_sub(20),
                     max_time_ns: time_ns + 200,
                 },
                 memory: Default::default(),
@@ -381,84 +407,136 @@ mod tests {
     }
 
     #[test]
-    fn test_trend_analyzer_increasing_trend() {
+    fn trend_analyzer_reports_increasing_trend_with_p_value() {
         let analyzer = TrendAnalyzer::new();
         let mut data = VecDeque::new();
 
-        // Create increasing trend
         for i in 0..10 {
             data.push_back(create_test_record(1000 + i * 100));
         }
 
-        let result = analyzer.analyze(&data).expect("unwrap failed");
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("analysis runs");
 
         assert!(result.summary.contains("increasing"));
         assert!(result.patterns.iter().any(|p| p.contains("increasing")));
+        let test = result.tests.first().expect("a slope test is reported");
+        assert_eq!(test.test_name, "ols_slope_t_test");
+        assert!(test.p_value < 1e-6, "p = {}", test.p_value);
+        assert!(result.patterns.iter().any(|p| p.contains("Slope 95% CI")));
     }
 
     #[test]
-    fn test_trend_analyzer_decreasing_trend() {
+    fn trend_analyzer_reports_decreasing_trend() {
         let analyzer = TrendAnalyzer::new();
         let mut data = VecDeque::new();
 
-        // Create decreasing trend
         for i in 0..10 {
             data.push_back(create_test_record(2000 - i * 100));
         }
 
-        let result = analyzer.analyze(&data).expect("unwrap failed");
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("analysis runs");
 
         assert!(result.summary.contains("decreasing"));
         assert!(result.patterns.iter().any(|p| p.contains("decreasing")));
     }
 
+    /// F66: thresholds must not be expressed in raw nanoseconds. Two series
+    /// with identical *relative* shape must be classified identically even when
+    /// their absolute scale differs by nine orders of magnitude.
     #[test]
-    fn test_trend_analyzer_insufficient_data() {
+    fn trend_classification_is_scale_invariant() {
+        let analyzer = TrendAnalyzer::new();
+
+        let mut small = VecDeque::new();
+        let mut large = VecDeque::new();
+        for i in 0..10u64 {
+            small.push_back(create_test_record(1000 + i * 100));
+            large.push_back(create_test_record(1_000_000_000 + i * 100_000_000));
+        }
+
+        let small_result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&small).expect("analysis runs");
+        let large_result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&large).expect("analysis runs");
+
+        let strength_of = |result: &StatisticalAnalysisResult<f64>| {
+            result
+                .patterns
+                .iter()
+                .find(|p| p.starts_with("Trend strength:"))
+                .cloned()
+                .unwrap_or_default()
+        };
+        assert_eq!(strength_of(&small_result), strength_of(&large_result));
+        assert!(strength_of(&small_result).contains("strong"));
+    }
+
+    /// A tiny absolute drift on a huge baseline is noise, not a trend.
+    #[test]
+    fn trend_analyzer_ignores_negligible_relative_drift() {
+        let analyzer = TrendAnalyzer::new();
+        let mut data = VecDeque::new();
+        for i in 0..10u64 {
+            data.push_back(create_test_record(1_000_000_000 + i));
+        }
+
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("analysis runs");
+        assert!(
+            result.summary.contains("stable"),
+            "summary was {}",
+            result.summary
+        );
+    }
+
+    #[test]
+    fn trend_analyzer_requires_minimum_data() {
         let analyzer = TrendAnalyzer::new();
         let mut data = VecDeque::new();
 
-        // Add only 3 data points (less than minimum of 5)
         for i in 0..3 {
             data.push_back(create_test_record(1000 + i * 10));
         }
 
-        let result = analyzer.analyze(&data).expect("unwrap failed");
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("analysis runs");
 
         assert!(result.summary.contains("Insufficient data"));
         assert!(result.patterns.iter().any(|p| p.contains("Insufficient")));
     }
 
     #[test]
-    fn test_outlier_analyzer_with_outliers() {
+    fn outlier_analyzer_flags_extremes() {
         let analyzer = OutlierAnalyzer::new();
         let mut data = VecDeque::new();
 
-        // Create normal data with outliers
         for _ in 0..10 {
             data.push_back(create_test_record(1000));
         }
+        data.push_back(create_test_record(2000));
+        data.push_back(create_test_record(500));
 
-        // Add outliers
-        data.push_back(create_test_record(2000)); // High outlier
-        data.push_back(create_test_record(500)); // Low outlier
-
-        let result = analyzer.analyze(&data).expect("unwrap failed");
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("analysis runs");
 
         assert!(!result.anomalies.is_empty());
         assert!(result.summary.contains("outliers detected"));
+        assert!(result.patterns.iter().any(|p| p.contains("IQR")));
     }
 
     #[test]
-    fn test_outlier_analyzer_no_outliers() {
+    fn outlier_analyzer_handles_constant_data() {
         let analyzer = OutlierAnalyzer::new();
         let mut data = VecDeque::new();
 
-        // Create consistent data
         for _ in 0..10 {
             data.push_back(create_test_record(1000));
         }
 
-        let result = analyzer.analyze(&data).expect("unwrap failed");
+        let result: StatisticalAnalysisResult<f64> =
+            analyzer.analyze(&data).expect("analysis runs");
 
         assert_eq!(result.anomalies.len(), 0);
         assert!(result
@@ -468,19 +546,19 @@ mod tests {
     }
 
     #[test]
-    fn test_outlier_analyzer_empty_data() {
+    fn outlier_analyzer_handles_empty_data() {
         let analyzer = OutlierAnalyzer::new();
         let data = VecDeque::new();
 
         let result: StatisticalAnalysisResult<f64> =
-            analyzer.analyze(&data).expect("unwrap failed");
+            analyzer.analyze(&data).expect("analysis runs");
 
         assert!(result.summary.contains("No data"));
         assert!(result.patterns.iter().any(|p| p.contains("No data")));
     }
 
     #[test]
-    fn test_custom_parameters() {
+    fn custom_parameters_are_stored() {
         let trend_analyzer = TrendAnalyzer::with_min_data_points(3);
         assert_eq!(trend_analyzer.min_data_points, 3);
 
@@ -489,26 +567,26 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_utils_median() {
+    fn stats_utils_are_nan_safe() {
         use super::stats_utils::*;
 
         assert_eq!(median(&[1.0, 2.0, 3.0]), 2.0);
         assert_eq!(median(&[1.0, 2.0, 3.0, 4.0]), 2.5);
         assert_eq!(median(&[]), 0.0);
-    }
-
-    #[test]
-    fn test_stats_utils_percentile() {
-        use super::stats_utils::*;
 
         let data = [1.0, 2.0, 3.0, 4.0, 5.0];
         assert_eq!(percentile(&data, 50.0), 3.0);
         assert_eq!(percentile(&data, 0.0), 1.0);
         assert_eq!(percentile(&data, 100.0), 5.0);
+
+        // The previous implementation panicked here via `partial_cmp().expect`.
+        let with_nan = [3.0, f64::NAN, 1.0, 2.0, f64::INFINITY];
+        assert_eq!(mad(&with_nan), 1.0);
+        assert_eq!(mad(&[]), 0.0);
     }
 
     #[test]
-    fn test_analyzer_names() {
+    fn analyzer_names_are_stable() {
         let trend_analyzer = TrendAnalyzer::new();
         let outlier_analyzer = OutlierAnalyzer::new();
 

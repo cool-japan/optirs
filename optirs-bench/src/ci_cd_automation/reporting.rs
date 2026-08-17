@@ -6,6 +6,7 @@
 
 use crate::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -510,7 +511,7 @@ impl ReportGenerator {
             generated_at: SystemTime::now(),
             size_bytes: fs::metadata(&report_path)?.len(),
             metadata: self.create_report_metadata("Performance Test Report"),
-            summary: self.create_report_summary(statistics),
+            summary: self.create_report_summary(test_results, statistics),
         })
     }
 
@@ -525,7 +526,7 @@ impl ReportGenerator {
 
         let report_data = JsonReportData {
             metadata: self.create_report_metadata("Performance Test Report"),
-            summary: self.create_report_summary(statistics),
+            summary: self.create_report_summary(test_results, statistics),
             statistics: statistics.clone(),
             test_results: test_results.to_vec(),
             charts: self.generate_chart_data(test_results, statistics)?,
@@ -552,7 +553,7 @@ impl ReportGenerator {
             generated_at: SystemTime::now(),
             size_bytes: fs::metadata(&report_path)?.len(),
             metadata: self.create_report_metadata("Performance Test Report"),
-            summary: self.create_report_summary(statistics),
+            summary: self.create_report_summary(test_results, statistics),
         })
     }
 
@@ -579,7 +580,7 @@ impl ReportGenerator {
             generated_at: SystemTime::now(),
             size_bytes: fs::metadata(&report_path)?.len(),
             metadata: self.create_report_metadata("JUnit Test Report"),
-            summary: self.create_report_summary(statistics),
+            summary: self.create_report_summary(test_results, statistics),
         })
     }
 
@@ -606,42 +607,28 @@ impl ReportGenerator {
             generated_at: SystemTime::now(),
             size_bytes: fs::metadata(&report_path)?.len(),
             metadata: self.create_report_metadata("Performance Test Report"),
-            summary: self.create_report_summary(statistics),
+            summary: self.create_report_summary(test_results, statistics),
         })
     }
 
-    /// Generate PDF report (simplified implementation)
+    /// PDF report generation is not supported: this crate has no PDF
+    /// rendering dependency (pure-Rust, no new deps for this concern) and
+    /// writing HTML bytes into a `.pdf` file produces a file that is not a
+    /// valid PDF. Rather than emit that, this always returns an explicit
+    /// error; `ReportingConfig::validate` rejects `generate_pdf: true`
+    /// up front so a validated config never reaches this function.
     pub fn generate_pdf_report(
         &mut self,
-        test_results: &[CiCdTestResult],
-        statistics: &TestSuiteStatistics,
-        output_dir: &Path,
+        _test_results: &[CiCdTestResult],
+        _statistics: &TestSuiteStatistics,
+        _output_dir: &Path,
     ) -> Result<GeneratedReport> {
-        let report_path = output_dir.join("performance_report.pdf");
-
-        // For now, generate PDF by creating HTML and indicating it should be converted
-        let html_content = self.create_pdf_html_content(test_results, statistics)?;
-
-        // In a real implementation, this would use a PDF generation library
-        // For now, just write the HTML content with a .pdf extension as a placeholder
-        fs::create_dir_all(output_dir).map_err(|e| {
-            OptimError::InvalidConfig(format!("Failed to create output directory: {}", e))
-        })?;
-
-        fs::write(
-            &report_path,
-            format!("<!-- PDF Report Content -->\n{}", html_content),
-        )
-        .map_err(OptimError::IO)?;
-
-        Ok(GeneratedReport {
-            report_type: ReportType::PDF,
-            file_path: report_path.clone(),
-            generated_at: SystemTime::now(),
-            size_bytes: fs::metadata(&report_path)?.len(),
-            metadata: self.create_report_metadata("Performance Test Report"),
-            summary: self.create_report_summary(statistics),
-        })
+        Err(OptimError::UnsupportedOperation(
+            "PDF report generation is not supported (no PDF rendering dependency is linked \
+             into this crate); disable ReportingConfig::generate_pdf and use the HTML or \
+             Markdown report instead"
+                .to_string(),
+        ))
     }
 
     /// Generate chart data for visualizations
@@ -1083,25 +1070,6 @@ impl ReportGenerator {
         Ok(markdown)
     }
 
-    /// Create PDF HTML content
-    fn create_pdf_html_content(
-        &self,
-        test_results: &[CiCdTestResult],
-        statistics: &TestSuiteStatistics,
-    ) -> Result<String> {
-        // Create a PDF-optimized HTML version
-        let mut html = String::new();
-        html.push_str("<!DOCTYPE html><html><head><title>Performance Report</title></head><body>");
-        html.push_str("<h1>Performance Test Report</h1>");
-        html.push_str(&format!("<p>Total Tests: {}</p>", statistics.total_tests));
-        html.push_str(&format!(
-            "<p>Success Rate: {:.1}%</p>",
-            statistics.success_rate * 100.0
-        ));
-        html.push_str("</body></html>");
-        Ok(html)
-    }
-
     /// Create report metadata
     fn create_report_metadata(&self, title: &str) -> ReportMetadata {
         ReportMetadata {
@@ -1111,7 +1079,7 @@ impl ReportGenerator {
                 name: "CI/CD Automation".to_string(),
                 version: "1.0.0".to_string(),
                 timestamp: SystemTime::now(),
-                config_hash: "abc123".to_string(), // Simplified
+                config_hash: self.config_hash(),
             },
             version: "1.0".to_string(),
             tags: vec!["performance".to_string(), "ci-cd".to_string()],
@@ -1119,8 +1087,69 @@ impl ReportGenerator {
         }
     }
 
-    /// Create report summary
-    fn create_report_summary(&self, statistics: &TestSuiteStatistics) -> ReportSummary {
+    /// SHA-256 hex digest of the serialized `ReportingConfig`, so two reports
+    /// generated under the same configuration can be recognized as such (and
+    /// two under different configurations cannot be mistaken for the same
+    /// generator settings). Falls back to an explicit `"unhashable-config"`
+    /// marker only if the config cannot be serialized at all, never to a
+    /// constant that looks like a real hash.
+    fn config_hash(&self) -> String {
+        match serde_json::to_vec(&self.config) {
+            Ok(bytes) => {
+                let mut hasher = Sha256::new();
+                hasher.update(&bytes);
+                hasher
+                    .finalize()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect()
+            }
+            Err(_) => "unhashable-config".to_string(),
+        }
+    }
+
+    /// Create report summary. `regressions_detected` and `key_insights` are
+    /// derived from the actual `test_results` (via
+    /// `CiCdTestResult::regression_analysis`), never a hardcoded constant.
+    fn create_report_summary(
+        &self,
+        test_results: &[CiCdTestResult],
+        statistics: &TestSuiteStatistics,
+    ) -> ReportSummary {
+        let regressions_detected = test_results
+            .iter()
+            .filter(|result| {
+                result
+                    .regression_analysis
+                    .as_ref()
+                    .is_some_and(|analysis| analysis.regression_detected)
+            })
+            .count();
+
+        let mut key_insights = Vec::new();
+        if regressions_detected > 0 {
+            key_insights.push(format!(
+                "{regressions_detected} test(s) show a detected performance regression"
+            ));
+            for result in test_results.iter().take(5) {
+                if let Some(analysis) = &result.regression_analysis {
+                    if analysis.regression_detected {
+                        key_insights.push(format!(
+                            "{}: {:+.1}% change (confidence {:.0}%)",
+                            result.test_name,
+                            analysis.performance_change_percent,
+                            analysis.confidence * 100.0
+                        ));
+                    }
+                }
+            }
+        } else if !test_results.is_empty() {
+            key_insights.push("No performance regressions detected in this run".to_string());
+        }
+        if statistics.failed > 0 {
+            key_insights.push(format!("{} test(s) failed", statistics.failed));
+        }
+
         ReportSummary {
             total_tests: statistics.total_tests,
             passed_tests: statistics.passed,
@@ -1128,11 +1157,8 @@ impl ReportGenerator {
             skipped_tests: statistics.skipped,
             success_rate: statistics.success_rate * 100.0,
             total_duration_sec: statistics.total_duration.as_secs_f64(),
-            regressions_detected: 0, // Simplified
-            key_insights: vec![
-                "No significant performance regressions detected".to_string(),
-                "Memory usage within expected ranges".to_string(),
-            ],
+            regressions_detected,
+            key_insights,
         }
     }
 }

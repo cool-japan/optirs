@@ -138,10 +138,10 @@ where
 
     fn get_learning_rate(&self) -> A {
         // Return the learning rate of the first optimizer, or a default if empty
-        if let Some(optimizer) = self.optimizers.first() {
-            optimizer.get_learning_rate()
-        } else {
-            A::from(0.01).expect("unwrap failed") // Default learning rate
+        match self.optimizers.first() {
+            Some(optimizer) => optimizer.get_learning_rate(),
+            // Default learning rate; falls back to zero for exotic float types
+            None => A::from(0.01).unwrap_or_else(A::zero),
         }
     }
 
@@ -439,24 +439,59 @@ where
         ))
     }
 
+    /// Updates several parameter tensors, one per parameter group
+    ///
+    /// Existing parameter groups are **reused**: only their parameter values are
+    /// refreshed, so the optimizer assignment made by
+    /// [`ParallelOptimizer::add_parameter_group`] survives across calls. Groups are
+    /// rebuilt only when the caller changes the number of tensors or their shapes, in
+    /// which case tensor `i` is assigned to optimizer `min(i, optimizers.len() - 1)`.
     fn step_list(
         &mut self,
         params_list: &[&Array<A, D>],
         gradients_list: &[&Array<A, D>],
     ) -> Result<Vec<Array<A, D>>> {
-        // Convert params_list to owned arrays
-        let params_vec: Vec<Array<A, D>> = params_list.iter().map(|&p| p.clone()).collect();
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
+        }
 
-        // Set parameter groups based on the input params
-        self.parameter_groups = params_vec
-            .into_iter()
-            .enumerate()
-            .map(|(i, params)| {
-                // Use the first optimizer for all if there are more params than optimizers
-                let optimizerindex = i.min(self.optimizers.len() - 1);
-                ParameterGroup::new(params, optimizerindex)
-            })
-            .collect();
+        // Guard against an empty optimizer list: the fallback assignment below would
+        // otherwise underflow when computing `optimizers.len() - 1`.
+        let last_optimizer = self.optimizers.len().checked_sub(1).ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "ParallelOptimizer has no optimizers; add at least one with add_optimizer \
+                 before calling step_list."
+                    .to_string(),
+            )
+        })?;
+
+        // Reuse the existing groups when they still describe the same tensors, so that
+        // per-group optimizer assignments are not silently discarded on every call.
+        let layout_matches = self.parameter_groups.len() == params_list.len()
+            && self
+                .parameter_groups
+                .iter()
+                .zip(params_list.iter())
+                .all(|(group, params)| group.params.raw_dim() == params.raw_dim());
+
+        if layout_matches {
+            for (group, params) in self.parameter_groups.iter_mut().zip(params_list.iter()) {
+                group.params = (*params).clone();
+            }
+        } else {
+            self.parameter_groups = params_list
+                .iter()
+                .enumerate()
+                .map(|(i, params)| {
+                    // Use the last optimizer for any tensor beyond the optimizer list
+                    ParameterGroup::new((*params).clone(), i.min(last_optimizer))
+                })
+                .collect();
+        }
 
         // Convert gradients_list to owned arrays
         let gradients_vec: Vec<Array<A, D>> = gradients_list.iter().map(|&g| g.clone()).collect();
@@ -1027,5 +1062,69 @@ mod tests {
         assert_eq!(weighted.num_optimizers(), 2);
         assert_abs_diff_eq!(weighted.weights()[0], 1.0);
         assert_abs_diff_eq!(weighted.weights()[1], 1.0);
+    }
+
+    /// Regression test for F88: `step_list` used to rebuild every parameter group on
+    /// each call, discarding the optimizer assignment set up by
+    /// `add_parameter_group`, and it underflowed on an empty optimizer list.
+    #[test]
+    fn test_parallel_optimizer_step_list_preserves_group_assignment() {
+        let sgd = SGD::new(0.1);
+        let adam = Adam::new(0.01);
+
+        let mut parallel_optimizer: ParallelOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            ParallelOptimizer::new(vec![Box::new(sgd), Box::new(adam)], vec![]);
+
+        // Deliberately assign BOTH tensors to optimizer 1 (Adam).
+        parallel_optimizer
+            .add_parameter_group(Array1::zeros(2), 1)
+            .expect("add group 0");
+        parallel_optimizer
+            .add_parameter_group(Array1::zeros(2), 1)
+            .expect("add group 1");
+
+        let params1 = Array1::zeros(2);
+        let params2 = Array1::zeros(2);
+        let grads1 = Array1::from_vec(vec![1.0, 2.0]);
+        let grads2 = Array1::from_vec(vec![1.0, 2.0]);
+
+        let updated = parallel_optimizer
+            .step_list(&[&params1, &params2], &[&grads1, &grads2])
+            .expect("step_list failed");
+
+        // Both groups must still be assigned to Adam, so neither may show the plain
+        // SGD result of -0.1 that the rebuilt-groups bug produced for group 0.
+        assert_eq!(
+            parallel_optimizer
+                .get_parameter_group(0)
+                .expect("group 0")
+                .optimizerindex,
+            1
+        );
+        assert_eq!(
+            parallel_optimizer
+                .get_parameter_group(1)
+                .expect("group 1")
+                .optimizerindex,
+            1
+        );
+        assert!(
+            (updated[0][0] + 0.1).abs() > 1e-6,
+            "group 0 was silently reassigned to SGD: {}",
+            updated[0][0]
+        );
+    }
+
+    /// An empty optimizer list must produce a clear error instead of underflowing.
+    #[test]
+    fn test_parallel_optimizer_step_list_rejects_empty_optimizers() {
+        let mut parallel_optimizer: ParallelOptimizer<f64, scirs2_core::ndarray::Ix1> =
+            ParallelOptimizer::new(vec![], vec![]);
+
+        let params = Array1::zeros(2);
+        let grads = Array1::from_vec(vec![1.0, 2.0]);
+
+        let result = parallel_optimizer.step_list(&[&params], &[&grads]);
+        assert!(result.is_err(), "empty optimizer list must be rejected");
     }
 }

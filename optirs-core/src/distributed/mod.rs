@@ -24,6 +24,7 @@ pub use elastic::{
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
+use scirs2_core::random::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -101,7 +102,13 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         }
 
         // Initialize uniform weights
-        let uniform_weight = A::one() / A::from(self.numnodes).expect("unwrap failed");
+        let numnodes_a = A::from(self.numnodes).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "node count {} could not be represented in the parameter type",
+                self.numnodes
+            ))
+        })?;
+        let uniform_weight = A::one() / numnodes_a;
         for nodeid in 0..self.numnodes {
             self.node_weights.insert(nodeid, uniform_weight);
         }
@@ -184,7 +191,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             param.fill(A::zero());
         }
 
-        let numnodes = A::from(nodeparameters.len()).expect("unwrap failed");
+        let numnodes = A::from(nodeparameters.len()).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "node count {} could not be represented in the parameter type",
+                nodeparameters.len()
+            ))
+        })?;
 
         // Sum all _parameters
         for (_node_id, params) in nodeparameters {
@@ -236,10 +248,15 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         Ok(())
     }
 
-    /// Federated averaging (similar to weighted but with special handling)
+    /// Federated averaging (FedAvg). This delegates to the same weighted-average
+    /// machinery as `WeightedByData`: the caller MUST call `set_node_weight` with
+    /// each node's local sample-size fraction before invoking `average_parameters`,
+    /// otherwise `initialize` seeds uniform weights and this degenerates to plain
+    /// `Arithmetic` averaging (not an error, but not FedAvg's defining property
+    /// either -- callers wanting genuine FedAvg with only local dataset sizes
+    /// available should prefer `distributed::fedprox::FedProxOptimizer`, which
+    /// accepts sample counts directly).
     fn federated_average(&mut self, nodeparameters: &[(usize, Vec<Array<A, D>>)]) -> Result<()> {
-        // For simplicity, use weighted averaging with data-based weights
-        // In practice, this would consider local dataset sizes and update frequencies
         self.weighted_average(nodeparameters)
     }
 
@@ -249,7 +266,16 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         nodeparameters: &[(usize, Vec<Array<A, D>>)],
         momentum: f64,
     ) -> Result<()> {
-        let momentum_factor = A::from(momentum).expect("unwrap failed");
+        if !(0.0..=1.0).contains(&momentum) {
+            return Err(OptimError::InvalidConfig(format!(
+                "momentum must be in [0, 1], got {momentum}"
+            )));
+        }
+        let momentum_factor = A::from(momentum).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "momentum {momentum} could not be represented in the parameter type"
+            ))
+        })?;
         let one_minus_momentum = A::one() - momentum_factor;
 
         // First compute arithmetic average of incoming _parameters
@@ -259,7 +285,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             .map(|param| Array::zeros(param.raw_dim()))
             .collect();
 
-        let numnodes = A::from(nodeparameters.len()).expect("unwrap failed");
+        let numnodes = A::from(nodeparameters.len()).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "node count {} could not be represented in the parameter type",
+                nodeparameters.len()
+            ))
+        })?;
         for (_node_id, params) in nodeparameters {
             for (avg_param, param) in current_average.iter_mut().zip(params.iter()) {
                 Zip::from(avg_param).and(param).for_each(|avg, &p| {
@@ -268,24 +299,34 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             }
         }
 
-        // Apply momentum update
-        if let Some(ref mut momentum_buf) = self.momentum_buffer {
-            for ((avg_param, current_param), momentum_param) in self
-                .averaged_params
-                .iter_mut()
-                .zip(current_average.iter())
-                .zip(momentum_buf.iter_mut())
-            {
-                // Update momentum buffer first
-                Zip::from(&mut *momentum_param)
-                    .and(current_param)
-                    .for_each(|mom, &curr| {
-                        *mom = momentum_factor * *mom + one_minus_momentum * curr;
-                    });
+        // Apply momentum update. The momentum buffer is only allocated by
+        // `initialize` when the strategy is `Momentum` *at that moment* -- if
+        // the caller switched strategies afterward (or never initialized this
+        // way), silently discarding the incoming update would corrupt training
+        // with no signal, so we fail loudly instead.
+        let momentum_buf = self.momentum_buffer.as_mut().ok_or_else(|| {
+            OptimError::InvalidState(
+                "Momentum averaging selected but the momentum buffer was never initialized; \
+                 call initialize() while the strategy is AveragingStrategy::Momentum"
+                    .to_string(),
+            )
+        })?;
 
-                // Copy momentum buffer to averaged params
-                avg_param.assign(&*momentum_param);
-            }
+        for ((avg_param, current_param), momentum_param) in self
+            .averaged_params
+            .iter_mut()
+            .zip(current_average.iter())
+            .zip(momentum_buf.iter_mut())
+        {
+            // Update momentum buffer first
+            Zip::from(&mut *momentum_param)
+                .and(current_param)
+                .for_each(|mom, &curr| {
+                    *mom = momentum_factor * *mom + one_minus_momentum * curr;
+                });
+
+            // Copy momentum buffer to averaged params
+            avg_param.assign(&*momentum_param);
         }
 
         Ok(())
@@ -297,7 +338,16 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         nodeparameters: &[(usize, Vec<Array<A, D>>)],
         decay: f64,
     ) -> Result<()> {
-        let decay_factor = A::from(decay).expect("unwrap failed");
+        if !(0.0..=1.0).contains(&decay) {
+            return Err(OptimError::InvalidConfig(format!(
+                "decay must be in [0, 1], got {decay}"
+            )));
+        }
+        let decay_factor = A::from(decay).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "decay {decay} could not be represented in the parameter type"
+            ))
+        })?;
         let one_minus_decay = A::one() - decay_factor;
 
         // First compute arithmetic average of incoming _parameters
@@ -307,7 +357,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             .map(|param| Array::zeros(param.raw_dim()))
             .collect();
 
-        let numnodes = A::from(nodeparameters.len()).expect("unwrap failed");
+        let numnodes = A::from(nodeparameters.len()).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "node count {} could not be represented in the parameter type",
+                nodeparameters.len()
+            ))
+        })?;
         for (_node_id, params) in nodeparameters {
             for (avg_param, param) in current_average.iter_mut().zip(params.iter()) {
                 Zip::from(avg_param).and(param).for_each(|avg, &p| {
@@ -412,6 +467,16 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 
     /// Initialize with global parameters
     pub fn initialize(&mut self, initialparams: &[Array<A, D>]) -> Result<()> {
+        if self.expected_updates_per_round == 0
+            || self.expected_updates_per_round > self.averager.numnodes()
+        {
+            return Err(OptimError::InvalidConfig(format!(
+                "expected_updates_per_round ({}) must be in [1, numnodes={}]",
+                self.expected_updates_per_round,
+                self.averager.numnodes()
+            )));
+        }
+
         self.averager.initialize(initialparams)?;
         self.global_parameters = initialparams.to_vec();
 
@@ -424,12 +489,26 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     }
 
     /// Submit parameter update from a node
+    ///
+    /// A node that has already submitted for the current (not-yet-aggregated)
+    /// round is rejected rather than silently overwritten -- `pending_updates`
+    /// is a map keyed by node id, so a resubmission would otherwise vanish
+    /// without raising the round's completion count, corrupting the barrier.
     pub fn submit_update(&mut self, nodeid: usize, parameters: Vec<Array<A, D>>) -> Result<bool> {
         if nodeid >= self.averager.numnodes() {
             return Err(OptimError::InvalidConfig(format!(
                 "Node ID {} exceeds number of nodes {}",
                 nodeid,
                 self.averager.numnodes()
+            )));
+        }
+
+        if self.pending_updates.contains_key(&nodeid) {
+            return Err(OptimError::InvalidState(format!(
+                "Node {} already submitted an update for the current round (round {}); \
+                 call force_aggregation() to close the round before resubmitting",
+                nodeid,
+                self.current_round + 1
             )));
         }
 
@@ -527,7 +606,7 @@ pub struct DistributedCoordinator<A: Float, D: Dimension> {
     /// Maximum rounds before forced stop
     max_rounds: usize,
     /// Training statistics
-    training_stats: TrainingStats<A>,
+    training_stats: TrainingStats<A, D>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
@@ -543,7 +622,10 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         Self {
             parameter_server: ParameterServer::new(strategy, numnodes, expected_updates_per_round),
             communication_rounds: 0,
-            convergence_threshold: A::from(1e-6).expect("unwrap failed"),
+            // 1e-6 is representable by every IEEE-754 float type this crate
+            // targets; the fallback only guards a constructor that cannot
+            // itself return `Result`.
+            convergence_threshold: A::from(1e-6).unwrap_or_else(A::epsilon),
             max_rounds,
             training_stats: TrainingStats::new(),
         }
@@ -628,7 +710,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 
     /// Compute convergence metric (parameter change magnitude)
     fn compute_convergence_metric(&self, currentparams: &[Array<A, D>]) -> A {
-        if let Some(prev_params) = self.training_stats.get_previous_parameters::<D>() {
+        if let Some(prev_params) = self.training_stats.get_previous_parameters() {
             let mut total_change = A::zero();
             let mut total_norm = A::zero();
 
@@ -665,21 +747,23 @@ pub struct CommunicationResult<A: Float, D: Dimension> {
     /// Convergence metric value
     pub convergence_metric: A,
     /// Training statistics
-    pub stats: TrainingStats<A>,
+    pub stats: TrainingStats<A, D>,
 }
 
 /// Training statistics for distributed training
 #[derive(Debug, Clone)]
-pub struct TrainingStats<A: Float> {
+pub struct TrainingStats<A: Float, D: Dimension> {
     /// Convergence history
     convergence_history: Vec<A>,
     /// Round timestamps
     round_times: Vec<usize>,
-    /// Previous parameters for convergence computation
-    previous_parameters: Option<Vec<u8>>, // Serialized for memory efficiency
+    /// Previous round's parameters, kept so `compute_convergence_metric` can
+    /// measure real parameter movement instead of always reporting "no
+    /// history".
+    previous_parameters: Option<Vec<Array<A, D>>>,
 }
 
-impl<A: Float + Send + Sync> TrainingStats<A> {
+impl<A: Float + Send + Sync, D: Dimension> TrainingStats<A, D> {
     /// Create new training stats
     pub fn new() -> Self {
         Self {
@@ -690,7 +774,7 @@ impl<A: Float + Send + Sync> TrainingStats<A> {
     }
 
     /// Record a training round
-    pub fn record_round<D: Dimension>(
+    pub fn record_round(
         &mut self,
         round: usize,
         convergence_metric: A,
@@ -698,10 +782,7 @@ impl<A: Float + Send + Sync> TrainingStats<A> {
     ) {
         self.convergence_history.push(convergence_metric);
         self.round_times.push(round);
-
-        // Store simplified representation of parameters for convergence computation
-        // In practice, you might want a more sophisticated serialization
-        self.previous_parameters = Some(vec![0u8; parameters.len()]);
+        self.previous_parameters = Some(parameters.to_vec());
     }
 
     /// Get convergence history
@@ -719,14 +800,13 @@ impl<A: Float + Send + Sync> TrainingStats<A> {
         self.round_times.len()
     }
 
-    /// Get previous parameters (simplified)
-    fn get_previous_parameters<D: Dimension>(&self) -> Option<Vec<Array<A, D>>> {
-        // Simplified implementation - in practice you'd deserialize properly
-        None
+    /// Get the parameters recorded by the previous `record_round` call, if any
+    fn get_previous_parameters(&self) -> Option<&[Array<A, D>]> {
+        self.previous_parameters.as_deref()
     }
 }
 
-impl<A: Float + Send + Sync> Default for TrainingStats<A> {
+impl<A: Float + Send + Sync, D: Dimension> Default for TrainingStats<A, D> {
     fn default() -> Self {
         Self::new()
     }
@@ -771,6 +851,40 @@ pub enum CompressionStrategy {
         /// Value to clip gradients to
         clip_value: f64,
     },
+}
+
+/// Read a little-endian `f64` out of a byte slice, returning an honest error
+/// instead of panicking on a truncated/corrupted buffer (e.g. from a
+/// tampered or short network payload).
+fn read_f64_le(bytes: &[u8]) -> Result<f64> {
+    let arr: [u8; 8] = bytes.try_into().map_err(|_| {
+        OptimError::InvalidConfig(
+            "corrupted compressed data: expected 8 bytes for an f64".to_string(),
+        )
+    })?;
+    Ok(f64::from_le_bytes(arr))
+}
+
+/// Read a little-endian `u32` out of a byte slice, returning an honest error
+/// instead of panicking on a truncated/corrupted buffer.
+fn read_u32_le(bytes: &[u8]) -> Result<u32> {
+    let arr: [u8; 4] = bytes.try_into().map_err(|_| {
+        OptimError::InvalidConfig(
+            "corrupted compressed data: expected 4 bytes for a u32".to_string(),
+        )
+    })?;
+    Ok(u32::from_le_bytes(arr))
+}
+
+/// Read a little-endian `u16` out of a byte slice, returning an honest error
+/// instead of panicking on a truncated/corrupted buffer.
+fn read_u16_le(bytes: &[u8]) -> Result<u16> {
+    let arr: [u8; 2] = bytes.try_into().map_err(|_| {
+        OptimError::InvalidConfig(
+            "corrupted compressed data: expected 2 bytes for a u16".to_string(),
+        )
+    })?;
+    Ok(u16::from_le_bytes(arr))
 }
 
 /// Compressed gradient representation
@@ -834,9 +948,24 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
 
     /// Compress gradients
     pub fn compress(&mut self, gradients: &[Array<A, D>]) -> Result<CompressedGradient<A>> {
-        // Apply error feedback if enabled
+        // Lazily initialize the error-feedback residual the first time a caller
+        // selects ErrorFeedback with compensation enabled but never called
+        // `initialize_error_state` themselves. Previously this silently
+        // degraded to plain (uncompensated) compression with no signal.
+        let needs_lazy_init = matches!(
+            &self.strategy,
+            CompressionStrategy::ErrorFeedback {
+                error_compensation: true,
+                ..
+            }
+        ) && self.error_state.is_none();
+        if needs_lazy_init {
+            self.initialize_error_state(gradients);
+        }
+
+        // Apply error feedback if enabled: working = gradient + accumulated residual
         let mut working_gradients: Vec<Array<A, D>> =
-            if let Some(ref mut error_state) = self.error_state {
+            if let Some(ref error_state) = self.error_state {
                 gradients
                     .iter()
                     .zip(error_state.iter())
@@ -852,25 +981,40 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             CompressionStrategy::RandomK { k } => self.compress_randomk(&working_gradients, *k)?,
             CompressionStrategy::Threshold { threshold } => self.compress_threshold(
                 &working_gradients,
-                A::from(*threshold).expect("unwrap failed"),
+                A::from(*threshold).ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "threshold {threshold} could not be represented in the parameter type"
+                    ))
+                })?,
             )?,
             CompressionStrategy::Quantization { bits } => {
                 self.compress_quantization(&working_gradients, *bits)?
             }
-            CompressionStrategy::ErrorFeedback { base_strategy, .. } => {
+            CompressionStrategy::ErrorFeedback {
+                base_strategy,
+                error_compensation,
+            } => {
                 // Recursively apply base strategy
                 let mut temp_compressor = GradientCompressor::new((**base_strategy).clone());
                 let compressed = temp_compressor.compress(&working_gradients)?;
-                let decompressed = temp_compressor.decompress(&compressed)?;
 
-                // Update error state
-                if let Some(ref mut error_state) = self.error_state {
-                    for ((original, decompressed), error) in gradients
-                        .iter()
-                        .zip(decompressed.iter())
-                        .zip(error_state.iter_mut())
-                    {
-                        *error = original - decompressed;
+                // Honour the `error_compensation` flag: when disabled, no
+                // residual should be tracked or applied on future calls.
+                if *error_compensation {
+                    // EF-SGD residual: e_new = working - decompress(compress(working)).
+                    // Using the raw input (`original`) here instead of `working`
+                    // (which already folds in the previous residual `e_old`) would
+                    // pin the residual at a constant and coordinates that never
+                    // individually clear the Top-K threshold would never be sent.
+                    let decompressed = temp_compressor.decompress(&compressed)?;
+                    if let Some(ref mut error_state) = self.error_state {
+                        for ((working, decompressed), error) in working_gradients
+                            .iter()
+                            .zip(decompressed.iter())
+                            .zip(error_state.iter_mut())
+                        {
+                            *error = working - decompressed;
+                        }
                     }
                 }
 
@@ -881,7 +1025,11 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 clip_value,
             } => {
                 // Clip gradients first
-                let clip_val = A::from(*clip_value).expect("unwrap failed");
+                let clip_val = A::from(*clip_value).ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "clip value {clip_value} could not be represented in the parameter type"
+                    ))
+                })?;
                 for grad in &mut working_gradients {
                     grad.mapv_inplace(|x| {
                         if x > clip_val {
@@ -950,7 +1098,13 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         // Simple serialization: store all gradient values sequentially
         for grad in gradients {
             for &val in grad.iter() {
-                data.extend_from_slice(&val.to_f64().expect("unwrap failed").to_le_bytes());
+                let bits = val.to_f64().ok_or_else(|| {
+                    OptimError::InvalidConfig(
+                        "gradient value could not be converted to f64 for serialization"
+                            .to_string(),
+                    )
+                })?;
+                data.extend_from_slice(&bits.to_le_bytes());
             }
         }
 
@@ -978,21 +1132,26 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for (grad_idx, grad) in gradients.iter().enumerate() {
             total_elements += grad.len();
 
-            // Collect (value, index) pairs
-            let mut value_indices: Vec<(A, usize)> = grad
-                .iter()
-                .enumerate()
-                .map(|(i, &val)| (val.abs(), i))
-                .collect();
+            // Collect (signed value, index) pairs once -- capturing the signed
+            // value up front avoids an O(n) `.nth()` re-lookup per selected
+            // element below (previously O(n*k) per gradient).
+            let mut value_indices: Vec<(A, usize)> =
+                grad.iter().enumerate().map(|(i, &val)| (val, i)).collect();
 
-            // Sort by absolute value (descending)
-            value_indices.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("unwrap failed"));
+            // Sort by absolute value (descending). NaN gradients (e.g. from a
+            // diverged run) must not panic a comparator run by `sort_by` --
+            // treat incomparable pairs as equal rather than unwrapping.
+            value_indices.sort_by(|a, b| {
+                b.0.abs()
+                    .partial_cmp(&a.0.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
             // Take top k elements
             let k_local = k.min(value_indices.len());
-            for (_, orig_idx) in value_indices.iter().take(k_local) {
-                indices.push((grad_idx as u32, *orig_idx as u32));
-                values.push(grad.iter().nth(*orig_idx).copied().expect("unwrap failed"));
+            for &(val, orig_idx) in value_indices.iter().take(k_local) {
+                indices.push((grad_idx as u32, orig_idx as u32));
+                values.push(val);
             }
         }
 
@@ -1006,12 +1165,18 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for ((grad_idx, elem_idx), value) in indices.iter().zip(values.iter()) {
             data.extend_from_slice(&grad_idx.to_le_bytes());
             data.extend_from_slice(&elem_idx.to_le_bytes());
-            data.extend_from_slice(&value.to_f64().expect("unwrap failed").to_le_bytes());
+            let bits = value.to_f64().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "gradient value could not be converted to f64 for serialization".to_string(),
+                )
+            })?;
+            data.extend_from_slice(&bits.to_le_bytes());
         }
 
         let metadata = CompressionMetadata {
             strategy: CompressionStrategy::TopK { k },
-            compression_ratio: data.len() as f64 / (total_elements * 8) as f64,
+            compression_ratio: data.len() as f64
+                / (total_elements.max(1) * std::mem::size_of::<A>()) as f64,
             nnz_count: indices.len(),
             scale_factors: Vec::new(),
             extra_data: Vec::new(),
@@ -1029,23 +1194,31 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         let mut indices = Vec::new();
         let mut values = Vec::new();
         let mut total_elements = 0;
+        let mut rng = thread_rng();
 
         for (grad_idx, grad) in gradients.iter().enumerate() {
             total_elements += grad.len();
 
-            // Random sampling of k indices
+            // Random sampling of k indices via a genuine partial Fisher-Yates
+            // shuffle. The previous implementation picked a swap index that
+            // was a pure function of (grad_idx, i) -- every node selected the
+            // identical index set every round (losing Random-K's unbiased-
+            // estimator property), and it divided by `grad.len() - i`, which
+            // is unreachable-but-fragile when i approaches grad.len().
             let k_local = k.min(grad.len());
             let mut selected_indices: Vec<usize> = (0..grad.len()).collect();
-
-            // Simple random selection (deterministic for testing)
             for i in 0..k_local {
-                let swap_idx = i + ((grad_idx + i) % (grad.len() - i));
+                let remaining = grad.len() - i;
+                let swap_idx = i + rng.gen_range(0..remaining);
                 selected_indices.swap(i, swap_idx);
             }
 
+            // Flatten once so per-element access below is O(1) instead of the
+            // previous O(n) `.nth()` walk (O(n*k) total per gradient).
+            let flat: Vec<A> = grad.iter().copied().collect();
             for &idx in selected_indices.iter().take(k_local) {
                 indices.push((grad_idx as u32, idx as u32));
-                values.push(grad.iter().nth(idx).copied().expect("unwrap failed"));
+                values.push(flat[idx]);
             }
         }
 
@@ -1056,12 +1229,18 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for ((grad_idx, elem_idx), value) in indices.iter().zip(values.iter()) {
             data.extend_from_slice(&grad_idx.to_le_bytes());
             data.extend_from_slice(&elem_idx.to_le_bytes());
-            data.extend_from_slice(&value.to_f64().expect("unwrap failed").to_le_bytes());
+            let bits = value.to_f64().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "gradient value could not be converted to f64 for serialization".to_string(),
+                )
+            })?;
+            data.extend_from_slice(&bits.to_le_bytes());
         }
 
         let metadata = CompressionMetadata {
             strategy: CompressionStrategy::RandomK { k },
-            compression_ratio: data.len() as f64 / (total_elements * 8) as f64,
+            compression_ratio: data.len() as f64
+                / (total_elements.max(1) * std::mem::size_of::<A>()) as f64,
             nnz_count: indices.len(),
             scale_factors: Vec::new(),
             extra_data: Vec::new(),
@@ -1098,14 +1277,24 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         for ((grad_idx, elem_idx), value) in indices.iter().zip(values.iter()) {
             data.extend_from_slice(&grad_idx.to_le_bytes());
             data.extend_from_slice(&elem_idx.to_le_bytes());
-            data.extend_from_slice(&value.to_f64().expect("unwrap failed").to_le_bytes());
+            let bits = value.to_f64().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "gradient value could not be converted to f64 for serialization".to_string(),
+                )
+            })?;
+            data.extend_from_slice(&bits.to_le_bytes());
         }
 
         let metadata = CompressionMetadata {
             strategy: CompressionStrategy::Threshold {
-                threshold: threshold.to_f64().expect("unwrap failed"),
+                threshold: threshold.to_f64().ok_or_else(|| {
+                    OptimError::InvalidConfig(
+                        "threshold could not be converted to f64 for metadata".to_string(),
+                    )
+                })?,
             },
-            compression_ratio: data.len() as f64 / (total_elements * 8) as f64,
+            compression_ratio: data.len() as f64
+                / (total_elements.max(1) * std::mem::size_of::<A>()) as f64,
             nnz_count: indices.len(),
             scale_factors: Vec::new(),
             extra_data: Vec::new(),
@@ -1120,34 +1309,54 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
         gradients: &[Array<A, D>],
         bits: u8,
     ) -> Result<(Vec<u8>, CompressionMetadata<A>)> {
-        if bits > 32 {
+        if bits == 0 || bits > 32 {
             return Err(OptimError::InvalidConfig(
-                "Quantization bits must be <= 32".to_string(),
+                "Quantization bits must be in 1..=32".to_string(),
             ));
         }
 
         let mut data = Vec::new();
         let mut scale_factors = Vec::new();
         let levels = (1u64 << bits) - 1;
+        let levels_a = A::from(levels).ok_or_else(|| {
+            OptimError::InvalidConfig(format!(
+                "quantization level count {levels} could not be represented in the parameter type"
+            ))
+        })?;
 
         for grad in gradients {
+            // Reject non-finite gradients up front: NaN/inf would otherwise
+            // corrupt the min/max fold below (whose behaviour on NaN is
+            // unspecified) and could drive `normalized` negative or NaN,
+            // which used to panic in `to_u64().expect(...)`.
+            if grad.iter().any(|v| !v.is_finite()) {
+                return Err(OptimError::InvalidConfig(
+                    "gradient contains non-finite (NaN/inf) values; cannot quantize".to_string(),
+                ));
+            }
+
             // Find min and max values for this gradient
             let min_val = grad.iter().fold(A::infinity(), |acc, &x| acc.min(x));
             let max_val = grad.iter().fold(A::neg_infinity(), |acc, &x| acc.max(x));
 
             let range = max_val - min_val;
             let scale = if range > A::zero() {
-                range / A::from(levels).expect("unwrap failed")
+                range / levels_a
             } else {
                 A::one()
             };
 
             scale_factors.push(scale);
 
-            // Quantize each value
+            // Quantize each value, clamping into [0, levels] so the u64
+            // conversion below can never fail (previously an unclamped
+            // negative/NaN `normalized` would panic).
             for &val in grad.iter() {
-                let normalized = (val - min_val) / scale;
-                let quantized = normalized.to_u64().expect("unwrap failed").min(levels) as u32;
+                let normalized = ((val - min_val) / scale)
+                    .max(A::zero())
+                    .min(levels_a)
+                    .round();
+                let quantized = normalized.to_u64().unwrap_or(levels).min(levels) as u32;
 
                 // Store quantized value
                 match bits {
@@ -1158,14 +1367,30 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 }
             }
 
-            // Store min value for reconstruction
-            data.extend_from_slice(&min_val.to_f64().expect("unwrap failed").to_le_bytes());
+            // Store min value AND scale inline for reconstruction. Carrying
+            // both in the byte stream (rather than trusting that the
+            // separately-returned `scale_factors[grad_idx]` stays aligned by
+            // position) means decompression never depends on a parallel
+            // array matching this stream's gradient order.
+            let min_bits = min_val.to_f64().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "min value could not be converted to f64 for serialization".to_string(),
+                )
+            })?;
+            let scale_bits = scale.to_f64().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "scale factor could not be converted to f64 for serialization".to_string(),
+                )
+            })?;
+            data.extend_from_slice(&min_bits.to_le_bytes());
+            data.extend_from_slice(&scale_bits.to_le_bytes());
         }
 
         let total_elements: usize = gradients.iter().map(|g| g.len()).sum();
         let metadata = CompressionMetadata {
             strategy: CompressionStrategy::Quantization { bits },
-            compression_ratio: data.len() as f64 / (total_elements * 8) as f64,
+            compression_ratio: data.len() as f64
+                / (total_elements.max(1) * std::mem::size_of::<A>()) as f64,
             nnz_count: total_elements,
             scale_factors,
             extra_data: Vec::new(),
@@ -1190,9 +1415,13 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                     ));
                 }
 
-                let bytes = &compressed.data[data_offset..data_offset + 8];
-                let value = f64::from_le_bytes(bytes.try_into().expect("unwrap failed"));
-                values.push(A::from(value).expect("unwrap failed"));
+                let value = read_f64_le(&compressed.data[data_offset..data_offset + 8])?;
+                values.push(A::from(value).ok_or_else(|| {
+                    OptimError::InvalidConfig(
+                        "decompressed value could not be represented in the parameter type"
+                            .to_string(),
+                    )
+                })?);
                 data_offset += 8;
             }
 
@@ -1229,8 +1458,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             ));
         }
 
-        let num_elements =
-            u32::from_le_bytes(compressed.data[0..4].try_into().expect("unwrap failed")) as usize;
+        let num_elements = read_u32_le(&compressed.data[0..4])? as usize;
         let mut data_offset = 4;
 
         // Restore sparse elements
@@ -1241,21 +1469,15 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 ));
             }
 
-            let grad_idx = u32::from_le_bytes(
-                compressed.data[data_offset..data_offset + 4]
-                    .try_into()
-                    .expect("unwrap failed"),
-            ) as usize;
-            let elem_idx = u32::from_le_bytes(
-                compressed.data[data_offset + 4..data_offset + 8]
-                    .try_into()
-                    .expect("unwrap failed"),
-            ) as usize;
-            let value_bytes = &compressed.data[data_offset + 8..data_offset + 16];
-            let value = A::from(f64::from_le_bytes(
-                value_bytes.try_into().expect("unwrap failed"),
-            ))
-            .expect("unwrap failed");
+            let grad_idx = read_u32_le(&compressed.data[data_offset..data_offset + 4])? as usize;
+            let elem_idx =
+                read_u32_le(&compressed.data[data_offset + 4..data_offset + 8])? as usize;
+            let value_f64 = read_f64_le(&compressed.data[data_offset + 8..data_offset + 16])?;
+            let value = A::from(value_f64).ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "decompressed value could not be represented in the parameter type".to_string(),
+                )
+            })?;
 
             data_offset += 16;
 
@@ -1265,12 +1487,21 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 ));
             }
 
-            if let Some(elem) = result[grad_idx].iter_mut().nth(elem_idx) {
-                *elem = value;
-            } else {
-                return Err(OptimError::InvalidConfig(
-                    "Invalid element index in compressed data".to_string(),
-                ));
+            // Write via a flat slice (O(1) indexed access) instead of
+            // `.iter_mut().nth(elem_idx)`, which re-walks from the start of
+            // the array for every restored element.
+            let target = result[grad_idx].as_slice_mut().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "target array is not contiguous; cannot write decompressed element".to_string(),
+                )
+            })?;
+            match target.get_mut(elem_idx) {
+                Some(elem) => *elem = value,
+                None => {
+                    return Err(OptimError::InvalidConfig(
+                        "Invalid element index in compressed data".to_string(),
+                    ));
+                }
             }
         }
 
@@ -1285,9 +1516,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
     ) -> Result<Vec<Array<A, D>>> {
         let mut result = Vec::new();
         let mut data_offset = 0;
-        let _levels = (1u64 << bits) - 1;
 
-        for (grad_idx, shape) in compressed.shapes.iter().enumerate() {
+        for shape in compressed.shapes.iter() {
             let num_elements: usize = shape.iter().product();
             let mut values = Vec::with_capacity(num_elements);
 
@@ -1310,11 +1540,8 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                                 "Insufficient quantized data".to_string(),
                             ));
                         }
-                        let val = u16::from_le_bytes(
-                            compressed.data[data_offset..data_offset + 2]
-                                .try_into()
-                                .expect("unwrap failed"),
-                        ) as u32;
+                        let val =
+                            read_u16_le(&compressed.data[data_offset..data_offset + 2])? as u32;
                         data_offset += 2;
                         val
                     }
@@ -1324,11 +1551,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                                 "Insufficient quantized data".to_string(),
                             ));
                         }
-                        let val = u32::from_le_bytes(
-                            compressed.data[data_offset..data_offset + 4]
-                                .try_into()
-                                .expect("unwrap failed"),
-                        );
+                        let val = read_u32_le(&compressed.data[data_offset..data_offset + 4])?;
                         data_offset += 4;
                         val
                     }
@@ -1342,33 +1565,44 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
                 values.push(quantized);
             }
 
-            // Read min value
-            if data_offset + 8 > compressed.data.len() {
+            // Read min value and scale, stored inline by `compress_quantization`
+            // right after each gradient's quantized block. Reading them from
+            // the stream itself (rather than indexing into the separately
+            // carried `metadata.scale_factors` by position) means
+            // reconstruction never depends on that parallel array staying
+            // aligned with this one.
+            if data_offset + 16 > compressed.data.len() {
                 return Err(OptimError::InvalidConfig(
-                    "Missing min value for quantization".to_string(),
+                    "Missing min value/scale for quantization".to_string(),
                 ));
             }
-            let min_bytes = &compressed.data[data_offset..data_offset + 8];
-            let min_val = A::from(f64::from_le_bytes(
-                min_bytes.try_into().expect("unwrap failed"),
-            ))
-            .expect("unwrap failed");
-            data_offset += 8;
-
-            // Get scale factor
-            let scale = if grad_idx < compressed.metadata.scale_factors.len() {
-                compressed.metadata.scale_factors[grad_idx]
-            } else {
-                return Err(OptimError::InvalidConfig(
-                    "Missing scale factor for quantization".to_string(),
-                ));
-            };
+            let min_val_f64 = read_f64_le(&compressed.data[data_offset..data_offset + 8])?;
+            let scale_f64 = read_f64_le(&compressed.data[data_offset + 8..data_offset + 16])?;
+            let min_val = A::from(min_val_f64).ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "min value could not be represented in the parameter type".to_string(),
+                )
+            })?;
+            let scale = A::from(scale_f64).ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "scale factor could not be represented in the parameter type".to_string(),
+                )
+            })?;
+            data_offset += 16;
 
             // Dequantize values
             let dequantized_values: Vec<A> = values
                 .into_iter()
-                .map(|q| min_val + A::from(q).expect("unwrap failed") * scale)
-                .collect();
+                .map(|q| -> Result<A> {
+                    let q_a = A::from(q).ok_or_else(|| {
+                        OptimError::InvalidConfig(
+                            "quantized value could not be represented in the parameter type"
+                                .to_string(),
+                        )
+                    })?;
+                    Ok(min_val + q_a * scale)
+                })
+                .collect::<Result<Vec<A>>>()?;
 
             let dynamic_array = Array::from_shape_vec(shape.as_slice(), dequantized_values)
                 .map_err(|_| {

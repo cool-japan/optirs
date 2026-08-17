@@ -1,13 +1,31 @@
 // Feed-forward network implementations for transformer layers
 
 use super::layers::ActivationLayer;
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, Axis};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
+/// Activations cached by [`FeedForwardNetwork::forward_with_cache`] so the
+/// backward pass can reuse them instead of recomputing the forward pass.
+#[derive(Debug, Clone)]
+pub struct FeedForwardCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
+    /// Input to the first linear layer
+    pub input: Array2<T>,
+
+    /// Pre-activation hidden state
+    pub hidden: Array2<T>,
+
+    /// Post-activation hidden state (input to the second linear layer)
+    pub activated: Array2<T>,
+}
+
 /// Feed-forward network implementation
-pub struct FeedForwardNetwork<T: Float + Debug + Send + Sync + 'static> {
+pub struct FeedForwardNetwork<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// First linear layer (expansion)
     linear1: LinearLayer<T>,
 
@@ -27,7 +45,9 @@ pub struct FeedForwardNetwork<T: Float + Debug + Send + Sync + 'static> {
     dropout: super::layers::DropoutLayer,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> FeedForwardNetwork<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    FeedForwardNetwork<T>
+{
     /// Create new feed-forward network
     pub fn new(
         input_dimension: usize,
@@ -86,6 +106,49 @@ impl<T: Float + Debug + Send + Sync + 'static> FeedForwardNetwork<T> {
         Ok(output)
     }
 
+    /// Forward pass that also returns the activations needed for the backward
+    /// pass. Dropout is bypassed here so that the cached activations match the
+    /// ones the gradients are computed against.
+    pub fn forward_with_cache(
+        &mut self,
+        input: &Array2<T>,
+    ) -> Result<(Array2<T>, FeedForwardCache<T>)> {
+        let hidden = self.linear1.forward(input)?;
+        let activated = ActivationLayer::apply(&hidden, self.activation);
+        let output = self.linear2.forward(&activated)?;
+
+        Ok((
+            output,
+            FeedForwardCache {
+                input: input.clone(),
+                hidden,
+                activated,
+            },
+        ))
+    }
+
+    /// Backward pass. Returns `dL/d(input)` and applies SGD steps to both
+    /// linear layers.
+    pub fn backward(
+        &mut self,
+        cache: &FeedForwardCache<T>,
+        grad_output: &Array2<T>,
+        learning_rate: T,
+    ) -> Result<Array2<T>> {
+        let grad_activated = self
+            .linear2
+            .backward(&cache.activated, grad_output, learning_rate)?;
+        let derivative = ActivationLayer::derivative(&cache.hidden, self.activation);
+        if derivative.dim() != grad_activated.dim() {
+            return Err(OptimError::InvalidConfig(
+                "Feed-forward backward shape mismatch at the activation".to_string(),
+            ));
+        }
+        let grad_hidden = &grad_activated * &derivative;
+        self.linear1
+            .backward(&cache.input, &grad_hidden, learning_rate)
+    }
+
     /// Get parameter count
     pub fn parameter_count(&self) -> usize {
         self.linear1.parameter_count() + self.linear2.parameter_count()
@@ -115,7 +178,9 @@ impl<T: Float + Debug + Send + Sync + 'static> FeedForwardNetwork<T> {
 }
 
 /// Linear layer implementation
-pub struct LinearLayer<T: Float + Debug + Send + Sync + 'static> {
+pub struct LinearLayer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Weight matrix
     weight: Array2<T>,
 
@@ -129,87 +194,108 @@ pub struct LinearLayer<T: Float + Debug + Send + Sync + 'static> {
     output_dim: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
-    /// Create new linear layer
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LinearLayer<T>
+{
+    /// Create new linear layer with Xavier/Glorot uniform weights,
+    /// limit `sqrt(6 / (fan_in + fan_out))`.
     pub fn new(input_dim: usize, output_dim: usize) -> Result<Self> {
-        // Xavier/Glorot initialization
-        let scale = T::from(2.0 / (input_dim + output_dim) as f64)
-            .expect("unwrap failed")
-            .sqrt();
-        let mut weight = Array2::zeros((input_dim, output_dim));
-        let bias = Array1::zeros(output_dim);
-
-        // Initialize weights with Xavier initialization
-        for i in 0..input_dim {
-            for j in 0..output_dim {
-                let random_f64 = scirs2_core::random::random::<f64>();
-                let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val =
-                    <T as scirs2_core::numeric::NumCast>::from(scaled_f64).expect("unwrap failed");
-                weight[[i, j]] = random_val * scale;
-            }
+        if input_dim == 0 || output_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "Linear layer dimensions must be positive".to_string(),
+            ));
         }
 
-        Ok(Self {
-            weight,
-            bias,
+        let mut layer = Self {
+            weight: Array2::zeros((input_dim, output_dim)),
+            bias: Array1::zeros(output_dim),
             input_dim,
             output_dim,
-        })
+        };
+        layer.randomize_xavier();
+        Ok(layer)
+    }
+
+    /// Fill the weights with a fresh Xavier/Glorot uniform draw.
+    fn randomize_xavier(&mut self) {
+        let bound = (6.0 / (self.input_dim + self.output_dim).max(1) as f64).sqrt();
+        for elem in self.weight.iter_mut() {
+            let sample = scirs2_core::random::random::<f64>() * 2.0 - 1.0;
+            *elem =
+                scirs2_core::numeric::NumCast::from(sample * bound).unwrap_or_else(|| T::zero());
+        }
     }
 
     /// Create with He initialization (better for ReLU)
     pub fn new_he_init(input_dim: usize, output_dim: usize) -> Result<Self> {
-        let scale = scirs2_core::numeric::NumCast::from(2.0 / input_dim as f64)
-            .unwrap_or_else(|| T::zero())
-            .sqrt();
-        let mut weight = Array2::zeros((input_dim, output_dim));
-        let bias = Array1::zeros(output_dim);
+        if input_dim == 0 || output_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "Linear layer dimensions must be positive".to_string(),
+            ));
+        }
 
-        for i in 0..input_dim {
-            for j in 0..output_dim {
-                let random_f64 = scirs2_core::random::random::<f64>();
-                let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val =
-                    <T as scirs2_core::numeric::NumCast>::from(scaled_f64).expect("unwrap failed");
-                weight[[i, j]] = random_val * scale;
-            }
+        let scale = (2.0 / input_dim as f64).sqrt();
+        let mut weight = Array2::zeros((input_dim, output_dim));
+        for elem in weight.iter_mut() {
+            let sample = scirs2_core::random::random::<f64>() * 2.0 - 1.0;
+            *elem =
+                scirs2_core::numeric::NumCast::from(sample * scale).unwrap_or_else(|| T::zero());
         }
 
         Ok(Self {
             weight,
-            bias,
+            bias: Array1::zeros(output_dim),
             input_dim,
             output_dim,
         })
     }
 
-    /// Forward pass through linear layer
+    /// Forward pass through linear layer: `input @ weight + bias`.
     pub fn forward(&self, input: &Array2<T>) -> Result<Array2<T>> {
-        let batch_size = input.shape()[0];
-        let input_features = input.shape()[1];
+        let input_features = input.ncols();
 
         if input_features != self.input_dim {
-            return Err(crate::error::OptimError::Other(format!(
+            return Err(OptimError::InvalidConfig(format!(
                 "Input dimension mismatch: expected {}, got {}",
                 self.input_dim, input_features
             )));
         }
 
-        let mut output = Array2::zeros((batch_size, self.output_dim));
+        Ok(input.dot(&self.weight) + &self.bias)
+    }
 
-        // Matrix multiplication: input @ weight + bias
-        for i in 0..batch_size {
-            for j in 0..self.output_dim {
-                let mut sum = self.bias[j];
-                for k in 0..self.input_dim {
-                    sum = sum + input[[i, k]] * self.weight[[k, j]];
-                }
-                output[[i, j]] = sum;
-            }
+    /// Backward pass. Returns `dL/d(input)` and applies an SGD step.
+    pub fn backward(
+        &mut self,
+        input: &Array2<T>,
+        grad_output: &Array2<T>,
+        learning_rate: T,
+    ) -> Result<Array2<T>> {
+        if input.ncols() != self.input_dim || grad_output.ncols() != self.output_dim {
+            return Err(OptimError::InvalidConfig(format!(
+                "Linear backward shape mismatch: input {:?}, grad {:?}, layer ({}, {})",
+                input.dim(),
+                grad_output.dim(),
+                self.input_dim,
+                self.output_dim
+            )));
+        }
+        if input.nrows() != grad_output.nrows() {
+            return Err(OptimError::InvalidConfig(
+                "Linear backward received mismatched row counts".to_string(),
+            ));
         }
 
-        Ok(output)
+        let grad_weight = input.t().dot(grad_output);
+        let mut grad_bias = Array1::zeros(self.output_dim);
+        for j in 0..self.output_dim {
+            grad_bias[j] = grad_output.column(j).iter().fold(T::zero(), |a, &b| a + b);
+        }
+        let grad_input = grad_output.dot(&self.weight.t());
+
+        self.update_weights(&(grad_weight * learning_rate), &(grad_bias * learning_rate))?;
+
+        Ok(grad_input)
     }
 
     /// Get parameter count
@@ -217,23 +303,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
         self.input_dim * self.output_dim + self.output_dim
     }
 
-    /// Reset parameters
+    /// Reset parameters, re-drawing the Xavier initialization.
     pub fn reset(&mut self) -> Result<()> {
-        // Re-initialize with Xavier
-        let scale = T::from(2.0 / (self.input_dim + self.output_dim) as f64)
-            .expect("unwrap failed")
-            .sqrt();
-
-        for i in 0..self.input_dim {
-            for j in 0..self.output_dim {
-                let random_f64 = scirs2_core::random::random::<f64>();
-                let scaled_f64 = random_f64 * 2.0 - 1.0;
-                let random_val =
-                    <T as scirs2_core::numeric::NumCast>::from(scaled_f64).expect("unwrap failed");
-                self.weight[[i, j]] = random_val * scale;
-            }
-        }
-
+        self.randomize_xavier();
         self.bias.fill(T::zero());
         Ok(())
     }
@@ -255,15 +327,19 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
         bias_delta: &Array1<T>,
     ) -> Result<()> {
         if weight_delta.shape() != self.weight.shape() {
-            return Err(crate::error::OptimError::Other(
-                "Weight delta shape mismatch".to_string(),
-            ));
+            return Err(OptimError::InvalidConfig(format!(
+                "Weight delta shape {:?} does not match {:?}",
+                weight_delta.dim(),
+                self.weight.dim()
+            )));
         }
 
         if bias_delta.len() != self.bias.len() {
-            return Err(crate::error::OptimError::Other(
-                "Bias delta shape mismatch".to_string(),
-            ));
+            return Err(OptimError::InvalidConfig(format!(
+                "Bias delta length {} does not match {}",
+                bias_delta.len(),
+                self.bias.len()
+            )));
         }
 
         self.weight = &self.weight - weight_delta;
@@ -274,7 +350,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LinearLayer<T> {
 }
 
 /// Gated Linear Unit (GLU) implementation
-pub struct GatedLinearUnit<T: Float + Debug + Send + Sync + 'static> {
+pub struct GatedLinearUnit<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Linear layer for gate
     gate_linear: LinearLayer<T>,
 
@@ -288,7 +366,9 @@ pub struct GatedLinearUnit<T: Float + Debug + Send + Sync + 'static> {
     hidden_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> GatedLinearUnit<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    GatedLinearUnit<T>
+{
     /// Create new GLU
     pub fn new(input_dimension: usize, hidden_dimension: usize) -> Result<Self> {
         let gate_linear = LinearLayer::new(input_dimension, hidden_dimension)?;
@@ -328,7 +408,7 @@ impl<T: Float + Debug + Send + Sync + 'static> GatedLinearUnit<T> {
 }
 
 /// Swish GLU variant
-pub struct SwiGLU<T: Float + Debug + Send + Sync + 'static> {
+pub struct SwiGLU<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> {
     /// Linear layer for gate
     gate_linear: LinearLayer<T>,
 
@@ -342,7 +422,7 @@ pub struct SwiGLU<T: Float + Debug + Send + Sync + 'static> {
     hidden_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SwiGLU<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> SwiGLU<T> {
     /// Create new SwiGLU
     pub fn new(input_dimension: usize, hidden_dimension: usize) -> Result<Self> {
         let gate_linear = LinearLayer::new(input_dimension, hidden_dimension)?;
@@ -382,7 +462,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SwiGLU<T> {
 }
 
 /// Expert mixture for sparse feed-forward networks
-pub struct MixtureOfExperts<T: Float + Debug + Send + Sync + 'static> {
+pub struct MixtureOfExperts<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Individual expert networks
     experts: Vec<FeedForwardNetwork<T>>,
 
@@ -402,7 +484,9 @@ pub struct MixtureOfExperts<T: Float + Debug + Send + Sync + 'static> {
     hidden_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MixtureOfExperts<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MixtureOfExperts<T>
+{
     /// Create new mixture of experts
     pub fn new(
         input_dimension: usize,

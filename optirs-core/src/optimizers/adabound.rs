@@ -12,9 +12,12 @@
 //   Clipped learning rate: η_t(i) = Clip(α / √(v_t(i) + ε), α_l(t), α_u(t))
 
 use crate::error::{OptimError, Result};
+use crate::optimizers::Optimizer;
+use scirs2_core::ndarray::{Ix1, ScalarOperand};
 use scirs2_core::ndarray_ext::{Array1, ArrayView1};
 use scirs2_core::numeric::{Float, Zero};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// AdaBound optimizer configuration
 ///
@@ -69,8 +72,6 @@ pub struct AdaBound<T: Float> {
     /// Number of optimization steps performed
     step_count: usize,
 }
-
-use scirs2_core::ndarray::ScalarOperand;
 
 impl<T: Float + ScalarOperand> Default for AdaBound<T> {
     fn default() -> Self {
@@ -224,7 +225,19 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
     ///
     /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
     /// ```
-    pub fn step(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
+    pub fn step<'a, P, G>(&mut self, params: P, grads: G) -> Result<Array1<T>>
+    where
+        P: Into<ArrayView1<'a, T>>,
+        G: Into<ArrayView1<'a, T>>,
+        T: 'a,
+    {
+        self.step_view(params.into(), grads.into())
+    }
+
+    /// Perform a single optimization step on borrowed views
+    ///
+    /// This is the concrete implementation behind [`AdaBound::step`].
+    pub fn step_view(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
         let n = params.len();
 
         if grads.len() != n {
@@ -351,6 +364,23 @@ impl<T: Float + ScalarOperand> AdaBound<T> {
         let upper_bound = self.final_lr * (one + one / (self.gamma * t));
 
         (lower_bound, upper_bound)
+    }
+}
+
+impl<T> Optimizer<T, Ix1> for AdaBound<T>
+where
+    T: Float + ScalarOperand + Debug + Send + Sync,
+{
+    fn step(&mut self, params: &Array1<T>, gradients: &Array1<T>) -> Result<Array1<T>> {
+        self.step_view(params.view(), gradients.view())
+    }
+
+    fn get_learning_rate(&self) -> T {
+        self.learning_rate
+    }
+
+    fn set_learning_rate(&mut self, learning_rate: T) {
+        self.learning_rate = learning_rate;
     }
 }
 
@@ -501,5 +531,32 @@ mod tests {
         assert_eq!(optimizer.step_count(), 0);
         assert!(optimizer.momentum.is_none());
         assert!(optimizer.velocity.is_none());
+    }
+
+    /// AdaBound must be usable through the generic `Optimizer` trait.
+    #[test]
+    fn test_adabound_optimizer_trait() {
+        use crate::optimizers::Optimizer as _;
+
+        let mut optimizer = AdaBound::<f64>::default();
+        let params = scirs2_core::ndarray_ext::array![1.0f64, 2.0, 3.0];
+        let grads = scirs2_core::ndarray_ext::array![0.1f64, 0.2, 0.3];
+
+        let updated =
+            Optimizer::<f64, scirs2_core::ndarray::Ix1>::step(&mut optimizer, &params, &grads)
+                .expect("trait step failed");
+        assert_eq!(updated.len(), 3);
+
+        let lr = Optimizer::<f64, scirs2_core::ndarray::Ix1>::get_learning_rate(&optimizer);
+        Optimizer::<f64, scirs2_core::ndarray::Ix1>::set_learning_rate(&mut optimizer, lr * 2.0);
+        assert!(
+            (Optimizer::<f64, scirs2_core::ndarray::Ix1>::get_learning_rate(&optimizer) - lr * 2.0)
+                .abs()
+                < 1e-12
+        );
+
+        // The generic inherent `step` also accepts plain references.
+        let again = optimizer.step(&params, &grads).expect("ref step failed");
+        assert_eq!(again.len(), 3);
     }
 }

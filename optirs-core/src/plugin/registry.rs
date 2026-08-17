@@ -6,10 +6,61 @@
 use super::core::*;
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+/// Take a read lock, recovering from poisoning instead of propagating the
+/// panic. A panic inside one plugin call (which runs while these locks are
+/// held) must never permanently brick the process-wide registry: the data
+/// behind these locks stays structurally consistent even if one accessor
+/// panicked partway through a call, since every mutation here is a single
+/// insert/remove/assign with no multi-step invariant spanning the guard.
+fn read_lock<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Take a write lock, recovering from poisoning. See [`read_lock`].
+fn write_lock<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Take a mutex lock, recovering from poisoning. See [`read_lock`].
+fn mutex_lock<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Parse a `major.minor.patch` prefix (ignoring any `-pre`/`+build` suffix,
+/// per semver's separator rules) into a numeric triplet. `None` when the
+/// string does not start with a dotted numeric version.
+fn parse_version_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// Compare two version strings numerically by `(major, minor, patch)` when
+/// both parse as dotted numeric versions (this crate has no `semver`
+/// dependency, so pre-release/build metadata ordering is not modelled).
+/// Falls back to a byte-lexicographic comparison for non-numeric version
+/// strings so callers still get a total order rather than a panic.
+///
+/// Byte-lexicographic comparison alone is wrong for numeric versions --
+/// `"0.10.0" < "0.9.0"` and `"1.10.0" < "1.9.0"` under `str`'s `Ord`, so an
+/// ecosystem that ever reaches a double-digit minor or patch would silently
+/// mis-resolve plugin version requirements.
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (parse_version_triplet(a), parse_version_triplet(b)) {
+        (Some(va), Some(vb)) => va.cmp(&vb),
+        _ => a.cmp(b),
+    }
+}
 
 /// Central plugin registry for managing all optimizer plugins
 #[derive(Debug)]
@@ -256,13 +307,13 @@ impl PluginRegistry {
         };
 
         {
-            let mut factories = self.factories.write().expect("lock poisoned");
+            let mut factories = write_lock(&self.factories);
             factories.insert(name.clone(), registration);
         }
 
         // Notify event listeners
         {
-            let mut listeners = self.event_listeners.write().expect("lock poisoned");
+            let mut listeners = write_lock(&self.event_listeners);
             for listener in listeners.iter_mut() {
                 listener.on_plugin_registered(&info);
             }
@@ -273,11 +324,11 @@ impl PluginRegistry {
 
     /// Unregister a plugin
     pub fn unregister_plugin(&self, name: &str) -> Result<()> {
-        let mut factories = self.factories.write().expect("lock poisoned");
+        let mut factories = write_lock(&self.factories);
         if factories.remove(name).is_some() {
             // Notify event listeners
             drop(factories);
-            let mut listeners = self.event_listeners.write().expect("lock poisoned");
+            let mut listeners = write_lock(&self.event_listeners);
             for listener in listeners.iter_mut() {
                 listener.on_plugin_unregistered(name);
             }
@@ -296,7 +347,7 @@ impl PluginRegistry {
     where
         A: Float + Debug + Send + Sync + 'static,
     {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         let registration = factories
             .get(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -312,7 +363,7 @@ impl PluginRegistry {
             }
             PluginStatus::Deprecated => {
                 // Log warning but continue
-                eprintln!("Warning: Plugin '{}' is deprecated", name);
+                log::warn!("Plugin '{}' is deprecated", name);
             }
             PluginStatus::Maintenance => {
                 return Err(OptimError::PluginInMaintenance(name.to_string()));
@@ -322,23 +373,49 @@ impl PluginRegistry {
         // Validate configuration
         registration.factory.validate_config(&config)?;
 
-        // Create optimizer based on type
+        // Create optimizer based on type. Third-party factory code runs here
+        // while `factories` is still held read-locked below, so a panic is
+        // caught rather than allowed to poison the registry-wide lock.
         let optimizer = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
-            let opt = registration.factory.create_f32(config)?;
-            // This is safe because we checked the type
-            unsafe {
-                std::mem::transmute::<Box<dyn OptimizerPlugin<f32>>, Box<dyn OptimizerPlugin<A>>>(
-                    opt,
-                )
-            }
+            let opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                registration.factory.create_f32(config)
+            }))
+            .map_err(|_| {
+                OptimError::PluginLoadError(format!(
+                    "plugin '{name}' panicked while creating an f32 optimizer"
+                ))
+            })??;
+            // Safe downcast: A and f32 are the same type here (proven by the
+            // TypeId check above), so boxing `opt` into `dyn Any` and
+            // downcasting to `Box<dyn OptimizerPlugin<A>>` succeeds via
+            // ordinary `Any` machinery -- no `transmute` of a trait object
+            // (whose fat-pointer/vtable layout across distinct generic
+            // instantiations is not guaranteed) is required.
+            let boxed_any: Box<dyn Any> = Box::new(opt);
+            *boxed_any
+                .downcast::<Box<dyn OptimizerPlugin<A>>>()
+                .map_err(|_| {
+                    OptimError::UnsupportedDataType(
+                        "internal error: f32 downcast failed".to_string(),
+                    )
+                })?
         } else if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f64>() {
-            let opt = registration.factory.create_f64(config)?;
-            // This is safe because we checked the type
-            unsafe {
-                std::mem::transmute::<Box<dyn OptimizerPlugin<f64>>, Box<dyn OptimizerPlugin<A>>>(
-                    opt,
-                )
-            }
+            let opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                registration.factory.create_f64(config)
+            }))
+            .map_err(|_| {
+                OptimError::PluginLoadError(format!(
+                    "plugin '{name}' panicked while creating an f64 optimizer"
+                ))
+            })??;
+            let boxed_any: Box<dyn Any> = Box::new(opt);
+            *boxed_any
+                .downcast::<Box<dyn OptimizerPlugin<A>>>()
+                .map_err(|_| {
+                    OptimError::UnsupportedDataType(
+                        "internal error: f64 downcast failed".to_string(),
+                    )
+                })?
         } else {
             return Err(OptimError::UnsupportedDataType(format!(
                 "Type {} not supported",
@@ -348,7 +425,7 @@ impl PluginRegistry {
 
         // Update usage statistics
         drop(factories);
-        let mut factories = self.factories.write().expect("lock poisoned");
+        let mut factories = write_lock(&self.factories);
         if let Some(registration) = factories.get_mut(name) {
             registration.load_count += 1;
             registration.last_used = Some(std::time::SystemTime::now());
@@ -356,7 +433,7 @@ impl PluginRegistry {
 
         // Notify event listeners
         drop(factories);
-        let mut listeners = self.event_listeners.write().expect("lock poisoned");
+        let mut listeners = write_lock(&self.event_listeners);
         for listener in listeners.iter_mut() {
             listener.on_plugin_loaded(name);
         }
@@ -366,14 +443,14 @@ impl PluginRegistry {
 
     /// List all registered plugins
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         factories.values().map(|reg| reg.info.clone()).collect()
     }
 
     /// Search for plugins matching criteria
     pub fn search_plugins(&self, query: PluginQuery) -> PluginSearchResult {
         let start_time = std::time::Instant::now();
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
 
         let mut matching_plugins = Vec::new();
 
@@ -402,19 +479,19 @@ impl PluginRegistry {
 
     /// Get plugin information
     pub fn get_plugin_info(&self, name: &str) -> Option<PluginInfo> {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         factories.get(name).map(|reg| reg.info.clone())
     }
 
     /// Get plugin status
     pub fn get_plugin_status(&self, name: &str) -> Option<PluginStatus> {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         factories.get(name).map(|reg| reg.status.clone())
     }
 
     /// Enable/disable plugin
     pub fn set_plugin_status(&self, name: &str, status: PluginStatus) -> Result<()> {
-        let mut factories = self.factories.write().expect("lock poisoned");
+        let mut factories = write_lock(&self.factories);
         let registration = factories
             .get_mut(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -425,7 +502,7 @@ impl PluginRegistry {
         // Notify event listeners if status changed
         if old_status != status {
             drop(factories);
-            let mut listeners = self.event_listeners.write().expect("lock poisoned");
+            let mut listeners = write_lock(&self.event_listeners);
             for listener in listeners.iter_mut() {
                 listener.on_plugin_status_changed(name, &status);
             }
@@ -436,7 +513,7 @@ impl PluginRegistry {
 
     /// Add plugin search path
     pub fn add_search_path<P: AsRef<Path>>(&self, path: P) {
-        let mut search_paths = self.search_paths.write().expect("lock poisoned");
+        let mut search_paths = write_lock(&self.search_paths);
         search_paths.push(path.as_ref().to_path_buf());
     }
 
@@ -446,7 +523,7 @@ impl PluginRegistry {
             return Ok(0);
         }
 
-        let search_paths = self.search_paths.read().expect("lock poisoned");
+        let search_paths = read_lock(&self.search_paths);
         let mut discovered_count = 0;
 
         for path in search_paths.iter() {
@@ -460,19 +537,19 @@ impl PluginRegistry {
 
     /// Add event listener
     pub fn add_event_listener(&self, listener: Box<dyn RegistryEventListener>) {
-        let mut listeners = self.event_listeners.write().expect("lock poisoned");
+        let mut listeners = write_lock(&self.event_listeners);
         listeners.push(listener);
     }
 
     /// Get cache statistics
     pub fn get_cache_stats(&self) -> CacheStats {
-        let cache = self.cache.lock().expect("lock poisoned");
+        let cache = mutex_lock(&self.cache);
         cache.stats.clone()
     }
 
     /// Clear plugin cache
     pub fn clear_cache(&self) {
-        let mut cache = self.cache.lock().expect("lock poisoned");
+        let mut cache = mutex_lock(&self.cache);
         cache.instances.clear();
         cache.stats = CacheStats::default();
     }
@@ -531,19 +608,18 @@ impl PluginRegistry {
     }
 
     fn version_matches(&self, version: &str, requirement: &VersionRequirement) -> bool {
-        // Simplified version matching - in practice would use semver
         if let Some(ref exact) = requirement.exact_version {
             return version == exact;
         }
 
         if let Some(ref min) = requirement.min_version {
-            if version < min.as_str() {
+            if version_cmp(version, min) == std::cmp::Ordering::Less {
                 return false;
             }
         }
 
         if let Some(ref max) = requirement.max_version {
-            if version >= max.as_str() {
+            if version_cmp(version, max) != std::cmp::Ordering::Less {
                 return false;
             }
         }

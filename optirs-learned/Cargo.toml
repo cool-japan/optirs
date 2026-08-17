@@ -31,9 +31,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 log = { workspace = true }
 
-# ML dependencies
-autograd = { workspace = true, optional = true }
-tokenizers = { workspace = true, optional = true }
 # Random generation - REMOVED: Use scirs2_core::random instead
 # rand = { workspace = true }
 # rand_distr = { workspace = true }
@@ -46,5 +43,3 @@ default = ["transformer"]
 transformer = []
 lstm = []
 meta_learning = []
-autograd_integration = ["autograd"]
-nlp = ["tokenizers"]

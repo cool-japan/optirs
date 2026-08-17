@@ -6,6 +6,7 @@ use std::fmt::Debug;
 // and executing XLA computations on TPU hardware.
 
 pub mod backend;
+pub mod execution;
 pub mod frontend;
 pub mod optimization;
 
@@ -27,6 +28,7 @@ use frontend::{ComputationGraphBuilder, OperationLowering, ShapeInference};
 use optimization::{MemoryPlanner, OptimizationPipeline, PerformanceAnalyzer};
 
 // Re-export for public API
+pub use execution::{ReferenceExecutor, ValueMap};
 pub use frontend::XLAComputation;
 
 /// XLA Compiler for TPU optimization

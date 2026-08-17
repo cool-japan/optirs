@@ -17,6 +17,7 @@ use crate::nas_engine::results::EvaluationResults;
 use crate::{EvaluationConfig, EvaluationMetric, OptimizerArchitecture};
 
 /// Performance evaluator for optimizer architectures
+#[derive(Debug)]
 pub struct PerformanceEvaluator<T: Float + Debug + Send + Sync + 'static> {
     /// Evaluation configuration
     config: EvaluationConfig,
@@ -69,9 +70,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     }
 
     /// Evaluate an optimizer architecture
+    ///
+    /// Runs the full benchmark suite: every registered test function is
+    /// actually minimized by the concrete optimizer the architecture describes,
+    /// and the achieved objectives are aggregated into the returned metrics.
+    /// Repeated evaluation of the same architecture is served from the cache.
     pub fn evaluate_architecture(
         &mut self,
-        architecture: &OptimizerArchitecture,
+        architecture: &OptimizerArchitecture<T>,
     ) -> Result<EvaluationResults<T>> {
         let start_time = Instant::now();
 
@@ -133,10 +139,59 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         Ok(results)
     }
 
-    fn generate_cache_key(&self, architecture: &OptimizerArchitecture) -> String {
-        // Generate a unique key for the architecture
-        // This is simplified - in practice would use better hashing
-        format!("arch_{}", architecture.structure.len())
+    /// Build a cache key that identifies the *whole* architecture.
+    ///
+    /// An FNV-1a hash is taken over the component list (in order), every
+    /// hyperparameter and parameter entry (key-sorted, so `HashMap` iteration
+    /// order cannot perturb the result) and the connection list. Two
+    /// architectures therefore share a cache entry only when they would produce
+    /// an identical optimizer, and a change to any single hyperparameter yields
+    /// a different key.
+    fn generate_cache_key(&self, architecture: &OptimizerArchitecture<T>) -> String {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        let mut hash: u64 = FNV_OFFSET;
+        let mix_bytes = |bytes: &[u8], hash: &mut u64| {
+            for byte in bytes {
+                *hash ^= *byte as u64;
+                *hash = hash.wrapping_mul(FNV_PRIME);
+            }
+            // Field separator so ["ab","c"] and ["a","bc"] differ.
+            *hash ^= 0x1f;
+            *hash = hash.wrapping_mul(FNV_PRIME);
+        };
+
+        for component in &architecture.components {
+            mix_bytes(component.as_bytes(), &mut hash);
+        }
+
+        let mut hyperparameters: Vec<(&String, &T)> = architecture.hyperparameters.iter().collect();
+        hyperparameters.sort_by(|a, b| a.0.cmp(b.0));
+        for (key, value) in hyperparameters {
+            mix_bytes(key.as_bytes(), &mut hash);
+            mix_bytes(
+                &value.to_f64().unwrap_or(0.0).to_bits().to_le_bytes(),
+                &mut hash,
+            );
+        }
+
+        let mut parameters: Vec<(&String, &T)> = architecture.parameters.iter().collect();
+        parameters.sort_by(|a, b| a.0.cmp(b.0));
+        for (key, value) in parameters {
+            mix_bytes(key.as_bytes(), &mut hash);
+            mix_bytes(
+                &value.to_f64().unwrap_or(0.0).to_bits().to_le_bytes(),
+                &mut hash,
+            );
+        }
+
+        for (from, to) in &architecture.connections {
+            mix_bytes(&(*from as u64).to_le_bytes(), &mut hash);
+            mix_bytes(&(*to as u64).to_le_bytes(), &mut hash);
+        }
+
+        format!("arch_{:016x}", hash)
     }
 
     fn aggregate_benchmark_scores(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -145,11 +200,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         }
 
         let sum: T = results.iter().map(|r| r.normalized_score).sum();
-        Ok(sum / T::from(results.len()).expect("conversion failed"))
+        let count: T =
+            scirs2_core::numeric::NumCast::from(results.len()).unwrap_or_else(|| T::one());
+        Ok(sum / count)
     }
 
     fn compute_convergence_speed(&self, results: &[TestResult<T>]) -> Result<T> {
-        // Simplified convergence speed computation
+        if results.is_empty() {
+            return Ok(T::zero());
+        }
+
         let avg_time: f64 = results
             .iter()
             .map(|r| r.execution_time.as_secs_f64())
@@ -157,7 +217,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
             / results.len() as f64;
 
         // Inverse of average time (higher is better)
-        Ok(T::from(1.0 / (avg_time + 1e-6)).expect("conversion failed"))
+        Ok(scirs2_core::numeric::NumCast::from(1.0 / (avg_time + 1e-6))
+            .unwrap_or_else(|| T::zero()))
     }
 
     fn compute_stability(&self, results: &[TestResult<T>]) -> Result<T> {
@@ -166,10 +227,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
         }
 
         let scores: Vec<T> = results.iter().map(|r| r.score).collect();
-        let mean =
-            scores.iter().cloned().sum::<T>() / T::from(scores.len()).expect("conversion failed");
-        let variance = scores.iter().map(|&s| (s - mean) * (s - mean)).sum::<T>()
-            / T::from(scores.len()).expect("conversion failed");
+        let count: T =
+            scirs2_core::numeric::NumCast::from(scores.len()).unwrap_or_else(|| T::one());
+        let mean = scores.iter().cloned().sum::<T>() / count;
+        let variance = scores.iter().map(|&s| (s - mean) * (s - mean)).sum::<T>() / count;
         let std_dev = variance.sqrt();
 
         // Stability as inverse of coefficient of variation
@@ -184,9 +245,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     }
 
     fn compute_memory_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
+        if results.is_empty() {
+            return Ok(T::zero());
+        }
+
         let avg_memory = results
             .iter()
-            .map(|r| r.resource_usage.memory_gb)
+            .map(|r| r.resource_usage.memory_gb.to_f64().unwrap_or(0.0))
             .sum::<f64>()
             / results.len() as f64;
 
@@ -196,9 +261,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
     }
 
     fn compute_computational_efficiency(&self, results: &[TestResult<T>]) -> Result<T> {
+        if results.is_empty() {
+            return Ok(T::zero());
+        }
+
         let avg_cpu_time = results
             .iter()
-            .map(|r| r.resource_usage.cpu_time_seconds)
+            .map(|r| r.resource_usage.cpu_time_seconds.to_f64().unwrap_or(0.0))
             .sum::<f64>()
             / results.len() as f64;
 
@@ -232,9 +301,114 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + std::i
 mod tests {
     use super::*;
 
+    fn config() -> EvaluationConfig {
+        EvaluationConfig {
+            epochs: 40,
+            ..Default::default()
+        }
+    }
+
+    fn architecture(
+        id: &str,
+        component: &str,
+        hyper: &[(&str, f64)],
+    ) -> OptimizerArchitecture<f64> {
+        let mut hyperparameters = HashMap::new();
+        for (k, v) in hyper {
+            hyperparameters.insert((*k).to_string(), *v);
+        }
+        OptimizerArchitecture {
+            components: vec![component.to_string()],
+            parameters: HashMap::new(),
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters,
+            architecture_id: id.to_string(),
+        }
+    }
+
+    fn evaluator() -> PerformanceEvaluator<f64> {
+        let mut evaluator = PerformanceEvaluator::<f64>::new(config()).expect("construct");
+        evaluator.initialize().expect("initialize");
+        evaluator
+    }
+
     #[test]
     fn test_performance_evaluator_creation() {
-        // Skip this test for now - EvaluationConfig needs Default implementation
-        // but some dependent types (EvaluationBudget, StatisticalTestingConfig) are not yet defined
+        let evaluator = PerformanceEvaluator::<f64>::new(config());
+        assert!(evaluator.is_ok());
+    }
+
+    #[test]
+    fn test_evaluation_produces_real_metrics() {
+        let mut evaluator = evaluator();
+        let results = evaluator
+            .evaluate_architecture(&architecture(
+                "adam_good",
+                "Adam",
+                &[("learning_rate", 0.1)],
+            ))
+            .expect("evaluate");
+
+        assert!(results.success);
+        // The score is an aggregate of real benchmark progress, not a constant.
+        assert!(results.overall_score > 0.0 && results.overall_score <= 1.0);
+        assert!(results
+            .metric_scores
+            .contains_key(&EvaluationMetric::FinalPerformance));
+        assert!(results
+            .metric_scores
+            .contains_key(&EvaluationMetric::ConvergenceSpeed));
+    }
+
+    #[test]
+    fn test_two_different_architectures_get_different_scores() {
+        let mut evaluator = evaluator();
+
+        let good = evaluator
+            .evaluate_architecture(&architecture("good", "Adam", &[("learning_rate", 0.1)]))
+            .expect("good")
+            .overall_score;
+        let bad = evaluator
+            .evaluate_architecture(&architecture("bad", "SGD", &[("learning_rate", 1e-7)]))
+            .expect("bad")
+            .overall_score;
+
+        assert!(
+            (good - bad).abs() > 1e-9,
+            "distinct architectures must score differently ({} vs {})",
+            good,
+            bad
+        );
+        assert!(good > bad, "the well-tuned candidate must score higher");
+    }
+
+    #[test]
+    fn test_identical_architecture_reproduces_and_hits_cache() {
+        let mut evaluator = evaluator();
+        let arch = architecture("repeat", "AdamW", &[("learning_rate", 0.05)]);
+
+        let first = evaluator.evaluate_architecture(&arch).expect("first");
+        assert_eq!(evaluator.cache().len(), 1);
+
+        let second = evaluator.evaluate_architecture(&arch).expect("second");
+        assert_eq!(evaluator.cache().len(), 1, "second call must hit the cache");
+        assert_eq!(first.overall_score, second.overall_score);
+    }
+
+    #[test]
+    fn test_cache_key_covers_the_whole_architecture() {
+        let evaluator = evaluator();
+
+        let base = architecture("a", "Adam", &[("learning_rate", 0.01)]);
+        let same_shape_other_lr = architecture("a", "Adam", &[("learning_rate", 0.02)]);
+        let other_component = architecture("a", "SGD", &[("learning_rate", 0.01)]);
+        let identical = architecture("different_id", "Adam", &[("learning_rate", 0.01)]);
+
+        let key = evaluator.generate_cache_key(&base);
+        assert_ne!(key, evaluator.generate_cache_key(&same_shape_other_lr));
+        assert_ne!(key, evaluator.generate_cache_key(&other_component));
+        // The key is content-derived, so the (cosmetic) identifier is irrelevant.
+        assert_eq!(key, evaluator.generate_cache_key(&identical));
     }
 }

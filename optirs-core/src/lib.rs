@@ -1,6 +1,6 @@
 //! # OptiRS Core - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.3.1
+//! **Version:** 0.3.2
 //! **Status:** Stable Release - Production Ready
 //!
 //! `optirs-core` provides state-of-the-art optimization algorithms for machine learning,
@@ -254,7 +254,6 @@
 #![allow(unused_mut)]
 #![allow(unused_parens)]
 #![allow(for_loops_over_fallibles)]
-#![allow(unexpected_cfgs)]
 #![allow(unused_attributes)]
 #![allow(missing_docs)]
 
@@ -412,5 +411,5 @@ pub use visualization::{
     OptimizationMetric, OptimizationVisualizer, OptimizerComparison, PlotType, VisualizationConfig,
 };
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 pub use metrics::*;

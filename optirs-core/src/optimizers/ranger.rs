@@ -12,10 +12,12 @@
 // - Better generalization than either optimizer alone
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::ScalarOperand;
+use crate::optimizers::Optimizer;
+use scirs2_core::ndarray::{Ix1, ScalarOperand};
 use scirs2_core::ndarray_ext::{Array1, ArrayView1};
 use scirs2_core::numeric::{Float, Zero};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// Ranger optimizer configuration
 ///
@@ -186,7 +188,19 @@ impl<T: Float + ScalarOperand> Ranger<T> {
     ///
     /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
     /// ```
-    pub fn step(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
+    pub fn step<'a, P, G>(&mut self, params: P, grads: G) -> Result<Array1<T>>
+    where
+        P: Into<ArrayView1<'a, T>>,
+        G: Into<ArrayView1<'a, T>>,
+        T: 'a,
+    {
+        self.step_view(params.into(), grads.into())
+    }
+
+    /// Perform a single optimization step on borrowed views
+    ///
+    /// This is the concrete implementation behind [`Ranger::step`].
+    pub fn step_view(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
         let n = params.len();
 
         if grads.len() != n {
@@ -319,6 +333,23 @@ impl<T: Float + ScalarOperand> Ranger<T> {
     }
 }
 
+impl<T> Optimizer<T, Ix1> for Ranger<T>
+where
+    T: Float + ScalarOperand + Debug + Send + Sync,
+{
+    fn step(&mut self, params: &Array1<T>, gradients: &Array1<T>) -> Result<Array1<T>> {
+        self.step_view(params.view(), gradients.view())
+    }
+
+    fn get_learning_rate(&self) -> T {
+        self.learning_rate
+    }
+
+    fn set_learning_rate(&mut self, learning_rate: T) {
+        self.learning_rate = learning_rate;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +467,24 @@ mod tests {
                 .expect("unwrap failed");
         }
         assert!(optimizer.is_rectified());
+    }
+
+    /// Ranger must be usable through the generic `Optimizer` trait.
+    #[test]
+    fn test_ranger_optimizer_trait() {
+        use crate::optimizers::Optimizer as _;
+
+        let mut optimizer = Ranger::<f64>::default();
+        let params = array![1.0f64, 2.0, 3.0];
+        let grads = array![0.1f64, 0.2, 0.3];
+
+        let updated =
+            Optimizer::<f64, scirs2_core::ndarray::Ix1>::step(&mut optimizer, &params, &grads)
+                .expect("trait step failed");
+        assert_eq!(updated.len(), 3);
+
+        // The generic inherent `step` also accepts plain references.
+        let again = optimizer.step(&params, &grads).expect("ref step failed");
+        assert_eq!(again.len(), 3);
     }
 }

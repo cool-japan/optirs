@@ -26,6 +26,11 @@ pub enum OptimError {
     ConfigurationError(String),
     /// Resource limit exceeded
     ResourceLimitExceeded(String),
+    /// Requested functionality is not implemented
+    ///
+    /// Returned instead of silently substituting a fabricated result when a
+    /// code path has no real implementation available.
+    NotImplemented(String),
 }
 
 impl fmt::Display for OptimError {
@@ -43,6 +48,7 @@ impl fmt::Display for OptimError {
             OptimError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
             OptimError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
             OptimError::ResourceLimitExceeded(msg) => write!(f, "Resource limit exceeded: {}", msg),
+            OptimError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
         }
     }
 }

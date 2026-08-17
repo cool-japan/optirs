@@ -14,13 +14,20 @@
 //
 // The subsampled Gaussian bound used here is the standard tight bound for
 // integer orders, computed in log space using the log-sum-exp trick for
-// numerical stability. Non-integer orders are handled by linear interpolation
-// between bracketing integer orders -- the same approach used by Opacus and
-// TensorFlow Privacy.
+// numerical stability. It is evaluated exactly for every sampling probability
+// `q > 0` -- there is deliberately no "small q" analytical shortcut, because
+// such shortcuts under-report epsilon (the one direction that silently voids a
+// DP guarantee).
 //
-// This accountant coexists with `moment_accountant::MomentsAccountant` and
-// offers tighter composition bounds for DP-SGD style algorithms via a modern
-// public API.
+// Non-integer orders are handled by evaluating the kernel at `ceil(alpha)`.
+// The Renyi divergence `D_alpha` is non-decreasing in `alpha`, so this is a
+// valid *upper* bound on the RDP at the requested order: conservative, never
+// optimistic. Interpolating (or extrapolating) between integer anchors, as
+// earlier revisions did, can fall below the true value and is not used.
+//
+// This accountant is the reference privacy accountant of the crate;
+// `moment_accountant::MomentsAccountant` composes the very same per-step kernel
+// through a heterogeneous-composition ledger.
 
 use crate::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
@@ -35,19 +42,16 @@ pub const DEFAULT_ALPHAS: &[f64] = &[
     20.0, 24.0, 28.0, 32.0, 48.0, 64.0,
 ];
 
-/// Cap on a single RDP step contribution to avoid +inf propagation.
+/// Threshold on the accumulated per-order RDP above which the accountant
+/// reports *no* privacy at all.
 ///
-/// Even with extremely small noise multipliers, individual step
-/// contributions are clamped so that further composition arithmetic stays
-/// finite. Downstream conversion will still report a very large epsilon.
-const RDP_STEP_CAP: f64 = 1.0e6;
-
-/// Threshold for switching to the small-q analytical approximation.
-const SMALL_Q_THRESHOLD: f64 = 1.0e-6;
-
-/// Threshold below which the noise multiplier is considered numerically
-/// unstable for the closed-form bound.
-const MIN_SAFE_SIGMA: f64 = 0.5;
+/// The accountant never silently clamps a privacy loss: once a contribution
+/// is not finite (or the accumulated spend crosses this threshold), the
+/// accountant latches a saturation flag and every subsequent conversion
+/// returns `epsilon = +infinity`. That is the fail-closed direction --
+/// callers comparing against a budget will see the budget as exhausted
+/// rather than believing a fabricated finite number.
+const RDP_SATURATION_THRESHOLD: f64 = 1.0e12;
 
 /// Snapshot of the current per-order RDP spend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +94,11 @@ pub struct RenyiAccountant {
 
     /// Total number of mechanism applications composed so far.
     total_steps: usize,
+
+    /// Latched once any composed contribution overflowed the representable
+    /// range (or crossed [`RDP_SATURATION_THRESHOLD`]). While set, the
+    /// accountant reports an infinite epsilon.
+    saturated: bool,
 }
 
 impl RenyiAccountant {
@@ -126,6 +135,7 @@ impl RenyiAccountant {
             orders: sorted,
             rdp_epsilons: vec![0.0; len],
             total_steps: 0,
+            saturated: false,
         })
     }
 
@@ -139,6 +149,7 @@ impl RenyiAccountant {
             orders,
             rdp_epsilons: vec![0.0; len],
             total_steps: 0,
+            saturated: false,
         }
     }
 
@@ -182,8 +193,12 @@ impl RenyiAccountant {
         let steps_f = steps as f64;
         for (i, &alpha) in self.orders.iter().enumerate() {
             let per_step = rdp_subsampled_gaussian_step(alpha, noise_multiplier, sampling_prob)?;
-            let contribution = (per_step * steps_f).min(RDP_STEP_CAP);
-            self.rdp_epsilons[i] = (self.rdp_epsilons[i] + contribution).min(RDP_STEP_CAP);
+            let contribution = per_step * steps_f;
+            let accumulated = self.rdp_epsilons[i] + contribution;
+            if !accumulated.is_finite() || accumulated > RDP_SATURATION_THRESHOLD {
+                self.saturated = true;
+            }
+            self.rdp_epsilons[i] = accumulated;
         }
 
         self.total_steps = self.total_steps.saturating_add(steps);
@@ -211,8 +226,11 @@ impl RenyiAccountant {
 
         for (i, &alpha) in self.orders.iter().enumerate() {
             let per_step = alpha / (2.0 * variance);
-            let contribution = (per_step * steps_f).min(RDP_STEP_CAP);
-            self.rdp_epsilons[i] = (self.rdp_epsilons[i] + contribution).min(RDP_STEP_CAP);
+            let accumulated = self.rdp_epsilons[i] + per_step * steps_f;
+            if !accumulated.is_finite() || accumulated > RDP_SATURATION_THRESHOLD {
+                self.saturated = true;
+            }
+            self.rdp_epsilons[i] = accumulated;
         }
 
         self.total_steps = self.total_steps.saturating_add(steps);
@@ -229,10 +247,25 @@ impl RenyiAccountant {
 
     /// Convert the accumulated RDP into a tight (epsilon, delta)-DP bound.
     ///
-    /// For each tracked order alpha, computes
-    /// `eps(alpha) = rdp(alpha) + ln(1 / delta) / (alpha - 1)` and returns
-    /// the minimum across orders (Mironov 2017, Proposition 3, refined by
-    /// Canonne, Kamath, Steinke 2020 / Balle et al. 2020).
+    /// For each tracked order alpha, computes the improved RDP-to-DP
+    /// conversion of Canonne, Kamath and Steinke (2020, Proposition 12), as
+    /// used by Opacus:
+    ///
+    /// ```text
+    /// eps(alpha) = rdp(alpha)
+    ///            + ln((alpha - 1) / alpha)
+    ///            - (ln(delta) + ln(alpha)) / (alpha - 1)
+    /// ```
+    ///
+    /// This is uniformly tighter than the classic Mironov (2017,
+    /// Proposition 3) conversion `rdp(alpha) + ln(1/delta) / (alpha - 1)`,
+    /// because both correction terms `ln(1 - 1/alpha)` and
+    /// `-ln(alpha)/(alpha - 1)` are negative. The minimum over the tracked
+    /// orders is returned.
+    ///
+    /// If the accountant has saturated (see [`is_saturated`](Self::is_saturated)),
+    /// `epsilon` is `+infinity`: the mechanism provides no usable guarantee
+    /// and the caller must treat its budget as exhausted.
     pub fn to_epsilon_delta(&self, target_delta: f64) -> Result<DpConversion> {
         if !target_delta.is_finite() || target_delta <= 0.0 || target_delta > 1.0 {
             return Err(OptimError::InvalidParameter(format!(
@@ -240,14 +273,34 @@ impl RenyiAccountant {
             )));
         }
 
-        let log_inv_delta = (1.0 / target_delta).ln();
+        if self.saturated {
+            return Ok(DpConversion {
+                epsilon: f64::INFINITY,
+                delta: target_delta,
+                best_order: self.orders[0],
+            });
+        }
+
+        // Composing nothing costs nothing. Without this guard the conversion
+        // slack (`ln(1/delta) / (alpha - 1)`) would report a positive epsilon
+        // for an accountant that has never observed a mechanism.
+        if self.rdp_epsilons.iter().all(|&e| e == 0.0) {
+            return Ok(DpConversion {
+                epsilon: 0.0,
+                delta: target_delta,
+                best_order: self.orders[self.orders.len() - 1],
+            });
+        }
+
+        let log_delta = target_delta.ln();
 
         let mut best_epsilon = f64::INFINITY;
         let mut best_order = self.orders[0];
 
         for (i, &alpha) in self.orders.iter().enumerate() {
-            let candidate = self.rdp_epsilons[i] + log_inv_delta / (alpha - 1.0);
-            if candidate < best_epsilon {
+            let candidate = self.rdp_epsilons[i] + ((alpha - 1.0) / alpha).ln()
+                - (log_delta + alpha.ln()) / (alpha - 1.0);
+            if candidate.is_finite() && candidate < best_epsilon {
                 best_epsilon = candidate;
                 best_order = alpha;
             }
@@ -270,6 +323,14 @@ impl RenyiAccountant {
             *value = 0.0;
         }
         self.total_steps = 0;
+        self.saturated = false;
+    }
+
+    /// Whether the accumulated privacy loss overflowed the representable
+    /// range. Once true, [`to_epsilon_delta`](Self::to_epsilon_delta)
+    /// reports an infinite epsilon until [`reset`](Self::reset) is called.
+    pub fn is_saturated(&self) -> bool {
+        self.saturated
     }
 
     /// Return the total number of composed mechanism applications.
@@ -286,15 +347,40 @@ impl RenyiAccountant {
 /// Compute the RDP of one application of the subsampled Gaussian mechanism
 /// at a given Renyi order.
 ///
-/// For integer orders alpha >= 2 the formula expands the moment-generating
-/// function as a binomial sum. For small sampling probabilities the leading
-/// `q^2` term is used analytically to avoid numerical issues with `log(q)`.
-/// For non-integer orders we linearly interpolate between the two bracketing
-/// integer orders, matching the convention used by Opacus and TF Privacy.
-fn rdp_subsampled_gaussian_step(alpha: f64, noise_multiplier: f64, q: f64) -> Result<f64> {
+/// For integer orders `alpha >= 2` the exact binomial expansion of the
+/// sampled-Gaussian moment generating function is evaluated in log space.
+/// The expansion is used for **every** `q > 0`: there is no small-`q`
+/// analytical shortcut, because such shortcuts under-report the privacy
+/// loss, and `ln(q)` is perfectly well behaved down to the smallest
+/// normal `f64`.
+///
+/// Non-integer orders are bounded by the value at `ceil(alpha)`. The Renyi
+/// divergence is non-decreasing in its order, so `rdp(alpha) <=
+/// rdp(ceil(alpha))`; the returned value is therefore a valid, conservative
+/// bound. Orders in `(1, 2)` are bounded by the value at `alpha = 2` for the
+/// same reason.
+///
+/// The result may be `+infinity` for pathologically small noise multipliers
+/// (the exponent `k(k-1)/(2 sigma^2)` overflows). That is reported faithfully
+/// rather than clamped: an infinite RDP means "no privacy".
+pub(crate) fn rdp_subsampled_gaussian_step(
+    alpha: f64,
+    noise_multiplier: f64,
+    q: f64,
+) -> Result<f64> {
     if !alpha.is_finite() || alpha <= 1.0 {
         return Err(OptimError::InvalidParameter(format!(
             "Renyi order alpha must satisfy alpha > 1, got {alpha}"
+        )));
+    }
+    if !noise_multiplier.is_finite() || noise_multiplier <= 0.0 {
+        return Err(OptimError::InvalidParameter(format!(
+            "noise_multiplier must be a positive finite number, got {noise_multiplier}"
+        )));
+    }
+    if !q.is_finite() || !(0.0..=1.0).contains(&q) {
+        return Err(OptimError::InvalidParameter(format!(
+            "sampling probability must be in [0, 1], got {q}"
         )));
     }
 
@@ -305,62 +391,22 @@ fn rdp_subsampled_gaussian_step(alpha: f64, noise_multiplier: f64, q: f64) -> Re
     if q == 1.0 {
         // Sampling everything is equivalent to the pure Gaussian mechanism.
         let variance = noise_multiplier * noise_multiplier;
-        return Ok((alpha / (2.0 * variance)).min(RDP_STEP_CAP));
+        return Ok(alpha / (2.0 * variance));
     }
 
-    // For very small q, use the asymptotic small-q expansion of the
-    // sampled-Gaussian RDP (see Wang/Balle/Kasiviswanathan 2019, eq. (7);
-    // the leading dependence is q^2 * alpha / (2 sigma^2) for the simple
-    // amplification regime). This avoids numerically catastrophic `log(q)`.
-    if q < SMALL_Q_THRESHOLD {
-        let variance = noise_multiplier * noise_multiplier;
-        return Ok((q * q * alpha / (2.0 * variance)).min(RDP_STEP_CAP));
-    }
-
-    // For numerically unstable small noise multipliers the closed-form
-    // bound can overflow; cap the contribution so composition arithmetic
-    // stays finite.
-    if noise_multiplier < MIN_SAFE_SIGMA {
-        return Ok(RDP_STEP_CAP);
-    }
-
-    if (alpha - alpha.round()).abs() < 1.0e-12 {
-        // Integer order path.
-        let alpha_int = alpha.round() as usize;
-        let value = rdp_subsampled_gaussian_step_integer(alpha_int, noise_multiplier, q);
-        return Ok(value.min(RDP_STEP_CAP));
-    }
-
-    // Non-integer order: linearly interpolate between floor and ceil.
-    let lower = alpha.floor();
-    let upper = alpha.ceil();
-
-    // alpha > 1 and non-integer implies lower >= 1 and upper >= 2. If
-    // lower == 1.0, we cannot evaluate at it (RDP undefined at alpha = 1),
-    // so we use ceil() and ceil()+1 instead and extrapolate.
-    let (anchor_lo, anchor_hi) = if lower <= 1.0 {
-        (upper, upper + 1.0)
+    // Evaluate at an integer order that upper-bounds the requested one.
+    let alpha_int = if (alpha - alpha.round()).abs() < 1.0e-12 {
+        alpha.round() as usize
     } else {
-        (lower, upper)
+        alpha.ceil() as usize
     };
+    let alpha_int = alpha_int.max(2);
 
-    let lo_int = anchor_lo.round() as usize;
-    let hi_int = anchor_hi.round() as usize;
-    let lo_int = lo_int.max(2);
-    let hi_int = hi_int.max(lo_int + 1);
-
-    let lo_value = rdp_subsampled_gaussian_step_integer(lo_int, noise_multiplier, q);
-    let hi_value = rdp_subsampled_gaussian_step_integer(hi_int, noise_multiplier, q);
-
-    let span = (hi_int as f64) - (lo_int as f64);
-    let weight = if span > 0.0 {
-        (alpha - lo_int as f64) / span
-    } else {
-        0.0
-    };
-
-    let interpolated = lo_value + weight * (hi_value - lo_value);
-    Ok(interpolated.clamp(0.0, RDP_STEP_CAP))
+    Ok(rdp_subsampled_gaussian_step_integer(
+        alpha_int,
+        noise_multiplier,
+        q,
+    ))
 }
 
 /// Compute the RDP per step at an integer order alpha >= 2 using the
@@ -373,7 +419,7 @@ fn rdp_subsampled_gaussian_step(alpha: f64, noise_multiplier: f64, q: f64) -> Re
 ///                                       * exp( k * (k - 1) / (2 sigma^2) ) )
 /// ```
 /// Implemented in log space with the log-sum-exp trick.
-fn rdp_subsampled_gaussian_step_integer(alpha: usize, sigma: f64, q: f64) -> f64 {
+pub(crate) fn rdp_subsampled_gaussian_step_integer(alpha: usize, sigma: f64, q: f64) -> f64 {
     if alpha < 2 {
         // Shouldn't happen given our call sites, but be defensive.
         return 0.0;
@@ -398,11 +444,16 @@ fn rdp_subsampled_gaussian_step_integer(alpha: usize, sigma: f64, q: f64) -> f64
     let log_sum = log_sum_exp(&log_terms);
     let rdp = log_sum / (alpha_f - 1.0);
 
-    if !rdp.is_finite() || rdp < 0.0 {
-        // Numerical underflow or pathological inputs: clamp to a safe range.
-        // RDP is non-negative by definition.
-        rdp.clamp(0.0, RDP_STEP_CAP)
+    if rdp.is_nan() {
+        // Pathological inputs: fail closed with "no privacy" rather than
+        // propagating a NaN that compares false against every budget check.
+        f64::INFINITY
+    } else if rdp < 0.0 {
+        // RDP is non-negative by definition; a small negative value can only
+        // come from floating-point round-off in the log-sum-exp.
+        0.0
     } else {
+        // May legitimately be +infinity for a vanishing noise multiplier.
         rdp
     }
 }
@@ -801,6 +852,123 @@ mod tests {
             "expected epsilon in [0.5, 10] for canonical setup, got {}",
             result.epsilon
         );
+    }
+
+    #[test]
+    fn test_small_q_uses_exact_expansion_not_a_shortcut() {
+        // Regression for the deleted "small q" analytical shortcut, which
+        // returned q^2 * alpha / (2 sigma^2) below q = 1e-6 and under-reported
+        // the true RDP by orders of magnitude. The exact expansion must be
+        // continuous across the old threshold and must dominate the shortcut.
+        let sigma = 1.0_f64;
+        let alpha = 8.0_f64;
+        for &q in &[9.0e-7_f64, 1.0e-6, 1.1e-6] {
+            let exact = rdp_subsampled_gaussian_step(alpha, sigma, q).expect("valid parameters");
+            let old_shortcut = q * q * alpha / (2.0 * sigma * sigma);
+            assert!(
+                exact >= old_shortcut,
+                "exact bound {exact} must not fall below the discarded shortcut {old_shortcut}"
+            );
+            assert!(exact.is_finite() && exact > 0.0);
+        }
+
+        // Continuity across the old threshold: relative change is tiny.
+        let below = rdp_subsampled_gaussian_step(alpha, sigma, 9.99e-7).expect("valid");
+        let above = rdp_subsampled_gaussian_step(alpha, sigma, 1.01e-6).expect("valid");
+        assert!(
+            (above - below).abs() / above < 0.05,
+            "kernel must be continuous across the removed threshold: {below} vs {above}"
+        );
+    }
+
+    #[test]
+    fn test_fractional_orders_are_conservative_upper_bounds() {
+        // RDP is non-decreasing in the order, so the value reported for a
+        // fractional alpha must sit at or above the value at floor(alpha)
+        // and equal the value at ceil(alpha).
+        let sigma = 1.0_f64;
+        let q = 0.01_f64;
+
+        let at_two = rdp_subsampled_gaussian_step(2.0, sigma, q).expect("valid");
+        let at_three = rdp_subsampled_gaussian_step(3.0, sigma, q).expect("valid");
+        let at_two_five = rdp_subsampled_gaussian_step(2.5, sigma, q).expect("valid");
+        assert!(at_two_five >= at_two);
+        assert!(approx_eq(at_two_five, at_three, 1.0e-12));
+
+        // Orders in (1, 2) previously extrapolated with a negative weight,
+        // producing values below the true RDP. They must now be bounded by
+        // the alpha = 2 value.
+        for &alpha in &[1.25_f64, 1.5, 1.75] {
+            let value = rdp_subsampled_gaussian_step(alpha, sigma, q).expect("valid");
+            assert!(value > 0.0, "order {alpha} must have positive RDP");
+            assert!(
+                approx_eq(value, at_two, 1.0e-12),
+                "order {alpha} must be bounded by the alpha=2 value"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tiny_noise_multiplier_reports_infinite_epsilon() {
+        // Previously a sigma below 0.5 silently returned a capped constant.
+        // The accountant must instead report saturation and an infinite
+        // epsilon: fail closed, never a fabricated finite budget.
+        let mut accountant = RenyiAccountant::with_default_orders();
+        accountant
+            .add_subsampled_gaussian(1.0e-8, 0.5, 1000)
+            .expect("composition should be accepted");
+        assert!(accountant.is_saturated());
+
+        let conversion = accountant.to_epsilon_delta(1.0e-5).expect("conversion");
+        assert!(
+            conversion.epsilon.is_infinite(),
+            "saturated accountant must report infinite epsilon, got {}",
+            conversion.epsilon
+        );
+
+        accountant.reset();
+        assert!(!accountant.is_saturated());
+    }
+
+    #[test]
+    fn test_moderately_small_sigma_still_computed_exactly() {
+        // sigma = 0.4 used to hit the MIN_SAFE_SIGMA shortcut; the log-space
+        // routine handles it exactly and must produce a finite bound.
+        let mut accountant = RenyiAccountant::with_default_orders();
+        accountant
+            .add_subsampled_gaussian(0.4, 0.01, 100)
+            .expect("composition");
+        assert!(!accountant.is_saturated());
+        let conversion = accountant.to_epsilon_delta(1.0e-5).expect("conversion");
+        assert!(conversion.epsilon.is_finite() && conversion.epsilon > 0.0);
+    }
+
+    #[test]
+    fn test_cks_conversion_is_tighter_than_classic() {
+        let mut accountant = RenyiAccountant::with_default_orders();
+        accountant
+            .add_subsampled_gaussian(1.0, 0.01, 1000)
+            .expect("composition");
+        let delta = 1.0e-5_f64;
+        let converted = accountant.to_epsilon_delta(delta).expect("conversion");
+
+        // Classic Mironov conversion over the same spend.
+        let spend = accountant.current_spend();
+        let log_inv_delta = (1.0 / delta).ln();
+        let mut classic = f64::INFINITY;
+        for (i, &alpha) in spend.orders.iter().enumerate() {
+            let candidate = spend.epsilons[i] + log_inv_delta / (alpha - 1.0);
+            if candidate < classic {
+                classic = candidate;
+            }
+        }
+
+        assert!(
+            converted.epsilon <= classic + 1.0e-12,
+            "CKS conversion {} must not exceed the classic bound {classic}",
+            converted.epsilon
+        );
+        assert!(converted.epsilon > 0.0);
     }
 
     #[test]

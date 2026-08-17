@@ -4,7 +4,8 @@
 // SAC (Soft Actor-Critic), and other modern actor-critic methods.
 
 use super::{
-    ActionDistribution, DistributionType, PolicyNetwork, RLOptimizationMetrics, RLOptimizerConfig,
+    add_named_gradients, clip_named_gradients, scale_named_gradients, ActionDistribution,
+    DistributionType, PolicyNetwork, QNetwork, RLOptimizationMetrics, RLOptimizerConfig,
     RLScheduler, TrajectoryBatch, ValueNetwork,
 };
 use crate::error::{OptimError, Result};
@@ -132,9 +133,21 @@ pub struct DDPGConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Exploration noise standard deviation
     pub exploration_noise: T,
 
-    /// Ornstein-Uhlenbeck noise parameters
+    /// Ornstein-Uhlenbeck mean-reversion rate θ
     pub ou_noise_theta: T,
+
+    /// Ornstein-Uhlenbeck diffusion scale σ
     pub ou_noise_sigma: T,
+
+    /// Ornstein-Uhlenbeck integration timestep dt.
+    ///
+    /// The process is `dx = θ(μ − x)dt + σ√dt·dW`; without `dt` the discretization
+    /// is only valid at `dt = 1`, which is far too coarse for the θ/σ values the
+    /// DDPG paper recommends.
+    pub ou_noise_dt: T,
+
+    /// Ornstein-Uhlenbeck long-run mean μ
+    pub ou_noise_mu: T,
 
     /// Action bounds for clipping
     pub action_bounds: Option<(T, T)>,
@@ -195,6 +208,8 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for DDPGConfig<T> {
             exploration_noise: T::from(0.1).unwrap_or_else(|| T::zero()),
             ou_noise_theta: T::from(0.15).unwrap_or_else(|| T::zero()),
             ou_noise_sigma: T::from(0.2).unwrap_or_else(|| T::zero()),
+            ou_noise_dt: T::from(0.01).unwrap_or_else(|| T::zero()),
+            ou_noise_mu: T::zero(),
             action_bounds: Some((
                 T::from(-1.0).unwrap_or_else(|| T::zero()),
                 T::from(1.0).unwrap_or_else(|| T::zero()),
@@ -326,7 +341,36 @@ pub struct Experience<T: Float + Debug + Send + Sync + 'static> {
     pub info: HashMap<String, T>,
 }
 
-/// Experience replay buffer
+/// A sampled replay mini-batch.
+///
+/// Carries the buffer indices alongside the experiences so their priorities can be
+/// refreshed with the TD errors the update produces, plus the importance-sampling
+/// weights that correct the bias introduced by non-uniform sampling.
+#[derive(Debug, Clone)]
+pub struct ReplaySample<T: Float + Debug + Send + Sync + 'static> {
+    /// The sampled transitions.
+    pub experiences: Vec<Experience<T>>,
+
+    /// Buffer index of each sampled transition.
+    pub indices: Vec<usize>,
+
+    /// Importance-sampling weights `w_i = (1 / (N · P(i)))^β`, normalized by their
+    /// maximum so they only ever scale gradients *down*. Uniform sampling yields
+    /// all-ones.
+    pub weights: Vec<T>,
+}
+
+/// Experience replay buffer with genuine prioritized sampling.
+///
+/// When `prioritized` is enabled, transition `i` is drawn with probability
+/// `P(i) = p_iᵅ / Σ_k p_kᵅ` using an O(log N) sum tree, and the resulting bias is
+/// corrected with importance weights `(1/(N·P(i)))^β` (Schaul et al., 2016). With
+/// `prioritized` disabled the buffer samples uniformly and returns unit weights.
+///
+/// The previous implementation advertised prioritized replay but sampled uniformly
+/// and never touched `alpha`/`beta`, and it panicked on an empty buffer
+/// (`gen_range(0..0)`) and on `maxsize == 0` (`% 0`). Both are now impossible:
+/// `new` rejects a zero capacity and `sample` returns an error on an empty buffer.
 pub struct ExperienceReplayBuffer<T: Float + Debug + Send + Sync + 'static> {
     /// Buffer storage
     buffer: Vec<Experience<T>>,
@@ -334,62 +378,230 @@ pub struct ExperienceReplayBuffer<T: Float + Debug + Send + Sync + 'static> {
     /// Maximum buffer size
     maxsize: usize,
 
-    /// Current position in buffer
+    /// Next write position (ring buffer)
     position: usize,
 
-    /// Whether the buffer is full
+    /// Whether the buffer has wrapped at least once
     is_full: bool,
 
-    /// Prioritized replay parameters
+    /// Prioritization exponent (0 = uniform, 1 = fully prioritized)
     alpha: T,
+
+    /// Importance-sampling correction exponent
     beta: T,
 
-    /// Priority sum tree (for efficient sampling)
-    priority_tree: Option<Vec<T>>,
+    /// Whether prioritized sampling is active
+    prioritized: bool,
+
+    /// Sum tree over `p^α`, laid out as a complete binary tree in
+    /// `[1, 2·capacity)` with leaves at `[capacity, capacity + maxsize)`.
+    priority_tree: Vec<T>,
+
+    /// Power-of-two leaf capacity of the sum tree.
+    capacity: usize,
+
+    /// Largest raw priority observed, used to seed new transitions so every
+    /// transition is replayed at least once.
+    max_priority: T,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> ExperienceReplayBuffer<T> {
-    /// Create a new experience replay buffer
-    pub fn new(maxsize: usize, alpha: T, beta: T) -> Self {
-        Self {
+    /// Small constant keeping every priority strictly positive.
+    fn priority_epsilon() -> T {
+        T::from(1e-6).unwrap_or_else(T::epsilon)
+    }
+
+    /// Create a new experience replay buffer.
+    ///
+    /// Returns an error for `maxsize == 0` (a zero-capacity ring buffer cannot
+    /// store anything and its modular arithmetic would divide by zero).
+    pub fn new(maxsize: usize, alpha: T, beta: T, prioritized: bool) -> Result<Self> {
+        if maxsize == 0 {
+            return Err(OptimError::InvalidConfig(
+                "replay buffer capacity must be greater than zero".to_string(),
+            ));
+        }
+        let capacity = maxsize.next_power_of_two();
+        Ok(Self {
             buffer: Vec::with_capacity(maxsize),
             maxsize,
             position: 0,
             is_full: false,
             alpha,
             beta,
-            priority_tree: None,
+            prioritized,
+            priority_tree: vec![T::zero(); 2 * capacity],
+            capacity,
+            max_priority: T::one(),
+        })
+    }
+
+    /// Whether prioritized sampling is active.
+    pub fn is_prioritized(&self) -> bool {
+        self.prioritized
+    }
+
+    /// Total prioritized mass `Σ p^α` currently stored.
+    pub fn total_priority(&self) -> T {
+        self.priority_tree[1]
+    }
+
+    /// Write `p^α` into leaf `index` and propagate the change to the root.
+    fn set_tree_priority(&mut self, index: usize, priority: T) {
+        let clamped = priority.max(Self::priority_epsilon());
+        let weighted = clamped.powf(self.alpha);
+
+        let mut node = self.capacity + index;
+        self.priority_tree[node] = weighted;
+        while node > 1 {
+            node /= 2;
+            self.priority_tree[node] =
+                self.priority_tree[2 * node] + self.priority_tree[2 * node + 1];
         }
     }
 
-    /// Add experience to buffer
+    /// Locate the leaf whose cumulative interval contains `value`.
+    fn find_leaf(&self, mut value: T) -> usize {
+        let mut node = 1usize;
+        while node < self.capacity {
+            let left = 2 * node;
+            if value <= self.priority_tree[left] {
+                node = left;
+            } else {
+                value = value - self.priority_tree[left];
+                node = left + 1;
+            }
+        }
+        (node - self.capacity).min(self.len().saturating_sub(1))
+    }
+
+    /// Add experience to buffer.
+    ///
+    /// A transition with a non-positive `priority` is inserted at the maximum
+    /// priority seen so far, the standard PER convention that guarantees every new
+    /// transition is replayed at least once.
     pub fn add(&mut self, experience: Experience<T>) {
+        let priority = if experience.priority > T::zero() {
+            experience.priority
+        } else {
+            self.max_priority
+        };
+        if priority > self.max_priority {
+            self.max_priority = priority;
+        }
+
+        let index = self.position;
         if self.buffer.len() < self.maxsize {
             self.buffer.push(experience);
         } else {
-            self.buffer[self.position] = experience;
+            self.buffer[index] = experience;
             self.is_full = true;
         }
 
+        self.set_tree_priority(index, priority);
         self.position = (self.position + 1) % self.maxsize;
     }
 
-    /// Sample batch from buffer
-    pub fn sample(&self, batchsize: usize) -> Vec<Experience<T>> {
-        let available_size = if self.is_full {
-            self.maxsize
-        } else {
-            self.buffer.len()
-        };
-        let sample_size = batchsize.min(available_size);
-
-        let mut samples = Vec::new();
-        for _ in 0..sample_size {
-            let idx = scirs2_core::random::thread_rng().gen_range(0..available_size);
-            samples.push(self.buffer[idx].clone());
+    /// Sample a mini-batch.
+    ///
+    /// Prioritized mode uses stratified sampling over `batchsize` equal segments of
+    /// the total priority mass (lower variance than independent draws) and returns
+    /// max-normalized importance weights. Returns an error when the buffer is
+    /// empty or `batchsize` is zero instead of panicking inside the RNG.
+    pub fn sample(&self, batchsize: usize) -> Result<ReplaySample<T>> {
+        let available = self.len();
+        if available == 0 {
+            return Err(OptimError::InvalidState(
+                "cannot sample from an empty replay buffer".to_string(),
+            ));
+        }
+        if batchsize == 0 {
+            return Err(OptimError::InvalidConfig(
+                "replay sample size must be greater than zero".to_string(),
+            ));
         }
 
-        samples
+        let sample_size = batchsize.min(available);
+        let mut rng = scirs2_core::random::thread_rng();
+
+        let mut indices = Vec::with_capacity(sample_size);
+        let mut weights = Vec::with_capacity(sample_size);
+
+        let total = self.total_priority();
+        let use_priorities = self.prioritized && total > T::zero();
+
+        if !use_priorities {
+            for _ in 0..sample_size {
+                indices.push(rng.gen_range(0..available));
+                weights.push(T::one());
+            }
+        } else {
+            let n = T::from(available).unwrap_or_else(T::one);
+            let segment = total / T::from(sample_size).unwrap_or_else(T::one);
+            let mut max_weight = T::zero();
+
+            for k in 0..sample_size {
+                let offset = T::from(k as f64 + rng.random::<f64>()).unwrap_or_else(T::zero);
+                let value = (segment * offset).min(total);
+                let index = self.find_leaf(value);
+
+                // P(i) = p_iᵅ / Σ p^α, w_i = (1 / (N·P(i)))^β
+                let leaf = self.priority_tree[self.capacity + index];
+                let probability = if total > T::zero() {
+                    (leaf / total).max(T::from(1e-12).unwrap_or_else(T::epsilon))
+                } else {
+                    T::one() / n
+                };
+                let weight = (T::one() / (n * probability)).powf(self.beta);
+                if weight > max_weight {
+                    max_weight = weight;
+                }
+
+                indices.push(index);
+                weights.push(weight);
+            }
+
+            if max_weight > T::zero() {
+                for weight in weights.iter_mut() {
+                    *weight = *weight / max_weight;
+                }
+            }
+        }
+
+        let experiences = indices.iter().map(|&i| self.buffer[i].clone()).collect();
+
+        Ok(ReplaySample {
+            experiences,
+            indices,
+            weights,
+        })
+    }
+
+    /// Refresh the priorities of previously sampled transitions from their TD errors.
+    pub fn update_priorities(&mut self, indices: &[usize], td_errors: &[T]) -> Result<()> {
+        if indices.len() != td_errors.len() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "priority update needs one TD error per index ({} vs {})",
+                indices.len(),
+                td_errors.len()
+            )));
+        }
+
+        let available = self.len();
+        for (&index, &error) in indices.iter().zip(td_errors.iter()) {
+            if index >= available {
+                return Err(OptimError::InvalidParameter(format!(
+                    "replay index {index} out of range (buffer holds {available} transitions)"
+                )));
+            }
+            let priority = error.abs() + Self::priority_epsilon();
+            if priority > self.max_priority {
+                self.max_priority = priority;
+            }
+            self.buffer[index].priority = priority;
+            self.set_tree_priority(index, priority);
+        }
+        Ok(())
     }
 
     /// Get buffer size
@@ -407,6 +619,24 @@ impl<T: Float + Debug + Send + Sync + 'static> ExperienceReplayBuffer<T> {
     }
 }
 
+/// Draw one standard-normal sample via the Box–Muller transform.
+///
+/// `scirs2_core::random` exposes uniforms; the RL code needs Gaussians for the
+/// reparameterization trick, TD3 target smoothing and the Ornstein-Uhlenbeck
+/// process. Uniform noise (as used previously) has the wrong tails and the wrong
+/// variance, which silently changes the exploration behaviour of every method.
+fn standard_normal_sample() -> f64 {
+    let mut rng = scirs2_core::random::thread_rng();
+    let u1 = rng.random::<f64>().max(1e-12);
+    let u2 = rng.random::<f64>();
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+}
+
+/// Smallest standard deviation used by the Gaussian helpers.
+fn min_sigma<T: Float>() -> T {
+    T::from(1e-6).unwrap_or_else(T::epsilon)
+}
+
 impl<
         T: Float
             + Debug
@@ -420,8 +650,18 @@ impl<
         V: ValueNetwork<T>,
     > ActorCriticOptimizer<T, P, V>
 {
-    /// Create a new Actor-Critic optimizer
-    pub fn new(config: ActorCriticConfig<T>, actor: P, critics: Vec<V>) -> Result<Self> {
+    /// Create a new Actor-Critic optimizer.
+    ///
+    /// When `config.use_target_networks` is set, the target actor and target
+    /// critics are **populated here** by cloning the online networks (previously
+    /// they stayed `None` forever, so every "target" computation silently used the
+    /// online networks and the soft update had nothing to update). That is why the
+    /// networks must be `Clone`.
+    pub fn new(config: ActorCriticConfig<T>, actor: P, critics: Vec<V>) -> Result<Self>
+    where
+        P: Clone,
+        V: Clone,
+    {
         if critics.is_empty() {
             return Err(OptimError::InvalidConfig(
                 "At least one critic required".to_string(),
@@ -432,16 +672,23 @@ impl<
             config.replay_buffer_size,
             config.per_alpha,
             config.per_beta,
-        );
+            config.prioritized_replay,
+        )?;
 
         let temperature = config.sac_config.temperature;
+
+        let (target_actor, target_critics) = if config.use_target_networks {
+            (Some(actor.clone()), Some(critics.clone()))
+        } else {
+            (None, None)
+        };
 
         Ok(Self {
             config,
             actor,
             critics,
-            target_actor: None,
-            target_critics: None,
+            target_actor,
+            target_critics,
             temperature,
             actor_scheduler: None,
             critic_scheduler: None,
@@ -454,27 +701,45 @@ impl<
         })
     }
 
-    /// Update using experience replay
-    pub fn update_from_replay(&mut self, batchsize: usize) -> Result<ActorCriticMetrics<T>> {
-        if self.replay_buffer.len() < batchsize {
-            return Err(OptimError::InvalidConfig(
-                "Not enough experiences in buffer".to_string(),
-            ));
-        }
+    /// Current SAC temperature α.
+    pub fn temperature(&self) -> T {
+        self.temperature
+    }
 
-        let experiences = self.replay_buffer.sample(batchsize);
+    /// Immutable access to the replay buffer.
+    pub fn replay_buffer(&self) -> &ExperienceReplayBuffer<T> {
+        &self.replay_buffer
+    }
 
-        match self.config.method {
-            ActorCriticMethod::SAC => self.update_sac(&experiences),
-            ActorCriticMethod::TD3 => self.update_td3(&experiences),
-            ActorCriticMethod::DDPG => self.update_ddpg(&experiences),
-            ActorCriticMethod::A2C => Err(OptimError::InvalidConfig(
-                "Method not implemented".to_string(),
-            )),
-            _ => Err(OptimError::InvalidConfig(
-                "Method not implemented".to_string(),
-            )),
-        }
+    /// Mutable access to the replay buffer (e.g. to refresh priorities).
+    pub fn replay_buffer_mut(&mut self) -> &mut ExperienceReplayBuffer<T> {
+        &mut self.replay_buffer
+    }
+
+    /// Actor learning rate (scheduler value when configured).
+    fn actor_lr(&self) -> T {
+        self.actor_scheduler
+            .as_ref()
+            .map(|s| s.get_lr())
+            .unwrap_or(self.config.base_config.policy_lr)
+    }
+
+    /// Critic learning rate (scheduler value when configured).
+    fn critic_lr(&self) -> T {
+        self.critic_scheduler
+            .as_ref()
+            .map(|s| s.get_lr())
+            .unwrap_or(self.config.base_config.value_lr)
+    }
+
+    /// Clip, scale by `-lr` and apply a gradient to the actor. Returns the
+    /// pre-clipping gradient norm.
+    fn apply_actor_gradient(&mut self, gradients: &HashMap<String, Array1<T>>) -> Result<T> {
+        let (clipped, norm) =
+            clip_named_gradients(gradients, self.config.base_config.max_grad_norm);
+        let step = scale_named_gradients(&clipped, -self.actor_lr());
+        self.actor.update_parameters(&step)?;
+        Ok(norm)
     }
 
     /// Update using trajectory (on-policy methods)
@@ -484,338 +749,105 @@ impl<
     ) -> Result<ActorCriticMetrics<T>> {
         match self.config.method {
             ActorCriticMethod::A2C => self.update_a2c(trajectory),
-            ActorCriticMethod::A3C => Err(OptimError::InvalidConfig(
-                "Method requires experience replay".to_string(),
-            )),
-            _ => Err(OptimError::InvalidConfig(
-                "Method requires experience replay".to_string(),
-            )),
+            ActorCriticMethod::A3C => self.update_a3c(trajectory),
+            other => Err(OptimError::InvalidConfig(format!(
+                "{other:?} is an off-policy method: use update_from_replay"
+            ))),
         }
     }
 
-    /// SAC update
-    fn update_sac(&mut self, experiences: &[Experience<T>]) -> Result<ActorCriticMetrics<T>> {
-        let _batch_size = experiences.len();
-
-        // Extract batch data
-        let states = self.extract_states(experiences)?;
-        let actions = self.extract_actions(experiences)?;
-        let rewards = self.extract_rewards(experiences)?;
-        let next_states = self.extract_next_states(experiences)?;
-        let dones = self.extract_dones(experiences)?;
-
-        // Update critics
-        let mut critic_losses = Vec::new();
-        for critic in self.critics.iter() {
-            let q_values = self.compute_q_values(critic, &states, &actions)?;
-            let targetq = self.compute_target_q_sac(&next_states, &rewards, &dones)?;
-
-            let critic_loss = self.compute_critic_loss(&q_values, &targetq)?;
-            critic_losses.push(critic_loss);
-
-            // Update critic (simplified)
-            // In practice, compute gradients and update parameters
-        }
-
-        // Update actor (policy)
-        let actor_loss = self.compute_actor_loss_sac(&states)?;
-
-        // Update temperature (if auto-tuning)
-        let temperature_loss = if self.config.sac_config.auto_entropy_tuning {
-            Some(self.update_temperature_sac(&states)?)
-        } else {
-            None
-        };
-
-        // Update target networks
-        if self.config.use_target_networks {
-            self.soft_update_targets()?;
-        }
-
-        // Update metrics
-        self.metrics.actor_loss = actor_loss;
-        self.metrics.critic_losses = critic_losses;
-        self.metrics.temperature = Some(self.temperature);
-        self.metrics.temperature_loss = temperature_loss;
-        self.metrics.replay_buffer_size = self.replay_buffer.len();
-
-        self.update_count += 1;
-
-        Ok(self.metrics.clone())
-    }
-
-    /// TD3 update
-    fn update_td3(&mut self, experiences: &[Experience<T>]) -> Result<ActorCriticMetrics<T>> {
-        let _batch_size = experiences.len();
-
-        // Extract batch data
-        let states = self.extract_states(experiences)?;
-        let actions = self.extract_actions(experiences)?;
-        let rewards = self.extract_rewards(experiences)?;
-        let next_states = self.extract_next_states(experiences)?;
-        let dones = self.extract_dones(experiences)?;
-
-        // Update critics (always update both critics in TD3)
-        let mut critic_losses = Vec::new();
-        if self.critics.len() >= 2 {
-            // Compute target actions with noise
-            let target_actions = if let Some(ref target_actor) = self.target_actor {
-                let target_action_dist = target_actor.get_action_distribution(&next_states)?;
-                let mut target_actions =
-                    self.sample_actions_from_distribution(&target_action_dist)?;
-
-                // Add target policy smoothing noise (TD3 feature)
-                for action in target_actions.iter_mut() {
-                    let noise = T::from(scirs2_core::random::thread_rng().random::<f64>() - 0.5)
-                        .expect("unwrap failed")
-                        * T::from(2.0).unwrap_or_else(|| T::zero())
-                        * self.config.td3_config.policy_noise;
-                    let clipped_noise = noise
-                        .max(-self.config.td3_config.noise_clip)
-                        .min(self.config.td3_config.noise_clip);
-                    *action = *action + clipped_noise;
-
-                    // Clip actions to bounds
-                    if let Some((min_action, max_action)) = self.config.td3_config.action_bounds {
-                        *action = action.max(min_action).min(max_action);
-                    }
-                }
-
-                target_actions
-            } else {
-                // Fallback if no target actor
-                actions.clone()
-            };
-
-            // Compute target Q-values using twin critics and minimum
-            let target_q1 = if let Some(ref target_critics) = self.target_critics {
-                if target_critics.len() >= 2 {
-                    self.compute_q_values(&target_critics[0], &next_states, &target_actions)?
-                } else {
-                    self.compute_q_values(&self.critics[0], &next_states, &target_actions)?
-                }
-            } else {
-                self.compute_q_values(&self.critics[0], &next_states, &target_actions)?
-            };
-
-            let target_q2 = if let Some(ref target_critics) = self.target_critics {
-                if target_critics.len() >= 2 {
-                    self.compute_q_values(&target_critics[1], &next_states, &target_actions)?
-                } else {
-                    self.compute_q_values(&self.critics[1], &next_states, &target_actions)?
-                }
-            } else {
-                self.compute_q_values(&self.critics[1], &next_states, &target_actions)?
-            };
-
-            // Take minimum (TD3 feature for overestimation bias reduction)
-            let mut min_target_q = Array1::zeros(target_q1.len());
-            for i in 0..target_q1.len() {
-                min_target_q[i] = target_q1[i].min(target_q2[i]);
-            }
-
-            // Compute TD targets
-            let gamma = self.config.base_config.discount_factor;
-            let mut td_targets = Array1::zeros(rewards.len());
-            for i in 0..rewards.len() {
-                td_targets[i] = rewards[i]
-                    + gamma
-                        * min_target_q[i]
-                        * T::from(if dones[i] { 0.0 } else { 1.0 }).unwrap_or_else(|| T::zero());
-            }
-
-            // Update both critics
-            for (_i, critic) in self.critics.iter().enumerate().take(2) {
-                let q_values = self.compute_q_values(critic, &states, &actions)?;
-                let critic_loss = self.compute_critic_loss(&q_values, &td_targets)?;
-                critic_losses.push(critic_loss);
-            }
-        }
-
-        // Update actor with delayed policy updates (TD3 feature)
-        let actor_loss = if self
-            .update_count
-            .is_multiple_of(self.config.td3_config.policy_delay)
-        {
-            self.compute_actor_loss_td3(&states)?
-        } else {
-            T::zero()
-        };
-
-        // Update target networks
-        if self.config.use_target_networks {
-            self.soft_update_targets()?;
-        }
-
-        // Update metrics
-        self.metrics.actor_loss = actor_loss;
-        self.metrics.critic_losses = critic_losses;
-        self.metrics.replay_buffer_size = self.replay_buffer.len();
-
-        self.update_count += 1;
-
-        Ok(self.metrics.clone())
-    }
-
-    /// DDPG update
-    fn update_ddpg(&mut self, experiences: &[Experience<T>]) -> Result<ActorCriticMetrics<T>> {
-        let _batch_size = experiences.len();
-
-        // Extract batch data
-        let states = self.extract_states(experiences)?;
-        let actions = self.extract_actions(experiences)?;
-        let rewards = self.extract_rewards(experiences)?;
-        let next_states = self.extract_next_states(experiences)?;
-        let dones = self.extract_dones(experiences)?;
-
-        // Update critic
-        let target_actions = if let Some(ref target_actor) = self.target_actor {
-            let target_action_dist = target_actor.get_action_distribution(&next_states)?;
-            self.sample_actions_from_distribution(&target_action_dist)?
-        } else {
-            // Use current actor if no target
-            let action_dist = self.actor.get_action_distribution(&next_states)?;
-            self.sample_actions_from_distribution(&action_dist)?
-        };
-
-        let targetq = if let Some(ref target_critics) = self.target_critics {
-            self.compute_q_values(&target_critics[0], &next_states, &target_actions)?
-        } else {
-            self.compute_q_values(&self.critics[0], &next_states, &target_actions)?
-        };
-
-        // Compute TD targets
-        let gamma = self.config.base_config.discount_factor;
-        let mut td_targets = Array1::zeros(rewards.len());
-        for i in 0..rewards.len() {
-            td_targets[i] = rewards[i]
-                + gamma
-                    * targetq[i]
-                    * T::from(if dones[i] { 0.0 } else { 1.0 }).unwrap_or_else(|| T::zero());
-        }
-
-        let q_values = self.compute_q_values(&self.critics[0], &states, &actions)?;
-        let critic_loss = self.compute_critic_loss(&q_values, &td_targets)?;
-
-        // Update actor (DDPG deterministic policy gradient)
-        let actor_loss = self.compute_actor_loss_ddpg(&states)?;
-
-        // Update target networks
-        if self.config.use_target_networks {
-            self.soft_update_targets()?;
-        }
-
-        // Add Ornstein-Uhlenbeck noise for exploration (DDPG feature)
-        self.update_ou_noise()?;
-
-        // Update metrics
-        self.metrics.actor_loss = actor_loss;
-        self.metrics.critic_losses = vec![critic_loss];
-        self.metrics.replay_buffer_size = self.replay_buffer.len();
-
-        self.update_count += 1;
-
-        Ok(self.metrics.clone())
-    }
-
-    /// Compute actor loss for TD3
-    fn compute_actor_loss_td3(&self, states: &Array2<T>) -> Result<T> {
-        // TD3 actor loss: maximize Q1(s, π(s))
-        let action_dist = self.actor.get_action_distribution(states)?;
-        let actions = self.sample_actions_from_distribution(&action_dist)?;
-
-        // Use only the first critic for actor update (TD3 style)
-        let q_values = self.compute_q_values(&self.critics[0], states, &actions)?;
-
-        // Actor loss: negative Q-values (since we want to maximize Q)
-        let actor_loss =
-            -q_values.iter().copied().sum::<T>() / T::from(q_values.len()).unwrap_or(T::zero());
-
-        Ok(actor_loss)
-    }
-
-    /// Compute actor loss for DDPG
-    fn compute_actor_loss_ddpg(&self, states: &Array2<T>) -> Result<T> {
-        // DDPG actor loss: maximize Q(s, π(s))
-        let action_dist = self.actor.get_action_distribution(states)?;
-        let actions = self.sample_actions_from_distribution(&action_dist)?;
-
-        let q_values = self.compute_q_values(&self.critics[0], states, &actions)?;
-
-        // Actor loss: negative Q-values
-        let actor_loss =
-            -q_values.iter().copied().sum::<T>() / T::from(q_values.len()).unwrap_or(T::zero());
-
-        Ok(actor_loss)
-    }
-
-    /// Update Ornstein-Uhlenbeck noise for DDPG exploration
-    fn update_ou_noise(&mut self) -> Result<()> {
-        if let Some(ref mut ou_state) = self.ou_noise_state {
-            let theta = self.config.ddpg_config.ou_noise_theta;
-            let sigma = self.config.ddpg_config.ou_noise_sigma;
-
-            // OU noise update: dx = theta * (0 - x) * dt + sigma * dW
-            for noise in ou_state.iter_mut() {
-                let dx = -theta * *noise
-                    + sigma
-                        * T::from(scirs2_core::random::thread_rng().random::<f64>() - 0.5)
-                            .expect("unwrap failed");
-                *noise = *noise + dx;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// A2C update from trajectory
+    /// A2C update from trajectory.
+    ///
+    /// Both networks receive real gradient steps: the actor through its score
+    /// oracle with `∂L/∂log π_i = −A_i/N`, the critic through its value gradient
+    /// with `∂L/∂V_i = 2(V_i − R_i)/N`.
     fn update_a2c(&mut self, trajectory: TrajectoryBatch<T>) -> Result<ActorCriticMetrics<T>> {
-        // Compute advantages
-        let mut traj_copy = trajectory;
-        let next_value = if let Some(critic) = self.critics.first() {
-            let last_obs = traj_copy.observations.slice(s![-1.., ..]).to_owned();
-            let mut last_obs_batch = Array2::zeros((1, last_obs.ncols()));
-            last_obs_batch.row_mut(0).assign(&last_obs.row(0));
-            critic.evaluate_value(&last_obs_batch)?[0]
-        } else {
-            T::zero()
+        let mut traj = trajectory;
+        let batch_len = traj.observations.nrows();
+        if batch_len == 0 {
+            return Err(OptimError::InvalidConfig(
+                "A2C received an empty trajectory".to_string(),
+            ));
+        }
+        let count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+        let two = T::one() + T::one();
+
+        // Bootstrap on the successor state s_T, not on the last stored state.
+        let next_value = match (self.critics.first(), traj.final_observation.as_ref()) {
+            (Some(critic), Some(final_obs)) => {
+                let mut batch = Array2::zeros((1, final_obs.len()));
+                batch.row_mut(0).assign(final_obs);
+                critic.evaluate_value(&batch)?[0]
+            }
+            _ => T::zero(),
         };
 
-        traj_copy.compute_advantages(
+        traj.compute_advantages(
             self.config.base_config.discount_factor,
             self.config.base_config.gae_lambda,
             next_value,
         )?;
 
-        // Update critic
-        let values = self.critics[0].evaluate_value(&traj_copy.observations)?;
-        let critic_loss = (&values - &traj_copy.returns)
-            .mapv(|x| x * x)
-            .mean()
-            .unwrap_or(T::zero());
+        // Critic regression against the GAE returns.
+        let values = self.critics[0].evaluate_value(&traj.observations)?;
+        let mut critic_loss = T::zero();
+        let mut residuals = Array1::zeros(batch_len);
+        for i in 0..batch_len {
+            let err = values[i] - traj.returns[i];
+            critic_loss = critic_loss + err * err * inv_n;
+            residuals[i] = two * err * inv_n * self.config.base_config.value_loss_coeff;
+        }
+        let critic_grads = self.critics[0].value_gradient(&traj.observations, &residuals)?;
+        let (clipped_critic, critic_norm) =
+            clip_named_gradients(&critic_grads, self.config.base_config.max_grad_norm);
+        let critic_step = scale_named_gradients(&clipped_critic, -self.critic_lr());
+        self.critics[0].update_parameters(&critic_step)?;
 
-        // Update actor
+        // Actor update.
         let policy_eval = self
             .actor
-            .evaluate_actions(&traj_copy.observations, &traj_copy.actions)?;
-        let actor_loss = -(policy_eval.log_probs * traj_copy.advantages)
-            .mean()
-            .unwrap_or(T::zero());
+            .evaluate_actions(&traj.observations, &traj.actions)?;
+        let mut actor_loss = T::zero();
+        let mut dloss_dlogp = Array1::zeros(batch_len);
+        for i in 0..batch_len {
+            actor_loss = actor_loss - policy_eval.log_probs[i] * traj.advantages[i] * inv_n;
+            dloss_dlogp[i] = -traj.advantages[i] * inv_n;
+        }
 
-        // Update metrics
+        let mut actor_grads =
+            self.actor
+                .log_prob_gradient(&traj.observations, &traj.actions, &dloss_dlogp)?;
+        let entropy_coeff = self.config.base_config.entropy_coeff;
+        if entropy_coeff != T::zero() {
+            let entropy_grad = self.actor.entropy_gradient(&traj.observations)?;
+            let negated = scale_named_gradients(&entropy_grad, -entropy_coeff);
+            add_named_gradients(&mut actor_grads, negated)?;
+        }
+        let actor_norm = self.apply_actor_gradient(&actor_grads)?;
+
+        if self.config.use_target_networks {
+            self.soft_update_targets()?;
+        }
+
         self.metrics.actor_loss = actor_loss;
         self.metrics.critic_losses = vec![critic_loss];
-        self.metrics.policy_entropy = policy_eval.entropy.iter().copied().sum::<T>()
-            / T::from(policy_eval.entropy.len()).unwrap_or(T::zero());
+        self.metrics.critic_grad_norms = vec![critic_norm];
+        self.metrics.base_metrics.policy_grad_norm = actor_norm;
+        self.metrics.base_metrics.value_grad_norm = critic_norm;
+        self.metrics.policy_entropy = policy_eval.entropy.iter().copied().sum::<T>() * inv_n;
+        self.metrics.replay_buffer_size = self.replay_buffer.len();
 
         self.update_count += 1;
 
         Ok(self.metrics.clone())
     }
 
-    /// A3C update (asynchronous)
+    /// A3C update: asynchronous A2C. The per-worker math is identical; the
+    /// asynchrony is an orchestration concern outside this optimizer.
     fn update_a3c(&mut self, trajectory: TrajectoryBatch<T>) -> Result<ActorCriticMetrics<T>> {
-        // A3C is similar to A2C but with asynchronous updates
         self.update_a2c(trajectory)
     }
 
@@ -824,7 +856,6 @@ impl<
         &mut self,
         experiences: &[Experience<T>],
     ) -> Result<ActorCriticMetrics<T>> {
-        // Convert experiences to trajectory format
         let trajectory = self.experiences_to_trajectory(experiences)?;
         self.update_a2c(trajectory)
     }
@@ -837,6 +868,90 @@ impl<
     /// Get current metrics
     pub fn get_metrics(&self) -> &ActorCriticMetrics<T> {
         &self.metrics
+    }
+
+    /// Advance the Ornstein-Uhlenbeck process one step and return the new state.
+    ///
+    /// ```text
+    /// x ← x + θ (μ − x) dt + σ √dt · N(0, 1)
+    /// ```
+    ///
+    /// The state is initialized lazily (it was previously `None` forever, so the
+    /// whole routine was dead code), the noise is a genuine Gaussian rather than a
+    /// uniform draw, and the timestep `dt` enters both the drift and — as `√dt` —
+    /// the diffusion term, as the Ornstein-Uhlenbeck SDE requires.
+    fn update_ou_noise(&mut self, action_dim: usize) -> Result<Array1<T>> {
+        if action_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "OU noise requires a positive action dimension".to_string(),
+            ));
+        }
+
+        let theta = self.config.ddpg_config.ou_noise_theta;
+        let sigma = self.config.ddpg_config.ou_noise_sigma;
+        let dt = self.config.ddpg_config.ou_noise_dt;
+        let mu = self.config.ddpg_config.ou_noise_mu;
+        let sqrt_dt = dt.max(T::zero()).sqrt();
+
+        let needs_reset = match self.ou_noise_state {
+            Some(ref state) => state.len() != action_dim,
+            None => true,
+        };
+        if needs_reset {
+            self.ou_noise_state = Some(Array1::from_elem(action_dim, mu));
+        }
+
+        let state = match self.ou_noise_state {
+            Some(ref mut state) => state,
+            None => {
+                return Err(OptimError::InvalidState(
+                    "OU noise state failed to initialize".to_string(),
+                ))
+            }
+        };
+
+        for value in state.iter_mut() {
+            let noise = T::from(standard_normal_sample()).unwrap_or_else(T::zero);
+            let drift = theta * (mu - *value) * dt;
+            *value = *value + drift + sigma * sqrt_dt * noise;
+        }
+
+        Ok(state.clone())
+    }
+
+    /// Reset the Ornstein-Uhlenbeck exploration state (call between episodes).
+    pub fn reset_ou_noise(&mut self) {
+        self.ou_noise_state = None;
+    }
+
+    /// Deterministic actions with Ornstein-Uhlenbeck exploration noise **added**,
+    /// clipped to the configured action bounds.
+    ///
+    /// This is the missing half of DDPG exploration: the OU process used to be
+    /// advanced (at best) without its output ever reaching an action.
+    pub fn explore_actions(&mut self, states: &Array2<T>) -> Result<Array2<T>> {
+        let distribution = self.actor.get_action_distribution(states)?;
+        let mut actions = distribution.mean.ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "OU exploration requires a distribution with a mean action".to_string(),
+            )
+        })?;
+
+        let action_dim = actions.ncols();
+        let bounds = self.config.ddpg_config.action_bounds;
+
+        for i in 0..actions.nrows() {
+            let noise = self.update_ou_noise(action_dim)?;
+            for j in 0..action_dim {
+                let mut value = actions[[i, j]] + noise[j];
+                if let Some((low, high)) = bounds {
+                    value = value.max(low).min(high);
+                }
+                actions[[i, j]] = value;
+            }
+        }
+
+        Ok(actions)
     }
 
     // Helper methods
@@ -853,6 +968,11 @@ impl<
         let mut states = Array2::zeros((batchsize, state_dim));
 
         for (i, exp) in experiences.iter().enumerate() {
+            if exp.state.len() != state_dim {
+                return Err(OptimError::DimensionMismatch(
+                    "inconsistent state dimensions in experience batch".to_string(),
+                ));
+            }
             states.row_mut(i).assign(&exp.state);
         }
 
@@ -860,11 +980,22 @@ impl<
     }
 
     fn extract_actions(&self, experiences: &[Experience<T>]) -> Result<Array2<T>> {
+        if experiences.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "Empty experience batch".to_string(),
+            ));
+        }
+
         let batchsize = experiences.len();
         let action_dim = experiences[0].action.len();
         let mut actions = Array2::zeros((batchsize, action_dim));
 
         for (i, exp) in experiences.iter().enumerate() {
+            if exp.action.len() != action_dim {
+                return Err(OptimError::DimensionMismatch(
+                    "inconsistent action dimensions in experience batch".to_string(),
+                ));
+            }
             actions.row_mut(i).assign(&exp.action);
         }
 
@@ -877,11 +1008,22 @@ impl<
     }
 
     fn extract_next_states(&self, experiences: &[Experience<T>]) -> Result<Array2<T>> {
+        if experiences.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "Empty experience batch".to_string(),
+            ));
+        }
+
         let batchsize = experiences.len();
         let state_dim = experiences[0].next_state.len();
         let mut next_states = Array2::zeros((batchsize, state_dim));
 
         for (i, exp) in experiences.iter().enumerate() {
+            if exp.next_state.len() != state_dim {
+                return Err(OptimError::DimensionMismatch(
+                    "inconsistent next-state dimensions in experience batch".to_string(),
+                ));
+            }
             next_states.row_mut(i).assign(&exp.next_state);
         }
 
@@ -893,120 +1035,11 @@ impl<
         Ok(Array1::from_vec(dones))
     }
 
-    fn compute_q_values(
-        &self,
-        critic: &V,
-        states: &Array2<T>,
-        _actions: &Array2<T>,
-    ) -> Result<Array1<T>> {
-        // Simplified Q-value computation
-        critic.evaluate_value(states)
-    }
-
-    fn compute_target_q_sac(
-        &self,
-        next_states: &Array2<T>,
-        rewards: &Array1<T>,
-        dones: &Array1<bool>,
-    ) -> Result<Array1<T>> {
-        // Soft TD target: r + γ (1 − done) V(s'). With state-value critics, V(s')
-        // serves as the soft state value, and the twin-critic minimum gives the
-        // standard SAC/TD3 over-estimation control. (A true Q(s,a) target would
-        // require the ValueNetwork trait to accept actions, which it does not.)
-        if self.critics.is_empty() {
-            return Ok(rewards.clone());
-        }
-        let gamma = self.config.base_config.discount_factor;
-        let v_next = if self.critics.len() >= 2 {
-            let v1 = self.critics[0].evaluate_value(next_states)?;
-            let v2 = self.critics[1].evaluate_value(next_states)?;
-            let mut min_v = Array1::zeros(v1.len());
-            for i in 0..v1.len() {
-                min_v[i] = v1[i].min(v2[i]);
-            }
-            min_v
-        } else {
-            self.critics[0].evaluate_value(next_states)?
-        };
-        let mut target = rewards.clone();
-        for i in 0..target.len() {
-            let not_done = if dones[i] { T::zero() } else { T::one() };
-            target[i] = target[i] + gamma * not_done * v_next[i];
-        }
-        Ok(target)
-    }
-
     fn compute_critic_loss(&self, q_values: &Array1<T>, targetq: &Array1<T>) -> Result<T> {
         Ok((q_values - targetq)
             .mapv(|x| x * x)
             .mean()
             .unwrap_or(T::zero()))
-    }
-
-    fn compute_actor_loss_sac(&self, states: &Array2<T>) -> Result<T> {
-        // SAC actor loss: minimize Q(s,a) - alpha * H(π(·|s))
-        let action_dist = self.actor.get_action_distribution(states)?;
-
-        // Sample actions from current policy
-        let sampled_actions = self.sample_actions_from_distribution(&action_dist)?;
-
-        // Compute Q-values for sampled actions
-        let q_values = if self.critics.len() >= 2 {
-            // Use minimum of twin critics (TD3/SAC style)
-            let q1 = self.compute_q_values(&self.critics[0], states, &sampled_actions)?;
-            let q2 = self.compute_q_values(&self.critics[1], states, &sampled_actions)?;
-
-            // Element-wise minimum
-            let mut min_q = Array1::zeros(q1.len());
-            for i in 0..q1.len() {
-                min_q[i] = q1[i].min(q2[i]);
-            }
-            min_q
-        } else {
-            self.compute_q_values(&self.critics[0], states, &sampled_actions)?
-        };
-
-        // Compute log probabilities of sampled actions
-        let log_probs = self.compute_log_probabilities(&action_dist, &sampled_actions)?;
-
-        // SAC actor loss: -E[Q(s,a) - α log π(a|s)]
-        let entropy_term = log_probs * self.temperature;
-        let actor_objective = q_values - entropy_term;
-        let actor_loss = -actor_objective.iter().copied().sum::<T>()
-            / T::from(actor_objective.len()).unwrap_or(T::zero());
-
-        Ok(actor_loss)
-    }
-
-    fn update_temperature_sac(&mut self, states: &Array2<T>) -> Result<T> {
-        if !self.config.sac_config.auto_entropy_tuning {
-            return Ok(T::zero());
-        }
-
-        // Compute current policy entropy
-        let action_dist = self.actor.get_action_distribution(states)?;
-        let sampled_actions = self.sample_actions_from_distribution(&action_dist)?;
-        let log_probs = self.compute_log_probabilities(&action_dist, &sampled_actions)?;
-        let current_entropy =
-            -log_probs.iter().copied().sum::<T>() / T::from(log_probs.len()).unwrap_or(T::zero());
-
-        // Target entropy (typically -action_dim for continuous actions)
-        let target_entropy = self
-            .config
-            .sac_config
-            .target_entropy
-            .unwrap_or(-T::from(sampled_actions.ncols()).expect("unwrap failed"));
-
-        // Temperature loss: α * (target_entropy - current_entropy)
-        let temperature_loss = self.temperature * (target_entropy - current_entropy);
-
-        // Update temperature (simplified gradient step)
-        let temp_lr = self.config.sac_config.temperature_lr;
-        let temp_gradient = target_entropy - current_entropy;
-        self.temperature = (self.temperature - temp_lr * temp_gradient)
-            .max(T::from(0.001).unwrap_or_else(|| T::zero()));
-
-        Ok(temperature_loss)
     }
 
     /// Sample actions from action distribution
@@ -1019,16 +1052,13 @@ impl<
                 if let (Some(ref mean), Some(ref std)) = (&action_dist.mean, &action_dist.std) {
                     let mut actions = mean.clone();
 
-                    // Reparameterization trick: action = mean + std · z, z ~ N(0,1).
-                    // Standard normal sampled via the Box–Muller transform from two
-                    // uniforms (the previous code used uniform[-1,1], not Gaussian).
-                    let mut rng = scirs2_core::random::thread_rng();
+                    // Reparameterization trick: action = mean + std · z, z ~ N(0,1),
+                    // with σ clamped away from zero so a collapsed policy cannot
+                    // produce NaNs downstream.
                     for ((action, &m), &s) in actions.iter_mut().zip(mean.iter()).zip(std.iter()) {
-                        let u1 = rng.random::<f64>().max(1e-12);
-                        let u2 = rng.random::<f64>();
-                        let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-                        let noise = T::from(z).unwrap_or_else(|| T::zero());
-                        *action = m + s * noise;
+                        let sigma = s.max(min_sigma::<T>());
+                        let noise = T::from(standard_normal_sample()).unwrap_or_else(T::zero);
+                        *action = m + sigma * noise;
                     }
 
                     Ok(actions)
@@ -1044,12 +1074,17 @@ impl<
                     let mut actions = Array2::zeros(logits.dim());
 
                     for i in 0..logits.nrows() {
-                        // Convert logits to probabilities (simplified)
+                        // Convert logits to probabilities (stabilized softmax)
                         let row = logits.row(i);
                         let max_logit = row.iter().fold(T::neg_infinity(), |acc, &x| acc.max(x));
                         let exp_logits: Vec<T> =
                             row.iter().map(|&x| (x - max_logit).exp()).collect();
                         let sum_exp: T = exp_logits.iter().cloned().sum();
+                        if !(sum_exp > T::zero()) {
+                            return Err(OptimError::ComputationError(
+                                "categorical logits produced a degenerate distribution".to_string(),
+                            ));
+                        }
 
                         // Sample from the categorical distribution via inverse-CDF
                         // (walk the cumulative probabilities until they exceed a
@@ -1077,9 +1112,9 @@ impl<
                     ))
                 }
             }
-            _ => Err(OptimError::InvalidConfig(
-                "Unsupported distribution type".to_string(),
-            )),
+            other => Err(OptimError::UnsupportedOperation(format!(
+                "sampling from a {other:?} action distribution is not implemented"
+            ))),
         }
     }
 
@@ -1094,24 +1129,29 @@ impl<
                 if let (Some(ref mean), Some(ref std)) = (&action_dist.mean, &action_dist.std) {
                     let mut log_probs = Array1::zeros(actions.nrows());
 
+                    let half = T::from(0.5).unwrap_or_else(|| T::one() / (T::one() + T::one()));
+                    // ½·ln(2π) — the normalizing constant of a unit Gaussian. The
+                    // previous code computed ln(0.5·2·π) = ln(π), which is a
+                    // different number and shifted every log-probability.
+                    let half_log_two_pi =
+                        T::from(0.5 * (2.0 * std::f64::consts::PI).ln()).unwrap_or_else(T::zero);
+
                     for i in 0..actions.nrows() {
                         let mut log_prob = T::zero();
 
                         for j in 0..actions.ncols() {
                             let action = actions[[i, j]];
                             let mu = mean[[i, j]];
-                            let sigma = std[[i, j]];
+                            // σ clamped away from zero: 1/σ and ln σ are otherwise
+                            // ±inf for a collapsed policy.
+                            let sigma = std[[i, j]].max(min_sigma::<T>());
 
-                            // Log probability of Gaussian: -0.5 * ((x - μ) / σ)² - log(σ) - 0.5 * log(2π)
+                            // log N(x; μ, σ) = −½((x−μ)/σ)² − ln σ − ½ ln(2π)
                             let normalized_diff = (action - mu) / sigma;
-                            let log_prob_term = -T::from(0.5).unwrap_or_else(|| T::zero())
-                                * normalized_diff
-                                * normalized_diff
+                            log_prob = log_prob
+                                - half * normalized_diff * normalized_diff
                                 - sigma.ln()
-                                - T::from(0.5 * 2.0 * std::f64::consts::PI)
-                                    .unwrap_or_else(|| T::zero())
-                                    .ln();
-                            log_prob = log_prob + log_prob_term;
+                                - half_log_two_pi;
                         }
 
                         log_probs[i] = log_prob;
@@ -1155,50 +1195,89 @@ impl<
                     ))
                 }
             }
-            _ => Err(OptimError::InvalidConfig(
-                "Unsupported distribution type".to_string(),
-            )),
+            other => Err(OptimError::UnsupportedOperation(format!(
+                "log-probabilities for a {other:?} action distribution are not implemented"
+            ))),
         }
     }
 
-    fn soft_update_targets(&mut self) -> Result<()> {
+    /// Polyak-average the target networks towards the online networks.
+    ///
+    /// `update_parameters` takes an additive **delta**, so the soft update
+    /// `target ← τ·online + (1−τ)·target` is applied as the delta
+    /// `τ·(online − target)`. The previous code passed the *absolute* target
+    /// parameters into that additive API, which doubled the targets on every call
+    /// instead of averaging them.
+    pub fn soft_update_targets(&mut self) -> Result<()> {
         let tau = self.config.target_update_rate;
-        let one_minus_tau = T::one() - tau;
 
-        // Update target critics
         if let Some(ref mut target_critics) = self.target_critics {
             for (target_critic, online_critic) in target_critics.iter_mut().zip(self.critics.iter())
             {
                 let online_params = online_critic.get_parameters();
-                let mut target_params = target_critic.get_parameters();
+                let target_params = target_critic.get_parameters();
+                let mut deltas: HashMap<String, Array1<T>> =
+                    HashMap::with_capacity(target_params.len());
 
-                // Soft update: target = tau * online + (1 - tau) * target
-                for (param_name, online_param) in online_params {
-                    if let Some(target_param) = target_params.get_mut(&param_name) {
-                        *target_param =
-                            &(target_param.clone() * one_minus_tau) + &(online_param * tau);
+                for (name, online_param) in online_params {
+                    if let Some(target_param) = target_params.get(&name) {
+                        if target_param.len() != online_param.len() {
+                            return Err(OptimError::DimensionMismatch(format!(
+                                "target critic parameter '{name}' has length {} but the online \
+                                 critic has {}",
+                                target_param.len(),
+                                online_param.len()
+                            )));
+                        }
+                        let mut delta = Array1::zeros(online_param.len());
+                        for i in 0..online_param.len() {
+                            delta[i] = tau * (online_param[i] - target_param[i]);
+                        }
+                        deltas.insert(name, delta);
                     }
                 }
 
-                target_critic.update_parameters(&target_params)?;
+                target_critic.update_parameters(&deltas)?;
             }
         }
 
-        // Update target actor (for DDPG/TD3)
         if let Some(ref mut target_actor) = self.target_actor {
             let online_params = self.actor.get_parameters();
-            let mut target_params = target_actor.get_parameters();
+            let target_params = target_actor.get_parameters();
+            let mut deltas: HashMap<String, Array1<T>> =
+                HashMap::with_capacity(target_params.len());
 
-            for (param_name, online_param) in online_params {
-                if let Some(target_param) = target_params.get_mut(&param_name) {
-                    *target_param = &(target_param.clone() * one_minus_tau) + &(online_param * tau);
+            for (name, online_param) in online_params {
+                if let Some(target_param) = target_params.get(&name) {
+                    if target_param.len() != online_param.len() {
+                        return Err(OptimError::DimensionMismatch(format!(
+                            "target actor parameter '{name}' has length {} but the online actor \
+                             has {}",
+                            target_param.len(),
+                            online_param.len()
+                        )));
+                    }
+                    let mut delta = Array1::zeros(online_param.len());
+                    for i in 0..online_param.len() {
+                        delta[i] = tau * (online_param[i] - target_param[i]);
+                    }
+                    deltas.insert(name, delta);
                 }
             }
 
-            target_actor.update_parameters(&target_params)?;
+            target_actor.update_parameters(&deltas)?;
         }
 
         Ok(())
+    }
+
+    /// Copy the online parameters into the targets (`τ = 1`).
+    pub fn hard_update_targets(&mut self) -> Result<()> {
+        let tau = self.config.target_update_rate;
+        self.config.target_update_rate = T::one();
+        let result = self.soft_update_targets();
+        self.config.target_update_rate = tau;
+        result
     }
 
     fn experiences_to_trajectory(
@@ -1210,11 +1289,539 @@ impl<
         let rewards = self.extract_rewards(experiences)?;
         let dones = self.extract_dones(experiences)?;
 
-        // Create dummy log_probs and values
+        // Log-probs/values are unknown for replayed transitions; the on-policy
+        // path recomputes both from the current networks.
         let log_probs = Array1::zeros(experiences.len());
         let values = Array1::zeros(experiences.len());
 
-        TrajectoryBatch::new(states, actions, log_probs, rewards, values, dones)
+        let trajectory = TrajectoryBatch::new(states, actions, log_probs, rewards, values, dones)?;
+
+        match experiences.last() {
+            Some(last) => trajectory.with_final_observation(last.next_state.clone()),
+            None => Ok(trajectory),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Off-policy methods — these require an *action-value* critic
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl<
+        T: Float
+            + Debug
+            + scirs2_core::numeric::FromPrimitive
+            + std::iter::Sum
+            + Send
+            + Sync
+            + ScalarOperand
+            + 'static,
+        P: PolicyNetwork<T>,
+        V: QNetwork<T>,
+    > ActorCriticOptimizer<T, P, V>
+{
+    /// Update using experience replay.
+    ///
+    /// Available only for `V: QNetwork` — SAC, TD3 and DDPG are all built on
+    /// `Q(s, a)`, and the deterministic policy gradient needs `∇_a Q(s, a)`.
+    pub fn update_from_replay(&mut self, batchsize: usize) -> Result<ActorCriticMetrics<T>> {
+        if self.replay_buffer.len() < batchsize {
+            return Err(OptimError::InvalidConfig(format!(
+                "not enough experiences in buffer: have {}, need {batchsize}",
+                self.replay_buffer.len()
+            )));
+        }
+
+        let sample = self.replay_buffer.sample(batchsize)?;
+
+        match self.config.method {
+            ActorCriticMethod::SAC => self.update_sac(&sample),
+            ActorCriticMethod::TD3 => self.update_td3(&sample),
+            ActorCriticMethod::DDPG => self.update_ddpg(&sample),
+            other => Err(OptimError::UnsupportedOperation(format!(
+                "{other:?} does not support experience-replay updates"
+            ))),
+        }
+    }
+
+    /// The target critics, falling back to the online critics when target
+    /// networks are disabled (the standard "no target network" ablation).
+    fn effective_target_critics(&self) -> &[V] {
+        match self.target_critics {
+            Some(ref critics) => critics.as_slice(),
+            None => self.critics.as_slice(),
+        }
+    }
+
+    /// The target actor, falling back to the online actor when target networks
+    /// are disabled.
+    fn effective_target_actor(&self) -> &P {
+        match self.target_actor {
+            Some(ref actor) => actor,
+            None => &self.actor,
+        }
+    }
+
+    /// `Q(s, a)` — the action argument genuinely participates.
+    fn compute_q_values(
+        &self,
+        critic: &V,
+        states: &Array2<T>,
+        actions: &Array2<T>,
+    ) -> Result<Array1<T>> {
+        critic.evaluate_q(states, actions)
+    }
+
+    /// Regress the first `n_critics` critics onto `targets`, returning the losses
+    /// and the TD errors of the first critic (used to refresh replay priorities).
+    fn update_critics(
+        &mut self,
+        states: &Array2<T>,
+        actions: &Array2<T>,
+        targets: &Array1<T>,
+        weights: &[T],
+        n_critics: usize,
+    ) -> Result<(Vec<T>, Vec<T>, Array1<T>)> {
+        let batch_len = states.nrows();
+        let count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+        let two = T::one() + T::one();
+        let lr = self.critic_lr();
+        let max_norm = self.config.base_config.max_grad_norm;
+
+        let mut losses = Vec::new();
+        let mut norms = Vec::new();
+        let mut td_errors = Array1::zeros(batch_len);
+
+        for index in 0..n_critics.min(self.critics.len()) {
+            let q_values = self.critics[index].evaluate_q(states, actions)?;
+
+            let mut loss = T::zero();
+            let mut residuals = Array1::zeros(batch_len);
+            for i in 0..batch_len {
+                // Importance-sampling weight from prioritized replay (1 otherwise).
+                let weight = weights.get(i).copied().unwrap_or_else(T::one);
+                let error = q_values[i] - targets[i];
+                loss = loss + weight * error * error * inv_n;
+                residuals[i] = two * weight * error * inv_n;
+                if index == 0 {
+                    td_errors[i] = error;
+                }
+            }
+
+            let gradients = self.critics[index].q_gradient(states, actions, &residuals)?;
+            let (clipped, norm) = clip_named_gradients(&gradients, max_norm);
+            let step = scale_named_gradients(&clipped, -lr);
+            self.critics[index].update_parameters(&step)?;
+
+            losses.push(loss);
+            norms.push(norm);
+        }
+
+        Ok((losses, norms, td_errors))
+    }
+
+    /// Deterministic policy gradient actor update (DDPG / TD3).
+    ///
+    /// `L = −(1/N) Σ Q(sᵢ, μ(sᵢ))`, so `∂L/∂μᵢ = −∇_a Q(sᵢ, μ(sᵢ))/N` and the
+    /// parameter gradient follows by the chain rule through the actor's
+    /// `mean_action_gradient` oracle. This is the DPG theorem, and it is why the
+    /// critic must be a `QNetwork`.
+    fn update_actor_dpg(&mut self, states: &Array2<T>) -> Result<T> {
+        let distribution = self.actor.get_action_distribution(states)?;
+        let mean_actions = distribution.mean.ok_or_else(|| {
+            OptimError::UnsupportedOperation(
+                "the deterministic policy gradient requires an actor with a mean action"
+                    .to_string(),
+            )
+        })?;
+
+        let batch_len = states.nrows();
+        let count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+
+        let q_values = self.critics[0].evaluate_q(states, &mean_actions)?;
+        let actor_loss = -q_values.iter().copied().sum::<T>() * inv_n;
+
+        let dq_da = self.critics[0].action_gradient(states, &mean_actions)?;
+        let weights = dq_da.mapv(|g| -g * inv_n);
+
+        let gradients = self.actor.mean_action_gradient(states, &weights)?;
+        let norm = self.apply_actor_gradient(&gradients)?;
+        self.metrics.base_metrics.policy_grad_norm = norm;
+
+        self.policy_update_count += 1;
+        Ok(actor_loss)
+    }
+
+    /// Reparameterized SAC actor update.
+    ///
+    /// `L = (1/N) Σ [α log π(ãᵢ|sᵢ) − Q(sᵢ, ãᵢ)]` with `ã = μ + σ·z`. The
+    /// parameters enter twice — directly through `log π` and through the sampled
+    /// action — so both terms are assembled:
+    ///
+    /// ```text
+    /// ∇_θ L = ∇_θ [α log π]|_{a fixed}  +  Σ_ij (∂L/∂a_ij) ∂a_ij/∂θ
+    /// ∂L/∂a_ij = (α ∂log π/∂a_ij − ∂Q/∂a_ij)/N ,  ∂log π/∂a = −(a−μ)/σ²
+    /// ```
+    ///
+    /// Returns `(actor_loss, mean_entropy_estimate)`.
+    fn update_actor_sac(&mut self, states: &Array2<T>) -> Result<(T, T)> {
+        let distribution = self.actor.get_action_distribution(states)?;
+        let sampled_actions = self.sample_actions_from_distribution(&distribution)?;
+        let log_probs = self.compute_log_probabilities(&distribution, &sampled_actions)?;
+
+        let batch_len = states.nrows();
+        let count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+        let alpha = self.temperature;
+
+        // Twin-critic minimum, tracking which critic won so the action gradient
+        // comes from the same critic the value did.
+        let q_first = self.critics[0].evaluate_q(states, &sampled_actions)?;
+        let grad_first = self.critics[0].action_gradient(states, &sampled_actions)?;
+        let (q_values, dq_da) = if self.critics.len() >= 2 {
+            let q_second = self.critics[1].evaluate_q(states, &sampled_actions)?;
+            let grad_second = self.critics[1].action_gradient(states, &sampled_actions)?;
+            let mut q = Array1::zeros(batch_len);
+            let mut grad = Array2::zeros(grad_first.dim());
+            for i in 0..batch_len {
+                let use_first = q_first[i] <= q_second[i];
+                q[i] = if use_first { q_first[i] } else { q_second[i] };
+                for j in 0..grad_first.ncols() {
+                    grad[[i, j]] = if use_first {
+                        grad_first[[i, j]]
+                    } else {
+                        grad_second[[i, j]]
+                    };
+                }
+            }
+            (q, grad)
+        } else {
+            (q_first, grad_first)
+        };
+
+        let mut actor_loss = T::zero();
+        let mut mean_entropy = T::zero();
+        for i in 0..batch_len {
+            actor_loss = actor_loss + (alpha * log_probs[i] - q_values[i]) * inv_n;
+            mean_entropy = mean_entropy - log_probs[i] * inv_n;
+        }
+
+        // Direct dependence: ∂/∂θ (α/N) Σ log π(ãᵢ|sᵢ) with ã held fixed.
+        let coefficients = Array1::from_elem(batch_len, alpha * inv_n);
+        let mut gradients =
+            self.actor
+                .log_prob_gradient(states, &sampled_actions, &coefficients)?;
+
+        // Path through the sampled action.
+        let mean = distribution.mean.as_ref().ok_or_else(|| {
+            OptimError::UnsupportedOperation(
+                "the SAC actor update requires a Gaussian distribution mean".to_string(),
+            )
+        })?;
+        let std = distribution.std.as_ref().ok_or_else(|| {
+            OptimError::UnsupportedOperation(
+                "the SAC actor update requires a Gaussian distribution std".to_string(),
+            )
+        })?;
+
+        let mut action_weights = Array2::zeros(sampled_actions.dim());
+        for i in 0..batch_len {
+            for j in 0..sampled_actions.ncols() {
+                let sigma = std[[i, j]].max(min_sigma::<T>());
+                let dlogp_da = -(sampled_actions[[i, j]] - mean[[i, j]]) / (sigma * sigma);
+                action_weights[[i, j]] = (alpha * dlogp_da - dq_da[[i, j]]) * inv_n;
+            }
+        }
+        let path_gradients = self.actor.mean_action_gradient(states, &action_weights)?;
+        add_named_gradients(&mut gradients, path_gradients)?;
+
+        let norm = self.apply_actor_gradient(&gradients)?;
+        self.metrics.base_metrics.policy_grad_norm = norm;
+
+        self.policy_update_count += 1;
+        Ok((actor_loss, mean_entropy))
+    }
+
+    /// SAC temperature (α) update.
+    ///
+    /// `J(α) = α·(H − H̄)` where `H` is the current policy entropy and `H̄` the
+    /// target, so `dJ/dα = H − H̄` and gradient descent gives
+    /// `α ← α − lr·(H − H̄)`. The sign matters: an entropy **above** the target
+    /// must *reduce* α (less exploration bonus needed). The previous code used
+    /// `H̄ − H`, which increased α exactly when it should have decreased it and
+    /// drove the temperature away from its target.
+    fn update_temperature_sac(&mut self, current_entropy: T, action_dim: usize) -> Result<T> {
+        if !self.config.sac_config.auto_entropy_tuning {
+            return Ok(T::zero());
+        }
+
+        let target_entropy = match self.config.sac_config.target_entropy {
+            Some(value) => value,
+            None => -T::from(action_dim).ok_or_else(|| {
+                OptimError::ComputationError(
+                    "failed to convert action dimension to scalar".to_string(),
+                )
+            })?,
+        };
+
+        let gradient = current_entropy - target_entropy;
+        let temperature_loss = self.temperature * gradient;
+
+        let lr = self
+            .temperature_scheduler
+            .as_ref()
+            .map(|s| s.get_lr())
+            .unwrap_or(self.config.sac_config.temperature_lr);
+
+        let floor = T::from(1e-6).unwrap_or_else(T::epsilon);
+        self.temperature = (self.temperature - lr * gradient).max(floor);
+
+        Ok(temperature_loss)
+    }
+
+    /// Soft TD target `r + γ(1−done)·[min_i Q_target_i(s', ã') − α log π(ã'|s')]`
+    /// with `ã' ~ π(·|s')` — the entropy-regularized Bellman backup of SAC.
+    fn compute_target_q_sac(
+        &self,
+        next_states: &Array2<T>,
+        rewards: &Array1<T>,
+        dones: &Array1<bool>,
+    ) -> Result<Array1<T>> {
+        if self.critics.is_empty() {
+            return Ok(rewards.clone());
+        }
+
+        let gamma = self.config.base_config.discount_factor;
+        let actor = self.effective_target_actor();
+        let distribution = actor.get_action_distribution(next_states)?;
+        let next_actions = self.sample_actions_from_distribution(&distribution)?;
+        let next_log_probs = self.compute_log_probabilities(&distribution, &next_actions)?;
+
+        let critics = self.effective_target_critics();
+        let mut q_next = critics[0].evaluate_q(next_states, &next_actions)?;
+        if critics.len() >= 2 {
+            let q_second = critics[1].evaluate_q(next_states, &next_actions)?;
+            for i in 0..q_next.len() {
+                q_next[i] = q_next[i].min(q_second[i]);
+            }
+        }
+
+        let mut targets = rewards.clone();
+        for i in 0..targets.len() {
+            let not_done = if dones[i] { T::zero() } else { T::one() };
+            let soft_value = q_next[i] - self.temperature * next_log_probs[i];
+            targets[i] = targets[i] + gamma * not_done * soft_value;
+        }
+        Ok(targets)
+    }
+
+    /// SAC update: twin critics, reparameterized actor, tuned temperature.
+    fn update_sac(&mut self, sample: &ReplaySample<T>) -> Result<ActorCriticMetrics<T>> {
+        let experiences = sample.experiences.as_slice();
+        let states = self.extract_states(experiences)?;
+        let actions = self.extract_actions(experiences)?;
+        let rewards = self.extract_rewards(experiences)?;
+        let next_states = self.extract_next_states(experiences)?;
+        let dones = self.extract_dones(experiences)?;
+
+        let targets = self.compute_target_q_sac(&next_states, &rewards, &dones)?;
+        let n_critics = self.critics.len();
+        let (critic_losses, critic_norms, td_errors) =
+            self.update_critics(&states, &actions, &targets, &sample.weights, n_critics)?;
+
+        let (actor_loss, mean_entropy) = self.update_actor_sac(&states)?;
+        let temperature_loss = self.update_temperature_sac(mean_entropy, actions.ncols())?;
+
+        if self.config.use_target_networks
+            && self
+                .update_count
+                .is_multiple_of(self.config.sac_config.target_update_freq.max(1))
+        {
+            self.soft_update_targets()?;
+        }
+
+        if self.replay_buffer.is_prioritized() {
+            let errors: Vec<T> = td_errors.iter().copied().collect();
+            self.replay_buffer
+                .update_priorities(&sample.indices, &errors)?;
+        }
+
+        self.metrics.actor_loss = actor_loss;
+        self.metrics.critic_losses = critic_losses;
+        self.metrics.critic_grad_norms = critic_norms;
+        self.metrics.temperature = Some(self.temperature);
+        self.metrics.temperature_loss = Some(temperature_loss);
+        self.metrics.policy_entropy = mean_entropy;
+        self.metrics.target_q_mean = mean_of(&targets);
+        self.metrics.replay_buffer_size = self.replay_buffer.len();
+
+        self.update_count += 1;
+
+        Ok(self.metrics.clone())
+    }
+
+    /// TD3 update: clipped double-Q targets, target-policy smoothing and delayed
+    /// actor updates.
+    fn update_td3(&mut self, sample: &ReplaySample<T>) -> Result<ActorCriticMetrics<T>> {
+        if self.critics.len() < 2 {
+            return Err(OptimError::InvalidConfig(
+                "TD3 requires two critics (clipped double-Q learning); configure n_critics = 2 \
+                 and pass two critics"
+                    .to_string(),
+            ));
+        }
+
+        let experiences = sample.experiences.as_slice();
+        let states = self.extract_states(experiences)?;
+        let actions = self.extract_actions(experiences)?;
+        let rewards = self.extract_rewards(experiences)?;
+        let next_states = self.extract_next_states(experiences)?;
+        let dones = self.extract_dones(experiences)?;
+
+        // Target action with clipped Gaussian smoothing noise.
+        let target_distribution = self
+            .effective_target_actor()
+            .get_action_distribution(&next_states)?;
+        let mut target_actions = target_distribution.mean.clone().ok_or_else(|| {
+            OptimError::UnsupportedOperation(
+                "TD3 requires a deterministic (mean-bearing) target actor".to_string(),
+            )
+        })?;
+
+        let policy_noise = self.config.td3_config.policy_noise;
+        let noise_clip = self.config.td3_config.noise_clip;
+        for action in target_actions.iter_mut() {
+            let raw = T::from(standard_normal_sample()).unwrap_or_else(T::zero) * policy_noise;
+            let clipped = raw.max(-noise_clip).min(noise_clip);
+            *action = *action + clipped;
+            if let Some((low, high)) = self.config.td3_config.action_bounds {
+                *action = action.max(low).min(high);
+            }
+        }
+
+        // min(Q_target1, Q_target2) at the smoothed target action.
+        let target_critics = self.effective_target_critics();
+        let target_q1 = target_critics[0].evaluate_q(&next_states, &target_actions)?;
+        let target_q2 = target_critics[1].evaluate_q(&next_states, &target_actions)?;
+
+        let gamma = self.config.base_config.discount_factor;
+        let mut td_targets = Array1::zeros(rewards.len());
+        for i in 0..rewards.len() {
+            let min_q = target_q1[i].min(target_q2[i]);
+            let not_done = if dones[i] { T::zero() } else { T::one() };
+            td_targets[i] = rewards[i] + gamma * not_done * min_q;
+        }
+
+        let (critic_losses, critic_norms, td_errors) =
+            self.update_critics(&states, &actions, &td_targets, &sample.weights, 2)?;
+
+        // Delayed policy updates.
+        let delay = self.config.td3_config.policy_delay.max(1);
+        let actor_loss = if self.update_count.is_multiple_of(delay) {
+            let loss = self.update_actor_dpg(&states)?;
+            if self.config.use_target_networks {
+                self.soft_update_targets()?;
+            }
+            loss
+        } else {
+            self.metrics.actor_loss
+        };
+
+        if self.replay_buffer.is_prioritized() {
+            let errors: Vec<T> = td_errors.iter().copied().collect();
+            self.replay_buffer
+                .update_priorities(&sample.indices, &errors)?;
+        }
+
+        self.metrics.actor_loss = actor_loss;
+        self.metrics.critic_losses = critic_losses;
+        self.metrics.critic_grad_norms = critic_norms;
+        self.metrics.target_q_mean = mean_of(&td_targets);
+        self.metrics.replay_buffer_size = self.replay_buffer.len();
+
+        self.update_count += 1;
+
+        Ok(self.metrics.clone())
+    }
+
+    /// DDPG update: single critic, deterministic actor, Polyak targets.
+    fn update_ddpg(&mut self, sample: &ReplaySample<T>) -> Result<ActorCriticMetrics<T>> {
+        let experiences = sample.experiences.as_slice();
+        let states = self.extract_states(experiences)?;
+        let actions = self.extract_actions(experiences)?;
+        let rewards = self.extract_rewards(experiences)?;
+        let next_states = self.extract_next_states(experiences)?;
+        let dones = self.extract_dones(experiences)?;
+
+        let target_distribution = self
+            .effective_target_actor()
+            .get_action_distribution(&next_states)?;
+        let mut target_actions = target_distribution.mean.clone().ok_or_else(|| {
+            OptimError::UnsupportedOperation(
+                "DDPG requires a deterministic (mean-bearing) target actor".to_string(),
+            )
+        })?;
+        if let Some((low, high)) = self.config.ddpg_config.action_bounds {
+            target_actions.mapv_inplace(|a| a.max(low).min(high));
+        }
+
+        let target_q =
+            self.effective_target_critics()[0].evaluate_q(&next_states, &target_actions)?;
+
+        let gamma = self.config.base_config.discount_factor;
+        let mut td_targets = Array1::zeros(rewards.len());
+        for i in 0..rewards.len() {
+            let not_done = if dones[i] { T::zero() } else { T::one() };
+            td_targets[i] = rewards[i] + gamma * not_done * target_q[i];
+        }
+
+        let (critic_losses, critic_norms, td_errors) =
+            self.update_critics(&states, &actions, &td_targets, &sample.weights, 1)?;
+
+        let actor_loss = self.update_actor_dpg(&states)?;
+
+        if self.config.use_target_networks {
+            self.soft_update_targets()?;
+        }
+
+        if self.replay_buffer.is_prioritized() {
+            let errors: Vec<T> = td_errors.iter().copied().collect();
+            self.replay_buffer
+                .update_priorities(&sample.indices, &errors)?;
+        }
+
+        self.metrics.actor_loss = actor_loss;
+        self.metrics.critic_losses = critic_losses;
+        self.metrics.critic_grad_norms = critic_norms;
+        self.metrics.target_q_mean = mean_of(&td_targets);
+        self.metrics.replay_buffer_size = self.replay_buffer.len();
+
+        self.update_count += 1;
+
+        Ok(self.metrics.clone())
+    }
+}
+
+/// Mean of an array, or zero for an empty one.
+fn mean_of<T: Float + Debug + Send + Sync + 'static>(values: &Array1<T>) -> T {
+    if values.is_empty() {
+        return T::zero();
+    }
+    let mut total = T::zero();
+    for &v in values.iter() {
+        total = total + v;
+    }
+    match T::from(values.len()) {
+        Some(count) if count > T::zero() => total / count,
+        _ => T::zero(),
     }
 }
 
@@ -1224,23 +1831,32 @@ use scirs2_core::ndarray::s;
 
 #[cfg(test)]
 mod tests {
-    use super::{ActorCriticConfig, ActorCriticOptimizer};
+    use super::{
+        ActorCriticConfig, ActorCriticMethod, ActorCriticOptimizer, Experience,
+        ExperienceReplayBuffer, SACConfig,
+    };
     use crate::error::Result;
     use crate::reinforcement_learning::{
-        ActionDistribution, DistributionType, PolicyEvaluation, PolicyNetwork, ValueNetwork,
+        ActionDistribution, DistributionType, PolicyEvaluation, PolicyNetwork, QNetwork,
+        ValueNetwork,
     };
     use scirs2_core::ndarray::{Array1, Array2};
     use std::collections::HashMap;
 
     // ── Minimal mock networks ─────────────────────────────────────────────
 
-    struct MockValue {
-        v: f64,
+    /// Action-value critic returning a constant `q`, with a real (zero) gradient
+    /// API so the update paths can run end to end.
+    #[derive(Clone)]
+    struct MockQ {
+        q: f64,
     }
 
-    impl ValueNetwork<f64> for MockValue {
-        fn evaluate_value(&self, obs: &Array2<f64>) -> Result<Array1<f64>> {
-            Ok(Array1::from_elem(obs.nrows(), self.v))
+    impl ValueNetwork<f64> for MockQ {
+        fn evaluate_value(&self, _obs: &Array2<f64>) -> Result<Array1<f64>> {
+            Err(crate::error::OptimError::UnsupportedOperation(
+                "MockQ is an action-value critic".to_string(),
+            ))
         }
         fn update_parameters(&mut self, _: &HashMap<String, Array1<f64>>) -> Result<()> {
             Ok(())
@@ -1250,6 +1866,28 @@ mod tests {
         }
     }
 
+    impl QNetwork<f64> for MockQ {
+        fn evaluate_q(&self, states: &Array2<f64>, _actions: &Array2<f64>) -> Result<Array1<f64>> {
+            Ok(Array1::from_elem(states.nrows(), self.q))
+        }
+        fn q_gradient(
+            &self,
+            _states: &Array2<f64>,
+            _actions: &Array2<f64>,
+            _residuals: &Array1<f64>,
+        ) -> Result<HashMap<String, Array1<f64>>> {
+            Ok(HashMap::new())
+        }
+        fn action_gradient(
+            &self,
+            states: &Array2<f64>,
+            actions: &Array2<f64>,
+        ) -> Result<Array2<f64>> {
+            Ok(Array2::zeros((states.nrows(), actions.ncols())))
+        }
+    }
+
+    #[derive(Clone)]
     struct MockPolicy;
 
     impl PolicyNetwork<f64> for MockPolicy {
@@ -1281,21 +1919,27 @@ mod tests {
         }
     }
 
-    fn opt_with(critics: Vec<MockValue>) -> ActorCriticOptimizer<f64, MockPolicy, MockValue> {
+    /// Build an optimizer with `temperature = 0` so the SAC soft target reduces to
+    /// the plain TD target and the assertions stay deterministic.
+    fn opt_with(critics: Vec<MockQ>) -> ActorCriticOptimizer<f64, MockPolicy, MockQ> {
         let n = critics.len();
         let cfg = ActorCriticConfig::<f64> {
             n_critics: n,
+            sac_config: SACConfig::<f64> {
+                temperature: 0.0,
+                ..SACConfig::default()
+            },
             ..ActorCriticConfig::default()
         };
         ActorCriticOptimizer::new(cfg, MockPolicy, critics).expect("construction")
     }
 
-    // ── compute_target_q_sac — TD bootstrap r + γ(1−done)V(s') ──────────
+    // ── compute_target_q_sac — TD bootstrap r + γ(1−done)·min Q ──────────
 
     #[test]
     fn test_target_q_sac_twin_critics_take_minimum() {
         // critics return 3 and 5 → twin-critic min is 3, not 5
-        let opt = opt_with(vec![MockValue { v: 3.0 }, MockValue { v: 5.0 }]);
+        let opt = opt_with(vec![MockQ { q: 3.0 }, MockQ { q: 5.0 }]);
         let states = Array2::zeros((3_usize, 4));
         let rewards = Array1::from_vec(vec![1.0_f64, 2.0, 3.0]);
         let dones = Array1::from_vec(vec![false, true, false]);
@@ -1305,29 +1949,19 @@ mod tests {
             .expect("compute_target_q_sac");
 
         let gamma = 0.99_f64; // default discount factor
-        let v_min = 3.0_f64;
-        assert!(
-            (targets[0] - (1.0 + gamma * v_min)).abs() < 1e-9,
-            "not-done target[0]={} expected={}",
-            targets[0],
-            1.0 + gamma * v_min
-        );
+        let q_min = 3.0_f64;
+        assert!((targets[0] - (1.0 + gamma * q_min)).abs() < 1e-9);
         assert!(
             (targets[1] - 2.0).abs() < 1e-9,
             "done target[1]={} should equal reward=2.0",
             targets[1]
         );
-        assert!(
-            (targets[2] - (3.0 + gamma * v_min)).abs() < 1e-9,
-            "not-done target[2]={} expected={}",
-            targets[2],
-            3.0 + gamma * v_min
-        );
+        assert!((targets[2] - (3.0 + gamma * q_min)).abs() < 1e-9);
     }
 
     #[test]
     fn test_target_q_sac_single_critic_bootstrap() {
-        let opt = opt_with(vec![MockValue { v: 4.0 }]);
+        let opt = opt_with(vec![MockQ { q: 4.0 }]);
         let states = Array2::zeros((2_usize, 4));
         let rewards = Array1::from_vec(vec![2.0_f64, 3.0]);
         let dones = Array1::from_vec(vec![false, false]);
@@ -1337,22 +1971,13 @@ mod tests {
             .expect("compute_target_q_sac");
 
         let gamma = 0.99_f64;
-        assert!(
-            (targets[0] - (2.0 + gamma * 4.0)).abs() < 1e-9,
-            "target[0]={}",
-            targets[0]
-        );
-        assert!(
-            (targets[1] - (3.0 + gamma * 4.0)).abs() < 1e-9,
-            "target[1]={}",
-            targets[1]
-        );
+        assert!((targets[0] - (2.0 + gamma * 4.0)).abs() < 1e-9);
+        assert!((targets[1] - (3.0 + gamma * 4.0)).abs() < 1e-9);
     }
 
     #[test]
     fn test_target_q_sac_all_done_no_bootstrap() {
-        // All episodes terminated → target = reward exactly (no V(s') term)
-        let opt = opt_with(vec![MockValue { v: 99.0 }, MockValue { v: 99.0 }]);
+        let opt = opt_with(vec![MockQ { q: 99.0 }, MockQ { q: 99.0 }]);
         let states = Array2::zeros((3_usize, 2));
         let rewards = Array1::from_vec(vec![5.0_f64, 6.0, 7.0]);
         let dones = Array1::from_vec(vec![true, true, true]);
@@ -1371,11 +1996,74 @@ mod tests {
         }
     }
 
+    // ── F48 regression: SAC temperature sign ─────────────────────────────
+
+    #[test]
+    fn test_temperature_decreases_when_entropy_exceeds_target() {
+        let cfg = ActorCriticConfig::<f64> {
+            method: ActorCriticMethod::SAC,
+            sac_config: SACConfig::<f64> {
+                temperature: 0.2,
+                auto_entropy_tuning: true,
+                target_entropy: Some(-2.0),
+                temperature_lr: 0.1,
+                ..SACConfig::default()
+            },
+            ..ActorCriticConfig::default()
+        };
+        let mut opt =
+            ActorCriticOptimizer::new(cfg, MockPolicy, vec![MockQ { q: 0.0 }]).expect("build");
+
+        let before = opt.temperature();
+        // Current entropy (1.0) far exceeds the target (−2.0) ⇒ α must shrink.
+        let loss = opt
+            .update_temperature_sac(1.0, 2)
+            .expect("temperature update");
+        let after = opt.temperature();
+
+        assert!(
+            after < before,
+            "α must decrease when entropy exceeds the target: {before} -> {after}"
+        );
+        // dJ/dα = H − H̄ = 3 ⇒ α ← 0.2 − 0.1·3 = −0.1, clamped to the floor.
+        assert!(after > 0.0, "α must stay positive, got {after}");
+        assert!((loss - 0.2 * 3.0).abs() < 1e-12, "J(α) = α(H − H̄)");
+    }
+
+    #[test]
+    fn test_temperature_increases_when_entropy_below_target() {
+        let cfg = ActorCriticConfig::<f64> {
+            method: ActorCriticMethod::SAC,
+            sac_config: SACConfig::<f64> {
+                temperature: 0.2,
+                auto_entropy_tuning: true,
+                target_entropy: Some(1.0),
+                temperature_lr: 0.05,
+                ..SACConfig::default()
+            },
+            ..ActorCriticConfig::default()
+        };
+        let mut opt =
+            ActorCriticOptimizer::new(cfg, MockPolicy, vec![MockQ { q: 0.0 }]).expect("build");
+
+        let before = opt.temperature();
+        let _ = opt
+            .update_temperature_sac(-1.0, 2)
+            .expect("temperature update");
+        let after = opt.temperature();
+
+        assert!(
+            after > before,
+            "α must increase when entropy is below the target: {before} -> {after}"
+        );
+        assert!((after - (0.2 + 0.05 * 2.0)).abs() < 1e-12);
+    }
+
     // ── Gaussian Box–Muller sampling: moments converge ───────────────────
 
     #[test]
     fn test_gaussian_sampling_standard_normal_moments() {
-        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let opt = opt_with(vec![MockQ { q: 0.0 }]);
         let n = 2000_usize;
         let dist = ActionDistribution {
             mean: Some(Array2::zeros((n, 1))),
@@ -1398,39 +2086,55 @@ mod tests {
     }
 
     #[test]
-    fn test_gaussian_sampling_shifted_moments() {
-        let opt = opt_with(vec![MockValue { v: 0.0 }]);
-        let n = 2000_usize;
+    fn test_gaussian_log_prob_uses_correct_normalizer() {
+        // log N(0; 0, 1) = −½ln(2π) ≈ −0.9189385. The old code used −ln(π).
+        let opt = opt_with(vec![MockQ { q: 0.0 }]);
         let dist = ActionDistribution {
-            mean: Some(Array2::from_elem((n, 1), 5.0_f64)),
-            std: Some(Array2::from_elem((n, 1), 2.0_f64)),
+            mean: Some(Array2::zeros((1, 1))),
+            std: Some(Array2::from_elem((1, 1), 1.0_f64)),
             logits: None,
             distribution_type: DistributionType::Gaussian,
         };
+        let actions = Array2::zeros((1_usize, 1));
+        let log_probs = opt
+            .compute_log_probabilities(&dist, &actions)
+            .expect("log probs");
 
-        let samples = opt
-            .sample_actions_from_distribution(&dist)
-            .expect("sample_actions");
-
-        let vals: Vec<f64> = samples.iter().copied().collect();
-        let mean = vals.iter().sum::<f64>() / n as f64;
-        let var = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
-
-        assert!((mean - 5.0).abs() < 0.3, "N(5,2) mean={mean} (expected ≈5)");
+        let expected = -0.5 * (2.0 * std::f64::consts::PI).ln();
         assert!(
-            (var.sqrt() - 2.0).abs() < 0.3,
-            "N(5,2) std={} (expected ≈2)",
-            var.sqrt()
+            (log_probs[0] - expected).abs() < 1e-12,
+            "log N(0;0,1) = {} but got {}",
+            expected,
+            log_probs[0]
         );
     }
 
-    // ── Categorical inverse-CDF sampling: stochastic and proportional ────
+    #[test]
+    fn test_gaussian_log_prob_survives_zero_sigma() {
+        let opt = opt_with(vec![MockQ { q: 0.0 }]);
+        let dist = ActionDistribution {
+            mean: Some(Array2::zeros((1, 1))),
+            std: Some(Array2::zeros((1, 1))),
+            logits: None,
+            distribution_type: DistributionType::Gaussian,
+        };
+        let actions = Array2::zeros((1_usize, 1));
+        let log_probs = opt
+            .compute_log_probabilities(&dist, &actions)
+            .expect("log probs");
+        assert!(
+            log_probs[0].is_finite(),
+            "σ = 0 must be clamped, got {}",
+            log_probs[0]
+        );
+    }
+
+    // ── Categorical inverse-CDF sampling ─────────────────────────────────
 
     #[test]
     fn test_categorical_biased_sampling() {
-        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let opt = opt_with(vec![MockQ { q: 0.0 }]);
         let n = 200_usize;
-        // logit[0]=10 >> logit[1,2]=0 → p(class 0) ≈ 0.9999
         let mut logits = Array2::zeros((n, 3_usize));
         for i in 0..n {
             logits[[i, 0]] = 10.0_f64;
@@ -1455,9 +2159,8 @@ mod tests {
 
     #[test]
     fn test_categorical_uniform_covers_all_classes() {
-        let opt = opt_with(vec![MockValue { v: 0.0 }]);
+        let opt = opt_with(vec![MockQ { q: 0.0 }]);
         let n = 600_usize;
-        // Uniform logits [0,0,0] → each class ~33%
         let dist = ActionDistribution {
             mean: None,
             std: None,
@@ -1483,5 +2186,247 @@ mod tests {
                 "uniform categorical class {c} appeared {cnt}/600 (expected ≥100)"
             );
         }
+    }
+
+    // ── F71 regression: prioritized replay ───────────────────────────────
+
+    fn experience(value: f64, priority: f64) -> Experience<f64> {
+        Experience {
+            state: Array1::from_elem(1, value),
+            action: Array1::from_elem(1, 0.0),
+            reward: value,
+            next_state: Array1::from_elem(1, value),
+            done: false,
+            priority,
+            info: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_replay_buffer_rejects_zero_capacity() {
+        assert!(
+            ExperienceReplayBuffer::<f64>::new(0, 0.6, 0.4, false).is_err(),
+            "a zero-capacity buffer must be rejected, not panic on `% 0`"
+        );
+    }
+
+    #[test]
+    fn test_replay_buffer_empty_sample_errors() {
+        let buffer = ExperienceReplayBuffer::<f64>::new(8, 0.6, 0.4, true).expect("buffer");
+        assert!(
+            buffer.sample(4).is_err(),
+            "sampling an empty buffer must error, not panic inside gen_range(0..0)"
+        );
+    }
+
+    #[test]
+    fn test_prioritized_sampling_favours_high_priority() {
+        let mut buffer = ExperienceReplayBuffer::<f64>::new(4, 1.0, 0.4, true).expect("buffer");
+        buffer.add(experience(0.0, 1.0));
+        buffer.add(experience(1.0, 1.0));
+        buffer.add(experience(2.0, 1.0));
+        // Index 3 is 100x more likely than any other.
+        buffer.add(experience(3.0, 100.0));
+
+        let sample = buffer.sample(200).expect("sample");
+        assert_eq!(
+            sample.experiences.len(),
+            4,
+            "batch is capped at buffer size"
+        );
+
+        // Draw many batches and count how often index 3 appears.
+        let mut hits = 0usize;
+        let mut total = 0usize;
+        for _ in 0..100 {
+            let s = buffer.sample(4).expect("sample");
+            for &index in &s.indices {
+                total += 1;
+                if index == 3 {
+                    hits += 1;
+                }
+            }
+        }
+        // p(3) = 100/103 ≈ 0.97; uniform would give 0.25.
+        let ratio = hits as f64 / total as f64;
+        assert!(
+            ratio > 0.8,
+            "high-priority transition drawn {ratio:.2} of the time (uniform would be 0.25)"
+        );
+    }
+
+    #[test]
+    fn test_prioritized_importance_weights_are_normalized() {
+        let mut buffer = ExperienceReplayBuffer::<f64>::new(4, 1.0, 1.0, true).expect("buffer");
+        buffer.add(experience(0.0, 1.0));
+        buffer.add(experience(1.0, 4.0));
+
+        let sample = buffer.sample(2).expect("sample");
+        assert_eq!(sample.weights.len(), sample.indices.len());
+        for &w in &sample.weights {
+            assert!(w > 0.0 && w <= 1.0 + 1e-12, "IS weight out of range: {w}");
+        }
+        let max = sample.weights.iter().cloned().fold(0.0_f64, f64::max);
+        assert!((max - 1.0).abs() < 1e-9, "weights must be max-normalized");
+    }
+
+    #[test]
+    fn test_uniform_mode_returns_unit_weights() {
+        let mut buffer = ExperienceReplayBuffer::<f64>::new(4, 0.6, 0.4, false).expect("buffer");
+        buffer.add(experience(0.0, 1.0));
+        buffer.add(experience(1.0, 50.0));
+
+        let sample = buffer.sample(2).expect("sample");
+        for &w in &sample.weights {
+            assert!(
+                (w - 1.0).abs() < 1e-12,
+                "uniform sampling needs no correction"
+            );
+        }
+    }
+
+    #[test]
+    fn test_update_priorities_changes_sampling_mass() {
+        let mut buffer = ExperienceReplayBuffer::<f64>::new(4, 1.0, 0.4, true).expect("buffer");
+        buffer.add(experience(0.0, 1.0));
+        buffer.add(experience(1.0, 1.0));
+
+        let before = buffer.total_priority();
+        buffer
+            .update_priorities(&[0], &[9.0])
+            .expect("priority update");
+        let after = buffer.total_priority();
+
+        assert!(
+            after > before,
+            "raising a TD error must raise the total priority mass: {before} -> {after}"
+        );
+        assert!(buffer.update_priorities(&[7], &[1.0]).is_err());
+        assert!(buffer.update_priorities(&[0], &[1.0, 2.0]).is_err());
+    }
+
+    // ── F72 regression: Ornstein-Uhlenbeck exploration ───────────────────
+
+    #[test]
+    fn test_ou_noise_is_initialized_and_reverts_to_the_mean() {
+        let mut opt = opt_with(vec![MockQ { q: 0.0 }]);
+        // The state starts uninitialized; one step must create and advance it.
+        let first = opt.update_ou_noise(2).expect("ou step");
+        assert_eq!(first.len(), 2);
+        assert!(
+            first.iter().any(|&x| x != 0.0),
+            "OU noise must actually move away from zero"
+        );
+
+        // With σ = 0 the process is pure mean reversion towards μ = 0.
+        opt.config.ddpg_config.ou_noise_sigma = 0.0;
+        opt.config.ddpg_config.ou_noise_theta = 0.5;
+        opt.config.ddpg_config.ou_noise_dt = 1.0;
+        let before: Vec<f64> = opt
+            .update_ou_noise(2)
+            .expect("ou step")
+            .iter()
+            .copied()
+            .collect();
+        let after: Vec<f64> = opt
+            .update_ou_noise(2)
+            .expect("ou step")
+            .iter()
+            .copied()
+            .collect();
+        for (b, a) in before.iter().zip(after.iter()) {
+            assert!(
+                a.abs() <= b.abs() + 1e-12,
+                "mean reversion must shrink |x|: {b} -> {a}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explore_actions_adds_noise_and_respects_bounds() {
+        let mut opt = opt_with(vec![MockQ { q: 0.0 }]);
+        opt.config.ddpg_config.ou_noise_sigma = 5.0;
+        opt.config.ddpg_config.ou_noise_dt = 1.0;
+        opt.config.ddpg_config.action_bounds = Some((-1.0, 1.0));
+
+        let states = Array2::zeros((8_usize, 3));
+        let actions = opt.explore_actions(&states).expect("explore");
+
+        assert_eq!(actions.dim(), (8, 2));
+        assert!(
+            actions.iter().any(|&a| a != 0.0),
+            "exploration noise must reach the returned actions"
+        );
+        for &a in actions.iter() {
+            assert!((-1.0..=1.0).contains(&a), "action {a} out of bounds");
+        }
+    }
+
+    // ── F15 regression: target networks exist and soft-update correctly ──
+
+    #[test]
+    fn test_target_networks_are_populated_when_enabled() {
+        let cfg = ActorCriticConfig::<f64> {
+            use_target_networks: true,
+            ..ActorCriticConfig::default()
+        };
+        let opt = ActorCriticOptimizer::new(cfg, MockPolicy, vec![MockQ { q: 1.0 }])
+            .expect("construction");
+        assert!(opt.target_actor.is_some(), "target actor must be created");
+        assert!(
+            opt.target_critics.is_some(),
+            "target critics must be created"
+        );
+    }
+
+    #[test]
+    fn test_soft_update_moves_target_towards_online() {
+        /// Critic whose single parameter is observable, to check Polyak averaging.
+        #[derive(Clone)]
+        struct ParamCritic {
+            w: f64,
+        }
+        impl ValueNetwork<f64> for ParamCritic {
+            fn evaluate_value(&self, obs: &Array2<f64>) -> Result<Array1<f64>> {
+                Ok(Array1::from_elem(obs.nrows(), self.w))
+            }
+            fn update_parameters(&mut self, d: &HashMap<String, Array1<f64>>) -> Result<()> {
+                if let Some(delta) = d.get("w") {
+                    self.w += delta[0];
+                }
+                Ok(())
+            }
+            fn get_parameters(&self) -> HashMap<String, Array1<f64>> {
+                let mut m = HashMap::new();
+                m.insert("w".to_string(), Array1::from_elem(1, self.w));
+                m
+            }
+        }
+
+        let cfg = ActorCriticConfig::<f64> {
+            use_target_networks: true,
+            target_update_rate: 0.25,
+            ..ActorCriticConfig::default()
+        };
+        let mut opt = ActorCriticOptimizer::new(cfg, MockPolicy, vec![ParamCritic { w: 4.0 }])
+            .expect("construction");
+
+        // Move the online critic, then Polyak-average the target towards it.
+        opt.critics[0].w = 8.0;
+        opt.soft_update_targets().expect("soft update");
+
+        let target_w = opt
+            .target_critics
+            .as_ref()
+            .expect("targets")
+            .first()
+            .expect("critic")
+            .w;
+        // target ← 0.25·8 + 0.75·4 = 5.0 (NOT 4 + 5 = 9, which is what passing the
+        // absolute target parameters into the additive API used to produce).
+        assert!(
+            (target_w - 5.0).abs() < 1e-12,
+            "Polyak average should be 5.0, got {target_w}"
+        );
     }
 }

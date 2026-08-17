@@ -558,19 +558,7 @@ pub mod utils {
 }
 
 /// Prelude module for common imports
-pub mod prelude {
-    pub use super::{
-        ClockOffset, ClockSynchronizationBuilder, ClockSynchronizationConfig,
-        ClockSynchronizationError, ClockSynchronizationManager, Result,
-    };
-
-    pub use super::health::{AlertSeverity, HealthCheckType};
-    pub use super::protocols::{ClockSyncProtocol, NtpConfig, PtpConfig};
-    pub use super::quality::{QualityGrade, QualityMetric, TrendDirection};
-    pub use super::sources::{AtomicClockType, ClockSource, TimeSource};
-    pub use super::statistics::{PerformanceMetric, ReportFormat};
-    pub use super::utils;
-}
+pub mod prelude {}
 
 // Module-level documentation tests
 #[cfg(test)]

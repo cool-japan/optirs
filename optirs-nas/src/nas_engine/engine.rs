@@ -152,10 +152,20 @@ pub trait ArchitectureController<T: Float + Debug + Send + Sync + 'static>: Send
     fn validate(&self, architecture: &OptimizerArchitecture<T>) -> Result<bool>;
 }
 
-/// Performance evaluator for architectures
+/// Performance evaluator for architectures.
+///
+/// This is the engine-side handle onto the real evaluation subsystem in
+/// [`crate::evaluation`]: every call to [`PerformanceEvaluator::evaluate`]
+/// instantiates the concrete optimizer described by the candidate architecture
+/// and actually runs it on the registered benchmark test functions. Earlier
+/// releases carried a stub here that returned a constant score, which made the
+/// whole search a no-op; that stub is gone.
 #[derive(Debug)]
 pub struct PerformanceEvaluator<T: Float + Debug + Send + Sync + 'static> {
     config: EvaluationConfig<T>,
+    /// Live evaluator performing benchmark execution, caching and statistics.
+    inner: crate::evaluation::PerformanceEvaluator<T>,
+    /// Results returned so far, shared so cheap clones observe the same view.
     evaluation_cache: Arc<Mutex<HashMap<String, EvaluationResults<T>>>>,
     evaluation_count: usize,
 }
@@ -178,18 +188,29 @@ pub struct ProgressiveStage<T: Float + Debug + Send + Sync + 'static> {
     pub stage_config: NASConfig<T>,
 }
 
-/// Performance prediction system
+/// Performance prediction system.
+///
+/// Wraps the real learned predictor in [`crate::evaluation::PerformancePredictor`]
+/// (a ridge-regularised linear model over a deterministic architecture feature
+/// vector, trained online from observed evaluations). Earlier releases returned
+/// a constant `0.6` here.
 #[derive(Debug)]
 pub struct PerformancePredictor<T: Float + Debug + Send + Sync + 'static> {
     model_type: PredictorType,
+    /// Live predictor performing feature extraction, scoring and online updates.
+    inner: crate::evaluation::PerformancePredictor<T>,
     training_data: Vec<(OptimizerArchitecture<T>, EvaluationResults<T>)>,
     prediction_accuracy: T,
     confidence_threshold: T,
 }
 
 /// Types of predictors available
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredictorType {
+    /// Ridge-regularised linear model over the architecture feature vector.
+    /// This is the model actually implemented by
+    /// [`crate::evaluation::PerformancePredictor`].
+    LinearRegression,
     NeuralNetwork,
     GaussianProcess,
     RandomForest,
@@ -1133,38 +1154,60 @@ struct DefaultArchitectureController<T: Float + Debug + Send + Sync + 'static> {
 }
 
 // Implementations for PerformanceEvaluator
-impl<T: Float + Debug + Send + Sync + 'static> PerformanceEvaluator<T> {
+impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum>
+    PerformanceEvaluator<T>
+{
     pub fn new(config: EvaluationConfig<T>) -> Result<Self> {
+        let evaluation_config = crate::EvaluationConfig::from_engine_config(&config);
+        let mut inner = crate::evaluation::PerformanceEvaluator::<T>::new(evaluation_config)?;
+        inner.initialize()?;
+
         Ok(Self {
             config,
+            inner,
             evaluation_cache: Arc::new(Mutex::new(HashMap::new())),
             evaluation_count: 0,
         })
     }
 
+    /// Evaluate a candidate architecture by actually running it.
+    ///
+    /// Delegates to [`crate::evaluation::PerformanceEvaluator::evaluate_architecture`],
+    /// which builds the optimizer the architecture describes and minimizes each
+    /// registered benchmark function with it. The achieved objectives determine
+    /// the returned scores, so two different architectures receive different
+    /// scores and an identical architecture reproduces exactly.
     pub fn evaluate(
         &mut self,
         architecture: &OptimizerArchitecture<T>,
     ) -> Result<EvaluationResults<T>> {
-        // Implementation would perform actual evaluation
-        // For now, return dummy results
-        let mut scores = HashMap::new();
-        scores.insert(
-            EvaluationMetric::FinalPerformance,
-            scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
-        );
+        let results = self.inner.evaluate_architecture(architecture)?;
+        self.evaluation_count += 1;
 
-        Ok(EvaluationResults {
-            metric_scores: scores,
-            overall_score: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),
-            confidence_intervals: HashMap::new(),
-            evaluation_time: Duration::from_secs(1),
-            success: true,
-            error_message: None,
-            cv_results: None,
-            benchmark_results: HashMap::new(),
-            training_trajectory: Vec::new(),
-        })
+        // Mirror the result into the engine-visible cache. Lock poisoning is
+        // recovered from rather than propagated: a poisoned mirror must never
+        // abort an otherwise successful evaluation.
+        match self.evaluation_cache.lock() {
+            Ok(mut cache) => {
+                cache.insert(architecture.architecture_id.clone(), results.clone());
+            }
+            Err(poisoned) => {
+                let mut cache = poisoned.into_inner();
+                cache.insert(architecture.architecture_id.clone(), results.clone());
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Number of architectures evaluated by this evaluator.
+    pub fn evaluation_count(&self) -> usize {
+        self.evaluation_count
+    }
+
+    /// Engine-level evaluation configuration in force.
+    pub fn config(&self) -> &EvaluationConfig<T> {
+        &self.config
     }
 }
 
@@ -1189,50 +1232,103 @@ impl<T: Float + Debug + Send + Sync + 'static> ProgressiveNAS<T> {
 }
 
 // Implementations for PerformancePredictor
-impl<T: Float + Debug + Send + Sync + 'static> PerformancePredictor<T> {
-    pub fn new(_config: &EvaluationConfig<T>) -> Result<Self> {
+impl<T: Float + Debug + Default + Send + Sync + 'static> PerformancePredictor<T> {
+    pub fn new(config: &EvaluationConfig<T>) -> Result<Self> {
+        let evaluation_config = crate::EvaluationConfig::from_engine_config(config);
+        let inner = crate::evaluation::PerformancePredictor::<T>::new(&evaluation_config)?;
+
         Ok(Self {
-            model_type: PredictorType::NeuralNetwork,
+            model_type: PredictorType::LinearRegression,
+            inner,
             training_data: Vec::new(),
-            prediction_accuracy: scirs2_core::numeric::NumCast::from(0.8)
-                .unwrap_or_else(|| T::zero()),
+            prediction_accuracy: T::zero(),
             confidence_threshold: scirs2_core::numeric::NumCast::from(0.7)
                 .unwrap_or_else(|| T::zero()),
         })
     }
 
+    /// Predict the performance of an architecture without running it.
+    ///
+    /// Delegates to the learned model, which extracts a deterministic feature
+    /// vector from the architecture and scores it; the returned confidence
+    /// interval widens when little training data has been seen.
     pub fn predict(
         &mut self,
-        _architecture: &OptimizerArchitecture<T>,
+        architecture: &OptimizerArchitecture<T>,
     ) -> Result<EvaluationResults<T>> {
-        // Prediction logic would go here
-        let mut scores = HashMap::new();
-        scores.insert(
-            EvaluationMetric::FinalPerformance,
-            scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
-        );
-
-        Ok(EvaluationResults {
-            metric_scores: scores,
-            overall_score: scirs2_core::numeric::NumCast::from(0.6).unwrap_or_else(|| T::zero()),
-            confidence_intervals: HashMap::new(),
-            evaluation_time: Duration::from_millis(10),
-            success: true,
-            error_message: None,
-            cv_results: None,
-            benchmark_results: HashMap::new(),
-            training_trajectory: Vec::new(),
-        })
+        self.inner.predict_performance(architecture)
     }
 
+    /// Feed observed evaluations back into the model.
+    ///
+    /// Each result performs one online gradient step on the predictor's
+    /// weights, and the running prediction accuracy (1 - mean absolute error
+    /// over the retained history) is refreshed.
     pub fn update_training_data(&mut self, results: &[SearchResult<T>]) -> Result<()> {
+        let evaluations: Vec<EvaluationResults<T>> = results
+            .iter()
+            .map(|r| r.evaluation_results.clone())
+            .collect();
+        self.inner.update_with_results(&evaluations)?;
+
         for result in results {
             self.training_data.push((
                 result.architecture.clone(),
                 result.evaluation_results.clone(),
             ));
         }
+
+        // Recompute a real accuracy estimate: 1 - mean absolute error between
+        // the model's current prediction and the observed score, over the most
+        // recent observations.
+        const ACCURACY_WINDOW: usize = 64;
+        let window: Vec<&(OptimizerArchitecture<T>, EvaluationResults<T>)> = self
+            .training_data
+            .iter()
+            .rev()
+            .take(ACCURACY_WINDOW)
+            .collect();
+
+        if !window.is_empty() {
+            let mut error_sum = T::zero();
+            let mut counted = 0usize;
+            for (architecture, observed) in &window {
+                if let Ok(prediction) = self.inner.predict_performance(architecture) {
+                    let diff = prediction.overall_score - observed.overall_score;
+                    error_sum = error_sum + diff.abs();
+                    counted += 1;
+                }
+            }
+            if counted > 0 {
+                let count: T =
+                    scirs2_core::numeric::NumCast::from(counted).unwrap_or_else(|| T::one());
+                let mean_abs_error = error_sum / count;
+                self.prediction_accuracy = (T::one() - mean_abs_error).max(T::zero());
+            }
+        }
+
         Ok(())
+    }
+
+    /// Current estimated prediction accuracy in `[0, 1]`.
+    pub fn prediction_accuracy(&self) -> T {
+        self.prediction_accuracy
+    }
+
+    /// Minimum accuracy at which the predictor should be trusted in place of a
+    /// full evaluation.
+    pub fn confidence_threshold(&self) -> T {
+        self.confidence_threshold
+    }
+
+    /// Kind of model backing this predictor.
+    pub fn model_type(&self) -> &PredictorType {
+        &self.model_type
+    }
+
+    /// Number of `(architecture, evaluation)` pairs observed so far.
+    pub fn training_sample_count(&self) -> usize {
+        self.training_data.len()
     }
 }
 

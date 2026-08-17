@@ -1,4 +1,4 @@
-# OptiRS TPU TODO (v0.3.1)
+# OptiRS TPU TODO (v0.3.2)
 
 ## Module Status: Production Ready
 
@@ -142,5 +142,5 @@ Every remaining optirs-tpu item requires Google Cloud TPU APIs, cloud IAM/networ
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.1
+**Version**: v0.3.2
 **Release Date**: 2026-03-27

@@ -53,7 +53,9 @@ use optirs_core::adaptive_selection::OptimizerType;
 // Import for external compatibility
 
 /// Transformer-based meta-learning optimizer
-pub struct TransformerOptimizer<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerOptimizer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Core transformer architecture
     transformer: TransformerArchitecture<T>,
 
@@ -306,7 +308,9 @@ impl<
 
 /// Optimization trajectory for training
 #[derive(Debug, Clone)]
-pub struct OptimizationTrajectory<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationTrajectory<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub gradient_sequence: Array2<T>,
     pub parameter_sequence: Array2<T>,
     pub loss_sequence: Array1<T>,
@@ -324,7 +328,9 @@ pub struct TrajectoryMetadata {
 
 /// Training sequence
 #[derive(Debug, Clone)]
-pub struct TrainingSequence<T: Float + Debug + Send + Sync + 'static> {
+pub struct TrainingSequence<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub input: Array2<T>,
     pub target: Array2<T>,
     pub sequence_length: usize,

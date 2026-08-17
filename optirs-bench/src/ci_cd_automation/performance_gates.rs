@@ -8,6 +8,7 @@ use crate::error::{OptimError, Result};
 use crate::performance_regression_detector::{
     MetricType as RegressionMetricType, MetricValue, PerformanceMeasurement,
 };
+use crate::regression_tester::distributions::{linear_regression, welch_t_test_summary};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -53,6 +54,18 @@ pub struct BaselineMetric {
     pub last_updated: SystemTime,
     /// Statistical significance
     pub statistical_significance: f64,
+    /// Standard deviation of the baseline samples, when it was recorded.
+    ///
+    /// Required by the statistical gate: without a dispersion estimate there
+    /// is nothing to test a new measurement against. `variance_threshold` is a
+    /// *tolerance* expressed as a percentage, not a standard deviation, and
+    /// `confidence_interval` does not record the level it was computed at, so
+    /// neither can be reinterpreted as sigma without inventing an assumption.
+    /// When this is `None` the statistical gate reports
+    /// [`GateStatus::Skipped`] rather than silently degrading to a fixed
+    /// percentage rule.
+    #[serde(default)]
+    pub std_dev: Option<f64>,
 }
 
 /// Current state of a performance gate
@@ -343,6 +356,36 @@ pub enum TrendDirection {
     Stable,
     /// Volatile/unclear trend
     Volatile,
+    /// The trend could not be determined.
+    ///
+    /// Reported when there are too few points to fit a line, when the series
+    /// has no usable scale (a zero mean, so a relative change is undefined),
+    /// or when the metric's polarity is unknown (a `Custom` metric, where
+    /// "higher" could mean either better or worse).
+    Unknown,
+}
+
+/// Whether a larger value of `metric_type` is better.
+///
+/// Returns `None` when the polarity is genuinely unknown, which is the case
+/// for user-defined [`MetricType::Custom`] metrics: guessing would be worse
+/// than declining to gate.
+///
+/// This is the fix for the inverted trend gate: a rising execution time, memory
+/// footprint, latency, CPU usage or error rate is a *degradation*, while a
+/// rising throughput is an *improvement*. Treating a rising slope as
+/// "Improving" for every metric let real slowdowns sail through the gate while
+/// failing builds that got faster.
+pub fn higher_is_better(metric_type: &MetricType) -> Option<bool> {
+    match metric_type {
+        MetricType::Throughput => Some(true),
+        MetricType::ExecutionTime
+        | MetricType::MemoryUsage
+        | MetricType::CpuUsage
+        | MetricType::Latency
+        | MetricType::ErrorRate => Some(false),
+        MetricType::Custom(_) => None,
+    }
 }
 
 /// Alert manager for performance gates
@@ -519,8 +562,9 @@ impl PerformanceGateEvaluator {
         let evaluation_id = uuid::Uuid::new_v4().to_string();
         let start_time = SystemTime::now();
 
-        // Extract metrics from test results
-        let current_metrics = self.extract_metrics_from_results(test_results)?;
+        // Extract per-test samples, then the aggregate metrics derived from them.
+        let metric_samples = self.extract_metric_samples_from_results(test_results);
+        let current_metrics = Self::aggregate_metric_samples(&metric_samples);
 
         // Update trend analyzer with new data
         self.update_trend_analysis(&current_metrics)?;
@@ -535,8 +579,16 @@ impl PerformanceGateEvaluator {
             }
 
             if let Some(current_value) = current_metrics.get(metric_type) {
-                let gate_result =
-                    self.evaluate_individual_gate(metric_type, *current_value, gate_config)?;
+                let samples = metric_samples
+                    .get(metric_type)
+                    .map(|values| values.as_slice())
+                    .unwrap_or(&[]);
+                let gate_result = self.evaluate_individual_gate(
+                    metric_type,
+                    *current_value,
+                    samples,
+                    gate_config,
+                )?;
 
                 if gate_result.status == GateStatus::Failed {
                     overall_status = match overall_status {
@@ -590,59 +642,89 @@ impl PerformanceGateEvaluator {
         })
     }
 
-    /// Extract performance metrics from test results
+    /// Extract the raw per-test sample vector for each metric.
+    ///
+    /// Statistical gates need the samples, not just their mean, so the samples
+    /// are the primary output and the aggregates are derived from them via
+    /// [`Self::aggregate_metric_samples`].
+    fn extract_metric_samples_from_results(
+        &self,
+        test_results: &[CiCdTestResult],
+    ) -> HashMap<MetricType, Vec<f64>> {
+        let mut samples: HashMap<MetricType, Vec<f64>> = HashMap::new();
+        if test_results.is_empty() {
+            return samples;
+        }
+
+        let execution_times: Vec<f64> = test_results
+            .iter()
+            .filter_map(|r| r.duration)
+            .map(|d| d.as_secs_f64())
+            .filter(|value| value.is_finite())
+            .collect();
+        if !execution_times.is_empty() {
+            samples.insert(MetricType::ExecutionTime, execution_times.clone());
+        }
+
+        let memory_usage: Vec<f64> = test_results
+            .iter()
+            .map(|r| r.resource_usage.peak_memory_mb)
+            .filter(|value| value.is_finite())
+            .collect();
+        if !memory_usage.is_empty() {
+            samples.insert(MetricType::MemoryUsage, memory_usage);
+        }
+
+        let cpu_usage: Vec<f64> = test_results
+            .iter()
+            .map(|r| r.resource_usage.peak_cpu_percent)
+            .filter(|value| value.is_finite())
+            .collect();
+        if !cpu_usage.is_empty() {
+            samples.insert(MetricType::CpuUsage, cpu_usage);
+        }
+
+        // Per-test throughput: tests completed per second of that test's own
+        // wall-clock time. Aggregating these gives a usable sample vector,
+        // where a single pooled ratio would give exactly one observation.
+        let throughput: Vec<f64> = execution_times
+            .iter()
+            .filter(|duration| **duration > 0.0)
+            .map(|duration| 1.0 / duration)
+            .collect();
+        if !throughput.is_empty() {
+            samples.insert(MetricType::Throughput, throughput);
+        }
+
+        samples
+    }
+
+    /// Mean of each metric's samples.
+    fn aggregate_metric_samples(
+        samples: &HashMap<MetricType, Vec<f64>>,
+    ) -> HashMap<MetricType, f64> {
+        samples
+            .iter()
+            .filter(|(_, values)| !values.is_empty())
+            .map(|(metric_type, values)| {
+                (
+                    metric_type.clone(),
+                    values.iter().sum::<f64>() / values.len() as f64,
+                )
+            })
+            .collect()
+    }
+
+    /// Extract performance metrics from test results.
+    ///
+    /// Retained for callers that only need the aggregates.
     fn extract_metrics_from_results(
         &self,
         test_results: &[CiCdTestResult],
     ) -> Result<HashMap<MetricType, f64>> {
-        let mut metrics = HashMap::new();
-
-        // Calculate aggregate metrics
-        if !test_results.is_empty() {
-            // Execution time metrics
-            let execution_times: Vec<f64> = test_results
-                .iter()
-                .filter_map(|r| r.duration)
-                .map(|d| d.as_secs_f64())
-                .collect();
-
-            if !execution_times.is_empty() {
-                let avg_execution_time =
-                    execution_times.iter().sum::<f64>() / execution_times.len() as f64;
-                metrics.insert(MetricType::ExecutionTime, avg_execution_time);
-            }
-
-            // Memory usage metrics
-            let memory_usage: Vec<f64> = test_results
-                .iter()
-                .map(|r| r.resource_usage.peak_memory_mb)
-                .collect();
-
-            if !memory_usage.is_empty() {
-                let avg_memory = memory_usage.iter().sum::<f64>() / memory_usage.len() as f64;
-                metrics.insert(MetricType::MemoryUsage, avg_memory);
-            }
-
-            // CPU usage metrics
-            let cpu_usage: Vec<f64> = test_results
-                .iter()
-                .map(|r| r.resource_usage.peak_cpu_percent)
-                .collect();
-
-            if !cpu_usage.is_empty() {
-                let avg_cpu = cpu_usage.iter().sum::<f64>() / cpu_usage.len() as f64;
-                metrics.insert(MetricType::CpuUsage, avg_cpu);
-            }
-
-            // Throughput metrics (simplified calculation)
-            let total_duration: f64 = execution_times.iter().sum();
-            if total_duration > 0.0 {
-                let throughput = test_results.len() as f64 / total_duration;
-                metrics.insert(MetricType::Throughput, throughput);
-            }
-        }
-
-        Ok(metrics)
+        Ok(Self::aggregate_metric_samples(
+            &self.extract_metric_samples_from_results(test_results),
+        ))
     }
 
     /// Evaluate an individual performance gate
@@ -650,11 +732,13 @@ impl PerformanceGateEvaluator {
         &self,
         metric_type: &MetricType,
         current_value: f64,
+        current_samples: &[f64],
         gate_config: &MetricGate,
     ) -> Result<IndividualGateResult> {
         let baseline_value = self.get_baseline_value(metric_type);
         let threshold_value = self.calculate_threshold(baseline_value, gate_config);
 
+        let mut statistical_test = None;
         let status = match gate_config.gate_type {
             GateType::Absolute => {
                 self.evaluate_absolute_gate(current_value, threshold_value, &gate_config.operator)
@@ -666,9 +750,15 @@ impl PerformanceGateEvaluator {
                 &gate_config.operator,
             ),
             GateType::Statistical => {
-                self.evaluate_statistical_gate(metric_type, current_value, baseline_value)?
+                let (status, test) = self.evaluate_statistical_gate(
+                    metric_type,
+                    current_samples,
+                    self.baseline_metrics.get(metric_type),
+                )?;
+                statistical_test = test;
+                status
             }
-            GateType::Trend => self.evaluate_trend_gate(metric_type, current_value)?,
+            GateType::Trend => self.evaluate_trend_gate(metric_type)?,
         };
 
         let percentage_deviation = if baseline_value != 0.0 {
@@ -696,7 +786,13 @@ impl PerformanceGateEvaluator {
             percentage_deviation,
             severity: gate_config.severity.clone(),
             failure_reason,
-            details: self.create_evaluation_details(metric_type, current_value, baseline_value)?,
+            details: self.create_evaluation_details(
+                metric_type,
+                current_value,
+                baseline_value,
+                gate_config,
+                statistical_test,
+            )?,
         })
     }
 
@@ -750,45 +846,136 @@ impl PerformanceGateEvaluator {
         }
     }
 
-    /// Evaluate statistical significance gate
+    /// Evaluate a statistical significance gate with Welch's t-test.
+    ///
+    /// The current run's per-test samples are compared against the recorded
+    /// baseline distribution (mean, standard deviation, sample size). The gate
+    /// fails only when the difference is significant at `1 - confidence_level`
+    /// *and* moves in the bad direction for this metric.
+    ///
+    /// The test is skipped - explicitly, as [`GateStatus::Skipped`] - when the
+    /// inputs cannot support it: no baseline dispersion recorded, fewer than
+    /// two samples on either side, or an unknown-polarity custom metric. The
+    /// previous implementation degraded to "fail if the relative difference
+    /// exceeds 10%", which is a threshold rule wearing a statistics label: it
+    /// ignored the sample sizes, the variances and the configured confidence
+    /// level entirely.
     fn evaluate_statistical_gate(
         &self,
         metric_type: &MetricType,
-        current_value: f64,
-        baseline_value: f64,
-    ) -> Result<GateStatus> {
-        // Simplified statistical test - in reality, this would use proper statistical methods
-        let difference = (current_value - baseline_value).abs();
-        let relative_difference = if baseline_value != 0.0 {
-            difference / baseline_value
-        } else {
-            difference
+        current_samples: &[f64],
+        baseline: Option<&BaselineMetric>,
+    ) -> Result<(GateStatus, Option<StatisticalTestResult>)> {
+        let Some(baseline) = baseline else {
+            return Ok((GateStatus::Skipped, None));
+        };
+        let Some(baseline_std_dev) = baseline.std_dev else {
+            return Ok((GateStatus::Skipped, None));
+        };
+        if !(baseline_std_dev.is_finite()) || baseline_std_dev <= 0.0 || baseline.sample_size < 2 {
+            return Ok((GateStatus::Skipped, None));
+        }
+
+        let finite: Vec<f64> = current_samples
+            .iter()
+            .copied()
+            .filter(|value| value.is_finite())
+            .collect();
+        if finite.len() < 2 {
+            return Ok((GateStatus::Skipped, None));
+        }
+        let current_mean = finite.iter().sum::<f64>() / finite.len() as f64;
+        let current_variance = finite
+            .iter()
+            .map(|value| (value - current_mean) * (value - current_mean))
+            .sum::<f64>()
+            / (finite.len() - 1) as f64;
+
+        let Some(test) = welch_t_test_summary(
+            current_mean,
+            current_variance,
+            finite.len(),
+            baseline.baseline_value,
+            baseline_std_dev * baseline_std_dev,
+            baseline.sample_size,
+        ) else {
+            return Ok((GateStatus::Skipped, None));
         };
 
-        // Simple threshold-based evaluation (would use t-test, Mann-Whitney U, etc. in practice)
-        if relative_difference > 0.1 {
-            // 10% difference threshold
-            Ok(GateStatus::Failed)
+        let alpha = (1.0 - self.confidence_level()).clamp(f64::MIN_POSITIVE, 1.0);
+        let significant = test.p_value < alpha;
+
+        // A significant *improvement* must not fail the build.
+        let worse = match higher_is_better(metric_type) {
+            Some(true) => current_mean < baseline.baseline_value,
+            Some(false) => current_mean > baseline.baseline_value,
+            None => {
+                // Unknown polarity: report the test but do not judge it.
+                return Ok((
+                    GateStatus::Skipped,
+                    Some(StatisticalTestResult {
+                        test_name: "welch_t_test".to_string(),
+                        test_statistic: test.t_statistic,
+                        p_value: test.p_value,
+                        degrees_of_freedom: Some(test.degrees_of_freedom.round().max(0.0) as u32),
+                        conclusion: TestConclusion::Inconclusive,
+                    }),
+                ));
+            }
+        };
+
+        let result = StatisticalTestResult {
+            test_name: "welch_t_test".to_string(),
+            test_statistic: test.t_statistic,
+            p_value: test.p_value,
+            degrees_of_freedom: Some(test.degrees_of_freedom.round().max(0.0) as u32),
+            conclusion: if significant {
+                TestConclusion::Significant
+            } else {
+                TestConclusion::NotSignificant
+            },
+        };
+
+        let status = if significant && worse {
+            GateStatus::Failed
         } else {
-            Ok(GateStatus::Passed)
+            GateStatus::Passed
+        };
+
+        Ok((status, Some(result)))
+    }
+
+    /// Confidence level used for statistical gates, clamped into `(0, 1)`.
+    fn confidence_level(&self) -> f64 {
+        let level = self.trend_analyzer.config.confidence_level;
+        if level.is_finite() && level > 0.0 && level < 1.0 {
+            level
+        } else {
+            0.95
         }
     }
 
-    /// Evaluate trend-based gate
-    fn evaluate_trend_gate(
-        &self,
-        metric_type: &MetricType,
-        current_value: f64,
-    ) -> Result<GateStatus> {
-        if let Some(trend) = self.trend_analyzer.detected_trends.get(metric_type) {
-            match trend.direction {
-                TrendDirection::Degrading if trend.strength > 0.7 => Ok(GateStatus::Failed),
-                TrendDirection::Degrading if trend.strength > 0.4 => Ok(GateStatus::Warning),
-                _ => Ok(GateStatus::Passed),
-            }
-        } else {
-            Ok(GateStatus::Passed)
-        }
+    /// Evaluate a trend-based gate.
+    ///
+    /// Fails on a *statistically significant* degrading trend that also
+    /// explains most of the variation in the window. Direction now follows the
+    /// metric's polarity (see [`higher_is_better`]), so a rising execution time
+    /// fails and a falling one passes - the previous mapping had this exactly
+    /// backwards.
+    fn evaluate_trend_gate(&self, metric_type: &MetricType) -> Result<GateStatus> {
+        let Some(trend) = self.trend_analyzer.detected_trends.get(metric_type) else {
+            // No trend data is not evidence of a healthy trend.
+            return Ok(GateStatus::Skipped);
+        };
+
+        let significant = trend.significance >= self.confidence_level();
+
+        Ok(match trend.direction {
+            TrendDirection::Unknown => GateStatus::Skipped,
+            TrendDirection::Degrading if significant && trend.strength > 0.7 => GateStatus::Failed,
+            TrendDirection::Degrading if significant && trend.strength > 0.4 => GateStatus::Warning,
+            _ => GateStatus::Passed,
+        })
     }
 
     /// Get baseline value for metric
@@ -822,20 +1009,48 @@ impl PerformanceGateEvaluator {
         )
     }
 
-    /// Create detailed evaluation information
+    /// Create detailed evaluation information.
+    ///
+    /// When a statistical test actually ran, its result and p-value are carried
+    /// through instead of the previous empty vector and `None`.
     fn create_evaluation_details(
         &self,
         metric_type: &MetricType,
         current_value: f64,
         baseline_value: f64,
+        gate_config: &MetricGate,
+        statistical_test: Option<StatisticalTestResult>,
     ) -> Result<GateEvaluationDetails> {
+        let mut metadata = HashMap::new();
+        metadata.insert("metric".to_string(), format!("{:?}", metric_type));
+        if let Some(polarity) = higher_is_better(metric_type) {
+            metadata.insert("higher_is_better".to_string(), polarity.to_string());
+        } else {
+            metadata.insert("higher_is_better".to_string(), "unknown".to_string());
+        }
+
+        let evaluation_method = match gate_config.gate_type {
+            GateType::Absolute => "absolute_threshold",
+            GateType::Relative => "relative_threshold",
+            GateType::Statistical => "welch_t_test",
+            GateType::Trend => "ols_slope_trend",
+        }
+        .to_string();
+
+        let p_value = statistical_test.as_ref().map(|test| test.p_value);
+        let effect_size = if baseline_value.is_finite() && baseline_value != 0.0 {
+            Some((current_value - baseline_value) / baseline_value.abs())
+        } else {
+            None
+        };
+
         Ok(GateEvaluationDetails {
-            evaluation_method: "threshold_comparison".to_string(),
-            statistical_tests: Vec::new(), // Would include actual test results
-            confidence_level: 0.95,
-            p_value: None,
-            effect_size: Some((current_value - baseline_value).abs()),
-            metadata: HashMap::new(),
+            evaluation_method,
+            statistical_tests: statistical_test.into_iter().collect(),
+            confidence_level: self.confidence_level(),
+            p_value,
+            effect_size,
+            metadata,
         })
     }
 
@@ -892,12 +1107,30 @@ impl PerformanceGateEvaluator {
         }
     }
 
-    /// Handle gate failures
+    /// Handle gate failures.
+    ///
+    /// `FailBuild`/`MarkUnstable`/`LogWarning` are local, in-process actions
+    /// that this evaluator can execute itself, so those report a real
+    /// `ActionResult` derived from what actually ran. Sending external
+    /// notifications (email/Slack/webhooks) additionally requires network
+    /// credentials this evaluator does not own (they live on
+    /// `ci_cd_automation::integrations::IntegrationManager`, constructed by
+    /// the CI/CD orchestrator, not here) -- so that action is honestly
+    /// reported as `Skipped` with a description explaining why, never as a
+    /// fabricated `Success`. The orchestrator that *does* hold an
+    /// `IntegrationManager` is expected to call
+    /// `IntegrationManager::send_notification` itself using the
+    /// `NotificationType::PerformanceRegression`/`SystemAlert` variants when
+    /// it observes a non-`AllPassed` `GateResult`.
     fn handle_gate_failures(
         &mut self,
         gate_results: &[IndividualGateResult],
     ) -> Result<Vec<GateAction>> {
         let mut actions = Vec::new();
+        let failed_count = gate_results
+            .iter()
+            .filter(|r| r.status == GateStatus::Failed)
+            .count();
 
         // Determine action based on configuration
         let action_type = match self.config.failure_handling.failure_action {
@@ -907,31 +1140,45 @@ impl PerformanceGateEvaluator {
             GateFailureAction::NotifyOnly => GateActionType::SendNotification,
         };
 
+        // These three are genuinely executed by returning them to the
+        // caller: `FailBuild`/`MarkUnstable` are carried in `GateResult`'s
+        // `overall_status` (already set by `evaluate_gates` before this is
+        // called) and `LogWarning` is emitted right here, so all three can
+        // honestly report `Success`. `SendNotification` cannot be executed
+        // from this struct (see doc comment above) and is handled below.
+        let result = match action_type {
+            GateActionType::LogWarning => {
+                log::warn!("performance gate failures detected: {failed_count} gate(s) failed");
+                ActionResult::Success
+            }
+            GateActionType::SendNotification => ActionResult::Skipped,
+            _ => ActionResult::Success,
+        };
+
         let action = GateAction {
             action_type,
-            description: format!(
-                "Gate failure action triggered for {} failed gates",
-                gate_results
-                    .iter()
-                    .filter(|r| r.status == GateStatus::Failed)
-                    .count()
-            ),
+            description: format!("Gate failure action triggered for {failed_count} failed gates"),
             timestamp: SystemTime::now(),
-            result: ActionResult::Success, // Simplified
+            result,
         };
 
         actions.push(action);
 
-        // Send notifications if configured
+        // Record that external notification delivery was requested but must
+        // be dispatched by the orchestrator's `IntegrationManager` -- never
+        // claim it was sent from here.
         if self.config.failure_handling.notifications.send_email
             || self.config.failure_handling.notifications.send_slack
             || self.config.failure_handling.notifications.send_webhooks
         {
             let notification_action = GateAction {
                 action_type: GateActionType::SendNotification,
-                description: "Notification sent for gate failures".to_string(),
+                description: "Notification requested for gate failures; dispatch owned by \
+                    the CI/CD orchestrator's IntegrationManager (not sent by \
+                    PerformanceGateEvaluator directly)"
+                    .to_string(),
                 timestamp: SystemTime::now(),
-                result: ActionResult::Success,
+                result: ActionResult::Skipped,
             };
             actions.push(notification_action);
         }
@@ -1093,48 +1340,105 @@ impl PerformanceTrendAnalyzer {
         Ok(())
     }
 
-    /// Detect trend in metric data
+    /// Detect a trend in metric data by ordinary least squares.
+    ///
+    /// * **Direction** respects the metric's polarity via [`higher_is_better`]:
+    ///   a rising execution time degrades, a rising throughput improves.
+    /// * **Strength** is `|Pearson r|`, a dimensionless `0..=1` measure of how
+    ///   well the line explains the series. The previous `slope.abs().min(1.0)`
+    ///   was in the metric's own units, so it saturated at `1.0` for anything
+    ///   measured in nanoseconds and stayed near `0` for anything measured as a
+    ///   ratio.
+    /// * **Significance** is `1 - p` from the t-test on the slope.
+    /// * **Confidence interval** is `slope +/- t_{1-alpha/2, n-2} * SE(slope)` at
+    ///   the configured confidence level.
+    /// * The **stability threshold** is applied to the relative total change
+    ///   implied by the fit, so `config.sensitivity` is a dimensionless
+    ///   fraction (0.1 = 10% drift across the window) rather than a raw slope.
+    ///
+    /// Degenerate input (fewer than three points, no variation in the index, a
+    /// zero mean, or an unknown-polarity custom metric) yields
+    /// [`TrendDirection::Unknown`] instead of a fabricated direction.
     fn detect_trend(&self, data: &[&PerformanceDataPoint]) -> Result<PerformanceTrend> {
-        let values: Vec<f64> = data.iter().map(|dp| dp.value).collect();
+        let Some(first) = data.first() else {
+            return Err(OptimError::InvalidConfig(
+                "Cannot detect a trend from an empty data series".to_string(),
+            ));
+        };
+        let metric_type = first.metric_type.clone();
+        let duration = data
+            .last()
+            .and_then(|last| last.timestamp.duration_since(first.timestamp).ok())
+            .unwrap_or_default();
 
-        // Simple linear regression for trend detection
-        let n = values.len() as f64;
-        let x_values: Vec<f64> = (0..values.len()).map(|i| i as f64).collect();
-
-        let sum_x = x_values.iter().sum::<f64>();
-        let sum_y = values.iter().sum::<f64>();
-        let sum_xy = x_values
-            .iter()
-            .zip(values.iter())
-            .map(|(x, y)| x * y)
-            .sum::<f64>();
-        let sum_x2 = x_values.iter().map(|x| x * x).sum::<f64>();
-
-        let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
-
-        let direction = if slope > self.config.sensitivity {
-            TrendDirection::Improving
-        } else if slope < -self.config.sensitivity {
-            TrendDirection::Degrading
-        } else {
-            TrendDirection::Stable
+        let undetermined = |slope: f64| PerformanceTrend {
+            metric_type: metric_type.clone(),
+            direction: TrendDirection::Unknown,
+            strength: 0.0,
+            significance: 0.0,
+            slope,
+            duration,
+            confidence_interval: (slope, slope),
+            last_updated: SystemTime::now(),
         };
 
-        let strength = slope.abs().min(1.0);
+        let values: Vec<f64> = data
+            .iter()
+            .map(|dp| dp.value)
+            .filter(|value| value.is_finite())
+            .collect();
+
+        // F37: no fit, no trend - never a division by a zero denominator.
+        let Some(trend) = linear_regression(&values) else {
+            return Ok(undetermined(0.0));
+        };
+        let Some(relative_change) = trend.relative_total_change() else {
+            // A zero (or non-finite) mean leaves the relative change undefined.
+            return Ok(undetermined(trend.slope));
+        };
+
+        let confidence_level =
+            if self.config.confidence_level > 0.0 && self.config.confidence_level < 1.0 {
+                self.config.confidence_level
+            } else {
+                0.95
+            };
+        let confidence_interval = trend
+            .slope_confidence_interval(confidence_level)
+            .unwrap_or((trend.slope, trend.slope));
+
+        let sensitivity = if self.config.sensitivity.is_finite() && self.config.sensitivity > 0.0 {
+            self.config.sensitivity
+        } else {
+            0.0
+        };
+
+        let direction = if relative_change.abs() <= sensitivity {
+            TrendDirection::Stable
+        } else {
+            match higher_is_better(&metric_type) {
+                Some(higher_better) => {
+                    let rising = relative_change > 0.0;
+                    if rising == higher_better {
+                        TrendDirection::Improving
+                    } else {
+                        TrendDirection::Degrading
+                    }
+                }
+                // Unknown polarity: report the movement without claiming it is
+                // good or bad.
+                None => TrendDirection::Unknown,
+            }
+        };
 
         Ok(PerformanceTrend {
-            metric_type: data[0].metric_type.clone(),
+            metric_type,
             direction,
-            strength,
-            significance: 0.8, // Simplified
-            slope,
-            duration: data
-                .last()
-                .expect("unwrap failed")
-                .timestamp
-                .duration_since(data[0].timestamp)
-                .unwrap_or_default(),
-            confidence_interval: (slope - 0.1, slope + 0.1), // Simplified
+            strength: trend.correlation.abs().clamp(0.0, 1.0),
+            significance: (1.0 - trend.p_value).clamp(0.0, 1.0),
+            slope: trend.slope,
+            duration,
+            confidence_interval,
             last_updated: SystemTime::now(),
         })
     }
@@ -1249,6 +1553,7 @@ mod tests {
             sample_size: 100,
             last_updated: SystemTime::now(),
             statistical_significance: 0.95,
+            std_dev: Some(0.05),
         };
 
         assert_eq!(baseline.baseline_value, 1.0);

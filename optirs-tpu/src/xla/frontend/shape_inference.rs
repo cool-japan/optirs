@@ -9,10 +9,14 @@ use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet};
 
 use super::graph_capture::{
-    ConvolutionConfig, DataType, OperandId, OperationType, ReduceOperation, TensorShape,
-    XLAComputation, XLAOperation,
+    AttributeValue, ConvolutionConfig, DataType, OperandId, OperationType, PaddingConfig,
+    ReduceOperation, TensorShape, XLAComputation, XLAOperation,
 };
 use crate::error::{OptimError, Result};
+
+/// Attribute key holding a reshape's target dimensions (an `IntList`, where a
+/// single `-1` entry is inferred from the element count).
+pub const RESHAPE_TARGET_ATTRIBUTE: &str = "new_shape";
 
 /// Shape inference engine for XLA operations
 pub struct ShapeInference {
@@ -459,19 +463,14 @@ impl ShapeInference {
             OperationType::Convolution(conv_config) => {
                 self.infer_convolution_shape(conv_config, &input_shapes, context)?
             }
-            OperationType::Constant(_value) => {
-                // For constants, we infer a scalar shape
-                // The actual value doesn't affect the shape
+            OperationType::Constant(value) => {
+                // The constant carries its own materialized shape, so this is
+                // exact rather than an assumed scalar.
                 InferredShape {
-                    static_shape: Some(TensorShape {
-                        dimensions: vec![],
-                        dynamic_dimensions: vec![],
-                        element_count: 1,
-                        tuple_shapes: vec![],
-                    }),
+                    static_shape: Some(value.tensor_shape()),
                     dynamic_shape: None,
                     confidence: 1.0,
-                    inference_method: "Direct".to_string(),
+                    inference_method: "constant_literal".to_string(),
                     alternatives: vec![],
                 }
             }
@@ -512,8 +511,12 @@ impl ShapeInference {
             ));
         }
 
-        let shape1 = input_shapes[0].expect("unwrap failed");
-        let shape2 = input_shapes[1].expect("unwrap failed");
+        let shape1 = input_shapes[0].ok_or_else(|| {
+            OptimError::from("Elementwise operand 0 has no inferred shape yet".to_string())
+        })?;
+        let shape2 = input_shapes[1].ok_or_else(|| {
+            OptimError::from("Elementwise operand 1 has no inferred shape yet".to_string())
+        })?;
 
         // Broadcast shapes
         if let (Some(static1), Some(static2)) = (&shape1.static_shape, &shape2.static_shape) {
@@ -550,8 +553,12 @@ impl ShapeInference {
             ));
         }
 
-        let shape1 = input_shapes[0].expect("unwrap failed");
-        let shape2 = input_shapes[1].expect("unwrap failed");
+        let shape1 = input_shapes[0].ok_or_else(|| {
+            OptimError::from("Dot operand 0 has no inferred shape yet".to_string())
+        })?;
+        let shape2 = input_shapes[1].ok_or_else(|| {
+            OptimError::from("Dot operand 1 has no inferred shape yet".to_string())
+        })?;
 
         if let (Some(static1), Some(static2)) = (&shape1.static_shape, &shape2.static_shape) {
             // Matrix multiplication: [M, K] x [K, N] -> [M, N]
@@ -595,18 +602,109 @@ impl ShapeInference {
     }
 
     /// Infer shape for reshape operations
+    ///
+    /// The target shape is read from the operation's `new_shape` attribute (an
+    /// `IntList`). A single `-1` entry is inferred from the element count, which
+    /// is also validated against the input: a reshape that would change the
+    /// number of elements is rejected rather than silently accepted.
     fn infer_reshape_shape<T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static>(
         &self,
-        _operation: &XLAOperation<T>,
+        operation: &XLAOperation<T>,
         input_shapes: &[Option<&InferredShape>],
         _context: &ShapeInferenceContext<T>,
     ) -> Result<InferredShape> {
-        if let Some(Some(input_shape)) = input_shapes.first() {
-            // For now, return the input shape (reshape target would be in attributes)
-            Ok((*input_shape).clone())
-        } else {
-            Err(OptimError::from("Reshape requires input shape".to_string()))
+        let Some(Some(input_shape)) = input_shapes.first() else {
+            return Err(OptimError::from("Reshape requires input shape".to_string()));
+        };
+
+        let target = operation
+            .attributes
+            .attributes
+            .get(RESHAPE_TARGET_ATTRIBUTE)
+            .or_else(|| operation.attributes.attributes.get("target_shape"));
+
+        let Some(AttributeValue::IntList(raw_dims)) = target else {
+            return Err(OptimError::from(format!(
+                "Reshape operation {:?} has no `{RESHAPE_TARGET_ATTRIBUTE}` IntList attribute; \
+                 the output shape cannot be inferred from the input alone",
+                operation.id
+            )));
+        };
+
+        let Some(static_shape) = &input_shape.static_shape else {
+            // Without a static input we cannot validate the element count, and
+            // an unvalidated reshape is exactly the bug this replaces.
+            return Ok(InferredShape {
+                static_shape: None,
+                dynamic_shape: None,
+                confidence: 0.5,
+                inference_method: "reshape_dynamic".to_string(),
+                alternatives: vec![],
+            });
+        };
+
+        let input_elements = static_shape.element_count;
+
+        // Resolve at most one inferred (-1) dimension.
+        let mut inferred_index: Option<usize> = None;
+        let mut known_product: usize = 1;
+        let mut dimensions: Vec<usize> = Vec::with_capacity(raw_dims.len());
+
+        for (index, &dim) in raw_dims.iter().enumerate() {
+            if dim == -1 {
+                if inferred_index.is_some() {
+                    return Err(OptimError::from(format!(
+                        "Reshape target {raw_dims:?} has more than one inferred (-1) dimension"
+                    )));
+                }
+                inferred_index = Some(index);
+                dimensions.push(0);
+            } else if dim < 0 {
+                return Err(OptimError::from(format!(
+                    "Reshape target {raw_dims:?} contains invalid negative dimension {dim}"
+                )));
+            } else {
+                let dim = dim as usize;
+                known_product = known_product.saturating_mul(dim);
+                dimensions.push(dim);
+            }
         }
+
+        if let Some(index) = inferred_index {
+            if known_product == 0 || input_elements % known_product != 0 {
+                return Err(OptimError::from(format!(
+                    "Reshape cannot infer dimension {index}: {input_elements} elements are not \
+                     divisible by the product {known_product} of the remaining dimensions"
+                )));
+            }
+            let resolved = input_elements / known_product;
+            if let Some(slot) = dimensions.get_mut(index) {
+                *slot = resolved;
+            }
+        }
+
+        let output_elements: usize = dimensions.iter().product();
+        if output_elements != input_elements {
+            return Err(OptimError::from(format!(
+                "Reshape changes the element count: input shape {:?} has {input_elements} \
+                 elements but target {dimensions:?} has {output_elements}",
+                static_shape.dimensions
+            )));
+        }
+
+        let rank = dimensions.len();
+        Ok(InferredShape {
+            static_shape: Some(TensorShape {
+                dimensions,
+                dynamic_dimensions: vec![false; rank],
+                element_count: output_elements,
+                tuple_shapes: vec![],
+            }),
+            dynamic_shape: None,
+            confidence: input_shape.confidence,
+            inference_method: "reshape".to_string(),
+            alternatives: vec![],
+        })
     }
 
     /// Infer shape for transpose operations
@@ -701,23 +799,149 @@ impl ShapeInference {
         }
     }
 
-    /// Infer shape for convolution operations  
+    /// Infer shape for convolution operations
+    ///
+    /// Assumes the canonical XLA layout: input `[N, C_in, s0, s1, ...]` and
+    /// kernel `[C_out, C_in / feature_group_count, k0, k1, ...]`. Each spatial
+    /// output extent follows the standard formula
+    ///
+    /// ```text
+    /// out = floor((in + pad_lo + pad_hi - dilation * (k - 1) - 1) / stride) + 1
+    /// ```
+    ///
+    /// with `Same` padding chosen to preserve `ceil(in / stride)`.
     fn infer_convolution_shape<
         T: Float + Default + std::fmt::Debug + Clone + Send + Sync + 'static,
     >(
         &self,
-        _conv_config: &ConvolutionConfig,
+        conv_config: &ConvolutionConfig,
         input_shapes: &[Option<&InferredShape>],
         _context: &ShapeInferenceContext<T>,
     ) -> Result<InferredShape> {
-        // Simplified convolution shape inference
-        if let Some(Some(input_shape)) = input_shapes.first() {
-            Ok((*input_shape).clone())
-        } else {
-            Err(OptimError::from(
+        let Some(Some(input)) = input_shapes.first() else {
+            return Err(OptimError::from(
                 "Convolution requires input shape".to_string(),
-            ))
+            ));
+        };
+        let Some(Some(kernel)) = input_shapes.get(1) else {
+            return Err(OptimError::from(
+                "Convolution requires a kernel operand shape".to_string(),
+            ));
+        };
+
+        let (Some(input_shape), Some(kernel_shape)) = (&input.static_shape, &kernel.static_shape)
+        else {
+            return Ok(InferredShape {
+                static_shape: None,
+                dynamic_shape: None,
+                confidence: 0.5,
+                inference_method: "convolution_dynamic".to_string(),
+                alternatives: vec![],
+            });
+        };
+
+        // Leading batch + channel dimensions, then the spatial dimensions.
+        if input_shape.dimensions.len() < 3 || kernel_shape.dimensions.len() < 3 {
+            return Err(OptimError::from(format!(
+                "Convolution requires rank >= 3 operands, got input {:?} and kernel {:?}",
+                input_shape.dimensions, kernel_shape.dimensions
+            )));
         }
+
+        let spatial_rank = input_shape.dimensions.len() - 2;
+        if kernel_shape.dimensions.len() - 2 != spatial_rank {
+            return Err(OptimError::from(format!(
+                "Convolution operand ranks disagree: input has {spatial_rank} spatial dimensions, \
+                 kernel has {}",
+                kernel_shape.dimensions.len() - 2
+            )));
+        }
+
+        if conv_config.feature_group_count == 0 || conv_config.batch_group_count == 0 {
+            return Err(OptimError::from(
+                "Convolution feature_group_count and batch_group_count must be non-zero"
+                    .to_string(),
+            ));
+        }
+
+        let batch = input_shape
+            .dimensions
+            .first()
+            .copied()
+            .unwrap_or(0)
+            .checked_div(conv_config.batch_group_count)
+            .ok_or_else(|| {
+                OptimError::from("Convolution batch_group_count must be non-zero".to_string())
+            })?;
+
+        let output_features = kernel_shape.dimensions.first().copied().unwrap_or(0);
+
+        let explicit_padding = match &conv_config.padding {
+            PaddingConfig::Explicit(pads) => Some(pads.as_slice()),
+            _ => None,
+        };
+
+        let mut dimensions: Vec<usize> = Vec::with_capacity(spatial_rank + 2);
+        dimensions.push(batch);
+        dimensions.push(output_features);
+
+        for axis in 0..spatial_rank {
+            let in_size = input_shape.dimensions[axis + 2];
+            let kernel_size = kernel_shape.dimensions[axis + 2];
+            let stride = conv_config.strides.get(axis).copied().unwrap_or(1).max(1);
+            let dilation = conv_config.dilation.get(axis).copied().unwrap_or(1).max(1);
+
+            // Extent covered by the dilated kernel.
+            let effective_kernel = dilation.saturating_mul(kernel_size.saturating_sub(1)) + 1;
+
+            let out = match &conv_config.padding {
+                PaddingConfig::Same => in_size.div_ceil(stride),
+                PaddingConfig::Valid => {
+                    let padded = in_size;
+                    if padded < effective_kernel {
+                        0
+                    } else {
+                        (padded - effective_kernel) / stride + 1
+                    }
+                }
+                PaddingConfig::Explicit(_) => {
+                    let (lo, hi) = explicit_padding
+                        .and_then(|pads| pads.get(axis).copied())
+                        .unwrap_or((0, 0));
+                    let padded = in_size.saturating_add(lo).saturating_add(hi);
+                    if padded < effective_kernel {
+                        0
+                    } else {
+                        (padded - effective_kernel) / stride + 1
+                    }
+                }
+            };
+
+            if out == 0 {
+                return Err(OptimError::from(format!(
+                    "Convolution spatial dimension {axis} collapses to zero: input {in_size}, \
+                     kernel {kernel_size}, stride {stride}, dilation {dilation}"
+                )));
+            }
+
+            dimensions.push(out);
+        }
+
+        let element_count: usize = dimensions.iter().product();
+        let rank = dimensions.len();
+
+        Ok(InferredShape {
+            static_shape: Some(TensorShape {
+                dimensions,
+                dynamic_dimensions: vec![false; rank],
+                element_count,
+                tuple_shapes: vec![],
+            }),
+            dynamic_shape: None,
+            confidence: (input.confidence * kernel.confidence).min(1.0),
+            inference_method: "convolution".to_string(),
+            alternatives: vec![],
+        })
     }
 
     /// Infer shape for constant operations
@@ -919,6 +1143,7 @@ mod tests {
                 metadata: super::super::graph_capture::ComputationMetadata::default(),
                 operands: std::collections::HashMap::new(),
                 dependencies: std::collections::HashMap::new(),
+                next_operand_id: 0,
             },
             inferred_shapes: std::collections::HashMap::new(),
             discovered_constraints: vec![],

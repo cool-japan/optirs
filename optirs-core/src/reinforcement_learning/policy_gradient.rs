@@ -5,8 +5,9 @@
 // and other modern policy gradient algorithms.
 
 use super::{
-    PolicyNetwork, RLOptimizationMetrics, RLOptimizerConfig, RLScheduler, ScheduleType,
-    TrajectoryBatch, ValueNetwork,
+    clip_named_gradients, flatten_named, scale_named_gradients, PolicyNetwork,
+    RLOptimizationMetrics, RLOptimizerConfig, RLScheduler, ScheduleType, TrajectoryBatch,
+    TrustRegionConfig, TrustRegionMethod, TrustRegionOptimizer, ValueNetwork,
 };
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2, ScalarOperand};
@@ -268,19 +269,43 @@ impl<
         }
     }
 
-    /// Bootstrap value for the step *after* the final observation in the
-    /// trajectory. Uses the (current) value network on the last observation,
-    /// or zero when no value network is configured. Shared by every update rule
-    /// that needs a GAE / V-trace bootstrap so the logic lives in one place.
+    /// Bootstrap value `V(s_T)` for the step *after* the final transition.
+    ///
+    /// The successor state is [`TrajectoryBatch::final_observation`], **not** the
+    /// last row of `observations` (which is `s_{T-1}`, the state the final action
+    /// was taken from). Bootstrapping on `s_{T-1}` double-counts the last
+    /// transition and biases every advantage in the batch.
+    ///
+    /// Returns zero when there is no value network or no recorded successor state
+    /// (the batch simply gets no bootstrap, which is the correct behaviour for a
+    /// trajectory that ends on termination).
     fn bootstrap_next_value(&self, trajectory: &TrajectoryBatch<T>) -> Result<T> {
-        if let Some(ref value_net) = self.value_network {
-            let last_obs = trajectory.observations.slice(s![-1.., ..]).to_owned();
-            let mut last_obs_batch = Array2::zeros((1, last_obs.ncols()));
-            last_obs_batch.row_mut(0).assign(&last_obs.row(0));
-            Ok(value_net.evaluate_value(&last_obs_batch)?[0])
-        } else {
-            Ok(T::zero())
-        }
+        let (Some(value_net), Some(final_obs)) = (
+            self.value_network.as_ref(),
+            trajectory.final_observation.as_ref(),
+        ) else {
+            return Ok(T::zero());
+        };
+
+        let mut batch = Array2::zeros((1, final_obs.len()));
+        batch.row_mut(0).assign(final_obs);
+        Ok(value_net.evaluate_value(&batch)?[0])
+    }
+
+    /// Current policy learning rate (scheduler value when configured).
+    fn policy_lr(&self) -> T {
+        self.policy_scheduler
+            .as_ref()
+            .map(|s| s.get_lr())
+            .unwrap_or(self.config.base_config.policy_lr)
+    }
+
+    /// Current value-function learning rate (scheduler value when configured).
+    fn value_lr(&self) -> T {
+        self.value_scheduler
+            .as_ref()
+            .map(|s| s.get_lr())
+            .unwrap_or(self.config.base_config.value_lr)
     }
 
     /// Fill `trajectory.advantages` / `trajectory.returns` with normalized GAE
@@ -296,7 +321,14 @@ impl<
         )
     }
 
-    /// PPO with clipped surrogate objective
+    /// PPO with clipped surrogate objective.
+    ///
+    /// Per mini-batch sample the objective is `min(r·A, clip(r, 1±ε)·A)` with
+    /// `r = exp(log π − log π_old)`. Its derivative w.r.t. `log π` is `r·A` when
+    /// the unclipped branch wins, and zero when the clipped branch wins *and* the
+    /// ratio has left the clip interval (where `clip` is flat) — this is exactly
+    /// the "no gradient once you have moved too far" behaviour PPO relies on, and
+    /// it is what gets fed to the policy's score oracle.
     fn update_ppo_clip(
         &mut self,
         mut trajectory: TrajectoryBatch<T>,
@@ -306,119 +338,107 @@ impl<
         let mut total_entropy_loss = T::zero();
         let mut clip_fraction = T::zero();
         let mut approx_kl = T::zero();
+        // Real count of applied mini-batch updates — early stopping means this is
+        // NOT `n_epochs · ceil(N / batch)`.
+        let mut n_updates = 0usize;
 
         // Compute advantages using GAE (with value-network bootstrap).
         self.prepare_gae(&mut trajectory)?;
 
-        // Store old policy evaluation
-        let _old_policy_eval = self
-            .policy_network
-            .evaluate_actions(&trajectory.observations, &trajectory.actions)?;
-
         let n_epochs = self.config.base_config.n_epochs;
         let mini_batch_size = self.config.base_config.mini_batchsize;
+        if mini_batch_size == 0 {
+            return Err(OptimError::InvalidConfig(
+                "mini_batchsize must be greater than zero".to_string(),
+            ));
+        }
 
-        for _epoch in 0..n_epochs {
-            let mini_batches = trajectory.get_mini_batches(mini_batch_size);
+        let clip_eps = self.config.ppo_config.clip_epsilon;
+        let target_kl = self.config.ppo_config.target_kl;
+        let two = T::one() + T::one();
+        let half = T::one() / two;
 
-            for mini_batch in mini_batches {
-                // Current policy evaluation
+        'epochs: for _epoch in 0..n_epochs {
+            for mini_batch in trajectory.get_mini_batches(mini_batch_size) {
+                let batch_len = mini_batch.observations.nrows();
+                if batch_len == 0 {
+                    continue;
+                }
+                let count = T::from(batch_len).ok_or_else(|| {
+                    OptimError::ComputationError(
+                        "failed to convert mini-batch size to scalar".to_string(),
+                    )
+                })?;
+                let inv_n = T::one() / count;
+
                 let policy_eval = self
                     .policy_network
                     .evaluate_actions(&mini_batch.observations, &mini_batch.actions)?;
 
-                // Compute importance sampling ratio
                 let log_ratio = &policy_eval.log_probs - &mini_batch.log_probs;
                 let ratio = log_ratio.mapv(|x| x.exp());
 
-                // Compute surrogate loss
-                let surr1 = &ratio * &mini_batch.advantages;
-                let clipped_ratio = ratio.mapv(|r| {
-                    let clip_eps = self.config.ppo_config.clip_epsilon;
-                    r.max(T::one() - clip_eps).min(T::one() + clip_eps)
-                });
-                let surr2 = &clipped_ratio * &mini_batch.advantages;
+                let mut policy_loss = T::zero();
+                let mut dloss_dlogp = Array1::zeros(batch_len);
+                let mut n_clipped = 0usize;
 
-                // Policy loss (negative because we want to maximize)
-                let policy_loss = -surr1
-                    .iter()
-                    .zip(surr2.iter())
-                    .map(|(&s1, &s2)| s1.min(s2))
-                    .sum::<T>()
-                    / T::from(mini_batch.observations.nrows()).expect("unwrap failed");
+                for i in 0..batch_len {
+                    let r = ratio[i];
+                    let advantage = mini_batch.advantages[i];
+                    let clipped_r = r.max(T::one() - clip_eps).min(T::one() + clip_eps);
 
-                // Entropy loss (negative to encourage exploration)
-                let entropy_loss = -policy_eval.entropy.iter().copied().sum::<T>()
-                    / T::from(policy_eval.entropy.len()).unwrap_or(T::zero());
+                    let surr1 = r * advantage;
+                    let surr2 = clipped_r * advantage;
 
-                // Value function loss
-                let value_loss = if let Some(ref value_net) = self.value_network {
-                    let predicted_values = value_net.evaluate_value(&mini_batch.observations)?;
-
-                    if self.config.ppo_config.value_clip {
-                        // Clipped value loss
-                        let value_pred_clipped = &mini_batch.values
-                            + (&predicted_values - &mini_batch.values).mapv(|diff| {
-                                let clip_range = self.config.ppo_config.value_clip_range;
-                                diff.max(-clip_range).min(clip_range)
-                            });
-
-                        let value_loss_1 =
-                            (&predicted_values - &mini_batch.returns).mapv(|x| x * x);
-                        let value_loss_2 =
-                            (&value_pred_clipped - &mini_batch.returns).mapv(|x| x * x);
-
-                        value_loss_1
-                            .iter()
-                            .zip(value_loss_2.iter())
-                            .map(|(&v1, &v2)| v1.max(v2))
-                            .sum::<T>()
-                            / T::from(mini_batch.observations.nrows()).expect("unwrap failed")
+                    let (objective, dobjective) = if surr1 <= surr2 {
+                        // Unclipped branch: d(r·A)/d log π = r·A.
+                        (surr1, r * advantage)
                     } else {
-                        // Standard MSE loss
-                        (&predicted_values - &mini_batch.returns)
-                            .mapv(|x| x * x)
-                            .mean()
-                            .unwrap_or(T::zero())
+                        // Clipped branch: the gradient survives only while the
+                        // ratio is strictly inside the clip interval.
+                        let inside = r > T::one() - clip_eps && r < T::one() + clip_eps;
+                        (surr2, if inside { r * advantage } else { T::zero() })
+                    };
+
+                    policy_loss = policy_loss - objective * inv_n;
+                    dloss_dlogp[i] = -dobjective * inv_n;
+
+                    if r < T::one() - clip_eps || r > T::one() + clip_eps {
+                        n_clipped += 1;
                     }
-                } else {
-                    T::zero()
-                };
+                }
 
-                // Total loss
-                let total_loss = policy_loss
-                    + self.config.base_config.value_loss_coeff * value_loss
-                    + self.config.base_config.entropy_coeff * entropy_loss;
+                let entropy_loss = Self::entropy_loss(&policy_eval);
 
-                // Compute gradients and update networks
-                self.update_networks_with_loss(total_loss, policy_loss, value_loss)?;
+                // Real gradient steps: policy first (so the value update sees the
+                // same parameters PPO's reference implementations do), then value.
+                self.apply_policy_gradient_step(
+                    &mini_batch.observations,
+                    &mini_batch.actions,
+                    &dloss_dlogp,
+                )?;
+                let value_loss = self.update_value_on_batch(
+                    &mini_batch.observations,
+                    &mini_batch.values,
+                    &mini_batch.returns,
+                )?;
 
-                // Accumulate metrics
                 total_policy_loss += policy_loss;
                 total_value_loss += value_loss;
                 total_entropy_loss += entropy_loss;
+                n_updates += 1;
 
-                // Compute clip fraction
-                let n_clipped = ratio
-                    .iter()
-                    .filter(|&&r| {
-                        let clip_eps = self.config.ppo_config.clip_epsilon;
-                        r < T::one() - clip_eps || r > T::one() + clip_eps
-                    })
-                    .count();
-                clip_fraction += T::from(n_clipped).unwrap_or_else(|| T::zero())
-                    / T::from(ratio.len()).expect("unwrap failed");
+                clip_fraction = clip_fraction + T::from(n_clipped).unwrap_or_else(T::zero) * inv_n;
 
-                // Compute approximate KL divergence
-                approx_kl += log_ratio.mapv(|x| x * x).mean().unwrap_or(T::zero());
+                // Standard second-order KL estimator: ½·E[(log ratio)²].
+                let batch_kl = half * log_ratio.mapv(|x| x * x).mean().unwrap_or(T::zero());
+                approx_kl += batch_kl;
 
-                // Early stopping based on KL divergence
-                if self.config.ppo_config.early_stop_on_kl
-                    && approx_kl
-                        > self.config.ppo_config.target_kl
-                            * T::from(2.0).unwrap_or_else(|| T::zero())
-                {
-                    break;
+                // Early stopping compares the *current mini-batch* KL against the
+                // threshold (an accumulated sum would trip on batch count alone)
+                // and abandons the whole update, not just the inner loop.
+                if self.config.ppo_config.early_stop_on_kl && batch_kl > target_kl * two {
+                    break 'epochs;
                 }
             }
         }
@@ -433,18 +453,15 @@ impl<
 
         self.update_count += 1;
 
-        // Update metrics
-        let n_updates =
-            T::from(n_epochs * trajectory.observations.nrows().div_ceil(mini_batch_size))
-                .expect("unwrap failed");
-        self.metrics.policy_loss = total_policy_loss / n_updates;
-        self.metrics.value_loss = total_value_loss / n_updates;
-        self.metrics.entropy_loss = total_entropy_loss / n_updates;
+        let divisor = T::from(n_updates.max(1)).unwrap_or_else(T::one);
+        self.metrics.policy_loss = total_policy_loss / divisor;
+        self.metrics.value_loss = total_value_loss / divisor;
+        self.metrics.entropy_loss = total_entropy_loss / divisor;
         self.metrics.total_loss = self.metrics.policy_loss
             + self.config.base_config.value_loss_coeff * self.metrics.value_loss
             + self.config.base_config.entropy_coeff * self.metrics.entropy_loss;
-        self.metrics.clip_fraction = Some(clip_fraction / n_updates);
-        self.metrics.kl_divergence = Some(approx_kl / n_updates);
+        self.metrics.clip_fraction = Some(clip_fraction / divisor);
+        self.metrics.kl_divergence = Some(approx_kl / divisor);
 
         Ok(self.metrics.clone())
     }
@@ -488,23 +505,35 @@ impl<
         // Compute advantages using GAE (identical to the clipped variant).
         self.prepare_gae(&mut trajectory)?;
 
-        // Store old policy evaluation (kept for parity with the clipped path).
-        let _old_policy_eval = self
-            .policy_network
-            .evaluate_actions(&trajectory.observations, &trajectory.actions)?;
-
         let n_epochs = self.config.base_config.n_epochs;
         let mini_batch_size = self.config.base_config.mini_batchsize;
+        if mini_batch_size == 0 {
+            return Err(OptimError::InvalidConfig(
+                "mini_batchsize must be greater than zero".to_string(),
+            ));
+        }
 
         // The KL measured on the final epoch drives the β adaptation.
         let mut last_epoch_kl = T::zero();
+        let mut n_updates = 0usize;
 
-        for _epoch in 0..n_epochs {
+        'epochs: for _epoch in 0..n_epochs {
             let mini_batches = trajectory.get_mini_batches(mini_batch_size);
             let mut epoch_kl_sum = T::zero();
             let mut epoch_batches = T::zero();
 
             for mini_batch in mini_batches {
+                let batch_len = mini_batch.observations.nrows();
+                if batch_len == 0 {
+                    continue;
+                }
+                let batch_count = T::from(batch_len).ok_or_else(|| {
+                    OptimError::ComputationError(
+                        "failed to convert mini-batch size to scalar".to_string(),
+                    )
+                })?;
+                let inv_n = T::one() / batch_count;
+
                 // Current policy evaluation.
                 let policy_eval = self
                     .policy_network
@@ -513,8 +542,6 @@ impl<
                 // Importance sampling ratio = exp(new_logp − old_logp).
                 let log_ratio = &policy_eval.log_probs - &mini_batch.log_probs;
                 let ratio = log_ratio.mapv(|x| x.exp());
-
-                let batch_count = T::from(mini_batch.observations.nrows()).unwrap_or_else(T::one);
 
                 // Surrogate (un-clipped): E[ ratio · advantage ].
                 let surrogate =
@@ -531,64 +558,42 @@ impl<
                 // KL-penalty surrogate policy loss.
                 let policy_loss = -surrogate + self.kl_coeff * batch_kl;
 
-                // Entropy loss (negative to encourage exploration).
-                let entropy_loss = -policy_eval.entropy.iter().copied().sum::<T>()
-                    / T::from(policy_eval.entropy.len()).unwrap_or(T::zero());
+                // ∂L/∂ log πᵢ = (−rᵢ·Aᵢ − β)/N: the ratio term differentiates to
+                // r·A, the KL estimator (−log ratio) contributes −β.
+                let mut dloss_dlogp = Array1::zeros(batch_len);
+                for i in 0..batch_len {
+                    dloss_dlogp[i] = (-ratio[i] * mini_batch.advantages[i] - self.kl_coeff) * inv_n;
+                }
 
-                // Value function loss (identical to the clipped variant).
-                let value_loss = if let Some(ref value_net) = self.value_network {
-                    let predicted_values = value_net.evaluate_value(&mini_batch.observations)?;
+                let entropy_loss = Self::entropy_loss(&policy_eval);
 
-                    if self.config.ppo_config.value_clip {
-                        let value_pred_clipped = &mini_batch.values
-                            + (&predicted_values - &mini_batch.values).mapv(|diff| {
-                                let clip_range = self.config.ppo_config.value_clip_range;
-                                diff.max(-clip_range).min(clip_range)
-                            });
-
-                        let value_loss_1 =
-                            (&predicted_values - &mini_batch.returns).mapv(|x| x * x);
-                        let value_loss_2 =
-                            (&value_pred_clipped - &mini_batch.returns).mapv(|x| x * x);
-
-                        value_loss_1
-                            .iter()
-                            .zip(value_loss_2.iter())
-                            .map(|(&v1, &v2)| v1.max(v2))
-                            .sum::<T>()
-                            / batch_count
-                    } else {
-                        (&predicted_values - &mini_batch.returns)
-                            .mapv(|x| x * x)
-                            .mean()
-                            .unwrap_or(T::zero())
-                    }
-                } else {
-                    T::zero()
-                };
-
-                // Total loss.
-                let total_loss = policy_loss
-                    + self.config.base_config.value_loss_coeff * value_loss
-                    + self.config.base_config.entropy_coeff * entropy_loss;
-
-                // Compute gradients and update networks.
-                self.update_networks_with_loss(total_loss, policy_loss, value_loss)?;
+                self.apply_policy_gradient_step(
+                    &mini_batch.observations,
+                    &mini_batch.actions,
+                    &dloss_dlogp,
+                )?;
+                let value_loss = self.update_value_on_batch(
+                    &mini_batch.observations,
+                    &mini_batch.values,
+                    &mini_batch.returns,
+                )?;
 
                 // Accumulate metrics.
                 total_policy_loss += policy_loss;
                 total_value_loss += value_loss;
                 total_entropy_loss += entropy_loss;
+                n_updates += 1;
 
                 approx_kl += batch_kl;
                 epoch_kl_sum += batch_kl;
                 epoch_batches += T::one();
 
-                // Early stopping based on KL divergence.
+                // Early stopping based on KL divergence: abandon the whole update.
                 if self.config.ppo_config.early_stop_on_kl
                     && batch_kl > self.config.ppo_config.target_kl * two
                 {
-                    break;
+                    last_epoch_kl = epoch_kl_sum / epoch_batches;
+                    break 'epochs;
                 }
             }
 
@@ -621,19 +626,17 @@ impl<
 
         self.update_count += 1;
 
-        // Update metrics.
-        let n_updates =
-            T::from(n_epochs * trajectory.observations.nrows().div_ceil(mini_batch_size))
-                .unwrap_or_else(T::one);
-        self.metrics.policy_loss = total_policy_loss / n_updates;
-        self.metrics.value_loss = total_value_loss / n_updates;
-        self.metrics.entropy_loss = total_entropy_loss / n_updates;
+        // Update metrics (averaged over the mini-batch updates actually applied).
+        let divisor = T::from(n_updates.max(1)).unwrap_or_else(T::one);
+        self.metrics.policy_loss = total_policy_loss / divisor;
+        self.metrics.value_loss = total_value_loss / divisor;
+        self.metrics.entropy_loss = total_entropy_loss / divisor;
         self.metrics.total_loss = self.metrics.policy_loss
             + self.config.base_config.value_loss_coeff * self.metrics.value_loss
             + self.config.base_config.entropy_coeff * self.metrics.entropy_loss;
         // No clipping in this variant.
         self.metrics.clip_fraction = None;
-        self.metrics.kl_divergence = Some(approx_kl / n_updates);
+        self.metrics.kl_divergence = Some(approx_kl / divisor);
         // Surface the current penalty coefficient for inspection.
         self.metrics
             .custom_metrics
@@ -642,44 +645,197 @@ impl<
         Ok(self.metrics.clone())
     }
 
-    /// TRPO update with trust region constraint
-    fn update_trpo(&mut self, trajectory: TrajectoryBatch<T>) -> Result<RLOptimizationMetrics<T>> {
-        // TRPO implementation with conjugate gradient and line search
-        // This is a simplified version - full TRPO requires more complex optimization
-        self.update_ppo_clip(trajectory) // Simplified for now
+    /// TRPO update: a genuine trust-region step, not a PPO alias.
+    ///
+    /// The surrogate gradient `g = ∇_θ E[log π(a|s)·A(s,a)]` and the per-sample
+    /// score matrix are produced by the policy's analytic oracle, then handed to
+    /// [`TrustRegionOptimizer`] configured from this optimizer's [`TRPOConfig`].
+    /// The trust-region optimizer borrows the policy (via the `&mut P` forwarding
+    /// impl), solves `F x = g` with damped conjugate gradients, takes the
+    /// `β = √(2δ / sᵀFs)` step and backtracks against the **real**
+    /// importance-weighted surrogate evaluated on this trajectory.
+    ///
+    /// The value function is fitted by regression on the GAE returns, as in the
+    /// original TRPO.
+    fn update_trpo(
+        &mut self,
+        mut trajectory: TrajectoryBatch<T>,
+    ) -> Result<RLOptimizationMetrics<T>> {
+        self.prepare_gae(&mut trajectory)?;
+
+        let batch_len = trajectory.observations.nrows();
+        if batch_len == 0 {
+            return Err(OptimError::InvalidConfig(
+                "TRPO received an empty trajectory".to_string(),
+            ));
+        }
+        let count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+
+        // Fit the value baseline first (it does not participate in the trust region).
+        let value_loss = self.update_value_on_batch(
+            &trajectory.observations,
+            &trajectory.values,
+            &trajectory.returns,
+        )?;
+
+        // Ascent direction of the surrogate: ∇_θ (1/N) Σ A_i log π_i.
+        let coefficients = trajectory.advantages.mapv(|a| a * inv_n);
+        let gradient_map = self.policy_network.log_prob_gradient(
+            &trajectory.observations,
+            &trajectory.actions,
+            &coefficients,
+        )?;
+        let flat_gradient = flatten_named(&gradient_map);
+        let grad_norm = flat_gradient.iter().map(|&g| g * g).sum::<T>().sqrt();
+
+        // Empirical Fisher from per-sample scores.
+        let scores = self
+            .policy_network
+            .score_matrix(&trajectory.observations, &trajectory.actions)?;
+
+        // Log-probabilities of the behaviour policy, for the surrogate ratio.
+        let old_log_probs = self
+            .policy_network
+            .evaluate_actions(&trajectory.observations, &trajectory.actions)?
+            .log_probs;
+
+        let trpo = self.config.trpo_config.clone();
+        let tr_config = TrustRegionConfig {
+            method: TrustRegionMethod::TRPO,
+            max_kl: trpo.max_kl,
+            cg_iters: trpo.cg_iters,
+            cg_damping: trpo.cg_damping,
+            cg_tolerance: trpo.cg_tolerance,
+            max_backtracks: trpo.max_backtracks,
+            backtrack_coeff: trpo.backtrack_factor,
+            ..TrustRegionConfig::default()
+        };
+
+        // Owned copies so the surrogate closure never borrows `self`.
+        let observations = trajectory.observations.clone();
+        let actions = trajectory.actions.clone();
+        let advantages = trajectory.advantages.clone();
+
+        let tr_metrics = {
+            let mut trust_region = TrustRegionOptimizer::new(tr_config, &mut self.policy_network);
+            trust_region.set_score_samples(scores);
+            trust_region.update_trpo_with_surrogate(&flat_gradient, |policy| {
+                let evaluation = policy.evaluate_actions(&observations, &actions)?;
+                let mut surrogate = T::zero();
+                for i in 0..batch_len {
+                    let ratio = (evaluation.log_probs[i] - old_log_probs[i]).exp();
+                    surrogate = surrogate + ratio * advantages[i];
+                }
+                Ok(surrogate * inv_n)
+            })?
+        };
+
+        if let Some(ref mut scheduler) = self.policy_scheduler {
+            self.metrics.policy_lr = scheduler.step();
+        }
+        if let Some(ref mut scheduler) = self.value_scheduler {
+            self.metrics.value_lr = scheduler.step();
+        }
+        self.update_count += 1;
+
+        self.metrics.policy_loss = tr_metrics.policy_loss;
+        self.metrics.value_loss = value_loss;
+        self.metrics.entropy_loss = T::zero();
+        self.metrics.total_loss =
+            self.metrics.policy_loss + self.config.base_config.value_loss_coeff * value_loss;
+        self.metrics.clip_fraction = None;
+        self.metrics.kl_divergence = tr_metrics.kl_divergence;
+        self.metrics.policy_grad_norm = grad_norm;
+        for (name, value) in tr_metrics.custom_metrics {
+            self.metrics.custom_metrics.insert(name, value);
+        }
+
+        Ok(self.metrics.clone())
     }
 
-    /// REINFORCE algorithm
+    /// REINFORCE (Monte-Carlo policy gradient).
+    ///
+    /// The advantages/returns the loss needs are **computed here** rather than
+    /// read out of a freshly zeroed [`TrajectoryBatch`] (which made the loss
+    /// identically zero, and therefore the update a no-op):
+    ///
+    /// * with a value baseline → GAE advantages (plus a value regression step),
+    /// * without one → plain discounted Monte-Carlo returns `G_t`.
     fn update_reinforce(
         &mut self,
-        trajectory: TrajectoryBatch<T>,
+        mut trajectory: TrajectoryBatch<T>,
     ) -> Result<RLOptimizationMetrics<T>> {
+        let batch_len = trajectory.observations.nrows();
+        if batch_len == 0 {
+            return Err(OptimError::InvalidConfig(
+                "REINFORCE received an empty trajectory".to_string(),
+            ));
+        }
+        let count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+
+        let use_baseline = self.config.use_baseline && self.value_network.is_some();
+        let weights = if use_baseline {
+            self.prepare_gae(&mut trajectory)?;
+            trajectory.advantages.clone()
+        } else {
+            let next_value = self.bootstrap_next_value(&trajectory)?;
+            trajectory
+                .compute_discounted_returns(self.config.base_config.discount_factor, next_value)?;
+            trajectory.returns.clone()
+        };
+
         let policy_eval = self
             .policy_network
             .evaluate_actions(&trajectory.observations, &trajectory.actions)?;
 
-        // Use returns as targets (no baseline)
-        let policy_loss = if self.config.use_baseline && self.value_network.is_some() {
-            // Actor-critic style with baseline
-            -(policy_eval.log_probs * trajectory.advantages)
-                .mean()
-                .unwrap_or(T::zero())
+        // L = −(1/N) Σ log π_i · w_i  ⇒  ∂L/∂ log π_i = −w_i / N.
+        let mut policy_loss = T::zero();
+        let mut dloss_dlogp = Array1::zeros(batch_len);
+        for i in 0..batch_len {
+            policy_loss = policy_loss - policy_eval.log_probs[i] * weights[i] * inv_n;
+            dloss_dlogp[i] = -weights[i] * inv_n;
+        }
+
+        let entropy_loss = Self::entropy_loss(&policy_eval);
+
+        self.apply_policy_gradient_step(
+            &trajectory.observations,
+            &trajectory.actions,
+            &dloss_dlogp,
+        )?;
+
+        let value_loss = if use_baseline {
+            self.update_value_on_batch(
+                &trajectory.observations,
+                &trajectory.values,
+                &trajectory.returns,
+            )?
         } else {
-            // Pure REINFORCE
-            -(policy_eval.log_probs * trajectory.returns)
-                .mean()
-                .unwrap_or(T::zero())
+            T::zero()
         };
 
-        let entropy_loss = -policy_eval.entropy.iter().copied().sum::<T>()
-            / T::from(policy_eval.entropy.len()).unwrap_or(T::zero());
-        let total_loss = policy_loss + self.config.base_config.entropy_coeff * entropy_loss;
-
-        self.update_networks_with_loss(total_loss, policy_loss, T::zero())?;
+        if let Some(ref mut scheduler) = self.policy_scheduler {
+            self.metrics.policy_lr = scheduler.step();
+        }
+        if let Some(ref mut scheduler) = self.value_scheduler {
+            self.metrics.value_lr = scheduler.step();
+        }
+        self.update_count += 1;
 
         self.metrics.policy_loss = policy_loss;
+        self.metrics.value_loss = value_loss;
         self.metrics.entropy_loss = entropy_loss;
-        self.metrics.total_loss = total_loss;
+        self.metrics.total_loss = policy_loss
+            + self.config.base_config.value_loss_coeff * value_loss
+            + self.config.base_config.entropy_coeff * entropy_loss;
+        self.metrics.clip_fraction = None;
+        self.metrics.kl_divergence = Some(T::zero());
 
         Ok(self.metrics.clone())
     }
@@ -715,60 +871,49 @@ impl<
             .policy_network
             .evaluate_actions(&trajectory.observations, &trajectory.actions)?;
 
-        let batch_count = T::from(trajectory.observations.nrows()).unwrap_or_else(T::one);
+        let batch_len = trajectory.observations.nrows();
+        if batch_len == 0 {
+            return Err(OptimError::InvalidConfig(
+                "A2C received an empty trajectory".to_string(),
+            ));
+        }
+        let batch_count = T::from(batch_len).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / batch_count;
 
         // Policy loss = -E[ log π(a|s) · A(s,a) ]. The importance ratio is 1
-        // (on-policy), so this is the plain advantage-weighted log-likelihood.
-        let policy_loss = -(&policy_eval.log_probs * &trajectory.advantages)
-            .iter()
-            .copied()
-            .sum::<T>()
-            / batch_count;
+        // (on-policy), so this is the plain advantage-weighted log-likelihood, and
+        // ∂L/∂ log π_i = −A_i / N.
+        let mut policy_loss = T::zero();
+        let mut dloss_dlogp = Array1::zeros(batch_len);
+        for i in 0..batch_len {
+            policy_loss = policy_loss - policy_eval.log_probs[i] * trajectory.advantages[i] * inv_n;
+            dloss_dlogp[i] = -trajectory.advantages[i] * inv_n;
+        }
 
         // Entropy loss (negative to encourage exploration), same convention as
         // the PPO paths so `entropy_coeff` behaves identically.
-        let entropy_loss = -policy_eval.entropy.iter().copied().sum::<T>()
-            / T::from(policy_eval.entropy.len()).unwrap_or(T::zero());
+        let entropy_loss = Self::entropy_loss(&policy_eval);
 
-        // Value function loss against the GAE returns. Mirrors the clipped /
-        // unclipped MSE treatment of `update_ppo_clip`.
-        let value_loss = if let Some(ref value_net) = self.value_network {
-            let predicted_values = value_net.evaluate_value(&trajectory.observations)?;
-
-            if self.config.ppo_config.value_clip {
-                let value_pred_clipped = &trajectory.values
-                    + (&predicted_values - &trajectory.values).mapv(|diff| {
-                        let clip_range = self.config.ppo_config.value_clip_range;
-                        diff.max(-clip_range).min(clip_range)
-                    });
-
-                let value_loss_1 = (&predicted_values - &trajectory.returns).mapv(|x| x * x);
-                let value_loss_2 = (&value_pred_clipped - &trajectory.returns).mapv(|x| x * x);
-
-                value_loss_1
-                    .iter()
-                    .zip(value_loss_2.iter())
-                    .map(|(&v1, &v2)| v1.max(v2))
-                    .sum::<T>()
-                    / batch_count
-            } else {
-                (&predicted_values - &trajectory.returns)
-                    .mapv(|x| x * x)
-                    .mean()
-                    .unwrap_or(T::zero())
-            }
-        } else {
-            T::zero()
-        };
+        // Apply the real policy gradient, then fit the value function against the
+        // GAE returns (identical clipped / unclipped MSE treatment as PPO).
+        self.apply_policy_gradient_step(
+            &trajectory.observations,
+            &trajectory.actions,
+            &dloss_dlogp,
+        )?;
+        let value_loss = self.update_value_on_batch(
+            &trajectory.observations,
+            &trajectory.values,
+            &trajectory.returns,
+        )?;
 
         // Total loss combines policy, value and entropy contributions exactly
         // as the PPO variants do.
         let total_loss = policy_loss
             + self.config.base_config.value_loss_coeff * value_loss
             + self.config.base_config.entropy_coeff * entropy_loss;
-
-        // Apply policy & value gradient updates through the networks.
-        self.update_networks_with_loss(total_loss, policy_loss, value_loss)?;
 
         // Step learning-rate schedulers (parity with PPO).
         if let Some(ref mut scheduler) = self.policy_scheduler {
@@ -892,36 +1037,51 @@ impl<
             next_vtrace = vtrace;
         }
 
-        let batch_count = T::from(batch_size).unwrap_or_else(T::one);
+        let batch_count = T::from(batch_size).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / batch_count;
 
-        // Policy loss = -E[ log π(a_t|s_t) · A_t ] (ρ is already folded into A_t).
-        let policy_loss = -(&policy_eval.log_probs * &pg_advantages)
-            .iter()
-            .copied()
-            .sum::<T>()
-            / batch_count;
+        // Policy loss = -E[ log π(a_t|s_t) · A_t ] (ρ is already folded into A_t),
+        // so ∂L/∂ log π_t = −A_t / N.
+        let mut policy_loss = T::zero();
+        let mut dloss_dlogp = Array1::zeros(batch_size);
+        for t in 0..batch_size {
+            policy_loss = policy_loss - policy_eval.log_probs[t] * pg_advantages[t] * inv_n;
+            dloss_dlogp[t] = -pg_advantages[t] * inv_n;
+        }
 
         // Entropy loss (same convention as the other update rules).
-        let entropy_loss = -policy_eval.entropy.iter().copied().sum::<T>()
-            / T::from(policy_eval.entropy.len()).unwrap_or(T::zero());
+        let entropy_loss = Self::entropy_loss(&policy_eval);
 
-        // Value loss = MSE(V(s_t), v_t) against the V-trace targets.
-        let value_loss = if self.value_network.is_some() {
-            (&values_now - &vtrace_targets)
-                .mapv(|x| x * x)
-                .mean()
-                .unwrap_or(T::zero())
-        } else {
-            T::zero()
-        };
+        // Value loss = MSE(V(s_t), v_t) against the V-trace targets, which are
+        // treated as constants (standard V-trace: the recursion is not
+        // differentiated through).
+        let two = T::one() + T::one();
+        let mut value_loss = T::zero();
+        let mut dloss_dv = Array1::zeros(batch_size);
+        if self.value_network.is_some() {
+            for t in 0..batch_size {
+                let err = values_now[t] - vtrace_targets[t];
+                value_loss = value_loss + err * err * inv_n;
+                dloss_dv[t] = two * err * inv_n * self.config.base_config.value_loss_coeff;
+            }
+        }
 
         // Total loss.
         let total_loss = policy_loss
             + self.config.base_config.value_loss_coeff * value_loss
             + self.config.base_config.entropy_coeff * entropy_loss;
 
-        // Apply policy & value gradient updates through the networks.
-        self.update_networks_with_loss(total_loss, policy_loss, value_loss)?;
+        // Apply real policy & value gradient steps.
+        self.apply_policy_gradient_step(
+            &trajectory.observations,
+            &trajectory.actions,
+            &dloss_dlogp,
+        )?;
+        if self.value_network.is_some() {
+            self.apply_value_gradient_step(&trajectory.observations, &dloss_dv)?;
+        }
 
         // Step learning-rate schedulers (parity with the other update rules).
         if let Some(ref mut scheduler) = self.policy_scheduler {
@@ -955,128 +1115,190 @@ impl<
         Ok(self.metrics.clone())
     }
 
-    /// Update networks with computed losses
-    fn update_networks_with_loss(
+    /// Apply one gradient-**descent** step to the policy network.
+    ///
+    /// `dloss_dlogp[i] = ∂L/∂ log π(aᵢ|sᵢ)` — the only thing that differs between
+    /// REINFORCE, A2C, PPO-clip, PPO adaptive-KL and V-trace. The chain rule then
+    /// gives the parameter gradient through the policy's analytic score oracle:
+    ///
+    /// ```text
+    /// ∇_θ L = Σᵢ (∂L/∂log πᵢ)·∇_θ log πᵢ  −  entropy_coeff · ∇_θ H̄
+    /// ```
+    ///
+    /// (the entropy term enters with a minus sign because the reported
+    /// `entropy_loss` is `−H̄`). The result is globally norm-clipped, recorded in
+    /// the metrics, scaled by the current learning rate and **negated** before
+    /// being handed to the network — parameters move *down* the loss, and the
+    /// learning rate is genuinely applied.
+    fn apply_policy_gradient_step(
         &mut self,
-        _total_loss: T,
-        policy_loss: T,
-        value_loss: T,
+        observations: &Array2<T>,
+        actions: &Array2<T>,
+        dloss_dlogp: &Array1<T>,
     ) -> Result<()> {
-        // 1. Compute gradients from losses (simplified - would use autodiff in practice)
-        let policy_gradients = self.compute_policy_gradients(policy_loss)?;
-        let value_gradients = if self.value_network.is_some() {
-            Some(self.compute_value_gradients(value_loss)?)
-        } else {
-            None
-        };
+        let mut gradients =
+            self.policy_network
+                .log_prob_gradient(observations, actions, dloss_dlogp)?;
 
-        // 2. Apply gradient clipping
-        let clipped_policy_grads =
-            self.clip_gradients(&policy_gradients, self.config.base_config.max_grad_norm)?;
-        let clipped_value_grads = if let Some(val_grads) = value_gradients {
-            Some(self.clip_gradients(&val_grads, self.config.base_config.max_grad_norm)?)
-        } else {
-            None
-        };
-
-        // 3. Update network parameters
-        self.update_policy_parameters(&clipped_policy_grads)?;
-        if let Some(ref val_grads) = clipped_value_grads {
-            self.update_value_parameters(val_grads)?;
-        }
-
-        // 4. Update gradient norms in metrics
-        self.metrics.policy_grad_norm = self.compute_gradient_norm(&clipped_policy_grads);
-        if let Some(ref val_grads) = clipped_value_grads {
-            self.metrics.value_grad_norm = self.compute_gradient_norm(val_grads);
-        }
-
-        Ok(())
-    }
-
-    /// Compute policy gradients (simplified)
-    fn compute_policy_gradients(&self, loss: T) -> Result<HashMap<String, Array1<T>>> {
-        let mut gradients = HashMap::new();
-
-        // Simplified gradient computation - in practice would use autodiff
-        let policy_params = self.policy_network.get_parameters();
-        for (param_name, param_values) in policy_params {
-            let grad = Array1::ones(param_values.len()) * loss
-                / T::from(param_values.len()).expect("unwrap failed");
-            gradients.insert(param_name, grad);
-        }
-
-        Ok(gradients)
-    }
-
-    /// Compute value function gradients (simplified)
-    fn compute_value_gradients(&self, loss: T) -> Result<HashMap<String, Array1<T>>> {
-        let mut gradients = HashMap::new();
-
-        if let Some(ref value_net) = self.value_network {
-            let value_params = value_net.get_parameters();
-            for (param_name, param_values) in value_params {
-                let grad = Array1::ones(param_values.len()) * loss
-                    / T::from(param_values.len()).expect("unwrap failed");
-                gradients.insert(param_name, grad);
+        let entropy_coeff = self.config.base_config.entropy_coeff;
+        if entropy_coeff != T::zero() {
+            let entropy_grad = self.policy_network.entropy_gradient(observations)?;
+            for (name, grad) in entropy_grad {
+                match gradients.get_mut(&name) {
+                    Some(target) => {
+                        if target.len() != grad.len() {
+                            return Err(OptimError::DimensionMismatch(format!(
+                                "entropy gradient for '{name}' has length {} but the log-prob \
+                                 gradient has length {}",
+                                grad.len(),
+                                target.len()
+                            )));
+                        }
+                        for i in 0..target.len() {
+                            target[i] = target[i] - entropy_coeff * grad[i];
+                        }
+                    }
+                    None => {
+                        gradients.insert(name, grad.mapv(|g| -entropy_coeff * g));
+                    }
+                }
             }
         }
 
-        Ok(gradients)
+        let (clipped, norm) =
+            clip_named_gradients(&gradients, self.config.base_config.max_grad_norm);
+        self.metrics.policy_grad_norm = norm;
+
+        let step = scale_named_gradients(&clipped, -self.policy_lr());
+        self.policy_network.update_parameters(&step)
     }
 
-    /// Apply gradient clipping
-    fn clip_gradients(
-        &self,
-        gradients: &HashMap<String, Array1<T>>,
-        max_norm: T,
-    ) -> Result<HashMap<String, Array1<T>>> {
-        let mut clipped_gradients = HashMap::new();
+    /// Apply one gradient-descent step to the value network.
+    ///
+    /// `dloss_dv[i] = ∂L/∂V(sᵢ)`, already multiplied by `value_loss_coeff`.
+    /// A no-op when no value network is configured.
+    fn apply_value_gradient_step(
+        &mut self,
+        observations: &Array2<T>,
+        dloss_dv: &Array1<T>,
+    ) -> Result<()> {
+        let max_norm = self.config.base_config.max_grad_norm;
+        let lr = self.value_lr();
 
-        // Compute global gradient _norm
-        let mut total_norm = T::zero();
-        for grad in gradients.values() {
-            total_norm += grad.iter().map(|&g| g * g).sum::<T>();
-        }
-        total_norm = total_norm.sqrt();
-
-        // Apply clipping if necessary
-        let clip_factor = if total_norm > max_norm {
-            max_norm / total_norm
-        } else {
-            T::one()
+        let gradients = match self.value_network {
+            Some(ref value_net) => value_net.value_gradient(observations, dloss_dv)?,
+            None => return Ok(()),
         };
 
-        for (param_name, grad) in gradients {
-            let clipped_grad = grad * clip_factor;
-            clipped_gradients.insert(param_name.clone(), clipped_grad);
-        }
+        let (clipped, norm) = clip_named_gradients(&gradients, max_norm);
+        self.metrics.value_grad_norm = norm;
 
-        Ok(clipped_gradients)
-    }
-
-    /// Update policy network parameters
-    fn update_policy_parameters(&mut self, gradients: &HashMap<String, Array1<T>>) -> Result<()> {
-        // Apply gradients to policy network
-        self.policy_network.update_parameters(gradients)?;
-        Ok(())
-    }
-
-    /// Update value network parameters
-    fn update_value_parameters(&mut self, gradients: &HashMap<String, Array1<T>>) -> Result<()> {
+        let step = scale_named_gradients(&clipped, -lr);
         if let Some(ref mut value_net) = self.value_network {
-            value_net.update_parameters(gradients)?;
+            value_net.update_parameters(&step)?;
         }
         Ok(())
     }
 
-    /// Compute gradient norm
-    fn compute_gradient_norm(&self, gradients: &HashMap<String, Array1<T>>) -> T {
-        let mut total_norm = T::zero();
-        for grad in gradients.values() {
-            total_norm += grad.iter().map(|&g| g * g).sum::<T>();
+    /// Value loss together with its per-sample derivative `∂L/∂V(sᵢ)`.
+    ///
+    /// Honours the PPO value-clipping toggle: the pessimistic `max` of the raw and
+    /// clipped squared errors is used, and the derivative follows whichever branch
+    /// the `max` selected (zero when the clipped branch wins *and* the prediction
+    /// has left the clip interval, exactly like the clipped policy objective).
+    fn value_loss_and_grad(
+        &self,
+        predicted: &Array1<T>,
+        old_values: &Array1<T>,
+        returns: &Array1<T>,
+    ) -> Result<(T, Array1<T>)> {
+        let n = predicted.len();
+        if n == 0 {
+            return Ok((T::zero(), Array1::zeros(0)));
         }
-        total_norm.sqrt()
+        if old_values.len() != n || returns.len() != n {
+            return Err(OptimError::DimensionMismatch(
+                "value prediction, old value and return batches must have equal length".to_string(),
+            ));
+        }
+
+        let count = T::from(n).ok_or_else(|| {
+            OptimError::ComputationError("failed to convert batch size to scalar".to_string())
+        })?;
+        let inv_n = T::one() / count;
+        let two = T::one() + T::one();
+
+        let mut loss = T::zero();
+        let mut grad = Array1::zeros(n);
+
+        if self.config.ppo_config.value_clip {
+            let clip_range = self.config.ppo_config.value_clip_range;
+            for i in 0..n {
+                let diff = predicted[i] - old_values[i];
+                let clamped = diff.max(-clip_range).min(clip_range);
+                let clipped_pred = old_values[i] + clamped;
+
+                let raw_err = predicted[i] - returns[i];
+                let clipped_err = clipped_pred - returns[i];
+                let l1 = raw_err * raw_err;
+                let l2 = clipped_err * clipped_err;
+
+                if l1 >= l2 {
+                    loss = loss + l1 * inv_n;
+                    grad[i] = two * raw_err * inv_n;
+                } else {
+                    loss = loss + l2 * inv_n;
+                    // d clipped_pred / d predicted is 1 inside the clip interval, 0 outside.
+                    let inside = diff.abs() < clip_range;
+                    grad[i] = if inside {
+                        two * clipped_err * inv_n
+                    } else {
+                        T::zero()
+                    };
+                }
+            }
+        } else {
+            for i in 0..n {
+                let err = predicted[i] - returns[i];
+                loss = loss + err * err * inv_n;
+                grad[i] = two * err * inv_n;
+            }
+        }
+
+        Ok((loss, grad))
+    }
+
+    /// Run the value regression step for a batch, returning the value loss.
+    ///
+    /// Evaluates the critic, forms the (optionally clipped) squared-error loss and
+    /// its derivative, and applies a real gradient step scaled by
+    /// `value_loss_coeff`.
+    fn update_value_on_batch(
+        &mut self,
+        observations: &Array2<T>,
+        old_values: &Array1<T>,
+        returns: &Array1<T>,
+    ) -> Result<T> {
+        let predicted = match self.value_network {
+            Some(ref value_net) => value_net.evaluate_value(observations)?,
+            None => return Ok(T::zero()),
+        };
+
+        let (loss, grad) = self.value_loss_and_grad(&predicted, old_values, returns)?;
+        let coeff = self.config.base_config.value_loss_coeff;
+        let scaled = grad.mapv(|g| g * coeff);
+        self.apply_value_gradient_step(observations, &scaled)?;
+        Ok(loss)
+    }
+
+    /// Mean entropy loss (`−H̄`) of a policy evaluation.
+    fn entropy_loss(evaluation: &super::PolicyEvaluation<T>) -> T {
+        let len = evaluation.entropy.len();
+        if len == 0 {
+            return T::zero();
+        }
+        let count = T::from(len).unwrap_or_else(T::one);
+        -evaluation.entropy.iter().copied().sum::<T>() / count
     }
 
     /// Get current optimization metrics
@@ -1149,21 +1371,33 @@ impl<
                 .slice_mut(s![offset..offset + size])
                 .assign(&trajectory.values);
 
-            combined_dones.extend_from_slice(trajectory.dones.as_slice().expect("unwrap failed"));
+            // `as_slice` returns None for any non-contiguous (sliced/strided)
+            // array, so iterate instead of unwrapping a layout assumption.
+            combined_dones.extend(trajectory.dones.iter().copied());
 
             offset += size;
         }
 
         let combined_dones_array = Array1::from_vec(combined_dones);
 
-        TrajectoryBatch::new(
+        let combined = TrajectoryBatch::new(
             combined_obs,
             combined_actions,
             combined_log_probs,
             combined_rewards,
             combined_values,
             combined_dones_array,
-        )
+        )?;
+
+        // The combined batch ends where the last buffered trajectory ended.
+        match self
+            .trajectory_buffer
+            .last()
+            .and_then(|t| t.final_observation.clone())
+        {
+            Some(final_observation) => combined.with_final_observation(final_observation),
+            None => Ok(combined),
+        }
     }
 
     /// Clear trajectory buffer
@@ -1186,29 +1420,32 @@ mod tests {
     use scirs2_core::ndarray::{arr1, arr2, Array1, Array2};
     use std::collections::HashMap;
 
-    /// Mock policy whose evaluated log-probs differ from the trajectory's stored
-    /// (old) log-probs by a fixed `log_prob_offset`. Because the adaptive-KL
-    /// estimator is `KL = mean(old_logp − new_logp) = −offset`, a *negative*
-    /// offset yields a large positive KL — letting tests drive β up or down.
+    /// Mock policy whose log-probability *is* its single parameter `w[0]`.
+    ///
+    /// That makes it genuinely differentiable — `∂ log π/∂w = 1` — so the real
+    /// gradient path can be exercised end to end while the log-ratio against the
+    /// trajectory's stored (zero) log-probs stays exactly `w[0]`, letting tests
+    /// drive the adaptive-KL coefficient up or down.
     struct MockPolicy {
         params: HashMap<String, Array1<f64>>,
-        log_prob_offset: f64,
         entropy: f64,
-        /// Number of times `update_parameters` has been invoked. Lets update
-        /// tests assert that gradients were actually forwarded to the network.
+        /// Number of times `update_parameters` has been invoked.
         update_calls: usize,
     }
 
     impl MockPolicy {
         fn new(log_prob_offset: f64) -> Self {
             let mut params = HashMap::new();
-            params.insert("w".to_string(), arr1(&[0.0, 0.0]));
+            params.insert("w".to_string(), arr1(&[log_prob_offset]));
             Self {
                 params,
-                log_prob_offset,
                 entropy: 0.5,
                 update_calls: 0,
             }
+        }
+
+        fn offset(&self) -> f64 {
+            self.params["w"][0]
         }
     }
 
@@ -1219,9 +1456,7 @@ mod tests {
             _actions: &Array2<f64>,
         ) -> Result<PolicyEvaluation<f64>> {
             let n = observations.nrows();
-            // New log-probs = a constant (offset). Old log-probs in the
-            // trajectory are 0.0, so log_ratio = offset for every sample.
-            let log_probs = Array1::from_elem(n, self.log_prob_offset);
+            let log_probs = Array1::from_elem(n, self.offset());
             let entropy = Array1::from_elem(n, self.entropy);
             Ok(PolicyEvaluation {
                 log_probs,
@@ -1242,12 +1477,12 @@ mod tests {
             })
         }
 
-        fn update_parameters(&mut self, gradients: &HashMap<String, Array1<f64>>) -> Result<()> {
+        fn update_parameters(&mut self, deltas: &HashMap<String, Array1<f64>>) -> Result<()> {
             self.update_calls += 1;
-            for (key, grad) in gradients {
+            for (key, delta) in deltas {
                 if let Some(p) = self.params.get_mut(key) {
-                    if p.len() == grad.len() {
-                        *p = &*p + grad;
+                    if p.len() == delta.len() {
+                        *p = &*p + delta;
                     }
                 }
             }
@@ -1257,14 +1492,34 @@ mod tests {
         fn get_parameters(&self) -> HashMap<String, Array1<f64>> {
             self.params.clone()
         }
+
+        fn log_prob_gradient(
+            &self,
+            _observations: &Array2<f64>,
+            _actions: &Array2<f64>,
+            coefficients: &Array1<f64>,
+        ) -> Result<HashMap<String, Array1<f64>>> {
+            // log π_i = w[0] ⇒ ∂/∂w Σ c_i log π_i = Σ c_i.
+            let mut map = HashMap::new();
+            map.insert("w".to_string(), arr1(&[coefficients.iter().sum::<f64>()]));
+            Ok(map)
+        }
+
+        fn entropy_gradient(
+            &self,
+            _observations: &Array2<f64>,
+        ) -> Result<HashMap<String, Array1<f64>>> {
+            // Entropy is a constant here, so its gradient is exactly zero.
+            let mut map = HashMap::new();
+            map.insert("w".to_string(), arr1(&[0.0]));
+            Ok(map)
+        }
     }
 
-    /// Minimal value network returning a fixed constant; only needs to be a
-    /// valid `V`. A non-zero baseline (when requested) exercises the value-loss
-    /// and V-trace correction paths with informative numbers.
+    /// Bias-only linear value function `V(s) = v[0]`: constant in the state but
+    /// genuinely differentiable (`∂V/∂v = 1`), so value updates are real.
     struct MockValue {
         params: HashMap<String, Array1<f64>>,
-        value: f64,
         /// Number of times `update_parameters` has been invoked.
         update_calls: usize,
     }
@@ -1276,10 +1531,9 @@ mod tests {
 
         fn with_value(value: f64) -> Self {
             let mut params = HashMap::new();
-            params.insert("v".to_string(), arr1(&[0.0, 0.0]));
+            params.insert("v".to_string(), arr1(&[value]));
             Self {
                 params,
-                value,
                 update_calls: 0,
             }
         }
@@ -1287,15 +1541,15 @@ mod tests {
 
     impl ValueNetwork<f64> for MockValue {
         fn evaluate_value(&self, observations: &Array2<f64>) -> Result<Array1<f64>> {
-            Ok(Array1::from_elem(observations.nrows(), self.value))
+            Ok(Array1::from_elem(observations.nrows(), self.params["v"][0]))
         }
 
-        fn update_parameters(&mut self, gradients: &HashMap<String, Array1<f64>>) -> Result<()> {
+        fn update_parameters(&mut self, deltas: &HashMap<String, Array1<f64>>) -> Result<()> {
             self.update_calls += 1;
-            for (key, grad) in gradients {
+            for (key, delta) in deltas {
                 if let Some(p) = self.params.get_mut(key) {
-                    if p.len() == grad.len() {
-                        *p = &*p + grad;
+                    if p.len() == delta.len() {
+                        *p = &*p + delta;
                     }
                 }
             }
@@ -1304,6 +1558,16 @@ mod tests {
 
         fn get_parameters(&self) -> HashMap<String, Array1<f64>> {
             self.params.clone()
+        }
+
+        fn value_gradient(
+            &self,
+            _observations: &Array2<f64>,
+            residuals: &Array1<f64>,
+        ) -> Result<HashMap<String, Array1<f64>>> {
+            let mut map = HashMap::new();
+            map.insert("v".to_string(), arr1(&[residuals.iter().sum::<f64>()]));
+            Ok(map)
         }
     }
 
@@ -1509,6 +1773,9 @@ mod tests {
             a2c.policy_network.get_parameters()["w"],
             a3c.policy_network.get_parameters()["w"]
         );
+        // Note: this mock's log-probability is state-independent, so with
+        // mean-zero (normalized) advantages its exact policy gradient is zero.
+        // End-to-end learning is covered by the linear-policy convergence tests.
     }
 
     #[test]

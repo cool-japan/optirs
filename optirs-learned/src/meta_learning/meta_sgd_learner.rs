@@ -29,6 +29,8 @@ pub struct MetaSGDLearner<T: Float + Debug + Send + Sync + 'static> {
     base_lr: T,
     /// Learning rate for updating the per-parameter LRs
     alpha_lr: T,
+    /// Outer-loop interpolation rate toward the adapted parameters
+    outer_lr: T,
     /// Number of inner loop steps
     inner_steps: usize,
     /// Learnable per-parameter learning rates
@@ -43,6 +45,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MetaSGDLearner<T> {
         Self {
             base_lr,
             alpha_lr: T::from(0.001).unwrap_or_else(|| T::zero()),
+            outer_lr: T::from(0.1).unwrap_or_else(|| T::zero()),
             inner_steps: 5,
             per_param_lr: HashMap::new(),
             step_count: 0,
@@ -52,6 +55,13 @@ impl<T: Float + Debug + Send + Sync + 'static> MetaSGDLearner<T> {
     /// Set the alpha learning rate for updating per-param LRs (builder pattern)
     pub fn with_alpha_lr(mut self, lr: T) -> Self {
         self.alpha_lr = lr;
+        self
+    }
+
+    /// Set the outer-loop rate used to move the meta-parameters toward the
+    /// adapted parameters (builder pattern).
+    pub fn with_outer_lr(mut self, lr: T) -> Self {
+        self.outer_lr = lr;
         self
     }
 
@@ -323,15 +333,20 @@ impl<
         // Clamp per-param LRs to valid range
         self.clamp_per_param_lr();
 
-        // Update meta-parameters toward adapted params
-        let outer_lr = T::from(0.1).unwrap_or_else(|| T::zero());
+        // Update meta-parameters toward the adapted parameters.
+        //
+        // Update contract: the learner owns this update, and `meta_gradients`
+        // is reported in *descent* convention (the vector `g` for which the
+        // update is `theta <- theta - outer_lr * g`). Callers must not apply it
+        // a second time.
+        let outer_lr = self.outer_lr;
         for (name, param) in meta_parameters.iter_mut() {
             if let Some(acc) = accumulated_diff.get(name) {
                 let avg_diff = acc / batch_size;
                 for i in 0..param.len() {
                     param[i] = param[i] + outer_lr * avg_diff[i];
                 }
-                meta_gradients.insert(name.clone(), avg_diff.clone());
+                meta_gradients.insert(name.clone(), avg_diff.mapv(|v| -v));
             }
         }
 

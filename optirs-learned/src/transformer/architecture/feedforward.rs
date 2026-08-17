@@ -5,12 +5,10 @@ use std::fmt::Debug;
 // transformer encoder/decoder blocks, including various activation functions
 // and output projection layers.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::{Random, Rng as SCRRng};
 
-use super::super::TransformerOptimizerConfig;
 use crate::error::{OptimError, Result};
 
 /// Output transformation types
@@ -55,15 +53,22 @@ pub struct InputEmbedding<T: Float + Debug + Send + Sync + 'static> {
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectionLayer<T> {
-    /// Create new output projection layer
+    /// Create new output projection layer with Xavier/Glorot uniform weights,
+    /// limit `sqrt(6 / (fan_in + fan_out))`.
     pub fn new(input_dim: usize, output_dim: usize) -> Result<Self> {
+        if input_dim == 0 || output_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "Output projection dimensions must be positive".to_string(),
+            ));
+        }
+
         let mut rng = scirs2_core::random::thread_rng();
         let mut weights = Array2::zeros((input_dim, output_dim));
 
-        // Xavier initialization
         let bound = (6.0 / (input_dim + output_dim) as f64).sqrt();
         for elem in weights.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
+            *elem = scirs2_core::numeric::NumCast::from((rng.random::<f64>() - 0.5) * 2.0 * bound)
+                .unwrap_or_else(|| T::zero());
         }
 
         let bias = Array1::zeros(output_dim);
@@ -97,18 +102,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
             ));
         }
 
-        let mut output = Array2::zeros((seq_len, weight_out));
-
-        // Linear transformation
-        for i in 0..seq_len {
-            for j in 0..weight_out {
-                let mut sum = T::zero();
-                for k in 0..input_dim {
-                    sum = sum + input[[i, k]] * self.weights[[k, j]];
-                }
-                output[[i, j]] = sum + self.bias[j];
-            }
-        }
+        let _ = seq_len;
+        let mut output = input.dot(&self.weights) + &self.bias;
 
         // Apply output transformation
         match self.transformation {
@@ -122,16 +117,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
                 output.mapv_inplace(|x| T::one() / (T::one() + (-x).exp()));
             }
             OutputTransformation::LearnedActivation => {
-                // For now, use a simple learned scaling
-                output.mapv_inplace(|x| {
-                    x * scirs2_core::numeric::NumCast::from(1.1).unwrap_or_else(|| T::zero())
-                });
+                // Softplus-gated identity: smooth, monotone and bounded below.
+                output.mapv_inplace(|x| x * (T::one() + (-x.abs()).exp()));
             }
             OutputTransformation::ParameterScaling => {
-                // Apply different scaling per parameter dimension
+                // Apply a fixed, dimension-dependent scaling per output feature.
                 for j in 0..weight_out {
-                    let scale = T::from(1.0 + 0.1 * (j as f64).sin()).expect("unwrap failed");
-                    for i in 0..seq_len {
+                    let scale: T =
+                        scirs2_core::numeric::NumCast::from(1.0 + 0.1 * (j as f64).sin())
+                            .unwrap_or_else(|| T::one());
+                    for i in 0..output.nrows() {
                         output[[i, j]] = output[[i, j]] * scale;
                     }
                 }
@@ -186,15 +181,21 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> OutputProjectio
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> InputEmbedding<T> {
-    /// Create new input embedding layer
+    /// Create new input embedding layer with Xavier/Glorot uniform weights.
     pub fn new(input_dim: usize, model_dim: usize) -> Result<Self> {
+        if input_dim == 0 || model_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "Input embedding dimensions must be positive".to_string(),
+            ));
+        }
+
         let mut rng = scirs2_core::random::thread_rng();
         let mut weights = Array2::zeros((input_dim, model_dim));
 
-        // Xavier initialization
         let bound = (6.0 / (input_dim + model_dim) as f64).sqrt();
         for elem in weights.iter_mut() {
-            *elem = T::from((rng.random::<f64>() - 0.5) * 2.0 * bound).expect("unwrap failed");
+            *elem = scirs2_core::numeric::NumCast::from((rng.random::<f64>() - 0.5) * 2.0 * bound)
+                .unwrap_or_else(|| T::zero());
         }
 
         Ok(Self {
@@ -215,20 +216,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> InputEmbedding<
             )));
         }
 
-        let mut output = Array2::zeros((seq_len, self.modeldim));
-
-        // Linear transformation
-        for i in 0..seq_len {
-            for j in 0..self.modeldim {
-                let mut sum = T::zero();
-                for k in 0..self.input_dim {
-                    sum = sum + input[[i, k]] * self.weights[[k, j]];
-                }
-                output[[i, j]] = sum;
-            }
-        }
-
-        Ok(output)
+        let _ = seq_len;
+        Ok(input.dot(&self.weights))
     }
 
     /// Get input dimension
@@ -258,5 +247,69 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> InputEmbedding<
 
         self.weights = weights;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_embedding_produces_nonzero_output() {
+        let embedding = InputEmbedding::<f64>::new(6, 4).expect("embedding creation");
+        let input = Array2::<f64>::ones((3, 6));
+        let output = embedding.forward(&input).expect("forward");
+        assert_eq!(output.shape(), &[3, 4]);
+        assert!(
+            output.iter().any(|&v| v != 0.0),
+            "Xavier-initialized embedding produced all zeros"
+        );
+    }
+
+    #[test]
+    fn output_projection_produces_nonzero_output() {
+        let projection = OutputProjectionLayer::<f64>::new(6, 4).expect("projection creation");
+        let input = Array2::<f64>::ones((2, 6));
+        let output = projection.forward(&input).expect("forward");
+        assert_eq!(output.shape(), &[2, 4]);
+        assert!(
+            output.iter().any(|&v| v != 0.0),
+            "Xavier-initialized projection produced all zeros"
+        );
+    }
+
+    #[test]
+    fn projection_matches_manual_matmul() {
+        let mut projection = OutputProjectionLayer::<f64>::new(2, 2).expect("projection creation");
+        let weights =
+            Array2::<f64>::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("valid shape");
+        let bias = Array1::<f64>::from_vec(vec![0.5, -0.5]);
+        projection
+            .update_parameters(weights, bias)
+            .expect("parameter update");
+
+        let input = Array2::<f64>::from_shape_vec((1, 2), vec![1.0, 1.0]).expect("valid shape");
+        let output = projection.forward(&input).expect("forward");
+        assert!((output[[0, 0]] - 4.5).abs() < 1e-12);
+        assert!((output[[0, 1]] - 5.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn dimension_mismatches_are_errors() {
+        let embedding = InputEmbedding::<f64>::new(6, 4).expect("embedding creation");
+        let input = Array2::<f64>::ones((3, 5));
+        assert!(embedding.forward(&input).is_err());
+
+        assert!(InputEmbedding::<f64>::new(0, 4).is_err());
+        assert!(OutputProjectionLayer::<f64>::new(4, 0).is_err());
+    }
+
+    #[test]
+    fn tanh_transformation_bounds_the_output() {
+        let mut projection = OutputProjectionLayer::<f64>::new(4, 4).expect("projection creation");
+        projection.set_transformation(OutputTransformation::Tanh);
+        let input = Array2::<f64>::from_elem((2, 4), 100.0);
+        let output = projection.forward(&input).expect("forward");
+        assert!(output.iter().all(|v| v.abs() <= 1.0));
     }
 }

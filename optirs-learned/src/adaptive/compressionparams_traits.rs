@@ -13,7 +13,9 @@ use std::fmt::Debug;
 
 use super::types::CompressionParams;
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for CompressionParams<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for CompressionParams<T>
+{
     fn default() -> Self {
         Self {
             target_ratio: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()),

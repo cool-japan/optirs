@@ -84,6 +84,11 @@ pub struct SuiteResult {
     pub execution_time: Duration,
     /// Summary statistics
     pub summary: TestSummary,
+    /// Whether this suite actually ran real checks against the plugin.
+    /// `false` means the suite could not be executed (e.g. a required
+    /// capability is unavailable) -- such results are excluded from the
+    /// overall score and the pass gate rather than counted as a pass.
+    pub verified: bool,
 }
 
 /// Test execution summary
@@ -124,6 +129,13 @@ pub struct ComplianceResult {
     pub warnings: Vec<String>,
     /// Compliance score (0.0 to 1.0)
     pub compliance_score: f64,
+    /// Whether this checker actually inspected the plugin's declared
+    /// metadata. `false` means the category is not decidable from the data
+    /// this checker receives (e.g. performance conformance needs benchmark
+    /// measurements, not just `PluginInfo`) -- such results are excluded
+    /// from the overall score and the pass gate rather than counted as a
+    /// pass.
+    pub verified: bool,
 }
 
 /// Compliance violation
@@ -252,8 +264,10 @@ pub struct ValidationResults<A: Float> {
     pub compliance_results: Vec<ComplianceResult>,
     /// Performance benchmark results
     pub benchmark_results: Vec<BenchmarkResult<A>>,
-    /// Overall score (0.0 to 1.0)
-    pub overall_score: f64,
+    /// Overall score (0.0 to 1.0), excluding any unverified category.
+    /// `None` when every category was unverified -- there is no evidence
+    /// to score, so this must never be reported as a passing number.
+    pub overall_score: Option<f64>,
     /// Validation timestamp
     pub timestamp: std::time::SystemTime,
     /// Total validation time
@@ -293,30 +307,112 @@ impl<A: Float + std::fmt::Debug + Send + Sync> ThreadSafetyTestSuite<A> {
     }
 }
 
-impl<A: Float + std::fmt::Debug + Send + Sync> ValidationTestSuite<A> for ThreadSafetyTestSuite<A> {
-    fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
-        use std::time::Instant;
+impl<A: Float + std::fmt::Debug + Send + Sync + 'static> ThreadSafetyTestSuite<A> {
+    /// Concurrent step smoke test: clone the plugin, share it behind
+    /// `Arc<Mutex<_>>` across several threads, and drive many `step()`
+    /// calls concurrently. `OptimizerPlugin<A>: Send + Sync` is already a
+    /// supertrait bound, so this is always runnable -- there is no
+    /// "capability unavailable" case to fall back to `Unverified` for here.
+    fn test_concurrent_steps(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
         let start_time = Instant::now();
 
-        // For now, just return a passing result
-        // In a real implementation, this would test thread safety
+        const NUM_THREADS: usize = 4;
+        const STEPS_PER_THREAD: usize = 25;
+        const DIM: usize = 8;
+
+        let shared: Arc<Mutex<Box<dyn OptimizerPlugin<A>>>> =
+            Arc::new(Mutex::new(plugin.clone_plugin()));
+        {
+            let mut guard = shared.lock().unwrap_or_else(|e| e.into_inner());
+            if let Err(e) = guard.initialize(&[DIM]) {
+                return TestResult {
+                    passed: false,
+                    message: format!("initialize failed before concurrency test: {e}"),
+                    execution_time: start_time.elapsed(),
+                    data: HashMap::new(),
+                };
+            }
+        }
+
+        let params: Array1<A> =
+            Array1::from_iter((0..DIM).map(|i| A::from(1.0 + i as f64).unwrap_or_else(A::one)));
+        let gradients: Array1<A> =
+            Array1::from_iter((0..DIM).map(|_| A::from(0.01).unwrap_or_else(A::zero)));
+        let saw_error = Arc::new(AtomicBool::new(false));
+
+        let mut handles = Vec::with_capacity(NUM_THREADS);
+        for _ in 0..NUM_THREADS {
+            let shared = Arc::clone(&shared);
+            let saw_error = Arc::clone(&saw_error);
+            let params = params.clone();
+            let gradients = gradients.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..STEPS_PER_THREAD {
+                    let mut guard = shared.lock().unwrap_or_else(|e| e.into_inner());
+                    match guard.step(&params, &gradients) {
+                        Ok(result) => {
+                            if result.iter().any(|v| !v.is_finite()) {
+                                saw_error.store(true, Ordering::SeqCst);
+                            }
+                        }
+                        Err(_) => saw_error.store(true, Ordering::SeqCst),
+                    }
+                }
+            }));
+        }
+
+        let mut any_panicked = false;
+        for handle in handles {
+            if handle.join().is_err() {
+                any_panicked = true;
+            }
+        }
+
+        let passed = !any_panicked && !saw_error.load(Ordering::SeqCst);
+        let message = if any_panicked {
+            "A worker thread panicked while calling step() concurrently through Arc<Mutex<_>>"
+                .to_string()
+        } else if passed {
+            format!(
+                "{NUM_THREADS} threads completed {STEPS_PER_THREAD} concurrent step() calls \
+                 each through a shared Arc<Mutex<_>> instance with no panics and finite output"
+            )
+        } else {
+            "Concurrent step() calls produced an error or a non-finite result".to_string()
+        };
+
+        TestResult {
+            passed,
+            message,
+            execution_time: start_time.elapsed(),
+            data: HashMap::new(),
+        }
+    }
+}
+
+impl<A: Float + std::fmt::Debug + Send + Sync + 'static> ValidationTestSuite<A>
+    for ThreadSafetyTestSuite<A>
+{
+    fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
+        let start_time = Instant::now();
+        let result = self.test_concurrent_steps(plugin);
+        let passed = result.passed;
+
         SuiteResult {
             suite_name: "Thread Safety".to_string(),
-            test_results: vec![TestResult {
-                passed: true,
-                message: "Thread safety tests not yet implemented".to_string(),
-                execution_time: start_time.elapsed(),
-                data: std::collections::HashMap::new(),
-            }],
-            suite_passed: true,
+            test_results: vec![result],
+            suite_passed: passed,
             execution_time: start_time.elapsed(),
             summary: TestSummary {
                 total_tests: 1,
-                passed_tests: 1,
-                failed_tests: 0,
+                passed_tests: passed as usize,
+                failed_tests: (!passed) as usize,
                 skipped_tests: 0,
-                success_rate: 1.0,
+                success_rate: if passed { 1.0 } else { 0.0 },
             },
+            verified: true,
         }
     }
 
@@ -350,30 +446,96 @@ impl<A: Float + std::fmt::Debug + Send + Sync> MemoryTestSuite<A> {
     }
 }
 
+impl<A: Float + std::fmt::Debug + Send + Sync> MemoryTestSuite<A> {
+    /// Sample the plugin's self-reported `memory_usage()` across many steps
+    /// and flag runs where the peak reported usage keeps climbing in the
+    /// second half relative to the first -- a crude but real growth
+    /// heuristic. Plugins that never override `memory_usage()` report a
+    /// constant `0`, which is a real (if uninformative) measurement -- not
+    /// a fabricated pass -- and the flat sequence correctly reads as "no
+    /// growth observed".
+    fn test_memory_growth(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
+        let start_time = Instant::now();
+        const DIM: usize = 16;
+        const SAMPLES: usize = 50;
+
+        if let Err(e) = plugin.initialize(&[DIM]) {
+            return TestResult {
+                passed: false,
+                message: format!("initialize failed before memory growth probe: {e}"),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            };
+        }
+
+        let mut params: Array1<A> = Array1::from_elem(DIM, A::one());
+        let gradients: Array1<A> = Array1::from_elem(DIM, A::from(0.01).unwrap_or_else(A::zero));
+        let baseline = plugin.memory_usage().current_usage;
+        let mut samples = Vec::with_capacity(SAMPLES);
+
+        for _ in 0..SAMPLES {
+            match plugin.step(&params, &gradients) {
+                Ok(next) => params = next,
+                Err(e) => {
+                    return TestResult {
+                        passed: false,
+                        message: format!("step failed during memory growth probe: {e}"),
+                        execution_time: start_time.elapsed(),
+                        data: HashMap::new(),
+                    };
+                }
+            }
+            samples.push(plugin.memory_usage().current_usage);
+        }
+
+        let half = SAMPLES / 2;
+        let first_half_peak = samples[..half].iter().copied().max().unwrap_or(0);
+        let second_half_peak = samples[half..].iter().copied().max().unwrap_or(0);
+        let growth_factor = if first_half_peak == 0 {
+            if second_half_peak == 0 {
+                1.0
+            } else {
+                f64::INFINITY
+            }
+        } else {
+            second_half_peak as f64 / first_half_peak as f64
+        };
+        // Allow modest growth (e.g. lazily-allocated optimizer state
+        // settling in) but flag sustained, unbounded growth across the run.
+        let passed = growth_factor <= 1.5;
+
+        TestResult {
+            passed,
+            message: format!(
+                "self-reported current_usage over {SAMPLES} steps: baseline={baseline}B \
+                 first_half_peak={first_half_peak}B second_half_peak={second_half_peak}B \
+                 growth_factor={growth_factor:.2}"
+            ),
+            execution_time: start_time.elapsed(),
+            data: HashMap::new(),
+        }
+    }
+}
+
 impl<A: Float + std::fmt::Debug + Send + Sync> ValidationTestSuite<A> for MemoryTestSuite<A> {
     fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
-        use std::time::Instant;
         let start_time = Instant::now();
+        let result = self.test_memory_growth(plugin);
+        let passed = result.passed;
 
-        // For now, just return a passing result
-        // In a real implementation, this would test memory management
         SuiteResult {
             suite_name: "Memory Management".to_string(),
-            test_results: vec![TestResult {
-                passed: true,
-                message: "Memory management tests not yet implemented".to_string(),
-                execution_time: start_time.elapsed(),
-                data: std::collections::HashMap::new(),
-            }],
-            suite_passed: true,
+            test_results: vec![result],
+            suite_passed: passed,
             execution_time: start_time.elapsed(),
             summary: TestSummary {
                 total_tests: 1,
-                passed_tests: 1,
-                failed_tests: 0,
+                passed_tests: passed as usize,
+                failed_tests: (!passed) as usize,
                 skipped_tests: 0,
-                success_rate: 1.0,
+                success_rate: if passed { 1.0 } else { 0.0 },
             },
+            verified: true,
         }
     }
 
@@ -407,30 +569,88 @@ impl<A: Float + std::fmt::Debug + Send + Sync> ConvergenceTestSuite<A> {
     }
 }
 
+impl<A: Float + std::fmt::Debug + Send + Sync> ConvergenceTestSuite<A> {
+    /// Run the plugin on the convex quadratic `f(x) = sum(x_i^2)`
+    /// (gradient `2x`) and assert the loss actually decreases -- the one
+    /// property any optimizer claiming to optimize must satisfy.
+    fn test_quadratic_convergence(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
+        let start_time = Instant::now();
+        const DIM: usize = 4;
+        const ITERATIONS: usize = 200;
+
+        if let Err(e) = plugin.initialize(&[DIM]) {
+            return TestResult {
+                passed: false,
+                message: format!("initialize failed before convergence run: {e}"),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            };
+        }
+
+        let mut params: Array1<A> =
+            Array1::from_iter((0..DIM).map(|i| A::from(2.0 + i as f64).unwrap_or_else(A::one)));
+        let loss = |p: &Array1<A>| -> A { p.iter().fold(A::zero(), |acc, &v| acc + v * v) };
+        let initial_loss = loss(&params);
+
+        for step in 0..ITERATIONS {
+            let gradients = params.mapv(|v| v + v); // gradient of sum(x_i^2) is 2x
+            match plugin.step(&params, &gradients) {
+                Ok(next) => params = next,
+                Err(e) => {
+                    return TestResult {
+                        passed: false,
+                        message: format!(
+                            "step failed at iteration {step} during convergence run: {e}"
+                        ),
+                        execution_time: start_time.elapsed(),
+                        data: HashMap::new(),
+                    };
+                }
+            }
+            let current_loss = loss(&params);
+            if !current_loss.is_finite() {
+                return TestResult {
+                    passed: false,
+                    message: format!("loss diverged to a non-finite value by iteration {step}"),
+                    execution_time: start_time.elapsed(),
+                    data: HashMap::new(),
+                };
+            }
+        }
+
+        let final_loss = loss(&params);
+        let passed = final_loss < initial_loss;
+
+        TestResult {
+            passed,
+            message: format!(
+                "quadratic loss over {ITERATIONS} steps: initial={initial_loss:?} final={final_loss:?}"
+            ),
+            execution_time: start_time.elapsed(),
+            data: HashMap::new(),
+        }
+    }
+}
+
 impl<A: Float + std::fmt::Debug + Send + Sync> ValidationTestSuite<A> for ConvergenceTestSuite<A> {
     fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
-        use std::time::Instant;
         let start_time = Instant::now();
+        let result = self.test_quadratic_convergence(plugin);
+        let passed = result.passed;
 
-        // For now, just return a passing result
-        // In a real implementation, this would test convergence
         SuiteResult {
             suite_name: "Convergence".to_string(),
-            test_results: vec![TestResult {
-                passed: true,
-                message: "Convergence tests not yet implemented".to_string(),
-                execution_time: start_time.elapsed(),
-                data: std::collections::HashMap::new(),
-            }],
-            suite_passed: true,
+            test_results: vec![result],
+            suite_passed: passed,
             execution_time: start_time.elapsed(),
             summary: TestSummary {
                 total_tests: 1,
-                passed_tests: 1,
-                failed_tests: 0,
+                passed_tests: passed as usize,
+                failed_tests: (!passed) as usize,
                 skipped_tests: 0,
-                success_rate: 1.0,
+                success_rate: if passed { 1.0 } else { 0.0 },
             },
+            verified: true,
         }
     }
 
@@ -520,18 +740,72 @@ impl<A: Float + Send + Sync> ThroughputBenchmark<A> {
 
 impl<A: Float + Debug + Send + Sync> PerformanceBenchmark<A> for ThroughputBenchmark<A> {
     fn run(&self, plugin: &mut dyn OptimizerPlugin<A>) -> BenchmarkResult<A> {
-        use std::time::Instant;
         let start_time = Instant::now();
+        let dim = self.problemsize.max(1);
 
-        // For now, just return a basic result
-        // In a real implementation, this would measure throughput
+        if let Err(e) = plugin.initialize(&[dim]) {
+            let mut metrics = HashMap::new();
+            metrics.insert("error".to_string(), 0.0);
+            return BenchmarkResult {
+                name: format!("Throughput (initialize failed: {e})"),
+                score: 0.0,
+                metrics,
+                execution_time: start_time.elapsed(),
+                memory_usage: 0,
+                data: HashMap::new(),
+                verified: false,
+            };
+        }
+
+        let params: Array1<A> = Array1::from_iter(
+            (0..dim).map(|i| A::from(1.0 + (i % 7) as f64 * 0.1).unwrap_or_else(A::one)),
+        );
+        let gradients: Array1<A> = Array1::from_iter(
+            (0..dim).map(|i| A::from(0.01 + (i % 5) as f64 * 0.001).unwrap_or_else(A::zero)),
+        );
+
+        let run_start = Instant::now();
+        let mut current = params;
+        let mut completed = 0usize;
+        for _ in 0..self.iterations {
+            match plugin.step(&current, &gradients) {
+                Ok(next) => {
+                    current = next;
+                    completed += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        let elapsed_secs = run_start.elapsed().as_secs_f64();
+        let ops_per_sec = if elapsed_secs > 0.0 {
+            completed as f64 / elapsed_secs
+        } else {
+            completed as f64
+        };
+
+        // Normalize against the baseline into [0, 1] rather than surfacing
+        // the raw ops/sec magnitude -- a magnitude in the hundreds
+        // previously dominated the [0,1] overall score regardless of what
+        // the functional tests found.
+        let score = self
+            .expected_baseline()
+            .map(|baseline| {
+                (ops_per_sec / baseline.expected_value.max(f64::EPSILON)).clamp(0.0, 1.0)
+            })
+            .unwrap_or(0.0);
+
+        let mut metrics = HashMap::new();
+        metrics.insert("ops_per_sec".to_string(), ops_per_sec);
+        metrics.insert("completed_iterations".to_string(), completed as f64);
+
         BenchmarkResult {
             name: "Throughput".to_string(),
-            score: 100.0, // Dummy score
-            metrics: std::collections::HashMap::new(),
+            score,
+            metrics,
             execution_time: start_time.elapsed(),
-            memory_usage: 0,
-            data: std::collections::HashMap::new(),
+            memory_usage: plugin.memory_usage().current_usage,
+            data: HashMap::new(),
+            verified: true,
         }
     }
 
@@ -571,18 +845,72 @@ impl<A: Float + Send + Sync> LatencyBenchmark<A> {
 
 impl<A: Float + Debug + Send + Sync> PerformanceBenchmark<A> for LatencyBenchmark<A> {
     fn run(&self, plugin: &mut dyn OptimizerPlugin<A>) -> BenchmarkResult<A> {
-        use std::time::Instant;
         let start_time = Instant::now();
+        let dim = self.problemsize.max(1);
 
-        // For now, just return a basic result
-        // In a real implementation, this would measure latency
+        if let Err(e) = plugin.initialize(&[dim]) {
+            return BenchmarkResult {
+                name: format!("Latency (initialize failed: {e})"),
+                score: 0.0,
+                metrics: HashMap::new(),
+                execution_time: start_time.elapsed(),
+                memory_usage: 0,
+                data: HashMap::new(),
+                verified: false,
+            };
+        }
+
+        let params: Array1<A> = Array1::from_iter(
+            (0..dim).map(|i| A::from(1.0 + (i % 7) as f64 * 0.1).unwrap_or_else(A::one)),
+        );
+        let gradients: Array1<A> =
+            Array1::from_iter((0..dim).map(|_| A::from(0.01).unwrap_or_else(A::zero)));
+
+        const SAMPLES: usize = 50;
+        let run_start = Instant::now();
+        let mut current = params;
+        let mut completed = 0usize;
+        for _ in 0..SAMPLES {
+            match plugin.step(&current, &gradients) {
+                Ok(next) => {
+                    current = next;
+                    completed += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        let elapsed = run_start.elapsed();
+        let avg_latency_ms = if completed > 0 {
+            elapsed.as_secs_f64() * 1000.0 / completed as f64
+        } else {
+            f64::INFINITY
+        };
+
+        // Lower latency is better: normalize as baseline/actual, clamped to
+        // [0, 1] so a plugin faster than the baseline scores 1.0 rather than
+        // an unbounded value that would dominate the overall score.
+        let score = self
+            .expected_baseline()
+            .map(|baseline| {
+                if avg_latency_ms.is_finite() && avg_latency_ms > 0.0 {
+                    (baseline.expected_value / avg_latency_ms).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.0);
+
+        let mut metrics = HashMap::new();
+        metrics.insert("avg_latency_ms".to_string(), avg_latency_ms);
+
         BenchmarkResult {
             name: "Latency".to_string(),
-            score: 10.0, // Dummy score (lower is better for latency)
-            metrics: std::collections::HashMap::new(),
+            score,
+            metrics,
             execution_time: start_time.elapsed(),
-            memory_usage: 0,
-            data: std::collections::HashMap::new(),
+            memory_usage: plugin.memory_usage().current_usage,
+            data: HashMap::new(),
+            verified: true,
         }
     }
 
@@ -622,18 +950,65 @@ impl<A: Float + Send + Sync> MemoryBenchmark<A> {
 
 impl<A: Float + Debug + Send + Sync> PerformanceBenchmark<A> for MemoryBenchmark<A> {
     fn run(&self, plugin: &mut dyn OptimizerPlugin<A>) -> BenchmarkResult<A> {
-        use std::time::Instant;
         let start_time = Instant::now();
+        let dim = self.problemsize.max(1);
 
-        // For now, just return a basic result
-        // In a real implementation, this would measure memory usage
+        if let Err(e) = plugin.initialize(&[dim]) {
+            return BenchmarkResult {
+                name: format!("Memory (initialize failed: {e})"),
+                score: 0.0,
+                metrics: HashMap::new(),
+                execution_time: start_time.elapsed(),
+                memory_usage: 0,
+                data: HashMap::new(),
+                verified: false,
+            };
+        }
+
+        let params: Array1<A> = Array1::from_iter(
+            (0..dim).map(|i| A::from(1.0 + (i % 7) as f64 * 0.1).unwrap_or_else(A::one)),
+        );
+        let gradients: Array1<A> =
+            Array1::from_iter((0..dim).map(|_| A::from(0.01).unwrap_or_else(A::zero)));
+
+        let mut current = params;
+        for _ in 0..20 {
+            match plugin.step(&current, &gradients) {
+                Ok(next) => current = next,
+                Err(_) => break,
+            }
+        }
+
+        let usage = plugin.memory_usage();
+        let usage_mb = usage.current_usage as f64 / (1024.0 * 1024.0);
+
+        // Lower memory is better: normalize as baseline/actual. A plugin
+        // that never overrides `memory_usage()` reports `0` -- that is a
+        // real measurement of "nothing self-reported", not evidence of
+        // either compliance or violation, so it scores neutrally (1.0)
+        // rather than being penalized for a metric it never populated.
+        let score = self
+            .expected_baseline()
+            .map(|baseline| {
+                if usage_mb > 0.0 {
+                    (baseline.expected_value / usage_mb).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                }
+            })
+            .unwrap_or(0.0);
+
+        let mut metrics = HashMap::new();
+        metrics.insert("memory_usage_mb".to_string(), usage_mb);
+
         BenchmarkResult {
             name: "Memory".to_string(),
-            score: 75.0, // Dummy score
-            metrics: std::collections::HashMap::new(),
+            score,
+            metrics,
             execution_time: start_time.elapsed(),
-            memory_usage: 0,
-            data: std::collections::HashMap::new(),
+            memory_usage: usage.current_usage,
+            data: HashMap::new(),
+            verified: true,
         }
     }
 
@@ -697,14 +1072,30 @@ impl<A: Float + Debug + Send + Sync + 'static> PluginValidationFramework<A> {
         let bench_results = self.benchmarker.run_all_benchmarks(plugin);
         benchmark_results.extend(bench_results);
 
-        // Calculate overall score
+        // Calculate overall score, excluding any unverified category from
+        // both the numerator and the weight sum -- an unrun check must never
+        // read as a pass.
         let overall_score =
             self.calculate_overall_score(&suite_results, &compliance_results, &benchmark_results);
 
-        // Determine if validation passed
-        let validation_passed = overall_score >= 0.8 && // 80% threshold
-            suite_results.iter().all(|r| r.suite_passed) &&
-            compliance_results.iter().all(|r| r.compliant);
+        // Determine if validation passed. `None` means nothing could be
+        // verified at all -- there is no evidence to certify against, so
+        // the gate cannot pass on zero evidence. Otherwise only the
+        // *verified* suites/checkers must agree, mirroring the score.
+        let validation_passed = match overall_score {
+            Some(score) => {
+                score >= 0.8 // 80% threshold
+                    && suite_results
+                        .iter()
+                        .filter(|r| r.verified)
+                        .all(|r| r.suite_passed)
+                    && compliance_results
+                        .iter()
+                        .filter(|r| r.verified)
+                        .all(|r| r.compliant)
+            }
+            None => false,
+        };
 
         ValidationResults {
             validation_passed,
@@ -778,49 +1169,67 @@ impl<A: Float + Debug + Send + Sync + 'static> PluginValidationFramework<A> {
         }
     }
 
+    /// Aggregate suite/compliance/benchmark results into a single [0, 1]
+    /// score, excluding any category that was not actually verified from
+    /// both the numerator and the weight sum. An unverified category
+    /// (a suite that could not run, a checker that could not decide) must
+    /// never contribute as though it had passed -- and if *nothing* could
+    /// be verified there is no evidence to score at all, hence `None`
+    /// rather than a fabricated `0.0` that a caller might read as "checked
+    /// and failed" instead of "not checked".
     fn calculate_overall_score(
         &self,
         suite_results: &[SuiteResult],
         compliance_results: &[ComplianceResult],
         benchmark_results: &[BenchmarkResult<A>],
-    ) -> f64 {
+    ) -> Option<f64> {
         let mut total_score = 0.0;
         let mut weight_sum = 0.0;
 
         // Test suite scores (50% weight)
-        if !suite_results.is_empty() {
-            let suite_score = suite_results
+        let verified_suites: Vec<&SuiteResult> =
+            suite_results.iter().filter(|r| r.verified).collect();
+        if !verified_suites.is_empty() {
+            let suite_score = verified_suites
                 .iter()
                 .map(|r| r.summary.success_rate)
                 .sum::<f64>()
-                / suite_results.len() as f64;
+                / verified_suites.len() as f64;
             total_score += suite_score * 0.5;
             weight_sum += 0.5;
         }
 
         // Compliance scores (30% weight)
-        if !compliance_results.is_empty() {
-            let compliance_score = compliance_results
+        let verified_compliance: Vec<&ComplianceResult> =
+            compliance_results.iter().filter(|r| r.verified).collect();
+        if !verified_compliance.is_empty() {
+            let compliance_score = verified_compliance
                 .iter()
                 .map(|r| r.compliance_score)
                 .sum::<f64>()
-                / compliance_results.len() as f64;
+                / verified_compliance.len() as f64;
             total_score += compliance_score * 0.3;
             weight_sum += 0.3;
         }
 
-        // Performance scores (20% weight)
-        if !benchmark_results.is_empty() {
-            let perf_score = benchmark_results.iter().map(|r| r.score).sum::<f64>()
-                / benchmark_results.len() as f64;
+        // Performance scores (20% weight). Individual benchmark scores are
+        // already normalized into [0, 1] against their baseline (see
+        // ThroughputBenchmark/LatencyBenchmark/MemoryBenchmark::run), so
+        // this average stays commensurable with the other two categories
+        // instead of a raw ops/sec or MB magnitude dominating the mean.
+        let verified_benchmarks: Vec<&BenchmarkResult<A>> =
+            benchmark_results.iter().filter(|r| r.verified).collect();
+        if !verified_benchmarks.is_empty() {
+            let perf_score = verified_benchmarks.iter().map(|r| r.score).sum::<f64>()
+                / verified_benchmarks.len() as f64;
             total_score += perf_score * 0.2;
             weight_sum += 0.2;
         }
 
         if weight_sum > 0.0 {
-            total_score / weight_sum
+            Some((total_score / weight_sum).clamp(0.0, 1.0))
         } else {
-            0.0
+            None
         }
     }
 }
@@ -874,6 +1283,7 @@ impl<A: Float + Debug + Send + Sync + 'static> ValidationTestSuite<A>
                 skipped_tests: 0,
                 success_rate: passed_tests as f64 / total_tests as f64,
             },
+            verified: true,
         }
     }
 
@@ -1006,25 +1416,106 @@ impl<A: Float + Debug + Send + Sync + 'static> NumericalAccuracyTestSuite<A> {
             _phantom: std::marker::PhantomData,
         }
     }
+
+    /// A config roundtrip should preserve the learning rate within
+    /// `numerical_tolerance` -- catches plugins that silently lose
+    /// precision (or drop fields) between `get_config`/`set_config`.
+    fn test_config_roundtrip(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
+        let start_time = Instant::now();
+        let original = plugin.get_config();
+        if let Err(e) = plugin.set_config(original.clone()) {
+            return TestResult {
+                passed: false,
+                message: format!("set_config failed during roundtrip: {e}"),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            };
+        }
+        let after = plugin.get_config();
+        let diff = (after.learning_rate - original.learning_rate).abs();
+        let passed = diff <= self.config.numerical_tolerance;
+        TestResult {
+            passed,
+            message: format!(
+                "learning_rate roundtrip |diff|={diff:.3e} tolerance={:.3e}",
+                self.config.numerical_tolerance
+            ),
+            execution_time: start_time.elapsed(),
+            data: HashMap::new(),
+        }
+    }
+
+    /// A well-conditioned finite step must not silently produce NaN/inf.
+    fn test_step_output_finite(&self, plugin: &mut dyn OptimizerPlugin<A>) -> TestResult {
+        let start_time = Instant::now();
+        const DIM: usize = 6;
+
+        if let Err(e) = plugin.initialize(&[DIM]) {
+            return TestResult {
+                passed: false,
+                message: format!("initialize failed before numerical accuracy probe: {e}"),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            };
+        }
+
+        let params: Array1<A> = Array1::from_iter(
+            (0..DIM).map(|i| A::from(1.0 + i as f64 * 0.1).unwrap_or_else(A::one)),
+        );
+        let gradients: Array1<A> = Array1::from_iter(
+            (0..DIM).map(|i| A::from(0.05 - i as f64 * 0.005).unwrap_or_else(A::zero)),
+        );
+
+        match plugin.step(&params, &gradients) {
+            Ok(result) => {
+                let all_finite = result.iter().all(|v| v.is_finite());
+                TestResult {
+                    passed: all_finite,
+                    message: if all_finite {
+                        "step() output is finite for well-conditioned input".to_string()
+                    } else {
+                        "step() produced a non-finite value for finite, well-conditioned input"
+                            .to_string()
+                    },
+                    execution_time: start_time.elapsed(),
+                    data: HashMap::new(),
+                }
+            }
+            Err(e) => TestResult {
+                passed: false,
+                message: format!("step() failed: {e}"),
+                execution_time: start_time.elapsed(),
+                data: HashMap::new(),
+            },
+        }
+    }
 }
 
 impl<A: Float + Debug + Send + Sync + 'static> ValidationTestSuite<A>
     for NumericalAccuracyTestSuite<A>
 {
     fn run_tests(&self, plugin: &mut dyn OptimizerPlugin<A>) -> SuiteResult {
-        // Implementation would include numerical precision tests
+        let start_time = Instant::now();
+        let mut test_results = Vec::new();
+        test_results.push(self.test_config_roundtrip(plugin));
+        test_results.push(self.test_step_output_finite(plugin));
+
+        let passed_tests = test_results.iter().filter(|r| r.passed).count();
+        let total_tests = test_results.len();
+
         SuiteResult {
             suite_name: self.name().to_string(),
-            test_results: Vec::new(),
-            suite_passed: true,
-            execution_time: Duration::from_millis(100),
+            test_results,
+            suite_passed: passed_tests == total_tests,
+            execution_time: start_time.elapsed(),
             summary: TestSummary {
-                total_tests: 0,
-                passed_tests: 0,
-                failed_tests: 0,
+                total_tests,
+                passed_tests,
+                failed_tests: total_tests - passed_tests,
                 skipped_tests: 0,
-                success_rate: 1.0,
+                success_rate: passed_tests as f64 / total_tests as f64,
             },
+            verified: true,
         }
     }
 
@@ -1037,7 +1528,7 @@ impl<A: Float + Debug + Send + Sync + 'static> ValidationTestSuite<A>
     }
 
     fn test_count(&self) -> usize {
-        0
+        2
     }
 }
 
@@ -1074,7 +1565,7 @@ impl<A: Float + Send + Sync> ValidationResults<A> {
             suite_results: Vec::new(),
             compliance_results: Vec::new(),
             benchmark_results: Vec::new(),
-            overall_score: 0.0,
+            overall_score: None,
             timestamp: std::time::SystemTime::now(),
             total_time: Duration::from_secs(0),
         }
@@ -1102,12 +1593,61 @@ impl Default for ValidationConfig {
 // Placeholder implementations for compliance checkers
 
 impl ComplianceChecker for ApiComplianceChecker {
-    fn check_compliance(&self, _plugininfo: &PluginInfo) -> ComplianceResult {
+    fn check_compliance(&self, plugininfo: &PluginInfo) -> ComplianceResult {
+        let mut violations = Vec::new();
+        let mut score = 1.0;
+
+        if plugininfo.name.trim().is_empty() {
+            violations.push(ComplianceViolation {
+                violation_type: ViolationType::ApiViolation,
+                description: "Plugin name is empty".to_string(),
+                severity: ViolationSeverity::Critical,
+                suggested_fix: Some("Provide a non-empty plugin name".to_string()),
+            });
+            score -= 0.4;
+        }
+
+        if plugininfo.version.trim().is_empty() {
+            violations.push(ComplianceViolation {
+                violation_type: ViolationType::ApiViolation,
+                description: "Plugin version is empty".to_string(),
+                severity: ViolationSeverity::High,
+                suggested_fix: Some("Provide a semantic version string".to_string()),
+            });
+            score -= 0.3;
+        }
+
+        if plugininfo.supported_types.is_empty() {
+            violations.push(ComplianceViolation {
+                violation_type: ViolationType::ApiViolation,
+                description: "Plugin declares no supported data types".to_string(),
+                severity: ViolationSeverity::Medium,
+                suggested_fix: Some(
+                    "Declare at least one entry in `supported_types` (e.g. DataType::F64)"
+                        .to_string(),
+                ),
+            });
+            score -= 0.2;
+        }
+
+        if plugininfo.min_sdk_version.trim().is_empty() {
+            violations.push(ComplianceViolation {
+                violation_type: ViolationType::ApiViolation,
+                description: "Plugin declares no minimum SDK version".to_string(),
+                severity: ViolationSeverity::Low,
+                suggested_fix: Some(
+                    "Set `min_sdk_version` to the SDK version targeted".to_string(),
+                ),
+            });
+            score -= 0.1;
+        }
+
         ComplianceResult {
-            compliant: true,
-            violations: Vec::new(),
+            compliant: violations.is_empty(),
+            violations,
             warnings: Vec::new(),
-            compliance_score: 1.0,
+            compliance_score: score.max(0.0),
+            verified: true,
         }
     }
 
@@ -1116,17 +1656,87 @@ impl ComplianceChecker for ApiComplianceChecker {
     }
 
     fn requirements(&self) -> Vec<ComplianceRequirement> {
-        Vec::new()
+        vec![
+            ComplianceRequirement {
+                id: "api-1".to_string(),
+                description: "Plugin must declare a non-empty name".to_string(),
+                mandatory: true,
+                category: ComplianceCategory::API,
+            },
+            ComplianceRequirement {
+                id: "api-2".to_string(),
+                description: "Plugin must declare a non-empty version".to_string(),
+                mandatory: true,
+                category: ComplianceCategory::API,
+            },
+            ComplianceRequirement {
+                id: "api-3".to_string(),
+                description: "Plugin must declare at least one supported data type".to_string(),
+                mandatory: true,
+                category: ComplianceCategory::API,
+            },
+        ]
     }
 }
 
 impl ComplianceChecker for SecurityComplianceChecker {
-    fn check_compliance(&self, _plugininfo: &PluginInfo) -> ComplianceResult {
+    /// Inspects the declarative `PluginInfo` metadata this checker is given
+    /// (license presence, dependency version bounds). Static/dynamic code
+    /// inspection (unsafe blocks, filesystem/network access, signature
+    /// verification) is a different trust boundary handled by
+    /// `plugin::loader::SecurityManager`/`CodeScanner` at load time, which
+    /// this checker does not have access to -- it must not claim to have
+    /// verified what it cannot see.
+    fn check_compliance(&self, plugininfo: &PluginInfo) -> ComplianceResult {
+        let mut violations = Vec::new();
+        let mut score: f64 = 1.0;
+
+        if plugininfo.license.trim().is_empty() {
+            violations.push(ComplianceViolation {
+                violation_type: ViolationType::SecurityViolation,
+                description: "Plugin declares no license; provenance cannot be assessed"
+                    .to_string(),
+                severity: ViolationSeverity::Medium,
+                suggested_fix: Some("Declare an SPDX license identifier".to_string()),
+            });
+            score -= 0.3;
+        }
+
+        for dep in &plugininfo.dependencies {
+            let version_req = dep.version.trim();
+            if version_req.is_empty() || version_req == "*" {
+                violations.push(ComplianceViolation {
+                    violation_type: ViolationType::SecurityViolation,
+                    description: format!(
+                        "Dependency '{}' has an unbounded version requirement ('{}'); this \
+                         lets any future release -- including a compromised one -- be pulled \
+                         in transparently",
+                        dep.name, dep.version
+                    ),
+                    severity: ViolationSeverity::High,
+                    suggested_fix: Some("Pin dependencies to a bounded version range".to_string()),
+                });
+                score -= 0.2;
+            }
+        }
+
+        let compliant = !violations.iter().any(|v| {
+            matches!(
+                v.severity,
+                ViolationSeverity::Critical | ViolationSeverity::High
+            )
+        });
+
         ComplianceResult {
-            compliant: true,
-            violations: Vec::new(),
-            warnings: Vec::new(),
-            compliance_score: 1.0,
+            compliant,
+            violations,
+            warnings: vec![
+                "Security compliance here covers declared metadata only; code-level scanning \
+                 and signature verification happen separately in PluginLoader::SecurityManager"
+                    .to_string(),
+            ],
+            compliance_score: score.max(0.0),
+            verified: true,
         }
     }
 
@@ -1135,17 +1745,42 @@ impl ComplianceChecker for SecurityComplianceChecker {
     }
 
     fn requirements(&self) -> Vec<ComplianceRequirement> {
-        Vec::new()
+        vec![
+            ComplianceRequirement {
+                id: "sec-1".to_string(),
+                description: "Plugin should declare a license".to_string(),
+                mandatory: false,
+                category: ComplianceCategory::Security,
+            },
+            ComplianceRequirement {
+                id: "sec-2".to_string(),
+                description: "Dependencies must not use unbounded version requirements".to_string(),
+                mandatory: true,
+                category: ComplianceCategory::Security,
+            },
+        ]
     }
 }
 
 impl ComplianceChecker for PerformanceComplianceChecker {
+    /// `check_compliance` only receives `PluginInfo` metadata -- it has no
+    /// access to benchmark measurements, so performance conformance is not
+    /// decidable here. `PerformanceBenchmarker` (see `ThroughputBenchmark`,
+    /// `LatencyBenchmark`, `MemoryBenchmark`) already contributes real,
+    /// measured performance to the overall score under its own weight, so
+    /// this checker reports `Unverified` rather than a second, fabricated
+    /// opinion.
     fn check_compliance(&self, _plugininfo: &PluginInfo) -> ComplianceResult {
         ComplianceResult {
-            compliant: true,
+            compliant: false,
             violations: Vec::new(),
-            warnings: Vec::new(),
-            compliance_score: 1.0,
+            warnings: vec![
+                "Performance compliance is not decidable from PluginInfo alone; see the \
+                 benchmark suite (ThroughputBenchmark/LatencyBenchmark/MemoryBenchmark) instead"
+                    .to_string(),
+            ],
+            compliance_score: 0.0,
+            verified: false,
         }
     }
 
@@ -1154,7 +1789,14 @@ impl ComplianceChecker for PerformanceComplianceChecker {
     }
 
     fn requirements(&self) -> Vec<ComplianceRequirement> {
-        Vec::new()
+        vec![ComplianceRequirement {
+            id: "perf-1".to_string(),
+            description: "Performance must meet the declared benchmark baseline (see \
+                           PerformanceBenchmarker)"
+                .to_string(),
+            mandatory: false,
+            category: ComplianceCategory::Performance,
+        }]
     }
 }
 
@@ -1188,6 +1830,7 @@ impl ComplianceChecker for DocumentationComplianceChecker {
             violations,
             warnings: Vec::new(),
             compliance_score: score.max(0.0),
+            verified: true,
         }
     }
 

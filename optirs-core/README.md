@@ -68,7 +68,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.3.1"
+optirs-core = "0.3.2"
 scirs2-core = "0.4.0"  # Required foundation
 ```
 
@@ -125,7 +125,7 @@ Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.3.1", features = ["cross-platform-testing"] }
+optirs-core = { version = "0.3.2", features = ["cross-platform-testing"] }
 ```
 
 **Note**: SIMD and parallel processing are built-in via scirs2-core and automatically enabled when beneficial.

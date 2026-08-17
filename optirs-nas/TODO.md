@@ -1,4 +1,4 @@
-# OptiRS NAS TODO (v0.3.1)
+# OptiRS NAS TODO (v0.3.2)
 
 ## Module Status: Production Ready
 
@@ -152,5 +152,5 @@
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.1
+**Version**: v0.3.2
 **Release Date**: 2026-03-27

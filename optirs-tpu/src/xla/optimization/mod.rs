@@ -217,6 +217,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
     }
 
     /// Optimize XLA computation
+    ///
+    /// A phase is recorded in `applied_passes` only when it actually changed the
+    /// computation. Enabling a phase that then rewrites nothing must not show up
+    /// as an optimization that was applied.
     pub fn optimize(&mut self, computation: XLAComputation<T>) -> Result<XLAComputation<T>> {
         let start_time = Instant::now();
         let mut current_computation = computation;
@@ -224,17 +228,26 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
         // Graph optimization phase
         if self.config.enable_graph_optimization {
             let pass_start = Instant::now();
-            current_computation = self.graph_optimizer.optimize(current_computation)?;
+            let (optimized, changed) =
+                self.graph_optimizer.optimize_tracked(current_computation)?;
+            current_computation = optimized;
             self.record_pass_time("graph_optimization", pass_start.elapsed());
-            self.applied_passes.push("graph_optimization".to_string());
+            if changed {
+                self.applied_passes.push("graph_optimization".to_string());
+            }
         }
 
         // Kernel fusion phase
         if self.config.enable_kernel_fusion {
             let pass_start = Instant::now();
-            current_computation = self.fusion_engine.fuse_kernels(current_computation)?;
+            let (fused, changed) = self
+                .fusion_engine
+                .fuse_kernels_tracked(current_computation)?;
+            current_computation = fused;
             self.record_pass_time("kernel_fusion", pass_start.elapsed());
-            self.applied_passes.push("kernel_fusion".to_string());
+            if changed {
+                self.applied_passes.push("kernel_fusion".to_string());
+            }
         }
 
         // Memory optimization phase
@@ -256,7 +269,9 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
                 .push("scheduling_optimization".to_string());
         }
 
-        // Apply custom passes
+        // Custom passes are named by configuration but this pipeline has no
+        // registry to resolve them against, so an unknown name is an error
+        // rather than a silently skipped "applied" pass.
         let custom_passes = self.config.custom_passes.clone();
         for pass_name in &custom_passes {
             let pass_start = Instant::now();
@@ -266,17 +281,25 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Optimiz
         }
 
         self.performance_stats.total_time = start_time.elapsed();
+        self.performance_stats.operations_optimized = current_computation.operations.len();
         Ok(current_computation)
     }
 
-    /// Apply custom optimization pass
+    /// Apply a configured custom optimization pass.
+    ///
+    /// No custom pass registry exists, so any configured name is rejected
+    /// explicitly instead of being reported as applied while doing nothing.
     fn apply_custom_pass(
         &mut self,
-        _pass_name: &str,
-        computation: XLAComputation<T>,
+        pass_name: &str,
+        _computation: XLAComputation<T>,
     ) -> Result<XLAComputation<T>> {
-        // Custom pass application logic would go here
-        Ok(computation)
+        Err(OptimError::NotImplementedError(
+            scirs2_core::error::ErrorContext::new(format!(
+                "custom optimization pass '{pass_name}' is configured but no custom pass \
+                 registry is implemented; remove it from `custom_passes`"
+            )),
+        ))
     }
 
     /// Record optimization pass timing

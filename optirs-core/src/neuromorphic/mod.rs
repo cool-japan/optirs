@@ -16,6 +16,15 @@ pub mod energy_efficient;
 pub mod event_driven;
 pub mod spike_based;
 
+/// Convert an `f64` literal/derived value to a generic float type,
+/// falling back to `fallback` when the numeric type cannot represent it.
+/// Defensive only: always succeeds for the `f32`/`f64` types this crate
+/// targets. Shared by the neuromorphic submodules so none of them need a
+/// bare `.expect(...)` on a numeric-literal conversion.
+pub(crate) fn to_generic_or<F: Float>(value: f64, fallback: F) -> F {
+    F::from(value).unwrap_or_else(|| fallback)
+}
+
 // Re-export key types
 pub use energy_efficient::{EnergyBudget, EnergyEfficientOptimizer, EnergyOptimizationStrategy};
 pub use event_driven::{EventDrivenConfig, EventDrivenOptimizer, EventType};
@@ -414,16 +423,19 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
             return T::zero();
         }
 
-        let mean = self.inter_spike_intervals.iter().cloned().sum::<T>()
-            / T::from(self.inter_spike_intervals.len()).expect("unwrap failed");
+        let count = to_generic_or(self.inter_spike_intervals.len() as f64, T::one());
+        let mean = self.inter_spike_intervals.iter().cloned().sum::<T>() / count;
 
         let variance = self
             .inter_spike_intervals
             .iter()
             .map(|&isi| (isi - mean) * (isi - mean))
             .sum::<T>()
-            / T::from(self.inter_spike_intervals.len()).expect("unwrap failed");
+            / count;
 
+        if mean == T::zero() {
+            return T::zero();
+        }
         variance.sqrt() / mean
     }
 
@@ -445,8 +457,38 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> SpikeTrain<T> {
             }
         }
 
-        let three = T::from(3.0).unwrap_or_else(|| T::zero());
-        three * lv_sum / T::from(self.inter_spike_intervals.len() - 1).expect("unwrap failed")
+        let three = to_generic_or(3.0, T::one());
+        let denom = to_generic_or((self.inter_spike_intervals.len() - 1) as f64, T::one());
+        three * lv_sum / denom
+    }
+
+    /// Append a new spike at `time` and recompute `duration`, `firing_rate`
+    /// and `inter_spike_intervals` from the updated spike history (F51).
+    ///
+    /// Previously callers pushed directly onto `spike_times`/`spike_count`
+    /// without ever recomputing `firing_rate`, so homeostatic scaling (and
+    /// anything else reading `firing_rate`) always saw a permanently stale
+    /// value (0.0 for a train built from a single initial spike). This
+    /// mirrors [`Self::new`]'s math incrementally.
+    pub fn record_spike(&mut self, time: T) {
+        if let Some(&last) = self.spike_times.last() {
+            self.inter_spike_intervals.push(time - last);
+        }
+        self.spike_times.push(time);
+        self.spike_count += 1;
+
+        self.duration = if self.spike_count > 1 {
+            self.spike_times[self.spike_count - 1] - self.spike_times[0]
+        } else {
+            T::zero()
+        };
+
+        self.firing_rate = if self.duration > T::zero() {
+            to_generic_or(self.spike_count as f64, T::zero())
+                / (self.duration / to_generic_or(1000.0, T::one()))
+        } else {
+            T::zero()
+        };
     }
 }
 

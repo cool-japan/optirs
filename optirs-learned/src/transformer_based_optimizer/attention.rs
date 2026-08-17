@@ -7,7 +7,9 @@ use scirs2_core::numeric::Float;
 use std::f64::consts::PI;
 
 /// Multi-head attention mechanism
-pub struct MultiHeadAttention<T: Float + Debug + Send + Sync + 'static> {
+pub struct MultiHeadAttention<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Number of attention heads
     num_heads: usize,
 
@@ -39,7 +41,9 @@ pub struct MultiHeadAttention<T: Float + Debug + Send + Sync + 'static> {
     scale_factor: T,
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + Sync>
+    MultiHeadAttention<T>
+{
     /// Create new multi-head attention
     pub fn new(num_heads: usize, model_dimension: usize, head_dimension: usize) -> Result<Self> {
         if !model_dimension.is_multiple_of(num_heads) {
@@ -370,7 +374,10 @@ impl<T: Float + Debug + 'static + Send + Sync> MultiHeadAttention<T> {
 }
 
 /// Attention mechanism trait for different attention types
-pub trait AttentionMechanism<T: Float + Debug + Send + Sync + 'static> {
+pub trait AttentionMechanism<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+>
+{
     fn compute_attention(
         &mut self,
         query: &Array2<T>,
@@ -383,7 +390,9 @@ pub trait AttentionMechanism<T: Float + Debug + Send + Sync + 'static> {
     fn reset(&mut self) -> Result<()>;
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> AttentionMechanism<T> for MultiHeadAttention<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + Sync>
+    AttentionMechanism<T> for MultiHeadAttention<T>
+{
     fn compute_attention(
         &mut self,
         query: &Array2<T>,
@@ -407,11 +416,15 @@ impl<T: Float + Debug + 'static + Send + Sync> AttentionMechanism<T> for MultiHe
 }
 
 /// Self-attention specific implementation
-pub struct SelfAttention<T: Float + Debug + Send + Sync + 'static> {
+pub struct SelfAttention<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     multi_head_attention: MultiHeadAttention<T>,
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> SelfAttention<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + Sync>
+    SelfAttention<T>
+{
     pub fn new(num_heads: usize, model_dimension: usize, head_dimension: usize) -> Result<Self> {
         let multi_head_attention =
             MultiHeadAttention::new(num_heads, model_dimension, head_dimension)?;
@@ -428,11 +441,15 @@ impl<T: Float + Debug + 'static + Send + Sync> SelfAttention<T> {
 }
 
 /// Cross-attention implementation
-pub struct CrossAttention<T: Float + Debug + Send + Sync + 'static> {
+pub struct CrossAttention<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     multi_head_attention: MultiHeadAttention<T>,
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> CrossAttention<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + Sync>
+    CrossAttention<T>
+{
     pub fn new(num_heads: usize, model_dimension: usize, head_dimension: usize) -> Result<Self> {
         let multi_head_attention =
             MultiHeadAttention::new(num_heads, model_dimension, head_dimension)?;
@@ -449,17 +466,23 @@ impl<T: Float + Debug + 'static + Send + Sync> CrossAttention<T> {
 }
 
 /// Attention visualization utilities
-pub struct AttentionVisualizer<T: Float + Debug + Send + Sync + 'static> {
+pub struct AttentionVisualizer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> Default for AttentionVisualizer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + Sync> Default
+    for AttentionVisualizer<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> AttentionVisualizer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + Sync>
+    AttentionVisualizer<T>
+{
     pub fn new() -> Self {
         Self {
             _phantom: std::marker::PhantomData,
@@ -512,7 +535,9 @@ impl<T: Float + Debug + 'static + Send + Sync> AttentionVisualizer<T> {
 
 /// Attention pattern analysis results
 #[derive(Debug, Clone)]
-pub struct AttentionPatterns<T: Float + Debug + Send + Sync + 'static> {
+pub struct AttentionPatterns<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub head_entropies: Vec<T>,
     pub attention_diversity: T,
     pub sequence_length: usize,

@@ -10,12 +10,16 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 pub mod actor_critic;
+pub mod linear_models;
 pub mod natural_gradients;
 pub mod policy_gradient;
 pub mod trust_region;
 
 // Re-export key types
 pub use actor_critic::{ActorCriticConfig, ActorCriticMethod, ActorCriticOptimizer};
+pub use linear_models::{
+    LinearGaussianPolicy, LinearQFunction, LinearSoftmaxPolicy, LinearValueFunction,
+};
 pub use natural_gradients::{NaturalGradientConfig, NaturalPolicyGradient};
 pub use policy_gradient::{PolicyGradientConfig, PolicyGradientMethod, PolicyGradientOptimizer};
 pub use trust_region::{TrustRegionConfig, TrustRegionMethod, TrustRegionOptimizer};
@@ -128,6 +132,21 @@ pub struct TrajectoryBatch<T: Float + Debug + Send + Sync + 'static> {
 
     /// Target returns
     pub returns: Array1<T>,
+
+    /// Observation reached *after* the final transition of the batch (`s_T`).
+    ///
+    /// GAE and V-trace both need the value of the state that follows the last
+    /// stored transition in order to bootstrap. That state is **not** part of the
+    /// batch — `observations.row(len - 1)` is `s_{T-1}`, the state the last action
+    /// was taken *from*. Bootstrapping on `s_{T-1}` is an off-by-one error that
+    /// biases every advantage in the batch, so the successor state is carried
+    /// explicitly here.
+    ///
+    /// `None` means "no successor available" (e.g. the batch ends on a terminal
+    /// transition, or the caller did not record it); consumers then bootstrap with
+    /// zero. When the final transition is terminal the bootstrap is masked out by
+    /// `dones` regardless of this field.
+    pub final_observation: Option<Array1<T>>,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimitive>
@@ -169,21 +188,50 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
             dones,
             advantages,
             returns,
+            final_observation: None,
         })
     }
 
-    /// Compute Generalized Advantage Estimation (GAE)
-    pub fn compute_advantages(&mut self, gamma: T, lambda: T, nextvalue: T) -> Result<()> {
+    /// Attach the successor observation `s_T` used to bootstrap the final step.
+    ///
+    /// See [`TrajectoryBatch::final_observation`]. Returns an error if the
+    /// dimensionality does not match the batch's observation dimension.
+    pub fn with_final_observation(mut self, final_observation: Array1<T>) -> Result<Self> {
+        let expected = self.observations.ncols();
+        if final_observation.len() != expected {
+            return Err(OptimError::DimensionMismatch(format!(
+                "final observation length ({}) does not match observation dimension ({})",
+                final_observation.len(),
+                expected
+            )));
+        }
+        self.final_observation = Some(final_observation);
+        Ok(self)
+    }
+
+    /// Compute Generalized Advantage Estimation (GAE) **without** normalizing.
+    ///
+    /// ```text
+    /// δ_t = r_t + γ·(1 − done_t)·V(s_{t+1}) − V(s_t)
+    /// A_t = δ_t + γ·λ·(1 − done_t)·A_{t+1}
+    /// R_t = A_t + V(s_t)
+    /// ```
+    ///
+    /// `done_t` is read from `self.dones[t]` for **every** `t`, including the last
+    /// one: a batch whose final transition terminates the episode must not
+    /// bootstrap. `nextvalue` is `V(s_T)`, the value of the successor of the final
+    /// transition (see [`TrajectoryBatch::final_observation`]); it is ignored when
+    /// the final transition is terminal.
+    pub fn compute_gae(&mut self, gamma: T, lambda: T, nextvalue: T) -> Result<()> {
         let batch_size = self.rewards.len();
+        if batch_size == 0 {
+            return Ok(());
+        }
         let mut gae = T::zero();
 
-        // Compute advantages using GAE
         for t in (0..batch_size).rev() {
-            let is_terminal = if t == batch_size - 1 {
-                false // Assume not terminal for last step
-            } else {
-                self.dones[t]
-            };
+            // The terminal flag of step `t` itself — never a hardcoded `false`.
+            let nonterminal = if self.dones[t] { T::zero() } else { T::one() };
 
             let next_val = if t == batch_size - 1 {
                 nextvalue
@@ -191,17 +239,29 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
                 self.values[t + 1]
             };
 
-            let delta = self.rewards[t]
-                + gamma * next_val * T::from(!is_terminal as u8).unwrap_or_else(|| T::zero())
-                - self.values[t];
-            gae = delta
-                + gamma * lambda * T::from(!is_terminal as u8).unwrap_or_else(|| T::zero()) * gae;
+            let delta = self.rewards[t] + gamma * next_val * nonterminal - self.values[t];
+            gae = delta + gamma * lambda * nonterminal * gae;
 
             self.advantages[t] = gae;
             self.returns[t] = gae + self.values[t];
         }
 
-        // Normalize advantages
+        Ok(())
+    }
+
+    /// Compute GAE advantages/returns and normalize the advantages to zero mean
+    /// and unit variance (the usual policy-gradient variance reduction).
+    ///
+    /// Normalization is skipped for batches of fewer than two samples (where the
+    /// sample standard deviation is zero and normalizing would annihilate the
+    /// signal) and whenever the spread is numerically negligible.
+    pub fn compute_advantages(&mut self, gamma: T, lambda: T, nextvalue: T) -> Result<()> {
+        self.compute_gae(gamma, lambda, nextvalue)?;
+
+        if self.advantages.len() < 2 {
+            return Ok(());
+        }
+
         let mean = self.advantages.mean().unwrap_or(T::zero());
         let std = self
             .advantages
@@ -212,6 +272,30 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
 
         if std > T::from(1e-8).unwrap_or_else(|| T::zero()) {
             self.advantages.mapv_inplace(|x| (x - mean) / std);
+        }
+
+        Ok(())
+    }
+
+    /// Fill `returns` with plain discounted Monte-Carlo returns
+    /// `G_t = r_t + γ·(1 − done_t)·G_{t+1}`, bootstrapping the final step with
+    /// `nextvalue` when the final transition is non-terminal.
+    ///
+    /// Used by baseline-free REINFORCE, where the advantage *is* the return.
+    /// `advantages` is set to `G_t − V(s_t)` so downstream code that reads
+    /// advantages stays meaningful when a value baseline happens to be present.
+    pub fn compute_discounted_returns(&mut self, gamma: T, nextvalue: T) -> Result<()> {
+        let batch_size = self.rewards.len();
+        if batch_size == 0 {
+            return Ok(());
+        }
+
+        let mut running = nextvalue;
+        for t in (0..batch_size).rev() {
+            let nonterminal = if self.dones[t] { T::zero() } else { T::one() };
+            running = self.rewards[t] + gamma * nonterminal * running;
+            self.returns[t] = running;
+            self.advantages[t] = running - self.values[t];
         }
 
         Ok(())
@@ -244,6 +328,15 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
             // Convert Vec<bool> back to Array1<bool>
             let dones_array = Array1::from_vec(dones);
 
+            // The successor of this slice's last transition is the first
+            // observation of the next slice, or the whole batch's successor for
+            // the final slice.
+            let final_observation = if end < batch_size {
+                Some(self.observations.row(end).to_owned())
+            } else {
+                self.final_observation.clone()
+            };
+
             let mini_batch = TrajectoryBatch {
                 observations: obs,
                 actions: acts,
@@ -253,6 +346,7 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
                 dones: dones_array,
                 advantages,
                 returns,
+                final_observation,
             };
 
             mini_batches.push(mini_batch);
@@ -262,7 +356,183 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::numeric::FromPrimit
     }
 }
 
-/// Policy network interface for RL optimizers
+/// A Kronecker-factored block of the Fisher information matrix.
+///
+/// K-FAC approximates the Fisher block of a linear layer `W ∈ R^{n_out × n_in}` as
+/// `F ≈ G ⊗ A` with `A = E[φ φᵀ]` (input/activation covariance) and
+/// `G = E[δ δᵀ]` (output pre-activation gradient covariance). This struct carries
+/// the *per-sample* factors so the covariances can be formed by the consumer:
+/// row `i` of `inputs` is `φ_i`, row `i` of `outputs` is `δ_i`.
+///
+/// Contract: the per-sample score for the named parameter, reshaped **row-major**
+/// to `(n_out, n_in)`, must equal `δ_i φ_iᵀ`.
+#[derive(Debug, Clone)]
+pub struct KroneckerBlock<T: Float + Debug + Send + Sync + 'static> {
+    /// Name of the parameter this block factorizes (a key of `get_parameters`).
+    pub name: String,
+
+    /// Per-sample layer inputs, shape `(n_samples, n_in)`.
+    pub inputs: Array2<T>,
+
+    /// Per-sample pre-activation gradients, shape `(n_samples, n_out)`.
+    pub outputs: Array2<T>,
+}
+
+/// Total number of scalars across a named-parameter map.
+pub fn parameter_count<T: Float + Debug + Send + Sync + 'static>(
+    params: &HashMap<String, Array1<T>>,
+) -> usize {
+    params.values().map(|p| p.len()).sum()
+}
+
+/// Parameter keys in deterministic (sorted) order — the canonical flat layout.
+pub fn parameter_keys<T: Float + Debug + Send + Sync + 'static>(
+    params: &HashMap<String, Array1<T>>,
+) -> Vec<String> {
+    let mut keys: Vec<String> = params.keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+/// Flatten a named-parameter map into a single vector using the canonical
+/// (sorted-key, contiguous) layout shared by every flat/named conversion here.
+pub fn flatten_named<T: Float + Debug + Send + Sync + 'static>(
+    params: &HashMap<String, Array1<T>>,
+) -> Array1<T> {
+    let mut flat = Array1::zeros(parameter_count(params));
+    let mut offset = 0usize;
+    for key in parameter_keys(params) {
+        let value = &params[&key];
+        for (i, &v) in value.iter().enumerate() {
+            flat[offset + i] = v;
+        }
+        offset += value.len();
+    }
+    flat
+}
+
+/// Split a flat vector back into a named-parameter map matching `template`'s
+/// keys and lengths, using the canonical sorted-key layout.
+///
+/// Returns [`OptimError::DimensionMismatch`] when the flat length does not equal
+/// the template's total parameter count.
+pub fn unflatten_named<T: Float + Debug + Send + Sync + 'static>(
+    template: &HashMap<String, Array1<T>>,
+    flat: &Array1<T>,
+) -> Result<HashMap<String, Array1<T>>> {
+    let total = parameter_count(template);
+    if total != flat.len() {
+        return Err(OptimError::DimensionMismatch(format!(
+            "Flat vector length ({}) does not match total parameter count ({})",
+            flat.len(),
+            total
+        )));
+    }
+
+    let keys = parameter_keys(template);
+    let mut out: HashMap<String, Array1<T>> = HashMap::with_capacity(keys.len());
+    let mut offset = 0usize;
+    for key in keys {
+        let len = template[&key].len();
+        let mut chunk = Array1::zeros(len);
+        for i in 0..len {
+            chunk[i] = flat[offset + i];
+        }
+        out.insert(key, chunk);
+        offset += len;
+    }
+    Ok(out)
+}
+
+/// Global-norm clipping of a named-gradient map.
+///
+/// Returns the clipped gradients together with the **pre-clipping** global norm
+/// (what the metrics should report). A non-positive `max_norm` disables clipping.
+pub fn clip_named_gradients<T: Float + Debug + Send + Sync + 'static>(
+    gradients: &HashMap<String, Array1<T>>,
+    max_norm: T,
+) -> (HashMap<String, Array1<T>>, T) {
+    let mut total = T::zero();
+    for grad in gradients.values() {
+        for &g in grad.iter() {
+            total = total + g * g;
+        }
+    }
+    let norm = total.sqrt();
+
+    let factor = if max_norm > T::zero() && norm > max_norm && norm > T::zero() {
+        max_norm / norm
+    } else {
+        T::one()
+    };
+
+    let clipped = gradients
+        .iter()
+        .map(|(name, grad)| (name.clone(), grad.mapv(|g| g * factor)))
+        .collect();
+
+    (clipped, norm)
+}
+
+/// Multiply every entry of a named-gradient map by `factor`.
+pub fn scale_named_gradients<T: Float + Debug + Send + Sync + 'static>(
+    gradients: &HashMap<String, Array1<T>>,
+    factor: T,
+) -> HashMap<String, Array1<T>> {
+    gradients
+        .iter()
+        .map(|(name, grad)| (name.clone(), grad.mapv(|g| g * factor)))
+        .collect()
+}
+
+/// Accumulate `addend` into `base`, matching entries by name.
+///
+/// Returns [`OptimError::DimensionMismatch`] when a shared key has mismatched
+/// lengths; keys present only in `addend` are inserted as-is.
+pub fn add_named_gradients<T: Float + Debug + Send + Sync + 'static>(
+    base: &mut HashMap<String, Array1<T>>,
+    addend: HashMap<String, Array1<T>>,
+) -> Result<()> {
+    for (name, grad) in addend {
+        match base.get_mut(&name) {
+            Some(target) => {
+                if target.len() != grad.len() {
+                    return Err(OptimError::DimensionMismatch(format!(
+                        "gradient '{name}' has length {} in one term and {} in the other",
+                        target.len(),
+                        grad.len()
+                    )));
+                }
+                for i in 0..target.len() {
+                    target[i] = target[i] + grad[i];
+                }
+            }
+            None => {
+                base.insert(name, grad);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Policy network interface for RL optimizers.
+///
+/// # Parameter update contract
+///
+/// [`PolicyNetwork::update_parameters`] receives a **parameter delta**, not a raw
+/// gradient: the optimizer has already applied the learning rate, the gradient
+/// clipping and the sign (descent on the loss). Implementations must therefore
+/// *add* the supplied arrays to their parameters. Every optimizer in this module
+/// (policy gradient, trust region, natural gradient, target-network soft updates)
+/// relies on this additive semantics.
+///
+/// # Gradient oracle
+///
+/// The `*_gradient` methods form the differentiable path used by every learning
+/// rule here. They have no meaningful default, so the default bodies return
+/// [`OptimError::UnsupportedOperation`] — a policy that cannot differentiate
+/// itself must fail loudly rather than be "trained" with a fabricated gradient.
+/// [`linear_models`] provides ready-made analytic implementations.
 pub trait PolicyNetwork<T: Float + Debug + Send + Sync + 'static> {
     /// Evaluate actions for given observations
     fn evaluate_actions(
@@ -274,23 +544,257 @@ pub trait PolicyNetwork<T: Float + Debug + Send + Sync + 'static> {
     /// Get action distribution for given observations
     fn get_action_distribution(&self, observations: &Array2<T>) -> Result<ActionDistribution<T>>;
 
-    /// Update policy parameters with gradients
-    fn update_parameters(&mut self, gradients: &HashMap<String, Array1<T>>) -> Result<()>;
+    /// Add a parameter delta to the policy parameters (see the trait docs).
+    fn update_parameters(&mut self, deltas: &HashMap<String, Array1<T>>) -> Result<()>;
 
     /// Get current policy parameters
     fn get_parameters(&self) -> HashMap<String, Array1<T>>;
+
+    /// Gradient of a coefficient-weighted sum of log-probabilities:
+    /// `∂/∂θ Σᵢ cᵢ · log π(aᵢ | sᵢ)`.
+    ///
+    /// Every surrogate loss implemented in this module — REINFORCE, A2C/A3C,
+    /// PPO-clip, PPO adaptive-KL, V-trace/IMPALA — has a policy gradient of
+    /// exactly this shape with `cᵢ = ∂L/∂ log π(aᵢ|sᵢ)`, so this single oracle is
+    /// enough to train all of them end to end.
+    ///
+    /// The returned map must have the same keys and lengths as
+    /// [`Self::get_parameters`].
+    fn log_prob_gradient(
+        &self,
+        observations: &Array2<T>,
+        actions: &Array2<T>,
+        coefficients: &Array1<T>,
+    ) -> Result<HashMap<String, Array1<T>>> {
+        let _ = (observations, actions, coefficients);
+        Err(OptimError::UnsupportedOperation(
+            "PolicyNetwork::log_prob_gradient is not implemented for this policy; \
+             policy-gradient updates require an analytic (or autodiff) score function"
+                .to_string(),
+        ))
+    }
+
+    /// Gradient of the batch-mean entropy `∂/∂θ (1/N) Σᵢ H[π(·|sᵢ)]`.
+    ///
+    /// Only consulted when the entropy coefficient is non-zero.
+    fn entropy_gradient(&self, observations: &Array2<T>) -> Result<HashMap<String, Array1<T>>> {
+        let _ = observations;
+        Err(OptimError::UnsupportedOperation(
+            "PolicyNetwork::entropy_gradient is not implemented for this policy; \
+             set entropy_coeff = 0 or provide an analytic entropy gradient"
+                .to_string(),
+        ))
+    }
+
+    /// Gradient of a weighted sum of the distribution mean:
+    /// `∂/∂θ Σᵢ Σⱼ w[i,j] · μⱼ(sᵢ)`.
+    ///
+    /// This is the chain-rule hook required by the *deterministic* policy gradient
+    /// (DDPG/TD3) and by the reparameterized SAC actor update, where the loss
+    /// depends on the parameters through the sampled action rather than through
+    /// the log-probability.
+    fn mean_action_gradient(
+        &self,
+        observations: &Array2<T>,
+        weights: &Array2<T>,
+    ) -> Result<HashMap<String, Array1<T>>> {
+        let _ = (observations, weights);
+        Err(OptimError::UnsupportedOperation(
+            "PolicyNetwork::mean_action_gradient is not implemented for this policy; \
+             deterministic-policy-gradient updates (DDPG/TD3/SAC actor) require it"
+                .to_string(),
+        ))
+    }
+
+    /// Per-sample score vectors `g_i = ∇_θ log π(aᵢ|sᵢ)`, one per **row**, flattened
+    /// with [`flatten_named`]'s canonical layout.
+    ///
+    /// Used to build empirical / block-diagonal Fisher estimates. The default
+    /// implementation derives them from [`Self::log_prob_gradient`] one sample at a
+    /// time, which is correct but costs `N` oracle calls; policies that can produce
+    /// them in one pass should override it.
+    fn score_matrix(&self, observations: &Array2<T>, actions: &Array2<T>) -> Result<Array2<T>> {
+        let n = observations.nrows();
+        let dim = parameter_count(&self.get_parameters());
+        let mut scores = Array2::zeros((n, dim));
+
+        let one = Array1::from_elem(1, T::one());
+        for i in 0..n {
+            let obs_i = observations.slice(s![i..i + 1, ..]).to_owned();
+            let act_i = actions.slice(s![i..i + 1, ..]).to_owned();
+            let grad = self.log_prob_gradient(&obs_i, &act_i, &one)?;
+            let flat = flatten_named(&grad);
+            if flat.len() != dim {
+                return Err(OptimError::DimensionMismatch(format!(
+                    "score vector length ({}) does not match parameter count ({})",
+                    flat.len(),
+                    dim
+                )));
+            }
+            for j in 0..dim {
+                scores[[i, j]] = flat[j];
+            }
+        }
+
+        Ok(scores)
+    }
+
+    /// Per-sample Kronecker factors of the Fisher information matrix.
+    ///
+    /// See [`KroneckerBlock`] for the exact contract. Returning
+    /// [`OptimError::UnsupportedOperation`] (the default) makes K-FAC estimation
+    /// fail loudly instead of silently degrading to an identity Fisher.
+    fn kronecker_factors(
+        &self,
+        observations: &Array2<T>,
+        actions: &Array2<T>,
+    ) -> Result<Vec<KroneckerBlock<T>>> {
+        let _ = (observations, actions);
+        Err(OptimError::UnsupportedOperation(
+            "PolicyNetwork::kronecker_factors is not implemented for this policy; \
+             Kronecker-factored Fisher estimation requires per-layer factors"
+                .to_string(),
+        ))
+    }
 }
 
-/// Value network interface for RL optimizers
+/// Blanket forwarding so a `&mut P` can stand in for an owned policy.
+///
+/// This lets an optimizer that already owns a policy hand a *borrow* of it to
+/// another optimizer (e.g. [`policy_gradient::PolicyGradientOptimizer`] routing
+/// its TRPO update through [`trust_region::TrustRegionOptimizer`]) without
+/// transferring ownership. Every method — including the gradient oracle — is
+/// forwarded, so the borrow behaves exactly like the underlying policy.
+impl<T: Float + Debug + Send + Sync + 'static, P: PolicyNetwork<T> + ?Sized> PolicyNetwork<T>
+    for &mut P
+{
+    fn evaluate_actions(
+        &self,
+        observations: &Array2<T>,
+        actions: &Array2<T>,
+    ) -> Result<PolicyEvaluation<T>> {
+        (**self).evaluate_actions(observations, actions)
+    }
+
+    fn get_action_distribution(&self, observations: &Array2<T>) -> Result<ActionDistribution<T>> {
+        (**self).get_action_distribution(observations)
+    }
+
+    fn update_parameters(&mut self, deltas: &HashMap<String, Array1<T>>) -> Result<()> {
+        (**self).update_parameters(deltas)
+    }
+
+    fn get_parameters(&self) -> HashMap<String, Array1<T>> {
+        (**self).get_parameters()
+    }
+
+    fn log_prob_gradient(
+        &self,
+        observations: &Array2<T>,
+        actions: &Array2<T>,
+        coefficients: &Array1<T>,
+    ) -> Result<HashMap<String, Array1<T>>> {
+        (**self).log_prob_gradient(observations, actions, coefficients)
+    }
+
+    fn entropy_gradient(&self, observations: &Array2<T>) -> Result<HashMap<String, Array1<T>>> {
+        (**self).entropy_gradient(observations)
+    }
+
+    fn mean_action_gradient(
+        &self,
+        observations: &Array2<T>,
+        weights: &Array2<T>,
+    ) -> Result<HashMap<String, Array1<T>>> {
+        (**self).mean_action_gradient(observations, weights)
+    }
+
+    fn score_matrix(&self, observations: &Array2<T>, actions: &Array2<T>) -> Result<Array2<T>> {
+        (**self).score_matrix(observations, actions)
+    }
+
+    fn kronecker_factors(
+        &self,
+        observations: &Array2<T>,
+        actions: &Array2<T>,
+    ) -> Result<Vec<KroneckerBlock<T>>> {
+        (**self).kronecker_factors(observations, actions)
+    }
+}
+
+/// Value network interface for RL optimizers.
+///
+/// [`ValueNetwork::update_parameters`] follows the same additive **delta**
+/// contract as [`PolicyNetwork::update_parameters`].
 pub trait ValueNetwork<T: Float + Debug + Send + Sync + 'static> {
     /// Evaluate value function for given observations
     fn evaluate_value(&self, observations: &Array2<T>) -> Result<Array1<T>>;
 
-    /// Update value function parameters with gradients
-    fn update_parameters(&mut self, gradients: &HashMap<String, Array1<T>>) -> Result<()>;
+    /// Add a parameter delta to the value-function parameters.
+    fn update_parameters(&mut self, deltas: &HashMap<String, Array1<T>>) -> Result<()>;
 
     /// Get current value function parameters
     fn get_parameters(&self) -> HashMap<String, Array1<T>>;
+
+    /// Gradient of a residual-weighted sum of value predictions:
+    /// `∂/∂θ Σᵢ rᵢ · V(sᵢ)`.
+    ///
+    /// Callers pass `rᵢ = ∂L/∂V(sᵢ)`; for the mean-squared value loss
+    /// `L = (1/N) Σ (V(sᵢ) − yᵢ)²` that is `rᵢ = 2(V(sᵢ) − yᵢ)/N`.
+    fn value_gradient(
+        &self,
+        observations: &Array2<T>,
+        residuals: &Array1<T>,
+    ) -> Result<HashMap<String, Array1<T>>> {
+        let _ = (observations, residuals);
+        Err(OptimError::UnsupportedOperation(
+            "ValueNetwork::value_gradient is not implemented for this network; \
+             value-function updates require an analytic (or autodiff) gradient"
+                .to_string(),
+        ))
+    }
+}
+
+/// Action-value (Q) network interface.
+///
+/// The off-policy actor-critic methods (SAC, TD3, DDPG) are built on `Q(s, a)`,
+/// not on a state value `V(s)`: without the action argument the deterministic
+/// policy gradient `∇_a Q(s, a)` does not exist and the critic cannot distinguish
+/// the actions it is supposed to rank.
+///
+/// A pure Q network has no intrinsic state value, so it is free to return
+/// [`OptimError::UnsupportedOperation`] from
+/// [`ValueNetwork::evaluate_value`] — see [`linear_models::LinearQFunction`].
+pub trait QNetwork<T: Float + Debug + Send + Sync + 'static>: ValueNetwork<T> {
+    /// Evaluate `Q(s, a)` for a batch of state-action pairs.
+    fn evaluate_q(&self, states: &Array2<T>, actions: &Array2<T>) -> Result<Array1<T>>;
+
+    /// Gradient of a residual-weighted sum of Q predictions:
+    /// `∂/∂θ Σᵢ rᵢ · Q(sᵢ, aᵢ)`.
+    fn q_gradient(
+        &self,
+        states: &Array2<T>,
+        actions: &Array2<T>,
+        residuals: &Array1<T>,
+    ) -> Result<HashMap<String, Array1<T>>> {
+        let _ = (states, actions, residuals);
+        Err(OptimError::UnsupportedOperation(
+            "QNetwork::q_gradient is not implemented for this critic".to_string(),
+        ))
+    }
+
+    /// `∇_a Q(s, a)` for each row, shape `(n_samples, action_dim)`.
+    ///
+    /// This is the term the deterministic policy gradient chains with
+    /// [`PolicyNetwork::mean_action_gradient`].
+    fn action_gradient(&self, states: &Array2<T>, actions: &Array2<T>) -> Result<Array2<T>> {
+        let _ = (states, actions);
+        Err(OptimError::UnsupportedOperation(
+            "QNetwork::action_gradient is not implemented for this critic; \
+             the deterministic policy gradient requires ∇_a Q(s, a)"
+                .to_string(),
+        ))
+    }
 }
 
 /// Policy evaluation results

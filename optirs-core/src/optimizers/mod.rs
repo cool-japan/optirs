@@ -35,6 +35,21 @@ where
 
     /// Updates multiple parameter arrays at once
     ///
+    /// # State contract
+    ///
+    /// Position `i` in `params_list` identifies parameter tensor `i` and **must** get
+    /// its own optimizer state (moments, accumulators, velocities and any per-tensor
+    /// timestep). The caller is expected to pass the tensors in a stable order across
+    /// calls, exactly like PyTorch's parameter groups.
+    ///
+    /// The default implementation below simply forwards to [`Optimizer::step`], which
+    /// is only correct for *stateless* optimizers. Every stateful optimizer in this
+    /// crate overrides `step_list` and routes each index to a dedicated state slot
+    /// (see e.g. `Adam::step_indexed`). Implementors of new stateful optimizers must
+    /// do the same: relying on the default makes all tensors share one state slot, so
+    /// they reset each other on every shape change and their bias correction advances
+    /// once per tensor instead of once per step.
+    ///
     /// # Arguments
     ///
     /// * `params_list` - List of parameter arrays

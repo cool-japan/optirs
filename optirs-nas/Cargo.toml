@@ -19,9 +19,19 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # Core dependencies
-optirs-core = { workspace = true }
-optirs-learned = { workspace = true, optional = true }
-scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
+#
+# NOTE: `optirs-core` and `optirs-learned` were declared here but never used
+# (no `optirs_core::` / `optirs_learned::` path appears anywhere in this
+# crate). `optirs-learned` was pulled in only by the `learned_integration`
+# feature, which had no module behind it. Both are removed so `optirs-nas`
+# builds and tests standalone; the benchmark harness in `evaluation::benchmark`
+# implements its optimizer update rules directly, which also makes NAS scores
+# reproducible independently of sibling-crate changes.
+#
+# The `random` feature is declared explicitly rather than relied upon through
+# feature unification with a sibling crate: every search strategy samples from
+# `scirs2_core::random`, so this crate must request it itself.
+scirs2-core = { workspace = true, features = ["random"] }  # SciRS2 policy compliance
 
 # ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
 # ndarray - Use scirs2_core::ndarray
@@ -56,10 +66,18 @@ approx = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-default = ["bayesian"]
+# The default build enables every search strategy. Individual strategies can be
+# switched off by using `--no-default-features` and re-enabling only what is
+# needed; each flag gates the corresponding module in `search_strategies`.
+default = ["bayesian", "evolutionary", "reinforcement", "progressive", "multi_objective"]
+
+# Bayesian optimization with a Gaussian-process surrogate.
 bayesian = []
+# Population-based evolutionary architecture search.
 evolutionary = []
+# Reinforcement-learning controller (LSTM + REINFORCE).
 reinforcement = []
+# Progressive (staged complexity) search.
 progressive = []
+# Multi-objective search (NSGA-II and friends).
 multi_objective = []
-learned_integration = ["dep:optirs-learned"]

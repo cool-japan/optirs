@@ -70,6 +70,12 @@ pub enum CiReportFormat {
 }
 
 /// Alert configuration
+///
+/// Delivery destinations are provided explicitly via `email`/`slack`/`github`
+/// -- there are no hardcoded recipients, channels, or repositories. Enabling
+/// a channel (`enable_email`, etc.) without providing its matching
+/// destination config is a configuration error surfaced at send time as an
+/// explicit `Err`, never a silent no-op.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
     /// Enable alerts globally
@@ -84,6 +90,17 @@ pub struct AlertConfig {
     pub severity_threshold: f64,
     /// Cooldown period between alerts (minutes)
     pub cooldown_minutes: u64,
+    /// Email delivery destination; required when `enable_email` is true.
+    pub email: Option<EmailAlertConfig>,
+    /// Slack delivery destination; required when `enable_slack` is true.
+    pub slack: Option<SlackAlertConfig>,
+    /// GitHub issue delivery destination; required when
+    /// `enable_github_issues` is true.
+    pub github: Option<GitHubAlertConfig>,
+    /// Base URL used to build "view details" links in alert bodies (e.g.
+    /// `https://dashboards.example.com`). Links are omitted entirely when
+    /// this is `None` rather than pointing at a fabricated domain.
+    pub dashboard_base_url: Option<String>,
 }
 
 impl Default for AlertConfig {
@@ -95,8 +112,50 @@ impl Default for AlertConfig {
             enable_github_issues: false,
             severity_threshold: 0.05,
             cooldown_minutes: 60,
+            email: None,
+            slack: None,
+            github: None,
+            dashboard_base_url: None,
         }
     }
+}
+
+/// Email delivery settings for [`AlertConfig`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailAlertConfig {
+    /// SMTP server host
+    pub smtp_host: String,
+    /// SMTP server port
+    pub smtp_port: u16,
+    /// Submit over implicit TLS (`smtps://`)
+    pub use_tls: bool,
+    /// Optional SMTP AUTH username
+    pub username: Option<String>,
+    /// Optional SMTP AUTH password
+    pub password: Option<String>,
+    /// Envelope/`From:` address
+    pub from_address: String,
+    /// Recipient addresses
+    pub recipients: Vec<String>,
+}
+
+/// Slack delivery settings for [`AlertConfig`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlackAlertConfig {
+    /// Incoming webhook URL
+    pub webhook_url: String,
+    /// Target channel (informational; most Slack incoming webhooks are
+    /// already bound to a fixed channel server-side)
+    pub channel: String,
+}
+
+/// GitHub issue delivery settings for [`AlertConfig`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubAlertConfig {
+    /// Personal access token / fine-grained token with `issues:write`
+    pub token: String,
+    /// `owner/repo`
+    pub repository: String,
 }
 
 /// Test environment specification

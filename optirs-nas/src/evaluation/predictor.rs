@@ -529,10 +529,10 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
     /// Deterministic, order-independent content hash of the architecture structure,
     /// normalized into `[0, 1]`. Provides a stable identity-derived feature without
     /// depending on `HashMap` iteration order.
-    fn structure_signature(architecture: &OptimizerArchitecture) -> T {
+    fn structure_signature(architecture: &OptimizerArchitecture<T>) -> T {
         // FNV-1a over a canonicalized (sorted) view of the structure entries so the
         // result is independent of vector ordering noise yet sensitive to content.
-        let mut entries: Vec<&str> = architecture.structure.iter().map(|s| s.as_str()).collect();
+        let mut entries: Vec<&str> = architecture.components.iter().map(|s| s.as_str()).collect();
         entries.sort_unstable();
 
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -567,7 +567,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
     /// * `[9]`  squashed `id` length
     /// * `[10]` density of recognized optimizer keywords in the structure
     /// * `[11]` learning-rate hyperparameter (if present, else `0`)
-    fn extract_features(&self, architecture: &OptimizerArchitecture) -> Array1<T> {
+    fn extract_features(&self, architecture: &OptimizerArchitecture<T>) -> Array1<T> {
         let mut features = Array1::zeros(FEATURE_DIM);
 
         // [0] bias term.
@@ -575,20 +575,32 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
 
         // [1] component count (compressed via a saturating transform to keep the
         // linear model well-conditioned for large architectures).
-        let n_components = architecture.structure.len();
+        let n_components = architecture.components.len();
         features[1] = Self::saturating_count(n_components);
 
         // [2] distinct component types.
-        let mut distinct: Vec<&str> = architecture.structure.iter().map(|s| s.as_str()).collect();
+        let mut distinct: Vec<&str> = architecture.components.iter().map(|s| s.as_str()).collect();
         distinct.sort_unstable();
         distinct.dedup();
         features[2] = Self::saturating_count(distinct.len());
 
+        // Numeric attributes are the union of the architecture's `parameters`
+        // and `hyperparameters` maps: search strategies populate one or the
+        // other depending on how the candidate was produced, and the predictor
+        // must see the same architecture either way.
+        let numeric_values: Vec<f64> = architecture
+            .parameters
+            .values()
+            .chain(architecture.hyperparameters.values())
+            .map(|v| v.to_f64().unwrap_or(0.0))
+            .filter(|v| v.is_finite())
+            .collect();
+
         // [3] parameter count.
-        features[3] = Self::saturating_count(architecture.parameters.len());
+        features[3] = Self::saturating_count(numeric_values.len());
 
         // [4..8] parameter value statistics.
-        if architecture.parameters.is_empty() {
+        if numeric_values.is_empty() {
             features[4] = T::zero();
             features[5] = T::zero();
             features[6] = T::zero();
@@ -597,8 +609,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
             let mut sum = 0.0_f64;
             let mut max = f64::NEG_INFINITY;
             let mut min = f64::INFINITY;
-            for &value in architecture.parameters.values() {
-                let v = if value.is_finite() { value } else { 0.0 };
+            for &v in &numeric_values {
                 sum += v;
                 if v > max {
                     max = v;
@@ -607,7 +618,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
                     min = v;
                 }
             }
-            let count = architecture.parameters.len() as f64;
+            let count = numeric_values.len() as f64;
             features[4] = Self::scalar(sum / count);
             features[5] = Self::scalar((sum.abs()).tanh()); // squashed magnitude
             features[6] = Self::scalar(max);
@@ -618,7 +629,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
         features[8] = Self::structure_signature(architecture);
 
         // [9] identifier length (proxy for descriptive complexity).
-        features[9] = Self::saturating_count(architecture.id.len());
+        features[9] = Self::saturating_count(architecture.architecture_id.len());
 
         // [10] recognized optimizer keyword density.
         if n_components == 0 {
@@ -628,7 +639,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
                 "adam", "sgd", "momentum", "rmsprop", "adagrad", "adamw", "lamb",
             ];
             let mut hits = 0usize;
-            for entry in &architecture.structure {
+            for entry in &architecture.components {
                 let lower = entry.to_ascii_lowercase();
                 if KEYWORDS.iter().any(|kw| lower.contains(kw)) {
                     hits += 1;
@@ -638,13 +649,17 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
         }
 
         // [11] learning-rate hyperparameter if exposed under a common key.
-        let lr = architecture
-            .parameters
-            .get("learning_rate")
-            .or_else(|| architecture.parameters.get("lr"))
-            .copied()
+        let lr = ["learning_rate", "lr"]
+            .iter()
+            .find_map(|key| {
+                architecture
+                    .hyperparameters
+                    .get(*key)
+                    .or_else(|| architecture.parameters.get(*key))
+            })
+            .and_then(|v| v.to_f64())
+            .filter(|v| v.is_finite())
             .unwrap_or(0.0);
-        let lr = if lr.is_finite() { lr } else { 0.0 };
         features[11] = Self::scalar(lr);
 
         features
@@ -691,7 +706,7 @@ impl<T: Float + Debug + Default + Send + Sync> PerformancePredictor<T> {
 
     pub fn predict_performance(
         &self,
-        architecture: &OptimizerArchitecture,
+        architecture: &OptimizerArchitecture<T>,
     ) -> Result<EvaluationResults<T>> {
         let start_time = Instant::now();
 
@@ -966,20 +981,23 @@ mod tests {
     }
 
     /// Build a deterministic optimizer architecture for testing.
-    fn make_architecture(id: &str) -> OptimizerArchitecture {
+    fn make_architecture(id: &str) -> OptimizerArchitecture<f64> {
         let mut parameters = HashMap::new();
         parameters.insert("learning_rate".to_string(), 0.01_f64);
         parameters.insert("momentum".to_string(), 0.9_f64);
         parameters.insert("weight_decay".to_string(), 0.0001_f64);
 
         OptimizerArchitecture {
-            id: id.to_string(),
+            architecture_id: id.to_string(),
             parameters,
-            structure: vec![
+            components: vec![
                 "AdamW".to_string(),
                 "CosineSchedule".to_string(),
                 "GradientClipping".to_string(),
             ],
+            connections: Vec::new(),
+            metadata: HashMap::new(),
+            hyperparameters: HashMap::new(),
         }
     }
 

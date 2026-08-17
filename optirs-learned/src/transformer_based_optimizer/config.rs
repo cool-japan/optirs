@@ -7,7 +7,9 @@ use std::fmt::Debug;
 
 /// Configuration for transformer-based optimizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransformerBasedOptimizerConfig<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerBasedOptimizerConfig<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Model dimension (embedding size)
     pub model_dimension: usize,
 
@@ -75,7 +77,9 @@ pub struct TransformerBasedOptimizerConfig<T: Float + Debug + Send + Sync + 'sta
     pub enable_residual_connections: bool,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerBasedOptimizerConfig<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for TransformerBasedOptimizerConfig<T>
+{
     fn default() -> Self {
         Self {
             model_dimension: 512,
@@ -105,7 +109,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerBasedOptim
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerBasedOptimizerConfig<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerBasedOptimizerConfig<T>
+{
     /// Create configuration for small models
     pub fn small() -> Self {
         Self {
@@ -258,7 +264,9 @@ pub struct TransformerArchConfig {
 }
 
 impl TransformerArchConfig {
-    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(
+    pub fn from_optimizer_config<
+        T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    >(
         config: &TransformerBasedOptimizerConfig<T>,
     ) -> Self {
         Self {
@@ -333,7 +341,9 @@ pub enum CacheEvictionStrategy {
 
 /// Meta-learning configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetaLearningConfig<T: Float + Debug + Send + Sync + 'static> {
+pub struct MetaLearningConfig<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Meta-learning rate
     pub meta_learning_rate: T,
     /// Number of inner optimization steps
@@ -348,7 +358,9 @@ pub struct MetaLearningConfig<T: Float + Debug + Send + Sync + 'static> {
     pub num_query: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for MetaLearningConfig<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for MetaLearningConfig<T>
+{
     fn default() -> Self {
         Self {
             meta_learning_rate: scirs2_core::numeric::NumCast::from(1e-3)
@@ -363,7 +375,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for MetaLearningConfig<T>
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MetaLearningConfig<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MetaLearningConfig<T>
+{
     pub fn validate(&self) -> Result<(), String> {
         if self.meta_learning_rate <= T::zero() {
             return Err("meta_learning_rate must be positive".to_string());

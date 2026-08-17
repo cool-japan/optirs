@@ -1,6 +1,6 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.3.1
+//! **Version:** 0.3.2
 //! **Release Date:** 2026-03-27 (Stable Release)
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)

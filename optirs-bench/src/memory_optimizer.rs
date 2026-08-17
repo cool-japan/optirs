@@ -4,6 +4,7 @@
 // recommendations specifically for machine learning optimizers and their usage patterns.
 
 use crate::error::Result;
+use crate::system_sampler::SystemSampler;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -21,6 +22,14 @@ pub struct MemoryOptimizer {
     optimization_engine: OptimizationEngine,
     /// Memory pattern analyzer
     pattern_analyzer: MemoryPatternAnalyzer,
+    /// Real system/process telemetry (RSS, virtual memory, system memory).
+    sampler: SystemSampler,
+    /// Caller-registered byte counts per [`MemoryCategory`], used to
+    /// populate `MemoryUsage::by_category` honestly. Register via
+    /// [`MemoryOptimizer::register_category_bytes`]; categories that are
+    /// never registered simply do not appear (never a fabricated split of
+    /// total memory across categories).
+    category_bytes: HashMap<MemoryCategory, usize>,
 }
 
 /// Configuration for memory optimizer
@@ -193,10 +202,17 @@ pub struct AllocationTracker {
     size_distribution: HashMap<usize, usize>, // size_bucket -> count
     /// Allocation rate tracking
     allocation_rate: VecDeque<(Instant, usize)>,
-    /// Active allocations
-    active_allocations: HashMap<*const u8, AllocationInfo>,
+    /// Active allocations, keyed by a caller-assigned opaque allocation id
+    /// (not a raw pointer: callers register real allocations via
+    /// [`AllocationTracker::record_allocation`] with an id of their
+    /// choosing, e.g. an arena slot index or a counter).
+    active_allocations: HashMap<usize, AllocationInfo>,
     /// Allocation patterns
     patterns: Vec<AllocationPattern>,
+    /// Sizes of recently freed blocks, bounded history. Real bookkeeping
+    /// used to derive [`AllocationTracker::fragmentation_ratio`] --
+    /// see the identical rationale in `memory_leak_detector::AllocationTracker`.
+    freed_block_sizes: VecDeque<usize>,
 }
 
 /// Information about an active allocation
@@ -338,14 +354,15 @@ pub struct FragmentationMetrics {
 /// Performance impact of memory operations
 #[derive(Debug, Clone)]
 pub struct PerformanceImpact {
-    /// Memory allocation overhead
+    /// Memory allocation overhead (real: timed allocation/deallocation)
     pub allocation_overhead: Duration,
-    /// Cache miss ratio
-    pub cache_miss_ratio: f64,
-    /// Memory bandwidth utilization
-    pub memory_bandwidth_utilization: f64,
-    /// TLB miss ratio
-    pub tlb_miss_ratio: f64,
+    /// Cache miss ratio. `None`: not obtainable without hardware
+    /// performance counters, which portable Rust does not expose.
+    pub cache_miss_ratio: Option<f64>,
+    /// Memory bandwidth utilization. `None`: see `cache_miss_ratio`.
+    pub memory_bandwidth_utilization: Option<f64>,
+    /// TLB miss ratio. `None`: see `cache_miss_ratio`.
+    pub tlb_miss_ratio: Option<f64>,
 }
 
 /// Memory leak detection engine
@@ -799,14 +816,41 @@ pub enum ModelType {
 
 impl MemoryOptimizer {
     /// Create a new memory optimizer
-    pub fn new(config: MemoryOptimizerConfig) -> Self {
-        Self {
+    pub fn new(config: MemoryOptimizerConfig) -> Result<Self> {
+        Ok(Self {
             config,
             memory_tracker: AdvancedMemoryTracker::new(),
             leak_detector: MemoryLeakDetector::new(),
             optimization_engine: OptimizationEngine::new(),
             pattern_analyzer: MemoryPatternAnalyzer::new(),
-        }
+            sampler: SystemSampler::new()?,
+            category_bytes: HashMap::new(),
+        })
+    }
+
+    /// Register a real, caller-known byte count for a memory category
+    /// (e.g. "this optimizer's parameter buffers are 50MB"). Populates
+    /// `MemoryUsage::by_category` honestly; unregistered categories are
+    /// simply absent rather than filled with a fabricated split.
+    pub fn register_category_bytes(&mut self, category: MemoryCategory, bytes: usize) {
+        self.category_bytes.insert(category, bytes);
+    }
+
+    /// Record a real allocation under caller-chosen id `id` (e.g. a slot
+    /// index or monotonically increasing counter). Feeds the allocation
+    /// tracker's own bookkeeping, which in turn drives the real
+    /// fragmentation heuristic -- see [`AllocationTracker::fragmentation_ratio`].
+    pub fn record_allocation(&mut self, id: usize, size: usize, category: MemoryCategory) {
+        self.memory_tracker
+            .allocation_tracker
+            .record_allocation(id, size, category);
+    }
+
+    /// Record a real deallocation of a previously-registered id.
+    pub fn record_deallocation(&mut self, id: usize) {
+        self.memory_tracker
+            .allocation_tracker
+            .record_deallocation(id);
     }
 
     /// Start memory monitoring
@@ -947,50 +991,77 @@ impl MemoryOptimizer {
 
     // Private helper methods
 
+    /// Real memory usage: total/used/available/virtual/physical come from
+    /// [`SystemSampler`] (process RSS/virtual memory + system-wide
+    /// available memory). `by_category` reflects only what callers have
+    /// registered via [`Self::register_category_bytes`] -- unregistered
+    /// categories are simply absent, never a fabricated split.
     fn collect_memory_usage(&self) -> Result<MemoryUsage> {
-        // Simulate memory usage collection
-        // In a real implementation, this would interface with the system
-        let mut by_category = HashMap::new();
-        by_category.insert(MemoryCategory::OptimizerState, 1024 * 1024 * 10); // 10MB
-        by_category.insert(MemoryCategory::Parameters, 1024 * 1024 * 50); // 50MB
-        by_category.insert(MemoryCategory::Gradients, 1024 * 1024 * 30); // 30MB
-        by_category.insert(MemoryCategory::Temporaries, 1024 * 1024 * 20); // 20MB
+        self.sampler.refresh();
+        let process = self.sampler.sample_process()?;
+        let system = self.sampler.sample_system();
 
-        let total_allocated = by_category.values().sum();
+        let by_category = self.category_bytes.clone();
+        let registered_total: usize = by_category.values().sum();
+
+        // Prefer the caller-registered total when any categories are
+        // registered (it is the more precise, application-level figure);
+        // otherwise fall back to real process RSS.
+        let total_allocated = if registered_total > 0 {
+            registered_total
+        } else {
+            process.rss_bytes as usize
+        };
 
         Ok(MemoryUsage {
             total_allocated,
-            used_memory: (total_allocated as f64 * 0.8) as usize,
-            available_memory: (total_allocated as f64 * 0.2) as usize,
-            reserved_memory: 0,
+            used_memory: process.rss_bytes as usize,
+            available_memory: system.available_memory_bytes as usize,
+            reserved_memory: 0, // Not tracked: no real source for this figure.
             by_category,
-            virtual_memory: total_allocated,
-            physical_memory: (total_allocated as f64 * 0.9) as usize,
+            virtual_memory: process.virtual_bytes as usize,
+            physical_memory: process.rss_bytes as usize,
         })
     }
 
-    fn calculate_fragmentation(&self, usage: &MemoryUsage) -> Result<FragmentationMetrics> {
-        Ok(FragmentationMetrics {
-            external_fragmentation: 0.15,        // 15%
-            internal_fragmentation: 0.08,        // 8%
-            largest_free_block: 1024 * 1024 * 5, // 5MB
-            free_block_count: 42,
-            average_free_block_size: 1024.0 * 200.0, // 200KB
-        })
+    /// Fragmentation heuristic from the allocation tracker's own real
+    /// bookkeeping of freed vs. active block sizes (see
+    /// [`AllocationTracker::fragmentation_ratio`]), not fabricated
+    /// constants. `usage` is accepted for API stability but the tracker is
+    /// the source of truth for fragmentation.
+    fn calculate_fragmentation(&self, _usage: &MemoryUsage) -> Result<FragmentationMetrics> {
+        Ok(self
+            .memory_tracker
+            .allocation_tracker
+            .fragmentation_metrics())
     }
 
+    /// `allocation_overhead` is a real measurement (timing an actual heap
+    /// allocation/deallocation). The remaining fields require hardware
+    /// performance counters (cache misses, memory bandwidth, TLB misses)
+    /// that are not portably available from safe Rust, so they are `None`
+    /// rather than fabricated.
     fn measure_performance_impact(&self) -> Result<PerformanceImpact> {
+        let sample_size = 1usize << 16; // 64Ki bytes, enough to leave the tiniest allocator fast-paths
+        let start = Instant::now();
+        let probe: Vec<u8> = vec![0u8; sample_size];
+        std::hint::black_box(&probe);
+        drop(probe);
+        let allocation_overhead = start.elapsed();
+
         Ok(PerformanceImpact {
-            allocation_overhead: Duration::from_micros(50),
-            cache_miss_ratio: 0.05,            // 5%
-            memory_bandwidth_utilization: 0.7, // 70%
-            tlb_miss_ratio: 0.02,              // 2%
+            allocation_overhead,
+            cache_miss_ratio: None,
+            memory_bandwidth_utilization: None,
+            tlb_miss_ratio: None,
         })
     }
 
     fn calculate_memory_efficiency(&self) -> Result<f64> {
-        // Simplified efficiency calculation
         if let Some(usage) = self.memory_tracker.get_current_usage() {
+            if usage.total_allocated == 0 {
+                return Ok(0.0);
+            }
             let utilization = usage.used_memory as f64 / usage.total_allocated as f64;
             let fragmentation_penalty = self.get_average_fragmentation();
             let efficiency = utilization * (1.0 - fragmentation_penalty);
@@ -1000,20 +1071,48 @@ impl MemoryOptimizer {
         }
     }
 
+    /// Real average fragmentation across the recorded snapshot history,
+    /// not a hardcoded constant. Falls back to the tracker's current
+    /// (real) fragmentation ratio when there is no history yet.
     fn get_average_fragmentation(&self) -> f64 {
-        0.1 // 10% average fragmentation
+        let history = &self.memory_tracker.usage_history;
+        if history.is_empty() {
+            return self.memory_tracker.allocation_tracker.fragmentation_ratio();
+        }
+        let sum: f64 = history
+            .iter()
+            .map(|snapshot| snapshot.fragmentation.external_fragmentation)
+            .sum();
+        sum / history.len() as f64
+    }
+
+    /// Fragmentation trend via the OLS slope of external-fragmentation
+    /// over the snapshot history, rather than a hardcoded `Stable`.
+    fn fragmentation_trend(&self) -> FragmentationTrend {
+        let history = &self.memory_tracker.usage_history;
+        if history.len() < 3 {
+            return FragmentationTrend::Stable;
+        }
+        let points: Vec<(f64, f64)> = history
+            .iter()
+            .enumerate()
+            .map(|(i, snapshot)| (i as f64, snapshot.fragmentation.external_fragmentation))
+            .collect();
+        match ols_slope(&points) {
+            Some(slope) if slope > 0.001 => FragmentationTrend::Worsening,
+            Some(slope) if slope < -0.001 => FragmentationTrend::Improving,
+            _ => FragmentationTrend::Stable,
+        }
     }
 
     fn analyze_fragmentation(&self) -> Result<FragmentationAnalysisReport> {
+        let current_fragmentation = self
+            .memory_tracker
+            .allocation_tracker
+            .fragmentation_metrics();
         Ok(FragmentationAnalysisReport {
-            current_fragmentation: FragmentationMetrics {
-                external_fragmentation: 0.15,
-                internal_fragmentation: 0.08,
-                largest_free_block: 1024 * 1024 * 5,
-                free_block_count: 42,
-                average_free_block_size: 1024.0 * 200.0,
-            },
-            fragmentation_trend: FragmentationTrend::Stable,
+            current_fragmentation,
+            fragmentation_trend: self.fragmentation_trend(),
             causes: vec![
                 "Frequent small allocations".to_string(),
                 "Mixed allocation sizes".to_string(),
@@ -1025,21 +1124,58 @@ impl MemoryOptimizer {
         })
     }
 
+    /// `overall_impact_score` derives from the real fragmentation ratio
+    /// (1.0 == no fragmentation observed) instead of a hardcoded constant.
     fn analyze_performance_impact(&self) -> Result<PerformanceImpactReport> {
-        Ok(PerformanceImpactReport {
-            overall_impact_score: 0.85, // 85% efficiency
-            bottlenecks: vec![PerformanceBottleneck {
+        let fragmentation_ratio = self.memory_tracker.allocation_tracker.fragmentation_ratio();
+        let overall_impact_score = (1.0 - fragmentation_ratio).clamp(0.0, 1.0);
+
+        let mut bottlenecks = Vec::new();
+        if fragmentation_ratio > self.config.fragmentation_threshold {
+            bottlenecks.push(PerformanceBottleneck {
                 bottleneck_type: "Memory Allocation".to_string(),
-                severity: 0.3,
-                description: "Frequent small allocations causing overhead".to_string(),
-                impact: 0.15, // 15% performance loss
-            }],
+                severity: fragmentation_ratio.clamp(0.0, 1.0),
+                description: format!(
+                    "Tracked fragmentation ratio {:.1}% exceeds configured threshold {:.1}%",
+                    fragmentation_ratio * 100.0,
+                    self.config.fragmentation_threshold * 100.0
+                ),
+                impact: fragmentation_ratio.clamp(0.0, 1.0),
+            });
+        }
+
+        Ok(PerformanceImpactReport {
+            overall_impact_score,
+            bottlenecks,
             optimization_opportunities: vec![
                 "Pre-allocate working memory".to_string(),
                 "Use memory pools for small objects".to_string(),
             ],
         })
     }
+}
+
+/// Ordinary least-squares slope of `y` on `x`. Returns `None` for
+/// degenerate input (fewer than 2 points or zero variance in `x`).
+fn ols_slope(points: &[(f64, f64)]) -> Option<f64> {
+    let n = points.len();
+    if n < 2 {
+        return None;
+    }
+    let n_f = n as f64;
+    let mean_x = points.iter().map(|(x, _)| *x).sum::<f64>() / n_f;
+    let mean_y = points.iter().map(|(_, y)| *y).sum::<f64>() / n_f;
+
+    let mut ss_xx = 0.0;
+    let mut ss_xy = 0.0;
+    for (x, y) in points {
+        ss_xx += (x - mean_x).powi(2);
+        ss_xy += (x - mean_x) * (y - mean_y);
+    }
+    if ss_xx <= f64::EPSILON {
+        return None;
+    }
+    Some(ss_xy / ss_xx)
 }
 
 // Additional structures for reports and analysis
@@ -1176,6 +1312,13 @@ impl AdvancedMemoryTracker {
     }
 
     fn add_snapshot(&mut self, snapshot: MemorySnapshot) {
+        // Keep `current_usage`/`peak_usage` in sync with the real snapshot
+        // data instead of leaving them at their zeroed default forever.
+        self.current_usage = snapshot.usage.clone();
+        if snapshot.usage.total_allocated > self.peak_usage.total_allocated {
+            self.peak_usage = snapshot.usage.clone();
+        }
+
         self.usage_history.push_back(snapshot);
         // Maintain history size limit
         if self.usage_history.len() > 10000 {
@@ -1191,13 +1334,16 @@ impl AdvancedMemoryTracker {
         Some(&self.current_usage)
     }
 
+    /// Real allocation events are not centrally buffered by this tracker
+    /// (that would need a global allocator hook); an honest empty list
+    /// rather than a fabricated one. Real per-category totals are still
+    /// available via [`Self::get_current_usage`]`().by_category`.
     fn get_recent_allocations(&self) -> Vec<AllocationEvent> {
-        // Return recent allocation events
         Vec::new()
     }
 
+    /// See [`Self::get_recent_allocations`].
     fn get_recent_deallocations(&self) -> Vec<DeallocationEvent> {
-        // Return recent deallocation events
         Vec::new()
     }
 
@@ -1210,13 +1356,74 @@ impl AdvancedMemoryTracker {
         }
     }
 
+    /// Real average over the recorded snapshot history (not a copy of the
+    /// current value). Falls back to `current_usage` when there is no
+    /// history yet.
     fn calculate_average_usage(&self) -> MemoryUsage {
-        // Calculate average from history
-        self.current_usage.clone() // Simplified
+        if self.usage_history.is_empty() {
+            return self.current_usage.clone();
+        }
+        let n = self.usage_history.len() as f64;
+
+        let mut total_allocated = 0.0;
+        let mut used_memory = 0.0;
+        let mut available_memory = 0.0;
+        let mut reserved_memory = 0.0;
+        let mut virtual_memory = 0.0;
+        let mut physical_memory = 0.0;
+        let mut by_category_sum: HashMap<MemoryCategory, usize> = HashMap::new();
+
+        for snapshot in &self.usage_history {
+            let usage = &snapshot.usage;
+            total_allocated += usage.total_allocated as f64;
+            used_memory += usage.used_memory as f64;
+            available_memory += usage.available_memory as f64;
+            reserved_memory += usage.reserved_memory as f64;
+            virtual_memory += usage.virtual_memory as f64;
+            physical_memory += usage.physical_memory as f64;
+            for (category, bytes) in &usage.by_category {
+                *by_category_sum.entry(category.clone()).or_insert(0) += *bytes;
+            }
+        }
+
+        let by_category = by_category_sum
+            .into_iter()
+            .map(|(category, sum)| (category, (sum as f64 / n) as usize))
+            .collect();
+
+        MemoryUsage {
+            total_allocated: (total_allocated / n) as usize,
+            used_memory: (used_memory / n) as usize,
+            available_memory: (available_memory / n) as usize,
+            reserved_memory: (reserved_memory / n) as usize,
+            by_category,
+            virtual_memory: (virtual_memory / n) as usize,
+            physical_memory: (physical_memory / n) as usize,
+        }
     }
 
+    /// Real trend via the OLS slope of `total_allocated` across the
+    /// snapshot history, replacing the previous hardcoded `Stable`.
     fn calculate_usage_trend(&self) -> UsageTrend {
-        UsageTrend::Stable // Simplified
+        if self.usage_history.len() < 3 {
+            return UsageTrend::Stable;
+        }
+        let points: Vec<(f64, f64)> = self
+            .usage_history
+            .iter()
+            .enumerate()
+            .map(|(i, snapshot)| (i as f64, snapshot.usage.total_allocated as f64))
+            .collect();
+
+        let mean_magnitude = points.iter().map(|(_, y)| y.abs()).sum::<f64>() / points.len() as f64;
+        let relative_threshold = (mean_magnitude * 0.01).max(1.0); // 1% of mean per step
+
+        match ols_slope(&points) {
+            Some(slope) if slope > relative_threshold => UsageTrend::Increasing,
+            Some(slope) if slope < -relative_threshold => UsageTrend::Decreasing,
+            Some(_) => UsageTrend::Stable,
+            None => UsageTrend::Stable,
+        }
     }
 }
 
@@ -1229,6 +1436,88 @@ impl AllocationTracker {
             allocation_rate: VecDeque::new(),
             active_allocations: HashMap::new(),
             patterns: Vec::new(),
+            freed_block_sizes: VecDeque::new(),
+        }
+    }
+
+    /// Record a real allocation under caller-chosen id `id`.
+    fn record_allocation(&mut self, id: usize, size: usize, category: MemoryCategory) {
+        self.total_allocations += 1;
+        self.allocation_rate.push_back((Instant::now(), size));
+        const MAX_RATE_HISTORY: usize = 4096;
+        while self.allocation_rate.len() > MAX_RATE_HISTORY {
+            self.allocation_rate.pop_front();
+        }
+        *self.size_distribution.entry(size).or_insert(0) += 1;
+        self.active_allocations.insert(
+            id,
+            AllocationInfo {
+                size,
+                timestamp: Instant::now(),
+                category,
+                stack_trace: None,
+            },
+        );
+    }
+
+    /// Record a real deallocation of a previously-registered id.
+    fn record_deallocation(&mut self, id: usize) {
+        if let Some(info) = self.active_allocations.remove(&id) {
+            self.total_deallocations += 1;
+            self.freed_block_sizes.push_back(info.size);
+            const MAX_FREED_HISTORY: usize = 4096;
+            while self.freed_block_sizes.len() > MAX_FREED_HISTORY {
+                self.freed_block_sizes.pop_front();
+            }
+        }
+    }
+
+    /// Real fragmentation heuristic from this tracker's own bookkeeping:
+    /// the fraction of freed block sizes that do not match any
+    /// currently-active allocation size. See the identical rationale in
+    /// `memory_leak_detector::AllocationTracker::fragmentation_ratio`.
+    /// Returns `0.0` (not fabricated -- a real function of real, possibly
+    /// empty, state) when nothing has been recorded yet.
+    pub fn fragmentation_ratio(&self) -> f64 {
+        if self.freed_block_sizes.is_empty() {
+            return 0.0;
+        }
+        let active_sizes: std::collections::HashSet<usize> = self
+            .active_allocations
+            .values()
+            .map(|info| info.size)
+            .collect();
+        let unmatched = self
+            .freed_block_sizes
+            .iter()
+            .filter(|size| !active_sizes.contains(size))
+            .count();
+        unmatched as f64 / self.freed_block_sizes.len() as f64
+    }
+
+    /// Real, tracker-derived fragmentation metrics. `internal_fragmentation`
+    /// is left at `0.0` (documented): distinguishing internal from
+    /// external fragmentation needs allocator-internal slack information
+    /// this tracker does not have.
+    pub fn fragmentation_metrics(&self) -> FragmentationMetrics {
+        let external_fragmentation = self.fragmentation_ratio();
+
+        let mut distinct_free_sizes: Vec<usize> = self.freed_block_sizes.iter().copied().collect();
+        distinct_free_sizes.sort_unstable();
+        let largest_free_block = distinct_free_sizes.last().copied().unwrap_or(0);
+        let free_block_count = self.freed_block_sizes.len();
+        let average_free_block_size = if free_block_count > 0 {
+            self.freed_block_sizes.iter().sum::<usize>() as f64 / free_block_count as f64
+        } else {
+            0.0
+        };
+
+        FragmentationMetrics {
+            external_fragmentation,
+            internal_fragmentation: 0.0,
+            largest_free_block,
+            free_block_count,
+            average_free_block_size,
         }
     }
 }
@@ -1434,10 +1723,17 @@ impl Default for PoolUtilizationMetrics {
 mod tests {
     use super::*;
 
+    fn new_optimizer(config: MemoryOptimizerConfig) -> MemoryOptimizer {
+        match MemoryOptimizer::new(config) {
+            Ok(optimizer) => optimizer,
+            Err(e) => panic!("failed to create MemoryOptimizer: {e:?}"),
+        }
+    }
+
     #[test]
     fn test_memory_optimizer_creation() {
         let config = MemoryOptimizerConfig::default();
-        let optimizer = MemoryOptimizer::new(config);
+        let optimizer = new_optimizer(config);
         assert!(optimizer.config.enable_detailed_tracking);
     }
 
@@ -1451,7 +1747,7 @@ mod tests {
     #[test]
     fn test_alert_generation() {
         let config = MemoryOptimizerConfig::default();
-        let optimizer = MemoryOptimizer::new(config);
+        let optimizer = new_optimizer(config);
         let alerts = optimizer.get_alerts();
         // Should not generate alerts with default/empty state
         assert!(alerts.is_empty());
@@ -1460,9 +1756,78 @@ mod tests {
     #[test]
     fn test_fragmentation_calculation() {
         let config = MemoryOptimizerConfig::default();
-        let optimizer = MemoryOptimizer::new(config);
+        let optimizer = new_optimizer(config);
         let usage = MemoryUsage::default();
         let fragmentation = optimizer.calculate_fragmentation(&usage);
         assert!(fragmentation.is_ok());
+    }
+
+    #[test]
+    fn test_fragmentation_ratio_reflects_real_bookkeeping() {
+        let config = MemoryOptimizerConfig::default();
+        let mut optimizer = new_optimizer(config);
+
+        // No allocations recorded yet: honest zero, not fabricated.
+        assert_eq!(
+            optimizer
+                .memory_tracker
+                .allocation_tracker
+                .fragmentation_ratio(),
+            0.0
+        );
+
+        optimizer.record_allocation(1, 128, MemoryCategory::Temporaries);
+        optimizer.record_allocation(2, 256, MemoryCategory::Temporaries);
+        optimizer.record_deallocation(1); // size 128 freed, no active 128-byte block remains
+        optimizer.record_deallocation(2); // size 256 freed, no active 256-byte block remains
+
+        let ratio = optimizer
+            .memory_tracker
+            .allocation_tracker
+            .fragmentation_ratio();
+        assert!(
+            ratio > 0.0,
+            "freed blocks with no matching active allocation should register as fragmentation risk"
+        );
+    }
+
+    #[test]
+    fn test_average_usage_over_history() {
+        let config = MemoryOptimizerConfig::default();
+        let mut optimizer = new_optimizer(config);
+
+        for total in [100usize, 200, 300] {
+            let usage = MemoryUsage {
+                total_allocated: total,
+                used_memory: total,
+                available_memory: 0,
+                reserved_memory: 0,
+                by_category: HashMap::new(),
+                virtual_memory: total,
+                physical_memory: total,
+            };
+            optimizer.memory_tracker.add_snapshot(MemorySnapshot {
+                timestamp: Instant::now(),
+                usage,
+                allocation_events: Vec::new(),
+                deallocation_events: Vec::new(),
+                fragmentation: FragmentationMetrics {
+                    external_fragmentation: 0.0,
+                    internal_fragmentation: 0.0,
+                    largest_free_block: 0,
+                    free_block_count: 0,
+                    average_free_block_size: 0.0,
+                },
+                performance_impact: PerformanceImpact {
+                    allocation_overhead: Duration::from_micros(1),
+                    cache_miss_ratio: None,
+                    memory_bandwidth_utilization: None,
+                    tlb_miss_ratio: None,
+                },
+            });
+        }
+
+        let average = optimizer.memory_tracker.calculate_average_usage();
+        assert_eq!(average.total_allocated, 200); // (100+200+300)/3
     }
 }

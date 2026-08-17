@@ -13,6 +13,79 @@ use std::time::{Duration, SystemTime};
 
 use crate::error::{OptimError, Result};
 
+/// Group a sorted, deduplicated list of free resource IDs into contiguous
+/// runs (e.g. `[0,1,2,5,6,9]` -> `[[0,1,2],[5,6],[9]]`).
+fn contiguous_blocks(sorted_ids: &[usize]) -> Vec<Vec<usize>> {
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+    for &id in sorted_ids {
+        let extends_last = matches!(
+            blocks.last().and_then(|b: &Vec<usize>| b.last()),
+            Some(&last) if id == last + 1
+        );
+        if extends_last {
+            if let Some(block) = blocks.last_mut() {
+                block.push(id);
+            }
+        } else {
+            blocks.push(vec![id]);
+        }
+    }
+    blocks
+}
+
+/// Pick `count` IDs from `free_ids` (already sorted ascending) by taking the
+/// lowest-numbered free IDs, without regard to contiguity. Returns `None`
+/// (exhaustion) if fewer than `count` IDs are free.
+fn pick_first_fit(free_ids: &[usize], count: usize) -> Option<Vec<usize>> {
+    if free_ids.len() < count {
+        None
+    } else {
+        Some(free_ids[..count].to_vec())
+    }
+}
+
+/// Pick `count` IDs from `free_ids` (already sorted ascending) preferring the
+/// smallest contiguous block that can satisfy the request (minimizing
+/// fragmentation waste). Falls back to draining the largest blocks first when
+/// no single block is big enough. Returns `None` (exhaustion) if fewer than
+/// `count` IDs are free in total.
+fn pick_best_fit(free_ids: &[usize], count: usize) -> Option<Vec<usize>> {
+    if free_ids.len() < count {
+        return None;
+    }
+    if count == 0 {
+        return Some(Vec::new());
+    }
+
+    let blocks = contiguous_blocks(free_ids);
+
+    if let Some(best_block) = blocks
+        .iter()
+        .filter(|b| b.len() >= count)
+        .min_by_key(|b| b.len())
+    {
+        return Some(best_block[..count].to_vec());
+    }
+
+    // No single contiguous block is big enough: drain the largest blocks
+    // first, which still minimizes the number of fragments created.
+    let mut sorted_blocks = blocks;
+    sorted_blocks.sort_by(|a, b| b.len().cmp(&a.len()));
+    let mut chosen = Vec::with_capacity(count);
+    for block in sorted_blocks {
+        for id in block {
+            if chosen.len() == count {
+                break;
+            }
+            chosen.push(id);
+        }
+        if chosen.len() == count {
+            break;
+        }
+    }
+    Some(chosen)
+}
+
 /// Resource manager for optimization processes
 #[derive(Debug)]
 pub struct ResourceManager<T: Float + Debug + Send + Sync + 'static> {
@@ -931,14 +1004,19 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
     /// Allocate resources for a task
     pub fn allocate_resources(&mut self, request: ResourceRequest) -> Result<ResourceAllocation> {
-        // Check resource availability
+        // Check resource availability against the true free pool (derived from
+        // currently-tracked allocations, not a stale utilization snapshot).
         self.check_resource_availability(&request)?;
 
-        // Apply allocation strategy
+        // Apply allocation strategy (performs its own free-pool search and can
+        // still fail here if a concurrent caller raced us, since this method
+        // takes `&mut self` there is no such race within a single manager).
         let allocation = self.apply_allocation_strategy(&request)?;
 
-        // Track the allocation
-        self.allocation_tracker.track_allocation(&allocation)?;
+        // Track the allocation and refresh the utilization snapshot so the
+        // free pool used by the next call reflects this allocation.
+        self.allocation_tracker
+            .track_allocation(&allocation, &self.resource_pool)?;
 
         // Update statistics
         self.stats.total_allocations += 1;
@@ -948,9 +1026,76 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
     /// Deallocate resources for a task
     pub fn deallocate_resources(&mut self, task_id: &str) -> Result<()> {
-        self.allocation_tracker.deallocate(task_id)?;
+        self.allocation_tracker
+            .deallocate(task_id, &self.resource_pool)?;
         self.stats.total_deallocations += 1;
         Ok(())
+    }
+
+    /// CPU core IDs currently held by any active allocation.
+    fn used_cpu_core_ids(&self) -> std::collections::HashSet<usize> {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .flat_map(|a| a.cpu_cores.iter().copied())
+            .collect()
+    }
+
+    /// GPU device IDs currently held by any active allocation.
+    fn used_gpu_device_ids(&self) -> std::collections::HashSet<usize> {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .flat_map(|a| a.gpu_devices.iter().copied())
+            .collect()
+    }
+
+    fn used_memory_mb(&self) -> usize {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .map(|a| a.memory_mb)
+            .sum()
+    }
+
+    fn used_storage_gb(&self) -> usize {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .map(|a| a.storage_gb)
+            .sum()
+    }
+
+    fn used_network_bandwidth(&self) -> f64 {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .map(|a| a.network_bandwidth)
+            .sum()
+    }
+
+    fn used_special_hardware(&self, name: &str) -> usize {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .filter_map(|a| a.special_hardware.get(name).copied())
+            .sum()
+    }
+
+    /// Free (unallocated) CPU core IDs, in ascending order.
+    fn free_cpu_core_ids(&self) -> Vec<usize> {
+        let used = self.used_cpu_core_ids();
+        (0..self.resource_pool.cpu_cores)
+            .filter(|c| !used.contains(c))
+            .collect()
+    }
+
+    /// Free (unallocated) GPU device IDs, in ascending order.
+    fn free_gpu_device_ids(&self) -> Vec<usize> {
+        let used = self.used_gpu_device_ids();
+        (0..self.resource_pool.gpu_devices)
+            .filter(|g| !used.contains(g))
+            .collect()
     }
 
     /// Get current resource utilization
@@ -978,38 +1123,80 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         &self.stats
     }
 
-    /// Check if resources are available for request
-    fn check_resource_availability(&self, request: &ResourceRequest) -> Result<bool> {
-        let current_utilization = self.get_utilization();
-
-        // Check CPU availability
-        let available_cpu = self.resource_pool.cpu_cores
-            - (current_utilization
-                .cpu_utilization
-                .iter()
-                .cloned()
-                .sum::<T>()
-                .to_usize()
-                .unwrap_or(0));
-        if available_cpu < request.cpu_cores {
-            return Err(OptimError::ResourceUnavailable(
-                "Insufficient CPU cores".to_string(),
-            ));
+    /// Check if resources are available for request, against the real free
+    /// pool derived from currently-tracked allocations (not a stale
+    /// utilization snapshot). Returns `Err(OptimError::ResourceUnavailable)`
+    /// naming the first exhausted resource type.
+    fn check_resource_availability(&self, request: &ResourceRequest) -> Result<()> {
+        let free_cpu = self.free_cpu_core_ids().len();
+        if free_cpu < request.cpu_cores {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient CPU cores: requested {}, free {}",
+                request.cpu_cores, free_cpu
+            )));
         }
 
-        // Check memory availability
-        let available_memory = T::from(self.resource_pool.memory_mb).unwrap_or_else(|| T::zero())
-            * (T::one() - current_utilization.memory_utilization);
-        if available_memory < T::from(request.memory_mb).unwrap_or_else(|| T::zero()) {
-            return Err(OptimError::ResourceUnavailable(
-                "Insufficient memory".to_string(),
-            ));
+        let free_memory = self
+            .resource_pool
+            .memory_mb
+            .saturating_sub(self.used_memory_mb());
+        if free_memory < request.memory_mb {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient memory: requested {}MB, free {}MB",
+                request.memory_mb, free_memory
+            )));
         }
 
-        Ok(true)
+        let free_gpu = self.free_gpu_device_ids().len();
+        if free_gpu < request.gpu_devices {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient GPU devices: requested {}, free {}",
+                request.gpu_devices, free_gpu
+            )));
+        }
+
+        let free_storage = self
+            .resource_pool
+            .storage_gb
+            .saturating_sub(self.used_storage_gb());
+        if free_storage < request.storage_gb {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient storage: requested {}GB, free {}GB",
+                request.storage_gb, free_storage
+            )));
+        }
+
+        let free_bandwidth =
+            (self.resource_pool.network_bandwidth - self.used_network_bandwidth()).max(0.0);
+        if free_bandwidth < request.network_bandwidth {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient network bandwidth: requested {}Mbps, free {}Mbps",
+                request.network_bandwidth, free_bandwidth
+            )));
+        }
+
+        for (hw_name, &requested_units) in &request.special_hardware {
+            let capacity = self
+                .resource_pool
+                .special_hardware
+                .get(hw_name)
+                .copied()
+                .unwrap_or(0);
+            let free = capacity.saturating_sub(self.used_special_hardware(hw_name));
+            if free < requested_units {
+                return Err(OptimError::ResourceUnavailable(format!(
+                    "insufficient special hardware '{hw_name}': requested {requested_units}, free {free}"
+                )));
+            }
+        }
+
+        Ok(())
     }
 
-    /// Apply allocation strategy
+    /// Apply allocation strategy. `WorstFit`, `PerformanceOptimized`,
+    /// `EnergyEfficient`, `FairShare`, and `PriorityBased` are not yet
+    /// implemented as independently-optimized strategies; they fall back to
+    /// the honest first-fit search rather than silently echoing the request.
     fn apply_allocation_strategy(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
         match self.allocation_strategy {
             ResourceAllocationStrategy::BestFit => self.best_fit_allocation(request),
@@ -1018,14 +1205,37 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         }
     }
 
-    /// Best fit allocation strategy
+    /// Best-fit allocation: among free CPU/GPU IDs, prefer the smallest
+    /// contiguous block that still satisfies the request (minimizing
+    /// fragmentation waste); falls back to draining the largest blocks first
+    /// when no single block is big enough. Fails with
+    /// `ResourceUnavailable` when the free pool cannot satisfy the request.
     fn best_fit_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
-        // Simplified best fit implementation
+        self.check_resource_availability(request)?;
+
+        let free_cpu = self.free_cpu_core_ids();
+        let cpu_cores = pick_best_fit(&free_cpu, request.cpu_cores).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "best-fit: cannot satisfy {} CPU cores from {} free",
+                request.cpu_cores,
+                free_cpu.len()
+            ))
+        })?;
+
+        let free_gpu = self.free_gpu_device_ids();
+        let gpu_devices = pick_best_fit(&free_gpu, request.gpu_devices).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "best-fit: cannot satisfy {} GPU devices from {} free",
+                request.gpu_devices,
+                free_gpu.len()
+            ))
+        })?;
+
         Ok(ResourceAllocation {
             task_id: request.task_id.clone(),
-            cpu_cores: (0..request.cpu_cores).collect(),
+            cpu_cores,
             memory_mb: request.memory_mb,
-            gpu_devices: (0..request.gpu_devices).collect(),
+            gpu_devices,
             storage_gb: request.storage_gb,
             network_bandwidth: request.network_bandwidth,
             special_hardware: request.special_hardware.clone(),
@@ -1035,19 +1245,35 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         })
     }
 
-    /// First fit allocation strategy
+    /// First-fit allocation: takes the lowest-numbered free CPU/GPU IDs in
+    /// ascending order, without regard to contiguity. Fails with
+    /// `ResourceUnavailable` when the free pool cannot satisfy the request.
     fn first_fit_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
-        // Simplified first fit implementation
-        self.default_allocation(request)
-    }
+        self.check_resource_availability(request)?;
 
-    /// Default allocation strategy
-    fn default_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
+        let free_cpu = self.free_cpu_core_ids();
+        let cpu_cores = pick_first_fit(&free_cpu, request.cpu_cores).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "first-fit: cannot satisfy {} CPU cores from {} free",
+                request.cpu_cores,
+                free_cpu.len()
+            ))
+        })?;
+
+        let free_gpu = self.free_gpu_device_ids();
+        let gpu_devices = pick_first_fit(&free_gpu, request.gpu_devices).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "first-fit: cannot satisfy {} GPU devices from {} free",
+                request.gpu_devices,
+                free_gpu.len()
+            ))
+        })?;
+
         Ok(ResourceAllocation {
             task_id: request.task_id.clone(),
-            cpu_cores: (0..request.cpu_cores).collect(),
+            cpu_cores,
             memory_mb: request.memory_mb,
-            gpu_devices: (0..request.gpu_devices).collect(),
+            gpu_devices,
             storage_gb: request.storage_gb,
             network_bandwidth: request.network_bandwidth,
             special_hardware: request.special_hardware.clone(),
@@ -1055,6 +1281,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
             expected_release: SystemTime::now() + Duration::from_secs(3600),
             priority: request.priority,
         })
+    }
+
+    /// Default allocation strategy for strategies without a dedicated
+    /// implementation: behaves exactly like first-fit (real free-pool
+    /// search, honest failure on exhaustion) rather than echoing the
+    /// request unchecked.
+    fn default_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
+        self.first_fit_allocation(request)
     }
 
     /// Get current resource state
@@ -1082,7 +1316,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceAllocat
         })
     }
 
-    pub fn track_allocation(&mut self, allocation: &ResourceAllocation) -> Result<()> {
+    /// Record a new allocation and refresh the utilization snapshot so the
+    /// free pool used by subsequent availability checks reflects it.
+    pub fn track_allocation(
+        &mut self,
+        allocation: &ResourceAllocation,
+        pool: &ResourcePool,
+    ) -> Result<()> {
         self.current_allocations
             .insert(allocation.task_id.clone(), allocation.clone());
 
@@ -1095,22 +1335,32 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceAllocat
         };
 
         self.allocation_history.push_back(event);
+        self.refresh_utilization(pool);
         Ok(())
     }
 
-    pub fn deallocate(&mut self, task_id: &str) -> Result<()> {
-        if let Some(allocation) = self.current_allocations.remove(task_id) {
-            let event = AllocationEvent {
-                event_type: AllocationEventType::Deallocated,
-                task_id: task_id.to_string(),
-                allocation,
-                timestamp: SystemTime::now(),
-                metadata: HashMap::new(),
-            };
+    /// Release a task's allocation, restoring its resources to the free pool
+    /// and refreshing the utilization snapshot. Errors if the task has no
+    /// active allocation (nothing to deallocate).
+    pub fn deallocate(&mut self, task_id: &str, pool: &ResourcePool) -> Result<()> {
+        match self.current_allocations.remove(task_id) {
+            Some(allocation) => {
+                let event = AllocationEvent {
+                    event_type: AllocationEventType::Deallocated,
+                    task_id: task_id.to_string(),
+                    allocation,
+                    timestamp: SystemTime::now(),
+                    metadata: HashMap::new(),
+                };
 
-            self.allocation_history.push_back(event);
+                self.allocation_history.push_back(event);
+                self.refresh_utilization(pool);
+                Ok(())
+            }
+            None => Err(OptimError::InvalidState(format!(
+                "cannot deallocate unknown task '{task_id}': no active allocation found"
+            ))),
         }
-        Ok(())
     }
 
     pub fn get_current_utilization(&self) -> UtilizationSnapshot<T> {
@@ -1119,6 +1369,59 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceAllocat
 
     pub fn get_current_allocations(&self) -> HashMap<String, ResourceAllocation> {
         self.current_allocations.clone()
+    }
+
+    /// Recompute the utilization snapshot fields from the ground-truth set
+    /// of current allocations, so `get_current_utilization()` reflects
+    /// reality instead of staying pinned at its initial (zero) value.
+    fn refresh_utilization(&mut self, pool: &ResourcePool) {
+        let mut cpu_used = vec![false; pool.cpu_cores];
+        let mut gpu_used = vec![false; pool.gpu_devices];
+        let mut memory_used = 0usize;
+        let mut storage_used = 0usize;
+        let mut bandwidth_used = 0.0f64;
+
+        for alloc in self.current_allocations.values() {
+            for &core in &alloc.cpu_cores {
+                if let Some(slot) = cpu_used.get_mut(core) {
+                    *slot = true;
+                }
+            }
+            for &gpu in &alloc.gpu_devices {
+                if let Some(slot) = gpu_used.get_mut(gpu) {
+                    *slot = true;
+                }
+            }
+            memory_used += alloc.memory_mb;
+            storage_used += alloc.storage_gb;
+            bandwidth_used += alloc.network_bandwidth;
+        }
+
+        self.utilization_tracker.cpu_utilization = cpu_used
+            .iter()
+            .map(|&used| if used { T::one() } else { T::zero() })
+            .collect();
+        self.utilization_tracker.gpu_utilization = gpu_used
+            .iter()
+            .map(|&used| if used { T::one() } else { T::zero() })
+            .collect();
+        self.utilization_tracker.memory_utilization = if pool.memory_mb > 0 {
+            T::from(memory_used).unwrap_or_else(|| T::zero())
+                / T::from(pool.memory_mb).unwrap_or_else(|| T::one())
+        } else {
+            T::zero()
+        };
+        self.utilization_tracker.storage_utilization = if pool.storage_gb > 0 {
+            T::from(storage_used).unwrap_or_else(|| T::zero())
+                / T::from(pool.storage_gb).unwrap_or_else(|| T::one())
+        } else {
+            T::zero()
+        };
+        self.utilization_tracker.network_utilization = if pool.network_bandwidth > 0.0 {
+            T::from(bandwidth_used / pool.network_bandwidth).unwrap_or_else(|| T::zero())
+        } else {
+            T::zero()
+        };
     }
 }
 
@@ -1323,5 +1626,206 @@ impl<T: Float + Debug + Default + Send + Sync> Default for ResourceStatistics<T>
             load_balance_effectiveness: T::from(0.8).unwrap_or_else(|| T::zero()),
             conflict_resolution_rate: T::from(0.9).unwrap_or_else(|| T::zero()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn small_pool(cpu_cores: usize, memory_mb: usize, gpu_devices: usize) -> ResourcePool {
+        ResourcePool {
+            cpu_cores,
+            cpu_specs: Vec::new(),
+            memory_mb,
+            memory_specs: MemorySpec::default(),
+            gpu_devices,
+            gpu_specs: Vec::new(),
+            storage_gb: 1000,
+            storage_specs: Vec::new(),
+            network_bandwidth: 1000.0,
+            network_specs: NetworkSpec::default(),
+            special_hardware: HashMap::new(),
+            availability_times: HashMap::new(),
+        }
+    }
+
+    fn test_config() -> ResourceManagerConfig<f64> {
+        ResourceManagerConfig {
+            allocation_timeout: Duration::from_secs(1),
+            monitoring_interval: Duration::from_secs(1),
+            optimization_interval: Duration::from_secs(1),
+            max_allocation_retries: 3,
+            enable_predictive_allocation: false,
+            enable_load_balancing: false,
+            over_provisioning_factor: 1.0,
+            enable_conflict_detection: false,
+        }
+    }
+
+    fn request(
+        task_id: &str,
+        cpu_cores: usize,
+        memory_mb: usize,
+        gpu_devices: usize,
+    ) -> ResourceRequest {
+        ResourceRequest {
+            task_id: task_id.to_string(),
+            cpu_cores,
+            memory_mb,
+            gpu_devices,
+            storage_gb: 0,
+            network_bandwidth: 0.0,
+            special_hardware: HashMap::new(),
+            priority: 5,
+            deadline: None,
+            requested_at: SystemTime::now(),
+        }
+    }
+
+    fn manager(pool: ResourcePool) -> ResourceManager<f64> {
+        ResourceManager::<f64>::new(pool, test_config()).expect("manager construction failed")
+    }
+
+    #[test]
+    fn oversubscription_now_fails() {
+        // Regression test for F10: the pool has 4 cores total; the first
+        // request takes all 4, so a second request for even 1 more core
+        // must fail instead of silently succeeding with duplicate IDs.
+        let mut mgr = manager(small_pool(4, 8192, 1));
+
+        let first = mgr
+            .allocate_resources(request("task-a", 4, 1024, 0))
+            .expect("first allocation should succeed");
+        assert_eq!(first.cpu_cores.len(), 4);
+
+        let second = mgr.allocate_resources(request("task-b", 1, 1024, 0));
+        assert!(
+            second.is_err(),
+            "allocating beyond the free pool must fail, not silently succeed"
+        );
+    }
+
+    #[test]
+    fn memory_exhaustion_fails() {
+        let mut mgr = manager(small_pool(8, 2048, 0));
+        mgr.allocate_resources(request("task-a", 1, 2000, 0))
+            .expect("first allocation should succeed");
+
+        let result = mgr.allocate_resources(request("task-b", 1, 100, 0));
+        assert!(result.is_err(), "memory exhaustion must fail allocation");
+    }
+
+    #[test]
+    fn decrement_and_restore_round_trip() {
+        let mut mgr = manager(small_pool(4, 4096, 0));
+
+        assert_eq!(mgr.free_cpu_core_ids().len(), 4);
+        mgr.allocate_resources(request("task-a", 2, 512, 0))
+            .expect("allocation should succeed");
+        assert_eq!(
+            mgr.free_cpu_core_ids().len(),
+            2,
+            "free pool must decrement by exactly what was allocated"
+        );
+
+        mgr.deallocate_resources("task-a")
+            .expect("deallocation should succeed");
+        assert_eq!(
+            mgr.free_cpu_core_ids().len(),
+            4,
+            "free pool must be fully restored after deallocation"
+        );
+    }
+
+    #[test]
+    fn deallocate_unknown_task_errors() {
+        let mut mgr = manager(small_pool(4, 4096, 0));
+        let result = mgr.deallocate_resources("never-allocated");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sequential_allocations_do_not_collide() {
+        let mut mgr = manager(small_pool(8, 8192, 0));
+
+        let a = mgr
+            .allocate_resources(request("task-a", 3, 512, 0))
+            .expect("task-a allocation should succeed");
+        let b = mgr
+            .allocate_resources(request("task-b", 3, 512, 0))
+            .expect("task-b allocation should succeed");
+
+        let a_ids: std::collections::HashSet<_> = a.cpu_cores.iter().copied().collect();
+        let b_ids: std::collections::HashSet<_> = b.cpu_cores.iter().copied().collect();
+        assert!(
+            a_ids.is_disjoint(&b_ids),
+            "concurrently active allocations must not share CPU core IDs: {a_ids:?} vs {b_ids:?}"
+        );
+    }
+
+    #[test]
+    fn best_fit_prefers_smallest_sufficient_contiguous_block() {
+        // Pool of 5 cores (0..5). Hold core 0, then release it after taking
+        // core 1 too, leaving free = {0,2,3,4}: a singleton block [0] and a
+        // contiguous block [2,3,4] (size 3). A best-fit request for 1 core
+        // must prefer the singleton [0] over splitting the larger block.
+        let mut mgr = manager(small_pool(5, 8192, 0));
+        mgr.allocation_strategy = ResourceAllocationStrategy::FirstFit;
+
+        let hold_a = mgr
+            .allocate_resources(request("hold-a", 1, 0, 0))
+            .expect("hold-a should succeed"); // takes core 0
+        assert_eq!(hold_a.cpu_cores, vec![0]);
+        let hold_b = mgr
+            .allocate_resources(request("hold-b", 1, 0, 0))
+            .expect("hold-b should succeed"); // takes core 1
+        assert_eq!(hold_b.cpu_cores, vec![1]);
+        mgr.deallocate_resources(&hold_a.task_id)
+            .expect("release hold-a");
+        // Free set is now {0, 2, 3, 4}.
+        assert_eq!(mgr.free_cpu_core_ids(), vec![0, 2, 3, 4]);
+
+        mgr.allocation_strategy = ResourceAllocationStrategy::BestFit;
+        let picked = mgr
+            .allocate_resources(request("best-fit-pick", 1, 0, 0))
+            .expect("best-fit allocation should succeed");
+        assert_eq!(
+            picked.cpu_cores,
+            vec![0],
+            "best-fit should prefer the exact-size singleton block over fragmenting the larger block"
+        );
+    }
+
+    #[test]
+    fn pick_first_fit_and_best_fit_behave_differently_on_fragmented_pool() {
+        // Free IDs with a fragmented layout: [0] and [2,3,4,5] (two blocks).
+        let free_ids = vec![0usize, 2, 3, 4, 5];
+
+        let first = pick_first_fit(&free_ids, 1).expect("first-fit should succeed");
+        assert_eq!(first, vec![0]);
+
+        // Best-fit for size 1 should also prefer the smallest sufficient
+        // block, which is the singleton [0] (size 1) over the size-4 block.
+        let best = pick_best_fit(&free_ids, 1).expect("best-fit should succeed");
+        assert_eq!(best, vec![0]);
+
+        // For size 4, only the [2,3,4,5] block suffices.
+        let best4 = pick_best_fit(&free_ids, 4).expect("best-fit size 4 should succeed");
+        assert_eq!(best4, vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn pick_functions_return_none_on_exhaustion() {
+        let free_ids = vec![0usize, 1, 2];
+        assert!(pick_first_fit(&free_ids, 4).is_none());
+        assert!(pick_best_fit(&free_ids, 4).is_none());
+    }
+
+    #[test]
+    fn contiguous_blocks_groups_runs_correctly() {
+        let ids = vec![0usize, 1, 2, 5, 6, 9];
+        let blocks = contiguous_blocks(&ids);
+        assert_eq!(blocks, vec![vec![0, 1, 2], vec![5, 6], vec![9]]);
     }
 }

@@ -37,7 +37,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-tpu = "0.3.1"
+optirs-tpu = "0.3.2"
 scirs2-core = "0.4.0"  # Required foundation
 ```
 

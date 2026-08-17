@@ -11,6 +11,19 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
+/// Convert an `f64` literal to the generic float type `A`, falling back to
+/// `fallback` when the numeric type cannot represent the literal.
+///
+/// This is defensive only: for the `f32`/`f64` types this crate targets the
+/// conversion always succeeds. It exists so numeric-literal conversions
+/// never panic, instead degrading gracefully to a caller-chosen safe value
+/// (e.g. `A::one()` as an identity fallback for multiplicative factors and
+/// divisors, so a failed conversion never produces a division by zero).
+#[inline]
+fn to_a_or<A: Float>(value: f64, fallback: A) -> A {
+    A::from(value).unwrap_or_else(|| fallback)
+}
+
 /// Quality of Service violation types
 #[derive(Debug, Clone)]
 pub enum QoSViolation {
@@ -204,6 +217,9 @@ where
     pub data_buffer: VecDeque<StreamingDataPoint<A>>,
     /// Gradient buffer
     gradient_buffer: Option<Array1<A>>,
+    /// Live model parameters, updated in place by every sync/async step.
+    /// `None` until the feature dimensionality is known (first sample seen).
+    current_parameters: Option<Array1<A>>,
     /// Learning rate adaptation state
     lr_adaptation_state: LearningRateAdaptationState<A>,
     /// Concept drift detector
@@ -250,7 +266,7 @@ where
     /// Create a new streaming optimizer
     pub fn new(baseoptimizer: O, config: StreamingConfig) -> Result<Self> {
         let lr_adaptation_state = LearningRateAdaptationState {
-            current_lr: A::from(0.01).expect("unwrap failed"),
+            current_lr: to_a_or(0.01, A::one()),
             accumulated_gradients: None,
             ema_squared_gradients: None,
             performance_history: VecDeque::with_capacity(100),
@@ -261,7 +277,7 @@ where
             loss_window: VecDeque::with_capacity(config.drift_window_size),
             historical_mean: A::zero(),
             historical_std: A::one(),
-            threshold: A::from(config.drift_threshold).expect("unwrap failed"),
+            threshold: to_a_or(config.drift_threshold, A::one()),
             last_drift: None,
             drift_count: 0,
         };
@@ -319,6 +335,7 @@ where
             config,
             data_buffer: VecDeque::with_capacity(buffer_size),
             gradient_buffer: None,
+            current_parameters: None,
             lr_adaptation_state,
             drift_detector,
             metrics: StreamingMetrics::default(),
@@ -371,43 +388,77 @@ where
         if self.data_buffer.is_empty() {
             return Ok(None);
         }
-        let gradient = self.compute_mini_batch_gradient()?;
+        let featuredim = self.data_buffer[0].features.len();
+        self.ensure_parameters_initialized(featuredim);
+        let current_params = self.get_current_parameters()?;
+        let (gradient, batch_loss) = self.compute_mini_batch_gradient(&current_params)?;
+        self.metrics.current_loss = batch_loss.to_f64().unwrap_or(0.0);
         let compressed_gradient = if self.config.gradient_compression {
             self.compress_gradient(&gradient)?
         } else {
             gradient
         };
         self.adapt_learning_rate(&compressed_gradient)?;
-        let current_params = self.get_current_parameters()?;
+        if self.config.adaptive_learning_rate {
+            self.baseoptimizer
+                .set_learning_rate(self.lr_adaptation_state.current_lr);
+        }
         let updated_params = if self.config.async_updates {
             self.async_update(&current_params, &compressed_gradient)?
         } else {
             self.sync_update(&current_params, &compressed_gradient)?
         };
+        self.current_parameters = Some(updated_params.clone());
         self.data_buffer.clear();
         self.step_count += 1;
         self.update_metrics();
         Ok(Some(updated_params))
     }
-    fn compute_mini_batch_gradient(&self) -> Result<Array1<A>> {
+    /// Compute the mini-batch gradient of squared-error loss for a simple
+    /// linear model `prediction = dot(params, features)`, along with the
+    /// mean squared error of the batch (used to report `current_loss` and
+    /// to drive concept-drift detection).
+    ///
+    /// Using the *actual current parameters* here (rather than a hardcoded
+    /// zero prediction) is what lets the streaming optimizer converge: the
+    /// residual `prediction - target` now reflects the model's real error.
+    fn compute_mini_batch_gradient(&self, params: &Array1<A>) -> Result<(Array1<A>, A)> {
         if self.data_buffer.is_empty() {
             return Err(OptimError::InvalidConfig("Empty data buffer".to_string()));
         }
         let batch_size = self.data_buffer.len();
         let featuredim = self.data_buffer[0].features.len();
         let mut gradient = Array1::zeros(featuredim);
+        let mut loss_sum = A::zero();
+        let mut loss_count = 0usize;
         for data_point in &self.data_buffer {
             if let Some(target) = data_point.target {
-                let prediction = A::zero();
+                let prediction = if params.len() == data_point.features.len() {
+                    data_point
+                        .features
+                        .iter()
+                        .zip(params.iter())
+                        .map(|(&feature, &weight)| feature * weight)
+                        .sum::<A>()
+                } else {
+                    A::zero()
+                };
                 let error = prediction - target;
+                loss_sum = loss_sum + error * error;
+                loss_count += 1;
                 for (i, &feature) in data_point.features.iter().enumerate() {
                     gradient[i] = gradient[i] + error * feature * data_point.weight;
                 }
             }
         }
-        let batch_size_a = A::from(batch_size).expect("unwrap failed");
+        let batch_size_a = to_a_or(batch_size as f64, A::one());
         gradient.mapv_inplace(|g| g / batch_size_a);
-        Ok(gradient)
+        let mean_loss = if loss_count > 0 {
+            loss_sum / to_a_or(loss_count as f64, A::one())
+        } else {
+            A::zero()
+        };
+        Ok((gradient, mean_loss))
     }
     fn compress_gradient(&self, gradient: &Array1<A>) -> Result<Array1<A>> {
         let k = (gradient.len() as f64 * self.config.compression_ratio) as usize;
@@ -417,7 +468,7 @@ where
             .enumerate()
             .map(|(i, &g)| (i, g.abs()))
             .collect();
-        abs_values.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
+        abs_values.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         for (i, _) in abs_values.iter().skip(k) {
             compressed[*i] = A::zero();
         }
@@ -454,65 +505,50 @@ where
         Ok(())
     }
     fn adapt_adagrad(&mut self, gradient: &Array1<A>) -> Result<()> {
-        if self.lr_adaptation_state.accumulated_gradients.is_none() {
-            self.lr_adaptation_state.accumulated_gradients = Some(Array1::zeros(gradient.len()));
-        }
         let acc_grads = self
             .lr_adaptation_state
             .accumulated_gradients
-            .as_mut()
-            .expect("unwrap failed");
+            .get_or_insert_with(|| Array1::zeros(gradient.len()));
         for i in 0..gradient.len() {
             acc_grads[i] = acc_grads[i] + gradient[i] * gradient[i];
         }
-        let base_lr = A::from(0.01).expect("unwrap failed");
-        let eps = A::from(1e-8).expect("unwrap failed");
+        let base_lr = to_a_or(0.01, A::one());
+        let eps = to_a_or(1e-8, A::one());
         let norm_sum = acc_grads.iter().copied().sum::<A>();
         let adaptive_factor = (norm_sum + eps).sqrt();
         self.lr_adaptation_state.current_lr = base_lr / adaptive_factor;
         Ok(())
     }
     fn adapt_rmsprop(&mut self, gradient: &Array1<A>) -> Result<()> {
-        if self.lr_adaptation_state.ema_squared_gradients.is_none() {
-            self.lr_adaptation_state.ema_squared_gradients = Some(Array1::zeros(gradient.len()));
-        }
         let ema_grads = self
             .lr_adaptation_state
             .ema_squared_gradients
-            .as_mut()
-            .expect("unwrap failed");
-        let decay = A::from(0.9).expect("unwrap failed");
+            .get_or_insert_with(|| Array1::zeros(gradient.len()));
+        let decay = to_a_or(0.9, A::one());
         let one_minus_decay = A::one() - decay;
         for i in 0..gradient.len() {
             ema_grads[i] = decay * ema_grads[i] + one_minus_decay * gradient[i] * gradient[i];
         }
-        let base_lr = A::from(0.01).expect("unwrap failed");
-        let eps = A::from(1e-8).expect("unwrap failed");
+        let base_lr = to_a_or(0.01, A::one());
+        let eps = to_a_or(1e-8, A::one());
         let rms = ema_grads.iter().copied().sum::<A>().sqrt();
         self.lr_adaptation_state.current_lr = base_lr / (rms + eps);
         Ok(())
     }
     fn adapt_performance_based(&mut self) -> Result<()> {
-        if self.lr_adaptation_state.performance_history.len() < 2 {
+        let n = self.lr_adaptation_state.performance_history.len();
+        if n < 2 {
             return Ok(());
         }
-        let recent_perf = self
-            .lr_adaptation_state
-            .performance_history
-            .back()
-            .expect("unwrap failed");
-        let prev_perf = self
-            .lr_adaptation_state
-            .performance_history
-            .get(self.lr_adaptation_state.performance_history.len() - 2)
-            .expect("unwrap failed");
-        let improvement = *prev_perf - *recent_perf;
+        let recent_perf = self.lr_adaptation_state.performance_history[n - 1];
+        let prev_perf = self.lr_adaptation_state.performance_history[n - 2];
+        let improvement = prev_perf - recent_perf;
         if improvement > A::zero() {
             self.lr_adaptation_state.current_lr =
-                self.lr_adaptation_state.current_lr * A::from(1.01).expect("unwrap failed");
+                self.lr_adaptation_state.current_lr * to_a_or(1.01, A::one());
         } else {
             self.lr_adaptation_state.current_lr =
-                self.lr_adaptation_state.current_lr * A::from(0.99).expect("unwrap failed");
+                self.lr_adaptation_state.current_lr * to_a_or(0.99, A::one());
         }
         Ok(())
     }
@@ -521,20 +557,20 @@ where
             let time_since_drift = last_drift.elapsed();
             if time_since_drift < Duration::from_secs(60) {
                 self.lr_adaptation_state.current_lr =
-                    self.lr_adaptation_state.current_lr * A::from(1.5).expect("unwrap failed");
+                    self.lr_adaptation_state.current_lr * to_a_or(1.5, A::one());
             }
         }
         Ok(())
     }
     fn check_concept_drift(&mut self, update: &Array1<A>) -> Result<()> {
-        let current_loss = A::from(self.metrics.current_loss).expect("unwrap failed");
+        let current_loss = to_a_or(self.metrics.current_loss, A::one());
         self.drift_detector.loss_window.push_back(current_loss);
         if self.drift_detector.loss_window.len() > self.config.drift_window_size {
             self.drift_detector.loss_window.pop_front();
         }
         if self.drift_detector.loss_window.len() >= 10 {
             let mean = self.drift_detector.loss_window.iter().cloned().sum::<A>()
-                / A::from(self.drift_detector.loss_window.len()).expect("unwrap failed");
+                / to_a_or(self.drift_detector.loss_window.len() as f64, A::one());
             let variance = self
                 .drift_detector
                 .loss_window
@@ -544,10 +580,10 @@ where
                     diff * diff
                 })
                 .sum::<A>()
-                / A::from(self.drift_detector.loss_window.len()).expect("unwrap failed");
+                / to_a_or(self.drift_detector.loss_window.len() as f64, A::one());
             let std = variance.sqrt();
             let z_score = (current_loss - self.drift_detector.historical_mean).abs()
-                / (self.drift_detector.historical_std + A::from(1e-8).expect("unwrap failed"));
+                / (self.drift_detector.historical_std + to_a_or(1e-8, A::one()));
             if z_score > self.drift_detector.threshold {
                 self.drift_detector.last_drift = Some(Instant::now());
                 self.drift_detector.drift_count += 1;
@@ -564,8 +600,21 @@ where
         }
         Ok(())
     }
+    /// Return the live model parameters. Callers must call
+    /// [`Self::ensure_parameters_initialized`] first once the feature
+    /// dimensionality is known; before that this returns an empty vector.
     fn get_current_parameters(&self) -> Result<Array1<A>> {
-        Ok(Array1::zeros(0))
+        match &self.current_parameters {
+            Some(params) => Ok(params.clone()),
+            None => Ok(Array1::zeros(0)),
+        }
+    }
+    /// Lazily allocate the live parameter vector once the feature
+    /// dimensionality is known. A no-op once parameters already exist.
+    fn ensure_parameters_initialized(&mut self, featuredim: usize) {
+        if self.current_parameters.is_none() {
+            self.current_parameters = Some(Array1::zeros(featuredim));
+        }
     }
     fn sync_update(&mut self, params: &Array1<A>, gradient: &Array1<A>) -> Result<Array1<A>> {
         let params_owned = params.clone();
@@ -577,23 +626,31 @@ where
             .step(&params_generic, &gradient_generic)?;
         Ok(result.into_dimensionality::<scirs2_core::ndarray::Ix1>()?)
     }
+    /// Enqueue a gradient update for asynchronous application. Existing
+    /// queued updates age by one tick of staleness; once the queue is full
+    /// or any entry has become too stale, the whole queue is drained and
+    /// applied in order via [`Self::process_async_updates`], which is what
+    /// actually advances `current_parameters` for async mode.
     fn async_update(&mut self, params: &Array1<A>, gradient: &Array1<A>) -> Result<Array1<A>> {
-        if let Some(ref mut async_state) = self.async_state {
+        let should_process = if let Some(async_state) = self.async_state.as_mut() {
             let gradient_generic = gradient.clone().into_dimensionality::<D>()?;
-            let update = AsyncUpdate {
+            for pending in async_state.update_queue.iter_mut() {
+                pending.staleness += 1;
+            }
+            async_state.update_queue.push_back(AsyncUpdate {
                 update: gradient_generic,
                 timestamp: Instant::now(),
                 priority: UpdatePriority::Normal,
                 staleness: 0,
-            };
-            async_state.update_queue.push_back(update);
-            if async_state.update_queue.len() >= self.config.buffer_size
-                || self.max_staleness_reached()
-            {
-                return self.process_async_updates();
-            }
+            });
+            async_state.update_queue.len() >= self.config.buffer_size
+        } else {
+            return Ok(params.clone());
+        };
+        if should_process || self.max_staleness_reached() {
+            return self.process_async_updates();
         }
-        self.get_current_parameters()
+        Ok(params.clone())
     }
     fn max_staleness_reached(&self) -> bool {
         if let Some(ref async_state) = self.async_state {
@@ -605,21 +662,29 @@ where
             false
         }
     }
+    /// Drain the queue of pending asynchronous updates and actually apply
+    /// each one, in FIFO order, to `current_parameters` via the base
+    /// optimizer. Staleness of each applied update is recorded for
+    /// diagnostics. Returns the resulting (now up to date) parameters.
     fn process_async_updates(&mut self) -> Result<Array1<A>> {
-        if let Some(ref mut async_state) = self.async_state {
-            if let Some(update) = async_state.update_queue.pop_front() {
-                let current_params = self.get_current_parameters()?;
-                if let (Ok(params_1d), Ok(_update_1d)) = (
-                    current_params.into_dimensionality::<scirs2_core::ndarray::Ix1>(),
-                    update
-                        .update
-                        .into_dimensionality::<scirs2_core::ndarray::Ix1>(),
-                ) {
-                    return Ok(params_1d);
-                }
+        let mut current_params = self.get_current_parameters()?;
+        let pending: Vec<AsyncUpdate<A, D>> = match self.async_state.as_mut() {
+            Some(async_state) => async_state.update_queue.drain(..).collect(),
+            None => Vec::new(),
+        };
+        for update in pending {
+            if let Some(async_state) = self.async_state.as_mut() {
+                *async_state
+                    .staleness_counter
+                    .entry(update.staleness)
+                    .or_insert(0) += 1;
             }
+            let params_generic = current_params.clone().into_dimensionality::<D>()?;
+            let new_params = self.baseoptimizer.step(&params_generic, &update.update)?;
+            current_params = new_params.into_dimensionality::<scirs2_core::ndarray::Ix1>()?;
         }
-        self.get_current_parameters()
+        self.current_parameters = Some(current_params.clone());
+        Ok(current_params)
     }
     fn update_timing_metrics(&mut self, latency: Duration) {
         self.timing.latency_samples.push_back(latency);
@@ -676,6 +741,12 @@ where
     pub fn get_metrics(&self) -> &StreamingMetrics {
         &self.metrics
     }
+    /// Get the live model parameters currently maintained by the streaming
+    /// optimizer, if any samples have been processed yet (F27: parameters
+    /// are tracked on the optimizer itself, not recomputed from nothing).
+    pub fn current_parameters(&self) -> Option<&Array1<A>> {
+        self.current_parameters.as_ref()
+    }
     /// Check if streaming optimizer is healthy (within budgets)
     pub fn is_healthy(&self) -> StreamingHealthStatus {
         let mut warnings = Vec::new();
@@ -710,42 +781,32 @@ where
     }
     /// Adaptive momentum-based learning rate adaptation
     fn adapt_momentum_based(&mut self, gradient: &Array1<A>) -> Result<()> {
-        if self.lr_adaptation_state.ema_squared_gradients.is_none() {
-            self.lr_adaptation_state.ema_squared_gradients = Some(Array1::zeros(gradient.len()));
-        }
         let momentum = self
             .lr_adaptation_state
             .ema_squared_gradients
-            .as_mut()
-            .expect("unwrap failed");
-        let beta = A::from(0.9).expect("unwrap failed");
+            .get_or_insert_with(|| Array1::zeros(gradient.len()));
+        let beta = to_a_or(0.9, A::one());
         let one_minus_beta = A::one() - beta;
         for i in 0..gradient.len() {
             momentum[i] = beta * momentum[i] + one_minus_beta * gradient[i];
         }
         let momentum_norm = momentum.iter().map(|&m| m * m).sum::<A>().sqrt();
-        let base_lr = A::from(0.01).expect("unwrap failed");
-        let adaptation_factor = A::one() + momentum_norm * A::from(0.1).expect("unwrap failed");
+        let base_lr = to_a_or(0.01, A::one());
+        let adaptation_factor = A::one() + momentum_norm * to_a_or(0.1, A::one());
         self.lr_adaptation_state.current_lr = base_lr / adaptation_factor;
         Ok(())
     }
     /// Gradient variance-based learning rate adaptation
     fn adapt_gradient_variance(&mut self, gradient: &Array1<A>) -> Result<()> {
-        if self.lr_adaptation_state.accumulated_gradients.is_none() {
-            self.lr_adaptation_state.accumulated_gradients = Some(Array1::zeros(gradient.len()));
-            self.lr_adaptation_state.ema_squared_gradients = Some(Array1::zeros(gradient.len()));
-        }
         let mean_grad = self
             .lr_adaptation_state
             .accumulated_gradients
-            .as_mut()
-            .expect("unwrap failed");
+            .get_or_insert_with(|| Array1::zeros(gradient.len()));
         let mean_squared_grad = self
             .lr_adaptation_state
             .ema_squared_gradients
-            .as_mut()
-            .expect("unwrap failed");
-        let alpha = A::from(0.99).expect("unwrap failed");
+            .get_or_insert_with(|| Array1::zeros(gradient.len()));
+        let alpha = to_a_or(0.99, A::one());
         let one_minus_alpha = A::one() - alpha;
         for i in 0..gradient.len() {
             mean_grad[i] = alpha * mean_grad[i] + one_minus_alpha * gradient[i];
@@ -757,9 +818,9 @@ where
             .zip(mean_grad.iter())
             .map(|(&sq, &m)| sq - m * m)
             .sum::<A>()
-            / A::from(gradient.len()).expect("unwrap failed");
-        let base_lr = A::from(0.01).expect("unwrap failed");
-        let var_factor = A::one() + variance.sqrt() * A::from(10.0).expect("unwrap failed");
+            / to_a_or(gradient.len() as f64, A::one());
+        let base_lr = to_a_or(0.01, A::one());
+        let var_factor = A::one() + variance.sqrt() * to_a_or(10.0, A::one());
         self.lr_adaptation_state.current_lr = base_lr / var_factor;
         Ok(())
     }
@@ -781,13 +842,13 @@ where
             A::zero()
         };
         let adjustment = if recent_trend > A::zero() {
-            A::from(0.95).expect("unwrap failed")
+            to_a_or(0.95, A::one())
         } else {
-            A::from(1.02).expect("unwrap failed")
+            to_a_or(1.02, A::one())
         };
         self.lr_adaptation_state.current_lr = self.lr_adaptation_state.current_lr * adjustment;
-        let min_lr = A::from(1e-6).expect("unwrap failed");
-        let max_lr = A::from(1.0).expect("unwrap failed");
+        let min_lr = to_a_or(1e-6, A::one());
+        let max_lr = to_a_or(1.0, A::one());
         self.lr_adaptation_state.current_lr =
             self.lr_adaptation_state.current_lr.max(min_lr).min(max_lr);
         Ok(())
@@ -1368,8 +1429,8 @@ impl<A: Float + Send + Sync + Send + Sync> PredictiveStreamingEngine<A> {
             prediction_model: PredictionModel::new(config.buffer_size)?,
             historical_buffer: VecDeque::with_capacity(config.buffer_size * 2),
             prediction_horizon: 10,
-            confidence_threshold: A::from(0.8).expect("unwrap failed"),
-            adaptation_rate: A::from(0.1).expect("unwrap failed"),
+            confidence_threshold: to_a_or(0.8, A::one()),
+            adaptation_rate: to_a_or(0.1, A::one()),
         })
     }
     /// Predict future data points

@@ -91,14 +91,21 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
     /// Compute the diagonal Fisher information matrix by sampling gradients.
     ///
     /// `parameters` - current model parameters keyed by name.
-    /// `gradients_fn` - callable that returns stochastic gradients for a single sample.
+    /// `gradients_fn` - callable that returns stochastic gradients for the
+    /// sample identified by its second argument. The sample index runs over
+    /// `0..num_samples_fisher`, so each of the `N` Fisher samples is drawn from
+    /// a *different* datum; calling the closure `N` times with identical
+    /// arguments would make the "expectation" a single squared gradient.
     ///
     /// The Fisher diagonal is approximated as E[g_i^2] where g_i is the gradient
     /// of the log-likelihood with respect to parameter i.
+    ///
+    /// Returns `Err` if the closure reports a gradient for a parameter that was
+    /// not supplied, or one whose length differs from that parameter's.
     pub fn compute_fisher_diagonal(
         &mut self,
         parameters: &HashMap<String, Array1<T>>,
-        gradients_fn: impl Fn(&HashMap<String, Array1<T>>) -> Result<HashMap<String, Array1<T>>>,
+        gradients_fn: impl Fn(&HashMap<String, Array1<T>>, usize) -> Result<HashMap<String, Array1<T>>>,
     ) -> Result<()> {
         if parameters.is_empty() {
             return Err(OptimError::InsufficientData(
@@ -120,22 +127,33 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
 
         let n_samples = T::from(self.num_samples_fisher).unwrap_or_else(|| T::one());
 
-        for _ in 0..self.num_samples_fisher {
-            let grads = gradients_fn(parameters)?;
+        for sample_idx in 0..self.num_samples_fisher {
+            let grads = gradients_fn(parameters, sample_idx)?;
             for (name, grad) in &grads {
-                if let Some(accum) = fisher_accum.get_mut(name) {
-                    if accum.len() != grad.len() {
-                        return Err(OptimError::ComputationError(format!(
-                            "gradient dimension mismatch for '{}': expected {}, got {}",
-                            name,
-                            accum.len(),
-                            grad.len()
-                        )));
-                    }
-                    // Accumulate g_i^2
-                    for (a, g) in accum.iter_mut().zip(grad.iter()) {
-                        *a = *a + (*g) * (*g);
-                    }
+                let accum = fisher_accum.get_mut(name).ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "gradient reported for unknown parameter '{}'; \
+                         known parameters: {:?}",
+                        name,
+                        {
+                            let mut keys: Vec<&str> =
+                                parameters.keys().map(|s| s.as_str()).collect();
+                            keys.sort_unstable();
+                            keys
+                        }
+                    ))
+                })?;
+                if accum.len() != grad.len() {
+                    return Err(OptimError::ComputationError(format!(
+                        "gradient dimension mismatch for '{}': expected {}, got {}",
+                        name,
+                        accum.len(),
+                        grad.len()
+                    )));
+                }
+                // Accumulate g_i^2
+                for (a, g) in accum.iter_mut().zip(grad.iter()) {
+                    *a = *a + (*g) * (*g);
                 }
             }
         }
@@ -729,7 +747,9 @@ mod tests {
 
         // Gradients function: returns constant gradients (simulating quadratic loss)
         // For a quadratic loss f(x) = 0.5 * x^2, grad = x = [1, 1, 1]
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w1".to_string(), Array1::from_vec(vec![1.0, 2.0, 3.0]));
             g.insert("w2".to_string(), Array1::from_vec(vec![0.5, 0.5, 0.5]));
@@ -763,7 +783,9 @@ mod tests {
         let anchor = make_params(&["w"], 2, 1.0);
 
         // Constant Fisher = [1.0, 1.0]
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 1.0]));
             Ok(g)
@@ -797,7 +819,9 @@ mod tests {
 
         let anchor = make_params(&["w"], 2, 1.0);
 
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 1.0]));
             Ok(g)
@@ -828,7 +852,9 @@ mod tests {
 
         let params_task1 = make_params(&["w"], 2, 1.0);
 
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 2.0]));
             Ok(g)
@@ -871,7 +897,9 @@ mod tests {
 
         // Task 1
         let params1 = make_params(&["w"], 2, 0.0);
-        let grad_fn1 = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn1 = |_p: &HashMap<String, Array1<F>>,
+                        _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 1.0]));
             Ok(g)
@@ -890,7 +918,9 @@ mod tests {
 
         // Task 2
         let params2 = make_params(&["w"], 2, 1.0);
-        let grad_fn2 = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn2 = |_p: &HashMap<String, Array1<F>>,
+                        _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![2.0, 2.0]));
             Ok(g)

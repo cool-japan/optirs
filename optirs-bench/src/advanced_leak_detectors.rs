@@ -512,13 +512,22 @@ impl ReferenceCountingDetector {
             GrowthPattern::Normal
         };
 
-        // Project future memory usage
-        let last_timestamp = snapshots.back().expect("unwrap failed").timestamp;
+        // Project future memory usage. Both `.back()`/`.last()` are safe
+        // here since `snapshots.len() < 2` returned early above.
+        let (Some(last_snapshot), Some(&last_value)) = (snapshots.back(), memory_values.last())
+        else {
+            return Ok(MemoryGrowthAnalysis {
+                growth_trend,
+                growth_rate,
+                projected_usage: Vec::new(),
+                pattern_type,
+            });
+        };
+        let last_timestamp = last_snapshot.timestamp;
         let projected_usage = (1..=10)
             .map(|i| {
                 let future_timestamp = last_timestamp + (i * 60); // 1 minute intervals
-                let future_memory =
-                    memory_values.last().expect("unwrap failed") + (growth_rate * i as f64);
+                let future_memory = last_value + (growth_rate * i as f64);
                 (future_timestamp, future_memory.max(0.0) as usize)
             })
             .collect();
@@ -627,9 +636,11 @@ impl CycleDetector {
     pub fn detect_cycles(&self, graph: &HashMap<usize, HashSet<usize>>) -> Vec<Vec<usize>> {
         let mut state = TarjanState::new();
 
-        for &node in graph.keys() {
+        let mut nodes: Vec<usize> = graph.keys().copied().collect();
+        nodes.sort_unstable();
+        for node in nodes {
             if !state.indices.contains_key(&node) {
-                Self::strongconnect(node, &mut state, graph);
+                Self::strongconnect_iterative(node, &mut state, graph);
             }
         }
 
@@ -647,40 +658,98 @@ impl CycleDetector {
             .collect()
     }
 
-    /// Tarjan's strongly connected components algorithm
-    fn strongconnect(v: usize, state: &mut TarjanState, graph: &HashMap<usize, HashSet<usize>>) {
-        state.indices.insert(v, state.index);
-        state.lowlinks.insert(v, state.index);
-        state.index += 1;
-        state.stack.push(v);
-        state.on_stack.insert(v);
-
-        if let Some(neighbors) = graph.get(&v) {
-            for &w in neighbors {
-                if !state.indices.contains_key(&w) {
-                    Self::strongconnect(w, state, graph);
-                    let v_lowlink = *state.lowlinks.get(&v).expect("unwrap failed");
-                    let w_lowlink = *state.lowlinks.get(&w).expect("unwrap failed");
-                    state.lowlinks.insert(v, v_lowlink.min(w_lowlink));
-                } else if state.on_stack.contains(&w) {
-                    let v_lowlink = *state.lowlinks.get(&v).expect("unwrap failed");
-                    let w_index = *state.indices.get(&w).expect("unwrap failed");
-                    state.lowlinks.insert(v, v_lowlink.min(w_index));
-                }
-            }
+    /// Tarjan's strongly connected components algorithm, iterative form.
+    ///
+    /// Recursion depth in the naive formulation tracks reference-graph
+    /// depth, which is attacker/data controlled in the worst case; this
+    /// uses an explicit work stack of call "frames" instead of the
+    /// call stack, and never panics on missing map entries (every access
+    /// is guarded, since by construction a node's `indices`/`lowlinks`
+    /// entry always exists once it has been pushed onto `frames`).
+    fn strongconnect_iterative(
+        start: usize,
+        state: &mut TarjanState,
+        graph: &HashMap<usize, HashSet<usize>>,
+    ) {
+        struct Frame {
+            node: usize,
+            neighbors: Vec<usize>,
+            next: usize,
         }
 
-        if state.lowlinks.get(&v) == state.indices.get(&v) {
-            let mut component = Vec::new();
-            loop {
-                let w = state.stack.pop().expect("unwrap failed");
-                state.on_stack.remove(&w);
-                component.push(w);
-                if w == v {
-                    break;
+        fn sorted_neighbors(graph: &HashMap<usize, HashSet<usize>>, node: usize) -> Vec<usize> {
+            let mut neighbors: Vec<usize> = graph
+                .get(&node)
+                .map(|set| set.iter().copied().collect())
+                .unwrap_or_default();
+            neighbors.sort_unstable();
+            neighbors
+        }
+
+        fn visit(state: &mut TarjanState, node: usize, graph: &HashMap<usize, HashSet<usize>>) {
+            state.indices.insert(node, state.index);
+            state.lowlinks.insert(node, state.index);
+            state.index += 1;
+            state.stack.push(node);
+            state.on_stack.insert(node);
+        }
+
+        let mut frames: Vec<Frame> = Vec::new();
+        visit(state, start, graph);
+        frames.push(Frame {
+            node: start,
+            neighbors: sorted_neighbors(graph, start),
+            next: 0,
+        });
+
+        while let Some(frame) = frames.last_mut() {
+            let v = frame.node;
+
+            if frame.next < frame.neighbors.len() {
+                let w = frame.neighbors[frame.next];
+                frame.next += 1;
+
+                if !state.indices.contains_key(&w) {
+                    visit(state, w, graph);
+                    frames.push(Frame {
+                        node: w,
+                        neighbors: sorted_neighbors(graph, w),
+                        next: 0,
+                    });
+                } else if state.on_stack.contains(&w) {
+                    if let (Some(&v_low), Some(&w_idx)) =
+                        (state.lowlinks.get(&v), state.indices.get(&w))
+                    {
+                        state.lowlinks.insert(v, v_low.min(w_idx));
+                    }
+                }
+                continue;
+            }
+
+            // All of v's neighbors are processed: pop v's frame and
+            // propagate its lowlink to its parent frame (if any).
+            frames.pop();
+
+            if let Some(parent_frame) = frames.last() {
+                let parent = parent_frame.node;
+                if let (Some(&v_low), Some(&p_low)) =
+                    (state.lowlinks.get(&v), state.lowlinks.get(&parent))
+                {
+                    state.lowlinks.insert(parent, p_low.min(v_low));
                 }
             }
-            state.strongly_connected_components.push(component);
+
+            if state.lowlinks.get(&v) == state.indices.get(&v) {
+                let mut component = Vec::new();
+                while let Some(w) = state.stack.pop() {
+                    state.on_stack.remove(&w);
+                    component.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                state.strongly_connected_components.push(component);
+            }
         }
     }
 }
@@ -723,6 +792,8 @@ pub struct RealTimeMemoryMonitor {
     alert_system: AlertSystem,
     /// Is monitoring active
     is_active: Arc<Mutex<bool>>,
+    /// Real system/process telemetry sampler (see `system_sampler`).
+    sampler: Arc<crate::system_sampler::SystemSampler>,
 }
 
 /// Real-time monitor configuration
@@ -772,12 +843,17 @@ pub struct MonitorState {
 pub struct MemorySample {
     /// Sample timestamp
     pub timestamp: Instant,
-    /// Memory usage in bytes
+    /// Memory usage in bytes (real process RSS via `sysinfo`)
     pub memory_usage: usize,
-    /// Allocation rate
-    pub allocation_rate: f64,
-    /// Deallocation rate
-    pub deallocation_rate: f64,
+    /// Gross allocation rate (bytes/sec). Deriving this honestly requires
+    /// an allocator hook that tracks cumulative bytes allocated, which
+    /// this module does not install; `None` rather than a fabricated 0.0.
+    /// The *net* growth rate is still available and real, via
+    /// [`MonitorState::current_growth_rate`].
+    pub allocation_rate: Option<f64>,
+    /// Gross deallocation rate (bytes/sec). See `allocation_rate` for why
+    /// this is `None` rather than fabricated.
+    pub deallocation_rate: Option<f64>,
 }
 
 /// Memory alert
@@ -828,13 +904,14 @@ pub struct AlertSystem {
 
 impl RealTimeMemoryMonitor {
     /// Create a new real-time memory monitor
-    pub fn new(config: RealTimeMonitorConfig) -> Self {
-        Self {
+    pub fn new(config: RealTimeMonitorConfig) -> Result<Self> {
+        Ok(Self {
             config,
             state: Arc::new(Mutex::new(MonitorState::new())),
             alert_system: AlertSystem::new(),
             is_active: Arc::new(Mutex::new(false)),
-        }
+            sampler: Arc::new(crate::system_sampler::SystemSampler::new()?),
+        })
     }
 
     /// Start monitoring
@@ -853,6 +930,7 @@ impl RealTimeMemoryMonitor {
         let state = Arc::clone(&self.state);
         let config = self.config.clone();
         let is_active_flag = Arc::clone(&self.is_active);
+        let sampler = Arc::clone(&self.sampler);
 
         thread::spawn(move || {
             let mut _last_sample_time = Instant::now();
@@ -860,7 +938,10 @@ impl RealTimeMemoryMonitor {
             loop {
                 // Check if monitoring should continue
                 {
-                    let active = is_active_flag.lock().expect("lock poisoned");
+                    let active = match is_active_flag.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     if !*active {
                         break;
                     }
@@ -869,13 +950,13 @@ impl RealTimeMemoryMonitor {
                 // Sleep for sampling interval
                 thread::sleep(Duration::from_millis(config.sampling_interval_ms));
 
-                // Take memory sample
+                // Take a real memory sample; skip this tick if sampling failed.
                 let now = Instant::now();
-                let sample = Self::take_memory_sample(now);
-
-                // Update state
-                {
-                    let mut monitor_state = state.lock().expect("lock poisoned");
+                if let Some(sample) = Self::take_memory_sample(&sampler, now) {
+                    let mut monitor_state = match state.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     monitor_state.add_sample(sample);
                     monitor_state.update_metrics(&config);
                 }
@@ -898,27 +979,24 @@ impl RealTimeMemoryMonitor {
         Ok(())
     }
 
-    /// Take a memory sample
-    fn take_memory_sample(timestamp: Instant) -> MemorySample {
-        // In a real implementation, this would use system APIs to get actual memory usage
-        // For now, we'll simulate memory sampling
-        MemorySample {
+    /// Take a real memory sample via [`crate::system_sampler::SystemSampler`]
+    /// (process RSS through `sysinfo`). Returns `None` (skip this tick)
+    /// rather than fabricating a value if the process could not be sampled.
+    /// Gross allocation/deallocation rates are always `None`: deriving them
+    /// honestly needs an allocator hook this module does not install.
+    fn take_memory_sample(
+        sampler: &crate::system_sampler::SystemSampler,
+        timestamp: Instant,
+    ) -> Option<MemorySample> {
+        sampler.refresh();
+        let memory_usage = sampler.sample_process().ok()?.rss_bytes as usize;
+
+        Some(MemorySample {
             timestamp,
-            memory_usage: Self::get_current_memory_usage(),
-            allocation_rate: 0.0,   // Would be calculated from real data
-            deallocation_rate: 0.0, // Would be calculated from real data
-        }
-    }
-
-    /// Get current memory usage (simulated)
-    fn get_current_memory_usage() -> usize {
-        // In a real implementation, this would use:
-        // - On Linux: /proc/self/status or mallinfo
-        // - On macOS: task_info or malloc_zone_statistics
-        // - On Windows: GetProcessMemoryInfo
-
-        // For now, return a simulated value
-        64 * 1024 * 1024 // 64MB
+            memory_usage,
+            allocation_rate: None,
+            deallocation_rate: None,
+        })
     }
 
     /// Get current monitoring statistics
@@ -986,9 +1064,7 @@ impl MonitorState {
             let recent_samples: Vec<_> =
                 self.memory_samples.iter().rev().take(window_size).collect();
 
-            if recent_samples.len() >= 2 {
-                let first = recent_samples.last().expect("unwrap failed");
-                let last = recent_samples.first().expect("unwrap failed");
+            if let (Some(last), Some(first)) = (recent_samples.first(), recent_samples.last()) {
                 let time_diff = last.timestamp.duration_since(first.timestamp).as_secs_f64();
 
                 if time_diff > 0.0 {

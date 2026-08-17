@@ -37,7 +37,9 @@ pub struct PerformanceMetrics {
 }
 
 /// Transformer performance tracker
-pub struct TransformerPerformanceTracker<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerPerformanceTracker<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Configuration
     config: PerformanceConfig,
 
@@ -75,13 +77,17 @@ pub struct TransformerPerformanceTracker<T: Float + Debug + Send + Sync + 'stati
     session_start: Instant,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerPerformanceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for TransformerPerformanceTracker<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerPerformanceTracker<T>
+{
     /// Create new performance tracker
     pub fn new() -> Self {
         let config = PerformanceConfig::default();

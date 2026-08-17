@@ -26,7 +26,9 @@ pub enum SequenceProcessingStrategy {
 }
 
 /// Optimization sequence processor
-pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationSequenceProcessor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Processing strategy
     strategy: SequenceProcessingStrategy,
 
@@ -55,8 +57,14 @@ pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'stati
     chunking: ChunkingStrategy<T>,
 }
 
-impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
-    OptimizationSequenceProcessor<T>
+impl<
+        T: Float
+            + Debug
+            + scirs2_core::numeric::FromPrimitive
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync,
+    > OptimizationSequenceProcessor<T>
 {
     /// Create new sequence processor
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
@@ -534,7 +542,9 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
 }
 
 /// Sequence buffer for storing optimization history
-pub struct SequenceBuffer<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceBuffer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Gradient history
     gradient_buffer: VecDeque<Array2<T>>,
 
@@ -551,7 +561,9 @@ pub struct SequenceBuffer<T: Float + Debug + Send + Sync + 'static> {
     model_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SequenceBuffer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequenceBuffer<T>
+{
     pub fn new(max_size: usize, model_dimension: usize) -> Result<Self> {
         Ok(Self {
             gradient_buffer: VecDeque::new(),
@@ -617,7 +629,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceBuffer<T> {
 }
 
 /// Sequence statistics tracker
-pub struct SequenceStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Gradient statistics
     gradient_stats: StatisticsAccumulator<T>,
 
@@ -631,13 +645,17 @@ pub struct SequenceStatistics<T: Float + Debug + Send + Sync + 'static> {
     length_stats: StatisticsAccumulator<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for SequenceStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for SequenceStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequenceStatistics<T>
+{
     pub fn new() -> Self {
         Self {
             gradient_stats: StatisticsAccumulator::new(),
@@ -683,7 +701,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
 }
 
 /// Sequence preprocessor
-pub struct SequencePreprocessor<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequencePreprocessor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Model dimension
     model_dimension: usize,
 
@@ -691,7 +711,9 @@ pub struct SequencePreprocessor<T: Float + Debug + Send + Sync + 'static> {
     normalization_stats: HashMap<String, (T, T)>, // (mean, std)
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SequencePreprocessor<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequencePreprocessor<T>
+{
     pub fn new(model_dimension: usize) -> Result<Self> {
         Ok(Self {
             model_dimension,
@@ -754,7 +776,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SequencePreprocessor<T> {
 }
 
 /// Chunking strategy
-pub struct ChunkingStrategy<T: Float + Debug + Send + Sync + 'static> {
+pub struct ChunkingStrategy<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Maximum chunk size
     max_chunk_size: usize,
 
@@ -765,7 +789,9 @@ pub struct ChunkingStrategy<T: Float + Debug + Send + Sync + 'static> {
     chunk_stats: StatisticsAccumulator<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ChunkingStrategy<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ChunkingStrategy<T>
+{
     pub fn new(max_chunk_size: usize, overlap_size: usize) -> Result<Self> {
         Ok(Self {
             max_chunk_size,
@@ -801,7 +827,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ChunkingStrategy<T> {
 
 /// Supporting data structures
 #[derive(Debug, Clone)]
-pub struct SequenceSegment<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceSegment<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub gradients: Array2<T>,
     pub parameters: Array2<T>,
     pub losses: Array1<T>,
@@ -809,7 +837,9 @@ pub struct SequenceSegment<T: Float + Debug + Send + Sync + 'static> {
     pub end_index: usize,
 }
 
-pub struct StatisticsAccumulator<T: Float + Debug + Send + Sync + 'static> {
+pub struct StatisticsAccumulator<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     count: usize,
     sum: T,
     sum_sq: T,
@@ -817,13 +847,17 @@ pub struct StatisticsAccumulator<T: Float + Debug + Send + Sync + 'static> {
     max: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for StatisticsAccumulator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for StatisticsAccumulator<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    StatisticsAccumulator<T>
+{
     pub fn new() -> Self {
         Self {
             count: 0,

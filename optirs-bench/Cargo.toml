@@ -9,6 +9,9 @@ license.workspace = true
 repository.workspace = true
 keywords = ["benchmarking", "profiling", "performance", "regression", "monitoring"]
 categories = ["development-tools", "development-tools::profiling", "development-tools::testing"]
+# Explicit binary list only: src/bin/*.rs is NOT auto-discovered, so every
+# intended binary must have a matching [[bin]] entry below.
+autobins = false
 
 [lints]
 workspace = true
@@ -85,4 +88,34 @@ doc = false
 [[bin]]
 name = "security-audit-scanner"
 path = "src/bin/security_scanner.rs"
+doc = false
+
+[[bin]]
+name = "dependency_vulnerability_scanner"
+path = "src/bin/dependency_vulnerability_scanner.rs"
+doc = false
+
+[[bin]]
+name = "longrun_analyzer"
+path = "src/bin/longrun_analyzer.rs"
+doc = false
+
+[[bin]]
+name = "memory_leak_reporter"
+path = "src/bin/memory_leak_reporter.rs"
+doc = false
+
+[[bin]]
+name = "performance_baseline_manager"
+path = "src/bin/performance_baseline_manager.rs"
+doc = false
+
+[[bin]]
+name = "security_audit_scanner"
+path = "src/bin/security_audit_scanner.rs"
+doc = false
+
+[[bin]]
+name = "stress_test_analyzer"
+path = "src/bin/stress_test_analyzer.rs"
 doc = false

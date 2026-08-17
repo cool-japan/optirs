@@ -11,7 +11,7 @@
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use super::types::MetaOptimizationTracker;
+use super::framework::MetaOptimizationTracker;
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default
     for MetaOptimizationTracker<T>

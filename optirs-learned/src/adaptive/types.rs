@@ -15,7 +15,9 @@ use std::time::Instant;
 
 /// Performance predictor for transformer variants
 #[derive(Debug)]
-pub struct TransformerPerformancePredictor<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerPerformancePredictor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Neural predictor network
     predictor_network: PredictorNetwork<T>,
     /// Feature extractor
@@ -25,7 +27,9 @@ pub struct TransformerPerformancePredictor<T: Float + Debug + Send + Sync + 'sta
     /// Uncertainty estimator
     uncertainty_estimator: UncertaintyEstimator<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformancePredictor<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerPerformancePredictor<T>
+{
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
         Ok(Self {
             predictor_network: PredictorNetwork::new(vec![64, 128, 64, 1])?,
@@ -51,7 +55,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformancePredictor<T
 }
 /// Architecture adaptation result
 #[derive(Debug)]
-pub struct ArchitectureAdaptation<T: Float + Debug + Send + Sync + 'static> {
+pub struct ArchitectureAdaptation<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Adapted configuration
     pub adapted_config: TransformerOptimizerConfig<T>,
     /// Architecture changes
@@ -63,7 +69,9 @@ pub struct ArchitectureAdaptation<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Memory-efficient attention manager
 #[derive(Debug)]
-pub struct MemoryEfficientAttentionManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryEfficientAttentionManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Attention pattern cache
     pattern_cache: AttentionPatternCache<T>,
     /// Sparse attention mask
@@ -75,7 +83,9 @@ pub struct MemoryEfficientAttentionManager<T: Float + Debug + Send + Sync + 'sta
     /// Memory usage tracker
     memory_tracker: MemoryUsageTracker,
 }
-impl<T: Float + Debug + Send + Sync + 'static> MemoryEfficientAttentionManager<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MemoryEfficientAttentionManager<T>
+{
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
         Ok(Self {
             pattern_cache: AttentionPatternCache::new(),
@@ -197,7 +207,9 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryEfficientAttentionManager<T
 }
 /// Adaptive sequence processor for variable-length optimization histories
 #[derive(Debug)]
-pub struct AdaptiveSequenceProcessor<T: Float + Debug + Send + Sync + 'static> {
+pub struct AdaptiveSequenceProcessor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Current sequence length
     current_length: usize,
     /// Sequence importance scores
@@ -209,7 +221,9 @@ pub struct AdaptiveSequenceProcessor<T: Float + Debug + Send + Sync + 'static> {
     /// Adaptive windowing strategy
     windowing_strategy: WindowingStrategy,
 }
-impl<T: Float + Debug + Send + Sync + 'static> AdaptiveSequenceProcessor<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    AdaptiveSequenceProcessor<T>
+{
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
         Ok(Self {
             current_length: 512,
@@ -291,7 +305,9 @@ pub enum WindowingStrategy {
 }
 /// Landscape features for optimization analysis
 #[derive(Debug, Clone)]
-pub struct LandscapeFeatures<T: Float + Debug + Send + Sync + 'static> {
+pub struct LandscapeFeatures<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Smoothness measure
     pub(super) smoothness: T,
     /// Multimodality indicator
@@ -324,7 +340,9 @@ pub struct PatternApplicability {
 }
 /// Sequence adaptation result
 #[derive(Debug)]
-pub struct SequenceAdaptation<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceAdaptation<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// New sequence length
     pub new_length: usize,
     /// Compression ratio
@@ -336,7 +354,9 @@ pub struct SequenceAdaptation<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Landscape analysis result
 #[derive(Debug)]
-pub struct LandscapeAnalysis<T: Float + Debug + Send + Sync + 'static> {
+pub struct LandscapeAnalysis<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Landscape complexity
     pub complexity: T,
     /// Optimization difficulty
@@ -355,7 +375,9 @@ pub enum PositionalEncodingType {
 }
 /// Complexity estimator
 #[derive(Debug)]
-pub struct ComplexityEstimator<T: Float + Debug + Send + Sync + 'static> {
+pub struct ComplexityEstimator<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Computational complexity
     computational_complexity: T,
     /// Sample complexity
@@ -365,7 +387,9 @@ pub struct ComplexityEstimator<T: Float + Debug + Send + Sync + 'static> {
     /// Generalization complexity
     generalization_complexity: T,
 }
-impl<T: Float + Debug + Send + Sync + 'static> ComplexityEstimator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ComplexityEstimator<T>
+{
     fn new() -> Self {
         Self {
             computational_complexity: scirs2_core::numeric::NumCast::from(0.5)
@@ -380,7 +404,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ComplexityEstimator<T> {
 }
 /// Curvature information
 #[derive(Debug, Clone)]
-pub struct CurvatureInfo<T: Float + Debug + Send + Sync + 'static> {
+pub struct CurvatureInfo<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Mean curvature
     pub(super) mean_curvature: T,
     /// Gaussian curvature
@@ -399,7 +425,9 @@ pub enum SaddleDetectionAlgorithm {
 }
 /// Architecture performance metrics
 #[derive(Debug, Clone)]
-pub struct ArchitecturePerformance<T: Float + Debug + Send + Sync + 'static> {
+pub struct ArchitecturePerformance<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Convergence speed
     convergence_speed: T,
     /// Final performance
@@ -413,7 +441,9 @@ pub struct ArchitecturePerformance<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Enhancement result
 #[derive(Debug)]
-pub struct EnhancementResult<T: Float + Debug + Send + Sync + 'static> {
+pub struct EnhancementResult<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Sequence processing adaptations
     pub sequence_adaptation: SequenceAdaptation<T>,
     /// Attention optimizations
@@ -429,7 +459,9 @@ pub struct EnhancementResult<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Enhancement statistics for tracking performance
 #[derive(Debug, Clone)]
-pub struct EnhancementStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct EnhancementStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Total number of enhancements performed
     pub total_enhancements: usize,
     /// Average complexity of analyzed landscapes
@@ -443,7 +475,9 @@ pub struct EnhancementStatistics<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Sequence compressor for information-preserving compression
 #[derive(Debug)]
-pub struct SequenceCompressor<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceCompressor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Compression algorithm
     algorithm: CompressionAlgorithm,
     /// Compression parameters
@@ -451,7 +485,9 @@ pub struct SequenceCompressor<T: Float + Debug + Send + Sync + 'static> {
     /// Quality metrics
     quality_metrics: CompressionQualityMetrics<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> SequenceCompressor<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequenceCompressor<T>
+{
     fn new() -> Result<Self> {
         Ok(Self {
             algorithm: CompressionAlgorithm::PCA,
@@ -462,7 +498,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceCompressor<T> {
 }
 /// Prediction result
 #[derive(Debug, Clone)]
-pub struct PredictionResult<T: Float + Debug + Send + Sync + 'static> {
+pub struct PredictionResult<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Predicted performance
     predicted_performance: T,
     /// Confidence interval
@@ -488,7 +526,8 @@ pub enum CacheEvictionPolicy {
 }
 /// Symmetry representation
 #[derive(Debug, Clone)]
-pub struct Symmetry<T: Float + Debug + Send + Sync + 'static> {
+pub struct Symmetry<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+{
     /// Symmetry type
     symmetry_type: SymmetryType,
     /// Symmetry parameters
@@ -498,7 +537,9 @@ pub struct Symmetry<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Performance feature extractor
 #[derive(Debug)]
-pub struct PerformanceFeatureExtractor<T: Float + Debug + Send + Sync + 'static> {
+pub struct PerformanceFeatureExtractor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Feature dimensions
     feature_dims: usize,
     /// Feature computation cache
@@ -506,7 +547,9 @@ pub struct PerformanceFeatureExtractor<T: Float + Debug + Send + Sync + 'static>
     /// Feature importance weights
     importance_weights: Array1<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> PerformanceFeatureExtractor<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    PerformanceFeatureExtractor<T>
+{
     fn new(dims: usize) -> Result<Self> {
         Ok(Self {
             feature_dims: dims,
@@ -531,13 +574,17 @@ pub enum CompressionAlgorithm {
 }
 /// Connectivity analyzer
 #[derive(Debug)]
-pub struct ConnectivityAnalyzer<T: Float + Debug + Send + Sync + 'static> {
+pub struct ConnectivityAnalyzer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Connectivity graph
     connectivity_graph: Array2<T>,
     /// Path analysis results
     path_analysis: PathAnalysisResults<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> ConnectivityAnalyzer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ConnectivityAnalyzer<T>
+{
     fn new() -> Self {
         Self {
             connectivity_graph: Array2::zeros((0, 0)),
@@ -551,7 +598,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ConnectivityAnalyzer<T> {
 }
 /// Optimization path
 #[derive(Debug, Clone)]
-pub struct OptimizationPath<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationPath<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Path points
     points: Vec<Array1<T>>,
     /// Path values
@@ -563,7 +612,9 @@ pub struct OptimizationPath<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Pattern library
 #[derive(Debug)]
-pub struct PatternLibrary<T: Float + Debug + Send + Sync + 'static> {
+pub struct PatternLibrary<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Pattern database
     patterns: HashMap<String, OptimizationPattern<T>>,
     /// Pattern index
@@ -625,7 +676,9 @@ pub enum BasinAnalysisMethod {
 }
 /// Global structure detector
 #[derive(Debug)]
-pub struct GlobalStructureDetector<T: Float + Debug + Send + Sync + 'static> {
+pub struct GlobalStructureDetector<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Connectivity analyzer
     connectivity_analyzer: ConnectivityAnalyzer<T>,
     /// Symmetry detector
@@ -633,7 +686,9 @@ pub struct GlobalStructureDetector<T: Float + Debug + Send + Sync + 'static> {
     /// Pattern recognizer
     pattern_recognizer: PatternRecognizer<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> GlobalStructureDetector<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    GlobalStructureDetector<T>
+{
     fn new() -> Self {
         Self {
             connectivity_analyzer: ConnectivityAnalyzer::new(),
@@ -644,7 +699,7 @@ impl<T: Float + Debug + Send + Sync + 'static> GlobalStructureDetector<T> {
 }
 /// Basin representation
 #[derive(Debug, Clone)]
-pub struct Basin<T: Float + Debug + Send + Sync + 'static> {
+pub struct Basin<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> {
     /// Basin boundary
     boundary: Vec<Array1<T>>,
     /// Volume
@@ -656,13 +711,17 @@ pub struct Basin<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Basin analyzer
 #[derive(Debug)]
-pub struct BasinAnalyzer<T: Float + Debug + Send + Sync + 'static> {
+pub struct BasinAnalyzer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Basin characteristics
     basin_characteristics: Vec<Basin<T>>,
     /// Analysis method
     analysis_method: BasinAnalysisMethod,
 }
-impl<T: Float + Debug + Send + Sync + 'static> BasinAnalyzer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    BasinAnalyzer<T>
+{
     fn new() -> Self {
         Self {
             basin_characteristics: Vec::new(),
@@ -672,7 +731,9 @@ impl<T: Float + Debug + Send + Sync + 'static> BasinAnalyzer<T> {
 }
 /// Attention pattern cache for efficiency
 #[derive(Debug)]
-pub struct AttentionPatternCache<T: Float + Debug + Send + Sync + 'static> {
+pub struct AttentionPatternCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Cached patterns
     patterns: HashMap<String, Array3<T>>,
     /// Pattern usage frequency
@@ -682,7 +743,9 @@ pub struct AttentionPatternCache<T: Float + Debug + Send + Sync + 'static> {
     /// Eviction policy
     eviction_policy: CacheEvictionPolicy,
 }
-impl<T: Float + Debug + Send + Sync + 'static> AttentionPatternCache<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    AttentionPatternCache<T>
+{
     fn new() -> Self {
         Self {
             patterns: HashMap::new(),
@@ -694,7 +757,9 @@ impl<T: Float + Debug + Send + Sync + 'static> AttentionPatternCache<T> {
 }
 /// Optimization landscape analyzer
 #[derive(Debug)]
-pub struct OptimizationLandscapeAnalyzer<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationLandscapeAnalyzer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Landscape features
     landscape_features: LandscapeFeatures<T>,
     /// Complexity estimator
@@ -706,7 +771,9 @@ pub struct OptimizationLandscapeAnalyzer<T: Float + Debug + Send + Sync + 'stati
     /// Analysis cache
     analysis_cache: HashMap<String, AnalysisResult<T>>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> OptimizationLandscapeAnalyzer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    OptimizationLandscapeAnalyzer<T>
+{
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
         Ok(Self {
             landscape_features: LandscapeFeatures::default(),
@@ -731,7 +798,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationLandscapeAnalyzer<T> 
 }
 /// Analysis result container
 #[derive(Debug, Clone)]
-pub struct AnalysisResult<T: Float + Debug + Send + Sync + 'static> {
+pub struct AnalysisResult<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Analysis timestamp
     timestamp: Instant,
     /// Analysis features
@@ -763,7 +832,9 @@ pub enum AdaptationStrategy {
 }
 /// Local geometry analyzer
 #[derive(Debug)]
-pub struct LocalGeometryAnalyzer<T: Float + Debug + Send + Sync + 'static> {
+pub struct LocalGeometryAnalyzer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Local minima detector
     local_minima_detector: LocalMinimaDetector<T>,
     /// Saddle point detector
@@ -771,7 +842,9 @@ pub struct LocalGeometryAnalyzer<T: Float + Debug + Send + Sync + 'static> {
     /// Basin analyzer
     basin_analyzer: BasinAnalyzer<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> LocalGeometryAnalyzer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LocalGeometryAnalyzer<T>
+{
     fn new() -> Self {
         Self {
             local_minima_detector: LocalMinimaDetector::new(),
@@ -782,7 +855,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LocalGeometryAnalyzer<T> {
 }
 /// Configuration for adaptive enhancements
 #[derive(Debug, Clone)]
-pub struct AdaptiveConfig<T: Float + Debug + Send + Sync + 'static> {
+pub struct AdaptiveConfig<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Enable adaptive sequence length
     pub adaptive_sequence_length: bool,
     /// Maximum sequence length
@@ -806,7 +881,9 @@ pub struct AdaptiveConfig<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Prediction cache
 #[derive(Debug)]
-pub struct PredictionCache<T: Float + Debug + Send + Sync + 'static> {
+pub struct PredictionCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Cached predictions
     predictions: HashMap<String, PredictionResult<T>>,
     /// Cache hit rate
@@ -814,7 +891,9 @@ pub struct PredictionCache<T: Float + Debug + Send + Sync + 'static> {
     /// Cache capacity
     capacity: usize,
 }
-impl<T: Float + Debug + Send + Sync + 'static> PredictionCache<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    PredictionCache<T>
+{
     fn new(capacity: usize) -> Self {
         Self {
             predictions: HashMap::new(),
@@ -825,7 +904,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictionCache<T> {
 }
 /// Attention optimization result
 #[derive(Debug, Clone)]
-pub struct AttentionOptimization<T: Float + Debug + Send + Sync + 'static> {
+pub struct AttentionOptimization<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Optimized attention patterns
     pub attention_patterns: Array3<T>,
     /// Sparsity level achieved
@@ -837,7 +918,9 @@ pub struct AttentionOptimization<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Performance prediction result
 #[derive(Debug)]
-pub struct PerformancePrediction<T: Float + Debug + Send + Sync + 'static> {
+pub struct PerformancePrediction<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Predicted convergence improvement
     pub convergence_improvement: T,
     /// Predicted final performance
@@ -861,7 +944,9 @@ pub enum UncertaintyMethod {
 }
 /// Performance prediction network
 #[derive(Debug)]
-pub struct PredictorNetwork<T: Float + Debug + Send + Sync + 'static> {
+pub struct PredictorNetwork<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Network weights
     weights: Vec<Array2<T>>,
     /// Network biases
@@ -871,7 +956,9 @@ pub struct PredictorNetwork<T: Float + Debug + Send + Sync + 'static> {
     /// Network architecture
     architecture: Vec<usize>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> PredictorNetwork<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    PredictorNetwork<T>
+{
     fn new(architecture: Vec<usize>) -> Result<Self> {
         let mut weights = Vec::new();
         let mut biases = Vec::new();
@@ -892,7 +979,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PredictorNetwork<T> {
 }
 /// Uncertainty estimator
 #[derive(Debug)]
-pub struct UncertaintyEstimator<T: Float + Debug + Send + Sync + 'static> {
+pub struct UncertaintyEstimator<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Epistemic uncertainty
     epistemic_uncertainty: T,
     /// Aleatoric uncertainty
@@ -902,7 +991,9 @@ pub struct UncertaintyEstimator<T: Float + Debug + Send + Sync + 'static> {
     /// Uncertainty estimation method
     estimation_method: UncertaintyMethod,
 }
-impl<T: Float + Debug + Send + Sync + 'static> UncertaintyEstimator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    UncertaintyEstimator<T>
+{
     fn new(method: UncertaintyMethod) -> Self {
         Self {
             epistemic_uncertainty: scirs2_core::numeric::NumCast::from(0.1)
@@ -917,7 +1008,9 @@ impl<T: Float + Debug + Send + Sync + 'static> UncertaintyEstimator<T> {
 }
 /// Optimization pattern
 #[derive(Debug, Clone)]
-pub struct OptimizationPattern<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationPattern<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Pattern type
     pattern_type: PatternType,
     /// Pattern parameters
@@ -929,7 +1022,9 @@ pub struct OptimizationPattern<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Compression quality metrics
 #[derive(Debug, Clone)]
-pub struct CompressionQualityMetrics<T: Float + Debug + Send + Sync + 'static> {
+pub struct CompressionQualityMetrics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Reconstruction error
     pub(super) reconstruction_error: T,
     /// Information loss
@@ -941,7 +1036,9 @@ pub struct CompressionQualityMetrics<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Path analysis results
 #[derive(Debug, Clone)]
-pub struct PathAnalysisResults<T: Float + Debug + Send + Sync + 'static> {
+pub struct PathAnalysisResults<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Shortest paths
     shortest_paths: Vec<OptimizationPath<T>>,
     /// Path difficulties
@@ -968,7 +1065,9 @@ pub enum OptimizationStrategy {
 }
 /// Saddle point representation
 #[derive(Debug, Clone)]
-pub struct SaddlePoint<T: Float + Debug + Send + Sync + 'static> {
+pub struct SaddlePoint<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Position
     position: Array1<T>,
     /// Value
@@ -1018,7 +1117,9 @@ pub struct AdaptiveTransformerOptimizerConfig {
 }
 /// Dynamic architecture adapter
 #[derive(Debug)]
-pub struct DynamicArchitectureAdapter<T: Float + Debug + Send + Sync + 'static> {
+pub struct DynamicArchitectureAdapter<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Current architecture configuration
     current_config: TransformerOptimizerConfig<T>,
     /// Architecture performance history
@@ -1030,7 +1131,9 @@ pub struct DynamicArchitectureAdapter<T: Float + Debug + Send + Sync + 'static> 
     /// Architecture search space
     search_space: ArchitectureSearchSpace,
 }
-impl<T: Float + Debug + Send + Sync + 'static> DynamicArchitectureAdapter<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    DynamicArchitectureAdapter<T>
+{
     fn new(config: &AdaptiveConfig<T>) -> Result<Self> {
         Ok(Self {
             current_config: TransformerOptimizerConfig::<T>::default(),
@@ -1079,7 +1182,9 @@ impl MemoryUsageTracker {
 }
 /// Local minimum representation
 #[derive(Debug, Clone)]
-pub struct LocalMinimum<T: Float + Debug + Send + Sync + 'static> {
+pub struct LocalMinimum<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Position
     position: Array1<T>,
     /// Value
@@ -1091,7 +1196,9 @@ pub struct LocalMinimum<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Saddle point detector
 #[derive(Debug)]
-pub struct SaddlePointDetector<T: Float + Debug + Send + Sync + 'static> {
+pub struct SaddlePointDetector<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Detection threshold
     threshold: T,
     /// Detected saddle points
@@ -1099,7 +1206,9 @@ pub struct SaddlePointDetector<T: Float + Debug + Send + Sync + 'static> {
     /// Detection algorithm
     algorithm: SaddleDetectionAlgorithm,
 }
-impl<T: Float + Debug + Send + Sync + 'static> SaddlePointDetector<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SaddlePointDetector<T>
+{
     fn new() -> Self {
         Self {
             threshold: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
@@ -1124,13 +1233,17 @@ pub struct ArchitectureSearchSpace {
 }
 /// Symmetry detector
 #[derive(Debug)]
-pub struct SymmetryDetector<T: Float + Debug + Send + Sync + 'static> {
+pub struct SymmetryDetector<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Detected symmetries
     symmetries: Vec<Symmetry<T>>,
     /// Symmetry types
     symmetry_types: Vec<SymmetryType>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> SymmetryDetector<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SymmetryDetector<T>
+{
     fn new() -> Self {
         Self {
             symmetries: Vec::new(),
@@ -1150,7 +1263,9 @@ pub enum PatternType {
 }
 /// Convergence metrics for tracking optimization progress
 #[derive(Debug, Clone)]
-pub struct ConvergenceMetrics<T: Float + Debug + Send + Sync + 'static> {
+pub struct ConvergenceMetrics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Rate of convergence
     pub convergence_rate: T,
     /// Stability measure
@@ -1161,7 +1276,9 @@ pub struct ConvergenceMetrics<T: Float + Debug + Send + Sync + 'static> {
     pub oscillation_measure: T,
 }
 /// Adaptive Transformer Enhancement System
-pub struct AdaptiveTransformerEnhancement<T: Float + Debug + Send + Sync + 'static> {
+pub struct AdaptiveTransformerEnhancement<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Adaptive sequence processor
     sequence_processor: AdaptiveSequenceProcessor<T>,
     /// Memory-efficient attention manager
@@ -1175,7 +1292,16 @@ pub struct AdaptiveTransformerEnhancement<T: Float + Debug + Send + Sync + 'stat
     /// Adaptive configuration
     adaptive_config: AdaptiveConfig<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransformerEnhancement<T> {
+impl<
+        T: Float
+            + Debug
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync
+            + 'static
+            + std::iter::Sum,
+    > AdaptiveTransformerEnhancement<T>
+{
     /// Enhance transformer optimizer for current optimization task
     pub fn enhance_optimizer(
         &mut self,
@@ -1211,7 +1337,16 @@ impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransfor
         })
     }
 }
-impl<T: Float + Debug + Send + Sync + 'static + std::iter::Sum> AdaptiveTransformerEnhancement<T> {
+impl<
+        T: Float
+            + Debug
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync
+            + 'static
+            + std::iter::Sum,
+    > AdaptiveTransformerEnhancement<T>
+{
     pub fn new(config: AdaptiveConfig<T>) -> Result<Self> {
         Ok(Self {
             sequence_processor: AdaptiveSequenceProcessor::new(&config)?,
@@ -1446,7 +1581,9 @@ pub enum BasinShape {
 }
 /// Local minima detector
 #[derive(Debug)]
-pub struct LocalMinimaDetector<T: Float + Debug + Send + Sync + 'static> {
+pub struct LocalMinimaDetector<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Detection threshold
     threshold: T,
     /// Detected minima
@@ -1454,7 +1591,9 @@ pub struct LocalMinimaDetector<T: Float + Debug + Send + Sync + 'static> {
     /// Detection algorithm
     algorithm: MinimaDetectionAlgorithm,
 }
-impl<T: Float + Debug + Send + Sync + 'static> LocalMinimaDetector<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LocalMinimaDetector<T>
+{
     fn new() -> Self {
         Self {
             threshold: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
@@ -1465,7 +1604,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LocalMinimaDetector<T> {
 }
 /// Compression parameters
 #[derive(Debug, Clone)]
-pub struct CompressionParams<T: Float + Debug + Send + Sync + 'static> {
+pub struct CompressionParams<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Target compression ratio
     pub(super) target_ratio: T,
     /// Quality threshold
@@ -1477,13 +1618,17 @@ pub struct CompressionParams<T: Float + Debug + Send + Sync + 'static> {
 }
 /// Pattern recognizer
 #[derive(Debug)]
-pub struct PatternRecognizer<T: Float + Debug + Send + Sync + 'static> {
+pub struct PatternRecognizer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Recognized patterns
     patterns: Vec<OptimizationPattern<T>>,
     /// Pattern library
     pattern_library: PatternLibrary<T>,
 }
-impl<T: Float + Debug + Send + Sync + 'static> PatternRecognizer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    PatternRecognizer<T>
+{
     fn new() -> Self {
         Self {
             patterns: Vec::new(),
@@ -1497,7 +1642,9 @@ impl<T: Float + Debug + Send + Sync + 'static> PatternRecognizer<T> {
 }
 /// Gradient characteristics
 #[derive(Debug, Clone)]
-pub struct GradientCharacteristics<T: Float + Debug + Send + Sync + 'static> {
+pub struct GradientCharacteristics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Gradient norm
     pub(super) gradient_norm: T,
     /// Gradient consistency

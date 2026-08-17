@@ -109,6 +109,14 @@ pub struct CoordinatorState<T: Float + Debug + Send + Sync + 'static> {
     pub coordination_start_time: Instant,
     pub total_tasks_processed: usize,
     pub total_experiments_completed: usize,
+    /// Total convergence checks performed via `monitor_optimization_value`.
+    pub convergence_checks_total: usize,
+    /// Of those, how many reported `converged == true`.
+    pub convergence_checks_passed: usize,
+    /// Total anomaly checks performed via `monitor_optimization_value`.
+    pub anomaly_checks_total: usize,
+    /// Of those, how many flagged `is_anomaly == true`.
+    pub anomaly_checks_flagged: usize,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> Default for CoordinatorState<T> {
@@ -129,6 +137,10 @@ impl<T: Float + Debug + Send + Sync + 'static> CoordinatorState<T> {
             coordination_start_time: Instant::now(),
             total_tasks_processed: 0,
             total_experiments_completed: 0,
+            convergence_checks_total: 0,
+            convergence_checks_passed: 0,
+            anomaly_checks_total: 0,
+            anomaly_checks_flagged: 0,
         }
     }
 }
@@ -176,18 +188,27 @@ pub struct CoordinationResult<T: Float + Debug + Send + Sync + 'static> {
 
 impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator<T> {
     /// Create a new optimization coordinator
-    pub fn new(config: CoordinatorConfig<T>) -> Self {
+    ///
+    /// # Errors
+    /// Returns `Err` (as a descriptive `String`, matching this type's other
+    /// public methods) if any underlying scheduler, orchestrator, or
+    /// performance tracker fails to construct, or if `0.9` cannot be
+    /// represented in the target float type `T`.
+    pub fn new(config: CoordinatorConfig<T>) -> Result<Self, String> {
+        let estimation_threshold = T::from(0.9)
+            .ok_or_else(|| "failed to represent 0.9 in target float type".to_string())?;
+
         let scheduler = TaskScheduler::new(SchedulerConfig {
             max_concurrent_tasks: config.max_concurrent_tasks,
             queue_size_limit: 1000,
             task_timeout: config.default_timeout,
             priority_update_interval: Duration::from_secs(5),
             load_balance_interval: Duration::from_secs(10),
-            estimation_threshold: T::from(0.9).expect("unwrap failed"),
+            estimation_threshold,
             enable_adaptive_scheduling: true,
             enable_performance_learning: true,
         })
-        .expect("Failed to create task scheduler");
+        .map_err(|e| format!("Failed to create task scheduler: {e}"))?;
 
         let orchestrator = PipelineOrchestrator::new(OrchestratorConfiguration {
             max_concurrent_pipelines: config.max_concurrent_tasks,
@@ -195,7 +216,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
             default_timeouts: TimeoutSettings::default(),
             monitoring: MonitoringConfiguration::default(),
         })
-        .expect("Failed to create pipeline orchestrator");
+        .map_err(|e| format!("Failed to create pipeline orchestrator: {e}"))?;
 
         let performance_tracker = PerformanceTracker::new(TrackerConfiguration {
             collection_interval: config.monitoring_interval,
@@ -210,13 +231,13 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
                 custom_params: HashMap::new(),
             },
         })
-        .expect("Failed to create performance tracker");
+        .map_err(|e| format!("Failed to create performance tracker: {e}"))?;
 
         let convergence_detector = ConvergenceDetector::new(config.convergence_criteria.clone());
 
         let anomaly_detector = AnomalyDetector::new(AnomalyConfig::default());
 
-        Self {
+        Ok(Self {
             scheduler,
             orchestrator,
             performance_tracker,
@@ -226,7 +247,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
             metrics: CoordinatorMetrics::default(),
             config,
             _phantom: PhantomData,
-        }
+        })
     }
 
     /// Submit a single optimization task
@@ -343,12 +364,16 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
         // Generate alerts based on monitoring results
         if let Some(ref anomaly) = anomaly_result {
+            self.state.anomaly_checks_total += 1;
             if anomaly.is_anomaly {
+                self.state.anomaly_checks_flagged += 1;
                 alerts.push(MonitoringAlert::Anomaly(anomaly.clone()));
             }
         }
 
+        self.state.convergence_checks_total += 1;
         if convergence_result.converged {
+            self.state.convergence_checks_passed += 1;
             alerts.push(MonitoringAlert::Convergence(convergence_result.clone()));
         }
 
@@ -432,18 +457,22 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
 
     fn process_scheduled_tasks(&mut self) -> Vec<CoordinationResult<T>> {
         let mut results = Vec::new();
-        let ready_tasks = Vec::new(); // Need proper scheduler API
 
-        for task in ready_tasks {
+        // Pull every task the scheduler is currently willing to hand out
+        // (respecting its configured scheduling strategy) and dispatch each
+        // one for real, instead of iterating over a permanently-empty list.
+        while let Some(task) = self.scheduler.get_next_task() {
+            let task_id = task.task_id.clone();
             match self.execute_task(&task) {
                 Ok(result) => {
                     results.push(result);
-                    self.state.active_tasks.remove(&task.task_id);
+                    self.state.active_tasks.remove(&task_id);
                 }
                 Err(e) => {
+                    self.state.active_tasks.remove(&task_id);
                     results.push(CoordinationResult {
                         success: false,
-                        task_id: task.task_id.clone(),
+                        task_id,
                         execution_time: Duration::new(0, 0),
                         resource_usage: ResourceUsage::default(),
                         performance_metrics: PerformanceMetrics::default(),
@@ -465,23 +494,46 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         let start_time = Instant::now();
         let task_id = task.task_id.clone();
 
-        // Execute the task (simplified)
-        let performance_metrics = self
-            .performance_tracker
-            .collect_metrics()
-            .unwrap_or_else(|_| PerformanceMetrics::default());
+        // Dispatch through the scheduler's real execution lifecycle (start
+        // -> do the work this layer is responsible for -> complete) instead
+        // of being a no-op that always reports success without doing
+        // anything checkable.
+        let assigned_resources =
+            crate::coordination::scheduling::task_scheduler::AssignedResources {
+                cpu_cores: (0..task.resource_requirements.cpu_cores).collect(),
+                memory_mb: task.resource_requirements.memory_mb,
+                gpu_devices: (0..task.resource_requirements.gpu_devices).collect(),
+                storage_gb: task.resource_requirements.storage_gb,
+                network_bandwidth: task.resource_requirements.network_bandwidth,
+            };
+        self.scheduler
+            .start_task_execution(task.clone(), assigned_resources)
+            .map_err(|e| format!("Failed to start task execution: {e}"))?;
+
+        // The concrete unit of work this coordination layer performs per
+        // task is collecting real performance metrics; its actual `Result`
+        // determines success instead of being papered over with a default.
+        let (success, performance_metrics, error_info) =
+            match self.performance_tracker.collect_metrics() {
+                Ok(metrics) => (true, metrics, None),
+                Err(e) => (false, PerformanceMetrics::default(), Some(e.to_string())),
+            };
 
         let execution_time = start_time.elapsed();
 
+        self.scheduler
+            .complete_task(&task_id, success, error_info.clone())
+            .map_err(|e| format!("Failed to complete task in scheduler: {e}"))?;
+
         Ok(CoordinationResult {
-            success: true,
+            success,
             task_id,
             execution_time,
             resource_usage: self.state.resource_usage.clone(),
             performance_metrics,
             convergence_result: None,
             anomaly_alerts: Vec::new(),
-            errors: Vec::new(),
+            errors: error_info.into_iter().collect(),
         })
     }
 
@@ -574,7 +626,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         if uptime.as_secs() > 0 {
             self.metrics.throughput = T::from(self.state.total_tasks_processed)
                 .unwrap_or_else(|| T::zero())
-                / T::from(uptime.as_secs()).expect("unwrap failed");
+                / T::from(uptime.as_secs()).unwrap_or_else(|| T::one());
         }
 
         // Update resource utilization
@@ -585,14 +637,27 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         self.metrics.anomaly_detection_rate = self.calculate_anomaly_rate();
     }
 
+    /// Fraction of `monitor_optimization_value` calls that reported
+    /// convergence, computed from real state history rather than a
+    /// hardcoded constant. Returns `T::zero()` when no checks have been
+    /// performed yet (honest "no data" rather than a fabricated rate).
     fn calculate_convergence_rate(&self) -> T {
-        // Implementation would calculate convergence success rate
-        T::from(0.85).unwrap_or_else(|| T::zero()) // Placeholder
+        if self.state.convergence_checks_total == 0 {
+            return T::zero();
+        }
+        T::from(self.state.convergence_checks_passed).unwrap_or_else(|| T::zero())
+            / T::from(self.state.convergence_checks_total).unwrap_or_else(|| T::one())
     }
 
+    /// Fraction of `monitor_optimization_value` calls that flagged an
+    /// anomaly, computed from real state history rather than a hardcoded
+    /// constant. Returns `T::zero()` when no checks have been performed yet.
     fn calculate_anomaly_rate(&self) -> T {
-        // Implementation would calculate anomaly detection rate
-        T::from(0.05).unwrap_or_else(|| T::zero()) // Placeholder
+        if self.state.anomaly_checks_total == 0 {
+            return T::zero();
+        }
+        T::from(self.state.anomaly_checks_flagged).unwrap_or_else(|| T::zero())
+            / T::from(self.state.anomaly_checks_total).unwrap_or_else(|| T::one())
     }
 
     fn collect_system_metrics(&self) -> Vec<T> {
@@ -600,8 +665,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> OptimizationCoordinator
         vec![
             self.metrics.resource_utilization,
             self.metrics.throughput,
-            T::from(self.state.active_tasks.len()).expect("unwrap failed"),
-            T::from(self.state.active_pipelines.len()).expect("unwrap failed"),
+            T::from(self.state.active_tasks.len()).unwrap_or_else(|| T::zero()),
+            T::from(self.state.active_pipelines.len()).unwrap_or_else(|| T::zero()),
         ]
     }
 
@@ -780,7 +845,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default> CoordinatorBuilder<T> {
         self
     }
 
-    pub fn build(self) -> OptimizationCoordinator<T> {
+    pub fn build(self) -> Result<OptimizationCoordinator<T>, String> {
         OptimizationCoordinator::new(self.config)
     }
 }
@@ -800,7 +865,8 @@ mod tests {
         let coordinator = CoordinatorBuilder::<f64>::new()
             .max_concurrent_tasks(5)
             .enable_anomaly_detection(true)
-            .build();
+            .build()
+            .expect("unwrap failed");
 
         let status = coordinator.get_status();
         assert_eq!(status.active_tasks, 0);
@@ -809,7 +875,8 @@ mod tests {
 
     #[test]
     fn test_task_submission() {
-        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default());
+        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default())
+            .expect("unwrap failed");
         let task = OptimizationTask::new("test_task".to_string());
 
         let task_id = coordinator.submit_task(task).expect("unwrap failed");
@@ -821,10 +888,57 @@ mod tests {
 
     #[test]
     fn test_monitoring() {
-        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default());
+        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default())
+            .expect("unwrap failed");
         let result = coordinator.monitor_optimization_value("test_task", 1.0);
 
         assert_eq!(result.task_id, "test_task");
         assert_eq!(result.value, 1.0);
+    }
+
+    #[test]
+    fn convergence_and_anomaly_rates_reflect_real_history() {
+        // Regression test for F62: rates must be computed from actual
+        // monitor_optimization_value history, not hardcoded constants.
+        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default())
+            .expect("unwrap failed");
+
+        // No checks performed yet: rates must honestly report zero, not a
+        // fabricated "everything is fine" placeholder.
+        assert_eq!(coordinator.calculate_convergence_rate(), 0.0);
+        assert_eq!(coordinator.calculate_anomaly_rate(), 0.0);
+
+        for _ in 0..4 {
+            coordinator.monitor_optimization_value("t", 1.0);
+        }
+        // Rates must now be derived from the recorded history: exactly 4
+        // convergence checks were performed.
+        assert_eq!(coordinator.state.convergence_checks_total, 4);
+    }
+
+    #[test]
+    fn execute_cycle_processes_submitted_tasks_through_the_scheduler() {
+        // Regression test for F62: process_scheduled_tasks must actually
+        // pull tasks from the scheduler and execute them, instead of
+        // iterating over a permanently-empty list.
+        let mut coordinator = OptimizationCoordinator::<f64>::new(CoordinatorConfig::default())
+            .expect("unwrap failed");
+        let task = OptimizationTask::new("cycle_task".to_string());
+        coordinator.submit_task(task).expect("unwrap failed");
+
+        let results = coordinator.execute_cycle();
+        assert!(
+            !results.is_empty(),
+            "execute_cycle must dispatch the submitted task instead of processing nothing"
+        );
+        // The task must have been finalized through the scheduler's real
+        // lifecycle (either completed or failed), not left in limbo by a
+        // no-op `execute_task` that never calls `complete_task`.
+        let stats = coordinator.scheduler.get_statistics();
+        assert_eq!(
+            stats.total_tasks_completed + stats.total_tasks_failed,
+            1,
+            "the dispatched task must be reflected in scheduler statistics"
+        );
     }
 }

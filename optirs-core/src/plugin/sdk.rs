@@ -345,7 +345,8 @@ pub enum BenchmarkCategory {
 pub struct BenchmarkResult<A: Float> {
     /// Benchmark name
     pub name: String,
-    /// Score (higher is better)
+    /// Score, normalized into `[0, 1]` against the benchmark's
+    /// `expected_baseline` (higher is better)
     pub score: f64,
     /// Metrics
     pub metrics: HashMap<String, f64>,
@@ -355,6 +356,10 @@ pub struct BenchmarkResult<A: Float> {
     pub memory_usage: usize,
     /// Additional data
     pub data: HashMap<String, A>,
+    /// Whether this benchmark actually measured the plugin (e.g. `false`
+    /// when `initialize()` failed before any step could run). Unverified
+    /// results are excluded from the overall score rather than counted.
+    pub verified: bool,
 }
 
 /// Benchmark configuration

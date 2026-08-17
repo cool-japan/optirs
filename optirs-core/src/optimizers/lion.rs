@@ -3,11 +3,11 @@
 // Based on the paper "Symbolic Discovery of Optimization Algorithms"
 // by Chen et al. (2023).
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// Lion optimizer
@@ -47,8 +47,8 @@ pub struct Lion<A: Float + ScalarOperand + Debug> {
     beta2: A,
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
-    /// Momentum vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
+    /// Momentum vectors, one slot per parameter-tensor index
+    m: Option<Vec<Array<A, IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> Lion<A> {
@@ -132,6 +132,106 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Lion<A> {
     pub fn reset(&mut self) {
         self.m = None;
     }
+
+    /// Ensures a momentum slot exists for `index` and matches `dim`
+    fn ensure_state(&mut self, index: usize, dim: &IxDyn) {
+        let m = self.m.get_or_insert_with(Vec::new);
+        while m.len() <= index {
+            m.push(Array::zeros(dim.clone()));
+        }
+        if m[index].raw_dim() != *dim {
+            m[index] = Array::zeros(dim.clone());
+        }
+    }
+
+    /// Applies a Lion update in place for the parameter tensor at `index`
+    pub fn step_inplace_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &mut Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<()> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
+        }
+
+        let dim = params.raw_dim().into_dyn();
+        self.ensure_state(index, &dim);
+
+        let beta1 = self.beta1;
+        let beta2 = self.beta2;
+        let lr = self.learning_rate;
+        let weight_decay = self.weight_decay;
+        let use_weight_decay = weight_decay > A::zero();
+        let one = A::one();
+        let zero = A::zero();
+        let decay_factor = one - weight_decay * lr;
+
+        let m = self
+            .m
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("Lion state not initialized".to_string()))?;
+
+        let mut params_view = params.view_mut().into_dyn();
+        let gradients_view = gradients.view().into_dyn();
+
+        Zip::from(&mut params_view)
+            .and(&gradients_view)
+            .and(&mut m[index])
+            .for_each(|p, &g, m_i| {
+                // Step 1: interpolated update using beta1
+                let interpolated = *m_i * beta1 + g * (one - beta1);
+
+                // Step 2: sign of the interpolated update
+                let sign_update = if interpolated > zero {
+                    one
+                } else if interpolated < zero {
+                    -one
+                } else {
+                    zero
+                };
+
+                // Step 3: decoupled weight decay, then the sign step
+                let decayed = if use_weight_decay {
+                    *p * decay_factor
+                } else {
+                    *p
+                };
+                *p = decayed - sign_update * lr;
+
+                // Step 4: momentum update using beta2
+                *m_i = *m_i * beta2 + g * (one - beta2);
+            });
+
+        Ok(())
+    }
+
+    /// Applies a Lion update in place using the state slot of the first parameter tensor
+    pub fn step_inplace<D: Dimension>(
+        &mut self,
+        params: &mut Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<()> {
+        self.step_inplace_indexed(0, params, gradients)
+    }
+
+    /// Performs a Lion update for the parameter tensor at `index`
+    ///
+    /// Each `index` owns an independent momentum slot.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        let mut updated = params.to_owned();
+        self.step_inplace_indexed(index, &mut updated, gradients)?;
+        Ok(updated)
+    }
 }
 
 impl<A, D> Optimizer<A, D> for Lion<A>
@@ -140,57 +240,27 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Convert to dynamic dimension for storage in state vectors
-        let params_dyn = params.to_owned().into_dyn();
-        let gradients_dyn = gradients.to_owned().into_dyn();
+        self.step_indexed(0, params, gradients)
+    }
 
-        // Initialize state if this is the first step
-        if self.m.is_none() {
-            self.m = Some(vec![Array::zeros(params_dyn.raw_dim())]);
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
         }
 
-        let m = self.m.as_mut().expect("unwrap failed");
-
-        // Ensure we have state for this parameter set
-        if m.is_empty() {
-            m.push(Array::zeros(params_dyn.raw_dim()));
-        } else if m[0].raw_dim() != params_dyn.raw_dim() {
-            // If the parameter dimensions have changed, reset state
-            m[0] = Array::zeros(params_dyn.raw_dim());
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
         }
-
-        // Step 1: Compute interpolated update using beta1
-        let interpolated_update = &m[0] * self.beta1 + &gradients_dyn * (A::one() - self.beta1);
-
-        // Step 2: Compute sign of interpolated update
-        let sign_update = interpolated_update.mapv(|x| {
-            if x > A::zero() {
-                A::one()
-            } else if x < A::zero() {
-                -A::one()
-            } else {
-                A::zero()
-            }
-        });
-
-        // Step 3: Update parameters
-        let mut updated_params = params_dyn.clone();
-
-        // Apply weight decay if specified
-        if self.weight_decay > A::zero() {
-            updated_params = &updated_params * (A::one() - self.weight_decay * self.learning_rate);
-        }
-
-        // Apply the sign update
-        updated_params = &updated_params - &sign_update * self.learning_rate;
-
-        // Step 4: Update momentum using beta2
-        m[0] = &m[0] * self.beta2 + &gradients_dyn * (A::one() - self.beta2);
-
-        // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("unwrap failed"))
+        Ok(results)
     }
 
     fn get_learning_rate(&self) -> A {

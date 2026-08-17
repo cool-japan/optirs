@@ -1,6 +1,6 @@
 //! # OptiRS Learned - Learned Optimizers and Meta-Learning
 //!
-//! **Version:** 0.3.1
+//! **Version:** 0.3.2
 //! **Status:** Research Phase (Early Implementation)
 //!
 //! ⚠️ **Warning:** This crate is in early research phase. APIs may change significantly

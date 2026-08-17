@@ -1,6 +1,6 @@
 // Adam optimizer implementation
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
@@ -8,7 +8,7 @@ use std::fmt::Debug;
 // Note: OptiRS receives pre-computed gradients, so scirs2-autograd is not needed
 use scirs2_optimize::stochastic::{minimize_adam, AdamOptions};
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// Adam optimizer
@@ -51,12 +51,15 @@ pub struct Adam<A: Float + ScalarOperand + Debug> {
     epsilon: A,
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
-    /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
-    /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
-    /// Current timestep
-    t: usize,
+    /// First moment vectors, one slot per parameter-tensor index
+    m: Option<Vec<Array<A, IxDyn>>>,
+    /// Second moment vectors, one slot per parameter-tensor index
+    v: Option<Vec<Array<A, IxDyn>>>,
+    /// Per-parameter-index timestep counters
+    ///
+    /// Each parameter tensor passed through [`Optimizer::step_list`] keeps its own
+    /// timestep so that bias correction is computed independently per tensor.
+    t: Vec<usize>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> Adam<A> {
@@ -74,7 +77,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Adam<A> {
             weight_decay: A::zero(),
             m: None,
             v: None,
-            t: 0,
+            t: Vec::new(),
         }
     }
 
@@ -102,7 +105,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Adam<A> {
             weight_decay,
             m: None,
             v: None,
-            t: 0,
+            t: Vec::new(),
         }
     }
 
@@ -188,7 +191,141 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Adam<A> {
     pub fn reset(&mut self) {
         self.m = None;
         self.v = None;
-        self.t = 0;
+        self.t.clear();
+    }
+
+    /// Returns the timestep recorded for the parameter tensor at `index`
+    ///
+    /// Returns `0` when the index has never been stepped.
+    pub fn timestep(&self, index: usize) -> usize {
+        self.t.get(index).copied().unwrap_or(0)
+    }
+
+    /// Ensures state slots exist for `index` and match `dim`, then advances its timestep
+    ///
+    /// Returns the new (1-based) timestep for that index.
+    fn advance_state(&mut self, index: usize, dim: &IxDyn) -> Result<usize> {
+        let m = self.m.get_or_insert_with(Vec::new);
+        let v = self.v.get_or_insert_with(Vec::new);
+        while m.len() <= index {
+            m.push(Array::zeros(dim.clone()));
+        }
+        while v.len() <= index {
+            v.push(Array::zeros(dim.clone()));
+        }
+        while self.t.len() <= index {
+            self.t.push(0);
+        }
+
+        // Reset the slot when the parameter shape for this index changed
+        if m[index].raw_dim() != *dim || v[index].raw_dim() != *dim {
+            m[index] = Array::zeros(dim.clone());
+            v[index] = Array::zeros(dim.clone());
+            self.t[index] = 0;
+        }
+
+        let next = self.t[index].checked_add(1).ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "Timestep counter overflow - too many optimization steps".to_string(),
+            )
+        })?;
+        self.t[index] = next;
+        Ok(next)
+    }
+
+    /// Applies an Adam update in place for the parameter tensor at `index`
+    ///
+    /// This is the allocation-free hot path: the moments and the parameters are
+    /// updated with a single fused [`Zip`] traversal, so no temporary arrays are
+    /// created per step.
+    pub fn step_inplace_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &mut Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<()> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
+        }
+
+        let dim = params.raw_dim().into_dyn();
+        let t = self.advance_state(index, &dim)?;
+
+        let exp = i32::try_from(t).map_err(|_| {
+            OptimError::InvalidConfig(
+                "Timestep too large for bias correction calculation".to_string(),
+            )
+        })?;
+
+        let beta1 = self.beta1;
+        let beta2 = self.beta2;
+        let lr = self.learning_rate;
+        let eps = self.epsilon;
+        let weight_decay = self.weight_decay;
+        let one = A::one();
+        let bias_correction1 = one - beta1.powi(exp);
+        let bias_correction2 = one - beta2.powi(exp);
+        let use_weight_decay = weight_decay > A::zero();
+
+        let m = self
+            .m
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("Adam state not initialized".to_string()))?;
+        let v = self
+            .v
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("Adam state not initialized".to_string()))?;
+
+        let mut params_view = params.view_mut().into_dyn();
+        let gradients_view = gradients.view().into_dyn();
+
+        Zip::from(&mut params_view)
+            .and(&gradients_view)
+            .and(&mut m[index])
+            .and(&mut v[index])
+            .for_each(|p, &g, m_i, v_i| {
+                let grad = if use_weight_decay {
+                    g + weight_decay * *p
+                } else {
+                    g
+                };
+                *m_i = *m_i * beta1 + grad * (one - beta1);
+                *v_i = *v_i * beta2 + grad * grad * (one - beta2);
+                let m_hat = *m_i / bias_correction1;
+                let v_hat = *v_i / bias_correction2;
+                *p = *p - lr * m_hat / (v_hat.sqrt() + eps);
+            });
+
+        Ok(())
+    }
+
+    /// Applies an Adam update in place using the state slot of the first parameter tensor
+    pub fn step_inplace<D: Dimension>(
+        &mut self,
+        params: &mut Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<()> {
+        self.step_inplace_indexed(0, params, gradients)
+    }
+
+    /// Performs an Adam update for the parameter tensor at `index`
+    ///
+    /// Each `index` owns an independent moment/timestep slot, so several parameter
+    /// tensors of different shapes can be optimized by a single `Adam` instance
+    /// without their state interfering.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        let mut updated = params.to_owned();
+        self.step_inplace_indexed(index, &mut updated, gradients)?;
+        Ok(updated)
     }
 }
 
@@ -198,87 +335,27 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Validate that parameters and gradients have compatible shapes
-        if params.shape() != gradients.shape() {
-            return Err(crate::error::OptimError::DimensionMismatch(format!(
-                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
-                params.shape(),
-                gradients.shape()
+        self.step_indexed(0, params, gradients)
+    }
+
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
             )));
         }
 
-        // Convert to dynamic dimension for storage in state vectors
-        let params_dyn = params.to_owned().into_dyn();
-        let gradients_dyn = gradients.to_owned().into_dyn();
-
-        // Apply weight decay to gradients if needed
-        let adjusted_gradients = if self.weight_decay > A::zero() {
-            &gradients_dyn + &(&params_dyn * self.weight_decay)
-        } else {
-            gradients_dyn
-        };
-
-        // Initialize state if this is the first step
-        if self.m.is_none() {
-            self.m = Some(vec![Array::zeros(params_dyn.raw_dim())]);
-            self.v = Some(vec![Array::zeros(params_dyn.raw_dim())]);
-            self.t = 0;
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
         }
-
-        let m = self.m.as_mut().expect("unwrap failed");
-        let v = self.v.as_mut().expect("unwrap failed");
-
-        // Ensure we have state for this parameter set
-        if m.is_empty() {
-            m.push(Array::zeros(params_dyn.raw_dim()));
-            v.push(Array::zeros(params_dyn.raw_dim()));
-        } else if m[0].raw_dim() != params_dyn.raw_dim() {
-            // If the parameter dimensions have changed, reset state
-            m[0] = Array::zeros(params_dyn.raw_dim());
-            v[0] = Array::zeros(params_dyn.raw_dim());
-        }
-
-        // Increment timestep with overflow protection
-        self.t = self.t.checked_add(1).ok_or_else(|| {
-            crate::error::OptimError::InvalidConfig(
-                "Timestep counter overflow - too many optimization steps".to_string(),
-            )
-        })?;
-
-        // Update biased first moment estimate
-        m[0] = &m[0] * self.beta1 + &(&adjusted_gradients * (A::one() - self.beta1));
-
-        // Update biased second raw moment estimate
-        v[0] = &v[0] * self.beta2
-            + &(&adjusted_gradients * &adjusted_gradients * (A::one() - self.beta2));
-
-        // Compute bias-corrected first moment estimate with safe integer conversion
-        let exp_beta1 = i32::try_from(self.t).map_err(|_| {
-            crate::error::OptimError::InvalidConfig(
-                "Timestep too large for bias correction calculation".to_string(),
-            )
-        })?;
-        let m_hat = &m[0] / (A::one() - self.beta1.powi(exp_beta1));
-
-        // Compute bias-corrected second raw moment estimate with safe integer conversion
-        let exp_beta2 = i32::try_from(self.t).map_err(|_| {
-            crate::error::OptimError::InvalidConfig(
-                "Timestep too large for bias correction calculation".to_string(),
-            )
-        })?;
-        let v_hat = &v[0] / (A::one() - self.beta2.powi(exp_beta2));
-
-        // Compute square root of v_hat
-        let v_hat_sqrt = v_hat.mapv(|x| x.sqrt());
-
-        // Update parameters
-        let step = &m_hat / &(&v_hat_sqrt + self.epsilon) * self.learning_rate;
-        let updated_params = &params_dyn - step;
-
-        // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("unwrap failed"))
+        Ok(results)
     }
 
     fn get_learning_rate(&self) -> A {

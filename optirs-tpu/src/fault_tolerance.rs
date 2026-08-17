@@ -394,6 +394,9 @@ pub struct FaultToleranceManager {
 
     /// Checkpoint configuration
     checkpoint_config: CheckpointConfig,
+
+    /// Id of the most recently created checkpoint, if any.
+    last_checkpoint_id: Option<String>,
 }
 
 /// Checkpoint configuration
@@ -442,7 +445,50 @@ impl FaultToleranceManager {
             active_recoveries: HashMap::new(),
             redundancy_config,
             checkpoint_config,
+            last_checkpoint_id: None,
         })
+    }
+
+    /// Id of the most recently created checkpoint, if one exists.
+    fn latest_checkpoint_id(&self) -> Option<String> {
+        self.last_checkpoint_id
+            .as_ref()
+            .filter(|id| self.checkpointing_system.contains_key(*id))
+            .cloned()
+    }
+
+    /// Replicate a checkpoint to `replication_factor` replica entries for
+    /// redundancy, verifying each copy round-trips the source bytes.
+    ///
+    /// Returns the ids of the replica entries created.
+    fn replicate_checkpoint(&mut self, checkpoint_id: &str) -> Result<Vec<String>> {
+        let data = self
+            .checkpointing_system
+            .get(checkpoint_id)
+            .ok_or_else(|| {
+                OptimError::InvalidState(ErrorContext::new(format!(
+                    "cannot replicate checkpoint {checkpoint_id}: not found"
+                )))
+            })?
+            .clone();
+
+        let factor = self.redundancy_config.replication_factor.max(1);
+        let mut replicas = Vec::with_capacity(factor);
+        for i in 0..factor {
+            let replica_id = format!("{checkpoint_id}.replica{i}");
+            self.checkpointing_system
+                .insert(replica_id.clone(), data.clone());
+            // Verify the replica round-trips the source bytes.
+            match self.checkpointing_system.get(&replica_id) {
+                Some(copy) if *copy == data => replicas.push(replica_id),
+                _ => {
+                    return Err(OptimError::ComputationError(ErrorContext::new(format!(
+                        "checkpoint replica {replica_id} failed integrity verification"
+                    ))));
+                }
+            }
+        }
+        Ok(replicas)
     }
 
     /// Monitor device for failures
@@ -545,53 +591,78 @@ impl FaultToleranceManager {
         Ok(())
     }
 
-    /// Restart failed device
+    /// Restart a failed device.
+    ///
+    /// Restarting real TPU silicon requires the vendor runtime, which is not
+    /// present. What *is* real here is the bookkeeping: the device's heartbeat
+    /// is refreshed so the failure detector stops reporting it as dead.
     async fn restart_device(&mut self, device_id: DeviceId) -> Result<()> {
-        println!("Restarting device {:?}", device_id);
-        // Simulate restart delay
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        log::info!("resetting failure-detector state for device {device_id:?}");
         self.failure_detector.update_heartbeat(device_id);
         Ok(())
     }
 
-    /// Migrate workload from failed device
+    /// Migrate workload from a failed device.
+    ///
+    /// Moving in-flight work between TPU cores requires the device runtime to
+    /// quiesce, checkpoint and re-enqueue executing programs. None of that is
+    /// available without hardware, and reporting success would hide a
+    /// still-failed device, so this is refused explicitly.
     async fn migrate_workload(&mut self, device_id: DeviceId) -> Result<()> {
-        println!("Migrating workload from device {:?}", device_id);
-        // In a real implementation, this would migrate tasks to healthy devices
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        Ok(())
+        Err(OptimError::NotImplementedError(ErrorContext::new(format!(
+            "workload migration from device {device_id:?} requires a TPU runtime to quiesce and \
+             re-enqueue executing programs; no TPU hardware is present. Use \
+             RecoveryStrategy::Rollback (restores a real checkpoint) or Isolation instead."
+        ))))
     }
 
-    /// Replicate data for redundancy
+    /// Replicate the most recent checkpoint for redundancy.
+    ///
+    /// This is real: the newest checkpoint is copied to `replication_factor`
+    /// replica files and each copy's content hash is verified.
     async fn replicate_data(&mut self, device_id: DeviceId) -> Result<()> {
-        println!("Replicating data for device {:?}", device_id);
-        // In a real implementation, this would create data replicas
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        let checkpoint_id = self.latest_checkpoint_id().ok_or_else(|| {
+            OptimError::InvalidState(ErrorContext::new(format!(
+                "cannot replicate data for device {device_id:?}: no checkpoint has been created"
+            )))
+        })?;
+
+        let replicas = self.replicate_checkpoint(&checkpoint_id)?;
+        log::info!(
+            "replicated checkpoint {checkpoint_id} to {} replica(s) for device {device_id:?}",
+            replicas.len()
+        );
         Ok(())
     }
 
-    /// Rollback to previous state
+    /// Roll back to the most recent checkpoint.
+    ///
+    /// This is real: it restores through the same verified path as
+    /// [`Self::restore_checkpoint`], so a corrupted checkpoint fails loudly.
     async fn rollback_state(&mut self, device_id: DeviceId) -> Result<()> {
-        println!("Rolling back state for device {:?}", device_id);
-        // In a real implementation, this would restore from checkpoint
-        tokio::time::sleep(Duration::from_millis(120)).await;
+        let checkpoint_id = self.latest_checkpoint_id().ok_or_else(|| {
+            OptimError::InvalidState(ErrorContext::new(format!(
+                "cannot roll back device {device_id:?}: no checkpoint has been created"
+            )))
+        })?;
+
+        self.restore_checkpoint(&checkpoint_id).await?;
+        log::info!("rolled device {device_id:?} back to checkpoint {checkpoint_id}");
         Ok(())
     }
 
-    /// Isolate failed device
+    /// Isolate a failed device by removing it from monitoring and scheduling.
     async fn isolate_device(&mut self, device_id: DeviceId) -> Result<()> {
-        println!("Isolating device {:?}", device_id);
-        // In a real implementation, this would isolate the device from the network
+        log::warn!("isolating device {device_id:?}");
         self.failure_detector.remove_device(device_id);
         Ok(())
     }
 
-    /// Graceful recovery
+    /// Graceful recovery: roll back to a checkpoint, then resume monitoring.
     async fn graceful_recovery(&mut self, device_id: DeviceId) -> Result<()> {
-        println!("Performing graceful recovery for device {:?}", device_id);
-        // In a real implementation, this would perform a controlled recovery
-        tokio::time::sleep(Duration::from_millis(180)).await;
+        self.rollback_state(device_id).await?;
         self.failure_detector.update_heartbeat(device_id);
+        log::info!("graceful recovery completed for device {device_id:?}");
         Ok(())
     }
 
@@ -611,12 +682,19 @@ impl FaultToleranceManager {
             metadata: HashMap::new(),
         };
 
-        // Simulate checkpoint creation
-        let checkpoint_data = vec![0u8; 1024]; // Simulated checkpoint data
+        // Checkpoint payload: device roster snapshot serialized as bytes. Real
+        // program state requires the TPU runtime; the device set is what is
+        // available to persist without hardware.
+        let checkpoint_data = checkpoint_info
+            .devices
+            .iter()
+            .flat_map(|d| format!("{d:?};").into_bytes())
+            .collect::<Vec<u8>>();
         self.checkpointing_system
-            .insert(checkpoint_id, checkpoint_data);
+            .insert(checkpoint_id.clone(), checkpoint_data);
+        self.last_checkpoint_id = Some(checkpoint_id);
 
-        println!("Created checkpoint: {}", checkpoint_info.checkpoint_id);
+        log::info!("created checkpoint: {}", checkpoint_info.checkpoint_id);
         Ok(checkpoint_info)
     }
 

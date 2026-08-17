@@ -118,7 +118,9 @@ mod integration_tests {
             .step::<fn() -> f32>(layer_gradients, None)
             .expect("unwrap failed");
         assert!(updates.contains_key("dense1"));
-        assert_eq!(updates["dense1"].dim(), gradients.dim());
+        // Updates are weight updates: [out_dim, input_dim + 1] for a biased dense layer,
+        // not the [batch, out_dim] shape of the per-sample output gradients.
+        assert_eq!(updates["dense1"].dim(), (2, 5));
     }
 
     #[test]
@@ -160,8 +162,9 @@ mod integration_tests {
             assert!(updates.contains_key("layer2"));
 
             // Check that updates have correct dimensions
-            assert_eq!(updates["layer1"].dim(), gradients1.dim());
-            assert_eq!(updates["layer2"].dim(), gradients2.dim());
+            // layer1 is dense(8 -> 4) with bias, layer2 is dense(4 -> 2) without.
+            assert_eq!(updates["layer1"].dim(), (4, 9));
+            assert_eq!(updates["layer2"].dim(), (2, 4));
 
             // Verify step count increases
             assert_eq!(kfac.step_count(), step + 1);

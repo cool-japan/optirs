@@ -3,18 +3,19 @@
 // This module provides learning rate schedulers that adjust the learning rate
 // based on metric values.
 
+use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::ScalarOperand;
 use scirs2_core::numeric::{Float, FromPrimitive};
-#[cfg(not(feature = "metrics_integration"))]
+#[cfg(not(feature = "metrics-integration"))]
 use std::fmt::Debug;
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 use std::fmt::{Debug, Display};
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 use crate::schedulers::LearningRateScheduler;
 
 /// A scheduler that adjusts learning rate based on metrics
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 #[derive(Debug, Clone)]
 pub struct MetricScheduler<F: Float + Debug + Display + ScalarOperand + FromPrimitive> {
     /// Base scheduler
@@ -23,9 +24,13 @@ pub struct MetricScheduler<F: Float + Debug + Display + ScalarOperand + FromPrim
     threshold: F,
 }
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync> MetricScheduler<F> {
     /// Create a new metric-based scheduler
+    ///
+    /// # Errors
+    /// Returns [`OptimError::ConfigurationError`] if the default improvement
+    /// threshold (`1e-4`) cannot be represented in the target float type `F`.
     pub fn new(
         initial_lr: F,
         factor: F,
@@ -33,8 +38,13 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync> M
         min_lr: F,
         metric_name: &str,
         maximize: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let threshold = F::from(1e-4).ok_or_else(|| {
+            OptimError::ConfigurationError(
+                "failed to represent default threshold 1e-4 in target float type".to_string(),
+            )
+        })?;
+        Ok(Self {
             scheduler: scirs2_metrics::integration::optim::MetricLRScheduler::new(
                 initial_lr,
                 factor,
@@ -43,8 +53,8 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync> M
                 metric_name,
                 maximize,
             ),
-            threshold: F::from(1e-4).expect("unwrap failed"),
-        }
+            threshold,
+        })
     }
 
     /// Set the threshold for considering an improvement
@@ -55,7 +65,7 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync> M
     }
 
     /// Update scheduler with a metric value
-    pub fn step_with_metric(&mut self, metricvalue: F) -> F {
+    pub fn step_with_metric(&mut self, metric_value: F) -> F {
         self.scheduler.step_with_metric(metric_value)
     }
 
@@ -80,7 +90,7 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync> M
     }
 }
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
     LearningRateScheduler<F> for MetricScheduler<F>
 {
@@ -99,7 +109,7 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
 }
 
 /// A wrapper around ReduceOnPlateau for use with metrics
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 #[derive(Debug)]
 pub struct MetricBasedReduceOnPlateau<F: Float + Debug + Display + ScalarOperand + FromPrimitive> {
     /// Base scheduler
@@ -112,11 +122,16 @@ pub struct MetricBasedReduceOnPlateau<F: Float + Debug + Display + ScalarOperand
     lr_history: Vec<F>,
 }
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
     MetricBasedReduceOnPlateau<F>
 {
     /// Create a new metric-based ReduceOnPlateau scheduler
+    ///
+    /// # Errors
+    /// This constructor is currently infallible under the `metrics-integration`
+    /// feature, but returns [`Result`] to keep the API symmetric with the
+    /// feature-disabled fallback (which always errors).
     pub fn new(
         initial_lr: F,
         factor: F,
@@ -124,7 +139,7 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
         min_lr: F,
         metric_name: &str,
         maximize: bool,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut scheduler =
             crate::schedulers::ReduceOnPlateau::new(initial_lr, factor, patience, min_lr);
 
@@ -135,16 +150,16 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
             scheduler.mode_min();
         }
 
-        Self {
+        Ok(Self {
             scheduler,
             metric_name: metric_name.to_string(),
             metric_history: Vec::new(),
-            _lr_history: Vec::new(),
-        }
+            lr_history: Vec::new(),
+        })
     }
 
     /// Update scheduler with a metric value
-    pub fn step_with_metric(&mut self, metricvalue: F) -> F {
+    pub fn step_with_metric(&mut self, metric_value: F) -> F {
         self.metric_history.push(metric_value);
         let lr = self.scheduler.step_with_metric(metric_value);
         self.lr_history.push(lr);
@@ -167,7 +182,7 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
     }
 }
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
     LearningRateScheduler<F> for MetricBasedReduceOnPlateau<F>
 {
@@ -188,15 +203,19 @@ impl<F: Float + Debug + Display + ScalarOperand + FromPrimitive + Send + Sync>
 }
 
 /// Error raised when metrics integration is not enabled
-#[cfg(not(feature = "metrics_integration"))]
+#[cfg(not(feature = "metrics-integration"))]
 #[derive(Debug)]
 pub struct MetricScheduler<F: Float + Debug> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-#[cfg(not(feature = "metrics_integration"))]
+#[cfg(not(feature = "metrics-integration"))]
 impl<F: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MetricScheduler<F> {
-    /// Create a new metric-based scheduler (not implemented)
+    /// Create a new metric-based scheduler (requires the `metrics-integration` feature)
+    ///
+    /// # Errors
+    /// Returns [`OptimError::MissingDependency`] because this crate was built
+    /// without the `metrics-integration` feature enabled.
     pub fn new(
         _initial_lr: F,
         _factor: F,
@@ -204,7 +223,40 @@ impl<F: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MetricSched
         _min_lr: F,
         _metric_name: &str,
         _maximize: bool,
-    ) -> Self {
-        panic!("metrics_integration feature is not enabled - enable it in your Cargo.toml");
+    ) -> Result<Self> {
+        Err(OptimError::MissingDependency(
+            "metrics-integration feature is not enabled - enable it in your Cargo.toml".to_string(),
+        ))
+    }
+}
+
+/// Fallback for [`MetricBasedReduceOnPlateau`] when the `metrics-integration`
+/// feature is not enabled. All constructors return an error so that callers
+/// see a clear, actionable message instead of a missing type or a panic.
+#[cfg(not(feature = "metrics-integration"))]
+#[derive(Debug)]
+pub struct MetricBasedReduceOnPlateau<F: Float + Debug> {
+    _phantom: std::marker::PhantomData<F>,
+}
+
+#[cfg(not(feature = "metrics-integration"))]
+impl<F: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MetricBasedReduceOnPlateau<F> {
+    /// Create a new metric-based ReduceOnPlateau scheduler (requires the
+    /// `metrics-integration` feature)
+    ///
+    /// # Errors
+    /// Returns [`OptimError::MissingDependency`] because this crate was built
+    /// without the `metrics-integration` feature enabled.
+    pub fn new(
+        _initial_lr: F,
+        _factor: F,
+        _patience: usize,
+        _min_lr: F,
+        _metric_name: &str,
+        _maximize: bool,
+    ) -> Result<Self> {
+        Err(OptimError::MissingDependency(
+            "metrics-integration feature is not enabled - enable it in your Cargo.toml".to_string(),
+        ))
     }
 }

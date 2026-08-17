@@ -1,0 +1,55 @@
+# COOLJAPAN policy enforcement for the OptiRS workspace.
+[graph]
+all-features = true
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "wasm32-unknown-unknown" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+deny = [
+    # --- BLAS / FFI numerics ---
+    { name = "openblas-src" },
+    { name = "openblas-build" },
+    { name = "blas-src" },
+    { name = "blas-sys" },
+    { name = "lapack-src" },
+    { name = "lapack-sys" },
+    { name = "intel-mkl-src" },
+    { name = "netlib-src" },
+    # --- Serialization / FFT / SMT / SQL ---
+    { name = "bincode" },
+    { name = "rustfft" },
+    { name = "z3" },
+    { name = "z3-sys" },
+    { name = "rusqlite" },
+    { name = "libsqlite3-sys" },
+    # --- Compression (use oxiarc-*) ---
+    { name = "zip" },
+    { name = "flate2", wrappers = ["ureq"] },
+    { name = "zstd" },
+    { name = "zstd-sys" },
+    { name = "bzip2" },
+    { name = "bzip2-sys" },
+    { name = "lz4" },
+    { name = "lz4-sys" },
+    { name = "tar" },
+    { name = "snap" },
+    { name = "brotli" },
+    { name = "miniz_oxide", wrappers = ["flate2"] },
+    # --- TLS / crypto FFI ---
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+    { name = "ring" },
+    { name = "aws-lc-sys" },
+    # --- C toolchain reachable only through vetted wrappers ---
+    { name = "onig" },
+    { name = "onig_sys" },
+    { name = "esaxx-rs" },
+]

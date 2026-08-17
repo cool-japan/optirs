@@ -3,7 +3,6 @@
 // This module implements various curriculum learning approaches that progressively
 // introduce optimization challenges of increasing difficulty to improve learning.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
@@ -312,16 +311,144 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         // Update progress tracker
         self.progress_tracker.update_performance(performance);
 
-        // Update curriculum state based on strategy
+        // Update curriculum state based on strategy. Every variant has its own
+        // progression rule; none of them share an implementation.
         match self.strategy {
             CurriculumStrategy::None => Ok(()),
             CurriculumStrategy::DifficultyProgression => {
                 self.update_difficulty_progression(performance)
             }
+            CurriculumStrategy::DiversityBased => {
+                self.update_diversity_curriculum(task_id, performance)
+            }
             CurriculumStrategy::SelfPaced => self.update_self_paced_curriculum(performance),
+            CurriculumStrategy::TeacherStudent => {
+                self.update_teacher_student_curriculum(performance)
+            }
+            CurriculumStrategy::Adversarial => self.update_adversarial_curriculum(performance),
+            CurriculumStrategy::MultiTask => {
+                self.update_multi_task_curriculum(task_id, performance)
+            }
             CurriculumStrategy::Adaptive => self.update_adaptive_curriculum(task_id, performance),
-            _ => self.update_generic_curriculum(performance),
         }
+    }
+
+    /// Clamp a difficulty proposal into the configured range.
+    fn clamp_difficulty(&self, value: T) -> T {
+        value
+            .max(self.curriculum_params.initial_difficulty)
+            .min(self.curriculum_params.max_difficulty)
+    }
+
+    /// Diversity-based curriculum: difficulty is driven by how many *distinct*
+    /// tasks have been seen relative to the number of attempts, so a learner
+    /// grinding a single task progresses more slowly than one covering many.
+    fn update_diversity_curriculum(&mut self, task_id: &str, performance: T) -> Result<()> {
+        self.curriculum_state.recent_performance = performance;
+
+        if !self
+            .curriculum_state
+            .active_tasks
+            .iter()
+            .any(|t| t == task_id)
+        {
+            self.curriculum_state.active_tasks.push(task_id.to_string());
+        }
+
+        let attempts = self.performance_history.len().max(1);
+        let distinct = self.curriculum_state.active_tasks.len();
+        let diversity: T = scirs2_core::numeric::NumCast::from(distinct as f64 / attempts as f64)
+            .unwrap_or_else(|| T::zero());
+
+        let increment = self.curriculum_params.difficulty_increment
+            * self.curriculum_params.diversity_weight
+            * diversity;
+        self.curriculum_state.current_difficulty =
+            self.clamp_difficulty(self.curriculum_state.current_difficulty + increment);
+        self.update_learning_phase();
+
+        Ok(())
+    }
+
+    /// Teacher-student curriculum: the student only advances once its
+    /// performance clears the teacher's confidence bar; falling short pulls the
+    /// difficulty back down.
+    fn update_teacher_student_curriculum(&mut self, performance: T) -> Result<()> {
+        self.curriculum_state.recent_performance = performance;
+
+        let increment = self.curriculum_params.difficulty_increment;
+        let proposal = if performance >= self.curriculum_params.teacher_confidence {
+            self.curriculum_state.epochs_since_increase = 0;
+            self.curriculum_state.current_difficulty + increment
+        } else {
+            self.curriculum_state.epochs_since_increase += 1;
+            let half: T = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::one());
+            self.curriculum_state.current_difficulty - increment * half
+        };
+
+        self.curriculum_state.current_difficulty = self.clamp_difficulty(proposal);
+        self.update_learning_phase();
+        Ok(())
+    }
+
+    /// Adversarial curriculum: the environment pushes back hardest exactly when
+    /// the learner is doing well, and relents when it collapses.
+    fn update_adversarial_curriculum(&mut self, performance: T) -> Result<()> {
+        self.curriculum_state.recent_performance = performance;
+
+        let two: T = scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::one());
+        let half: T = scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::one());
+        let threshold = self.curriculum_params.progression_threshold;
+
+        let proposal = if performance > threshold {
+            self.curriculum_state.current_difficulty
+                + self.curriculum_params.difficulty_increment * two
+        } else if performance < threshold * half {
+            self.curriculum_state.current_difficulty - self.curriculum_params.difficulty_increment
+        } else {
+            self.curriculum_state.current_difficulty
+        };
+
+        self.curriculum_state.current_difficulty = self.clamp_difficulty(proposal);
+        self.update_learning_phase();
+        Ok(())
+    }
+
+    /// Multi-task curriculum: the difficulty follows the *weakest* task, so a
+    /// single lagging task holds the whole curriculum back.
+    fn update_multi_task_curriculum(&mut self, task_id: &str, performance: T) -> Result<()> {
+        self.curriculum_state.recent_performance = performance;
+
+        let alpha: T = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
+        let competency = self
+            .progress_tracker
+            .competency_levels
+            .get(task_id)
+            .copied()
+            .unwrap_or(T::zero());
+        let updated = competency * (T::one() - alpha) + performance * alpha;
+        self.progress_tracker
+            .competency_levels
+            .insert(task_id.to_string(), updated);
+
+        let weakest = self
+            .progress_tracker
+            .competency_levels
+            .values()
+            .cloned()
+            .fold(T::infinity(), |a, b| a.min(b));
+
+        let proposal = if weakest.is_finite()
+            && weakest > self.curriculum_params.progression_threshold
+        {
+            self.curriculum_state.current_difficulty + self.curriculum_params.difficulty_increment
+        } else {
+            self.curriculum_state.current_difficulty
+        };
+
+        self.curriculum_state.current_difficulty = self.clamp_difficulty(proposal);
+        self.update_learning_phase();
+        Ok(())
     }
 
     /// Get next task according to curriculum
@@ -398,20 +525,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         Ok(())
     }
 
-    /// Generic curriculum update
-    fn update_generic_curriculum(&mut self, performance: T) -> Result<()> {
-        // Simple linear progression based on performance
-        if performance > scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()) {
-            let increment = self.curriculum_params.difficulty_increment
-                * scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero());
-            self.curriculum_state.current_difficulty = (self.curriculum_state.current_difficulty
-                + increment)
-                .min(self.curriculum_params.max_difficulty);
-        }
-
-        Ok(())
-    }
-
     /// Update learning phase
     fn update_learning_phase(&mut self) {
         let difficulty_ratio =
@@ -483,13 +596,15 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
             .iter()
             .cloned()
             .fold(T::zero(), |a, b| a + b)
-            / T::from(task_performances.len() as f64).expect("unwrap failed");
+            / scirs2_core::numeric::NumCast::from(task_performances.len() as f64)
+                .unwrap_or_else(|| T::one());
 
         let variance = task_performances
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |a, b| a + b)
-            / T::from((task_performances.len() - 1) as f64).expect("unwrap failed");
+            / scirs2_core::numeric::NumCast::from((task_performances.len() - 1) as f64)
+                .unwrap_or_else(|| T::one());
 
         variance
     }
@@ -570,7 +685,8 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
         );
         stats.insert(
             "active_tasks_count".to_string(),
-            T::from(self.curriculum_state.active_tasks.len() as f64).expect("unwrap failed"),
+            scirs2_core::numeric::NumCast::from(self.curriculum_state.active_tasks.len() as f64)
+                .unwrap_or_else(|| T::zero()),
         );
 
         // Average competency across all tasks
@@ -581,17 +697,39 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumLearn
                 .values()
                 .cloned()
                 .fold(T::zero(), |a, b| a + b)
-                / T::from(self.progress_tracker.competency_levels.len() as f64)
-                    .expect("unwrap failed");
+                / scirs2_core::numeric::NumCast::from(
+                    self.progress_tracker.competency_levels.len() as f64,
+                )
+                .unwrap_or_else(|| T::one());
             stats.insert("average_competency".to_string(), avg_competency);
         }
 
         stats
     }
 
+    /// Get the active curriculum strategy
+    pub fn strategy(&self) -> CurriculumStrategy {
+        self.strategy
+    }
+
+    /// Current difficulty level
+    pub fn current_difficulty(&self) -> T {
+        self.curriculum_state.current_difficulty
+    }
+
+    /// Current learning phase
+    pub fn learning_phase(&self) -> LearningPhase {
+        self.curriculum_state.learning_phase
+    }
+
+    /// Change the task scheduling policy
+    pub fn set_scheduling_policy(&mut self, policy: SchedulingPolicy) {
+        self.task_scheduler.set_policy(policy);
+    }
+
     /// Reset curriculum state
     pub fn reset(&mut self) {
-        self.curriculum_state = CurriculumState::new().expect("unwrap failed");
+        self.curriculum_state = CurriculumState::new_state();
         self.progress_tracker.reset();
         self.performance_history.clear();
         self.task_scheduler.reset();
@@ -637,7 +775,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LearningProgres
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumState<T> {
     fn new() -> Result<Self> {
-        Ok(Self {
+        Ok(Self::new_state())
+    }
+
+    fn new_state() -> Self {
+        Self {
             current_difficulty: scirs2_core::numeric::NumCast::from(0.1)
                 .unwrap_or_else(|| T::zero()),
             active_tasks: Vec::new(),
@@ -645,7 +787,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CurriculumState
             epochs_since_increase: 0,
             learning_phase: LearningPhase::Exploration,
             adaptive_params: HashMap::new(),
-        })
+        }
     }
 }
 
@@ -663,12 +805,91 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskScheduler<T
         self.task_queue.push_back(task);
     }
 
+    /// Pick the next task according to the configured scheduling policy.
     fn schedule_next_task(&mut self) -> Option<String> {
-        if let Some(task) = self.task_queue.pop_front() {
-            Some(task.task_id)
-        } else {
-            None
+        if self.task_queue.is_empty() {
+            return None;
         }
+
+        let index = match self.scheduling_policy {
+            SchedulingPolicy::FIFO => 0,
+            SchedulingPolicy::Priority => Self::arg_extreme(&self.task_queue, true),
+            SchedulingPolicy::Balanced => Self::arg_extreme(&self.task_queue, false),
+            SchedulingPolicy::WeightedRandom => {
+                // Deterministic weighted choice driven by the queue state so the
+                // scheduler stays reproducible without an external generator.
+                let total: f64 = self
+                    .task_queue
+                    .iter()
+                    .map(|t| t.priority.to_f64().unwrap_or(0.0).max(0.0))
+                    .sum();
+                if total <= 0.0 {
+                    0
+                } else {
+                    let mut target =
+                        (self.task_weights.len() as f64 * 0.618_033_988_75).fract() * total;
+                    let mut chosen = self.task_queue.len() - 1;
+                    for (i, task) in self.task_queue.iter().enumerate() {
+                        target -= task.priority.to_f64().unwrap_or(0.0).max(0.0);
+                        if target <= 0.0 {
+                            chosen = i;
+                            break;
+                        }
+                    }
+                    chosen
+                }
+            }
+            SchedulingPolicy::Adaptive => {
+                // Prefer the task whose difficulty is closest to the required
+                // competency, i.e. the best-matched challenge.
+                let mut best = 0;
+                let mut best_gap = T::infinity();
+                for (i, task) in self.task_queue.iter().enumerate() {
+                    let gap = (task.difficulty - task.required_competency).abs();
+                    if gap < best_gap {
+                        best_gap = gap;
+                        best = i;
+                    }
+                }
+                best
+            }
+        };
+
+        let task = self.task_queue.remove(index)?;
+        let counter = self
+            .load_balancing
+            .entry(task.task_id.clone())
+            .or_insert(T::zero());
+        *counter = *counter + T::one();
+        self.task_weights
+            .insert(task.task_id.clone(), task.priority);
+        Some(task.task_id)
+    }
+
+    /// Index of the highest (or lowest) priority task.
+    fn arg_extreme(queue: &VecDeque<ScheduledTask<T>>, highest: bool) -> usize {
+        let mut best = 0;
+        let mut best_priority = match queue.front() {
+            Some(task) => task.priority,
+            None => return 0,
+        };
+        for (i, task) in queue.iter().enumerate() {
+            let better = if highest {
+                task.priority > best_priority
+            } else {
+                task.priority < best_priority
+            };
+            if better {
+                best_priority = task.priority;
+                best = i;
+            }
+        }
+        best
+    }
+
+    /// Change the scheduling policy.
+    fn set_policy(&mut self, policy: SchedulingPolicy) {
+        self.scheduling_policy = policy;
     }
 
     fn reset(&mut self) {
@@ -706,5 +927,128 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> Default for Cur
             teacher_confidence: scirs2_core::numeric::NumCast::from(0.9)
                 .unwrap_or_else(|| T::zero()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn all_strategies() -> [CurriculumStrategy; 8] {
+        [
+            CurriculumStrategy::None,
+            CurriculumStrategy::DifficultyProgression,
+            CurriculumStrategy::DiversityBased,
+            CurriculumStrategy::SelfPaced,
+            CurriculumStrategy::TeacherStudent,
+            CurriculumStrategy::Adversarial,
+            CurriculumStrategy::MultiTask,
+            CurriculumStrategy::Adaptive,
+        ]
+    }
+
+    #[test]
+    fn every_strategy_runs_and_stays_in_range() {
+        for strategy in all_strategies() {
+            let mut learner = CurriculumLearner::<f64>::new(strategy).expect("curriculum creation");
+            for step in 0..50 {
+                let task = if step % 3 == 0 { "a" } else { "b" };
+                learner
+                    .update_curriculum(task, 0.9, step)
+                    .unwrap_or_else(|e| panic!("{strategy:?} failed: {e}"));
+            }
+            let difficulty = learner.current_difficulty();
+            assert!(
+                (0.1..=1.0).contains(&difficulty),
+                "{strategy:?} produced difficulty {difficulty}"
+            );
+        }
+    }
+
+    #[test]
+    fn strategies_do_not_all_behave_identically() {
+        let run = |strategy| {
+            let mut learner = CurriculumLearner::<f64>::new(strategy).expect("curriculum creation");
+            for step in 0..30 {
+                learner
+                    .update_curriculum("task", 0.95, step)
+                    .expect("update");
+            }
+            learner.current_difficulty()
+        };
+
+        let teacher = run(CurriculumStrategy::TeacherStudent);
+        let adversarial = run(CurriculumStrategy::Adversarial);
+        let diversity = run(CurriculumStrategy::DiversityBased);
+        let multi_task = run(CurriculumStrategy::MultiTask);
+
+        let mut distinct = vec![teacher, adversarial, diversity, multi_task];
+        distinct.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        distinct.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+        assert!(
+            distinct.len() >= 3,
+            "strategies collapsed to the same behaviour: {distinct:?}"
+        );
+    }
+
+    #[test]
+    fn zero_performance_keeps_difficulty_finite() {
+        for strategy in all_strategies() {
+            let mut learner = CurriculumLearner::<f64>::new(strategy).expect("curriculum creation");
+            for step in 0..20 {
+                learner.update_curriculum("t", 0.0, step).expect("update");
+            }
+            assert!(
+                learner.current_difficulty().is_finite(),
+                "{strategy:?} produced a non-finite difficulty"
+            );
+        }
+    }
+
+    #[test]
+    fn scheduling_policies_pick_different_tasks() {
+        let mut learner =
+            CurriculumLearner::<f64>::new(CurriculumStrategy::Adaptive).expect("creation");
+        learner.add_task("hard".to_string(), 4.0, 0.9).expect("add");
+        learner.add_task("easy".to_string(), 1.0, 0.9).expect("add");
+
+        learner.set_scheduling_policy(SchedulingPolicy::FIFO);
+        assert_eq!(
+            learner.get_next_task().expect("schedule"),
+            Some("hard".to_string())
+        );
+
+        let mut learner =
+            CurriculumLearner::<f64>::new(CurriculumStrategy::Adaptive).expect("creation");
+        learner.add_task("hard".to_string(), 4.0, 0.9).expect("add");
+        learner.add_task("easy".to_string(), 1.0, 0.9).expect("add");
+        learner.set_scheduling_policy(SchedulingPolicy::Priority);
+        // Priority is 1 / difficulty, so the easy task wins.
+        assert_eq!(
+            learner.get_next_task().expect("schedule"),
+            Some("easy".to_string())
+        );
+    }
+
+    #[test]
+    fn statistics_are_reported() {
+        let mut learner =
+            CurriculumLearner::<f64>::new(CurriculumStrategy::Adaptive).expect("creation");
+        learner.update_curriculum("t", 0.7, 1).expect("update");
+        let stats = learner.get_curriculum_statistics();
+        assert!(stats.contains_key("current_difficulty"));
+        assert!(stats.contains_key("recent_performance"));
+    }
+
+    #[test]
+    fn reset_restores_the_initial_state() {
+        let mut learner =
+            CurriculumLearner::<f64>::new(CurriculumStrategy::Adversarial).expect("creation");
+        for step in 0..20 {
+            learner.update_curriculum("t", 0.99, step).expect("update");
+        }
+        assert!(learner.current_difficulty() > 0.1);
+        learner.reset();
+        assert!((learner.current_difficulty() - 0.1).abs() < 1e-12);
     }
 }

@@ -4,8 +4,8 @@
 // and temporal spike patterns, designed for neuromorphic computing platforms.
 
 use super::{
-    EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics, PlasticityModel,
-    STDPConfig, Spike, SpikeTrain,
+    to_generic_or, EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics,
+    PlasticityModel, STDPConfig, Spike, SpikeTrain,
 };
 
 // SciRS2 Integration - CRITICAL for neuromorphic computing
@@ -170,6 +170,13 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for HomeostaticConfig<T> 
     }
 }
 
+/// Shared rate-coding parameters (F54): `rate_encode` and `rate_decode`
+/// must agree on both the encoding window and the max firing rate, or
+/// decoding introduces a systematic gain error. Both now derive their
+/// window from [`SpikingOptimizer::rate_coding_window`] and their max
+/// rate from this single constant.
+const RATE_CODING_MAX_RATE_HZ: f64 = 100.0;
+
 impl<T: Float + Debug + Send + Sync + 'static> Default for SpikeNoiseConfig<T> {
     fn default() -> Self {
         Self {
@@ -212,6 +219,12 @@ pub struct SpikingOptimizer<
 
     /// Refractory state
     refractory_until: Array1<T>,
+
+    /// Per-neuron synaptic current `I_syn`, accumulated from external
+    /// input spikes and from internal spikes propagated through
+    /// `synaptic_weights` (F52), then consumed each step by
+    /// `update_membrane_potential`'s `R * I_syn` term.
+    synaptic_current: Array1<T>,
 
     /// Homeostatic scaling factors
     homeostatic_scales: Array1<T>,
@@ -258,6 +271,7 @@ impl<
                 T::from(-1000.0).unwrap_or_else(|| T::zero()),
             ),
             refractory_until: Array1::zeros(num_neurons),
+            synaptic_current: Array1::zeros(num_neurons),
             homeostatic_scales: Array1::ones(num_neurons),
             spike_buffer: VecDeque::new(),
             metrics: NeuromorphicMetrics::default(),
@@ -289,19 +303,28 @@ impl<
         Ok(spike_trains)
     }
 
+    /// The time window (ms) that rate coding integrates spikes over.
+    /// Shared by [`Self::rate_encode`] and [`Self::rate_decode`] (F54):
+    /// using two different windows (e.g. encoding over `simulation_time`
+    /// but decoding over the much shorter `temporal_window`) introduces a
+    /// systematic gain error between the two.
+    fn rate_coding_window(&self) -> T {
+        self.config.simulation_time
+    }
+
     /// Rate encoding: firing rate proportional to input value
     fn rate_encode(&self, neuron_id: usize, value: T) -> Result<SpikeTrain<T>> {
-        let max_rate = T::from(100.0).unwrap_or_else(|| T::zero()); // 100 Hz max
+        let max_rate = to_generic_or(RATE_CODING_MAX_RATE_HZ, T::one()); // Hz
         let firing_rate = value.abs() * max_rate;
 
         let mut spike_times = Vec::new();
         let dt = self.config.time_step;
-        let total_time = self.config.simulation_time;
+        let total_time = self.rate_coding_window();
 
         let mut time = T::zero();
         while time < total_time {
             // Poisson process: probability of spike in dt
-            let spike_prob = firing_rate * dt / T::from(1000.0).unwrap_or_else(|| T::zero());
+            let spike_prob = firing_rate * dt / to_generic_or(1000.0, T::one());
 
             if thread_rng().random::<f64>() < spike_prob.to_f64().unwrap_or(0.0) {
                 spike_times.push(time);
@@ -369,12 +392,20 @@ impl<
         Ok(output)
     }
 
-    /// Rate decoding: spike count normalized by time window
+    /// Rate decoding: spike count normalized by time window. Uses the
+    /// *same* window and max rate as [`Self::rate_encode`] (F54) — this
+    /// used to normalize by `temporal_window` (20ms default) while encode
+    /// spiked over `simulation_time` (1000ms default), a 50x mismatch.
     fn rate_decode(&self, spike_train: &SpikeTrain<T>) -> Result<T> {
-        let window_duration = self.config.temporal_window;
-        let spike_count = T::from(spike_train.spike_count).unwrap_or_else(|| T::zero());
-        let rate = spike_count / (window_duration / T::from(1000.0).unwrap_or_else(|| T::zero()));
-        Ok(rate / T::from(100.0).unwrap_or_else(|| T::zero())) // Normalize by max expected rate
+        let window_duration = self.rate_coding_window();
+        let spike_count = to_generic_or(spike_train.spike_count as f64, T::zero());
+        let window_seconds = window_duration / to_generic_or(1000.0, T::one());
+        if window_seconds <= T::zero() {
+            return Ok(T::zero());
+        }
+        let rate = spike_count / window_seconds;
+        let max_rate = to_generic_or(RATE_CODING_MAX_RATE_HZ, T::one());
+        Ok(rate / max_rate) // Normalize by the same max rate used to encode
     }
 
     /// Temporal decoding: use first spike time
@@ -442,31 +473,52 @@ impl<
         Ok(output_spikes)
     }
 
-    /// Process an input spike
+    /// Process an input spike (F52): external input is accumulated as
+    /// synaptic current rather than jumping the membrane potential
+    /// directly, so it flows through the same `R * I_syn` leaky-integrator
+    /// term as internally-propagated spikes.
     fn process_input_spike(&mut self, spike: &Spike<T>) -> Result<()> {
         let target_neuron = spike.postsynaptic_id.unwrap_or(spike.neuron_id);
 
-        if target_neuron < self.membrane_potentials.len() {
-            // Add synaptic current
+        if target_neuron < self.synaptic_current.len() {
             let synaptic_current = spike.weight * spike.amplitude;
-            self.membrane_potentials[target_neuron] =
-                self.membrane_potentials[target_neuron] + synaptic_current;
+            self.synaptic_current[target_neuron] =
+                self.synaptic_current[target_neuron] + synaptic_current;
         }
 
         Ok(())
     }
 
-    /// Update membrane potential using leaky integrate-and-fire model
+    /// Update membrane potential using a leaky integrate-and-fire model
+    /// with a synaptic drive term (F52):
+    /// `tau * dV/dt = (V_rest - V) + R * I_syn`, where `R = 1 /
+    /// leak_conductance`. Previously this dropped `I_syn` entirely, so
+    /// `synaptic_weights` (built up by STDP/Hebbian learning) never
+    /// actually influenced the dynamics it was supposed to shape.
     fn update_membrane_potential(&mut self, neuron_id: usize, dt: T) -> Result<()> {
         let v = self.membrane_potentials[neuron_id];
         let v_rest = self.membrane_config.resting_potential;
         let tau = self.membrane_config.tau_membrane;
+        let leak_conductance = self.membrane_config.leak_conductance;
+        let membrane_resistance = if leak_conductance > T::zero() {
+            T::one() / leak_conductance
+        } else {
+            T::zero()
+        };
+        let i_syn = self.synaptic_current[neuron_id];
 
-        // Leaky integration: dV/dt = (V_rest - V) / tau
-        let dv_dt = (v_rest - v) / tau;
+        let dv_dt = if tau > T::zero() {
+            ((v_rest - v) + membrane_resistance * i_syn) / tau
+        } else {
+            T::zero()
+        };
         let new_v = v + dv_dt * dt;
 
         self.membrane_potentials[neuron_id] = new_v;
+
+        // The injected current is consumed by this integration step (a
+        // simple pulse model); new input/network spikes re-inject it.
+        self.synaptic_current[neuron_id] = T::zero();
 
         Ok(())
     }
@@ -487,21 +539,31 @@ impl<
         let spike = Spike {
             neuron_id,
             time: self.current_time,
-            amplitude: T::from(1.0).unwrap_or_else(|| T::zero()),
-            width: Some(T::from(1.0).unwrap_or_else(|| T::zero())),
+            amplitude: to_generic_or(1.0, T::one()),
+            width: Some(to_generic_or(1.0, T::one())),
             weight: T::one(),
             presynaptic_id: None,
             postsynaptic_id: None,
         };
 
-        // Update spike train
-        if let Some(spike_train) = self.spike_trains.get_mut(&neuron_id) {
-            spike_train.spike_times.push(self.current_time);
-            spike_train.spike_count += 1;
-        } else {
-            let spike_train = SpikeTrain::new(neuron_id, vec![self.current_time]);
-            self.spike_trains.insert(neuron_id, spike_train);
+        // Propagate this spike to every postsynaptic target through the
+        // real synaptic weight matrix (F52): this is what makes
+        // `synaptic_weights` (shaped by STDP/Hebbian plasticity) actually
+        // affect network dynamics instead of being a write-only matrix.
+        for target_id in 0..self.synaptic_weights.ncols() {
+            if target_id != neuron_id {
+                let w = self.synaptic_weights[[neuron_id, target_id]];
+                self.synaptic_current[target_id] = self.synaptic_current[target_id] + w;
+            }
         }
+
+        // Update spike train, recomputing firing_rate/duration from the
+        // updated history (F51) rather than leaving them permanently
+        // stale.
+        self.spike_trains
+            .entry(neuron_id)
+            .or_insert_with(|| SpikeTrain::new(neuron_id, Vec::new()))
+            .record_spike(self.current_time);
 
         // Update metrics
         self.metrics.total_spikes += 1;
@@ -529,27 +591,46 @@ impl<
 
     /// Update STDP (Spike Timing Dependent Plasticity)
     fn update_stdp(&mut self, output_spikes: &[Spike<T>]) -> Result<()> {
+        let long_ago = to_generic_or(-1000.0, T::zero());
+
         for spike in output_spikes {
-            let post_id = spike.neuron_id;
-            let post_time = spike.time;
+            let fired_id = spike.neuron_id;
+            let fired_time = spike.time;
 
-            // Check all presynaptic connections
-            for pre_id in 0..self.last_spike_times.len() {
-                if pre_id != post_id {
-                    let pre_time = self.last_spike_times[pre_id];
-
-                    if pre_time > T::from(-1000.0).unwrap_or_else(|| T::zero()) {
-                        // Valid spike time
-                        let dt = post_time - pre_time;
-                        let weight_change = self.compute_stdp_update(dt);
-
-                        // Update synaptic weight
-                        self.synaptic_weights[[pre_id, post_id]] =
-                            (self.synaptic_weights[[pre_id, post_id]] + weight_change)
-                                .max(self.stdp_config.weight_min)
-                                .min(self.stdp_config.weight_max);
-                    }
+            for other_id in 0..self.last_spike_times.len() {
+                if other_id == fired_id {
+                    continue;
                 }
+                let other_time = self.last_spike_times[other_id];
+                if other_time <= long_ago {
+                    continue; // no valid spike history for `other_id` yet
+                }
+
+                // `other_id` fired before `fired_id` (now): it is
+                // PRE, `fired_id` is POST, dt = t_post - t_pre > 0
+                // => potentiation (LTP) on other_id -> fired_id.
+                let dt_ltp = fired_time - other_time;
+                let ltp = self.compute_stdp_update(dt_ltp);
+                self.synaptic_weights[[other_id, fired_id]] =
+                    (self.synaptic_weights[[other_id, fired_id]] + ltp)
+                        .max(self.stdp_config.weight_min)
+                        .min(self.stdp_config.weight_max);
+
+                // `fired_id` is firing NOW, arriving after `other_id`'s
+                // last spike: from `other_id`'s perspective as POST, this
+                // is a PRE spike arriving late, dt = t_post - t_pre =
+                // other_time - fired_time < 0 => depression (LTD) on
+                // fired_id -> other_id. This is the presynaptic-trace
+                // side of STDP that was previously unreachable (F50):
+                // without it, `dt` computed from "post's own time minus
+                // pre's last (necessarily past) spike time" was always
+                // >= 0, so LTD never fired.
+                let dt_ltd = other_time - fired_time;
+                let ltd = self.compute_stdp_update(dt_ltd);
+                self.synaptic_weights[[fired_id, other_id]] =
+                    (self.synaptic_weights[[fired_id, other_id]] + ltd)
+                        .max(self.stdp_config.weight_min)
+                        .min(self.stdp_config.weight_max);
             }
         }
 
@@ -569,16 +650,27 @@ impl<
         }
     }
 
-    /// Update Hebbian plasticity
+    /// Update Hebbian plasticity. Presynaptic activity is the normalized
+    /// depolarization fraction `((v - v_rest) / (v_thresh - v_rest))
+    /// .max(0)` — 0 at rest, 1 at threshold (F53). The previous `v /
+    /// v_threshold` ratio of two negative mV values was inverted: a
+    /// neuron sitting at rest (no activity) produced a *larger* ratio
+    /// than one nearly at threshold (maximal activity).
     fn update_hebbian(&mut self, output_spikes: &[Spike<T>]) -> Result<()> {
-        // Simplified Hebbian learning
+        let v_rest = self.membrane_config.resting_potential;
+        let v_thresh = self.membrane_config.threshold_potential;
+        let range = v_thresh - v_rest;
+
         for spike in output_spikes {
             let post_id = spike.neuron_id;
 
             for pre_id in 0..self.membrane_potentials.len() {
                 if pre_id != post_id {
-                    let pre_activity =
-                        self.membrane_potentials[pre_id] / self.membrane_config.threshold_potential;
+                    let pre_activity = if range != T::zero() {
+                        ((self.membrane_potentials[pre_id] - v_rest) / range).max(T::zero())
+                    } else {
+                        T::zero()
+                    };
 
                     let weight_change = self.stdp_config.learning_rate_pot * pre_activity;
 
@@ -593,27 +685,54 @@ impl<
         Ok(())
     }
 
-    /// Update homeostatic scaling
+    /// Update homeostatic scaling (F51).
+    ///
+    /// Two bugs made this diverge geometrically: `firing_rate` was read
+    /// from the spike train but never recomputed as spikes accumulated
+    /// (fixed by [`SpikeTrain::record_spike`] in `generate_spike`), and
+    /// the *cumulative, unbounded* `homeostatic_scales` value was
+    /// multiplied into every weight on *every* call — so corrections
+    /// compounded on top of corrections indefinitely. This now applies a
+    /// single, clamped per-step multiplier each call, and separately
+    /// clamps the cumulative scale record so it cannot drift without
+    /// bound even over very long runs.
     fn update_homeostatic_scaling(&mut self) -> Result<()> {
         let target_rate = self.config.homeostatic_config.target_firing_rate;
         let time_constant = self.config.homeostatic_config.scaling_time_constant;
         let dt = self.config.time_step;
+        if time_constant <= T::zero() {
+            return Ok(());
+        }
+
+        let min_step = to_generic_or(0.9, T::one());
+        let max_step = to_generic_or(1.1, T::one());
+        let min_cumulative = to_generic_or(0.1, T::zero());
+        let max_cumulative = to_generic_or(10.0, T::one());
 
         for neuron_id in 0..self.homeostatic_scales.len() {
             if let Some(spike_train) = self.spike_trains.get(&neuron_id) {
                 let current_rate = spike_train.firing_rate;
                 let rate_error = target_rate - current_rate;
 
-                // Exponential approach to target
-                let scale_change = rate_error * dt / time_constant;
-                self.homeostatic_scales[neuron_id] =
-                    self.homeostatic_scales[neuron_id] + scale_change;
+                // Bounded per-step multiplicative correction toward the
+                // target rate.
+                let raw_step_scale = T::one() + rate_error * dt / time_constant;
+                let step_multiplier = raw_step_scale.max(min_step).min(max_step);
 
-                // Apply scaling to synaptic weights
+                // Track the cumulative scale purely for observability,
+                // clamped so it cannot grow or collapse without bound.
+                self.homeostatic_scales[neuron_id] = (self.homeostatic_scales[neuron_id]
+                    * step_multiplier)
+                    .max(min_cumulative)
+                    .min(max_cumulative);
+
+                // Apply only the bounded per-step multiplier to weights,
+                // not the (potentially very different) cumulative value.
                 for pre_id in 0..self.synaptic_weights.nrows() {
-                    self.synaptic_weights[[pre_id, neuron_id]] = self.synaptic_weights
-                        [[pre_id, neuron_id]]
-                        * self.homeostatic_scales[neuron_id];
+                    self.synaptic_weights[[pre_id, neuron_id]] =
+                        (self.synaptic_weights[[pre_id, neuron_id]] * step_multiplier)
+                            .max(self.stdp_config.weight_min)
+                            .min(self.stdp_config.weight_max);
                 }
             }
         }
@@ -634,6 +753,7 @@ impl<
         self.last_spike_times
             .fill(T::from(-1000.0).unwrap_or_else(|| T::zero()));
         self.refractory_until.fill(T::zero());
+        self.synaptic_current.fill(T::zero());
         self.spike_trains.clear();
         self.spike_buffer.clear();
         self.metrics = NeuromorphicMetrics::default();
@@ -856,7 +976,7 @@ impl<T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + std:
 
         // Normalize by number of spike pairs
         if !spikes1.is_empty() && !spikes2.is_empty() {
-            correlation / T::from(spikes1.len() * spikes2.len()).expect("unwrap failed")
+            correlation / to_generic_or((spikes1.len() * spikes2.len()) as f64, T::one())
         } else {
             T::zero()
         }
@@ -938,5 +1058,171 @@ impl<T: Float + Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + std:
     /// Get learned patterns
     pub fn get_patterns(&self) -> &[SpikePattern<T>] {
         &self.pattern_templates
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_optimizer(num_neurons: usize) -> SpikingOptimizer<f64> {
+        SpikingOptimizer::new(
+            SpikingConfig::default(),
+            STDPConfig::default(),
+            MembraneDynamicsConfig::default(),
+            num_neurons,
+        )
+    }
+
+    fn dummy_spike(neuron_id: usize, time: f64) -> Spike<f64> {
+        Spike {
+            neuron_id,
+            time,
+            amplitude: 1.0,
+            width: None,
+            weight: 1.0,
+            presynaptic_id: None,
+            postsynaptic_id: None,
+        }
+    }
+
+    /// F50: STDP must produce both potentiation (LTP) and depression
+    /// (LTD), not just LTP.
+    #[test]
+    fn stdp_produces_both_potentiation_and_depression() {
+        let mut optimizer = make_optimizer(2);
+        optimizer.last_spike_times[0] = 5.0;
+
+        optimizer
+            .update_stdp(&[dummy_spike(1, 15.0)])
+            .expect("update_stdp failed");
+
+        let initial = 0.1;
+        assert!(
+            optimizer.synaptic_weights[[0, 1]] > initial,
+            "LTP (0->1) did not fire: {}",
+            optimizer.synaptic_weights[[0, 1]]
+        );
+        assert!(
+            optimizer.synaptic_weights[[1, 0]] < initial,
+            "LTD (1->0) did not fire (F50 regression): {}",
+            optimizer.synaptic_weights[[1, 0]]
+        );
+    }
+
+    /// F51: homeostatic scaling must not diverge — weights and scale
+    /// factors stay bounded over many steps.
+    #[test]
+    fn homeostatic_scaling_does_not_blow_up() {
+        let mut optimizer = make_optimizer(3);
+        optimizer
+            .config
+            .homeostatic_config
+            .enable_homeostatic_scaling = true;
+
+        for step in 0..500 {
+            optimizer.current_time = step as f64 * 0.1;
+            let train = optimizer
+                .spike_trains
+                .entry(0)
+                .or_insert_with(|| SpikeTrain::new(0, Vec::new()));
+            if step % 5 == 0 {
+                let t = optimizer.current_time;
+                train.record_spike(t);
+            }
+            optimizer
+                .update_homeostatic_scaling()
+                .expect("update_homeostatic_scaling failed");
+        }
+
+        for &w in optimizer.synaptic_weights.iter() {
+            assert!(w.is_finite(), "weight diverged: {w}");
+            assert!(
+                (0.0..=1.0).contains(&w),
+                "weight left [weight_min, weight_max]: {w}"
+            );
+        }
+        for &s in optimizer.homeostatic_scales.iter() {
+            assert!(
+                s.is_finite() && (0.1..=10.0).contains(&s),
+                "homeostatic scale diverged (F51 regression): {s}"
+            );
+        }
+    }
+
+    /// F52: a spike propagated through a strong synaptic weight must
+    /// actually move the postsynaptic membrane potential.
+    #[test]
+    fn synaptic_weights_propagate_into_membrane_dynamics() {
+        let mut optimizer = make_optimizer(2);
+        optimizer.synaptic_weights[[0, 1]] = 50.0;
+        optimizer.membrane_potentials[1] = optimizer.membrane_config.resting_potential;
+        optimizer.membrane_potentials[0] = optimizer.membrane_config.threshold_potential;
+
+        optimizer.generate_spike(0).expect("generate_spike failed");
+        let dt = optimizer.config.time_step;
+        optimizer
+            .update_membrane_potential(1, dt)
+            .expect("update_membrane_potential failed");
+
+        assert!(
+            optimizer.membrane_potentials[1] > optimizer.membrane_config.resting_potential,
+            "postsynaptic potential did not respond to the propagated synaptic weight (F52 regression)"
+        );
+    }
+
+    /// F53: Hebbian presynaptic activity must increase monotonically with
+    /// depolarization (0 at rest, up to 1 near threshold), not the
+    /// inverted `v / v_threshold` ratio.
+    #[test]
+    fn hebbian_activity_increases_with_depolarization() {
+        let run = |pre_potential: f64| -> f64 {
+            let mut optimizer = make_optimizer(2);
+            optimizer.plasticity_model = PlasticityModel::Hebbian;
+            optimizer.membrane_potentials[0] = pre_potential;
+            optimizer
+                .update_hebbian(&[dummy_spike(1, 1.0)])
+                .expect("update_hebbian failed");
+            optimizer.synaptic_weights[[0, 1]]
+        };
+
+        let membrane_config = MembraneDynamicsConfig::<f64>::default();
+        let weight_at_rest = run(membrane_config.resting_potential);
+        let weight_near_threshold = run(membrane_config.threshold_potential);
+
+        assert!(
+            (weight_at_rest - 0.1).abs() < 1e-9,
+            "resting potential should contribute zero Hebbian activity: {weight_at_rest}"
+        );
+        assert!(
+            weight_near_threshold > weight_at_rest,
+            "activity did not increase with depolarization (F53 regression): \
+             rest={weight_at_rest}, near_threshold={weight_near_threshold}"
+        );
+    }
+
+    /// F54: `decode(encode(v))` must recover `v` (averaged over trials to
+    /// cancel Poisson spiking noise), not be off by the previous 50x
+    /// window mismatch between `rate_encode` and `rate_decode`.
+    #[test]
+    fn rate_encode_decode_round_trip_within_noise_tolerance() {
+        let optimizer = make_optimizer(1);
+        let true_value = 0.5_f64;
+        let trials = 20;
+
+        let mut sum = 0.0;
+        for _ in 0..trials {
+            let train = optimizer
+                .rate_encode(0, true_value)
+                .expect("rate_encode failed");
+            sum += optimizer.rate_decode(&train).expect("rate_decode failed");
+        }
+        let avg_decoded = sum / trials as f64;
+
+        assert!(
+            (avg_decoded - true_value).abs() < 0.08,
+            "decode(encode(v)) did not recover v within noise tolerance (F54 regression): \
+             v={true_value}, avg_decoded={avg_decoded}"
+        );
     }
 }

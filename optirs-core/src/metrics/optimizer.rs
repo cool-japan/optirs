@@ -2,21 +2,20 @@
 //
 // This module provides the MetricOptimizer which uses metrics to guide optimization.
 
-#[cfg(feature = "metrics_integration")]
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
-#[cfg(not(feature = "metrics_integration"))]
+#[cfg(not(feature = "metrics-integration"))]
 use scirs2_core::ndarray::{Dimension, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
 
 /// An optimizer guided by metric values
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 pub struct MetricOptimizer<F, D>
 where
     F: Float + Debug + Display + FromPrimitive + ScalarOperand,
@@ -36,19 +35,24 @@ where
     _phantom: PhantomData<(F, D)>,
 }
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 impl<F, D> MetricOptimizer<F, D>
 where
-    F: Float + Debug + Display + FromPrimitive + ScalarOperand + 'static,
+    F: Float + Debug + Display + FromPrimitive + ScalarOperand + Send + Sync + 'static,
     D: Dimension + 'static,
 {
     /// Create a new MetricOptimizer
-    pub fn new<O>(optimizer: O, metric_name: &str, maximize: bool) -> Self
+    ///
+    /// # Errors
+    /// This constructor is currently infallible under the `metrics-integration`
+    /// feature, but returns [`Result`] to keep the API symmetric with the
+    /// feature-disabled fallback (which always errors).
+    pub fn new<O>(optimizer: O, metric_name: &str, maximize: bool) -> Result<Self>
     where
         O: Optimizer<F, D> + 'static,
     {
         let initial_lr = optimizer.get_learning_rate();
-        Self {
+        Ok(Self {
             base_optimizer: Box::new(optimizer),
             current_lr: initial_lr,
             metric_adapter: scirs2_metrics::integration::optim::MetricOptimizer::new(
@@ -58,7 +62,7 @@ where
             history: Vec::new(),
             best_params: None,
             _phantom: PhantomData,
-        }
+        })
     }
 
     /// Update the optimizer with a metric value
@@ -148,7 +152,7 @@ where
     }
 }
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 impl<F, D> Optimizer<F, D> for MetricOptimizer<F, D>
 where
     F: Float + Debug + Display + FromPrimitive + ScalarOperand + 'static,
@@ -205,7 +209,7 @@ where
 }
 
 /// Error raised when metrics integration is not enabled
-#[cfg(not(feature = "metrics_integration"))]
+#[cfg(not(feature = "metrics-integration"))]
 #[derive(Debug)]
 pub struct MetricOptimizer<F, D>
 where
@@ -215,17 +219,23 @@ where
     _phantom: PhantomData<(F, D)>,
 }
 
-#[cfg(not(feature = "metrics_integration"))]
+#[cfg(not(feature = "metrics-integration"))]
 impl<F, D> MetricOptimizer<F, D>
 where
     F: Float + Debug + Display + FromPrimitive + ScalarOperand,
     D: Dimension,
 {
-    /// Create a new MetricOptimizer (not implemented)
-    pub fn new<O>(_optimizer: O, _metric_name: &str, _maximize: bool) -> Self
+    /// Create a new MetricOptimizer (requires the `metrics-integration` feature)
+    ///
+    /// # Errors
+    /// Returns [`OptimError::MissingDependency`] because this crate was built
+    /// without the `metrics-integration` feature enabled.
+    pub fn new<O>(_optimizer: O, _metric_name: &str, _maximize: bool) -> Result<Self>
     where
         O: Optimizer<F, D>,
     {
-        panic!("metrics_integration feature is not enabled - enable it in your Cargo.toml");
+        Err(OptimError::MissingDependency(
+            "metrics-integration feature is not enabled - enable it in your Cargo.toml".to_string(),
+        ))
     }
 }

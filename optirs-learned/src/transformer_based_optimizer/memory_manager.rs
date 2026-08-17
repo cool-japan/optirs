@@ -27,7 +27,9 @@ pub enum MemoryManagementStrategy {
 }
 
 /// Transformer memory manager
-pub struct TransformerMemoryManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerMemoryManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Memory management strategy
     strategy: MemoryManagementStrategy,
 
@@ -56,7 +58,9 @@ pub struct TransformerMemoryManager<T: Float + Debug + Send + Sync + 'static> {
     model_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerMemoryManager<T>
+{
     /// Create new memory manager
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let memory_config = config.memory_config.clone();
@@ -416,7 +420,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
 }
 
 /// Memory cache implementation
-pub struct MemoryCache<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Stored tensors
     storage: HashMap<String, CacheEntry<T>>,
 
@@ -436,7 +442,9 @@ pub struct MemoryCache<T: Float + Debug + Send + Sync + 'static> {
     eviction_strategy: CacheEvictionStrategy,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MemoryCache<T>
+{
     pub fn new(max_size: usize, eviction_strategy: CacheEvictionStrategy) -> Result<Self> {
         Ok(Self {
             storage: HashMap::new(),
@@ -594,7 +602,9 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
 
 /// Cache entry
 #[derive(Debug, Clone)]
-pub struct CacheEntry<T: Float + Debug + Send + Sync + 'static> {
+pub struct CacheEntry<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub tensor: Array2<T>,
     pub size: usize,
     pub access_time: Instant,
@@ -602,7 +612,9 @@ pub struct CacheEntry<T: Float + Debug + Send + Sync + 'static> {
 }
 
 /// Compression manager
-pub struct CompressionManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct CompressionManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Compressed storage
     compressed_storage: HashMap<String, CompressedData<T>>,
 
@@ -616,7 +628,9 @@ pub struct CompressionManager<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> CompressionManager<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    CompressionManager<T>
+{
     pub fn new(compression_ratio: f64) -> Result<Self> {
         Ok(Self {
             compressed_storage: HashMap::new(),
@@ -687,7 +701,9 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionManager<T> {
 
 /// Compressed data structure
 #[derive(Debug, Clone)]
-pub struct CompressedData<T: Float + Debug + Send + Sync + 'static> {
+pub struct CompressedData<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub shape: Vec<usize>,
     pub data: Vec<T>, // Generic data type
     pub original_size: usize,

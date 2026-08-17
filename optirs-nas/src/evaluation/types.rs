@@ -43,7 +43,7 @@ pub enum BenchmarkType {
 }
 
 /// Types of test functions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TestFunctionType {
     /// Quadratic bowl
     Quadratic,

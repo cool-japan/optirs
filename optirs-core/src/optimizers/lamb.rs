@@ -3,11 +3,11 @@
 // Based on the paper "Large Batch Optimization for Deep Learning: Training BERT in 76 minutes"
 // by You et al. (2019).
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// LAMB (Layer-wise Adaptive Moments) optimizer
@@ -57,12 +57,12 @@ pub struct LAMB<A: Float + ScalarOperand + Debug> {
     weight_decay: A,
     /// Whether to use bias correction
     bias_correction: bool,
-    /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
-    /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
-    /// Current timestep
-    t: usize,
+    /// First moment vectors, one slot per parameter-tensor index
+    m: Option<Vec<Array<A, IxDyn>>>,
+    /// Second moment vectors, one slot per parameter-tensor index
+    v: Option<Vec<Array<A, IxDyn>>>,
+    /// Per-parameter-index timestep counters
+    t: Vec<usize>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMB<A> {
@@ -81,7 +81,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMB<A> {
             bias_correction: true,
             m: None,
             v: None,
-            t: 0,
+            t: Vec::new(),
         }
     }
 
@@ -112,7 +112,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMB<A> {
             bias_correction,
             m: None,
             v: None,
-            t: 0,
+            t: Vec::new(),
         }
     }
 
@@ -174,7 +174,140 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LAMB<A> {
     pub fn reset(&mut self) {
         self.m = None;
         self.v = None;
-        self.t = 0;
+        self.t.clear();
+    }
+
+    /// Returns the timestep recorded for the parameter tensor at `index`
+    ///
+    /// Returns `0` when the index has never been stepped.
+    pub fn timestep(&self, index: usize) -> usize {
+        self.t.get(index).copied().unwrap_or(0)
+    }
+
+    /// Ensures state slots exist for `index` and match `dim`, then advances its timestep
+    fn advance_state(&mut self, index: usize, dim: &IxDyn) -> Result<usize> {
+        let m = self.m.get_or_insert_with(Vec::new);
+        let v = self.v.get_or_insert_with(Vec::new);
+        while m.len() <= index {
+            m.push(Array::zeros(dim.clone()));
+        }
+        while v.len() <= index {
+            v.push(Array::zeros(dim.clone()));
+        }
+        while self.t.len() <= index {
+            self.t.push(0);
+        }
+
+        // Reset the slot when the parameter shape for this index changed
+        if m[index].raw_dim() != *dim || v[index].raw_dim() != *dim {
+            m[index] = Array::zeros(dim.clone());
+            v[index] = Array::zeros(dim.clone());
+            self.t[index] = 0;
+        }
+
+        let next = self.t[index].checked_add(1).ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "Timestep counter overflow - too many optimization steps".to_string(),
+            )
+        })?;
+        self.t[index] = next;
+        Ok(next)
+    }
+
+    /// Performs a LAMB update for the parameter tensor at `index`
+    ///
+    /// Each `index` owns an independent moment/timestep slot, so several parameter
+    /// tensors can be optimized by a single `LAMB` instance without interference.
+    /// LAMB's trust ratio is computed per tensor, which is exactly the layer-wise
+    /// adaptation the algorithm prescribes.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
+        }
+
+        let dim = params.raw_dim().into_dyn();
+        let t = self.advance_state(index, &dim)?;
+        let exp = i32::try_from(t).map_err(|_| {
+            OptimError::InvalidConfig(
+                "Timestep too large for bias correction calculation".to_string(),
+            )
+        })?;
+
+        let beta1 = self.beta1;
+        let beta2 = self.beta2;
+        let eps = self.epsilon;
+        let weight_decay = self.weight_decay;
+        let use_weight_decay = weight_decay > A::zero();
+        let one = A::one();
+        let (bias_correction1, bias_correction2) = if self.bias_correction {
+            (one - beta1.powi(exp), one - beta2.powi(exp))
+        } else {
+            (one, one)
+        };
+
+        let m = self
+            .m
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("LAMB state not initialized".to_string()))?;
+        let v = self
+            .v
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("LAMB state not initialized".to_string()))?;
+
+        let params_view = params.view().into_dyn();
+        let gradients_view = gradients.view().into_dyn();
+
+        // Build the (weight-decayed) adaptive update direction, and accumulate the
+        // two norms needed for the layer-wise trust ratio in the same traversal.
+        let mut update: Array<A, IxDyn> = Array::zeros(dim.clone());
+        let mut weight_norm_sq = A::zero();
+        let mut update_norm_sq = A::zero();
+
+        Zip::from(&mut update)
+            .and(&params_view)
+            .and(&gradients_view)
+            .and(&mut m[index])
+            .and(&mut v[index])
+            .for_each(|u, &p, &g, m_i, v_i| {
+                *m_i = *m_i * beta1 + g * (one - beta1);
+                *v_i = *v_i * beta2 + g * g * (one - beta2);
+                let m_hat = *m_i / bias_correction1;
+                let v_hat = *v_i / bias_correction2;
+                let mut direction = m_hat / (v_hat.sqrt() + eps);
+                if use_weight_decay {
+                    direction = direction + p * weight_decay;
+                }
+                *u = direction;
+                weight_norm_sq = weight_norm_sq + p * p;
+                update_norm_sq = update_norm_sq + direction * direction;
+            });
+
+        let weight_norm = weight_norm_sq.sqrt();
+        let update_norm = update_norm_sq.sqrt();
+        let trust_ratio = if weight_norm > A::zero() && update_norm > A::zero() {
+            weight_norm / update_norm
+        } else {
+            one
+        };
+
+        let scale = self.learning_rate * trust_ratio;
+        let mut updated = params.to_owned();
+        let mut updated_view = updated.view_mut().into_dyn();
+        Zip::from(&mut updated_view).and(&update).for_each(|p, &u| {
+            *p = *p - u * scale;
+        });
+        drop(updated_view);
+
+        Ok(updated)
     }
 }
 
@@ -184,89 +317,27 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Convert to dynamic dimension for storage in state vectors
-        let params_dyn = params.to_owned().into_dyn();
-        let gradients_dyn = gradients.to_owned().into_dyn();
+        self.step_indexed(0, params, gradients)
+    }
 
-        // Initialize state if this is the first step
-        if self.m.is_none() {
-            self.m = Some(vec![Array::zeros(params_dyn.raw_dim())]);
-            self.v = Some(vec![Array::zeros(params_dyn.raw_dim())]);
-            self.t = 0;
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
         }
 
-        let m = self.m.as_mut().expect("unwrap failed");
-        let v = self.v.as_mut().expect("unwrap failed");
-
-        // Ensure we have state for this parameter set
-        if m.is_empty() {
-            m.push(Array::zeros(params_dyn.raw_dim()));
-            v.push(Array::zeros(params_dyn.raw_dim()));
-        } else if m[0].raw_dim() != params_dyn.raw_dim() {
-            // If the parameter dimensions have changed, reset state
-            m[0] = Array::zeros(params_dyn.raw_dim());
-            v[0] = Array::zeros(params_dyn.raw_dim());
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
         }
-
-        // Increment timestep
-        self.t += 1;
-
-        // Update biased first moment estimate
-        m[0] = &m[0] * self.beta1 + &gradients_dyn * (A::one() - self.beta1);
-
-        // Update biased second raw moment estimate
-        v[0] = &v[0] * self.beta2 + &(&gradients_dyn * &gradients_dyn * (A::one() - self.beta2));
-
-        // Compute bias-corrected moments if enabled
-        let (m_hat, v_hat) = if self.bias_correction {
-            let bias1 = A::one() - self.beta1.powi(self.t as i32);
-            let bias2 = A::one() - self.beta2.powi(self.t as i32);
-            (&m[0] / bias1, &v[0] / bias2)
-        } else {
-            (m[0].clone(), v[0].clone())
-        };
-
-        // Compute adaptive term (similar to Adam)
-        let v_hat_sqrt = v_hat.mapv(|x| x.sqrt());
-        let adaptive_term = &m_hat / &(&v_hat_sqrt + self.epsilon);
-
-        // Apply weight decay to create the full gradient term
-        let normalized_gradient = if self.weight_decay > A::zero() {
-            &adaptive_term + &(&params_dyn * self.weight_decay)
-        } else {
-            adaptive_term
-        };
-
-        // Layer-wise adaptation (trust ratio)
-        let weight_norm = {
-            let norm_sq = params_dyn
-                .iter()
-                .map(|x| *x * *x)
-                .fold(A::zero(), |acc, x| acc + x);
-            norm_sq.sqrt()
-        };
-        let gradient_norm = {
-            let norm_sq = normalized_gradient
-                .iter()
-                .map(|x| *x * *x)
-                .fold(A::zero(), |acc, x| acc + x);
-            norm_sq.sqrt()
-        };
-
-        let trust_ratio = if weight_norm > A::zero() && gradient_norm > A::zero() {
-            weight_norm / gradient_norm
-        } else {
-            A::one()
-        };
-
-        // Update parameters with the trust ratio
-        let step = &normalized_gradient * (self.learning_rate * trust_ratio);
-        let updated_params = &params_dyn - step;
-
-        // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("unwrap failed"))
+        Ok(results)
     }
 
     fn get_learning_rate(&self) -> A {
@@ -350,7 +421,7 @@ mod tests {
         // State should exist
         assert!(optimizer.m.is_some());
         assert!(optimizer.v.is_some());
-        assert_eq!(optimizer.t, 1);
+        assert_eq!(optimizer.timestep(0), 1);
 
         // Reset
         optimizer.reset();
@@ -358,7 +429,7 @@ mod tests {
         // State should be cleared
         assert!(optimizer.m.is_none());
         assert!(optimizer.v.is_none());
-        assert_eq!(optimizer.t, 0);
+        assert_eq!(optimizer.timestep(0), 0);
     }
 
     #[test]

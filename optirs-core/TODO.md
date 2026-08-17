@@ -1,4 +1,4 @@
-# OptiRS Core TODO (v0.3.1)
+# OptiRS Core TODO (v0.3.2)
 
 ## Module Status: Production Ready
 
@@ -259,5 +259,5 @@ Doc tests: All passing
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.1
+**Version**: v0.3.2
 **Release Date**: 2026-03-27

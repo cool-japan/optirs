@@ -1,28 +1,30 @@
-//! GPU-accelerated optimizer operations
+//! GPU optimizer scaffolding
 //!
-//! This module provides GPU acceleration for optimization using SciRS2's GPU abstractions.
-//! Enables 10-50x speedup for large models through GPU parallelism and tensor cores.
+//! # Status: no GPU backend is wired up yet
 //!
-//! # Features
+//! This module defines the API surface for GPU-accelerated optimization, but **no
+//! device backend is currently implemented**. [`GpuUtils::detect_backends`] returns
+//! an empty list, [`GpuUtils::device_count`] returns `0`, and consequently
+//! [`GpuOptimizer::is_gpu_available`] reports `false` and every optimization step
+//! executes on the CPU through the wrapped base optimizer.
 //!
-//! - GPU-accelerated parameter updates
-//! - Tensor core support for mixed-precision training
-//! - Multi-backend support (CUDA, Metal, OpenCL, WebGPU via SciRS2)
-//! - Automatic host-device data transfer
-//! - GPU memory tracking and management
+//! The wrapper is still useful today: it lets calling code be written once against
+//! the GPU-aware API and keep working unchanged when a backend lands. It will not,
+//! however, make anything faster right now — treat it as a compatibility shim, not
+//! as an accelerator.
 //!
-//! # Performance
+//! # What a real backend must provide
 //!
-//! Achieves 10-50x speedup over CPU for models with millions of parameters.
-//!
-//! # SciRS2 Integration
-//!
-//! This module uses SciRS2-Core GPU abstractions exclusively:
+//! When SciRS2's GPU abstractions become available, the integration points are:
 //! - `scirs2_core::gpu::GpuContext` for GPU context management
 //! - `scirs2_core::gpu::GpuBuffer` for GPU memory allocation
 //! - `scirs2_core::gpu::GpuKernel` for GPU kernel execution
 //! - `scirs2_core::tensor_cores` for mixed-precision optimization
-//! - `scirs2_core::array_protocol::GPUArray` for GPU array interface
+//! - `scirs2_core::array_protocol::GPUArray` for the GPU array interface
+//!
+//! Wiring those up means implementing [`GpuUtils::detect_backends`],
+//! [`GpuUtils::device_count`] and [`GpuOptimizer::step_gpu`]; the availability
+//! reporting below then becomes truthful automatically.
 
 use scirs2_core::ndarray::{Array1, ArrayView1, ScalarOperand};
 use scirs2_core::numeric::Float;
@@ -103,10 +105,10 @@ where
 
 /// Wrapper for GPU context to handle initialization
 struct GpuContextWrapper {
-    /// Whether GPU is available and initialized
+    /// Whether a GPU backend was actually found and initialized
     available: bool,
-    /// GPU backend name (CUDA, Metal, OpenCL, WebGPU)
-    backend: String,
+    /// GPU backend name (CUDA, Metal, OpenCL, WebGPU); `None` when unavailable
+    backend: Option<String>,
 }
 
 impl<O, A> GpuOptimizer<O, A>
@@ -141,21 +143,26 @@ where
         Self::new(base_optimizer, GpuConfig::default())
     }
 
-    /// Initialize GPU context using SciRS2 abstractions
+    /// Initialize the GPU context, if a backend is actually present
+    ///
+    /// No backend is implemented yet, so this reports "unavailable" and the optimizer
+    /// transparently runs on the CPU. Construction still succeeds: an unavailable GPU
+    /// is a supported configuration, not an error.
     fn initialize_gpu(config: &GpuConfig) -> Result<GpuContextWrapper> {
-        // Note: In a full implementation, this would use:
-        // - scirs2_core::gpu::GpuContext::new()
-        // - scirs2_core::gpu::detect_backend()
-        // - scirs2_core::gpu::initialize_tensor_cores()
+        let available_backends = GpuUtils::detect_backends();
 
-        // For now, create a placeholder that indicates GPU availability
-        let backend = config
-            .preferred_backend
-            .clone()
-            .unwrap_or_else(|| "auto".to_string());
+        let backend = match &config.preferred_backend {
+            // A specific backend was requested: honour it only if it is present.
+            Some(preferred) => available_backends
+                .iter()
+                .find(|candidate| candidate.eq_ignore_ascii_case(preferred))
+                .cloned(),
+            // Otherwise take whatever the platform offers first.
+            None => available_backends.first().cloned(),
+        };
 
         Ok(GpuContextWrapper {
-            available: true,
+            available: backend.is_some() && GpuUtils::device_count() > 0,
             backend,
         })
     }
@@ -171,49 +178,59 @@ where
     ///
     /// Updated parameters after GPU-accelerated optimization
     pub fn step(&mut self, params: &Array1<A>, gradients: &Array1<A>) -> Result<Array1<A>> {
-        // Check if GPU is available
-        if let Some(ref ctx) = self.gpu_context {
-            if ctx.available {
-                return self.step_gpu(params, gradients);
-            }
+        // Use the device path only when a backend really exists. Today this is never
+        // taken; the CPU fallback below is the executed path.
+        let gpu_ready = self
+            .gpu_context
+            .as_ref()
+            .map(|ctx| ctx.available)
+            .unwrap_or(false);
+
+        if gpu_ready {
+            return self.step_gpu(params, gradients);
         }
 
-        // Fallback to CPU if GPU unavailable
         self.base_optimizer.step(params, gradients)
     }
 
-    /// GPU-accelerated step implementation
-    fn step_gpu(&mut self, params: &Array1<A>, gradients: &Array1<A>) -> Result<Array1<A>> {
-        // Note: In a full implementation, this would:
-        // 1. Transfer params and gradients to GPU using scirs2_core::gpu::GpuBuffer
-        // 2. Execute GPU kernel using scirs2_core::gpu::GpuKernel
-        // 3. Use tensor cores if enabled via scirs2_core::tensor_cores
-        // 4. Transfer results back to host
-        // 5. Track memory usage via scirs2_core::memory::TrackedGpuBuffer
-
-        // For now, use CPU optimizer (GPU acceleration requires full scirs2_core GPU implementation)
-        self.base_optimizer.step(params, gradients)
+    /// Device-side step implementation
+    ///
+    /// Unimplemented: a real version would transfer `params`/`gradients` into
+    /// `scirs2_core::gpu::GpuBuffer`s, run a `scirs2_core::gpu::GpuKernel` (optionally
+    /// through `scirs2_core::tensor_cores`), copy the result back and account the
+    /// memory. Until then this returns an error rather than pretending the work
+    /// happened on a device.
+    fn step_gpu(&mut self, _params: &Array1<A>, _gradients: &Array1<A>) -> Result<Array1<A>> {
+        Err(crate::error::OptimError::InvalidConfig(
+            "GPU execution path is not implemented; no device backend is available".to_string(),
+        ))
     }
 
     /// Transfer array to GPU
     ///
-    /// Note: Full implementation would use scirs2_core::gpu::GpuBuffer
+    /// Unimplemented: returns an error because there is no device to copy to.
+    /// A real version would use `scirs2_core::gpu::GpuBuffer::from_slice()`.
     pub fn to_gpu(&self, _data: &ArrayView1<A>) -> Result<()> {
-        // Future: Use scirs2_core::gpu::GpuBuffer::from_slice()
-        Ok(())
+        Err(crate::error::OptimError::InvalidConfig(
+            "GPU transfer is not implemented; no device backend is available".to_string(),
+        ))
     }
 
     /// Transfer array from GPU
     ///
-    /// Note: Full implementation would use scirs2_core::gpu::GpuBuffer
+    /// Unimplemented: returns an error because there is no device to copy from.
+    /// A real version would use `scirs2_core::gpu::GpuBuffer::to_host()`.
     pub fn from_gpu(&self) -> Result<Array1<A>> {
-        // Future: Use scirs2_core::gpu::GpuBuffer::to_host()
         Err(crate::error::OptimError::InvalidConfig(
-            "GPU implementation not yet available".to_string(),
+            "GPU transfer is not implemented; no device backend is available".to_string(),
         ))
     }
 
-    /// Check if GPU is available and initialized
+    /// Check whether a GPU backend is actually available and initialized
+    ///
+    /// Currently always `false`: no device backend is implemented, so all work runs
+    /// on the CPU. This is guaranteed to agree with
+    /// [`GpuUtils::device_count`] / [`GpuUtils::detect_backends`].
     pub fn is_gpu_available(&self) -> bool {
         self.gpu_context
             .as_ref()
@@ -221,9 +238,11 @@ where
             .unwrap_or(false)
     }
 
-    /// Get GPU backend name
+    /// Get the active GPU backend name, or `None` when running on the CPU
     pub fn gpu_backend(&self) -> Option<&str> {
-        self.gpu_context.as_ref().map(|ctx| ctx.backend.as_str())
+        self.gpu_context
+            .as_ref()
+            .and_then(|ctx| ctx.backend.as_deref())
     }
 
     /// Get GPU configuration
@@ -292,10 +311,14 @@ pub struct GpuUtils;
 impl GpuUtils {
     /// Detect available GPU backends
     ///
-    /// Returns list of available backends (CUDA, Metal, OpenCL, WebGPU)
+    /// Returns the list of usable backends (CUDA, Metal, OpenCL, WebGPU).
+    ///
+    /// No backend is implemented yet, so this is always empty. It must stay empty
+    /// until a backend can genuinely execute kernels — reporting a phantom "auto"
+    /// backend would make [`GpuOptimizer::is_gpu_available`] lie.
     pub fn detect_backends() -> Vec<String> {
         // Note: Full implementation would use scirs2_core::gpu::detect_backends()
-        vec!["auto".to_string()]
+        Vec::new()
     }
 
     /// Check if tensor cores are available
@@ -365,13 +388,27 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Regression test: availability reporting must match the actual device inventory.
+    ///
+    /// `is_gpu_available()` used to return `true` unconditionally while
+    /// `device_count()` returned `0` and every step ran on the CPU.
     #[test]
-    fn test_gpu_availability() {
+    fn test_gpu_availability_matches_device_inventory() {
         let optimizer = SGD::new(0.01);
         let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
-        // Should initialize GPU context
-        assert!(gpu_opt.is_gpu_available());
+        let devices = GpuUtils::device_count();
+        let backends = GpuUtils::detect_backends();
+
+        assert_eq!(
+            gpu_opt.is_gpu_available(),
+            devices > 0 && !backends.is_empty(),
+            "availability must agree with the detected device inventory"
+        );
+        assert_eq!(backends.is_empty(), devices == 0);
+
+        // No backend is implemented yet, so the honest answer is "not available".
+        assert!(!gpu_opt.is_gpu_available());
     }
 
     #[test]
@@ -379,8 +416,34 @@ mod tests {
         let optimizer = SGD::new(0.01);
         let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
 
-        let backend = gpu_opt.gpu_backend();
-        assert!(backend.is_some());
+        // No device => no backend name to report.
+        assert_eq!(gpu_opt.gpu_backend().is_some(), gpu_opt.is_gpu_available());
+        assert!(gpu_opt.gpu_backend().is_none());
+    }
+
+    /// Requesting a backend that does not exist must not fabricate one.
+    #[test]
+    fn test_gpu_preferred_backend_is_not_fabricated() {
+        let optimizer = SGD::new(0.01);
+        let config = GpuConfig {
+            preferred_backend: Some("cuda".to_string()),
+            ..GpuConfig::default()
+        };
+        let gpu_opt = GpuOptimizer::new(optimizer, config).expect("construction must succeed");
+
+        assert!(!gpu_opt.is_gpu_available());
+        assert!(gpu_opt.gpu_backend().is_none());
+    }
+
+    /// The device transfer helpers must report that they are unimplemented.
+    #[test]
+    fn test_gpu_transfers_report_unavailable() {
+        let optimizer = SGD::new(0.01);
+        let gpu_opt = GpuOptimizer::with_default_config(optimizer).expect("unwrap failed");
+
+        let data = Array1::from_vec(vec![1.0f64, 2.0]);
+        assert!(gpu_opt.to_gpu(&data.view()).is_err());
+        assert!(gpu_opt.from_gpu().is_err());
     }
 
     #[test]
@@ -417,8 +480,10 @@ mod tests {
 
     #[test]
     fn test_gpu_utils_detect_backends() {
+        // No backend is implemented, so nothing may be advertised.
         let backends = GpuUtils::detect_backends();
-        assert!(!backends.is_empty());
+        assert!(backends.is_empty());
+        assert_eq!(GpuUtils::device_count(), 0);
     }
 
     #[test]

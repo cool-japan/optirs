@@ -26,7 +26,9 @@ pub enum MetaLearningStrategy {
 }
 
 /// Transformer meta-learning implementation
-pub struct TransformerMetaLearning<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerMetaLearning<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Meta-learning strategy
     strategy: MetaLearningStrategy,
 
@@ -49,8 +51,15 @@ pub struct TransformerMetaLearning<T: Float + Debug + Send + Sync + 'static> {
     meta_state: MetaState<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOperand>
-    TransformerMetaLearning<T>
+impl<
+        T: Float
+            + Debug
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync
+            + 'static
+            + scirs2_core::ndarray::ScalarOperand,
+    > TransformerMetaLearning<T>
 {
     /// Create new transformer meta-learning component
     pub fn new(config: &super::config::TransformerBasedOptimizerConfig<T>) -> Result<Self> {
@@ -461,7 +470,9 @@ impl<T: Float + Debug + Send + Sync + 'static + scirs2_core::ndarray::ScalarOper
 }
 
 /// Meta-optimizer for outer loop updates
-pub struct MetaOptimizer<T: Float + Debug + Send + Sync + 'static> {
+pub struct MetaOptimizer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Learning rate
     learning_rate: T,
 
@@ -472,7 +483,9 @@ pub struct MetaOptimizer<T: Float + Debug + Send + Sync + 'static> {
     velocity: Option<Vec<T>>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MetaOptimizer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MetaOptimizer<T>
+{
     pub fn new(config: &MetaLearningConfig<T>) -> Result<Self> {
         Ok(Self {
             learning_rate: config.meta_learning_rate,
@@ -508,7 +521,9 @@ impl<T: Float + Debug + Send + Sync + 'static> MetaOptimizer<T> {
 }
 
 /// Task adaptation network
-pub struct AdaptationNetwork<T: Float + Debug + Send + Sync + 'static> {
+pub struct AdaptationNetwork<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Context encoder
     context_encoder: FeedForwardNetwork<T>,
 
@@ -522,7 +537,9 @@ pub struct AdaptationNetwork<T: Float + Debug + Send + Sync + 'static> {
     model_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> AdaptationNetwork<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    AdaptationNetwork<T>
+{
     pub fn new(model_dimension: usize, hidden_dimension: usize) -> Result<Self> {
         let context_encoder =
             FeedForwardNetwork::new(model_dimension, hidden_dimension, ActivationFunction::ReLU)?;
@@ -579,7 +596,9 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptationNetwork<T> {
 }
 
 /// Memory bank for storing task experiences
-pub struct MemoryBank<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryBank<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Stored experiences
     experiences: VecDeque<MemoryExperience<T>>,
 
@@ -590,7 +609,7 @@ pub struct MemoryBank<T: Float + Debug + Send + Sync + 'static> {
     parameter_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MemoryBank<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> MemoryBank<T> {
     pub fn new(max_size: usize, parameter_dimension: usize) -> Result<Self> {
         Ok(Self {
             experiences: VecDeque::new(),
@@ -670,7 +689,8 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryBank<T> {
 
 /// Supporting data structures
 #[derive(Debug, Clone)]
-pub struct TaskBatch<T: Float + Debug + Send + Sync + 'static> {
+pub struct TaskBatch<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+{
     pub id: String,
     pub difficulty: f64,
     pub complexity: f64,
@@ -679,7 +699,9 @@ pub struct TaskBatch<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct TaskAdaptation<T: Float + Debug + Send + Sync + 'static> {
+pub struct TaskAdaptation<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub task_id: String,
     pub adapted_parameters: Vec<T>,
     pub support_loss: T,
@@ -688,7 +710,9 @@ pub struct TaskAdaptation<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct MetaLearningResult<T: Float + Debug + Send + Sync + 'static> {
+pub struct MetaLearningResult<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub meta_loss: f64,
     pub task_adaptations: Vec<TaskAdaptation<T>>,
     pub computation_time: std::time::Duration,
@@ -696,25 +720,33 @@ pub struct MetaLearningResult<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemoryExperience<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryExperience<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub task_signature: Vec<f64>,
     pub parameters: Vec<T>,
     pub performance: f64,
     pub timestamp: Instant,
 }
 
-pub struct PerformanceTracker<T: Float + Debug + Send + Sync + 'static> {
+pub struct PerformanceTracker<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     loss_history: VecDeque<f64>,
     meta_results: VecDeque<MetaLearningResult<T>>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for PerformanceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for PerformanceTracker<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> PerformanceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    PerformanceTracker<T>
+{
     pub fn new() -> Self {
         Self {
             loss_history: VecDeque::new(),
@@ -742,13 +774,14 @@ impl<T: Float + Debug + Send + Sync + 'static> PerformanceTracker<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct MetaState<T: Float + Debug + Send + Sync + 'static> {
+pub struct MetaState<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+{
     parameters: Vec<T>,
     loss_history: VecDeque<T>,
     scale_factor: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MetaState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> MetaState<T> {
     pub fn new(parameter_count: usize) -> Result<Self> {
         Ok(Self {
             parameters: vec![T::zero(); parameter_count],

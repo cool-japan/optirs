@@ -45,6 +45,11 @@ pub struct MemoryDetectionConfig {
     pub memory_pressure_threshold: f64,
     /// Enable garbage collection hints
     pub enable_gc_hints: bool,
+    /// Capture a real `std::backtrace::Backtrace` on every recorded
+    /// allocation. Off by default because forcing a backtrace capture on
+    /// every allocation is expensive; when enabled, `capture_stack_trace`
+    /// returns a genuine captured stack rather than `None`.
+    pub capture_stack_traces: bool,
 }
 
 impl Default for MemoryDetectionConfig {
@@ -58,6 +63,7 @@ impl Default for MemoryDetectionConfig {
             enable_real_time_monitoring: true,
             memory_pressure_threshold: 0.85, // 85% memory usage
             enable_gc_hints: true,
+            capture_stack_traces: false,
         }
     }
 }
@@ -80,6 +86,12 @@ pub struct AllocationTracker {
     active_allocations: HashMap<usize, AllocationInfo>,
     /// Memory pools tracking
     memory_pools: HashMap<String, MemoryPoolStats>,
+    /// Sizes of recently freed blocks, bounded history. Used to derive a
+    /// real (non-fabricated) fragmentation heuristic from the tracker's own
+    /// bookkeeping: a free-block-size population with high diversity
+    /// relative to active-allocation sizes is a real signal of external
+    /// fragmentation risk, even without OS-level heap introspection.
+    freed_block_sizes: VecDeque<usize>,
 }
 
 /// Individual allocation event
@@ -392,14 +404,18 @@ pub enum ImplementationComplexity {
 /// Performance metrics for memory optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
-    /// Memory efficiency score
+    /// Memory efficiency score: current / peak tracked memory usage.
     pub memory_efficiency: f64,
-    /// Allocation efficiency
+    /// Allocation efficiency: complement of the tracker's real
+    /// fragmentation heuristic (see [`AllocationTracker::fragmentation_ratio`]).
     pub allocation_efficiency: f64,
-    /// Cache hit ratio
-    pub cache_hit_ratio: f64,
-    /// Garbage collection overhead
-    pub gc_overhead: f64,
+    /// Cache hit ratio. `None` because this module tracks no cache layer;
+    /// an honest absence rather than a fabricated number.
+    pub cache_hit_ratio: Option<f64>,
+    /// Garbage collection overhead. `None` because Rust has no tracked
+    /// garbage collector here to measure; an honest absence rather than a
+    /// fabricated number.
+    pub gc_overhead: Option<f64>,
 }
 
 impl MemoryLeakDetector {
@@ -526,17 +542,54 @@ impl MemoryLeakDetector {
             patterns,
             anomalies,
             recommendations,
-            performance_metrics: self.optimizer.performance_metrics.clone(),
+            performance_metrics: self.compute_performance_metrics(),
             summary: self.generate_summary()?,
         })
     }
 
+    /// Compute real performance metrics from the allocation tracker's own
+    /// counters, replacing the previously hardcoded constants.
+    fn compute_performance_metrics(&self) -> PerformanceMetrics {
+        let current = self.get_total_memory_usage() as f64;
+        let peak = self
+            .allocation_tracker
+            .peak_memory_usage
+            .load(Ordering::Relaxed) as f64;
+
+        let memory_efficiency = if peak > 0.0 {
+            (current / peak).min(1.0)
+        } else {
+            1.0
+        };
+        let allocation_efficiency =
+            (1.0 - self.allocation_tracker.fragmentation_ratio()).clamp(0.0, 1.0);
+
+        PerformanceMetrics {
+            memory_efficiency,
+            allocation_efficiency,
+            cache_hit_ratio: None,
+            gc_overhead: None,
+        }
+    }
+
     // Helper methods for memory monitoring
 
+    /// Capture a real stack trace via `std::backtrace::Backtrace`, gated by
+    /// `config.capture_stack_traces` since forcing a capture on every
+    /// allocation is expensive. Returns `None` when disabled -- an honest
+    /// "not captured", never a synthesized trace.
     fn capture_stack_trace(&self) -> Option<Vec<String>> {
-        // Simplified stack trace capture
-        // In a real implementation, this would use backtrace crate
-        None
+        if !self.config.capture_stack_traces {
+            return None;
+        }
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let rendered = format!("{backtrace}");
+        let frames: Vec<String> = rendered.lines().map(|line| line.to_string()).collect();
+        if frames.is_empty() {
+            None
+        } else {
+            Some(frames)
+        }
     }
 
     fn get_total_memory_usage(&self) -> usize {
@@ -545,13 +598,18 @@ impl MemoryLeakDetector {
             .load(Ordering::Relaxed)
     }
 
+    /// ESTIMATE: `sysinfo` and portable Rust do not expose a real
+    /// heap/stack split per process, so this is a fixed 80% heuristic over
+    /// tracked allocation bytes rather than a measurement. Callers that
+    /// need a precise split must use a platform-specific tool (e.g.
+    /// `/proc/<pid>/smaps` on Linux).
     fn get_heap_memory_usage(&self) -> usize {
-        // Simplified heap memory calculation
         self.get_total_memory_usage() * 80 / 100
     }
 
+    /// ESTIMATE: see [`Self::get_heap_memory_usage`]; the complement 20%
+    /// heuristic, not a measurement.
     fn get_stack_memory_usage(&self) -> usize {
-        // Simplified stack memory calculation
         self.get_total_memory_usage() * 20 / 100
     }
 
@@ -586,10 +644,11 @@ impl MemoryLeakDetector {
         }
     }
 
+    /// Real fragmentation heuristic from the allocation tracker's own
+    /// freed/active block bookkeeping. See
+    /// [`AllocationTracker::fragmentation_ratio`].
     fn calculate_fragmentation_level(&self) -> f64 {
-        // Simplified fragmentation calculation
-        // In a real implementation, this would analyze memory layout
-        0.1 // Default 10% fragmentation
+        self.allocation_tracker.fragmentation_ratio()
     }
 
     fn generate_summary(&self) -> Result<String> {
@@ -665,6 +724,7 @@ impl AllocationTracker {
             allocation_history: VecDeque::new(),
             active_allocations: HashMap::new(),
             memory_pools: HashMap::new(),
+            freed_block_sizes: VecDeque::new(),
         }
     }
 
@@ -732,8 +792,44 @@ impl AllocationTracker {
             self.total_deallocations.fetch_add(1, Ordering::Relaxed);
             self.current_memory_usage
                 .fetch_sub(info.size, Ordering::Relaxed);
+
+            self.freed_block_sizes.push_back(info.size);
+            const MAX_FREED_HISTORY: usize = 4096;
+            while self.freed_block_sizes.len() > MAX_FREED_HISTORY {
+                self.freed_block_sizes.pop_front();
+            }
         }
         Ok(())
+    }
+
+    /// A real fragmentation heuristic derived from this tracker's own
+    /// allocation/deallocation bookkeeping (not an OS-level measurement,
+    /// and not a fabricated constant).
+    ///
+    /// Rationale: a freed-block-size population that is highly diverse
+    /// relative to the sizes currently in active use is a real signal that
+    /// freed blocks are unlikely to be reused as-is by a typical allocator,
+    /// i.e. external fragmentation risk. We approximate this as the
+    /// fraction of freed block sizes that do not match the size of any
+    /// currently-active allocation.
+    pub fn fragmentation_ratio(&self) -> f64 {
+        if self.freed_block_sizes.is_empty() {
+            return 0.0;
+        }
+
+        let active_sizes: std::collections::HashSet<usize> = self
+            .active_allocations
+            .values()
+            .map(|info| info.size)
+            .collect();
+
+        let unmatched = self
+            .freed_block_sizes
+            .iter()
+            .filter(|size| !active_sizes.contains(size))
+            .count();
+
+        unmatched as f64 / self.freed_block_sizes.len() as f64
     }
 }
 
@@ -820,11 +916,15 @@ impl MemoryOptimizer {
     pub fn new() -> Self {
         let mut optimizer = Self {
             strategies: Vec::new(),
+            // Real metrics require a live `AllocationTracker`; at
+            // construction time there is no data yet, so this starts at an
+            // honest "unknown" baseline and is overwritten with real
+            // measurements by `MemoryLeakDetector::generate_optimization_report`.
             performance_metrics: PerformanceMetrics {
-                memory_efficiency: 0.8,
-                allocation_efficiency: 0.85,
-                cache_hit_ratio: 0.9,
-                gc_overhead: 0.1,
+                memory_efficiency: 1.0,
+                allocation_efficiency: 1.0,
+                cache_hit_ratio: None,
+                gc_overhead: None,
             },
         };
 
@@ -996,26 +1096,107 @@ impl PatternBasedLeakDetector {
 }
 
 impl LeakDetector for PatternBasedLeakDetector {
+    /// Detects a "monotonic-with-sawtooth" leak signature: memory usage may
+    /// dip repeatedly (allocate/free cycles), but if the *floor* of those
+    /// dips (local minima / troughs) keeps rising across the series, that
+    /// is a real signal that each cycle is failing to fully release memory.
+    /// A purely monotonic series (no dips at all) is treated as the
+    /// degenerate one-trough-per-endpoint case.
     fn detect_leaks(
         &self,
         _allocation_history: &VecDeque<AllocationEvent>,
-        _usage_snapshots: &VecDeque<MemoryUsageSnapshot>,
+        usage_snapshots: &VecDeque<MemoryUsageSnapshot>,
     ) -> Result<MemoryLeakResult> {
-        // Simplified pattern-based detection
+        if usage_snapshots.len() < 4 {
+            return Ok(insufficient_data_result(
+                "Insufficient data for pattern analysis (need >= 4 snapshots)",
+            ));
+        }
+
+        let values: Vec<f64> = usage_snapshots
+            .iter()
+            .map(|s| s.total_memory as f64)
+            .collect();
+        let (Some(&first_value), Some(&last_value)) = (values.first(), values.last()) else {
+            return Ok(insufficient_data_result("Empty snapshot series"));
+        };
+
+        // Local minima ("troughs"): points at or below both neighbors.
+        let mut troughs = Vec::new();
+        for i in 1..values.len() - 1 {
+            if values[i] <= values[i - 1] && values[i] <= values[i + 1] {
+                troughs.push(values[i]);
+            }
+        }
+        if troughs.is_empty() {
+            // No dips observed: fall back to endpoint-only comparison so a
+            // purely monotonic series is still evaluated.
+            troughs.push(first_value);
+            troughs.push(last_value);
+        }
+
+        let rising_steps = troughs.windows(2).filter(|w| w[1] > w[0]).count();
+        let total_steps = troughs.len().saturating_sub(1).max(1);
+        let rising_fraction = rising_steps as f64 / total_steps as f64;
+
+        let overall_growth = last_value - first_value;
+        let relative_growth = if first_value > 0.0 {
+            overall_growth / first_value
+        } else {
+            0.0
+        };
+
+        // Sawtooth-with-rising-floor: most trough-to-trough steps increase
+        // and the series shows real net growth (not just noise).
+        let leak_detected = rising_fraction >= 0.75 && relative_growth > 0.05;
+        let confidence = rising_fraction.clamp(0.0, 1.0);
+        let severity = relative_growth.clamp(0.0, 1.0);
+
+        let (Some(front_snapshot), Some(back_snapshot)) =
+            (usage_snapshots.front(), usage_snapshots.back())
+        else {
+            return Ok(insufficient_data_result("Empty snapshot series"));
+        };
+        let first_ts = front_snapshot.timestamp as f64;
+        let last_ts = back_snapshot.timestamp as f64;
+        let duration = (last_ts - first_ts).max(1.0);
+
         Ok(MemoryLeakResult {
-            leak_detected: false,
-            severity: 0.0,
-            confidence: 0.5,
-            leaked_memory_bytes: 0,
+            leak_detected,
+            severity,
+            confidence,
+            leaked_memory_bytes: if leak_detected {
+                overall_growth.max(0.0) as usize
+            } else {
+                0
+            },
             leak_sources: vec![],
             growth_analysis: MemoryGrowthAnalysis {
-                growth_trend: GrowthTrend::Stable,
-                growth_rate: 0.0,
+                growth_trend: if leak_detected {
+                    GrowthTrend::Irregular
+                } else {
+                    GrowthTrend::Stable
+                },
+                growth_rate: overall_growth / duration,
                 projected_usage: vec![],
-                pattern_type: GrowthPattern::Normal,
+                pattern_type: if leak_detected {
+                    GrowthPattern::Leak
+                } else {
+                    GrowthPattern::Normal
+                },
             },
-            recommendations: vec![],
-            detailed_analysis: "Pattern-based analysis completed".to_string(),
+            recommendations: if leak_detected {
+                vec![
+                    "Sawtooth memory floor is rising across allocation/free cycles: check for incomplete deallocation".to_string(),
+                ]
+            } else {
+                vec![]
+            },
+            detailed_analysis: format!(
+                "Pattern analysis: {rising_steps}/{total_steps} trough-to-trough steps rising ({:.0}%), relative growth {:.1}%",
+                rising_fraction * 100.0,
+                relative_growth * 100.0
+            ),
         })
     }
 
@@ -1045,26 +1226,94 @@ impl StatisticalLeakDetector {
 }
 
 impl LeakDetector for StatisticalLeakDetector {
+    /// Fits an ordinary-least-squares trend line to the real snapshot
+    /// series (memory vs. elapsed time) and tests whether the slope is
+    /// significantly positive via a t-test (normal approximation), rather
+    /// than returning a constant "no leak".
     fn detect_leaks(
         &self,
         _allocation_history: &VecDeque<AllocationEvent>,
-        _usage_snapshots: &VecDeque<MemoryUsageSnapshot>,
+        usage_snapshots: &VecDeque<MemoryUsageSnapshot>,
     ) -> Result<MemoryLeakResult> {
-        // Simplified statistical detection
+        if usage_snapshots.len() < 3 {
+            return Ok(insufficient_data_result(
+                "Insufficient data for statistical analysis (need >= 3 snapshots)",
+            ));
+        }
+
+        let Some(front) = usage_snapshots.front() else {
+            return Ok(insufficient_data_result("Empty snapshot series"));
+        };
+        let t0 = front.timestamp as f64;
+        let points: Vec<(f64, f64)> = usage_snapshots
+            .iter()
+            .map(|s| (s.timestamp as f64 - t0, s.total_memory as f64))
+            .collect();
+
+        let Some((slope, intercept, se_slope)) = ols_fit(&points) else {
+            return Ok(insufficient_data_result(
+                "OLS fit degenerate: no variance in snapshot timestamps",
+            ));
+        };
+
+        // See the identical rationale in `advanced_memory_leak_detector`:
+        // a zero standard error is a perfect (noiseless) fit, which is
+        // maximal evidence of a real trend when the slope is nonzero, not
+        // "no significance".
+        let (t_stat, p_value) = if se_slope > f64::EPSILON {
+            let t = slope / se_slope;
+            (t, two_tailed_p_value(t))
+        } else if slope.abs() > f64::EPSILON {
+            (f64::INFINITY, 0.0)
+        } else {
+            (0.0, 1.0)
+        };
+        let significant = p_value < 0.05 && slope > 0.0;
+
+        let (Some(&(_, first_point_value)), Some(&(_, last_point_value))) =
+            (points.first(), points.last())
+        else {
+            return Ok(insufficient_data_result("Empty point series after OLS fit"));
+        };
+        let first_value = first_point_value.max(1.0);
+        let last_value = last_point_value;
+        let relative_growth = (last_value - first_value) / first_value;
+
         Ok(MemoryLeakResult {
-            leak_detected: false,
-            severity: 0.0,
-            confidence: 0.7,
-            leaked_memory_bytes: 0,
+            leak_detected: significant,
+            severity: relative_growth.clamp(0.0, 1.0),
+            confidence: (1.0 - p_value).clamp(0.0, 1.0),
+            leaked_memory_bytes: if significant {
+                (last_value - first_value).max(0.0) as usize
+            } else {
+                0
+            },
             leak_sources: vec![],
             growth_analysis: MemoryGrowthAnalysis {
-                growth_trend: GrowthTrend::Stable,
-                growth_rate: 0.0,
+                growth_trend: if significant {
+                    GrowthTrend::Linear
+                } else {
+                    GrowthTrend::Stable
+                },
+                growth_rate: slope,
                 projected_usage: vec![],
-                pattern_type: GrowthPattern::Normal,
+                pattern_type: if significant {
+                    GrowthPattern::Leak
+                } else {
+                    GrowthPattern::Normal
+                },
             },
-            recommendations: vec![],
-            detailed_analysis: "Statistical analysis completed".to_string(),
+            recommendations: if significant {
+                vec![format!(
+                    "OLS slope {slope:.3} bytes/sec is statistically significant (p={p_value:.4}); investigate sustained growth"
+                )]
+            } else {
+                vec![]
+            },
+            detailed_analysis: format!(
+                "OLS regression: slope={slope:.4} bytes/sec, intercept={intercept:.2}, t={t_stat:.3}, p={p_value:.4} (n={})",
+                usage_snapshots.len()
+            ),
         })
     }
 
@@ -1075,6 +1324,95 @@ impl LeakDetector for StatisticalLeakDetector {
     fn config(&self) -> HashMap<String, String> {
         HashMap::new()
     }
+}
+
+/// Shared "no leak, insufficient data" result used by detectors when the
+/// snapshot series is too short for a statistically meaningful judgement.
+fn insufficient_data_result(reason: &str) -> MemoryLeakResult {
+    MemoryLeakResult {
+        leak_detected: false,
+        severity: 0.0,
+        confidence: 0.0,
+        leaked_memory_bytes: 0,
+        leak_sources: vec![],
+        growth_analysis: MemoryGrowthAnalysis {
+            growth_trend: GrowthTrend::Stable,
+            growth_rate: 0.0,
+            projected_usage: vec![],
+            pattern_type: GrowthPattern::Normal,
+        },
+        recommendations: vec![],
+        detailed_analysis: reason.to_string(),
+    }
+}
+
+/// Ordinary least-squares fit of `y` on `x`, returning
+/// `(slope, intercept, standard_error_of_slope)`. Returns `None` when there
+/// are fewer than 3 points or `x` has no variance (degenerate fit).
+pub(crate) fn ols_fit(points: &[(f64, f64)]) -> Option<(f64, f64, f64)> {
+    let n = points.len();
+    if n < 3 {
+        return None;
+    }
+    let n_f = n as f64;
+    let mean_x = points.iter().map(|(x, _)| *x).sum::<f64>() / n_f;
+    let mean_y = points.iter().map(|(_, y)| *y).sum::<f64>() / n_f;
+
+    let mut ss_xx = 0.0;
+    let mut ss_xy = 0.0;
+    for (x, y) in points {
+        ss_xx += (x - mean_x).powi(2);
+        ss_xy += (x - mean_x) * (y - mean_y);
+    }
+    if ss_xx <= f64::EPSILON {
+        return None;
+    }
+    let slope = ss_xy / ss_xx;
+    let intercept = mean_y - slope * mean_x;
+
+    let ss_res: f64 = points
+        .iter()
+        .map(|(x, y)| {
+            let predicted = intercept + slope * x;
+            (y - predicted).powi(2)
+        })
+        .sum();
+
+    let dof = n_f - 2.0;
+    if dof <= 0.0 {
+        return None;
+    }
+    let residual_variance = ss_res / dof;
+    let se_slope = (residual_variance / ss_xx).sqrt();
+
+    Some((slope, intercept, se_slope))
+}
+
+/// Abramowitz & Stegun 7.1.26 erf approximation (max abs error ~1.5e-7).
+pub(crate) fn erf(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let a1 = 0.254_829_592;
+    let a2 = -0.284_496_736;
+    let a3 = 1.421_413_741;
+    let a4 = -1.453_152_027;
+    let a5 = 1.061_405_429;
+    let p = 0.327_591_1;
+    let t = 1.0 / (1.0 + p * x);
+    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-x * x).exp();
+    sign * y
+}
+
+pub(crate) fn normal_cdf(z: f64) -> f64 {
+    0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
+}
+
+/// Two-tailed p-value for a t-statistic, approximated via the standard
+/// normal distribution. This is exact in the large-sample limit and a
+/// documented approximation for small samples -- never a fabricated
+/// constant p-value.
+pub(crate) fn two_tailed_p_value(t_stat: f64) -> f64 {
+    2.0 * (1.0 - normal_cdf(t_stat.abs()))
 }
 
 // Pattern detector implementations

@@ -13,6 +13,84 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::{OptimError, Result};
 
+/// Parse a `usize` value out of a task's metadata map, if present and valid.
+fn parse_metadata_usize(metadata: &HashMap<String, String>, key: &str) -> Option<usize> {
+    metadata.get(key).and_then(|v| v.parse::<usize>().ok())
+}
+
+/// Parse an `f64` value out of a task's metadata map, if present and valid.
+fn parse_metadata_f64(metadata: &HashMap<String, String>, key: &str) -> Option<f64> {
+    metadata.get(key).and_then(|v| v.parse::<f64>().ok())
+}
+
+/// Average of `extract(record)` across a task type's resource-usage history,
+/// or `None` if there is no history yet.
+fn history_average_usize<T, F>(
+    history: Option<&VecDeque<ResourceUsageRecord<T>>>,
+    extract: F,
+) -> Option<usize>
+where
+    T: Float + Debug + Send + Sync + 'static,
+    F: Fn(&ResourceUsageRecord<T>) -> usize,
+{
+    let history = history?;
+    if history.is_empty() {
+        return None;
+    }
+    let sum: usize = history.iter().map(&extract).sum();
+    Some(sum / history.len())
+}
+
+/// Average of `extract(record)` across a task type's resource-usage history,
+/// or `None` if there is no history yet.
+fn history_average_f64<T, F>(
+    history: Option<&VecDeque<ResourceUsageRecord<T>>>,
+    extract: F,
+) -> Option<f64>
+where
+    T: Float + Debug + Send + Sync + 'static,
+    F: Fn(&ResourceUsageRecord<T>) -> f64,
+{
+    let history = history?;
+    if history.is_empty() {
+        return None;
+    }
+    let sum: f64 = history.iter().map(&extract).sum();
+    Some(sum / history.len() as f64)
+}
+
+/// Conservative default CPU core count by task type, used only when neither
+/// task metadata nor historical data is available.
+fn default_cpu_cores_for(task_type: &TaskType) -> usize {
+    match task_type {
+        TaskType::ArchitectureSearch | TaskType::MetaLearning | TaskType::EnsembleCoordination => 4,
+        TaskType::PerformanceEvaluation | TaskType::KnowledgeDistillation => 2,
+        TaskType::GradientComputation
+        | TaskType::ParameterUpdate
+        | TaskType::ResourceOptimization
+        | TaskType::Custom(_) => 1,
+    }
+}
+
+/// Conservative default memory (MB) by task type, used only when neither
+/// task metadata nor historical data is available.
+fn default_memory_mb_for(task_type: &TaskType) -> usize {
+    match task_type {
+        TaskType::ArchitectureSearch | TaskType::MetaLearning => 4096,
+        TaskType::EnsembleCoordination | TaskType::KnowledgeDistillation => 2048,
+        _ => 1024,
+    }
+}
+
+/// Conservative default GPU device count by task type, used only when
+/// neither task metadata nor historical data is available.
+fn default_gpu_devices_for(task_type: &TaskType) -> usize {
+    match task_type {
+        TaskType::ArchitectureSearch | TaskType::MetaLearning | TaskType::GradientComputation => 1,
+        _ => 0,
+    }
+}
+
 /// Task scheduler for optimization processes
 #[derive(Debug)]
 pub struct TaskScheduler<T: Float + Debug + Send + Sync + 'static> {
@@ -89,11 +167,11 @@ impl<T: Float + Debug + Send + Sync + 'static> ScheduledTask<T> {
             task_type: TaskType::ParameterUpdate,
             priority: TaskPriority {
                 base_priority: 5,
-                urgency: T::from(0.5).expect("unwrap failed"),
-                importance: T::from(0.5).expect("unwrap failed"),
+                urgency: T::from(0.5).unwrap_or_else(|| T::zero()),
+                importance: T::from(0.5).unwrap_or_else(|| T::zero()),
                 efficiency: T::one(),
                 dynamic_adjustment: T::one(),
-                composite_score: T::from(5.0).expect("unwrap failed"), // Initial composite score
+                composite_score: T::from(5.0).unwrap_or_else(|| T::zero()), // Initial composite score
             },
             resource_requirements: TaskResourceRequirements {
                 cpu_cores: 1,
@@ -614,8 +692,14 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TaskScheduler<T
 
     /// Submit a new task for scheduling
     pub fn submit_task(&mut self, mut task: ScheduledTask<T>) -> Result<()> {
-        // Calculate task priority
-        task.priority = self.priority_calculator.calculate_priority(&task)?;
+        // Calculate task priority from real signals: base priority,
+        // deadline slack, dependents in the current pending queue, and
+        // learned resource-usage history for this task type.
+        task.priority = self.priority_calculator.calculate_priority(
+            &task,
+            &self.pending_tasks,
+            &self.resource_estimator.resource_history,
+        )?;
 
         // Estimate resource requirements if not provided
         if task.resource_requirements.cpu_cores == 0 {
@@ -811,11 +895,22 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityCalcula
         })
     }
 
-    pub fn calculate_priority(&self, task: &ScheduledTask<T>) -> Result<TaskPriority<T>> {
+    /// Calculate the full priority (urgency/importance/efficiency and their
+    /// weighted composite) for `task`. `all_tasks` is the current pending
+    /// queue, used to count how many other tasks depend on this one, and
+    /// `resource_history` is the scheduler's learned resource-usage history
+    /// per task type, used to derive an efficiency estimate from real past
+    /// performance instead of a constant.
+    pub fn calculate_priority(
+        &self,
+        task: &ScheduledTask<T>,
+        all_tasks: &VecDeque<ScheduledTask<T>>,
+        resource_history: &HashMap<TaskType, VecDeque<ResourceUsageRecord<T>>>,
+    ) -> Result<TaskPriority<T>> {
         let base_priority = T::from(task.priority.base_priority).unwrap_or_else(|| T::zero());
         let urgency = self.calculate_urgency(task)?;
-        let importance = self.calculate_importance(task)?;
-        let efficiency = self.calculate_efficiency(task)?;
+        let importance = self.calculate_importance(task, all_tasks)?;
+        let efficiency = self.calculate_efficiency(task, resource_history)?;
 
         let composite_score = base_priority * self.weights.base_weight
             + urgency * self.weights.urgency_weight
@@ -836,22 +931,81 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PriorityCalcula
         if let Some(deadline) = task.deadline {
             let now = SystemTime::now();
             let time_to_deadline = deadline.duration_since(now).unwrap_or_default();
-            let urgency =
-                T::one() - T::from(time_to_deadline.as_secs_f64() / 3600.0).expect("unwrap failed");
+            let urgency = T::one()
+                - T::from(time_to_deadline.as_secs_f64() / 3600.0).unwrap_or_else(|| T::zero());
             Ok(urgency.max(T::zero()).min(T::one()))
         } else {
             Ok(T::from(0.5).unwrap_or_else(|| T::zero()))
         }
     }
 
-    fn calculate_importance(&self, _task: &ScheduledTask<T>) -> Result<T> {
-        // Simplified importance calculation
-        Ok(T::from(0.5).unwrap_or_else(|| T::zero()))
+    /// Importance derived from three real signals: the task's declared base
+    /// priority, how much slack its deadline leaves relative to its own
+    /// estimated duration (tighter slack = more important), and how many
+    /// other currently-known tasks depend on it (more dependents = more
+    /// important, since delaying this task blocks others).
+    fn calculate_importance(
+        &self,
+        task: &ScheduledTask<T>,
+        all_tasks: &VecDeque<ScheduledTask<T>>,
+    ) -> Result<T> {
+        // Base priority is a u8; treat 10 as a "very high" reference point.
+        let base_component = T::from(task.priority.base_priority as f64 / 10.0)
+            .unwrap_or_else(|| T::zero())
+            .min(T::one());
+
+        let deadline_component = match task.deadline {
+            Some(deadline) => match deadline.duration_since(SystemTime::now()) {
+                Ok(remaining) => {
+                    let estimated_secs = task.estimated_duration.as_secs_f64().max(1.0);
+                    let slack_ratio = (remaining.as_secs_f64() / estimated_secs).max(0.0);
+                    // Little slack beyond the estimated runtime -> high
+                    // importance; ample slack -> low importance.
+                    T::from((1.0 / (1.0 + slack_ratio)).clamp(0.0, 1.0))
+                        .unwrap_or_else(|| T::zero())
+                }
+                Err(_) => T::one(), // deadline already passed: maximally important
+            },
+            None => T::from(0.3).unwrap_or_else(|| T::zero()),
+        };
+
+        let dependents = all_tasks
+            .iter()
+            .filter(|other| other.dependencies.iter().any(|dep| dep == &task.task_id))
+            .count();
+        let dependents_component =
+            T::from((dependents as f64 / 5.0).min(1.0)).unwrap_or_else(|| T::zero());
+
+        let weight_base = T::from(0.4).unwrap_or_else(|| T::zero());
+        let weight_deadline = T::from(0.35).unwrap_or_else(|| T::zero());
+        let weight_dependents = T::from(0.25).unwrap_or_else(|| T::zero());
+
+        let importance = base_component * weight_base
+            + deadline_component * weight_deadline
+            + dependents_component * weight_dependents;
+
+        Ok(importance.max(T::zero()).min(T::one()))
     }
 
-    fn calculate_efficiency(&self, _task: &ScheduledTask<T>) -> Result<T> {
-        // Simplified efficiency calculation
-        Ok(T::from(0.5).unwrap_or_else(|| T::zero()))
+    /// Efficiency derived from the historical performance of previously
+    /// completed tasks of the same type (`resource_history`, populated by
+    /// `ResourceRequirementEstimator::learn_from_completion`). Falls back to
+    /// a neutral 0.5 only when no history exists yet for this task type.
+    fn calculate_efficiency(
+        &self,
+        task: &ScheduledTask<T>,
+        resource_history: &HashMap<TaskType, VecDeque<ResourceUsageRecord<T>>>,
+    ) -> Result<T> {
+        match resource_history.get(&task.task_type) {
+            Some(history) if !history.is_empty() => {
+                let count = T::from(history.len()).unwrap_or_else(|| T::one());
+                let sum = history
+                    .iter()
+                    .fold(T::zero(), |acc, record| acc + record.performance);
+                Ok((sum / count).max(T::zero()).min(T::one()))
+            }
+            _ => Ok(T::from(0.5).unwrap_or_else(|| T::zero())),
+        }
     }
 }
 
@@ -864,18 +1018,51 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ResourceRequire
         })
     }
 
+    /// Estimate resource requirements for `task`, preferring (in order):
+    /// 1. Explicit values in `task.metadata` (the caller's stated intent);
+    /// 2. The average actual usage recorded in `resource_history` for tasks
+    ///    of the same `task_type` (real learned data, previously collected
+    ///    by `learn_from_completion` but never read anywhere);
+    /// 3. A conservative task-type-based heuristic default.
     pub fn estimate_requirements(
         &self,
         task: &ScheduledTask<T>,
     ) -> Result<TaskResourceRequirements> {
-        // Simplified estimation - in practice would use historical data and ML models
+        let history = self.resource_history.get(&task.task_type);
+
+        let cpu_cores = parse_metadata_usize(&task.metadata, "cpu_cores")
+            .or_else(|| history_average_usize(history, |r| r.actual_usage.cpu_cores))
+            .unwrap_or_else(|| default_cpu_cores_for(&task.task_type));
+        let memory_mb = parse_metadata_usize(&task.metadata, "memory_mb")
+            .or_else(|| history_average_usize(history, |r| r.actual_usage.memory_mb))
+            .unwrap_or_else(|| default_memory_mb_for(&task.task_type));
+        let gpu_devices = parse_metadata_usize(&task.metadata, "gpu_devices")
+            .or_else(|| history_average_usize(history, |r| r.actual_usage.gpu_devices))
+            .unwrap_or_else(|| default_gpu_devices_for(&task.task_type));
+        let storage_gb = parse_metadata_usize(&task.metadata, "storage_gb")
+            .or_else(|| history_average_usize(history, |r| r.actual_usage.storage_gb))
+            .unwrap_or(1);
+        let network_bandwidth = parse_metadata_f64(&task.metadata, "network_bandwidth_mbps")
+            .or_else(|| history_average_f64(history, |r| r.actual_usage.network_bandwidth))
+            .unwrap_or(10.0);
+        let special_hardware = task
+            .metadata
+            .get("special_hardware")
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(TaskResourceRequirements {
-            cpu_cores: 1,
-            memory_mb: 1024,
-            gpu_devices: 0,
-            storage_gb: 1,
-            network_bandwidth: 10.0,
-            special_hardware: Vec::new(),
+            cpu_cores,
+            memory_mb,
+            gpu_devices,
+            storage_gb,
+            network_bandwidth,
+            special_hardware,
         })
     }
 
@@ -982,5 +1169,213 @@ impl<T: Float + Debug + Default + Send + Sync> Default for SchedulerStatistics<T
             scheduling_overhead: T::zero(),
             throughput: T::zero(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scheduler() -> TaskScheduler<f64> {
+        TaskScheduler::<f64>::new(SchedulerConfig {
+            max_concurrent_tasks: 4,
+            queue_size_limit: 100,
+            task_timeout: Duration::from_secs(60),
+            priority_update_interval: Duration::from_secs(5),
+            load_balance_interval: Duration::from_secs(10),
+            estimation_threshold: 0.9,
+            enable_adaptive_scheduling: true,
+            enable_performance_learning: true,
+        })
+        .expect("scheduler construction failed")
+    }
+
+    #[test]
+    fn priority_queue_pops_highest_composite_score_first() {
+        // Regression test for F63: pending tasks must be served in
+        // descending priority order.
+        let mut sched = scheduler();
+
+        let mut low = ScheduledTask::<f64>::new("low".to_string());
+        low.priority.base_priority = 1;
+        let mut high = ScheduledTask::<f64>::new("high".to_string());
+        high.priority.base_priority = 9;
+        let mut mid = ScheduledTask::<f64>::new("mid".to_string());
+        mid.priority.base_priority = 5;
+
+        sched.submit_task(low).expect("submit low");
+        sched.submit_task(high).expect("submit high");
+        sched.submit_task(mid).expect("submit mid");
+
+        let first = sched.get_next_task().expect("first task");
+        let second = sched.get_next_task().expect("second task");
+        let third = sched.get_next_task().expect("third task");
+
+        assert!(
+            first.priority.composite_score >= second.priority.composite_score,
+            "expected descending order: {:?} >= {:?}",
+            first.priority.composite_score,
+            second.priority.composite_score
+        );
+        assert!(
+            second.priority.composite_score >= third.priority.composite_score,
+            "expected descending order: {:?} >= {:?}",
+            second.priority.composite_score,
+            third.priority.composite_score
+        );
+        // The task submitted with the highest base_priority must come out
+        // first under the default PriorityBased strategy.
+        assert_eq!(first.metadata.get("name"), Some(&"high".to_string()));
+    }
+
+    #[test]
+    fn importance_reflects_dependents_not_a_constant() {
+        // Regression test for F63: calculate_importance must vary with real
+        // signals (here: number of dependents), not return a fixed 0.5.
+        let calc = PriorityCalculator::<f64>::new().expect("calculator construction failed");
+
+        let base = ScheduledTask::<f64>::new("base".to_string());
+        let mut dependent = ScheduledTask::<f64>::new("dependent".to_string());
+        dependent.dependencies.push(base.task_id.clone());
+
+        let empty_queue: VecDeque<ScheduledTask<f64>> = VecDeque::new();
+        let with_dependent: VecDeque<ScheduledTask<f64>> = VecDeque::from(vec![dependent]);
+
+        let importance_no_deps = calc
+            .calculate_importance(&base, &empty_queue)
+            .expect("importance calc");
+        let importance_with_deps = calc
+            .calculate_importance(&base, &with_dependent)
+            .expect("importance calc");
+
+        assert!(
+            importance_with_deps > importance_no_deps,
+            "a task with a dependent must be considered more important: {importance_with_deps} vs {importance_no_deps}"
+        );
+    }
+
+    #[test]
+    fn efficiency_uses_resource_history_not_a_constant() {
+        // Regression test for F63: calculate_efficiency must derive from
+        // resource_history when present, not always return 0.5.
+        let calc = PriorityCalculator::<f64>::new().expect("calculator construction failed");
+        let task = ScheduledTask::<f64>::new("t".to_string());
+
+        let mut history: HashMap<TaskType, VecDeque<ResourceUsageRecord<f64>>> = HashMap::new();
+        let mut records = VecDeque::new();
+        records.push_back(ResourceUsageRecord {
+            task_params: HashMap::new(),
+            actual_usage: TaskResourceRequirements {
+                cpu_cores: 1,
+                memory_mb: 512,
+                gpu_devices: 0,
+                storage_gb: 1,
+                network_bandwidth: 1.0,
+                special_hardware: Vec::new(),
+            },
+            execution_time: Duration::from_secs(10),
+            performance: 0.9,
+            timestamp: SystemTime::now(),
+        });
+        history.insert(task.task_type.clone(), records);
+
+        let empty_history: HashMap<TaskType, VecDeque<ResourceUsageRecord<f64>>> = HashMap::new();
+
+        let efficiency_no_history = calc
+            .calculate_efficiency(&task, &empty_history)
+            .expect("efficiency calc");
+        let efficiency_with_history = calc
+            .calculate_efficiency(&task, &history)
+            .expect("efficiency calc");
+
+        assert_eq!(efficiency_no_history, 0.5);
+        assert!(
+            (efficiency_with_history - 0.9).abs() < 1e-9,
+            "efficiency should reflect the recorded performance: got {efficiency_with_history}"
+        );
+    }
+
+    #[test]
+    fn estimate_requirements_uses_metadata_when_present() {
+        // Regression test for F63: estimate_requirements must honor
+        // explicit task metadata instead of always returning fixed values.
+        let estimator =
+            ResourceRequirementEstimator::<f64>::new().expect("estimator construction failed");
+
+        let mut task = ScheduledTask::<f64>::new("custom".to_string());
+        task.metadata
+            .insert("cpu_cores".to_string(), "16".to_string());
+        task.metadata
+            .insert("memory_mb".to_string(), "32768".to_string());
+        task.metadata
+            .insert("gpu_devices".to_string(), "2".to_string());
+
+        let requirements = estimator
+            .estimate_requirements(&task)
+            .expect("estimate_requirements");
+
+        assert_eq!(requirements.cpu_cores, 16);
+        assert_eq!(requirements.memory_mb, 32768);
+        assert_eq!(requirements.gpu_devices, 2);
+    }
+
+    #[test]
+    fn estimate_requirements_learns_from_history_when_no_metadata() {
+        let mut estimator =
+            ResourceRequirementEstimator::<f64>::new().expect("estimator construction failed");
+
+        let completed = CompletedTask {
+            task: ScheduledTask::<f64>::new("historical".to_string()),
+            start_time: SystemTime::now(),
+            end_time: SystemTime::now(),
+            duration: Duration::from_secs(5),
+            final_metrics: ExecutionMetrics::default(),
+            resource_efficiency: 0.8,
+            success: true,
+            error_info: None,
+        };
+        let mut historical_task = completed.task.clone();
+        historical_task.resource_requirements = TaskResourceRequirements {
+            cpu_cores: 8,
+            memory_mb: 8192,
+            gpu_devices: 1,
+            storage_gb: 5,
+            network_bandwidth: 50.0,
+            special_hardware: Vec::new(),
+        };
+        let mut completed = completed;
+        completed.task = historical_task;
+
+        estimator
+            .learn_from_completion(&completed)
+            .expect("learn_from_completion");
+
+        let mut new_task = ScheduledTask::<f64>::new("same_type".to_string());
+        new_task.task_type = completed.task.task_type.clone();
+
+        let requirements = estimator
+            .estimate_requirements(&new_task)
+            .expect("estimate_requirements");
+
+        assert_eq!(requirements.cpu_cores, 8);
+        assert_eq!(requirements.memory_mb, 8192);
+    }
+
+    #[test]
+    fn estimate_requirements_falls_back_to_type_heuristic() {
+        let estimator =
+            ResourceRequirementEstimator::<f64>::new().expect("estimator construction failed");
+
+        let mut search_task = ScheduledTask::<f64>::new("search".to_string());
+        search_task.task_type = TaskType::ArchitectureSearch;
+
+        let requirements = estimator
+            .estimate_requirements(&search_task)
+            .expect("estimate_requirements");
+
+        // ArchitectureSearch's heuristic default is heavier than the
+        // previous universal constant of 1 core / 1024MB.
+        assert_eq!(requirements.cpu_cores, 4);
+        assert_eq!(requirements.memory_mb, 4096);
     }
 }

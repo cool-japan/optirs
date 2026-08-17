@@ -2,17 +2,27 @@
 //
 // This module provides comprehensive integration capabilities with external services
 // including GitHub, Slack, email, webhooks, and custom integrations for CI/CD automation.
+//
+// Every integration delivers through `crate::notification_transport`: no HTTP client
+// dependency is linked into this crate. By default (`TransportKind::Command`) delivery
+// shells out to the system `curl`; set `OPTIRS_NOTIFICATION_TRANSPORT=file:<dir>`,
+// `=log`, or `=disabled` to redirect delivery for tests/offline CI. An integration that
+// is not configured (no token/webhook URL/etc.) or whose transport is `Disabled` always
+// returns `IntegrationStatus::Disabled` plus an `Err` -- it never reports `Ok(())` for a
+// notification that was not actually sent.
 
 use crate::error::{OptimError, Result};
+use crate::notification_transport::{
+    self, DeliveryOutcome, DeliveryTarget, SmtpTarget, TransportKind, TransportMethod,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use super::config::{
-    CustomIntegrationConfig, EmailIntegration, EmailTemplateConfig, GitHubIntegration,
-    GitHubLabelConfig, GitHubStatusCheckConfig, HttpMethod, IntegrationConfig, PayloadFormat,
-    SlackIntegration, SlackNotificationConfig, SmtpConfig, WebhookAuth, WebhookIntegration,
-    WebhookPayloadConfig, WebhookRetryConfig, WebhookTriggerConfig,
+    EmailIntegration, GitHubIntegration, HttpMethod, IntegrationConfig, PayloadFormat,
+    SlackIntegration, WebhookAuth, WebhookIntegration, WebhookPayloadConfig, WebhookRetryConfig,
+    WebhookTriggerConfig,
 };
 use super::reporting::GeneratedReport;
 use super::test_execution::{CiCdTestResult, TestExecutionStatus, TestSuiteStatistics};
@@ -32,7 +42,7 @@ pub struct IntegrationManager {
     pub webhook_clients: Vec<WebhookClient>,
     /// Custom integration handlers
     pub custom_integrations: HashMap<String, Box<dyn CustomIntegration>>,
-    /// Integration statistics
+    /// Integration statistics, refreshed from each client after every send.
     pub statistics: IntegrationStatistics,
 }
 
@@ -45,6 +55,8 @@ pub struct GitHubClient {
     pub http_client: HttpClient,
     /// Rate limiter
     pub rate_limiter: RateLimiter,
+    /// Delivery statistics, updated after every real request attempt.
+    pub statistics: GitHubStatistics,
 }
 
 /// Slack integration client
@@ -54,6 +66,8 @@ pub struct SlackClient {
     pub config: SlackIntegration,
     /// HTTP client for API calls
     pub http_client: HttpClient,
+    /// Delivery statistics, updated after every real request attempt.
+    pub statistics: SlackStatistics,
 }
 
 /// Email integration client
@@ -61,8 +75,10 @@ pub struct SlackClient {
 pub struct EmailClient {
     /// Email configuration
     pub config: EmailIntegration,
-    /// SMTP client
-    pub smtp_client: SmtpClient,
+    /// SMTP transport selection (curl SMTP submission by default).
+    pub transport_kind: TransportKind,
+    /// Delivery statistics, updated after every real send attempt.
+    pub statistics: EmailStatistics,
 }
 
 /// Webhook integration client
@@ -74,6 +90,8 @@ pub struct WebhookClient {
     pub http_client: HttpClient,
     /// Retry manager
     pub retry_manager: RetryManager,
+    /// Delivery statistics, updated after every real request attempt.
+    pub statistics: WebhookStatistics,
 }
 
 /// Custom integration trait
@@ -101,7 +119,10 @@ pub trait CustomIntegration: std::fmt::Debug + Send + Sync {
     fn validate_config(&self, config: &HashMap<String, String>) -> Result<()>;
 }
 
-/// HTTP client for making API requests
+/// HTTP client for making API requests. Delivery is performed by
+/// `crate::notification_transport` (system `curl` by default); this struct
+/// only holds request defaults (base URL, headers, timeout) and the chosen
+/// transport.
 #[derive(Debug, Clone)]
 pub struct HttpClient {
     /// Base URL for requests
@@ -112,34 +133,19 @@ pub struct HttpClient {
     pub timeout: Duration,
     /// User agent string
     pub user_agent: String,
+    /// Transport used to actually deliver requests.
+    pub transport_kind: TransportKind,
 }
 
-/// SMTP client for sending emails
-#[derive(Debug, Clone)]
-pub struct SmtpClient {
-    /// SMTP configuration
-    pub config: SmtpConfig,
-    /// Connection pool
-    pub connection_pool: SmtpConnectionPool,
-}
-
-/// SMTP connection pool
-#[derive(Debug, Clone)]
-pub struct SmtpConnectionPool {
-    /// Maximum connections
-    pub max_connections: usize,
-    /// Current active connections
-    pub active_connections: usize,
-    /// Connection timeout
-    pub connection_timeout: Duration,
-}
-
-/// Rate limiter for API calls
+/// Rate limiter for API calls. Tracks requests against a configurable
+/// window (per-minute or per-hour), not a hardcoded 60-second bucket.
 #[derive(Debug, Clone)]
 pub struct RateLimiter {
-    /// Requests per minute limit
-    pub requests_per_minute: u32,
-    /// Current request count
+    /// Requests allowed per window
+    pub limit: u32,
+    /// Length of the rate-limit window
+    pub window: Duration,
+    /// Current request count within the window
     pub current_requests: u32,
     /// Reset time
     pub reset_time: SystemTime,
@@ -152,6 +158,8 @@ pub struct RateLimiter {
 pub struct RetryManager {
     /// Retry configuration
     pub config: WebhookRetryConfig,
+    /// Transport used to re-issue retried requests.
+    pub transport_kind: TransportKind,
     /// Failed requests queue
     pub failed_requests: Vec<FailedRequest>,
     /// Retry statistics
@@ -189,7 +197,7 @@ pub struct RequestData {
 }
 
 /// Retry statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RetryStatistics {
     /// Total retry attempts
     pub total_retries: u64,
@@ -212,7 +220,10 @@ pub struct IntegrationNotification {
     pub message: String,
     /// Notification priority
     pub priority: NotificationPriority,
-    /// Additional data
+    /// Additional data. Recognized keys used for GitHub delivery:
+    /// `commit_sha` (status checks) and `pr_number` (PR comments); both fall
+    /// back to the `GITHUB_SHA`/`PR_NUMBER`/`GITHUB_REF` environment
+    /// variables when absent.
     pub data: HashMap<String, String>,
     /// Timestamp
     pub timestamp: SystemTime,
@@ -281,7 +292,7 @@ pub struct IntegrationStatistics {
 }
 
 /// GitHub integration statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GitHubStatistics {
     /// Status checks created
     pub status_checks_created: u64,
@@ -298,10 +309,12 @@ pub struct GitHubStatistics {
 }
 
 /// Slack integration statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SlackStatistics {
     /// Messages sent
     pub messages_sent: u64,
+    /// Messages that failed to send
+    pub messages_failed: u64,
     /// Files uploaded
     pub files_uploaded: u64,
     /// Channels used
@@ -311,7 +324,7 @@ pub struct SlackStatistics {
 }
 
 /// Email integration statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EmailStatistics {
     /// Emails sent
     pub emails_sent: u64,
@@ -353,60 +366,6 @@ pub struct CustomIntegrationStatistics {
     pub last_activity: Option<SystemTime>,
 }
 
-/// GitHub API response types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubStatusCheckResponse {
-    /// Status check ID
-    pub id: u64,
-    /// Status state
-    pub state: String,
-    /// Status description
-    pub description: String,
-    /// Target URL
-    pub target_url: Option<String>,
-}
-
-/// GitHub PR comment response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubCommentResponse {
-    /// Comment ID
-    pub id: u64,
-    /// Comment body
-    pub body: String,
-    /// Comment URL
-    pub html_url: String,
-    /// Creation timestamp
-    pub created_at: String,
-}
-
-/// GitHub issue response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubIssueResponse {
-    /// Issue ID
-    pub id: u64,
-    /// Issue number
-    pub number: u64,
-    /// Issue title
-    pub title: String,
-    /// Issue URL
-    pub html_url: String,
-    /// Issue state
-    pub state: String,
-}
-
-/// Slack message response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SlackMessageResponse {
-    /// Success status
-    pub ok: bool,
-    /// Message timestamp
-    pub ts: Option<String>,
-    /// Channel ID
-    pub channel: Option<String>,
-    /// Error message
-    pub error: Option<String>,
-}
-
 impl IntegrationManager {
     /// Create a new integration manager
     pub fn new(config: IntegrationConfig) -> Result<Self> {
@@ -426,75 +385,104 @@ impl IntegrationManager {
 
     /// Initialize all configured integrations
     fn initialize_integrations(&mut self) -> Result<()> {
-        // Initialize GitHub integration
         if let Some(github_config) = &self.config.github {
             self.github_client = Some(GitHubClient::new(github_config.clone())?);
         }
 
-        // Initialize Slack integration
         if let Some(slack_config) = &self.config.slack {
             self.slack_client = Some(SlackClient::new(slack_config.clone())?);
         }
 
-        // Initialize Email integration
         if let Some(email_config) = &self.config.email {
             self.email_client = Some(EmailClient::new(email_config.clone())?);
         }
 
-        // Initialize Webhook integrations
         for webhook_config in &self.config.webhooks {
             let client = WebhookClient::new(webhook_config.clone())?;
             self.webhook_clients.push(client);
         }
 
-        // Initialize custom integrations
-        for (name, custom_config) in &self.config.custom {
-            // In a real implementation, this would load custom integration plugins
-            // For now, we'll just validate the configuration
-            if custom_config.enabled {
-                // Custom integration initialization would go here
-            }
-        }
+        // Custom integrations are provided externally via `register_custom_integration`;
+        // nothing further to do for entries that are merely configured but not yet
+        // registered (`enabled: false` explicitly means "do not attempt to use it").
 
         Ok(())
     }
 
-    /// Send notification to all configured integrations
+    /// Register a concrete custom integration handler for a name declared in
+    /// `config.custom`. Returns an error if no matching (enabled)
+    /// configuration entry exists, rather than silently accepting handlers
+    /// for unconfigured names.
+    pub fn register_custom_integration(
+        &mut self,
+        name: impl Into<String>,
+        mut handler: Box<dyn CustomIntegration>,
+    ) -> Result<()> {
+        let name = name.into();
+        let entry = self.config.custom.get(&name).ok_or_else(|| {
+            OptimError::InvalidConfig(format!("no custom integration configured named '{name}'"))
+        })?;
+        if !entry.enabled {
+            return Err(OptimError::InvalidConfig(format!(
+                "custom integration '{name}' is configured but disabled"
+            )));
+        }
+        handler.initialize(&entry.parameters)?;
+        self.custom_integrations.insert(name, handler);
+        Ok(())
+    }
+
+    /// Send notification to all configured integrations. Returns `Err` if
+    /// any *configured* integration fails to deliver; partially-succeeded
+    /// deliveries are still reflected truthfully in `self.statistics`
+    /// before the error is returned.
     pub fn send_notification(&mut self, notification: &IntegrationNotification) -> Result<()> {
-        // Send to GitHub
+        let mut first_error: Option<OptimError> = None;
+
         if self.should_send_to_github(&notification.notification_type) {
             if let Some(github_client) = &mut self.github_client {
-                github_client.send_notification(notification)?;
+                if let Err(err) = github_client.send_notification(notification) {
+                    first_error.get_or_insert(err);
+                }
             }
         }
 
-        // Send to Slack
         if self.should_send_to_slack(&notification.notification_type) {
             if let Some(slack_client) = &mut self.slack_client {
-                slack_client.send_notification(notification)?;
+                if let Err(err) = slack_client.send_notification(notification) {
+                    first_error.get_or_insert(err);
+                }
             }
         }
 
-        // Send to Email
         if self.should_send_to_email(&notification.notification_type) {
             if let Some(email_client) = &mut self.email_client {
-                email_client.send_notification(notification)?;
+                if let Err(err) = email_client.send_notification(notification) {
+                    first_error.get_or_insert(err);
+                }
             }
         }
 
-        // Send to Webhooks
         for webhook_client in &mut self.webhook_clients {
             if webhook_client.should_trigger(&notification.notification_type) {
-                webhook_client.send_notification(notification)?;
+                if let Err(err) = webhook_client.send_notification(notification) {
+                    first_error.get_or_insert(err);
+                }
             }
         }
 
-        // Send to custom integrations
-        for (name, integration) in &self.custom_integrations {
-            integration.send_notification(notification)?;
+        for integration in self.custom_integrations.values() {
+            if let Err(err) = integration.send_notification(notification) {
+                first_error.get_or_insert(err);
+            }
         }
 
-        Ok(())
+        self.refresh_statistics();
+
+        match first_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     /// Handle test completion
@@ -529,7 +517,6 @@ impl IntegrationManager {
 
         self.send_notification(&notification)?;
 
-        // Handle custom integration callbacks
         for integration in self.custom_integrations.values() {
             integration.handle_test_results(results, statistics)?;
         }
@@ -550,7 +537,6 @@ impl IntegrationManager {
 
         self.send_notification(&notification)?;
 
-        // Handle custom integration callbacks
         for integration in self.custom_integrations.values() {
             integration.handle_report_generated(report)?;
         }
@@ -563,7 +549,6 @@ impl IntegrationManager {
         let mut has_errors = false;
         let mut has_warnings = false;
 
-        // Check GitHub status
         if let Some(github_client) = &self.github_client {
             match github_client.get_health_status() {
                 IntegrationStatus::Error => has_errors = true,
@@ -572,7 +557,6 @@ impl IntegrationManager {
             }
         }
 
-        // Check Slack status
         if let Some(slack_client) = &self.slack_client {
             match slack_client.get_health_status() {
                 IntegrationStatus::Error => has_errors = true,
@@ -581,7 +565,6 @@ impl IntegrationManager {
             }
         }
 
-        // Check Email status
         if let Some(email_client) = &self.email_client {
             match email_client.get_health_status() {
                 IntegrationStatus::Error => has_errors = true,
@@ -590,7 +573,6 @@ impl IntegrationManager {
             }
         }
 
-        // Check webhook statuses
         for webhook_client in &self.webhook_clients {
             match webhook_client.get_health_status() {
                 IntegrationStatus::Error => has_errors = true,
@@ -599,7 +581,6 @@ impl IntegrationManager {
             }
         }
 
-        // Check custom integration statuses
         for integration in self.custom_integrations.values() {
             match integration.get_status() {
                 IntegrationStatus::Error => has_errors = true,
@@ -615,6 +596,33 @@ impl IntegrationManager {
         } else {
             IntegrationStatus::Healthy
         }
+    }
+
+    /// Rebuild `self.statistics` from each live client's own counters. This
+    /// is the only place `self.statistics` is written, so it can never drift
+    /// from what actually happened during delivery.
+    fn refresh_statistics(&mut self) {
+        let webhook =
+            self.webhook_clients
+                .iter()
+                .fold(WebhookStatistics::default(), |mut acc, client| {
+                    acc.requests_sent += client.statistics.requests_sent;
+                    acc.requests_successful += client.statistics.requests_successful;
+                    acc.requests_failed += client.statistics.requests_failed;
+                    acc.retry_stats.total_retries += client.statistics.retry_stats.total_retries;
+                    acc.retry_stats.successful_retries +=
+                        client.statistics.retry_stats.successful_retries;
+                    acc.retry_stats.failed_retries += client.statistics.retry_stats.failed_retries;
+                    acc
+                });
+
+        self.statistics = IntegrationStatistics {
+            github: self.github_client.as_ref().map(|c| c.statistics.clone()),
+            slack: self.slack_client.as_ref().map(|c| c.statistics.clone()),
+            email: self.email_client.as_ref().map(|c| c.statistics.clone()),
+            webhook,
+            custom: self.statistics.custom.clone(),
+        };
     }
 
     /// Determine if notification should be sent to GitHub
@@ -716,17 +724,80 @@ impl IntegrationManager {
     }
 }
 
+/// Resolve a commit SHA for a GitHub status check: explicit
+/// `notification.data["commit_sha"]` first, then the `GITHUB_SHA`/
+/// `CI_COMMIT_SHA` environment variables set by GitHub Actions/GitLab CI.
+fn resolve_commit_sha(notification: &IntegrationNotification) -> Option<String> {
+    notification
+        .data
+        .get("commit_sha")
+        .cloned()
+        .or_else(|| std::env::var("GITHUB_SHA").ok())
+        .or_else(|| std::env::var("CI_COMMIT_SHA").ok())
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve a PR/issue number for a GitHub PR comment: explicit
+/// `notification.data["pr_number"]` first, then the `PR_NUMBER` environment
+/// variable, then parsed out of `GITHUB_REF` (`refs/pull/<n>/merge`).
+fn resolve_pr_number(notification: &IntegrationNotification) -> Option<String> {
+    if let Some(number) = notification.data.get("pr_number") {
+        if !number.is_empty() {
+            return Some(number.clone());
+        }
+    }
+    if let Ok(number) = std::env::var("PR_NUMBER") {
+        if !number.is_empty() {
+            return Some(number);
+        }
+    }
+    if let Ok(reference) = std::env::var("GITHUB_REF") {
+        let parts: Vec<&str> = reference.split('/').collect();
+        if parts.len() >= 3 && parts.first() == Some(&"refs") && parts.get(1) == Some(&"pull") {
+            return Some(parts[2].to_string());
+        }
+    }
+    None
+}
+
 impl GitHubClient {
     /// Create a new GitHub client
     pub fn new(config: GitHubIntegration) -> Result<Self> {
         let http_client = HttpClient::new("https://api.github.com".to_string())?;
-        let rate_limiter = RateLimiter::new(5000); // GitHub allows 5000 requests per hour
+        // GitHub's REST API allows 5000 authenticated requests per hour.
+        let rate_limiter = RateLimiter::per_hour(5000);
 
         Ok(Self {
             config,
             http_client,
             rate_limiter,
+            statistics: GitHubStatistics::default(),
         })
+    }
+
+    fn auth_headers(&self) -> HashMap<String, String> {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", self.config.token),
+        );
+        headers.insert(
+            "Accept".to_string(),
+            "application/vnd.github+json".to_string(),
+        );
+        headers.insert("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string());
+        headers
+    }
+
+    fn check_rate_limit(&mut self) -> Result<()> {
+        if !self.rate_limiter.is_allowed() {
+            self.statistics.rate_limit_hits += 1;
+            return Err(OptimError::ResourceUnavailable(format!(
+                "GitHub API rate limit exceeded ({} requests per {:?})",
+                self.rate_limiter.limit, self.rate_limiter.window
+            )));
+        }
+        Ok(())
     }
 
     /// Send notification to GitHub
@@ -750,7 +821,18 @@ impl GitHubClient {
     }
 
     /// Create status check
-    fn create_status_check(&mut self, notification: &IntegrationNotification) -> Result<()> {
+    fn create_status_check(
+        &mut self,
+        notification: &IntegrationNotification,
+    ) -> Result<DeliveryOutcome> {
+        let sha = resolve_commit_sha(notification).ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "GitHub status check requires a commit SHA: set notification.data[\"commit_sha\"] \
+                 or the GITHUB_SHA/CI_COMMIT_SHA environment variable"
+                    .to_string(),
+            )
+        })?;
+
         let state = match &notification.notification_type {
             NotificationType::TestCompletion => "success",
             NotificationType::TestFailure => "failure",
@@ -763,57 +845,143 @@ impl GitHubClient {
             "context": self.config.status_checks.context
         });
 
-        // In a real implementation, this would make an actual HTTP request to GitHub API
-        println!("GitHub Status Check: {}", payload);
-        Ok(())
+        self.check_rate_limit()?;
+        let path = format!(
+            "/repos/{}/{}/statuses/{}",
+            self.config.owner, self.config.repository, sha
+        );
+        let outcome = self.http_client.send(
+            &path,
+            TransportMethod::Post,
+            &self.auth_headers(),
+            &format!(
+                "github-status:{}/{}",
+                self.config.owner, self.config.repository
+            ),
+            &payload.to_string(),
+        )?;
+        self.statistics.api_requests += 1;
+        self.statistics.last_activity = Some(SystemTime::now());
+        if outcome.is_success() {
+            self.statistics.status_checks_created += 1;
+        }
+        Ok(outcome)
     }
 
     /// Create PR comment
-    fn create_pr_comment(&mut self, notification: &IntegrationNotification) -> Result<()> {
+    fn create_pr_comment(
+        &mut self,
+        notification: &IntegrationNotification,
+    ) -> Result<DeliveryOutcome> {
+        let pr_number = resolve_pr_number(notification).ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "GitHub PR comment requires a PR number: set notification.data[\"pr_number\"], \
+                 the PR_NUMBER environment variable, or run in a GitHub Actions pull_request context"
+                    .to_string(),
+            )
+        })?;
+
         let comment_body = format!("## {}\n\n{}", notification.title, notification.message);
+        let payload = serde_json::json!({ "body": comment_body });
 
-        let payload = serde_json::json!({
-            "body": comment_body
-        });
-
-        // In a real implementation, this would make an actual HTTP request to GitHub API
-        println!("GitHub PR Comment: {}", payload);
-        Ok(())
+        self.check_rate_limit()?;
+        let path = format!(
+            "/repos/{}/{}/issues/{}/comments",
+            self.config.owner, self.config.repository, pr_number
+        );
+        let outcome = self.http_client.send(
+            &path,
+            TransportMethod::Post,
+            &self.auth_headers(),
+            &format!(
+                "github-comment:{}/{}",
+                self.config.owner, self.config.repository
+            ),
+            &payload.to_string(),
+        )?;
+        self.statistics.api_requests += 1;
+        self.statistics.last_activity = Some(SystemTime::now());
+        if outcome.is_success() {
+            self.statistics.pr_comments_created += 1;
+        }
+        Ok(outcome)
     }
 
     /// Create issue
-    fn create_issue(&mut self, notification: &IntegrationNotification) -> Result<()> {
+    fn create_issue(&mut self, notification: &IntegrationNotification) -> Result<DeliveryOutcome> {
         let payload = serde_json::json!({
             "title": &notification.title,
             "body": &notification.message,
             "labels": [self.config.labels.performance_regression]
         });
 
-        // In a real implementation, this would make an actual HTTP request to GitHub API
-        println!("GitHub Issue: {}", payload);
-        Ok(())
+        self.check_rate_limit()?;
+        let path = format!(
+            "/repos/{}/{}/issues",
+            self.config.owner, self.config.repository
+        );
+        let outcome = self.http_client.send(
+            &path,
+            TransportMethod::Post,
+            &self.auth_headers(),
+            &format!(
+                "github-issue:{}/{}",
+                self.config.owner, self.config.repository
+            ),
+            &payload.to_string(),
+        )?;
+        self.statistics.api_requests += 1;
+        self.statistics.last_activity = Some(SystemTime::now());
+        if outcome.is_success() {
+            self.statistics.issues_created += 1;
+        }
+        Ok(outcome)
     }
 
-    /// Get health status
+    /// Get health status, derived from the most recent delivery outcome
+    /// rather than an unconditional constant.
     pub fn get_health_status(&self) -> IntegrationStatus {
-        // In a real implementation, this would check API connectivity
-        IntegrationStatus::Healthy
+        if self.config.token.is_empty() {
+            return IntegrationStatus::NotConfigured;
+        }
+        if self.statistics.last_activity.is_none() {
+            return IntegrationStatus::Healthy; // configured, nothing sent yet
+        }
+        if self.statistics.status_checks_created == 0
+            && self.statistics.pr_comments_created == 0
+            && self.statistics.issues_created == 0
+            && self.statistics.api_requests > 0
+        {
+            IntegrationStatus::Error // every attempted request failed
+        } else {
+            IntegrationStatus::Healthy
+        }
     }
 }
 
 impl SlackClient {
     /// Create a new Slack client
     pub fn new(config: SlackIntegration) -> Result<Self> {
-        let http_client = HttpClient::new("https://hooks.slack.com".to_string())?;
+        // The webhook URL *is* the full endpoint (e.g.
+        // `https://hooks.slack.com/services/T000/B000/XXXX`); it must be the
+        // HttpClient's base URL, not a bare host, or requests would 404.
+        let http_client = HttpClient::new(config.webhook_url.clone())?;
 
         Ok(Self {
             config,
             http_client,
+            statistics: SlackStatistics::default(),
         })
     }
 
     /// Send notification to Slack
     pub fn send_notification(&mut self, notification: &IntegrationNotification) -> Result<()> {
+        if self.config.webhook_url.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "Slack integration has no webhook_url configured".to_string(),
+            ));
+        }
+
         let color = match notification.priority {
             NotificationPriority::Critical => "#FF0000",
             NotificationPriority::High => "#FF8C00",
@@ -834,31 +1002,71 @@ impl SlackClient {
             }]
         });
 
-        // In a real implementation, this would make an actual HTTP request to Slack API
-        println!("Slack Message: {}", payload);
-        Ok(())
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        let outcome = self.http_client.send(
+            "",
+            TransportMethod::Post,
+            &headers,
+            &self.config.default_channel,
+            &payload.to_string(),
+        )?;
+
+        self.statistics.last_activity = Some(SystemTime::now());
+        if !self
+            .statistics
+            .channels_used
+            .contains(&self.config.default_channel)
+        {
+            self.statistics
+                .channels_used
+                .push(self.config.default_channel.clone());
+        }
+        if outcome.is_success() {
+            self.statistics.messages_sent += 1;
+            Ok(())
+        } else {
+            self.statistics.messages_failed += 1;
+            Err(OptimError::InvalidConfig(format!(
+                "Slack delivery failed: {}",
+                outcome.detail()
+            )))
+        }
     }
 
-    /// Get health status
+    /// Get health status, derived from delivery counters.
     pub fn get_health_status(&self) -> IntegrationStatus {
-        // In a real implementation, this would check webhook connectivity
-        IntegrationStatus::Healthy
+        if self.config.webhook_url.is_empty() {
+            return IntegrationStatus::NotConfigured;
+        }
+        if self.statistics.messages_sent == 0 && self.statistics.messages_failed > 0 {
+            IntegrationStatus::Error
+        } else if self.statistics.messages_failed > 0 {
+            IntegrationStatus::Warning
+        } else {
+            IntegrationStatus::Healthy
+        }
     }
 }
 
 impl EmailClient {
     /// Create a new email client
     pub fn new(config: EmailIntegration) -> Result<Self> {
-        let smtp_client = SmtpClient::new(config.smtp.clone())?;
-
         Ok(Self {
             config,
-            smtp_client,
+            transport_kind: notification_transport::transport_kind_from_env(),
+            statistics: EmailStatistics::default(),
         })
     }
 
     /// Send notification via email
     pub fn send_notification(&mut self, notification: &IntegrationNotification) -> Result<()> {
+        if self.config.default_recipients.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "Email integration has no default_recipients configured".to_string(),
+            ));
+        }
+
         let subject = match notification.priority {
             NotificationPriority::Critical => format!("[CRITICAL] {}", notification.title),
             NotificationPriority::High => format!("[HIGH] {}", notification.title),
@@ -871,9 +1079,45 @@ impl EmailClient {
             notification.message.clone()
         };
 
-        // In a real implementation, this would send actual emails
-        println!("Email - Subject: {}, Body: {}", subject, body);
-        Ok(())
+        let message = format!(
+            "From: {}\r\nTo: {}\r\nSubject: {}\r\n\r\n{}\r\n",
+            self.config.from_email,
+            self.config.default_recipients.join(", "),
+            subject,
+            body
+        );
+
+        let smtp_target = SmtpTarget {
+            host: self.config.smtp.host.clone(),
+            port: self.config.smtp.port,
+            use_tls: self.config.smtp.use_tls,
+            username: self.config.smtp.username.clone(),
+            password: self.config.smtp.password.clone(),
+            from: self.config.from_email.clone(),
+            to: self.config.default_recipients.clone(),
+            timeout: Duration::from_secs(self.config.smtp.timeout_sec),
+        };
+
+        let outcome =
+            notification_transport::deliver_email(&self.transport_kind, &smtp_target, &message)?;
+
+        self.statistics.last_activity = Some(SystemTime::now());
+        for recipient in &self.config.default_recipients {
+            if !self.statistics.recipients_contacted.contains(recipient) {
+                self.statistics.recipients_contacted.push(recipient.clone());
+            }
+        }
+
+        if outcome.is_success() {
+            self.statistics.emails_sent += 1;
+            Ok(())
+        } else {
+            self.statistics.emails_failed += 1;
+            Err(OptimError::InvalidConfig(format!(
+                "Email delivery failed: {}",
+                outcome.detail()
+            )))
+        }
     }
 
     /// Create HTML email body
@@ -895,10 +1139,18 @@ impl EmailClient {
         )
     }
 
-    /// Get health status
+    /// Get health status, derived from delivery counters.
     pub fn get_health_status(&self) -> IntegrationStatus {
-        // In a real implementation, this would check SMTP connectivity
-        IntegrationStatus::Healthy
+        if self.config.default_recipients.is_empty() {
+            return IntegrationStatus::NotConfigured;
+        }
+        if self.statistics.emails_sent == 0 && self.statistics.emails_failed > 0 {
+            IntegrationStatus::Error
+        } else if self.statistics.emails_failed > 0 {
+            IntegrationStatus::Warning
+        } else {
+            IntegrationStatus::Healthy
+        }
     }
 }
 
@@ -906,12 +1158,16 @@ impl WebhookClient {
     /// Create a new webhook client
     pub fn new(config: WebhookIntegration) -> Result<Self> {
         let http_client = HttpClient::new(config.url.clone())?;
-        let retry_manager = RetryManager::new(config.payload.clone().into());
+        let retry_manager = RetryManager::new(
+            config.payload.clone().into(),
+            notification_transport::transport_kind_from_env(),
+        );
 
         Ok(Self {
             config,
             http_client,
             retry_manager,
+            statistics: WebhookStatistics::default(),
         })
     }
 
@@ -929,10 +1185,65 @@ impl WebhookClient {
     /// Send notification via webhook
     pub fn send_notification(&mut self, notification: &IntegrationNotification) -> Result<()> {
         let payload = self.create_webhook_payload(notification)?;
+        let method = transport_method_from_http_method(&self.config.method);
+        let mut headers = self.config.headers.clone();
+        apply_webhook_auth(&mut headers, self.config.auth.as_ref());
 
-        // In a real implementation, this would make an actual HTTP request
-        println!("Webhook {} - Payload: {}", self.config.name, payload);
-        Ok(())
+        let start = SystemTime::now();
+        let send_result = self
+            .http_client
+            .send("", method, &headers, &self.config.name, &payload);
+        let elapsed_ms = SystemTime::now()
+            .duration_since(start)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1000.0;
+
+        self.statistics.requests_sent += 1;
+        self.statistics.average_response_time_ms = if self.statistics.requests_sent <= 1 {
+            elapsed_ms
+        } else {
+            (self.statistics.average_response_time_ms * (self.statistics.requests_sent - 1) as f64
+                + elapsed_ms)
+                / self.statistics.requests_sent as f64
+        };
+
+        match send_result {
+            Ok(outcome) if outcome.is_success() => {
+                self.statistics.requests_successful += 1;
+                Ok(())
+            }
+            Ok(outcome) => {
+                self.statistics.requests_failed += 1;
+                self.retry_manager.add_failed_request(
+                    RequestData {
+                        method: self.config.method.clone(),
+                        url: self.config.url.clone(),
+                        headers,
+                        body: payload,
+                    },
+                    outcome.detail().to_string(),
+                );
+                Err(OptimError::InvalidConfig(format!(
+                    "webhook '{}' delivery failed: {}",
+                    self.config.name,
+                    outcome.detail()
+                )))
+            }
+            Err(err) => {
+                self.statistics.requests_failed += 1;
+                self.retry_manager.add_failed_request(
+                    RequestData {
+                        method: self.config.method.clone(),
+                        url: self.config.url.clone(),
+                        headers,
+                        body: payload,
+                    },
+                    err.to_string(),
+                );
+                Err(err)
+            }
+        }
     }
 
     /// Create webhook payload
@@ -973,11 +1284,81 @@ impl WebhookClient {
         }
     }
 
-    /// Get health status
+    /// Get health status, derived from delivery counters.
     pub fn get_health_status(&self) -> IntegrationStatus {
-        // In a real implementation, this would check webhook endpoint connectivity
-        IntegrationStatus::Healthy
+        if self.config.url.is_empty() {
+            return IntegrationStatus::NotConfigured;
+        }
+        if self.statistics.requests_sent == 0 {
+            IntegrationStatus::Healthy // configured, nothing sent yet
+        } else if self.statistics.requests_successful == 0 {
+            IntegrationStatus::Error
+        } else if self.statistics.requests_failed > 0 {
+            IntegrationStatus::Warning
+        } else {
+            IntegrationStatus::Healthy
+        }
     }
+}
+
+fn transport_method_from_http_method(method: &HttpMethod) -> TransportMethod {
+    match method {
+        HttpMethod::GET => TransportMethod::Get,
+        HttpMethod::POST => TransportMethod::Post,
+        HttpMethod::PUT => TransportMethod::Put,
+        HttpMethod::PATCH => TransportMethod::Patch,
+        HttpMethod::DELETE => TransportMethod::Delete,
+    }
+}
+
+fn apply_webhook_auth(headers: &mut HashMap<String, String>, auth: Option<&WebhookAuth>) {
+    match auth {
+        Some(WebhookAuth::Bearer { token }) => {
+            headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+        }
+        Some(WebhookAuth::Basic { username, password }) => {
+            let credentials = format!("{username}:{password}");
+            headers.insert(
+                "Authorization".to_string(),
+                format!("Basic {}", base64_encode(credentials.as_bytes())),
+            );
+        }
+        Some(WebhookAuth::ApiKey { key, header }) => {
+            headers.insert(header.clone(), key.clone());
+        }
+        Some(WebhookAuth::Custom { headers: custom }) => {
+            for (k, v) in custom {
+                headers.insert(k.clone(), v.clone());
+            }
+        }
+        None => {}
+    }
+}
+
+/// Minimal RFC 4648 base64 encoder (standard alphabet, with padding) so
+/// HTTP Basic auth headers can be built without a base64 crate dependency.
+fn base64_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+
+        out.push(ALPHABET[(b0 >> 2) as usize] as char);
+        out.push(ALPHABET[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(b2 & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 impl HttpClient {
@@ -987,49 +1368,60 @@ impl HttpClient {
             base_url,
             default_headers: HashMap::new(),
             timeout: Duration::from_secs(30),
-            user_agent: "CI/CD-Automation/1.0".to_string(),
+            user_agent: "optirs-bench-ci-cd-automation/1.0".to_string(),
+            transport_kind: notification_transport::transport_kind_from_env(),
         })
     }
 
-    /// Make HTTP request
-    pub fn request(&self, method: &HttpMethod, path: &str, body: Option<String>) -> Result<String> {
-        // In a real implementation, this would make actual HTTP requests
-        println!("HTTP Request: {:?} {}{}", method, self.base_url, path);
-        if let Some(body) = body {
-            println!("Body: {}", body);
+    /// Make an HTTP request through the configured transport. `path` is
+    /// appended to `base_url` verbatim (pass `""` when `base_url` is already
+    /// the full endpoint, as with Slack/generic webhooks).
+    pub fn send(
+        &self,
+        path: &str,
+        method: TransportMethod,
+        extra_headers: &HashMap<String, String>,
+        channel: &str,
+        body: &str,
+    ) -> Result<DeliveryOutcome> {
+        let mut headers = self.default_headers.clone();
+        headers.insert("User-Agent".to_string(), self.user_agent.clone());
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        for (k, v) in extra_headers {
+            headers.insert(k.clone(), v.clone());
         }
-        Ok("success".to_string())
-    }
-}
 
-impl SmtpClient {
-    /// Create a new SMTP client
-    pub fn new(config: SmtpConfig) -> Result<Self> {
-        Ok(Self {
-            config,
-            connection_pool: SmtpConnectionPool {
-                max_connections: 5,
-                active_connections: 0,
-                connection_timeout: Duration::from_secs(30),
-            },
-        })
-    }
+        let target = DeliveryTarget {
+            url: format!("{}{}", self.base_url, path),
+            method,
+            headers,
+            timeout: self.timeout,
+            channel: channel.to_string(),
+        };
 
-    /// Send email
-    pub fn send_email(&self, to: &[String], subject: &str, body: &str) -> Result<()> {
-        // In a real implementation, this would send actual emails via SMTP
-        println!("SMTP Email - To: {:?}, Subject: {}", to, subject);
-        Ok(())
+        notification_transport::deliver(&self.transport_kind, &target, body)
     }
 }
 
 impl RateLimiter {
-    /// Create a new rate limiter
+    /// Create a new rate limiter with a per-minute window (the historical
+    /// default for this constructor; kept for API/test compatibility).
     pub fn new(requests_per_minute: u32) -> Self {
+        Self::with_window(requests_per_minute, Duration::from_secs(60))
+    }
+
+    /// Create a rate limiter matching GitHub's per-hour budget.
+    pub fn per_hour(requests_per_hour: u32) -> Self {
+        Self::with_window(requests_per_hour, Duration::from_secs(3600))
+    }
+
+    /// Create a rate limiter with an explicit limit and window.
+    pub fn with_window(limit: u32, window: Duration) -> Self {
         Self {
-            requests_per_minute,
+            limit,
+            window,
             current_requests: 0,
-            reset_time: SystemTime::now() + Duration::from_secs(60),
+            reset_time: SystemTime::now() + window,
             request_history: Vec::new(),
         }
     }
@@ -1038,15 +1430,13 @@ impl RateLimiter {
     pub fn is_allowed(&mut self) -> bool {
         let now = SystemTime::now();
 
-        // Reset if time window has passed
         if now >= self.reset_time {
             self.current_requests = 0;
-            self.reset_time = now + Duration::from_secs(60);
+            self.reset_time = now + self.window;
             self.request_history.clear();
         }
 
-        // Check if under limit
-        if self.current_requests < self.requests_per_minute {
+        if self.current_requests < self.limit {
             self.current_requests += 1;
             self.request_history.push(now);
             true
@@ -1058,9 +1448,10 @@ impl RateLimiter {
 
 impl RetryManager {
     /// Create a new retry manager
-    pub fn new(config: WebhookRetryConfig) -> Self {
+    pub fn new(config: WebhookRetryConfig, transport_kind: TransportKind) -> Self {
         Self {
             config,
+            transport_kind,
             failed_requests: Vec::new(),
             statistics: RetryStatistics::default(),
         }
@@ -1080,45 +1471,78 @@ impl RetryManager {
         self.failed_requests.push(failed_request);
     }
 
-    /// Process retry queue
+    /// Process the retry queue, re-issuing each due request through the
+    /// real transport and branching on the actual outcome. A hard 4xx
+    /// failure (other than 429) is treated as permanent and is not retried
+    /// further; 429/5xx and transport-level errors are retried with
+    /// exponential backoff up to `max_retries`.
     pub fn process_retries(&mut self) -> Result<()> {
         let now = SystemTime::now();
-        let mut completed_retries = Vec::new();
+        let mut completed = Vec::new();
 
         for (index, failed_request) in self.failed_requests.iter_mut().enumerate() {
-            if now >= failed_request.next_retry_at
-                && failed_request.retry_attempts < self.config.max_retries
-            {
-                // Attempt retry
-                // In a real implementation, this would make the actual request
-                println!("Retrying request: {}", failed_request.id);
-
-                failed_request.retry_attempts += 1;
-                self.statistics.total_retries += 1;
-
-                // Calculate next retry time with exponential backoff
-                let delay = self.config.initial_delay_sec as f64
-                    * self
-                        .config
-                        .backoff_multiplier
-                        .powi(failed_request.retry_attempts as i32);
-                let delay = delay.min(self.config.max_delay_sec as f64) as u64;
-
-                failed_request.next_retry_at = now + Duration::from_secs(delay);
-
-                // Simulate success for demonstration
-                if failed_request.retry_attempts >= 2 {
-                    self.statistics.successful_retries += 1;
-                    completed_retries.push(index);
-                }
-            } else if failed_request.retry_attempts >= self.config.max_retries {
+            if now < failed_request.next_retry_at {
+                continue;
+            }
+            if failed_request.retry_attempts >= self.config.max_retries {
                 self.statistics.failed_retries += 1;
-                completed_retries.push(index);
+                completed.push(index);
+                continue;
+            }
+
+            failed_request.retry_attempts += 1;
+            self.statistics.total_retries += 1;
+
+            let target = DeliveryTarget {
+                url: failed_request.request_data.url.clone(),
+                method: transport_method_from_http_method(&failed_request.request_data.method),
+                headers: failed_request.request_data.headers.clone(),
+                timeout: Duration::from_secs(30),
+                channel: failed_request.id.clone(),
+            };
+
+            let outcome = notification_transport::deliver(
+                &self.transport_kind,
+                &target,
+                &failed_request.request_data.body,
+            );
+
+            let delay = (self.config.initial_delay_sec as f64
+                * self
+                    .config
+                    .backoff_multiplier
+                    .powi(failed_request.retry_attempts as i32))
+            .min(self.config.max_delay_sec as f64) as u64;
+            failed_request.next_retry_at = now + Duration::from_secs(delay);
+
+            match outcome {
+                Ok(outcome) if outcome.is_success() => {
+                    self.statistics.successful_retries += 1;
+                    completed.push(index);
+                }
+                Ok(outcome) => {
+                    failed_request.last_error = outcome.detail().to_string();
+                    let permanent_failure = matches!(
+                        outcome.http_status,
+                        Some(code) if (400..500).contains(&code) && code != 429
+                    );
+                    if permanent_failure || failed_request.retry_attempts >= self.config.max_retries
+                    {
+                        self.statistics.failed_retries += 1;
+                        completed.push(index);
+                    }
+                }
+                Err(err) => {
+                    // Transport itself is broken (e.g. curl missing): retrying
+                    // immediately cannot help, so stop retrying this request.
+                    failed_request.last_error = err.to_string();
+                    self.statistics.failed_retries += 1;
+                    completed.push(index);
+                }
             }
         }
 
-        // Remove completed retries (in reverse order to maintain indices)
-        for &index in completed_retries.iter().rev() {
+        for &index in completed.iter().rev() {
             self.failed_requests.remove(index);
         }
 
@@ -1136,17 +1560,6 @@ impl Default for WebhookStatistics {
             requests_failed: 0,
             average_response_time_ms: 0.0,
             retry_stats: RetryStatistics::default(),
-        }
-    }
-}
-
-impl Default for RetryStatistics {
-    fn default() -> Self {
-        Self {
-            total_retries: 0,
-            successful_retries: 0,
-            failed_retries: 0,
-            average_retry_delay_sec: 0.0,
         }
     }
 }
@@ -1188,13 +1601,18 @@ mod tests {
     fn test_rate_limiter() {
         let mut limiter = RateLimiter::new(5);
 
-        // Should allow first 5 requests
         for _ in 0..5 {
             assert!(limiter.is_allowed());
         }
 
-        // Should deny 6th request
         assert!(!limiter.is_allowed());
+    }
+
+    #[test]
+    fn rate_limiter_per_hour_uses_hour_window() {
+        let limiter = RateLimiter::per_hour(5000);
+        assert_eq!(limiter.limit, 5000);
+        assert_eq!(limiter.window, Duration::from_secs(3600));
     }
 
     #[test]
@@ -1210,21 +1628,10 @@ mod tests {
         assert!(NotificationPriority::High < NotificationPriority::Critical);
     }
 
-    #[test]
-    fn test_webhook_payload_format() {
-        let notification = IntegrationNotification {
-            notification_type: NotificationType::TestCompletion,
-            title: "Test".to_string(),
-            message: "Test message".to_string(),
-            priority: NotificationPriority::Normal,
-            data: HashMap::new(),
-            timestamp: SystemTime::now(),
-        };
-
-        // Test that we can create webhook clients
-        let webhook_config = WebhookIntegration {
+    fn sample_webhook_config() -> WebhookIntegration {
+        WebhookIntegration {
             name: "test".to_string(),
-            url: "https://example.com/webhook".to_string(),
+            url: "https://example.invalid/webhook".to_string(),
             method: HttpMethod::POST,
             headers: HashMap::new(),
             auth: None,
@@ -1242,9 +1649,74 @@ mod tests {
                 include_environment: false,
                 custom_template: None,
             },
-        };
+        }
+    }
 
-        let client = WebhookClient::new(webhook_config);
+    #[test]
+    fn test_webhook_payload_format() {
+        let client = WebhookClient::new(sample_webhook_config());
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn disabled_transport_webhook_send_is_explicit_err() {
+        std::env::set_var("OPTIRS_NOTIFICATION_TRANSPORT", "disabled");
+        let mut client = WebhookClient::new(sample_webhook_config()).expect("client should build");
+        let notification = IntegrationNotification {
+            notification_type: NotificationType::TestCompletion,
+            title: "Test".to_string(),
+            message: "Test message".to_string(),
+            priority: NotificationPriority::Normal,
+            data: HashMap::new(),
+            timestamp: SystemTime::now(),
+        };
+        let result = client.send_notification(&notification);
+        std::env::remove_var("OPTIRS_NOTIFICATION_TRANSPORT");
+        assert!(
+            result.is_err(),
+            "disabled transport must never claim success"
+        );
+        assert_eq!(client.statistics.requests_failed, 1);
+    }
+
+    #[test]
+    fn file_transport_webhook_send_reports_success_and_updates_statistics() {
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_bench_webhook_transport_test_{}",
+            std::process::id()
+        ));
+        std::env::set_var(
+            "OPTIRS_NOTIFICATION_TRANSPORT",
+            format!("file:{}", dir.display()),
+        );
+        let mut client = WebhookClient::new(sample_webhook_config()).expect("client should build");
+        let notification = IntegrationNotification {
+            notification_type: NotificationType::TestCompletion,
+            title: "Test".to_string(),
+            message: "Test message".to_string(),
+            priority: NotificationPriority::Normal,
+            data: HashMap::new(),
+            timestamp: SystemTime::now(),
+        };
+        let result = client.send_notification(&notification);
+        std::env::remove_var("OPTIRS_NOTIFICATION_TRANSPORT");
+
+        assert!(
+            result.is_ok(),
+            "file transport delivery should succeed: {result:?}"
+        );
+        assert_eq!(client.statistics.requests_successful, 1);
+        assert_eq!(client.statistics.requests_failed, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn base64_encode_matches_known_vectors() {
+        assert_eq!(base64_encode(b"user:pass"), "dXNlcjpwYXNz");
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
     }
 }

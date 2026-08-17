@@ -13,7 +13,9 @@ use std::fmt::Debug;
 
 use super::types::AdaptiveConfig;
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for AdaptiveConfig<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for AdaptiveConfig<T>
+{
     fn default() -> Self {
         Self {
             adaptive_sequence_length: true,

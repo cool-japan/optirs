@@ -1,11 +1,19 @@
 // Regression detection algorithms for performance testing
 //
 // This module provides various algorithms for detecting performance regressions,
-// including statistical tests, sliding window analysis, and change point detection.
+// including statistical hypothesis testing, sliding window analysis, and change
+// point detection.
+//
+// All statistical machinery lives in [`crate::regression_tester::distributions`]
+// and is exercised against published reference values, so the p-values reported
+// here are real p-values rather than fixed constants.
 
 use crate::error::Result;
+use crate::regression_tester::distributions::{
+    binary_segmentation, mean as finite_mean, sample_std_dev, single_observation_t_test,
+};
 use crate::regression_tester::types::{
-    ChangePointAnalysis, OutlierAnalysis, OutlierType, PerformanceBaseline, PerformanceMetrics,
+    ChangePointAnalysis, OutlierAnalysis, PerformanceBaseline, PerformanceMetrics,
     PerformanceRecord, RegressionAnalysis, RegressionDetector, RegressionResult,
     StatisticalTestResult, TrendAnalysis, TrendDirection,
 };
@@ -13,25 +21,154 @@ use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
+/// Default performance degradation threshold in percent.
+///
+/// Kept in sync with [`crate::regression_tester::config::RegressionConfig`].
+pub const DEFAULT_DEGRADATION_THRESHOLD_PERCENT: f64 = 5.0;
+
+/// Default memory regression threshold in percent.
+pub const DEFAULT_MEMORY_THRESHOLD_PERCENT: f64 = 10.0;
+
+/// Convert an observed relative change into a `0.0..=1.0` severity score,
+/// calibrated against the threshold that made the change interesting.
+///
+/// # Contract
+///
+/// Severity is expressed **relative to the configured threshold**, not as a raw
+/// fraction of the change. Previously a 6% regression against a 5% threshold
+/// produced `0.06`, which every downstream consumer rounded away to "noise".
+///
+/// With `ratio = change_percent / threshold_percent` the mapping is:
+///
+/// | `ratio`   | severity | [`crate::regression_tester::config::AlertSeverity`] |
+/// |-----------|----------|-----------------------------------------------------|
+/// | `<= 0`    | `0.00`   | not alertable                                        |
+/// | `1.0`     | `0.25`   | `Low`, and above the default `0.05` alert floor       |
+/// | `~1.28`   | `0.30`   | `Medium`                                             |
+/// | `~2.91`   | `0.60`   | `High`                                               |
+/// | `>= 4.0`  | `>= 0.80`| `Critical`                                           |
+///
+/// The curve is continuous and strictly increasing, and saturates towards
+/// `1.0` for extreme regressions. Alert consumers should therefore keep their
+/// severity cut-offs on the `0.25 / 0.30 / 0.60 / 0.80` grid above.
+pub fn severity_from_threshold_ratio(change_percent: f64, threshold_percent: f64) -> f64 {
+    if !change_percent.is_finite() || !threshold_percent.is_finite() {
+        return 0.0;
+    }
+    if change_percent <= 0.0 {
+        return 0.0;
+    }
+    let threshold = if threshold_percent > 0.0 {
+        threshold_percent
+    } else {
+        DEFAULT_DEGRADATION_THRESHOLD_PERCENT
+    };
+    let ratio = change_percent / threshold;
+
+    let severity = if ratio < 1.0 {
+        0.25 * ratio
+    } else if ratio <= 4.0 {
+        0.25 + 0.55 * (ratio - 1.0) / 3.0
+    } else {
+        0.80 + 0.20 * (1.0 - (-(ratio - 4.0) / 4.0).exp())
+    };
+
+    severity.clamp(0.0, 1.0)
+}
+
+/// Build the "not enough information" result shared by every detector.
+fn inconclusive_result<A: Float>(
+    test_id: &str,
+    reason: &str,
+    recommendation: &str,
+) -> RegressionResult<A> {
+    RegressionResult {
+        test_id: test_id.to_string(),
+        regression_detected: false,
+        severity: 0.0,
+        confidence: 0.0,
+        performance_change_percent: 0.0,
+        memory_change_percent: 0.0,
+        affected_metrics: vec![],
+        statistical_tests: vec![],
+        analysis: RegressionAnalysis {
+            trend_analysis: TrendAnalysis {
+                direction: TrendDirection::Stable,
+                magnitude: 0.0,
+                significance: 0.0,
+                start_point: None,
+            },
+            change_point_analysis: ChangePointAnalysis {
+                change_points: vec![],
+                magnitudes: vec![],
+                confidences: vec![],
+            },
+            outlier_analysis: OutlierAnalysis {
+                outlier_indices: vec![],
+                outlier_scores: vec![],
+                outlier_types: vec![],
+            },
+            root_cause_hints: vec![reason.to_string()],
+        },
+        recommendations: vec![recommendation.to_string()],
+    }
+}
+
+/// Percentage change from `baseline` to `current`, or `None` when the baseline
+/// carries no usable scale.
+fn percent_change(current: f64, baseline: f64) -> Option<f64> {
+    if !current.is_finite() || !baseline.is_finite() || baseline == 0.0 {
+        return None;
+    }
+    Some(((current - baseline) / baseline.abs()) * 100.0)
+}
+
 /// Statistical test-based regression detector
 ///
-/// Uses statistical hypothesis testing (t-test approximation) to detect
-/// significant performance changes compared to a baseline.
+/// Compares a single new measurement against a baseline distribution with a
+/// one-sample Student's t-test built on the *prediction* standard error
+/// `sigma * sqrt(1 + 1/n)`. A single observation is not a sample mean, so the
+/// standard error of the mean (`sigma / sqrt(n)`) would grossly overstate the
+/// evidence and flag every run once the baseline grew large.
 #[derive(Debug)]
 pub struct StatisticalTestDetector {
     /// Statistical significance threshold (alpha level)
     alpha: f64,
+    /// Timing degradation threshold in percent, used to scale severity
+    degradation_threshold_percent: f64,
+    /// Memory regression threshold in percent
+    memory_threshold_percent: f64,
 }
 
 impl StatisticalTestDetector {
     /// Create a new statistical test detector with default significance level
     pub fn new() -> Self {
-        Self { alpha: 0.05 }
+        Self {
+            alpha: 0.05,
+            degradation_threshold_percent: DEFAULT_DEGRADATION_THRESHOLD_PERCENT,
+            memory_threshold_percent: DEFAULT_MEMORY_THRESHOLD_PERCENT,
+        }
     }
 
     /// Create a new statistical test detector with custom significance level
     pub fn with_alpha(alpha: f64) -> Self {
-        Self { alpha }
+        Self {
+            alpha,
+            ..Self::new()
+        }
+    }
+
+    /// Create a detector with custom alpha and severity-calibration thresholds
+    pub fn with_thresholds(
+        alpha: f64,
+        degradation_threshold_percent: f64,
+        memory_threshold_percent: f64,
+    ) -> Self {
+        Self {
+            alpha,
+            degradation_threshold_percent,
+            memory_threshold_percent,
+        }
     }
 }
 
@@ -48,66 +185,106 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for StatisticalTestDe
         current_metrics: &PerformanceMetrics<A>,
         _history: &VecDeque<PerformanceRecord<A>>,
     ) -> Result<RegressionResult<A>> {
-        // Simple t-test approximation for timing regression
         let current_time = current_metrics.timing.mean_time_ns as f64;
         let baseline_mean = baseline.baseline_stats.timing.mean;
         let baseline_std = baseline.baseline_stats.timing.std_dev;
 
-        let change_percent = ((current_time - baseline_mean) / baseline_mean) * 100.0;
+        let Some(change_percent) = percent_change(current_time, baseline_mean) else {
+            return Ok(inconclusive_result(
+                "statistical_test",
+                "Baseline timing mean is zero or non-finite; cannot compute a relative change",
+                "Rebuild the baseline from measurements with a non-zero mean execution time",
+            ));
+        };
 
-        // Calculate memory change percentage
+        // Memory change is only meaningful when the baseline actually measured
+        // memory. `None` here means "not measured", never "no change".
         let current_memory = current_metrics.memory.peak_memory_bytes as f64;
-        let baseline_memory_mean = baseline.baseline_stats.memory.mean_memory;
-        let memory_change_percent = if baseline_memory_mean > 0.0 {
-            ((current_memory - baseline_memory_mean) / baseline_memory_mean) * 100.0
+        let memory_change_percent =
+            percent_change(current_memory, baseline.baseline_stats.memory.mean_memory);
+
+        let Some(test) = single_observation_t_test(
+            current_time,
+            baseline_mean,
+            baseline_std,
+            baseline.sample_count,
+        ) else {
+            return Ok(inconclusive_result(
+                "statistical_test",
+                "Baseline has zero variance or fewer than two samples; a t-test is undefined",
+                "Collect at least two baseline runs with non-degenerate timing before testing",
+            ));
+        };
+
+        let timing_regression = test.p_value < self.alpha && change_percent > 0.0;
+        let memory_regression = memory_change_percent
+            .map(|change| change > self.memory_threshold_percent)
+            .unwrap_or(false);
+        let regression_detected = timing_regression || memory_regression;
+
+        let mut affected_metrics = Vec::new();
+        if timing_regression {
+            affected_metrics.push("timing".to_string());
+        }
+        if memory_regression {
+            affected_metrics.push("memory".to_string());
+        }
+
+        let timing_severity =
+            severity_from_threshold_ratio(change_percent, self.degradation_threshold_percent);
+        let memory_severity = memory_change_percent
+            .map(|change| severity_from_threshold_ratio(change, self.memory_threshold_percent))
+            .unwrap_or(0.0);
+        let severity = if regression_detected {
+            timing_severity.max(memory_severity)
         } else {
             0.0
         };
 
-        // Simple z-score calculation
-        let z_score =
-            (current_time - baseline_mean) / (baseline_std / (baseline.sample_count as f64).sqrt());
-        let p_value = 2.0 * (1.0 - normal_cdf(z_score.abs())); // Two-tailed test
-
-        let regression_detected =
-            p_value < self.alpha && (change_percent > 0.0 || memory_change_percent > 10.0);
+        let mut root_cause_hints = Vec::new();
+        if memory_change_percent.is_none() {
+            root_cause_hints.push(
+                "Memory was not measured for this baseline; memory delta unavailable".to_string(),
+            );
+        }
 
         Ok(RegressionResult {
             test_id: "statistical_test".to_string(),
             regression_detected,
-            severity: if regression_detected {
-                (change_percent / 100.0).min(1.0)
-            } else {
-                0.0
-            },
-            confidence: 1.0 - p_value,
+            severity,
+            confidence: (1.0 - test.p_value).clamp(0.0, 1.0),
             performance_change_percent: change_percent,
-            memory_change_percent,
-            affected_metrics: if regression_detected {
-                vec!["timing".to_string()]
-            } else {
-                vec![]
-            },
+            memory_change_percent: memory_change_percent.unwrap_or(0.0),
+            affected_metrics,
             statistical_tests: vec![StatisticalTestResult {
-                test_name: "t_test".to_string(),
-                test_statistic: z_score,
-                p_value,
-                degrees_of_freedom: Some(baseline.sample_count - 1),
+                test_name: "one_sample_t_test_prediction_interval".to_string(),
+                test_statistic: test.t_statistic,
+                p_value: test.p_value,
+                degrees_of_freedom: Some(baseline.sample_count.saturating_sub(1)),
                 conclusion: if regression_detected {
-                    "Significant regression detected".to_string()
+                    format!(
+                        "Significant regression detected (p = {:.6} < alpha = {:.4})",
+                        test.p_value, self.alpha
+                    )
                 } else {
-                    "No significant change".to_string()
+                    format!(
+                        "No significant change (p = {:.6} >= alpha = {:.4})",
+                        test.p_value, self.alpha
+                    )
                 },
             }],
             analysis: RegressionAnalysis {
                 trend_analysis: TrendAnalysis {
+                    // Execution time is a lower-is-better metric.
                     direction: if change_percent > 0.0 {
                         TrendDirection::Degrading
-                    } else {
+                    } else if change_percent < 0.0 {
                         TrendDirection::Improving
+                    } else {
+                        TrendDirection::Stable
                     },
                     magnitude: change_percent.abs(),
-                    significance: 1.0 - p_value,
+                    significance: (1.0 - test.p_value).clamp(0.0, 1.0),
                     start_point: None,
                 },
                 change_point_analysis: ChangePointAnalysis {
@@ -120,7 +297,7 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for StatisticalTestDe
                     outlier_scores: vec![],
                     outlier_types: vec![],
                 },
-                root_cause_hints: vec![],
+                root_cause_hints,
             },
             recommendations: if regression_detected {
                 vec![
@@ -141,14 +318,24 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for StatisticalTestDe
     fn config(&self) -> HashMap<String, String> {
         let mut config = HashMap::new();
         config.insert("alpha".to_string(), self.alpha.to_string());
+        config.insert(
+            "degradation_threshold_percent".to_string(),
+            self.degradation_threshold_percent.to_string(),
+        );
+        config.insert(
+            "memory_threshold_percent".to_string(),
+            self.memory_threshold_percent.to_string(),
+        );
         config
     }
 }
 
 /// Sliding window regression detector
 ///
-/// Compares current performance against a sliding window of recent measurements
-/// to detect performance degradation trends.
+/// Compares the current measurement against a sliding window of recent
+/// measurements. Both timing and memory deltas are computed from the window,
+/// and the reported confidence comes from a t-test of the current observation
+/// against the window distribution rather than from a fixed constant.
 #[derive(Debug)]
 pub struct SlidingWindowDetector {
     /// Size of the sliding window for comparison
@@ -162,7 +349,7 @@ impl SlidingWindowDetector {
     pub fn new() -> Self {
         Self {
             window_size: 10,
-            threshold: 5.0, // 5% threshold
+            threshold: DEFAULT_DEGRADATION_THRESHOLD_PERCENT,
         }
     }
 
@@ -189,43 +376,13 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for SlidingWindowDete
         history: &VecDeque<PerformanceRecord<A>>,
     ) -> Result<RegressionResult<A>> {
         if history.len() < self.window_size {
-            return Ok(RegressionResult {
-                test_id: "sliding_window".to_string(),
-                regression_detected: false,
-                severity: 0.0,
-                confidence: 0.0,
-                performance_change_percent: 0.0,
-                memory_change_percent: 0.0,
-                affected_metrics: vec![],
-                statistical_tests: vec![],
-                analysis: RegressionAnalysis {
-                    trend_analysis: TrendAnalysis {
-                        direction: TrendDirection::Stable,
-                        magnitude: 0.0,
-                        significance: 0.0,
-                        start_point: None,
-                    },
-                    change_point_analysis: ChangePointAnalysis {
-                        change_points: vec![],
-                        magnitudes: vec![],
-                        confidences: vec![],
-                    },
-                    outlier_analysis: OutlierAnalysis {
-                        outlier_indices: vec![],
-                        outlier_scores: vec![],
-                        outlier_types: vec![],
-                    },
-                    root_cause_hints: vec![
-                        "Insufficient data for sliding window analysis".to_string()
-                    ],
-                },
-                recommendations: vec![
-                    "Collect more performance data for accurate analysis".to_string()
-                ],
-            });
+            return Ok(inconclusive_result(
+                "sliding_window",
+                "Insufficient data for sliding window analysis",
+                "Collect more performance data for accurate analysis",
+            ));
         }
 
-        // Calculate average of recent window
         let recent_times: Vec<f64> = history
             .iter()
             .rev()
@@ -233,39 +390,120 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for SlidingWindowDete
             .map(|r| r.metrics.timing.mean_time_ns as f64)
             .collect();
 
-        let recent_avg = recent_times.iter().sum::<f64>() / recent_times.len() as f64;
-        let current_time = current_metrics.timing.mean_time_ns as f64;
+        // Memory samples are only usable when the window actually recorded
+        // memory; a window of zeroes means "unmeasured".
+        let recent_memory: Vec<f64> = history
+            .iter()
+            .rev()
+            .take(self.window_size)
+            .map(|r| r.metrics.memory.peak_memory_bytes as f64)
+            .filter(|value| *value > 0.0)
+            .collect();
 
-        let change_percent = ((current_time - recent_avg) / recent_avg) * 100.0;
+        let Some(recent_avg) = finite_mean(&recent_times) else {
+            return Ok(inconclusive_result(
+                "sliding_window",
+                "Sliding window contains no finite timing measurements",
+                "Verify that the benchmark harness records execution time",
+            ));
+        };
+
+        let current_time = current_metrics.timing.mean_time_ns as f64;
+        let Some(change_percent) = percent_change(current_time, recent_avg) else {
+            return Ok(inconclusive_result(
+                "sliding_window",
+                "Sliding window mean is zero; cannot compute a relative change",
+                "Verify that the benchmark harness records execution time",
+            ));
+        };
+
+        // F65: real memory delta over the window instead of a hardcoded zero.
+        let current_memory = current_metrics.memory.peak_memory_bytes as f64;
+        let memory_change_percent = if recent_memory.is_empty() || current_memory <= 0.0 {
+            None
+        } else {
+            finite_mean(&recent_memory)
+                .and_then(|window_memory| percent_change(current_memory, window_memory))
+        };
+
         let regression_detected = change_percent > self.threshold;
+
+        // Confidence is derived from the window distribution: how surprising is
+        // the current observation given the recent spread?
+        let window_std = sample_std_dev(&recent_times);
+        let test = window_std.and_then(|std_dev| {
+            single_observation_t_test(current_time, recent_avg, std_dev, recent_times.len())
+        });
+        let confidence = test
+            .map(|t| (1.0 - t.p_value).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+
+        let mut affected_metrics = Vec::new();
+        if regression_detected {
+            affected_metrics.push("timing".to_string());
+        }
+        if memory_change_percent
+            .map(|change| change > DEFAULT_MEMORY_THRESHOLD_PERCENT)
+            .unwrap_or(false)
+        {
+            affected_metrics.push("memory".to_string());
+        }
+
+        let statistical_tests = test
+            .map(|t| {
+                vec![StatisticalTestResult {
+                    test_name: "sliding_window_t_test".to_string(),
+                    test_statistic: t.t_statistic,
+                    p_value: t.p_value,
+                    degrees_of_freedom: Some(recent_times.len().saturating_sub(1)),
+                    conclusion: format!(
+                        "Current run is {:.2}% from the {}-sample window mean (p = {:.6})",
+                        change_percent,
+                        recent_times.len(),
+                        t.p_value
+                    ),
+                }]
+            })
+            .unwrap_or_default();
+
+        let mut root_cause_hints = Vec::new();
+        if memory_change_percent.is_none() {
+            root_cause_hints.push(
+                "Memory was not measured over the sliding window; memory delta unavailable"
+                    .to_string(),
+            );
+        }
+        if test.is_none() {
+            root_cause_hints.push(
+                "Sliding window has zero variance; confidence cannot be estimated".to_string(),
+            );
+        }
 
         Ok(RegressionResult {
             test_id: "sliding_window".to_string(),
             regression_detected,
             severity: if regression_detected {
-                (change_percent / 100.0).min(1.0)
+                severity_from_threshold_ratio(change_percent, self.threshold)
             } else {
                 0.0
             },
-            confidence: if regression_detected { 0.8 } else { 0.2 },
+            confidence,
             performance_change_percent: change_percent,
-            memory_change_percent: 0.0,
-            affected_metrics: if regression_detected {
-                vec!["timing".to_string()]
-            } else {
-                vec![]
-            },
-            statistical_tests: vec![],
+            memory_change_percent: memory_change_percent.unwrap_or(0.0),
+            affected_metrics,
+            statistical_tests,
             analysis: RegressionAnalysis {
                 trend_analysis: TrendAnalysis {
                     direction: if change_percent > 0.0 {
                         TrendDirection::Degrading
-                    } else {
+                    } else if change_percent < 0.0 {
                         TrendDirection::Improving
+                    } else {
+                        TrendDirection::Stable
                     },
                     magnitude: change_percent.abs(),
-                    significance: if regression_detected { 0.8 } else { 0.2 },
-                    start_point: Some(history.len() - self.window_size),
+                    significance: confidence,
+                    start_point: Some(history.len().saturating_sub(self.window_size)),
                 },
                 change_point_analysis: ChangePointAnalysis {
                     change_points: vec![],
@@ -277,7 +515,7 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for SlidingWindowDete
                     outlier_scores: vec![],
                     outlier_types: vec![],
                 },
-                root_cause_hints: vec![],
+                root_cause_hints,
             },
             recommendations: if regression_detected {
                 vec![
@@ -304,14 +542,19 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for SlidingWindowDete
 
 /// Change point detection regression detector
 ///
-/// Detects significant changes in performance characteristics by analyzing
-/// historical data for change points that indicate performance shifts.
+/// Locates level shifts in the historical series with binary segmentation: at
+/// each step the split that maximises the between-segment sum of squares is
+/// chosen and then accepted only when a Welch t-test across the split is
+/// significant. The reported change points are those argmax locations - not a
+/// fixed midpoint.
 #[derive(Debug)]
 pub struct ChangePointDetector {
     /// Minimum segment size for change point analysis
     min_segment_size: usize,
     /// Statistical significance threshold for change detection
     significance_threshold: f64,
+    /// Maximum number of change points to report
+    max_change_points: usize,
 }
 
 impl ChangePointDetector {
@@ -320,6 +563,7 @@ impl ChangePointDetector {
         Self {
             min_segment_size: 5,
             significance_threshold: 0.05,
+            max_change_points: 8,
         }
     }
 
@@ -328,6 +572,7 @@ impl ChangePointDetector {
         Self {
             min_segment_size,
             significance_threshold,
+            ..Self::new()
         }
     }
 }
@@ -345,123 +590,122 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for ChangePointDetect
         _current_metrics: &PerformanceMetrics<A>,
         history: &VecDeque<PerformanceRecord<A>>,
     ) -> Result<RegressionResult<A>> {
-        // Simplified change point detection using variance change
         if history.len() < 2 * self.min_segment_size {
-            return Ok(RegressionResult {
-                test_id: "change_point".to_string(),
-                regression_detected: false,
-                severity: 0.0,
-                confidence: 0.0,
-                performance_change_percent: 0.0,
-                memory_change_percent: 0.0,
-                affected_metrics: vec![],
-                statistical_tests: vec![],
-                analysis: RegressionAnalysis {
-                    trend_analysis: TrendAnalysis {
-                        direction: TrendDirection::Stable,
-                        magnitude: 0.0,
-                        significance: 0.0,
-                        start_point: None,
-                    },
-                    change_point_analysis: ChangePointAnalysis {
-                        change_points: vec![],
-                        magnitudes: vec![],
-                        confidences: vec![],
-                    },
-                    outlier_analysis: OutlierAnalysis {
-                        outlier_indices: vec![],
-                        outlier_scores: vec![],
-                        outlier_types: vec![],
-                    },
-                    root_cause_hints: vec![
-                        "Insufficient data for change point detection".to_string()
-                    ],
-                },
-                recommendations: vec![
-                    "Collect more performance data for change point analysis".to_string()
-                ],
-            });
+            return Ok(inconclusive_result(
+                "change_point",
+                "Insufficient data for change point detection",
+                "Collect more performance data for change point analysis",
+            ));
         }
 
-        // Simple change point detection - compare first and second half
-        let mid_point = history.len() / 2;
-
-        let first_half: Vec<f64> = history
+        let series: Vec<f64> = history
             .iter()
-            .take(mid_point)
             .map(|r| r.metrics.timing.mean_time_ns as f64)
             .collect();
 
-        let second_half: Vec<f64> = history
-            .iter()
-            .skip(mid_point)
-            .map(|r| r.metrics.timing.mean_time_ns as f64)
-            .collect();
+        let change_points = binary_segmentation(
+            &series,
+            self.min_segment_size,
+            self.significance_threshold,
+            self.max_change_points,
+        );
 
-        let first_mean = first_half.iter().sum::<f64>() / first_half.len() as f64;
-        let second_mean = second_half.iter().sum::<f64>() / second_half.len() as f64;
+        if change_points.is_empty() {
+            return Ok(inconclusive_result(
+                "change_point",
+                "No statistically significant level shift detected in the history",
+                "Continue monitoring; the series is consistent with a single regime",
+            ));
+        }
 
-        let change_percent = A::from((second_mean - first_mean) / first_mean)
-            .expect("unwrap failed")
-            * A::from(100.0).expect("unwrap failed");
-        let change_detected = change_percent.abs() > A::from(5.0).expect("unwrap failed"); // 5% change threshold
+        // `binary_segmentation` returns points ordered by index, so the last
+        // entry is the most recent regime change. That - not the largest shift
+        // in the whole history - is what decides whether the code is currently
+        // regressed: a series that improved 30% long ago and then regressed 5%
+        // yesterday is regressed today, even though the improvement has the
+        // bigger magnitude.
+        let Some(latest) = change_points.last() else {
+            return Ok(inconclusive_result(
+                "change_point",
+                "No statistically significant level shift detected in the history",
+                "Continue monitoring; the series is consistent with a single regime",
+            ));
+        };
+
+        let change_percent = latest.relative_magnitude * 100.0;
+        // Align with the other detectors: a statistically significant but
+        // negligible shift is not a regression.
+        let regression_detected = change_percent > DEFAULT_DEGRADATION_THRESHOLD_PERCENT;
+        let confidence = (1.0 - latest.p_value).clamp(0.0, 1.0);
 
         Ok(RegressionResult {
             test_id: "change_point".to_string(),
-            regression_detected: change_detected && change_percent > A::zero(),
-            severity: if change_detected {
-                (change_percent.abs() / A::from(100.0).expect("unwrap failed"))
-                    .min(A::one())
-                    .to_f64()
-                    .unwrap_or(0.0)
+            regression_detected,
+            severity: if regression_detected {
+                severity_from_threshold_ratio(change_percent, DEFAULT_DEGRADATION_THRESHOLD_PERCENT)
             } else {
                 0.0
             },
-            confidence: if change_detected { 0.7 } else { 0.3 },
-            performance_change_percent: change_percent.to_f64().unwrap_or(0.0),
+            confidence,
+            performance_change_percent: change_percent,
             memory_change_percent: 0.0,
-            affected_metrics: if change_detected {
+            affected_metrics: if regression_detected {
                 vec!["timing".to_string()]
             } else {
                 vec![]
             },
-            statistical_tests: vec![],
+            statistical_tests: change_points
+                .iter()
+                .map(|cp| StatisticalTestResult {
+                    test_name: format!("binary_segmentation_welch_t@{}", cp.index),
+                    test_statistic: cp.t_statistic,
+                    p_value: cp.p_value,
+                    degrees_of_freedom: None,
+                    conclusion: format!(
+                        "Level shift of {:.2}% at index {}",
+                        cp.relative_magnitude * 100.0,
+                        cp.index
+                    ),
+                })
+                .collect(),
             analysis: RegressionAnalysis {
                 trend_analysis: TrendAnalysis {
-                    direction: if change_percent > A::zero() {
+                    direction: if change_percent > 0.0 {
                         TrendDirection::Degrading
-                    } else {
+                    } else if change_percent < 0.0 {
                         TrendDirection::Improving
+                    } else {
+                        TrendDirection::Stable
                     },
-                    magnitude: change_percent.abs().to_f64().unwrap_or(0.0),
-                    significance: if change_detected { 0.7 } else { 0.3 },
-                    start_point: Some(mid_point),
+                    magnitude: change_percent.abs(),
+                    significance: confidence,
+                    start_point: Some(latest.index),
                 },
                 change_point_analysis: ChangePointAnalysis {
-                    change_points: if change_detected {
-                        vec![mid_point]
-                    } else {
-                        vec![]
-                    },
-                    magnitudes: if change_detected {
-                        vec![change_percent.to_f64().unwrap_or(0.0)]
-                    } else {
-                        vec![]
-                    },
-                    confidences: if change_detected { vec![0.7] } else { vec![] },
+                    change_points: change_points.iter().map(|cp| cp.index).collect(),
+                    magnitudes: change_points
+                        .iter()
+                        .map(|cp| cp.relative_magnitude * 100.0)
+                        .collect(),
+                    confidences: change_points
+                        .iter()
+                        .map(|cp| (1.0 - cp.p_value).clamp(0.0, 1.0))
+                        .collect(),
                 },
                 outlier_analysis: OutlierAnalysis {
                     outlier_indices: vec![],
                     outlier_scores: vec![],
                     outlier_types: vec![],
                 },
-                root_cause_hints: if change_detected {
-                    vec!["Significant performance change detected at mid-point".to_string()]
-                } else {
-                    vec![]
-                },
+                root_cause_hints: vec![format!(
+                    "Most recent significant performance change detected at index {} ({:+.2}%); \
+                     {} change point(s) found in total",
+                    latest.index,
+                    change_percent,
+                    change_points.len()
+                )],
             },
-            recommendations: if change_detected {
+            recommendations: if regression_detected {
                 vec![
                     "Investigate changes that occurred around the detected change point"
                         .to_string(),
@@ -487,34 +731,28 @@ impl<A: Float + Debug + Send + Sync> RegressionDetector<A> for ChangePointDetect
             "significance_threshold".to_string(),
             self.significance_threshold.to_string(),
         );
+        config.insert(
+            "max_change_points".to_string(),
+            self.max_change_points.to_string(),
+        );
         config
     }
 }
 
-/// Helper function to compute the cumulative distribution function of the standard normal distribution
-fn normal_cdf(x: f64) -> f64 {
-    0.5 * (1.0 + erf(x / std::f64::consts::SQRT_2))
+/// Cumulative distribution function of the standard normal distribution.
+///
+/// Retained for backwards compatibility; delegates to the shared, table-checked
+/// implementation in [`crate::regression_tester::distributions`].
+pub fn normal_cdf(x: f64) -> f64 {
+    crate::regression_tester::distributions::normal_cdf(x)
 }
 
-/// Simple error function approximation
+/// Error function.
 ///
-/// This function provides a good approximation of the error function using
-/// Abramowitz and Stegun's polynomial approximation.
-fn erf(x: f64) -> f64 {
-    let a1 = 0.254829592;
-    let a2 = -0.284496736;
-    let a3 = 1.421413741;
-    let a4 = -1.453152027;
-    let a5 = 1.061405429;
-    let p = 0.3275911;
-
-    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
-    let x = x.abs();
-
-    let t = 1.0 / (1.0 + p * x);
-    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-x * x).exp();
-
-    sign * y
+/// Retained for backwards compatibility; delegates to the shared, table-checked
+/// implementation in [`crate::regression_tester::distributions`].
+pub fn erf(x: f64) -> f64 {
+    crate::regression_tester::distributions::erf(x)
 }
 
 #[cfg(test)]
@@ -527,6 +765,13 @@ mod tests {
         MemoryStatistics, PerformanceMetrics, TimingMetrics, TimingStatistics,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn timestamp() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default()
+    }
 
     fn create_test_baseline() -> PerformanceBaseline<f64> {
         PerformanceBaseline {
@@ -569,14 +814,8 @@ mod tests {
                 memory_ci_99: (850000.0, 1150000.0),
             },
             sample_count: 100,
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
-            updated_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("unwrap failed")
-                .as_secs(),
+            created_at: timestamp(),
+            updated_at: timestamp(),
         }
     }
 
@@ -588,7 +827,7 @@ mod tests {
                 median_time_ns: mean_time_ns,
                 p95_time_ns: mean_time_ns + 50,
                 p99_time_ns: mean_time_ns + 100,
-                min_time_ns: mean_time_ns - 20,
+                min_time_ns: mean_time_ns.saturating_sub(20),
                 max_time_ns: mean_time_ns + 200,
             },
             memory: MemoryMetrics {
@@ -617,115 +856,181 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_statistical_test_detector() {
-        let detector = StatisticalTestDetector::new();
-        let baseline = create_test_baseline();
-        let current_metrics = create_test_metrics(1200); // 20% slower
-        let history = VecDeque::new();
-
-        let result = detector
-            .detect_regression(&baseline, &current_metrics, &history)
-            .expect("unwrap failed");
-
-        assert_eq!(result.test_id, "statistical_test");
-        assert!(result.performance_change_percent > 15.0); // Should detect significant change
+    fn record(time_ns: u64) -> PerformanceRecord<f64> {
+        PerformanceRecord {
+            timestamp: timestamp(),
+            commit_hash: None,
+            branch: None,
+            environment: TestEnvironment::default(),
+            metrics: create_test_metrics(time_ns),
+            metadata: HashMap::new(),
+        }
     }
 
     #[test]
-    fn test_sliding_window_detector() {
+    fn statistical_detector_reports_a_real_p_value() {
+        let detector = StatisticalTestDetector::new();
+        let baseline = create_test_baseline();
+        let history = VecDeque::new();
+
+        // Baseline is 1000 +/- 100 over 100 samples. 1200 is two prediction
+        // standard errors away, which the t-test must call significant.
+        let regressed = detector
+            .detect_regression(&baseline, &create_test_metrics(1200), &history)
+            .expect("detector runs");
+
+        assert_eq!(regressed.test_id, "statistical_test");
+        assert!(regressed.performance_change_percent > 15.0);
+        let p = regressed
+            .statistical_tests
+            .first()
+            .map(|t| t.p_value)
+            .expect("a test is reported");
+        assert!(p < 0.05, "expected a significant p-value, got {}", p);
+        assert!(regressed.regression_detected);
+        // Severity must be alertable, not the raw 0.20 fraction of the change.
+        assert!(
+            regressed.severity >= 0.8,
+            "20% against a 5% threshold is critical, got {}",
+            regressed.severity
+        );
+    }
+
+    #[test]
+    fn statistical_detector_stays_quiet_on_noise() {
+        let detector = StatisticalTestDetector::new();
+        let baseline = create_test_baseline();
+        let history = VecDeque::new();
+
+        // Well inside one prediction standard error.
+        let stable = detector
+            .detect_regression(&baseline, &create_test_metrics(1030), &history)
+            .expect("detector runs");
+        assert!(!stable.regression_detected);
+        assert_eq!(stable.severity, 0.0);
+        let p = stable
+            .statistical_tests
+            .first()
+            .map(|t| t.p_value)
+            .expect("a test is reported");
+        assert!(p > 0.05, "expected a non-significant p-value, got {}", p);
+    }
+
+    #[test]
+    fn statistical_detector_guards_degenerate_baselines() {
+        let detector = StatisticalTestDetector::new();
+        let history = VecDeque::new();
+
+        let mut zero_std = create_test_baseline();
+        zero_std.baseline_stats.timing.std_dev = 0.0;
+        let result = detector
+            .detect_regression(&zero_std, &create_test_metrics(1200), &history)
+            .expect("detector runs");
+        assert!(!result.regression_detected);
+        assert!(result
+            .analysis
+            .root_cause_hints
+            .iter()
+            .any(|hint| hint.contains("zero variance")));
+
+        let mut zero_mean = create_test_baseline();
+        zero_mean.baseline_stats.timing.mean = 0.0;
+        let result = detector
+            .detect_regression(&zero_mean, &create_test_metrics(1200), &history)
+            .expect("detector runs");
+        assert!(!result.regression_detected);
+        assert!(result.performance_change_percent == 0.0);
+
+        let mut single_sample = create_test_baseline();
+        single_sample.sample_count = 1;
+        let result = detector
+            .detect_regression(&single_sample, &create_test_metrics(1200), &history)
+            .expect("detector runs");
+        assert!(!result.regression_detected);
+    }
+
+    #[test]
+    fn severity_is_calibrated_against_the_threshold() {
+        // Just over the threshold: low, but above the 0.05 alert floor.
+        let just_over = severity_from_threshold_ratio(5.1, 5.0);
+        assert!(just_over > 0.05, "must be alertable, got {}", just_over);
+        assert!(just_over < 0.3, "must be Low, got {}", just_over);
+
+        // 4x the threshold is critical.
+        assert!(severity_from_threshold_ratio(20.0, 5.0) >= 0.8);
+        // Monotone and bounded.
+        assert!(severity_from_threshold_ratio(10.0, 5.0) > severity_from_threshold_ratio(6.0, 5.0));
+        assert!(severity_from_threshold_ratio(1.0e9, 5.0) <= 1.0);
+        // Improvements and garbage inputs carry no severity.
+        assert_eq!(severity_from_threshold_ratio(-10.0, 5.0), 0.0);
+        assert_eq!(severity_from_threshold_ratio(f64::NAN, 5.0), 0.0);
+    }
+
+    #[test]
+    fn sliding_window_detects_degradation_and_memory_change() {
         let detector = SlidingWindowDetector::new();
         let baseline = create_test_baseline();
-        let current_metrics = create_test_metrics(1200);
 
-        // Create history with consistent performance
         let mut history = VecDeque::new();
-        for _ in 0..15 {
-            let record = PerformanceRecord {
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("unwrap failed")
-                    .as_secs(),
-                commit_hash: None,
-                branch: None,
-                environment: TestEnvironment::default(),
-                metrics: create_test_metrics(1000),
-                metadata: HashMap::new(),
-            };
-            history.push_back(record);
+        for i in 0..15 {
+            // Slight jitter so the window has a usable variance.
+            history.push_back(record(1000 + (i % 3)));
         }
 
         let result = detector
-            .detect_regression(&baseline, &current_metrics, &history)
-            .expect("unwrap failed");
+            .detect_regression(&baseline, &create_test_metrics(1200), &history)
+            .expect("detector runs");
 
         assert_eq!(result.test_id, "sliding_window");
         assert!(result.performance_change_percent > 15.0);
-    }
-
-    #[test]
-    fn test_change_point_detector() {
-        let detector = ChangePointDetector::new();
-        let baseline = create_test_baseline();
-        let current_metrics = create_test_metrics(1000);
-
-        // Create history with a change point
-        let mut history = VecDeque::new();
-
-        // First half - good performance
-        for _ in 0..10 {
-            let record = PerformanceRecord {
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("unwrap failed")
-                    .as_secs(),
-                commit_hash: None,
-                branch: None,
-                environment: TestEnvironment::default(),
-                metrics: create_test_metrics(1000),
-                metadata: HashMap::new(),
-            };
-            history.push_back(record);
-        }
-
-        // Second half - degraded performance
-        for _ in 0..10 {
-            let record = PerformanceRecord {
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("unwrap failed")
-                    .as_secs(),
-                commit_hash: None,
-                branch: None,
-                environment: TestEnvironment::default(),
-                metrics: create_test_metrics(1200), // 20% slower
-                metadata: HashMap::new(),
-            };
-            history.push_back(record);
-        }
-
-        let result = detector
-            .detect_regression(&baseline, &current_metrics, &history)
-            .expect("unwrap failed");
-
-        assert_eq!(result.test_id, "change_point");
+        assert!(result.regression_detected);
+        // Confidence must come from the data, not the old 0.8 constant.
+        assert!(result.confidence > 0.9, "confidence {}", result.confidence);
+        assert!(!result.statistical_tests.is_empty());
+        // Memory is identical across the window, so the delta is exactly zero
+        // (and reported as measured, not as "unavailable").
+        assert_eq!(result.memory_change_percent, 0.0);
         assert!(!result
             .analysis
-            .change_point_analysis
-            .change_points
-            .is_empty());
+            .root_cause_hints
+            .iter()
+            .any(|hint| hint.contains("Memory was not measured")));
     }
 
     #[test]
-    fn test_insufficient_data_handling() {
+    fn sliding_window_reports_memory_growth() {
         let detector = SlidingWindowDetector::new();
         let baseline = create_test_baseline();
-        let current_metrics = create_test_metrics(1000);
-        let history = VecDeque::new(); // Empty history
+
+        let mut history = VecDeque::new();
+        for i in 0..12 {
+            let mut rec = record(1000 + (i % 3));
+            rec.metrics.memory.peak_memory_bytes = 1_000_000;
+            history.push_back(rec);
+        }
+
+        let mut current = create_test_metrics(1001);
+        current.memory.peak_memory_bytes = 1_500_000;
 
         let result = detector
-            .detect_regression(&baseline, &current_metrics, &history)
-            .expect("unwrap failed");
+            .detect_regression(&baseline, &current, &history)
+            .expect("detector runs");
+        assert!((result.memory_change_percent - 50.0).abs() < 1e-9);
+        assert!(result
+            .affected_metrics
+            .iter()
+            .any(|metric| metric == "memory"));
+    }
+
+    #[test]
+    fn sliding_window_needs_a_full_window() {
+        let detector = SlidingWindowDetector::new();
+        let baseline = create_test_baseline();
+        let history = VecDeque::new();
+
+        let result = detector
+            .detect_regression(&baseline, &create_test_metrics(1000), &history)
+            .expect("detector runs");
 
         assert!(!result.regression_detected);
         assert!(result
@@ -736,15 +1041,112 @@ mod tests {
     }
 
     #[test]
-    fn test_normal_cdf_function() {
-        // Test normal CDF at known points
-        assert!((normal_cdf(0.0) - 0.5).abs() < 0.01);
-        assert!(normal_cdf(-2.0) < 0.05);
-        assert!(normal_cdf(2.0) > 0.95);
+    fn change_point_detector_finds_the_actual_shift() {
+        let detector = ChangePointDetector::new();
+        let baseline = create_test_baseline();
+
+        // 20 stable runs then 10 degraded ones: the change point is at 20,
+        // not at the midpoint 15.
+        let mut history = VecDeque::new();
+        for i in 0..20 {
+            history.push_back(record(1000 + (i % 3)));
+        }
+        for i in 0..10 {
+            history.push_back(record(1200 + (i % 3)));
+        }
+
+        let result = detector
+            .detect_regression(&baseline, &create_test_metrics(1200), &history)
+            .expect("detector runs");
+
+        assert_eq!(result.test_id, "change_point");
+        let points = &result.analysis.change_point_analysis.change_points;
+        assert!(!points.is_empty());
+        assert!(
+            points.iter().any(|&p| p.abs_diff(20) <= 1),
+            "expected a change point near index 20, got {:?}",
+            points
+        );
+        assert!(result.regression_detected);
+        assert!(result.performance_change_percent > 15.0);
+        assert!(result.confidence > 0.95);
+    }
+
+    /// A history that improved a lot and then regressed must report the
+    /// *recent* regression, not the older (larger) improvement.
+    #[test]
+    fn change_point_detector_uses_the_most_recent_shift() {
+        let detector = ChangePointDetector::new();
+        let baseline = create_test_baseline();
+
+        let mut history = VecDeque::new();
+        for i in 0..20 {
+            history.push_back(record(1000 + (i % 3)));
+        }
+        // Big improvement.
+        for i in 0..20 {
+            history.push_back(record(700 + (i % 3)));
+        }
+        // Smaller, but real, regression on top of the improved level.
+        for i in 0..20 {
+            history.push_back(record(770 + (i % 3)));
+        }
+
+        let result = detector
+            .detect_regression(&baseline, &create_test_metrics(770), &history)
+            .expect("detector runs");
+
+        assert!(
+            result.regression_detected,
+            "a recent regression must not be masked by an older improvement"
+        );
+        assert!(result.performance_change_percent > 5.0);
+        let points = &result.analysis.change_point_analysis.change_points;
+        assert!(points.len() >= 2, "expected both shifts, got {:?}", points);
+        assert!(
+            result
+                .analysis
+                .trend_analysis
+                .start_point
+                .map(|p| p.abs_diff(40) <= 2)
+                .unwrap_or(false),
+            "expected the latest change point near index 40, got {:?}",
+            result.analysis.trend_analysis.start_point
+        );
     }
 
     #[test]
-    fn test_detector_configuration() {
+    fn change_point_detector_ignores_stable_history() {
+        let detector = ChangePointDetector::new();
+        let baseline = create_test_baseline();
+
+        let mut history = VecDeque::new();
+        for i in 0..40 {
+            history.push_back(record(1000 + (i % 5)));
+        }
+
+        let result = detector
+            .detect_regression(&baseline, &create_test_metrics(1000), &history)
+            .expect("detector runs");
+
+        assert!(!result.regression_detected);
+        assert!(result
+            .analysis
+            .change_point_analysis
+            .change_points
+            .is_empty());
+    }
+
+    #[test]
+    fn normal_cdf_delegates_to_the_shared_implementation() {
+        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-12);
+        assert!(normal_cdf(-2.0) < 0.05);
+        assert!(normal_cdf(2.0) > 0.95);
+        assert!((erf(1.0) - 0.842_700_792_949_715).abs() < 1e-12);
+    }
+
+    #[test]
+    fn detector_configuration_is_reported() {
         let detector = StatisticalTestDetector::with_alpha(0.01);
         let config = <StatisticalTestDetector as crate::regression_tester::types::RegressionDetector<f64>>::config(&detector);
         assert_eq!(config.get("alpha"), Some(&"0.01".to_string()));

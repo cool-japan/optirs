@@ -1,4 +1,4 @@
-# OptiRS GPU TODO (v0.3.1)
+# OptiRS GPU TODO (v0.3.2)
 
 ## Module Status: Production Ready
 
@@ -167,5 +167,5 @@ These require real GPU hardware, vendor collectives, framework runtimes, or OS/d
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.1
+**Version**: v0.3.2
 **Release Date**: 2026-03-27

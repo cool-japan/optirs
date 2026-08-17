@@ -1198,7 +1198,12 @@ impl Default for ArtifactRetentionPolicy {
 impl Default for ArtifactUploadConfig {
     fn default() -> Self {
         Self {
-            compress: true,
+            // `ArtifactManager` has no compression backend implemented, so
+            // defaulting this to `true` would make the default CI/CD
+            // automation pipeline fail every upload out of the box. Off by
+            // default; setting it explicitly is now an honest opt-in that
+            // fails loudly instead of silently uploading uncompressed data.
+            compress: false,
             compression_level: 6,
             encrypt: false,
             timeout_sec: 300,
@@ -1351,11 +1356,19 @@ impl BaselineManagementConfig {
 
 impl ReportingConfig {
     fn validate(&self) -> Result<(), String> {
+        if self.generate_pdf {
+            return Err(
+                "generate_pdf is not supported: no PDF rendering dependency is linked into \
+                 this crate (pure-Rust policy forbids adding one for this feature); use HTML \
+                 or Markdown instead"
+                    .to_string(),
+            );
+        }
+
         if !self.generate_html
             && !self.generate_json
             && !self.generate_junit
             && !self.generate_markdown
-            && !self.generate_pdf
         {
             return Err("At least one report format must be enabled".to_string());
         }
@@ -1747,14 +1760,26 @@ mod tests {
     fn test_comprehensive_config() {
         let mut config = CiCdAutomationConfig::default();
 
-        // Enable all features
+        // Enable all *supported* report formats -- PDF is intentionally
+        // excluded (see `ReportingConfig::validate`).
         config.reporting.generate_html = true;
         config.reporting.generate_json = true;
         config.reporting.generate_markdown = true;
-        config.reporting.generate_pdf = true;
         config.artifact_storage.enabled = true;
         config.performance_gates.enabled = true;
 
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_generate_pdf_is_rejected() {
+        let mut config = CiCdAutomationConfig::default();
+        config.reporting.generate_html = true;
+        config.reporting.generate_pdf = true;
+
+        assert!(
+            config.validate().is_err(),
+            "generate_pdf must be rejected: no PDF rendering dependency exists"
+        );
     }
 }

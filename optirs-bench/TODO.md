@@ -1,4 +1,4 @@
-# OptiRS Bench TODO (v0.3.1)
+# OptiRS Bench TODO (v0.3.2)
 
 ## Module Status: Production Ready
 
@@ -177,5 +177,5 @@ These require external systems / UIs / OS profilers and are intentionally NOT au
 ---
 
 **Status**: ✅ Production Ready
-**Version**: v0.3.1
+**Version**: v0.3.2
 **Release Date**: 2026-03-27

@@ -11,7 +11,9 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Transformer optimizer state
-pub struct TransformerOptimizerState<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerOptimizerState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Current model parameters
     pub current_parameters: Array1<T>,
 
@@ -46,7 +48,9 @@ pub struct TransformerOptimizerState<T: Float + Debug + Send + Sync + 'static> {
     last_updated: std::time::Instant,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerOptimizerState<T>
+{
     /// Create new optimizer state
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let parameter_count = config.model_dimension * config.num_transformer_layers;
@@ -282,7 +286,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
 }
 
 /// Parameter history management
-pub struct ParameterHistory<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterHistory<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Parameter snapshots
     snapshots: VecDeque<ParameterSnapshot<T>>,
 
@@ -296,7 +302,9 @@ pub struct ParameterHistory<T: Float + Debug + Send + Sync + 'static> {
     statistics: ParameterStatistics<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ParameterHistory<T>
+{
     pub fn new(max_size: usize, parameter_dimension: usize) -> Result<Self> {
         Ok(Self {
             snapshots: VecDeque::new(),
@@ -347,7 +355,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
 
 /// Optimization state tracking
 #[derive(Debug, Clone)]
-pub struct OptimizationState<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Current learning rate
     pub learning_rate: T,
 
@@ -370,7 +380,9 @@ pub struct OptimizationState<T: Float + Debug + Send + Sync + 'static> {
     pub convergence_tracker: ConvergenceTracker<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> OptimizationState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    OptimizationState<T>
+{
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let parameter_count = config.model_dimension * config.num_transformer_layers;
 
@@ -469,7 +481,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationState<T> {
 
 /// Learning state tracking
 #[derive(Debug, Clone)]
-pub struct LearningState<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Loss history
     loss_history: VecDeque<T>,
 
@@ -486,7 +500,9 @@ pub struct LearningState<T: Float + Debug + Send + Sync + 'static> {
     performance_metrics: LearningPerformanceMetrics<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LearningState<T>
+{
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let meta_state = Some(MetaState::new(config.model_dimension)?);
         let learning_schedule = LearningSchedule::new(config.learning_rate, config.warmup_steps);
@@ -601,7 +617,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
 
 /// Memory state management
 #[derive(Debug, Clone)]
-pub struct MemoryState<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Attention caches
     attention_caches: HashMap<String, AttentionCache<T>>,
 
@@ -612,7 +630,9 @@ pub struct MemoryState<T: Float + Debug + Send + Sync + 'static> {
     cache_statistics: CacheStatistics,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MemoryState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MemoryState<T>
+{
     pub fn new() -> Result<Self> {
         Ok(Self {
             attention_caches: HashMap::new(),
@@ -634,7 +654,9 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryState<T> {
 }
 
 /// Checkpoint management
-pub struct CheckpointManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct CheckpointManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Stored checkpoints
     checkpoints: HashMap<String, OptimizerStateSnapshot<T>>,
 
@@ -648,7 +670,9 @@ pub struct CheckpointManager<T: Float + Debug + Send + Sync + 'static> {
     auto_save_config: AutoSaveConfig,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    CheckpointManager<T>
+{
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         Ok(Self {
             checkpoints: HashMap::new(),
@@ -727,14 +751,18 @@ impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
 /// Supporting data structures and types
 
 #[derive(Debug, Clone)]
-pub struct ParameterSnapshot<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterSnapshot<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub parameters: Array1<T>,
     pub timestamp: std::time::Instant,
     pub norm: T,
 }
 
 #[derive(Debug, Clone)]
-pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub total_snapshots: usize,
     pub average_norm: T,
     pub max_norm: T,
@@ -742,13 +770,17 @@ pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub norm_trend: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for ParameterStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for ParameterStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ParameterStatistics<T>
+{
     pub fn new() -> Self {
         Self {
             total_snapshots: 0,
@@ -773,7 +805,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AdaptiveState<T: Float + Debug + Send + Sync + 'static> {
+pub struct AdaptiveState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// First moment estimates
     pub m: Array1<T>,
     /// Second moment estimates
@@ -787,7 +821,9 @@ pub struct AdaptiveState<T: Float + Debug + Send + Sync + 'static> {
     pub epsilon: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> AdaptiveState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    AdaptiveState<T>
+{
     pub fn new(parameter_count: usize) -> Result<Self> {
         Ok(Self {
             m: Array1::zeros(parameter_count),
@@ -814,14 +850,18 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveState<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct GradientAccumulator<T: Float + Debug + Send + Sync + 'static> {
+pub struct GradientAccumulator<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Accumulated gradients
     pub accumulated_gradients: Array1<T>,
     /// Accumulation count
     pub accumulation_count: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> GradientAccumulator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    GradientAccumulator<T>
+{
     pub fn new(parameter_count: usize) -> Result<Self> {
         Ok(Self {
             accumulated_gradients: Array1::zeros(parameter_count),
@@ -837,7 +877,9 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientAccumulator<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ConvergenceTracker<T: Float + Debug + Send + Sync + 'static> {
+pub struct ConvergenceTracker<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Recent loss values
     recent_losses: VecDeque<T>,
     /// Convergence threshold
@@ -846,13 +888,17 @@ pub struct ConvergenceTracker<T: Float + Debug + Send + Sync + 'static> {
     stability_window: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for ConvergenceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for ConvergenceTracker<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ConvergenceTracker<T>
+{
     pub fn new() -> Self {
         Self {
             recent_losses: VecDeque::new(),
@@ -921,7 +967,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
 
 /// State snapshots and serialization
 #[derive(Debug, Clone)]
-pub struct OptimizerStateSnapshot<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizerStateSnapshot<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub parameters: Array1<T>,
     pub optimization_state: OptimizationState<T>,
     pub learning_state: LearningState<T>,
@@ -948,7 +996,9 @@ pub struct StateConfig {
 }
 
 impl StateConfig {
-    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(
+    pub fn from_optimizer_config<
+        T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    >(
         config: &TransformerBasedOptimizerConfig<T>,
     ) -> Self {
         Self {
@@ -971,7 +1021,9 @@ pub struct StateMetadata {
 
 /// Statistics and tracking structures
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StateStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct StateStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub total_updates: usize,
     pub last_update_magnitude: T,
     pub average_update_magnitude: T,
@@ -979,13 +1031,17 @@ pub struct StateStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub update_frequency: f64,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for StateStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for StateStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> StateStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    StateStatistics<T>
+{
     pub fn new() -> Self {
         Self {
             total_updates: 0,
@@ -1034,7 +1090,9 @@ pub struct ValidationResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct StateSummary<T: Float + Debug + Send + Sync + 'static> {
+pub struct StateSummary<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub version: usize,
     pub parameter_count: usize,
     pub parameter_norm: T,
@@ -1049,7 +1107,9 @@ pub struct StateSummary<T: Float + Debug + Send + Sync + 'static> {
 
 /// Serializable state structures
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub parameters: Vec<T>,
     pub parameter_shape: Vec<usize>,
     pub optimization_state: SerializableOptimizationState<T>,
@@ -1059,7 +1119,9 @@ pub struct SerializableState<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableOptimizationState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableOptimizationState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub learning_rate: T,
     pub step_count: usize,
     pub last_update_magnitude: T,
@@ -1068,7 +1130,9 @@ pub struct SerializableOptimizationState<T: Float + Debug + Send + Sync + 'stati
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableLearningState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableLearningState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub loss_history: Vec<T>,
     pub average_loss: T,
     pub best_loss: T,
@@ -1076,7 +1140,9 @@ pub struct SerializableLearningState<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableConvergenceState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableConvergenceState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub recent_losses: Vec<T>,
     pub convergence_rate: T,
     pub stability_score: T,
@@ -1084,7 +1150,9 @@ pub struct SerializableConvergenceState<T: Float + Debug + Send + Sync + 'static
 
 /// Additional supporting structures
 #[derive(Debug, Clone)]
-pub struct TaskAdaptationRecord<T: Float + Debug + Send + Sync + 'static> {
+pub struct TaskAdaptationRecord<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub task_id: String,
     pub adaptation_steps: usize,
     pub final_loss: T,
@@ -1092,14 +1160,18 @@ pub struct TaskAdaptationRecord<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningSchedule<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningSchedule<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub initial_rate: T,
     pub current_rate: T,
     pub warmup_steps: usize,
     pub decay_factor: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LearningSchedule<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LearningSchedule<T>
+{
     pub fn new(initial_rate: T, warmup_steps: usize) -> Self {
         Self {
             initial_rate,
@@ -1111,19 +1183,25 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningSchedule<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningPerformanceMetrics<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningPerformanceMetrics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub loss_trend: T,
     pub convergence_stability: T,
     pub adaptation_efficiency: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for LearningPerformanceMetrics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for LearningPerformanceMetrics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LearningPerformanceMetrics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LearningPerformanceMetrics<T>
+{
     pub fn new() -> Self {
         Self {
             loss_trend: T::zero(),
@@ -1148,7 +1226,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningPerformanceMetrics<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct OptimizationProgress<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationProgress<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub step_count: usize,
     pub current_learning_rate: T,
     pub last_update_magnitude: T,
@@ -1157,7 +1237,9 @@ pub struct OptimizationProgress<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub total_episodes: usize,
     pub average_loss: T,
     pub best_loss: T,
@@ -1166,7 +1248,9 @@ pub struct LearningStatistics<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AttentionCache<T: Float + Debug + Send + Sync + 'static> {
+pub struct AttentionCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub cached_keys: Array2<T>,
     pub cached_values: Array2<T>,
     pub cache_size: usize,

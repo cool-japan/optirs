@@ -1,6 +1,6 @@
 //! # OptiRS Bench - Benchmarking and Performance Analysis
 //!
-//! **Version:** 0.3.1
+//! **Version:** 0.3.2
 //! **Status:** Available
 //!
 //! This crate provides comprehensive benchmarking, profiling, performance analysis, and regression
@@ -83,6 +83,7 @@ pub mod documentation_analyzer;
 pub mod enhanced_memory_monitor;
 pub mod memory_leak_detector;
 pub mod memory_optimizer;
+pub mod notification_transport;
 pub mod performance_forecast;
 pub mod performance_pattern_recognition;
 pub mod performance_prediction;
@@ -91,6 +92,7 @@ pub mod performance_regression_detector;
 pub mod regression_tester;
 pub mod report_templates;
 pub mod security_auditor;
+pub mod system_sampler;
 
 // Re-export common types for convenience
 pub use mod_impl::{

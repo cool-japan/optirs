@@ -5,8 +5,8 @@
 // neuromorphic computing platforms with event-based architectures.
 
 use super::{
-    EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics, PlasticityModel,
-    STDPConfig, Spike, SpikeTrain,
+    to_generic_or, EventPriority, MembraneDynamicsConfig, NeuromorphicEvent, NeuromorphicMetrics,
+    PlasticityModel, STDPConfig, Spike, SpikeTrain,
 };
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
@@ -17,6 +17,101 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
+
+// --- Pure-Rust varint helpers for event (de)serialization (F57) --------
+//
+// LEB128 unsigned varints, with zigzag encoding for signed values. Used by
+// `EventCompressionEngine` to produce real, decodable bytes for events
+// instead of fixed-size placeholder buffers.
+
+fn write_uvarint(buf: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        buf.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn read_uvarint(buf: &[u8], pos: &mut usize) -> Option<u64> {
+    let mut result: u64 = 0;
+    let mut shift: u32 = 0;
+    loop {
+        let byte = *buf.get(*pos)?;
+        *pos += 1;
+        result |= ((byte & 0x7f) as u64) << shift;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+    Some(result)
+}
+
+fn zigzag_encode(value: i64) -> u64 {
+    ((value << 1) ^ (value >> 63)) as u64
+}
+
+fn zigzag_decode(value: u64) -> i64 {
+    ((value >> 1) as i64) ^ -((value & 1) as i64)
+}
+
+fn write_ivarint(buf: &mut Vec<u8>, value: i64) {
+    write_uvarint(buf, zigzag_encode(value));
+}
+
+fn read_ivarint(buf: &[u8], pos: &mut usize) -> Option<i64> {
+    read_uvarint(buf, pos).map(zigzag_decode)
+}
+
+/// Fixed-point scale used to convert floating-point event fields
+/// (timestamps, neuron ids treated as integers, values, energy costs) to
+/// integers before varint encoding. Millisecond timestamps are kept to
+/// microsecond resolution.
+const EVENT_FIXED_POINT_SCALE: f64 = 1000.0;
+
+fn decode_event_type(byte: u8) -> Result<EventType> {
+    match byte {
+        0 => Ok(EventType::Spike),
+        1 => Ok(EventType::WeightUpdate),
+        2 => Ok(EventType::ThresholdCrossing),
+        3 => Ok(EventType::PlasticityEvent),
+        4 => Ok(EventType::ExternalStimulus),
+        5 => Ok(EventType::TimerEvent),
+        6 => Ok(EventType::ErrorEvent),
+        7 => Ok(EventType::HomeostaticEvent),
+        8 => Ok(EventType::SynchronizationEvent),
+        9 => Ok(EventType::EnergyEvent),
+        other => Err(OptimError::InvalidConfig(format!(
+            "unknown encoded EventType discriminant: {other}"
+        ))),
+    }
+}
+
+fn decode_priority(byte: u8) -> Result<EventPriority> {
+    match byte {
+        0 => Ok(EventPriority::Low),
+        1 => Ok(EventPriority::Normal),
+        2 => Ok(EventPriority::High),
+        3 => Ok(EventPriority::Critical),
+        4 => Ok(EventPriority::RealTime),
+        other => Err(OptimError::InvalidConfig(format!(
+            "unknown encoded EventPriority discriminant: {other}"
+        ))),
+    }
+}
+
+fn truncated_bytes_err() -> crate::error::OptimError {
+    OptimError::InvalidConfig("truncated compressed event bytes".to_string())
+}
 
 /// Event types for neuromorphic computing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -197,12 +292,18 @@ impl<T: Float + Debug + Send + Sync + 'static> PartialOrd for PriorityEventEntry
 
 impl<T: Float + Debug + Send + Sync + 'static> Ord for PriorityEventEntry<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Higher priority events come first (reverse order)
-        other
-            .event
+        // `BinaryHeap` is a max-heap: `pop()` returns the "greatest"
+        // element. We want higher `EventPriority` to pop first, so
+        // compare priorities directly rather than reversed (F55: the
+        // previous `other.priority.cmp(&self.priority)` inverted this,
+        // so pop() returned the LOWEST-priority event first). Ties break
+        // FIFO: the earlier `insertion_time` must compare as "greater" so
+        // it pops first, which is exactly what wrapping both sides in
+        // `Reverse` gives us.
+        self.event
             .priority
-            .cmp(&self.event.priority)
-            .then_with(|| self.insertion_time.cmp(&other.insertion_time))
+            .cmp(&other.event.priority)
+            .then_with(|| Reverse(self.insertion_time).cmp(&Reverse(other.insertion_time)))
     }
 }
 
@@ -348,24 +449,49 @@ impl<T: Float + Debug + Send + Sync + 'static> EventHandler<T> for SpikeEventHan
 
 impl<T: Float + Debug + Send + Sync + 'static> SpikeEventHandler<T> {
     fn trigger_stdp_updates(&self, post_neuron: usize, state: &mut SystemState<T>) -> Result<()> {
-        // Check all presynaptic connections
-        for pre_neuron in 0..state.last_spike_times.len() {
-            if pre_neuron != post_neuron {
-                let pre_spike_time = state.last_spike_times[pre_neuron];
+        let long_ago = to_generic_or(-1000.0, T::zero());
+        let now = state.current_time;
 
-                if pre_spike_time > T::from(-1000.0).unwrap_or_else(|| T::zero()) {
-                    let dt = state.current_time - pre_spike_time;
-                    let weight_change = self.compute_stdp_weight_change(dt);
-
-                    // Add to pending updates
-                    state
-                        .pending_updates
-                        .insert((pre_neuron, post_neuron), weight_change);
-                }
+        for other_neuron in 0..state.last_spike_times.len() {
+            if other_neuron == post_neuron {
+                continue;
             }
+            let other_spike_time = state.last_spike_times[other_neuron];
+            if other_spike_time <= long_ago {
+                continue; // no valid spike history for `other_neuron` yet
+            }
+
+            // `other_neuron` fired before `post_neuron` (now): it is PRE,
+            // dt = t_post - t_pre > 0 => potentiation (LTP) on
+            // other_neuron -> post_neuron.
+            let dt_ltp = now - other_spike_time;
+            let ltp = self.compute_stdp_weight_change(dt_ltp);
+            Self::accumulate_pending(state, (other_neuron, post_neuron), ltp);
+
+            // `post_neuron` is firing NOW, arriving after
+            // `other_neuron`'s last spike: from `other_neuron`'s
+            // perspective as POST, this is a PRE spike arriving late,
+            // dt = t_post - t_pre = other_spike_time - now < 0 =>
+            // depression (LTD) on post_neuron -> other_neuron. This is
+            // the presynaptic-trace side of STDP that was previously
+            // unreachable (F50): `dt` computed only from "post's own time
+            // minus pre's last (necessarily past) spike time" is always
+            // >= 0, so LTD never fired.
+            let dt_ltd = other_spike_time - now;
+            let ltd = self.compute_stdp_weight_change(dt_ltd);
+            Self::accumulate_pending(state, (post_neuron, other_neuron), ltd);
         }
 
         Ok(())
+    }
+
+    /// Accumulate a weight delta into `pending_updates` (F56): the
+    /// previous `insert(...)` overwrote any existing pending update for
+    /// the same `(pre, post)` pair instead of summing contributions from
+    /// multiple presynaptic partners within the same batch.
+    fn accumulate_pending(state: &mut SystemState<T>, key: (usize, usize), delta: T) {
+        let entry = state.pending_updates.entry(key).or_insert_with(T::zero);
+        *entry = *entry + delta;
     }
 
     fn compute_stdp_weight_change(&self, dt: T) -> T {

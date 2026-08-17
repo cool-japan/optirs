@@ -51,8 +51,8 @@ full = ["gpu", "tpu", "learned", "nas", "bench"]
 
 [[example]]
 name = "scirs2_integration_demo"
-path = "../examples/scirs2_integration_demo.rs"
+path = "examples/scirs2_integration_demo.rs"
 
 [[example]]
 name = "basic_optimization"
-path = "../examples/basic_optimization.rs"
+path = "examples/basic_optimization.rs"

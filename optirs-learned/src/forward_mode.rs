@@ -37,8 +37,17 @@ pub struct ForwardModeEngine<
     /// Computation graph
     tape: Vec<ForwardOperation<T>>,
 
-    /// Variable registry
+    /// Variable registry (name -> tape index)
     variables: HashMap<String, usize>,
+
+    /// Variable names in creation order.
+    ///
+    /// The seed/tangent space is the concatenation of the variables' values in
+    /// **this** order, so a variable's seed ordinal is its position here — it
+    /// is stable and independent of how many intermediate operations were
+    /// recorded between two variable creations (which is what the tape index
+    /// would have measured).
+    variable_order: Vec<String>,
 
     /// Current seed vectors for directional derivatives
     seed_vectors: Vec<Array1<T>>,
@@ -55,9 +64,6 @@ struct ForwardOperation<T: Float + Debug + Send + Sync + 'static> {
 
     /// Input variable indices
     inputs: Vec<usize>,
-
-    /// Output variable index
-    output: usize,
 
     /// Operation metadata
     metadata: ForwardOpMetadata<T>,
@@ -89,12 +95,8 @@ enum ForwardOpType {
 
 /// Operation metadata for forward mode
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct ForwardOpMetadata<T: Float + Debug + Send + Sync + 'static> {
-    /// Partial derivatives with respect to inputs
-    partials: Vec<T>,
-
-    /// Shape information
+    /// Logical shape of the operation's output
     shape: Vec<usize>,
 
     /// Operation-specific data
@@ -103,13 +105,17 @@ struct ForwardOpMetadata<T: Float + Debug + Send + Sync + 'static> {
 
 /// Operation-specific data
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum ForwardOpData<T: Float + Debug + Send + Sync + 'static> {
     None,
-    ConstantValue(T),
+    /// The full constant tensor (flat, row-major)
+    ConstantVector(Array1<T>),
     PowerExponent(T),
-    MatMulDims { m: usize, n: usize, k: usize },
-    ReductionAxis(usize),
+    /// `lhs` is `m x k`, `rhs` is `k x n`, output is `m x n`
+    MatMulDims {
+        m: usize,
+        k: usize,
+        n: usize,
+    },
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> DualNumber<T> {
@@ -167,6 +173,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         Self {
             tape: Vec::new(),
             variables: HashMap::new(),
+            variable_order: Vec::new(),
             seed_vectors: Vec::new(),
             higher_order: false,
         }
@@ -177,28 +184,63 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         self.higher_order = enabled;
     }
 
+    /// Whether higher-order derivative tracking is enabled
+    pub fn higher_order_enabled(&self) -> bool {
+        self.higher_order
+    }
+
     /// Set seed vectors for computing directional derivatives
     pub fn set_seed_vectors(&mut self, seeds: Vec<Array1<T>>) {
         self.seed_vectors = seeds;
     }
 
-    /// Create a variable
+    /// Seed vectors previously registered with [`Self::set_seed_vectors`]
+    pub fn seed_vectors(&self) -> &[Array1<T>] {
+        &self.seed_vectors
+    }
+
+    /// Variable names in creation order (the seed-space layout)
+    pub fn variable_order(&self) -> &[String] {
+        &self.variable_order
+    }
+
+    /// Declared logical shape of a tape node, when the builder recorded one.
+    ///
+    /// Leaves and matrix products carry an explicit shape; element-wise
+    /// operations infer theirs from their operands during the forward pass and
+    /// therefore report `None`.
+    pub fn declared_shape(&self, node_id: usize) -> Result<Option<&[usize]>> {
+        let op = self
+            .tape
+            .get(node_id)
+            .ok_or_else(|| OptimError::InvalidConfig(format!("invalid node id {node_id}")))?;
+        if op.metadata.shape.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(op.metadata.shape.as_slice()))
+        }
+    }
+
+    /// Create a variable.
+    ///
+    /// Re-creating a variable under an existing name rebinds the name to the
+    /// new tape node but keeps its original seed ordinal.
     pub fn create_variable(&mut self, name: &str, value: Array1<T>) -> usize {
         let var_id = self.tape.len();
 
         let op = ForwardOperation {
             optype: ForwardOpType::Variable,
             inputs: Vec::new(),
-            output: var_id,
             metadata: ForwardOpMetadata {
-                partials: vec![T::one()],
                 shape: value.shape().to_vec(),
                 data: ForwardOpData::None,
             },
         };
 
         self.tape.push(op);
-        self.variables.insert(name.to_string(), var_id);
+        if self.variables.insert(name.to_string(), var_id).is_none() {
+            self.variable_order.push(name.to_string());
+        }
         var_id
     }
 
@@ -209,16 +251,42 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         let op = ForwardOperation {
             optype: ForwardOpType::Constant,
             inputs: Vec::new(),
-            output: const_id,
             metadata: ForwardOpMetadata {
-                partials: vec![T::zero()],
                 shape: value.shape().to_vec(),
-                data: ForwardOpData::ConstantValue(value[0]),
+                data: ForwardOpData::ConstantVector(value),
             },
         };
 
         self.tape.push(op);
         const_id
+    }
+
+    /// Total dimension of the seed / tangent space for the given inputs.
+    ///
+    /// This is the sum of the input lengths taken in variable-creation order.
+    pub fn input_dimension(&self, inputs: &HashMap<String, Array1<T>>) -> Result<usize> {
+        let mut total = 0usize;
+        for name in &self.variable_order {
+            let value = inputs.get(name).ok_or_else(|| {
+                OptimError::InvalidConfig(format!("input value for '{name}' not provided"))
+            })?;
+            total += value.len();
+        }
+        Ok(total)
+    }
+
+    /// Offset of each variable inside the seed / tangent space.
+    fn seed_offsets(&self, inputs: &HashMap<String, Array1<T>>) -> Result<HashMap<String, usize>> {
+        let mut offsets = HashMap::new();
+        let mut cursor = 0usize;
+        for name in &self.variable_order {
+            let value = inputs.get(name).ok_or_else(|| {
+                OptimError::InvalidConfig(format!("input value for '{name}' not provided"))
+            })?;
+            offsets.insert(name.clone(), cursor);
+            cursor += value.len();
+        }
+        Ok(offsets)
     }
 
     /// Add two variables
@@ -248,10 +316,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         let op = ForwardOperation {
             optype: ForwardOpType::Power,
             inputs: vec![base],
-            output: output_id,
             metadata: ForwardOpMetadata {
-                partials: vec![T::zero()], // Will be computed during forward pass
-                shape: vec![],             // Will be inferred
+                shape: Vec::new(), // Inferred from the operand during the forward pass
                 data: ForwardOpData::PowerExponent(exponent),
             },
         };
@@ -295,22 +361,26 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         self.unary_op(ForwardOpType::ReLU, input)
     }
 
-    /// Matrix multiplication
+    /// Matrix multiplication.
+    ///
+    /// `dims` is `(m, k, n)`: the left operand is the row-major flattening of
+    /// an `m x k` matrix, the right operand of a `k x n` matrix, and the
+    /// output is `m x n`.
     pub fn matmul(&mut self, lhs: usize, rhs: usize, dims: (usize, usize, usize)) -> Result<usize> {
+        let (m, k, n) = dims;
+        if m == 0 || k == 0 || n == 0 {
+            return Err(OptimError::InvalidConfig(format!(
+                "matmul dimensions must be non-zero, got {dims:?}"
+            )));
+        }
         let output_id = self.tape.len();
 
         let op = ForwardOperation {
             optype: ForwardOpType::MatMul,
             inputs: vec![lhs, rhs],
-            output: output_id,
             metadata: ForwardOpMetadata {
-                partials: vec![T::zero(), T::zero()],
-                shape: vec![dims.0, dims.2],
-                data: ForwardOpData::MatMulDims {
-                    m: dims.0,
-                    n: dims.1,
-                    k: dims.2,
-                },
+                shape: vec![m, n],
+                data: ForwardOpData::MatMulDims { m, k, n },
             },
         };
 
@@ -323,42 +393,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         self.binary_op(ForwardOpType::Dot, lhs, rhs)
     }
 
-    /// Sum reduction
-    pub fn sum(&mut self, input: usize, axis: Option<usize>) -> Result<usize> {
-        let output_id = self.tape.len();
-
-        let op = ForwardOperation {
-            optype: ForwardOpType::Sum,
-            inputs: vec![input],
-            output: output_id,
-            metadata: ForwardOpMetadata {
-                partials: vec![T::zero()],
-                shape: vec![], // Will be computed
-                data: ForwardOpData::ReductionAxis(axis.unwrap_or(0)),
-            },
-        };
-
-        self.tape.push(op);
-        Ok(output_id)
+    /// Sum reduction over all elements
+    pub fn sum(&mut self, input: usize, _axis: Option<usize>) -> Result<usize> {
+        self.unary_op(ForwardOpType::Sum, input)
     }
 
-    /// Mean reduction
-    pub fn mean(&mut self, input: usize, axis: Option<usize>) -> Result<usize> {
-        let output_id = self.tape.len();
-
-        let op = ForwardOperation {
-            optype: ForwardOpType::Mean,
-            inputs: vec![input],
-            output: output_id,
-            metadata: ForwardOpMetadata {
-                partials: vec![T::zero()],
-                shape: vec![], // Will be computed
-                data: ForwardOpData::ReductionAxis(axis.unwrap_or(0)),
-            },
-        };
-
-        self.tape.push(op);
-        Ok(output_id)
+    /// Mean reduction over all elements
+    pub fn mean(&mut self, input: usize, _axis: Option<usize>) -> Result<usize> {
+        self.unary_op(ForwardOpType::Mean, input)
     }
 
     /// L2 norm
@@ -366,56 +408,70 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         self.unary_op(ForwardOpType::Norm, input)
     }
 
-    /// Compute forward pass with dual numbers
+    /// Compute the forward pass with dual numbers.
+    ///
+    /// `seed_direction` is a vector in the concatenated input space: its length
+    /// must equal [`Self::input_dimension`], and the slice belonging to a
+    /// variable seeds that variable's tangent component-wise.
     pub fn forward_pass(
         &self,
         inputs: &HashMap<String, Array1<T>>,
         seed_direction: &Array1<T>,
     ) -> Result<Vec<VectorDual<T>>> {
-        let mut values = Vec::with_capacity(self.tape.len());
+        let input_dim = self.input_dimension(inputs)?;
+        if seed_direction.len() != input_dim {
+            return Err(OptimError::InvalidConfig(format!(
+                "seed direction has {} elements but the input space has {input_dim}",
+                seed_direction.len()
+            )));
+        }
+        let offsets = self.seed_offsets(inputs)?;
+        let mut values: Vec<VectorDual<T>> = Vec::with_capacity(self.tape.len());
 
-        // Initialize with input values
-        for op in &self.tape {
+        for (idx, op) in self.tape.iter().enumerate() {
             match op.optype {
                 ForwardOpType::Variable => {
-                    // Find corresponding input value
                     let var_name = self
                         .variables
                         .iter()
-                        .find(|(_, &id)| id == op.output)
+                        .find(|(_, &id)| id == idx)
                         .map(|(name_, _)| name_.clone())
                         .ok_or_else(|| {
-                            OptimError::InvalidConfig("Variable not found".to_string())
+                            OptimError::InvalidConfig(format!(
+                                "tape node {idx} is a variable with no registered name"
+                            ))
                         })?;
 
                     let value = inputs
                         .get(&var_name)
                         .ok_or_else(|| {
-                            OptimError::InvalidConfig("Input value not provided".to_string())
+                            OptimError::InvalidConfig(format!(
+                                "input value for '{var_name}' not provided"
+                            ))
                         })?
                         .clone();
 
-                    let tangent = if op.output < seed_direction.len() {
-                        Array1::from_elem(value.len(), seed_direction[op.output])
-                    } else {
-                        Array1::zeros(value.len())
-                    };
+                    let offset = *offsets.get(&var_name).ok_or_else(|| {
+                        OptimError::ComputationError(format!(
+                            "no seed offset registered for '{var_name}'"
+                        ))
+                    })?;
+                    let tangent =
+                        Array1::from_shape_fn(value.len(), |i| seed_direction[offset + i]);
 
                     values.push(VectorDual::new(value, tangent));
                 }
                 ForwardOpType::Constant => {
-                    if let ForwardOpData::ConstantValue(val) = op.metadata.data {
-                        let value = Array1::from_elem(1, val);
-                        let tangent = Array1::zeros(1);
-                        values.push(VectorDual::new(value, tangent));
+                    if let ForwardOpData::ConstantVector(ref val) = op.metadata.data {
+                        let tangent = Array1::zeros(val.len());
+                        values.push(VectorDual::new(val.clone(), tangent));
                     } else {
                         return Err(OptimError::InvalidConfig(
-                            "Invalid constant data".to_string(),
+                            "constant node is missing its value".to_string(),
                         ));
                     }
                 }
                 _ => {
-                    // Compute operation
                     let result = self.compute_forward_operation(op, &values)?;
                     values.push(result);
                 }
@@ -441,26 +497,50 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         Ok(results[output_id].tangent.clone())
     }
 
-    /// Compute full Jacobian matrix
+    /// Compute the full Jacobian of `output_id` with respect to the inputs.
+    ///
+    /// The result has shape `(output_dim, input_dim)` where `output_dim` is the
+    /// number of elements of the selected output node and `input_dim` is
+    /// [`Self::input_dimension`]. `input_size` must agree with `input_dim`.
     pub fn jacobian_matrix(
         &self,
         inputs: &HashMap<String, Array1<T>>,
         output_id: usize,
         input_size: usize,
     ) -> Result<Array2<T>> {
-        let mut jacobian = Array2::zeros((inputs.len(), input_size));
+        let input_dim = self.input_dimension(inputs)?;
+        if input_size != input_dim {
+            return Err(OptimError::InvalidConfig(format!(
+                "requested input size {input_size} does not match the input space dimension {input_dim}"
+            )));
+        }
+        if input_dim == 0 {
+            return Err(OptimError::InvalidConfig(
+                "cannot build a Jacobian for an empty input space".to_string(),
+            ));
+        }
 
-        // Compute Jacobian one column at a time using unit vectors
-        for i in 0..input_size {
-            let mut direction = Array1::zeros(input_size);
+        // One JVP per input coordinate; the first also fixes the output size.
+        let mut columns: Vec<Array1<T>> = Vec::with_capacity(input_dim);
+        for i in 0..input_dim {
+            let mut direction = Array1::zeros(input_dim);
             direction[i] = T::one();
+            columns.push(self.jacobian_vector_product(inputs, output_id, &direction)?);
+        }
 
-            let jvp = self.jacobian_vector_product(inputs, output_id, &direction)?;
-
-            for (j, &val) in jvp.iter().enumerate() {
-                if j < jacobian.nrows() {
-                    jacobian[[j, i]] = val;
-                }
+        let output_dim = columns
+            .first()
+            .map(|c| c.len())
+            .ok_or_else(|| OptimError::ComputationError("no Jacobian columns".to_string()))?;
+        let mut jacobian = Array2::zeros((output_dim, input_dim));
+        for (i, column) in columns.iter().enumerate() {
+            if column.len() != output_dim {
+                return Err(OptimError::ComputationError(
+                    "Jacobian columns have inconsistent lengths".to_string(),
+                ));
+            }
+            for (j, &val) in column.iter().enumerate() {
+                jacobian[[j, i]] = val;
             }
         }
 
@@ -473,10 +553,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         let op = ForwardOperation {
             optype,
             inputs: vec![lhs, rhs],
-            output: output_id,
             metadata: ForwardOpMetadata {
-                partials: vec![T::zero(), T::zero()],
-                shape: vec![], // Will be inferred
+                shape: Vec::new(), // Inferred from the operands during the forward pass
                 data: ForwardOpData::None,
             },
         };
@@ -491,10 +569,8 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         let op = ForwardOperation {
             optype,
             inputs: vec![input],
-            output: output_id,
             metadata: ForwardOpMetadata {
-                partials: vec![T::zero()],
-                shape: vec![], // Will be inferred
+                shape: Vec::new(), // Inferred from the operand during the forward pass
                 data: ForwardOpData::None,
             },
         };
@@ -508,24 +584,49 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         op: &ForwardOperation<T>,
         values: &[VectorDual<T>],
     ) -> Result<VectorDual<T>> {
+        // Checked operand access: an operand index must exist on the tape and
+        // must already have been evaluated (guaranteed by tape ordering).
+        let fetch = |slot: usize| -> Result<&VectorDual<T>> {
+            let idx = *op.inputs.get(slot).ok_or_else(|| {
+                OptimError::ComputationError(format!("{:?} is missing operand {slot}", op.optype))
+            })?;
+            values.get(idx).ok_or_else(|| {
+                OptimError::ComputationError(format!("operand {idx} has not been evaluated"))
+            })
+        };
+        let require_same_len = |lhs: &VectorDual<T>, rhs: &VectorDual<T>| -> Result<()> {
+            if lhs.value.len() != rhs.value.len() {
+                return Err(OptimError::InvalidConfig(format!(
+                    "{:?} requires equal operand lengths, got {} and {}",
+                    op.optype,
+                    lhs.value.len(),
+                    rhs.value.len()
+                )));
+            }
+            Ok(())
+        };
+
         match op.optype {
             ForwardOpType::Add => {
-                let lhs = &values[op.inputs[0]];
-                let rhs = &values[op.inputs[1]];
+                let lhs = fetch(0)?;
+                let rhs = fetch(1)?;
+                require_same_len(lhs, rhs)?;
                 let value = &lhs.value + &rhs.value;
                 let tangent = &lhs.tangent + &rhs.tangent;
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Subtract => {
-                let lhs = &values[op.inputs[0]];
-                let rhs = &values[op.inputs[1]];
+                let lhs = fetch(0)?;
+                let rhs = fetch(1)?;
+                require_same_len(lhs, rhs)?;
                 let value = &lhs.value - &rhs.value;
                 let tangent = &lhs.tangent - &rhs.tangent;
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Multiply => {
-                let lhs = &values[op.inputs[0]];
-                let rhs = &values[op.inputs[1]];
+                let lhs = fetch(0)?;
+                let rhs = fetch(1)?;
+                require_same_len(lhs, rhs)?;
 
                 // Element-wise multiplication: (u*v)' = u'*v + u*v'
                 let value = &lhs.value * &rhs.value;
@@ -533,8 +634,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Divide => {
-                let lhs = &values[op.inputs[0]];
-                let rhs = &values[op.inputs[1]];
+                let lhs = fetch(0)?;
+                let rhs = fetch(1)?;
+                require_same_len(lhs, rhs)?;
 
                 // Division rule: (u/v)' = (u'*v - u*v') / v^2
                 let value = &lhs.value / &rhs.value;
@@ -544,7 +646,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Power => {
-                let base = &values[op.inputs[0]];
+                let base = fetch(0)?;
                 if let ForwardOpData::PowerExponent(exp) = op.metadata.data {
                     // Power rule: (u^n)' = n * u^(n-1) * u'
                     let value = base.value.mapv(|x| x.powf(exp));
@@ -558,21 +660,21 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 }
             }
             ForwardOpType::Exp => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (e^u)' = e^u * u'
                 let value = input.value.mapv(|x| x.exp());
                 let tangent = &value * &input.tangent;
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Log => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (ln(u))' = u' / u
                 let value = input.value.mapv(|x| x.ln());
                 let tangent = &input.tangent / &input.value;
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Sin => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (sin(u))' = cos(u) * u'
                 let value = input.value.mapv(|x| x.sin());
                 let derivative = input.value.mapv(|x| x.cos());
@@ -580,7 +682,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Cos => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (cos(u))' = -sin(u) * u'
                 let value = input.value.mapv(|x| x.cos());
                 let derivative = input.value.mapv(|x| -x.sin());
@@ -588,7 +690,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Tanh => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (tanh(u))' = sech^2(u) * u' = (1 - tanh^2(u)) * u'
                 let value = input.value.mapv(|x| x.tanh());
                 let derivative = value.mapv(|y| T::one() - y * y);
@@ -596,7 +698,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Sigmoid => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (sigmoid(u))' = sigmoid(u) * (1 - sigmoid(u)) * u'
                 let value = input.value.mapv(|x| T::one() / (T::one() + (-x).exp()));
                 let derivative = value.mapv(|y| y * (T::one() - y));
@@ -604,7 +706,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::ReLU => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // (ReLU(u))' = u' if u > 0, else 0
                 let value = input
                     .value
@@ -616,8 +718,9 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Dot => {
-                let lhs = &values[op.inputs[0]];
-                let rhs = &values[op.inputs[1]];
+                let lhs = fetch(0)?;
+                let rhs = fetch(1)?;
+                require_same_len(lhs, rhs)?;
                 // (u·v)' = u'·v + u·v'
                 let value = Array1::from_elem(1, lhs.value.dot(&rhs.value));
                 let tangent =
@@ -625,14 +728,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Sum => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // Sum derivative is sum of input derivatives
                 let value = Array1::from_elem(1, input.value.sum());
                 let tangent = Array1::from_elem(1, input.tangent.sum());
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Mean => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // Mean derivative is mean of input derivatives
                 let n =
                     scirs2_core::numeric::NumCast::from(input.value.len()).unwrap_or_else(T::one);
@@ -641,7 +744,7 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 Ok(VectorDual::new(value, tangent))
             }
             ForwardOpType::Norm => {
-                let input = &values[op.inputs[0]];
+                let input = fetch(0)?;
                 // ||u||' = (u·u')/ ||u||
                 let norm = input.value.iter().map(|&x| x * x).sum::<T>().sqrt();
                 let value = Array1::from_elem(1, norm);
@@ -653,8 +756,40 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
                 };
                 Ok(VectorDual::new(value, tangent))
             }
-            _ => Err(OptimError::InvalidConfig(
-                "Unsupported operation".to_string(),
+            ForwardOpType::MatMul => {
+                let lhs = fetch(0)?;
+                let rhs = fetch(1)?;
+                let (m, k, n) = match op.metadata.data {
+                    ForwardOpData::MatMulDims { m, k, n } => (m, k, n),
+                    _ => {
+                        return Err(OptimError::InvalidConfig(
+                            "matmul node is missing its dimensions".to_string(),
+                        ))
+                    }
+                };
+                if lhs.value.len() != m * k {
+                    return Err(OptimError::InvalidConfig(format!(
+                        "matmul left operand has {} elements, expected {}",
+                        lhs.value.len(),
+                        m * k
+                    )));
+                }
+                if rhs.value.len() != k * n {
+                    return Err(OptimError::InvalidConfig(format!(
+                        "matmul right operand has {} elements, expected {}",
+                        rhs.value.len(),
+                        k * n
+                    )));
+                }
+                // (A · B)' = A' · B + A · B'
+                let value = matmul_flat(&lhs.value, m, k, &rhs.value, n);
+                let left_term = matmul_flat(&lhs.tangent, m, k, &rhs.value, n);
+                let right_term = matmul_flat(&lhs.value, m, k, &rhs.tangent, n);
+                let tangent = left_term + right_term;
+                Ok(VectorDual::new(value, tangent))
+            }
+            ForwardOpType::Variable | ForwardOpType::Constant => Err(OptimError::InvalidConfig(
+                "leaf nodes are seeded directly and must not be recomputed".to_string(),
             )),
         }
     }
@@ -677,6 +812,27 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum + 'static
         // Simplified depth computation
         self.tape.len()
     }
+}
+
+/// Row-major matrix product of a flat `m x k` buffer with a flat `k x n` buffer.
+fn matmul_flat<T: Float + Clone>(
+    lhs: &Array1<T>,
+    m: usize,
+    k: usize,
+    rhs: &Array1<T>,
+    n: usize,
+) -> Array1<T> {
+    let mut out = Array1::zeros(m * n);
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = T::zero();
+            for p in 0..k {
+                acc = acc + lhs[i * k + p] * rhs[p * n + j];
+            }
+            out[i * n + j] = acc;
+        }
+    }
+    out
 }
 
 /// Forward-mode AD statistics
@@ -822,5 +978,125 @@ mod tests {
             .jacobian_vector_product(&inputs, sq_id, &direction)
             .expect("jvp");
         approx::assert_abs_diff_eq!(jvp[0], 6.0, epsilon = 1e-10);
+    }
+
+    /// F41: matrix multiplication used to fall through to "unsupported
+    /// operation". The JVP obeys the product rule (A·B)' = A'·B + A·B'.
+    #[test]
+    fn test_forward_mode_matmul_jvp() {
+        let mut engine = ForwardModeEngine::<f64>::new();
+        // A is 2x3, B is 3x2 -> C is 2x2.
+        let a = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let b = Array1::from_vec(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]);
+        let a_id = engine.create_variable("a", a.clone());
+        let b_id = engine.create_variable("b", b.clone());
+        let c_id = engine.matmul(a_id, b_id, (2, 3, 2)).expect("matmul");
+
+        let mut inputs = HashMap::new();
+        inputs.insert("a".to_string(), a.clone());
+        inputs.insert("b".to_string(), b.clone());
+
+        assert_eq!(engine.input_dimension(&inputs).expect("dim"), 12);
+        assert_eq!(
+            engine.declared_shape(c_id).expect("shape"),
+            Some(&[2, 2][..])
+        );
+
+        // Seed only a[0] (the first coordinate of the concatenated space).
+        let mut direction = Array1::zeros(12);
+        direction[0] = 1.0;
+        let results = engine.forward_pass(&inputs, &direction).expect("forward");
+        let c = &results[c_id];
+
+        // C = A·B computed by hand.
+        approx::assert_abs_diff_eq!(
+            c.value[0],
+            1.0 * 7.0 + 2.0 * 9.0 + 3.0 * 11.0,
+            epsilon = 1e-10
+        );
+        approx::assert_abs_diff_eq!(
+            c.value[3],
+            4.0 * 8.0 + 5.0 * 10.0 + 6.0 * 12.0,
+            epsilon = 1e-10
+        );
+        // dC/da[0,0] = row 0 of B: [7, 8] into C[0,0], C[0,1]; zero elsewhere.
+        approx::assert_abs_diff_eq!(c.tangent[0], 7.0, epsilon = 1e-10);
+        approx::assert_abs_diff_eq!(c.tangent[1], 8.0, epsilon = 1e-10);
+        approx::assert_abs_diff_eq!(c.tangent[2], 0.0, epsilon = 1e-10);
+        approx::assert_abs_diff_eq!(c.tangent[3], 0.0, epsilon = 1e-10);
+    }
+
+    /// F41: the Jacobian must be `(output_dim, input_dim)`.
+    #[test]
+    fn test_jacobian_matrix_dimensions_and_values() {
+        let mut engine = ForwardModeEngine::<f64>::new();
+        let x = Array1::from_vec(vec![2.0, 3.0, 4.0]);
+        let x_id = engine.create_variable("x", x.clone());
+        let y_id = engine.exp(x_id).expect("exp");
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".to_string(), x.clone());
+
+        let jac = engine.jacobian_matrix(&inputs, y_id, 3).expect("jacobian");
+        assert_eq!(jac.shape(), &[3, 3]);
+        for i in 0..3 {
+            for j in 0..3 {
+                let expected = if i == j { x[i].exp() } else { 0.0 };
+                approx::assert_abs_diff_eq!(jac[[i, j]], expected, epsilon = 1e-9);
+            }
+        }
+
+        // A mismatched requested size is an error, not a silently wrong matrix.
+        assert!(engine.jacobian_matrix(&inputs, y_id, 5).is_err());
+    }
+
+    /// F41: seed ordinals follow variable-creation order, not tape indices, so
+    /// intermediate operations between two variables do not shift the seeds.
+    #[test]
+    fn test_seed_ordinals_are_per_variable() {
+        let mut engine = ForwardModeEngine::<f64>::new();
+        let x = Array1::from_vec(vec![1.0]);
+        let x_id = engine.create_variable("x", x.clone());
+        // Several intermediate nodes push the tape index of `y` far past 1.
+        let t1 = engine.exp(x_id).expect("exp");
+        let _t2 = engine.sin(t1).expect("sin");
+        let y = Array1::from_vec(vec![5.0]);
+        let y_id = engine.create_variable("y", y.clone());
+        let prod = engine.multiply(x_id, y_id).expect("multiply");
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".to_string(), x);
+        inputs.insert("y".to_string(), y);
+
+        assert_eq!(engine.variable_order(), &["x".to_string(), "y".to_string()]);
+
+        // Seed the second variable (ordinal 1): d(xy)/dy = x = 1.
+        let direction = Array1::from_vec(vec![0.0, 1.0]);
+        let jvp = engine
+            .jacobian_vector_product(&inputs, prod, &direction)
+            .expect("jvp");
+        approx::assert_abs_diff_eq!(jvp[0], 1.0, epsilon = 1e-12);
+
+        // Seed the first variable (ordinal 0): d(xy)/dx = y = 5.
+        let direction = Array1::from_vec(vec![1.0, 0.0]);
+        let jvp = engine
+            .jacobian_vector_product(&inputs, prod, &direction)
+            .expect("jvp");
+        approx::assert_abs_diff_eq!(jvp[0], 5.0, epsilon = 1e-12);
+    }
+
+    /// A seed direction whose length disagrees with the input space is an error.
+    #[test]
+    fn test_seed_length_validation() {
+        let mut engine = ForwardModeEngine::<f64>::new();
+        let x = Array1::from_vec(vec![1.0, 2.0]);
+        let x_id = engine.create_variable("x", x.clone());
+        let y_id = engine.tanh(x_id).expect("tanh");
+
+        let mut inputs = HashMap::new();
+        inputs.insert("x".to_string(), x);
+
+        let bad = Array1::from_vec(vec![1.0]);
+        assert!(engine.jacobian_vector_product(&inputs, y_id, &bad).is_err());
     }
 }

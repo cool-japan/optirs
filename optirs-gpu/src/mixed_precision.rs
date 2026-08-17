@@ -1,50 +1,29 @@
-// Mixed precision training support with tensor cores
-//
-// This module provides automatic mixed precision (AMP) training capabilities
-// leveraging tensor cores on modern GPUs for accelerated computation.
+//! Mixed-precision (AMP) building blocks: IEEE-754 binary16 conversion and
+//! dynamic loss scaling.
+//!
+//! This module is pure Rust and has no device dependency, so it is usable from
+//! CPU code paths and from the GPU optimizer path alike. The conversions are
+//! full IEEE-754 `binary16` implementations — subnormals, infinities, NaN
+//! payload preservation and round-half-to-even are all handled — not the
+//! truncating placeholder they replace.
 
-use scirs2_core::ndarray::{Array, Dimension};
-use scirs2_core::numeric::Float;
-use std::marker::PhantomData;
-use std::sync::Arc;
-
-use crate::gpu::{GpuOptimError, GpuOptimizerConfig};
-
-#[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
-use scirs2_core::gpu::{GpuBuffer, GpuContext};
-
-/// Mixed precision configuration
-#[derive(Debug, Clone)]
+/// Configuration for dynamic loss scaling.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MixedPrecisionConfig {
-    /// Initial loss scale factor
+    /// Initial loss scale factor.
     pub init_scale: f32,
-
-    /// Growth factor for loss scaling
+    /// Multiplier applied when growing the scale.
     pub growth_factor: f32,
-
-    /// Backoff factor when overflow detected
+    /// Multiplier applied when an overflow is observed.
     pub backoff_factor: f32,
-
-    /// Growth interval (steps between scale increases)
-    pub growth_interval: i32,
-
-    /// Minimum loss scale
+    /// Number of consecutive overflow-free steps before growing.
+    pub growth_interval: u32,
+    /// Lower clamp for the scale.
     pub min_scale: f32,
-
-    /// Maximum loss scale
+    /// Upper clamp for the scale.
     pub max_scale: f32,
-
-    /// Enable gradient clipping
-    pub gradient_clipping: bool,
-
-    /// Maximum gradient norm
-    pub max_grad_norm: f32,
-
-    /// Use bfloat16 instead of float16
+    /// Use `bfloat16` rather than `float16` for the reduced-precision copy.
     pub use_bfloat16: bool,
-
-    /// Enable tensor core operations
-    pub use_tensor_cores: bool,
 }
 
 impl Default for MixedPrecisionConfig {
@@ -56,59 +35,69 @@ impl Default for MixedPrecisionConfig {
             growth_interval: 2000,
             min_scale: 1.0,
             max_scale: 65536.0 * 128.0,
-            gradient_clipping: true,
-            max_grad_norm: 1.0,
             use_bfloat16: false,
-            use_tensor_cores: true,
         }
     }
 }
 
-/// Dynamic loss scaler for mixed precision training
+/// Aggregate overflow statistics over the scaler's rolling window.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverflowStats {
+    /// Steps recorded in the rolling window.
+    pub total_steps: usize,
+    /// Overflowing steps in the rolling window.
+    pub overflow_count: usize,
+    /// `overflow_count / total_steps`, or `0.0` for an empty window.
+    pub overflow_rate: f32,
+    /// Scale currently in effect.
+    pub current_scale: f32,
+}
+
+/// Dynamic loss scaler with the standard grow/back-off schedule.
+#[derive(Debug, Clone)]
 pub struct DynamicLossScaler {
-    /// Current scale factor
     scale: f32,
-
-    /// Configuration
     config: MixedPrecisionConfig,
-
-    /// Steps since last scale update
-    growth_tracker: i32,
-
-    /// Overflow history for debugging
-    overflow_history: Vec<bool>,
+    growth_tracker: u32,
+    window: Vec<bool>,
 }
 
 impl DynamicLossScaler {
-    /// Create a new dynamic loss scaler
+    /// Rolling window length used for [`Self::overflow_stats`].
+    pub const WINDOW: usize = 100;
+
+    /// Create a scaler from a configuration.
     pub fn new(config: MixedPrecisionConfig) -> Self {
         Self {
-            scale: config.init_scale,
+            scale: config.init_scale.clamp(config.min_scale, config.max_scale),
             config,
             growth_tracker: 0,
-            overflow_history: Vec::with_capacity(100),
+            window: Vec::with_capacity(Self::WINDOW),
         }
     }
 
-    /// Get current scale
-    pub fn get_scale(&self) -> f32 {
+    /// Scale currently in effect.
+    pub fn scale(&self) -> f32 {
         self.scale
     }
 
-    /// Update scale based on overflow status
-    pub fn update(&mut self, hasoverflow: bool) {
-        self.overflow_history.push(has_overflow);
-        if self.overflow_history.len() > 100 {
-            self.overflow_history.remove(0);
+    /// Reciprocal of the current scale, for unscaling gradients.
+    pub fn inv_scale(&self) -> f32 {
+        1.0 / self.scale
+    }
+
+    /// Record the outcome of one step and update the scale.
+    pub fn update(&mut self, has_overflow: bool) {
+        if self.window.len() == Self::WINDOW {
+            self.window.remove(0);
         }
+        self.window.push(has_overflow);
 
         if has_overflow {
-            // Decrease scale on _overflow
             self.scale = (self.scale * self.config.backoff_factor).max(self.config.min_scale);
             self.growth_tracker = 0;
         } else {
-            // Increase scale if stable
-            self.growth_tracker += 1;
+            self.growth_tracker = self.growth_tracker.saturating_add(1);
             if self.growth_tracker >= self.config.growth_interval {
                 self.scale = (self.scale * self.config.growth_factor).min(self.config.max_scale);
                 self.growth_tracker = 0;
@@ -116,11 +105,10 @@ impl DynamicLossScaler {
         }
     }
 
-    /// Get overflow statistics
-    pub fn get_overflow_stats(&self) -> OverflowStats {
-        let total = self.overflow_history.len();
-        let overflows = self.overflow_history.iter().filter(|&&x| x).count();
-
+    /// Statistics over the rolling window.
+    pub fn overflow_stats(&self) -> OverflowStats {
+        let total = self.window.len();
+        let overflows = self.window.iter().filter(|&&x| x).count();
         OverflowStats {
             total_steps: total,
             overflow_count: overflows,
@@ -132,253 +120,141 @@ impl DynamicLossScaler {
             current_scale: self.scale,
         }
     }
-}
 
-/// Overflow statistics
-#[derive(Debug, Clone)]
-pub struct OverflowStats {
-    pub total_steps: usize,
-    pub overflow_count: usize,
-    pub overflow_rate: f32,
-    pub current_scale: f32,
-}
-
-/// Mixed precision optimizer wrapper
-pub struct MixedPrecisionOptimizer<O, A: Float> {
-    /// Underlying optimizer
-    optimizer: O,
-
-    /// Loss scaler
-    scaler: DynamicLossScaler,
-
-    /// GPU context
-    gpu_context: Option<Arc<GpuContext>>,
-
-    /// FP32 master weights
-    master_weights: Option<GpuBuffer<f32>>,
-
-    /// FP16/BF16 model weights
-    model_weights_half: Option<GpuBuffer<u16>>,
-
-    /// Gradient buffer (FP16/BF16)
-    gradients_half: Option<GpuBuffer<u16>>,
-
-    /// Overflow detection buffer
-    overflow_flag: Option<GpuBuffer<i32>>,
-
-    /// Configuration
-    config: MixedPrecisionConfig,
-
-    /// Phantom data
-    _phantom: PhantomData<A>,
-}
-
-impl<O, A: Float + Send + Sync> MixedPrecisionOptimizer<O, A> {
-    /// Create a new mixed precision optimizer
-    pub fn new(optimizer: O, config: MixedPrecisionConfig) -> Self {
-        let scaler = DynamicLossScaler::new(config.clone());
-
-        Self {
-            optimizer,
-            scaler,
-            gpu_context: None,
-            master_weights: None,
-            model_weights_half: None,
-            gradients_half: None,
-            overflow_flag: None,
-            config_phantom: PhantomData,
-        }
-    }
-
-    /// Initialize GPU resources
-    pub fn initialize_gpu(
-        &mut self,
-        param_count: usize,
-        gpu_config: GpuOptimizerConfig,
-    ) -> Result<(), GpuOptimError> {
-        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
-        {
-            let context = Arc::new(GpuContext::new(gpu_config.backend)?);
-
-            // Allocate buffers
-            self.master_weights = Some(context.create_buffer::<f32>(param_count));
-            self.model_weights_half = Some(context.create_buffer::<u16>(param_count));
-            self.gradients_half = Some(context.create_buffer::<u16>(param_count));
-            self.overflow_flag = Some(context.create_buffer::<i32>(1));
-
-            self.gpu_context = Some(context);
-        }
-
-        Ok(())
-    }
-
-    /// Scale gradients before backward pass
-    pub fn scale_loss(&self, loss: A) -> A {
-        loss * A::from(self.scaler.get_scale()).expect("unwrap failed")
-    }
-
-    /// Unscale gradients and check for overflow
-    pub fn unscale_and_check_overflow<D>(
-        &mut self,
-        gradients: &mut Array<A, D>,
-    ) -> Result<bool, GpuOptimError>
-    where
-        D: Dimension,
-    {
-        #[cfg(any(feature = "cuda", feature = "metal", feature = "opencl", feature = "wgpu"))]
-        {
-            if let Some(ref context) = self.gpu_context {
-                let kernel = context.get_kernel("scale_gradients_check_overflow_f16")?;
-
-                // Set kernel parameters
-                kernel.set_buffer("gradients", self.gradients_half.as_ref().expect("unwrap failed"));
-                kernel.set_buffer("has_overflow", self.overflow_flag.as_ref().expect("unwrap failed"));
-                kernel.set_f32("scale_factor", 1.0 / self.scaler.get_scale());
-                kernel.set_i32("n", gradients.len() as i32);
-
-                // Launch kernel
-                let (grid_size, block_size) =
-                    crate::utils::calculate_block_size(gradients.len(), 256);
-                kernel.dispatch([grid_size as u32, 1, 1]);
-
-                // Check overflow flag
-                let mut overflow_flag = vec![0i32; 1];
-                self.overflow_flag
-                    .as_ref()
-                    .expect("unwrap failed")
-                    .copy_to_host(&mut overflow_flag);
-
-                let has_overflow = overflow_flag[0] != 0;
-                self.scaler.update(has_overflow);
-
-                return Ok(has_overflow);
+    /// Divide `values` by the current scale, reporting whether the *scaled*
+    /// input contained a non-finite entry.
+    ///
+    /// This is the standard AMP overflow test: an `inf`/`NaN` produced by the
+    /// scaled backward pass means the step must be skipped and the scale cut.
+    pub fn unscale_and_check(&mut self, values: &mut [f32]) -> bool {
+        let inv = self.inv_scale();
+        let mut overflow = false;
+        for v in values.iter_mut() {
+            if !v.is_finite() {
+                overflow = true;
             }
+            *v *= inv;
         }
-
-        // CPU fallback
-        let scale = A::from(self.scaler.get_scale()).expect("unwrap failed");
-        let mut has_overflow = false;
-
-        gradients.mapv_inplace(|g| {
-            let unscaled = g / scale;
-            if !unscaled.is_finite() {
-                has_overflow = true;
-            }
-            unscaled
-        });
-
-        self.scaler.update(has_overflow);
-        Ok(has_overflow)
-    }
-
-    /// Get overflow statistics
-    pub fn get_overflow_stats(&self) -> OverflowStats {
-        self.scaler.get_overflow_stats()
-    }
-
-    /// Get current loss scale
-    pub fn get_scale(&self) -> f32 {
-        self.scaler.get_scale()
+        self.update(overflow);
+        overflow
     }
 }
 
-/// Tensor core optimization utilities
-pub mod tensor_core_utils {
-    use super::*;
+/// Convert an `f32` to IEEE-754 `binary16` bits with round-half-to-even.
+///
+/// Overflow saturates to the signed infinity of `binary16` (the same behaviour
+/// as hardware `f32 → f16` conversion); subnormal results are produced
+/// correctly rather than flushed to zero; NaN stays NaN with a non-zero
+/// mantissa.
+pub fn f32_to_f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let mantissa = bits & 0x007f_ffff;
 
-    /// Pad tensor dimensions for tensor core alignment
-    pub fn pad_for_tensor_cores(size: usize, alignment: usize) -> usize {
-        (_size + alignment - 1) / alignment * alignment
-    }
-
-    /// Check if dimensions are tensor core friendly
-    pub fn is_tensor_core_friendly(m: usize, n: usize, k: usize) -> bool {
-        // Tensor cores work best with dimensions divisible by 16
-        m % 16 == 0 && n % 16 == 0 && k % 16 == 0
-    }
-
-    /// Get optimal matrix multiplication configuration
-    pub fn get_optimal_gemm_config(m: usize, n: usize, k: usize) -> GemmConfig {
-        if is_tensor_core_friendly(m, n, k) {
-            GemmConfig {
-                use_tensor_cores: true,
-                tile_m: 128,
-                tile_n: 128,
-                tile_k: 32,
-                threads_per_block: 256,
-            }
+    if exponent == 0xff {
+        // Inf or NaN.
+        return if mantissa == 0 {
+            sign | 0x7c00
         } else {
-            GemmConfig {
-                use_tensor_cores: false,
-                tile_m: 64,
-                tile_n: 64,
-                tile_k: 16,
-                threads_per_block: 256,
-            }
+            // Preserve NaN-ness; keep the top mantissa bits and force non-zero.
+            sign | 0x7c00 | ((mantissa >> 13) as u16) | 0x0200
+        };
+    }
+
+    // Unbiased exponent, then rebias for binary16.
+    let unbiased = exponent - 127;
+    let half_exp = unbiased + 15;
+
+    if half_exp >= 0x1f {
+        // Overflow → infinity.
+        return sign | 0x7c00;
+    }
+
+    if half_exp <= 0 {
+        // Subnormal (or underflow to zero). Reintroduce the implicit bit and
+        // shift the significand into the subnormal range.
+        if half_exp < -10 {
+            return sign;
         }
+        let significand = mantissa | 0x0080_0000;
+        let shift = (14 - half_exp) as u32; // 14 = 23 - 10 + 1
+        let result = significand >> shift;
+        // Round half to even using the bits shifted out.
+        let round_bit = 1u32 << (shift - 1);
+        let remainder = significand & (round_bit.saturating_mul(2) - 1);
+        let mut half = result as u16;
+        if remainder > round_bit || (remainder == round_bit && (result & 1) == 1) {
+            half = half.wrapping_add(1);
+        }
+        return sign | half;
     }
+
+    // Normal range.
+    let mut half = ((half_exp as u16) << 10) | ((mantissa >> 13) as u16);
+    let remainder = mantissa & 0x1fff;
+    if remainder > 0x1000 || (remainder == 0x1000 && (half & 1) == 1) {
+        // Carrying into the exponent is handled naturally by the addition:
+        // a mantissa of all ones rolls over into the exponent field, and an
+        // exponent of 0x1e rolling over yields exactly the infinity pattern.
+        half = half.wrapping_add(1);
+    }
+    sign | half
 }
 
-/// GEMM configuration for tensor cores
-#[derive(Debug, Clone)]
-pub struct GemmConfig {
-    pub use_tensor_cores: bool,
-    pub tile_m: usize,
-    pub tile_n: usize,
-    pub tile_k: usize,
-    pub threads_per_block: usize,
+/// Convert IEEE-754 `binary16` bits to `f32`. Exact for every input.
+pub fn f16_bits_to_f32(bits: u16) -> f32 {
+    let sign = ((bits as u32) & 0x8000) << 16;
+    let exponent = ((bits >> 10) & 0x1f) as u32;
+    let mantissa = ((bits & 0x03ff) as u32) << 13;
+
+    if exponent == 0 {
+        if mantissa == 0 {
+            return f32::from_bits(sign);
+        }
+        // Subnormal: shift the significand left until the implicit bit lands
+        // on bit 23. A binary16 subnormal is `m * 2^-24` with `m` in
+        // `[1, 1023]`; after `k` normalising shifts the value is
+        // `1.f * 2^(-14 - k)`, i.e. a biased f32 exponent of `113 - k`.
+        let mut mant = mantissa;
+        let mut shifts: i32 = 0;
+        while mant & 0x0080_0000 == 0 {
+            mant <<= 1;
+            shifts += 1;
+        }
+        mant &= 0x007f_ffff;
+        let f32_exp = ((113 - shifts) as u32) << 23;
+        return f32::from_bits(sign | f32_exp | mant);
+    }
+
+    if exponent == 0x1f {
+        // Inf / NaN.
+        return f32::from_bits(sign | 0x7f80_0000 | mantissa);
+    }
+
+    let f32_exp = (exponent + (127 - 15)) << 23;
+    f32::from_bits(sign | f32_exp | mantissa)
 }
 
-/// Mixed precision training utilities
-pub struct MixedPrecisionUtils;
-
-impl MixedPrecisionUtils {
-    /// Convert FP32 to FP16 with saturation
-    pub fn float_to_half(values: &[f32]) -> Vec<u16> {
-        _values
-            .iter()
-            .map(|&v| {
-                let clamped = v.max(-65504.0).min(65504.0);
-                F16::from_f32(clamped).to_bits()
-            })
-            .collect()
-    }
-
-    /// Convert FP16 to FP32
-    pub fn half_to_float(values: &[u16]) -> Vec<f32> {
-        _values
-            .iter()
-            .map(|&v| F16::from_bits(v).to_f32())
-            .collect()
-    }
-
-    /// Check if GPU supports tensor cores
-    pub fn has_tensor_core_support(_gpucontext: &GpuContext) -> bool {
-        // Check compute capability
-        // Volta (7.0), Turing (7.5), Ampere (8.0+) have tensor cores
-        true // Placeholder
-    }
+/// Convert a slice of `f32` to `binary16` bit patterns.
+pub fn f32_slice_to_f16_bits(values: &[f32]) -> Vec<u16> {
+    values.iter().copied().map(f32_to_f16_bits).collect()
 }
 
-// F16 type placeholder (would use half crate in real implementation)
-struct F16(u16);
+/// Convert a slice of `binary16` bit patterns back to `f32`.
+pub fn f16_bits_slice_to_f32(bits: &[u16]) -> Vec<f32> {
+    bits.iter().copied().map(f16_bits_to_f32).collect()
+}
 
-impl F16 {
-    fn from_f32(v: f32) -> Self {
-        // Simplified conversion
-        F16(0)
-    }
+/// Largest finite magnitude representable in `binary16`.
+pub const F16_MAX: f32 = 65504.0;
 
-    fn to_f32(&self) -> f32 {
-        0.0
-    }
-
-    fn from_bits(bits: u16) -> Self {
-        F16(_bits)
-    }
-
-    fn to_bits(&self) -> u16 {
-        self.0
+/// Clamp to the `binary16` finite range before conversion.
+pub fn saturate_to_f16_range(value: f32) -> f32 {
+    if value.is_nan() {
+        value
+    } else {
+        value.clamp(-F16_MAX, F16_MAX)
     }
 }
 
@@ -387,37 +263,115 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mixed_precision_config_default() {
-        let config = MixedPrecisionConfig::default();
-        assert_eq!(config.init_scale, 65536.0);
-        assert_eq!(config.growth_factor, 2.0);
-        assert!(config.use_tensor_cores);
+    fn round_trips_exact_values() {
+        for &v in &[
+            0.0f32, -0.0, 1.0, -1.0, 0.5, 2.0, 65504.0, -65504.0, 0.125, 1024.0,
+        ] {
+            let back = f16_bits_to_f32(f32_to_f16_bits(v));
+            assert_eq!(back.to_bits(), v.to_bits(), "value {v} did not round-trip");
+        }
     }
 
     #[test]
-    fn test_dynamic_loss_scaler() {
-        let config = MixedPrecisionConfig::default();
+    fn round_trips_every_finite_f16() {
+        // Property: f16 -> f32 -> f16 is the identity on all 65536 patterns.
+        for bits in 0u16..=u16::MAX {
+            let exponent = (bits >> 10) & 0x1f;
+            let value = f16_bits_to_f32(bits);
+            if exponent == 0x1f {
+                // Inf/NaN class: only require the class to be preserved.
+                let back = f32_to_f16_bits(value);
+                assert_eq!(
+                    (back >> 10) & 0x1f,
+                    0x1f,
+                    "bits {bits:#06x} lost its inf/NaN class"
+                );
+                assert_eq!(back & 0x8000, bits & 0x8000, "bits {bits:#06x} lost sign");
+                continue;
+            }
+            let back = f32_to_f16_bits(value);
+            assert_eq!(
+                back, bits,
+                "bits {bits:#06x} did not round-trip (f32 {value})"
+            );
+        }
+    }
+
+    #[test]
+    fn subnormals_are_not_flushed_to_zero() {
+        // Smallest positive f16 subnormal is 2^-24.
+        let smallest = f16_bits_to_f32(1);
+        assert!(smallest > 0.0);
+        assert!((smallest - 2f32.powi(-24)).abs() < f32::EPSILON * smallest);
+        assert_eq!(f32_to_f16_bits(smallest), 1);
+    }
+
+    #[test]
+    fn rounds_half_to_even() {
+        // 1.0 + 2^-11 lies exactly halfway between 1.0 (even mantissa) and the
+        // next f16; round-half-to-even must pick 1.0.
+        let halfway = 1.0f32 + 2f32.powi(-11);
+        assert_eq!(f32_to_f16_bits(halfway), f32_to_f16_bits(1.0));
+        // 1.0 + 3 * 2^-11 lies halfway between the first and second f16 above
+        // 1.0; the even neighbour is the second one.
+        let halfway_up = 1.0f32 + 3.0 * 2f32.powi(-11);
+        assert_eq!(f32_to_f16_bits(halfway_up), f32_to_f16_bits(1.0) + 2);
+    }
+
+    #[test]
+    fn overflow_saturates_to_infinity() {
+        assert_eq!(f32_to_f16_bits(1.0e30), 0x7c00);
+        assert_eq!(f32_to_f16_bits(-1.0e30), 0xfc00);
+        assert!(f16_bits_to_f32(0x7c00).is_infinite());
+    }
+
+    #[test]
+    fn nan_stays_nan() {
+        assert!(f16_bits_to_f32(f32_to_f16_bits(f32::NAN)).is_nan());
+    }
+
+    #[test]
+    fn loss_scaler_backs_off_and_grows() {
+        let config = MixedPrecisionConfig {
+            growth_interval: 4,
+            ..MixedPrecisionConfig::default()
+        };
         let mut scaler = DynamicLossScaler::new(config);
+        assert_eq!(scaler.scale(), 65536.0);
 
-        assert_eq!(scaler.get_scale(), 65536.0);
-
-        // Test scale decrease on overflow
         scaler.update(true);
-        assert_eq!(scaler.get_scale(), 32768.0);
+        assert_eq!(scaler.scale(), 32768.0);
 
-        // Test scale increase after stable steps
-        for _ in 0..2000 {
+        for _ in 0..4 {
             scaler.update(false);
         }
-        assert!(scaler.get_scale() > 32768.0);
+        assert_eq!(scaler.scale(), 65536.0);
     }
 
     #[test]
-    fn test_tensor_core_alignment() {
-        assert_eq!(tensor_core_utils::pad_for_tensor_cores(100, 16), 112);
-        assert_eq!(tensor_core_utils::pad_for_tensor_cores(128, 16), 128);
+    fn loss_scaler_detects_overflow_while_unscaling() {
+        let mut scaler = DynamicLossScaler::new(MixedPrecisionConfig {
+            init_scale: 4.0,
+            ..MixedPrecisionConfig::default()
+        });
+        let mut grads = [8.0f32, -4.0, 2.0];
+        assert!(!scaler.unscale_and_check(&mut grads));
+        assert_eq!(grads, [2.0, -1.0, 0.5]);
+        assert_eq!(scaler.scale(), 4.0);
 
-        assert!(tensor_core_utils::is_tensor_core_friendly(256, 256, 128));
-        assert!(!tensor_core_utils::is_tensor_core_friendly(100, 100, 100));
+        let mut bad = [f32::INFINITY, 1.0];
+        assert!(scaler.unscale_and_check(&mut bad));
+        assert_eq!(scaler.scale(), 2.0);
+
+        let stats = scaler.overflow_stats();
+        assert_eq!(stats.total_steps, 2);
+        assert_eq!(stats.overflow_count, 1);
+    }
+
+    #[test]
+    fn saturation_keeps_values_finite() {
+        assert_eq!(saturate_to_f16_range(1.0e30), F16_MAX);
+        assert_eq!(saturate_to_f16_range(-1.0e30), -F16_MAX);
+        assert!(saturate_to_f16_range(f32::NAN).is_nan());
     }
 }

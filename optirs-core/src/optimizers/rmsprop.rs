@@ -1,10 +1,10 @@
 // RMSprop optimizer implementation
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// RMSprop optimizer
@@ -42,8 +42,8 @@ pub struct RMSprop<A: Float + ScalarOperand + Debug> {
     epsilon: A,
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
-    /// Moving average of squared gradients
-    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
+    /// Moving average of squared gradients, one slot per parameter-tensor index
+    v: Option<Vec<Array<A, IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSprop<A> {
@@ -117,6 +117,70 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> RMSprop<A> {
     pub fn reset(&mut self) {
         self.v = None;
     }
+
+    /// Ensures a state slot exists for `index` and matches `dim`
+    fn ensure_state(&mut self, index: usize, dim: &IxDyn) {
+        let v = self.v.get_or_insert_with(Vec::new);
+        while v.len() <= index {
+            v.push(Array::zeros(dim.clone()));
+        }
+        if v[index].raw_dim() != *dim {
+            v[index] = Array::zeros(dim.clone());
+        }
+    }
+
+    /// Performs an RMSprop update for the parameter tensor at `index`
+    ///
+    /// Each `index` owns an independent moving average, so several parameter tensors
+    /// can be optimized by a single `RMSprop` instance without interference.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
+        }
+
+        let dim = params.raw_dim().into_dyn();
+        self.ensure_state(index, &dim);
+
+        let lr = self.learning_rate;
+        let rho = self.rho;
+        let eps = self.epsilon;
+        let weight_decay = self.weight_decay;
+        let use_weight_decay = weight_decay > A::zero();
+        let one = A::one();
+
+        let v = self.v.as_mut().ok_or_else(|| {
+            OptimError::InvalidConfig("RMSprop state not initialized".to_string())
+        })?;
+
+        let mut updated = params.to_owned();
+        let mut params_view = updated.view_mut().into_dyn();
+        let gradients_view = gradients.view().into_dyn();
+
+        Zip::from(&mut params_view)
+            .and(&gradients_view)
+            .and(&mut v[index])
+            .for_each(|p, &g, v_i| {
+                let grad = if use_weight_decay {
+                    g + weight_decay * *p
+                } else {
+                    g
+                };
+                *v_i = *v_i * rho + grad * grad * (one - rho);
+                *p = *p - lr * grad / (v_i.sqrt() + eps);
+            });
+        drop(params_view);
+
+        Ok(updated)
+    }
 }
 
 impl<A, D> Optimizer<A, D> for RMSprop<A>
@@ -125,49 +189,27 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Convert to dynamic dimension for storage in state vectors
-        let params_dyn = params.to_owned().into_dyn();
-        let gradients_dyn = gradients.to_owned().into_dyn();
+        self.step_indexed(0, params, gradients)
+    }
 
-        // Apply weight decay to gradients if needed
-        let adjusted_gradients = if self.weight_decay > A::zero() {
-            &gradients_dyn + &(&params_dyn * self.weight_decay)
-        } else {
-            gradients_dyn
-        };
-
-        // Initialize state if this is the first step
-        if self.v.is_none() {
-            self.v = Some(vec![Array::zeros(params_dyn.raw_dim())]);
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
         }
 
-        let v = self.v.as_mut().expect("unwrap failed");
-
-        // Ensure we have state for this parameter set
-        if v.is_empty() {
-            v.push(Array::zeros(params_dyn.raw_dim()));
-        } else if v[0].raw_dim() != params_dyn.raw_dim() {
-            // If the parameter dimensions have changed, reset state
-            v[0] = Array::zeros(params_dyn.raw_dim());
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
         }
-
-        // Update moving average of squared gradients
-        // v_t = rho * v_{t-1} + (1 - rho) * g_t^2
-        v[0] =
-            &v[0] * self.rho + &(&adjusted_gradients * &adjusted_gradients * (A::one() - self.rho));
-
-        // Compute step size
-        // step = learning_rate * g_t / (sqrt(v_t) + epsilon)
-        let v_sqrt = v[0].mapv(|x| x.sqrt());
-        let step = &adjusted_gradients * self.learning_rate / &(&v_sqrt + self.epsilon);
-
-        // Update parameters
-        let updated_params = &params_dyn - step;
-
-        // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("unwrap failed"))
+        Ok(results)
     }
 
     fn get_learning_rate(&self) -> A {

@@ -13,7 +13,9 @@ use std::fmt::Debug;
 
 use super::types::CurvatureInfo;
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for CurvatureInfo<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for CurvatureInfo<T>
+{
     fn default() -> Self {
         Self {
             mean_curvature: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),

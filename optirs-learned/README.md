@@ -39,7 +39,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-learned = "0.3.1"
+optirs-learned = "0.3.2"
 scirs2-core = "0.4.0"  # Required foundation
 ```
 
@@ -49,7 +49,7 @@ Enable specific learned optimizer types:
 
 ```toml
 [dependencies]
-optirs-learned = { version = "0.3.1", features = ["transformer", "lstm", "meta_learning"] }
+optirs-learned = { version = "0.3.2", features = ["transformer", "lstm", "meta_learning"] }
 ```
 
 Available features:

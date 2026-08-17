@@ -9,6 +9,9 @@ description = "WebAssembly bindings for OptiRS - High-performance optimizer and 
 keywords = ["optimization", "wasm", "webassembly", "machine-learning", "deep-learning"]
 categories = ["wasm", "science", "mathematics"]
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -30,7 +33,7 @@ getrandom = { workspace = true, optional = true }
 
 # Force getrandom 0.2 (transitive via rand/statrs/scirs2) to use js backend on wasm32
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_02 = { workspace = true }
 
 [dev-dependencies]
 wasm-bindgen-test = { workspace = true }

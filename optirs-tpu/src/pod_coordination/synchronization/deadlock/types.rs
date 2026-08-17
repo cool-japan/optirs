@@ -19,7 +19,7 @@ pub struct DeadlockDetector {
     /// Detection state
     pub detection_state: DetectionState,
     /// Detection statistics
-    pub statistics: super::performance::DeadlockStatistics,
+    pub statistics: crate::pod_coordination::performance::DeadlockStatistics,
     /// Prevention system
     pub prevention_system: super::prevention::DeadlockPreventionSystem,
     /// Recovery system
@@ -33,6 +33,11 @@ pub struct DeadlockDetectionConfig {
     pub enable: bool,
     /// Detection algorithm
     pub algorithm: super::algorithms::DeadlockDetectionAlgorithm,
+    /// Traversal strategy used to search the wait-for graph for cycles.
+    ///
+    /// All variants are exact; they differ only in traversal order and
+    /// auxiliary state. See [`super::graph::DependencyGraph::has_cycle_with`].
+    pub cycle_detection: super::algorithms::CycleDetectionMethod,
     /// Detection frequency
     pub frequency: Duration,
     /// Detection sensitivity
@@ -271,6 +276,7 @@ impl Default for DeadlockDetectionConfig {
         Self {
             enable: true,
             algorithm: super::algorithms::DeadlockDetectionAlgorithm::WaitForGraph,
+            cycle_detection: super::algorithms::CycleDetectionMethod::default(),
             frequency: Duration::from_millis(100),
             sensitivity: DeadlockSensitivity::default(),
             prevention: super::prevention::DeadlockPrevention::default(),

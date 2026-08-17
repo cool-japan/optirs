@@ -13,7 +13,9 @@ use std::fmt::Debug;
 
 use super::types::CompressionQualityMetrics;
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for CompressionQualityMetrics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for CompressionQualityMetrics<T>
+{
     fn default() -> Self {
         Self {
             reconstruction_error: scirs2_core::numeric::NumCast::from(0.05)

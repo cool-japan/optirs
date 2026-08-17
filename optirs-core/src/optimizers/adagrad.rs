@@ -1,10 +1,10 @@
 // Adagrad optimizer implementation
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// Adagrad optimizer
@@ -43,8 +43,8 @@ pub struct Adagrad<A: Float + ScalarOperand + Debug> {
     epsilon: A,
     /// Weight decay factor (L2 regularization)
     weight_decay: A,
-    /// Sum of squared gradients
-    sum_squared_grads: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
+    /// Sum of squared gradients, one slot per parameter-tensor index
+    sum_squared_grads: Option<Vec<Array<A, IxDyn>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> Adagrad<A> {
@@ -104,6 +104,68 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> Adagrad<A> {
     pub fn reset(&mut self) {
         self.sum_squared_grads = None;
     }
+
+    /// Ensures an accumulator slot exists for `index` and matches `dim`
+    fn ensure_state(&mut self, index: usize, dim: &IxDyn) {
+        let accumulators = self.sum_squared_grads.get_or_insert_with(Vec::new);
+        while accumulators.len() <= index {
+            accumulators.push(Array::zeros(dim.clone()));
+        }
+        if accumulators[index].raw_dim() != *dim {
+            accumulators[index] = Array::zeros(dim.clone());
+        }
+    }
+
+    /// Performs an Adagrad update for the parameter tensor at `index`
+    ///
+    /// Each `index` owns an independent accumulator, so several parameter tensors can
+    /// be optimized by a single `Adagrad` instance without their histories mixing.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
+        }
+
+        let dim = params.raw_dim().into_dyn();
+        self.ensure_state(index, &dim);
+
+        let lr = self.learning_rate;
+        let eps = self.epsilon;
+        let weight_decay = self.weight_decay;
+        let use_weight_decay = weight_decay > A::zero();
+
+        let accumulators = self.sum_squared_grads.as_mut().ok_or_else(|| {
+            OptimError::InvalidConfig("Adagrad state not initialized".to_string())
+        })?;
+
+        let mut updated = params.to_owned();
+        let mut params_view = updated.view_mut().into_dyn();
+        let gradients_view = gradients.view().into_dyn();
+
+        Zip::from(&mut params_view)
+            .and(&gradients_view)
+            .and(&mut accumulators[index])
+            .for_each(|p, &g, acc| {
+                let grad = if use_weight_decay {
+                    g + weight_decay * *p
+                } else {
+                    g
+                };
+                *acc = *acc + grad * grad;
+                *p = *p - lr * grad / (acc.sqrt() + eps);
+            });
+        drop(params_view);
+
+        Ok(updated)
+    }
 }
 
 impl<A, D> Optimizer<A, D> for Adagrad<A>
@@ -112,48 +174,27 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Convert to dynamic dimension for storage in state vectors
-        let params_dyn = params.to_owned().into_dyn();
-        let gradients_dyn = gradients.to_owned().into_dyn();
+        self.step_indexed(0, params, gradients)
+    }
 
-        // Apply weight decay to gradients if needed
-        let adjusted_gradients = if self.weight_decay > A::zero() {
-            &gradients_dyn + &(&params_dyn * self.weight_decay)
-        } else {
-            gradients_dyn.clone()
-        };
-
-        // Initialize state if this is the first step
-        if self.sum_squared_grads.is_none() {
-            self.sum_squared_grads = Some(vec![Array::zeros(params_dyn.raw_dim())]);
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
         }
 
-        let sum_squared_grads = self.sum_squared_grads.as_mut().expect("unwrap failed");
-
-        // Ensure we have state for this parameter set
-        if sum_squared_grads.is_empty() {
-            sum_squared_grads.push(Array::zeros(params_dyn.raw_dim()));
-        } else if sum_squared_grads[0].raw_dim() != params_dyn.raw_dim() {
-            // If the parameter dimensions have changed, reset state
-            sum_squared_grads[0] = Array::zeros(params_dyn.raw_dim());
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
         }
-
-        // Update sum of squared gradients
-        // G_t = G_{t-1} + g_t^2
-        sum_squared_grads[0] = &sum_squared_grads[0] + &(&adjusted_gradients * &adjusted_gradients);
-
-        // Compute step size
-        // step = learning_rate * g_t / (sqrt(G_t) + epsilon)
-        let g_sqrt = sum_squared_grads[0].mapv(|x| x.sqrt());
-        let step = &adjusted_gradients * self.learning_rate / &(&g_sqrt + self.epsilon);
-
-        // Update parameters
-        let updated_params = &params_dyn - step;
-
-        // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("unwrap failed"))
+        Ok(results)
     }
 
     fn get_learning_rate(&self) -> A {

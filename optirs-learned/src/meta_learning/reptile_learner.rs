@@ -10,10 +10,11 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::functions::MetaLearner;
+use super::linear_model;
+use super::metrics::{mean_of, BatchObservations};
 use super::types::{
-    AdaptationStatistics, AdaptationStep, MetaLearningAlgorithm, MetaTask, MetaTrainingMetrics,
-    MetaTrainingResult, QueryEvaluationMetrics, QueryEvaluationResult, StabilityMetrics,
-    TaskAdaptationMetrics, TaskAdaptationResult,
+    AdaptationStep, MetaLearningAlgorithm, MetaTask, MetaTrainingResult, QueryEvaluationMetrics,
+    QueryEvaluationResult, TaskAdaptationMetrics, TaskAdaptationResult, TaskType,
 };
 
 /// Result type for inner loop adaptation: adapted parameters and adaptation trajectory
@@ -53,88 +54,40 @@ impl<T: Float + Debug + Send + Sync + 'static> ReptileLearner<T> {
         self
     }
 
-    /// Compute MSE loss on a dataset given parameters
+    /// MSE loss of the shared linear task model on a dataset.
+    ///
+    /// See [`super::linear_model`] for the model contract shared with the other
+    /// meta-learners.
     fn compute_loss(
         &self,
         features: &[Array1<T>],
         targets: &[T],
         parameters: &HashMap<String, Array1<T>>,
     ) -> Result<T> {
-        if features.is_empty() {
-            return Ok(T::zero());
-        }
-        let mut total_loss = T::zero();
-        for (feat, target) in features.iter().zip(targets.iter()) {
-            let prediction = self.predict_single(feat, parameters)?;
-            let diff = prediction - *target;
-            total_loss = total_loss + diff * diff;
-        }
-        let n = T::from(features.len()).ok_or_else(|| {
-            OptimError::ComputationError("Failed to convert dataset size".to_string())
-        })?;
-        Ok(total_loss / n)
+        linear_model::mse_loss(features, targets, parameters)
     }
 
-    /// Make a single prediction: weighted sum of features using parameters
+    /// Single prediction from the shared linear task model.
     fn predict_single(
         &self,
         features: &Array1<T>,
         parameters: &HashMap<String, Array1<T>>,
     ) -> Result<T> {
-        let feat_len = T::from(features.len()).ok_or_else(|| {
-            OptimError::ComputationError("Failed to convert feature length".to_string())
-        })?;
-        // Use parameters as weights if available, otherwise use simple average
-        if let Some(weights) = parameters.get("weights") {
-            let min_len = features.len().min(weights.len());
-            let mut sum = T::zero();
-            for i in 0..min_len {
-                sum = sum + features[i] * weights[i];
-            }
-            Ok(sum / feat_len)
-        } else {
-            // Fallback: sum features divided by length
-            let sum: T = features.iter().copied().fold(T::zero(), |a, b| a + b);
-            Ok(sum / feat_len)
-        }
+        linear_model::predict(features, parameters)
     }
 
-    /// Compute finite-difference gradients of loss w.r.t. parameters
+    /// Analytic gradients of the MSE loss.
+    ///
+    /// This used to be a central finite difference that re-evaluated the whole
+    /// dataset twice per parameter (O(P * N) loss evaluations and O(P) clones of
+    /// the parameter map). The closed-form gradient is exact and O(N).
     fn compute_gradients(
         &self,
         parameters: &HashMap<String, Array1<T>>,
         features: &[Array1<T>],
         targets: &[T],
     ) -> Result<HashMap<String, Array1<T>>> {
-        let epsilon = T::from(1e-5)
-            .ok_or_else(|| OptimError::ComputationError("Failed to convert epsilon".to_string()))?;
-        let two = T::from(2.0)
-            .ok_or_else(|| OptimError::ComputationError("Failed to convert 2.0".to_string()))?;
-        let mut gradients = HashMap::new();
-
-        for (name, param) in parameters {
-            let mut grad = Array1::zeros(param.len());
-            for i in 0..param.len() {
-                let mut params_plus = parameters.clone();
-                let p_plus = params_plus.get_mut(name).ok_or_else(|| {
-                    OptimError::ComputationError(format!("Parameter {} not found", name))
-                })?;
-                p_plus[i] = p_plus[i] + epsilon;
-
-                let mut params_minus = parameters.clone();
-                let p_minus = params_minus.get_mut(name).ok_or_else(|| {
-                    OptimError::ComputationError(format!("Parameter {} not found", name))
-                })?;
-                p_minus[i] = p_minus[i] - epsilon;
-
-                let loss_plus = self.compute_loss(features, targets, &params_plus)?;
-                let loss_minus = self.compute_loss(features, targets, &params_minus)?;
-
-                grad[i] = (loss_plus - loss_minus) / (two * epsilon);
-            }
-            gradients.insert(name.clone(), grad);
-        }
-        Ok(gradients)
+        linear_model::mse_gradients(features, targets, parameters)
     }
 
     /// Run inner loop SGD on a task's support set
@@ -159,30 +112,15 @@ impl<T: Float + Debug + Send + Sync + 'static> ReptileLearner<T> {
                 &task.support_set.targets,
             )?;
 
-            // Compute gradient norm
-            let grad_norm = gradients
-                .values()
-                .flat_map(|g| g.iter().copied())
-                .map(|v| v * v)
-                .fold(T::zero(), |a, b| a + b);
-
-            // SGD update: params -= inner_lr * grad
-            let mut param_change_sq = T::zero();
-            for (name, param) in params.iter_mut() {
-                if let Some(grad) = gradients.get(name) {
-                    for i in 0..param.len() {
-                        let change = self.inner_lr * grad[i];
-                        param[i] = param[i] - change;
-                        param_change_sq = param_change_sq + change * change;
-                    }
-                }
-            }
+            let gradient_norm = linear_model::map_norm(&gradients);
+            let parameter_change_norm =
+                linear_model::descend(&mut params, &gradients, self.inner_lr)?;
 
             trajectory.push(AdaptationStep {
                 step,
                 loss,
-                gradient_norm: grad_norm,
-                parameter_change_norm: param_change_sq,
+                gradient_norm,
+                parameter_change_norm,
                 learning_rate: self.inner_lr,
             });
         }
@@ -218,6 +156,7 @@ impl<
 
         let mut total_meta_loss = T::zero();
         let mut task_losses = Vec::new();
+        let mut observations = BatchObservations::<T>::new();
         let mut meta_gradients: HashMap<String, Array1<T>> = HashMap::new();
 
         // Initialize accumulated differences to zero
@@ -227,8 +166,14 @@ impl<
         }
 
         for task in task_batch {
+            let pre_loss = self.compute_loss(
+                &task.query_set.features,
+                &task.query_set.targets,
+                meta_parameters,
+            )?;
+
             // Run inner loop SGD from meta-parameters
-            let (adapted_params, _trajectory) =
+            let (adapted_params, trajectory) =
                 self.run_inner_loop(task, meta_parameters, self.inner_steps)?;
 
             // Compute task loss on query set with adapted parameters
@@ -240,6 +185,10 @@ impl<
             task_losses.push(task_loss);
             total_meta_loss = total_meta_loss + task_loss;
 
+            // Per-task "gradient" in descent convention: the direction Reptile
+            // moves *away* from, i.e. -(adapted - meta).
+            let mut task_gradient: HashMap<String, Array1<T>> = HashMap::new();
+
             // Accumulate difference: adapted_params - meta_parameters
             for (name, adapted_param) in &adapted_params {
                 if let Some(meta_param) = meta_parameters.get(name) {
@@ -247,18 +196,37 @@ impl<
                     if let Some(acc) = accumulated_diff.get_mut(name) {
                         *acc = acc.clone() + &diff;
                     }
+                    task_gradient.insert(name.clone(), diff.mapv(|v| -v));
                 }
             }
+
+            observations.pre_losses.push(pre_loss);
+            observations.post_losses.push(task_loss);
+            observations.convergence_steps.push(trajectory.len());
+            observations.parameter_changes.push(
+                trajectory
+                    .iter()
+                    .map(|s| s.parameter_change_norm)
+                    .fold(T::zero(), |a, b| a + b),
+            );
+            observations
+                .gradient_norms
+                .push(linear_model::map_norm(&task_gradient));
+            observations.gradients.push(task_gradient);
         }
 
-        // Update meta-parameters: meta_params += epsilon * avg_difference
+        // Update meta-parameters: meta_params += epsilon * avg_difference.
+        //
+        // Update contract: the learner owns this update. `meta_gradients` is
+        // reported in *descent* convention (the vector `g` for which the update
+        // is `theta <- theta - epsilon * g`), so callers must not apply it again.
         for (name, param) in meta_parameters.iter_mut() {
             if let Some(acc) = accumulated_diff.get(name) {
                 let avg_diff = acc / batch_size;
                 for i in 0..param.len() {
                     param[i] = param[i] + self.epsilon * avg_diff[i];
                 }
-                meta_gradients.insert(name.clone(), avg_diff.clone());
+                meta_gradients.insert(name.clone(), avg_diff.mapv(|v| -v));
             }
         }
 
@@ -269,32 +237,8 @@ impl<
             meta_loss,
             task_losses: task_losses.clone(),
             meta_gradients,
-            metrics: MetaTrainingMetrics {
-                avg_adaptation_speed: scirs2_core::numeric::NumCast::from(2.0)
-                    .unwrap_or_else(|| T::zero()),
-                generalization_performance: scirs2_core::numeric::NumCast::from(0.85)
-                    .unwrap_or_else(|| T::zero()),
-                task_diversity: scirs2_core::numeric::NumCast::from(0.7)
-                    .unwrap_or_else(|| T::zero()),
-                gradient_alignment: scirs2_core::numeric::NumCast::from(0.9)
-                    .unwrap_or_else(|| T::zero()),
-            },
-            adaptation_stats: AdaptationStatistics {
-                convergence_steps: vec![self.inner_steps; task_batch.len()],
-                final_losses: task_losses,
-                adaptation_efficiency: scirs2_core::numeric::NumCast::from(0.8)
-                    .unwrap_or_else(|| T::zero()),
-                stability_metrics: StabilityMetrics {
-                    parameter_stability: scirs2_core::numeric::NumCast::from(0.9)
-                        .unwrap_or_else(|| T::zero()),
-                    performance_stability: scirs2_core::numeric::NumCast::from(0.85)
-                        .unwrap_or_else(|| T::zero()),
-                    gradient_stability: scirs2_core::numeric::NumCast::from(0.92)
-                        .unwrap_or_else(|| T::zero()),
-                    forgetting_measure: scirs2_core::numeric::NumCast::from(0.1)
-                        .unwrap_or_else(|| T::zero()),
-                },
-            },
+            metrics: observations.training_metrics(),
+            adaptation_stats: observations.adaptation_statistics(),
         })
     }
 
@@ -307,23 +251,54 @@ impl<
         let (adapted_parameters, adaptation_trajectory) =
             self.run_inner_loop(task, meta_parameters, adaptation_steps)?;
 
-        let final_loss = adaptation_trajectory
-            .last()
+        let initial_loss = adaptation_trajectory
+            .first()
             .map(|s| s.loss)
             .unwrap_or_else(T::zero);
+        let final_loss = self.compute_loss(
+            &task.support_set.features,
+            &task.support_set.targets,
+            &adapted_parameters,
+        )?;
+
+        let steps_t = T::from(adaptation_steps.max(1)).ok_or_else(|| {
+            OptimError::ComputationError("Failed to convert adaptation steps".to_string())
+        })?;
+        let improvement = initial_loss - final_loss;
+        let travel = adaptation_trajectory
+            .iter()
+            .map(|s| s.parameter_change_norm)
+            .fold(T::zero(), |a, b| a + b);
+        let mut non_increasing = 0usize;
+        for pair in adaptation_trajectory.windows(2) {
+            if pair[1].loss <= pair[0].loss {
+                non_increasing += 1;
+            }
+        }
 
         Ok(TaskAdaptationResult {
             adapted_parameters,
+            metrics: TaskAdaptationMetrics {
+                convergence_speed: improvement / steps_t,
+                final_performance: if initial_loss > T::zero() {
+                    (improvement / initial_loss).max(T::zero()).min(T::one())
+                } else {
+                    T::zero()
+                },
+                efficiency: if travel > T::zero() {
+                    improvement / travel
+                } else {
+                    T::zero()
+                },
+                robustness: if adaptation_trajectory.len() > 1 {
+                    let denom = T::from(adaptation_trajectory.len() - 1).unwrap_or_else(T::one);
+                    T::from(non_increasing).unwrap_or_else(T::zero) / denom
+                } else {
+                    T::one()
+                },
+            },
             adaptation_trajectory,
             final_loss,
-            metrics: TaskAdaptationMetrics {
-                convergence_speed: scirs2_core::numeric::NumCast::from(1.5)
-                    .unwrap_or_else(|| T::zero()),
-                final_performance: scirs2_core::numeric::NumCast::from(0.9)
-                    .unwrap_or_else(|| T::zero()),
-                efficiency: scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero()),
-                robustness: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()),
-            },
         })
     }
 
@@ -332,25 +307,44 @@ impl<
         task: &MetaTask<T>,
         adapted_parameters: &HashMap<String, Array1<T>>,
     ) -> Result<QueryEvaluationResult<T>> {
-        let mut predictions = Vec::new();
-        let mut confidence_scores = Vec::new();
-        let mut total_loss = T::zero();
-
-        for (features, target) in task.query_set.features.iter().zip(&task.query_set.targets) {
-            let prediction = self.predict_single(features, adapted_parameters)?;
-            let diff = prediction - *target;
-            let loss = diff * diff;
-            predictions.push(prediction);
-            confidence_scores
-                .push(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()));
-            total_loss = total_loss + loss;
+        if task.query_set.features.is_empty() {
+            return Err(OptimError::InsufficientData(format!(
+                "task '{}' has an empty query set",
+                task.id
+            )));
         }
 
-        let n = T::from(task.query_set.features.len().max(1)).ok_or_else(|| {
-            OptimError::ComputationError("Failed to convert query set size".to_string())
-        })?;
-        let query_loss = total_loss / n;
-        let accuracy = scirs2_core::numeric::NumCast::from(0.85).unwrap_or_else(|| T::zero());
+        let mut predictions = Vec::with_capacity(task.query_set.features.len());
+        for features in task.query_set.features.iter() {
+            predictions.push(self.predict_single(features, adapted_parameters)?);
+        }
+
+        let query_loss = self.compute_loss(
+            &task.query_set.features,
+            &task.query_set.targets,
+            adapted_parameters,
+        )?;
+
+        // Confidence is the squashed per-sample residual: 1 for an exact hit.
+        let confidence_scores: Vec<T> = predictions
+            .iter()
+            .zip(task.query_set.targets.iter())
+            .map(|(p, y)| T::one() / (T::one() + (*p - *y).abs()))
+            .collect();
+
+        let classification_accuracy = match task.task_type {
+            TaskType::Classification => {
+                linear_model::label_accuracy(&predictions, &task.query_set.targets)
+            }
+            _ => None,
+        };
+        let accuracy = classification_accuracy
+            .or_else(|| {
+                linear_model::r_squared(&predictions, &task.query_set.targets)
+                    .map(|r| r.max(T::zero()).min(T::one()))
+            })
+            .unwrap_or_else(T::zero);
+        let uncertainty_quality = mean_of(&confidence_scores).unwrap_or_else(T::zero);
 
         Ok(QueryEvaluationResult {
             query_loss,
@@ -359,10 +353,10 @@ impl<
             confidence_scores,
             metrics: QueryEvaluationMetrics {
                 mse: Some(query_loss),
-                classification_accuracy: Some(accuracy),
-                auc: Some(scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero())),
-                uncertainty_quality: scirs2_core::numeric::NumCast::from(0.8)
-                    .unwrap_or_else(|| T::zero()),
+                classification_accuracy,
+                // AUC needs ranked binary labels, which scalar targets do not carry.
+                auc: None,
+                uncertainty_quality,
             },
         })
     }

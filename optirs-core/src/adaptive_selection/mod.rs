@@ -163,6 +163,11 @@ pub struct AdaptiveOptimizerSelector<A: Float> {
 }
 
 /// Neural network for optimizer selection
+///
+/// A single-hidden-layer perceptron with ReLU activation and a softmax output,
+/// trained with cross-entropy loss. [`SelectionNetwork::train`] backpropagates
+/// through **both** layers, so the hidden representation is learned rather than
+/// frozen at its initialization.
 #[derive(Debug)]
 pub struct SelectionNetwork<A: Float> {
     /// Input weights (problem features -> hidden)
@@ -174,7 +179,6 @@ pub struct SelectionNetwork<A: Float> {
     /// Output biases
     output_bias: Array1<A>,
     /// Hidden layer size
-    #[allow(dead_code)]
     hidden_size: usize,
 }
 
@@ -185,16 +189,14 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
     pub fn new(input_size: usize, hidden_size: usize, num_optimizers: usize) -> Self {
         let mut rng = thread_rng();
 
+        // Small uniform init in [-0.05, 0.05); the arithmetic is done in f64 so a
+        // single infallible-in-practice conversion is needed per weight.
         let input_weights = Array2::from_shape_fn((hidden_size, input_size), |_| {
-            A::from(rng.random::<f64>()).expect("unwrap failed")
-                * A::from(0.1).expect("unwrap failed")
-                - A::from(0.05).expect("unwrap failed")
+            A::from(rng.random::<f64>() * 0.1 - 0.05).unwrap_or_else(A::zero)
         });
 
         let output_weights = Array2::from_shape_fn((num_optimizers, hidden_size), |_| {
-            A::from(rng.random::<f64>()).expect("unwrap failed")
-                * A::from(0.1).expect("unwrap failed")
-                - A::from(0.05).expect("unwrap failed")
+            A::from(rng.random::<f64>() * 0.1 - 0.05).unwrap_or_else(A::zero)
         });
 
         let input_bias = Array1::zeros(hidden_size);
@@ -209,11 +211,107 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         }
     }
 
-    /// Forward pass to get optimizer probabilities
-    pub fn forward(&self, features: &Array1<A>) -> Result<Array1<A>> {
-        // Hidden layer
-        let hidden = self.input_weights.dot(features) + self.input_bias.clone();
-        let hidden_activated = hidden.mapv(|x| {
+    /// Build a network from explicit parameters
+    ///
+    /// Useful for reproducible experiments, checkpoint restore, and gradient
+    /// verification, where the pseudo-random initialization of
+    /// [`SelectionNetwork::new`] is not acceptable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the four parameter arrays do not describe a
+    /// consistent `input -> hidden -> output` topology.
+    pub fn from_parameters(
+        input_weights: Array2<A>,
+        input_bias: Array1<A>,
+        output_weights: Array2<A>,
+        output_bias: Array1<A>,
+    ) -> Result<Self> {
+        let hidden_size = input_weights.nrows();
+        if input_bias.len() != hidden_size {
+            return Err(OptimError::InvalidConfig(format!(
+                "Input bias length {} does not match the hidden size {hidden_size}",
+                input_bias.len()
+            )));
+        }
+        if output_weights.ncols() != hidden_size {
+            return Err(OptimError::InvalidConfig(format!(
+                "Output weights have {} columns but the hidden size is {hidden_size}",
+                output_weights.ncols()
+            )));
+        }
+        if output_bias.len() != output_weights.nrows() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Output bias length {} does not match the {} output units",
+                output_bias.len(),
+                output_weights.nrows()
+            )));
+        }
+
+        Ok(Self {
+            input_weights,
+            output_weights,
+            input_bias,
+            output_bias,
+            hidden_size,
+        })
+    }
+
+    /// Size of the hidden layer
+    pub fn hidden_size(&self) -> usize {
+        self.hidden_size
+    }
+
+    /// Number of input features the network expects
+    pub fn input_size(&self) -> usize {
+        self.input_weights.ncols()
+    }
+
+    /// Number of optimizer classes the network scores
+    pub fn num_outputs(&self) -> usize {
+        self.output_weights.nrows()
+    }
+
+    /// Read-only view of the hidden-layer (input -> hidden) weights
+    pub fn input_weights(&self) -> &Array2<A> {
+        &self.input_weights
+    }
+
+    /// Read-only view of the output-layer (hidden -> logits) weights
+    pub fn output_weights(&self) -> &Array2<A> {
+        &self.output_weights
+    }
+
+    /// Read-only view of the hidden-layer biases
+    pub fn input_bias(&self) -> &Array1<A> {
+        &self.input_bias
+    }
+
+    /// Read-only view of the output-layer biases
+    pub fn output_bias(&self) -> &Array1<A> {
+        &self.output_bias
+    }
+
+    /// Forward pass keeping the intermediate activations needed for training.
+    ///
+    /// Returns `(pre_activation, hidden_activation, probabilities)` where
+    /// `pre_activation` is the hidden layer before ReLU (needed for the ReLU
+    /// derivative during backpropagation).
+    fn forward_with_activations(
+        &self,
+        features: &Array1<A>,
+    ) -> Result<(Array1<A>, Array1<A>, Array1<A>)> {
+        if features.len() != self.input_weights.ncols() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Feature vector has length {} but the network expects {}",
+                features.len(),
+                self.input_weights.ncols()
+            )));
+        }
+
+        // Hidden layer (pre-activation), then ReLU.
+        let pre_activation = self.input_weights.dot(features) + &self.input_bias;
+        let hidden_activated = pre_activation.mapv(|x| {
             // ReLU activation
             if x > A::zero() {
                 x
@@ -225,16 +323,91 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         // Output layer
         let output = self.output_weights.dot(&hidden_activated) + &self.output_bias;
 
-        // Softmax activation
+        // Softmax activation (max-shifted for numerical stability)
         let max_val = output.iter().fold(A::neg_infinity(), |a, &b| A::max(a, b));
         let exp_output = output.mapv(|x| A::exp(x - max_val));
         let sum_exp = exp_output.sum();
-        let probabilities = exp_output.mapv(|x| x / sum_exp);
+        let probabilities = if sum_exp > A::zero() {
+            exp_output.mapv(|x| x / sum_exp)
+        } else {
+            // Degenerate case (empty or non-finite logits): fall back to uniform.
+            let n = A::from(output.len().max(1)).unwrap_or_else(A::one);
+            Array1::from_elem(output.len(), A::one() / n)
+        };
 
+        Ok((pre_activation, hidden_activated, probabilities))
+    }
+
+    /// Forward pass to get optimizer probabilities
+    pub fn forward(&self, features: &Array1<A>) -> Result<Array1<A>> {
+        let (_, _, probabilities) = self.forward_with_activations(features)?;
         Ok(probabilities)
     }
 
-    /// Train the network on historical data
+    /// Average cross-entropy loss over a labelled dataset
+    ///
+    /// Useful for monitoring that [`SelectionNetwork::train`] is actually
+    /// reducing the objective. Returns zero for an empty dataset.
+    pub fn average_loss(&self, features: &[Array1<A>], optimizer_labels: &[usize]) -> Result<A> {
+        Self::validate_dataset(features, optimizer_labels, self.output_weights.nrows())?;
+        if features.is_empty() {
+            return Ok(A::zero());
+        }
+
+        // Floor the probability so a saturated softmax cannot produce -inf.
+        let floor = A::epsilon();
+        let mut total = A::zero();
+        for (feature, &label) in features.iter().zip(optimizer_labels.iter()) {
+            let probabilities = self.forward(feature)?;
+            let target = probabilities[label];
+            let clamped = if target > floor { target } else { floor };
+            total = total - A::ln(clamped);
+        }
+
+        let count = A::from(features.len()).unwrap_or_else(A::one);
+        Ok(total / count)
+    }
+
+    /// Validate that a feature/label dataset is well formed.
+    fn validate_dataset(
+        features: &[Array1<A>],
+        optimizer_labels: &[usize],
+        num_outputs: usize,
+    ) -> Result<()> {
+        if features.len() != optimizer_labels.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Feature/label count mismatch: {} features vs {} labels",
+                features.len(),
+                optimizer_labels.len()
+            )));
+        }
+        if let Some(&bad) = optimizer_labels.iter().find(|&&l| l >= num_outputs) {
+            return Err(OptimError::InvalidConfig(format!(
+                "Optimizer label {bad} is out of range for {num_outputs} output units"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Train the network on historical data with full backpropagation
+    ///
+    /// Runs plain SGD on the cross-entropy loss for `epochs` passes over the
+    /// data. Every parameter is updated: the output layer from the softmax
+    /// delta `p − onehot(label)`, and the hidden layer from that delta
+    /// propagated back through `W₂ᵀ` and gated by the ReLU derivative
+    /// (`1` where the pre-activation is positive, `0` elsewhere).
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Input feature vectors
+    /// * `optimizer_labels` - Index of the correct optimizer for each feature vector
+    /// * `learning_rate` - SGD step size
+    /// * `epochs` - Number of passes over the dataset
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the feature and label counts disagree, if a label is
+    /// out of range, or if a feature vector has the wrong length.
     pub fn train(
         &mut self,
         features: &[Array1<A>],
@@ -242,34 +415,58 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         learning_rate: A,
         epochs: usize,
     ) -> Result<()> {
+        let num_outputs = self.output_weights.nrows();
+        Self::validate_dataset(features, optimizer_labels, num_outputs)?;
+
+        let hidden_units = self.output_weights.ncols();
+        let input_units = self.input_weights.ncols();
+
         for _ in 0..epochs {
             for (feature, &label) in features.iter().zip(optimizer_labels.iter()) {
-                // Forward pass
-                let probabilities = self.forward(feature)?;
+                // Forward pass, keeping the pre-activation for the ReLU derivative.
+                let (pre_activation, hidden_activated, probabilities) =
+                    self.forward_with_activations(feature)?;
 
-                // Compute loss (cross-entropy)
-                let target_prob = probabilities[label];
-                let _loss = -A::ln(target_prob);
+                // Output-layer delta of softmax + cross-entropy: p - onehot(label).
+                let mut output_delta = probabilities;
+                output_delta[label] = output_delta[label] - A::one();
 
-                // Backward pass (simplified)
-                let mut output_grad = probabilities;
-                output_grad[label] = output_grad[label] - A::one();
-
-                // Update weights (simplified gradient descent)
-                let hidden = self.input_weights.dot(feature) + self.input_bias.clone();
-                let hidden_activated = hidden.mapv(|x| if x > A::zero() { x } else { A::zero() });
-
-                // Update output weights
-                for i in 0..self.output_weights.nrows() {
-                    for j in 0..self.output_weights.ncols() {
-                        self.output_weights[[i, j]] = self.output_weights[[i, j]]
-                            - learning_rate * output_grad[i] * hidden_activated[j];
+                // Hidden-layer delta: (W2ᵀ · output_delta) ⊙ relu'(pre_activation).
+                // Computed from the *pre-update* output weights, as backprop requires.
+                let mut hidden_delta: Array1<A> = Array1::zeros(hidden_units);
+                for j in 0..hidden_units {
+                    if pre_activation[j] > A::zero() {
+                        let mut acc = A::zero();
+                        for i in 0..num_outputs {
+                            acc = acc + self.output_weights[[i, j]] * output_delta[i];
+                        }
+                        hidden_delta[j] = acc;
                     }
+                    // ReLU derivative is 0 for non-positive pre-activations, so
+                    // hidden_delta[j] stays at its initialized zero there.
                 }
 
-                // Update output bias
-                for i in 0..self.output_bias.len() {
-                    self.output_bias[i] = self.output_bias[i] - learning_rate * output_grad[i];
+                // Update output weights and biases.
+                for i in 0..num_outputs {
+                    let delta = output_delta[i];
+                    for j in 0..hidden_units {
+                        self.output_weights[[i, j]] = self.output_weights[[i, j]]
+                            - learning_rate * delta * hidden_activated[j];
+                    }
+                    self.output_bias[i] = self.output_bias[i] - learning_rate * delta;
+                }
+
+                // Update hidden weights and biases (this is what used to be missing).
+                for j in 0..hidden_units {
+                    let delta = hidden_delta[j];
+                    if delta == A::zero() {
+                        continue;
+                    }
+                    for k in 0..input_units {
+                        self.input_weights[[j, k]] =
+                            self.input_weights[[j, k]] - learning_rate * delta * feature[k];
+                    }
+                    self.input_bias[j] = self.input_bias[j] - learning_rate * delta;
                 }
             }
         }
@@ -338,7 +535,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
             } => self.bandit_selection(&problem, *epsilon, *confidence),
             SelectionStrategy::MetaLearning {
                 feature_dim,
-                k_nearest,
+                k_nearest: _,
             } => self.meta_learning_selection(&problem, *feature_dim),
         }
     }
@@ -416,7 +613,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
     /// Ensemble selection by trying multiple optimizers
     fn ensemble_selection(
         &self,
-        problem: &ProblemCharacteristics,
+        _problem: &ProblemCharacteristics,
         num_candidates: usize,
         _evaluation_steps: usize,
     ) -> Result<OptimizerType> {
@@ -432,7 +629,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
     /// Bandit-based selection with epsilon-greedy strategy
     fn bandit_selection(
         &self,
-        problem: &ProblemCharacteristics,
+        _problem: &ProblemCharacteristics,
         epsilon: f64,
         confidence: f64,
     ) -> Result<OptimizerType> {
@@ -512,7 +709,8 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
             }
 
             // Sort by similarity
-            similarities.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("unwrap failed"));
+            // NaN similarities compare Equal instead of panicking.
+            similarities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
             // Take k _nearest and vote
             let mut votes: HashMap<OptimizerType, f64> = HashMap::new();
@@ -524,7 +722,7 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
             // Return optimizer with highest weighted vote
             let best_optimizer = votes
                 .iter()
-                .max_by(|a, b| a.1.partial_cmp(b.1).expect("unwrap failed"))
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(optimizer_, _)| *optimizer_)
                 .unwrap_or(OptimizerType::Adam);
 
@@ -577,18 +775,23 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
         let mut features = Vec::new();
         let mut labels = Vec::new();
 
-        for (problem, optimizer_, metrics) in &self.problem_optimizer_map {
-            let feature_vec = self.extract_problem_features(problem);
-            features.push(feature_vec);
-
-            // Convert optimizer to label
-            if let Some(label) = self
+        for (problem, optimizer_, _metrics) in &self.problem_optimizer_map {
+            // Convert optimizer to label; skip samples whose optimizer is not in
+            // the candidate set so features and labels stay aligned 1:1.
+            let Some(label) = self
                 .available_optimizers
                 .iter()
                 .position(|&opt| opt == *optimizer_)
-            {
-                labels.push(label);
-            }
+            else {
+                continue;
+            };
+
+            features.push(self.extract_problem_features(problem));
+            labels.push(label);
+        }
+
+        if features.is_empty() {
+            return Ok(()); // No usable training samples
         }
 
         // Create network if it doesn't exist
@@ -646,17 +849,17 @@ impl<A: Float + ScalarOperand + Debug + scirs2_core::numeric::FromPrimitive + Se
     /// Extract numerical features from problem characteristics
     fn extract_problem_features(&self, problem: &ProblemCharacteristics) -> Array1<A> {
         Array1::from_vec(vec![
-            A::from((problem.dataset_size as f64).ln()).expect("unwrap failed"),
-            A::from((problem.input_dim as f64).ln()).expect("unwrap failed"),
-            A::from((problem.output_dim as f64).ln()).expect("unwrap failed"),
-            A::from(problem.problem_type as u8 as f64).expect("unwrap failed"),
-            A::from(problem.gradient_sparsity).expect("unwrap failed"),
-            A::from(problem.gradient_noise).expect("unwrap failed"),
-            A::from((problem.memory_budget as f64).ln()).expect("unwrap failed"),
-            A::from(problem.time_budget.ln()).expect("unwrap failed"),
-            A::from((problem.batch_size as f64).ln()).expect("unwrap failed"),
-            A::from(problem.lr_sensitivity).expect("unwrap failed"),
-            A::from(problem.regularization_strength).expect("unwrap failed"),
+            A::from((problem.dataset_size as f64).ln()).unwrap_or_else(A::zero),
+            A::from((problem.input_dim as f64).ln()).unwrap_or_else(A::zero),
+            A::from((problem.output_dim as f64).ln()).unwrap_or_else(A::zero),
+            A::from(problem.problem_type as u8 as f64).unwrap_or_else(A::zero),
+            A::from(problem.gradient_sparsity).unwrap_or_else(A::zero),
+            A::from(problem.gradient_noise).unwrap_or_else(A::zero),
+            A::from((problem.memory_budget as f64).ln()).unwrap_or_else(A::zero),
+            A::from(problem.time_budget.ln()).unwrap_or_else(A::zero),
+            A::from((problem.batch_size as f64).ln()).unwrap_or_else(A::zero),
+            A::from(problem.lr_sensitivity).unwrap_or_else(A::zero),
+            A::from(problem.regularization_strength).unwrap_or_else(A::zero),
         ])
     }
 

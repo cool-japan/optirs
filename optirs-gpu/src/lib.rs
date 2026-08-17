@@ -1,81 +1,77 @@
-//! # OptiRS GPU - GPU Acceleration for ML Optimization
+//! # OptiRS GPU — GPU acceleration and GPU-aware optimizer tooling
 //!
-//! **Version:** 0.3.1
-//! **Status:** Framework Ready (GPU Kernels Coming Soon)
+//! **Version:** 0.3.2
 //!
-//! `optirs-gpu` provides GPU acceleration for OptiRS optimizers, built on
-//! [SciRS2](https://github.com/cool-japan/scirs)'s GPU abstractions.
+//! `optirs-gpu` has two halves, and it is worth being precise about which is
+//! which:
 //!
-//! ## Dependencies
+//! 1. **A real GPU optimizer path.** [`optimizers`] runs Adam, AdamW, SGD,
+//!    RMSprop, Adagrad and LAMB as compute shaders through
+//!    [`scirs2_core::gpu`]. Parameters and gradients are uploaded to device
+//!    buffers, a compiled pipeline is dispatched, and the result is read back;
+//!    the per-parameter optimizer state stays resident in device memory between
+//!    steps. The kernels ship in both WGSL and MSL ([`shaders`]) so the same
+//!    optimizer runs on whichever backend the machine can reach.
+//! 2. **A CPU library of GPU-*aware* algorithms.** [`occupancy`],
+//!    [`kernel_fusion`], [`quantization`], [`sparse_optimizer`] and
+//!    [`memory::allocation`] / [`memory::management`] are pure-CPU models,
+//!    planners and numerical routines that reason *about* GPU execution. They
+//!    have no device dependency and are fully covered by unit tests.
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
+//! ## Backend support matrix
 //!
-//! ## Implementation Status (v0.1.0)
+//! | Backend | Status |
+//! |---------|--------|
+//! | Metal (`metal`, automatic on macOS) | ✅ real compute: MSL pipelines, buffers, dispatch, readback |
+//! | WebGPU (`wgpu`, default) | ✅ WGSL kernels are implemented, but `scirs2-core` 0.6.5's runtime device probe never enumerates wgpu adapters, so `GpuContext::new(Wgpu)` currently fails everywhere. The path goes live when that probe is fixed |
+//! | OpenCL (`opencl`) | 🚧 context creation only — no OpenCL C kernel sources are shipped |
+//! | CUDA (`cuda`) | ❌ not available — `scirs2-core` removed its CUDA backend in 0.6.x; the feature gates reporting code only |
+//! | ROCm | ❌ not available |
 //!
-//! - ✅ GPU context management
-//! - ✅ Multi-backend support framework (CUDA, Metal, OpenCL, WebGPU)
-//! - ✅ Memory transfer utilities
-//! - ✅ Configuration and initialization
-//! - 🚧 GPU kernels (in development)
-//! - 🚧 Tensor cores support (in development)
-//! - 📝 Multi-GPU coordination (planned)
+//! [`optimizers::GpuOptimizerConfig`] defaults to probing
+//! [`optimizers::SUPPORTED_BACKENDS`] in order and using the first that opens.
 //!
-//! ## Status: Coming Soon
+//! ## Not implemented (and not faked)
 //!
-//! This crate is under active development. GPU acceleration will leverage:
-//! - `scirs2_core::gpu` for GPU context and memory management
-//! - `scirs2_core::tensor_cores` for mixed-precision training
-//! - `scirs2_core::array_protocol::GPUArray` for zero-copy operations
+//! * Cross-**device** collectives. [`multi_gpu`] can drive a real reduction
+//!   kernel on a single device; anything that would require moving data
+//!   between two physical GPUs returns
+//!   [`GpuOptimError::UnsupportedOperation`].
+//! * Literal NVIDIA tensor cores / `wmma`. [`tensor_cores`] provides a real
+//!   mixed-precision tiled GEMM on the wgpu path and reports honest errors for
+//!   the NVIDIA-only operations.
 //!
-//! ## Planned Features
+//! ## Example
 //!
-//! ### Multi-Backend Support
-//! - **CUDA** - NVIDIA GPUs with full tensor core support
-//! - **Metal** - Apple Silicon M1/M2/M3 with unified memory
-//! - **OpenCL** - Cross-platform GPU compute
-//! - **WebGPU** - Browser and cross-platform support
-//!
-//! ### Performance Optimizations
-//! - **Tensor Cores** - FP16/BF16 mixed-precision training
-//! - **Memory Pools** - Advanced GPU memory management
-//! - **Kernel Fusion** - Optimized kernel execution
-//! - **Multi-GPU** - Distributed optimization across GPUs
-//!
-//! ### Expected Speedup
-//! - **10-50x** for large models (1M+ parameters)
-//! - **100x+** for very large models (100M+ parameters)
-//! - **Near-linear scaling** with multiple GPUs
-//!
-//! ## Example Usage (Future)
-//!
-//! ```rust,ignore
+//! ```no_run
+//! use optirs_gpu::optimizers::{AdamParams, GpuAdam};
 //! use optirs_gpu::GpuOptimizer;
-//! use optirs::prelude::*;
 //! use scirs2_core::ndarray::Array1;
 //!
-//! // Create GPU-accelerated optimizer
-//! let optimizer = Adam::new(0.001);
-//! let mut gpu_opt = GpuOptimizer::new(optimizer)?;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut optimizer = GpuAdam::new(AdamParams::default())?;
+//! optimizer.to_gpu()?;
 //!
-//! // Use like any optimizer - GPU acceleration is automatic
-//! let params = Array1::from_elem(1_000_000, 1.0);
-//! let grads = Array1::from_elem(1_000_000, 0.01);
-//! let updated = gpu_opt.step(&params, &grads)?;
+//! let mut params = Array1::from_elem(1_024, 1.0f32);
+//! let grads = Array1::from_elem(1_024, 0.01f32);
+//! optimizer.step_gpu(&mut params, &grads)?;
+//!
+//! // Bring the moment estimates back to host memory when done.
+//! optimizer.to_cpu()?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Architecture
 //!
-//! Built exclusively on SciRS2:
-//! - **GPU Context**: `scirs2_core::gpu::GpuContext`
-//! - **GPU Memory**: `scirs2_core::gpu::GpuBuffer`
-//! - **GPU Kernels**: `scirs2_core::gpu::GpuKernel`
-//! - **Tensor Cores**: `scirs2_core::tensor_cores`
-//! - **Zero-Copy**: `scirs2_core::array_protocol::GPUArray`
+//! Every device access goes through SciRS2:
+//! - **GPU context**: `scirs2_core::gpu::GpuContext`
+//! - **GPU memory**: `scirs2_core::gpu::GpuBuffer`
+//! - **Kernel compilation**: `scirs2_core::gpu::GpuCompiler`
 //!
-//! ## Contributing
-//!
-//! GPU acceleration development follows SciRS2 integration guidelines.
-//! All GPU operations must use `scirs2_core::gpu` abstractions.
+//! `wgpu`, `pollster`, `metal` and friends are *not* direct dependencies of
+//! this crate; they arrive through the `scirs2-core/<backend>` features that
+//! this crate's features forward.
 
 use scirs2_core::gpu::GpuError;
 use scirs2_core::ndarray::{Array, Dimension};
@@ -85,9 +81,12 @@ pub mod backends;
 pub mod kernel_fusion;
 pub mod kernels;
 pub mod memory;
+pub mod mixed_precision;
 pub mod multi_gpu;
 pub mod occupancy;
+pub mod optimizers;
 pub mod quantization;
+pub mod shaders;
 pub mod sparse_optimizer;
 pub mod tensor_cores;
 pub mod utils;
@@ -95,9 +94,16 @@ pub mod utils;
 pub use backends::GpuBackend;
 pub use kernel_fusion::{FusionGraph, FusionGroup, FusionOp, FusionPlan, FusionPlanner, OpKind};
 pub use memory::MemoryPool;
+pub use mixed_precision::{
+    f16_bits_to_f32, f32_to_f16_bits, DynamicLossScaler, MixedPrecisionConfig, OverflowStats,
+};
 pub use occupancy::{
     calculate_occupancy, optimal_block_size, KernelResourceUsage, OccupancyLimiter,
     OccupancyResult, SmResourceLimits,
+};
+pub use optimizers::{
+    AdagradParams, AdamParams, GpuAdagrad, GpuAdam, GpuAdamW, GpuLamb, GpuOptimizerConfig,
+    GpuRmsprop, GpuSgd, RmspropParams, SgdParams,
 };
 pub use quantization::{
     fake_quant_backward, fake_quant_fp8, fake_quant_int, fake_quant_int_per_channel,

@@ -1,6 +1,6 @@
 //! # OptiRS NAS - Neural Architecture Search
 //!
-//! **Version:** 0.3.1
+//! **Version:** 0.3.2
 //! **Status:** Research Phase (Early Development)
 //!
 //! ⚠️ **Warning:** This crate is in early research phase. APIs are unstable and may change
@@ -213,123 +213,53 @@ pub enum EvaluationMetric {
     TrainingTime,
 }
 
-/// Evaluation results for an architecture
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationResults {
-    /// Final evaluation metrics
-    pub metrics: EvaluationMetric,
-    /// Training history
-    pub history: Vec<f64>,
-    /// Validation accuracy
-    pub validation_accuracy: f64,
-    /// Metric scores by type
-    pub metric_scores: std::collections::HashMap<EvaluationMetric, f64>,
-    /// Overall aggregated score
-    pub overall_score: f64,
-    /// Confidence intervals for metrics
-    pub confidence_intervals: std::collections::HashMap<EvaluationMetric, (f64, f64)>,
-    /// Time taken for evaluation
-    pub evaluation_time: std::time::Duration,
-    /// Whether evaluation was successful
-    pub success: bool,
-    /// Error message if evaluation failed
-    pub error_message: Option<String>,
-    /// Benchmark results
-    pub benchmark_results: Vec<BenchmarkResult>,
-    /// Cross-validation results
-    pub cv_results: CrossValidationResults,
-    /// Training trajectory over time
-    pub training_trajectory: Vec<TrainingPoint>,
-}
+// ---------------------------------------------------------------------------
+// Canonical result / architecture types
+// ---------------------------------------------------------------------------
+//
+// The generic, element-type-parameterised definitions in
+// [`nas_engine::results`] are the single source of truth for architectures,
+// evaluation results and resource accounting. They are re-exported here so
+// `optirs_nas::OptimizerArchitecture<T>` and
+// `nas_engine::results::OptimizerArchitecture<T>` name the *same* type. Earlier
+// releases carried a second, `f64`-only copy of each of these structs at the
+// crate root; those duplicates are gone.
 
-/// Benchmark result for a specific task
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BenchmarkResult {
-    /// Benchmark name
-    pub name: String,
-    /// Score achieved
-    pub score: f64,
-    /// Execution time
-    pub execution_time: std::time::Duration,
-}
+pub use nas_engine::config::NASConfig;
+pub use nas_engine::results::{
+    BenchmarkResult, CrossValidationResults, EvaluationResults, OptimizerArchitecture,
+    ResourceUsage, TrainingSnapshot,
+};
 
-/// Cross-validation results
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrossValidationResults {
-    /// Mean score across folds
-    pub mean_score: f64,
-    /// Standard deviation across folds
-    pub std_score: f64,
-    /// Individual fold scores
-    pub fold_scores: Vec<f64>,
-    /// Number of folds used
-    pub num_folds: usize,
-}
-
-/// Training point for trajectory tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrainingPoint {
-    /// Training step/epoch
-    pub step: usize,
-    /// Training loss
-    pub training_loss: f64,
-    /// Validation loss
-    pub validation_loss: Option<f64>,
-    /// Timestamp (elapsed time in seconds since start)
-    pub timestamp_secs: f64,
-}
-
-/// Optimizer architecture representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OptimizerArchitecture {
-    /// Architecture identifier
-    pub id: String,
-    /// Architecture parameters
-    pub parameters: std::collections::HashMap<String, f64>,
-    /// Architecture structure
-    pub structure: Vec<String>,
-}
-
-/// Resource usage tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceUsage {
-    /// Memory usage in bytes
-    pub memory_usage: usize,
-    /// Compute time in seconds
-    pub compute_time: f64,
-    /// Energy consumption in joules
-    pub energy_consumption: f64,
-    /// Memory usage in GB
-    pub memory_gb: f64,
-    /// CPU time in seconds
-    pub cpu_time_seconds: f64,
-    /// GPU time in seconds
-    pub gpu_time_seconds: f64,
-    /// Energy consumption in kWh
-    pub energy_kwh: f64,
-    /// Cost in USD
-    pub cost_usd: f64,
-    /// Network usage in GB
-    pub network_gb: f64,
-}
-
-/// NAS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NASConfig {
-    /// Search budget (number of architectures to evaluate)
-    pub search_budget: usize,
-    /// Population size for evolutionary algorithms
-    pub population_size: usize,
-    /// Number of generations
-    pub generations: usize,
-}
-
-impl Default for NASConfig {
+impl Default for EvaluationConfig {
     fn default() -> Self {
         Self {
-            search_budget: 1000,
-            population_size: 50,
-            generations: 20,
+            epochs: 20,
+            batch_size: 32,
+            learning_rate: 1e-3,
+            performance_prediction: false,
+        }
+    }
+}
+
+impl EvaluationConfig {
+    /// Derive an evaluation configuration from the richer, generic
+    /// [`nas_engine::config::EvaluationConfig`] carried by [`NASConfig`].
+    ///
+    /// The engine-level configuration describes budgets and statistical
+    /// testing; the evaluation subsystem only needs the step budget, batch size
+    /// and base learning rate, plus whether performance prediction is enabled.
+    /// `max_epochs` is clamped to at least one step so an evaluation always
+    /// performs real work.
+    pub fn from_engine_config<T>(config: &nas_engine::config::EvaluationConfig<T>) -> Self
+    where
+        T: scirs2_core::numeric::Float + std::fmt::Debug + Send + Sync + 'static,
+    {
+        Self {
+            epochs: config.evaluation_budget.max_epochs.max(1) as u32,
+            batch_size: 32,
+            learning_rate: 1e-3,
+            performance_prediction: false,
         }
     }
 }

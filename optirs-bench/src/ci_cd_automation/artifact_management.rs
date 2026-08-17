@@ -529,12 +529,19 @@ pub struct CleanupResult {
     pub run_id: String,
     /// Cleanup timestamp
     pub timestamp: SystemTime,
-    /// Artifacts processed
+    /// Artifacts an enabled rule actually acted on (deleted or archived) --
+    /// never counts an artifact that only *matched* a rule whose action is
+    /// unimplemented or that failed a registry lookup.
     pub artifacts_processed: usize,
     /// Artifacts deleted
     pub artifacts_deleted: usize,
     /// Artifacts archived
     pub artifacts_archived: usize,
+    /// Artifacts that matched an enabled rule but were left untouched,
+    /// because the rule's action (`MoveToStorageClass`/`Compress`/
+    /// `TagForReview`) has no implementation, or the matched key was no
+    /// longer present in the registry by the time the action ran.
+    pub artifacts_skipped: usize,
     /// Space freed (bytes)
     pub space_freed_bytes: u64,
     /// Cleanup duration
@@ -563,6 +570,140 @@ pub struct LocalStorageConfig {
     pub dir_permissions: Option<u32>,
     /// Enable symbolic links
     pub allow_symlinks: bool,
+}
+
+/// Compute a real checksum of `buffer` for every [`ChecksumAlgorithm`] this
+/// crate can implement without a new dependency. `Blake2b` is the one
+/// exception (no Blake2 implementation is linked into this crate and
+/// hand-rolling one is out of scope here); it returns an explicit `Err`
+/// rather than a fabricated value shaped like `"checksum_<len>"`.
+fn compute_checksum(buffer: &[u8], algorithm: ChecksumAlgorithm) -> Result<String> {
+    match algorithm {
+        ChecksumAlgorithm::SHA256 => {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(buffer);
+            Ok(hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect())
+        }
+        ChecksumAlgorithm::SHA512 => {
+            use sha2::{Digest, Sha512};
+            let mut hasher = Sha512::new();
+            hasher.update(buffer);
+            Ok(hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect())
+        }
+        ChecksumAlgorithm::MD5 => {
+            let mut hasher = md5::Context::new();
+            hasher.consume(buffer);
+            Ok(hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect())
+        }
+        ChecksumAlgorithm::SHA1 => Ok(sha1_hex(buffer)),
+        ChecksumAlgorithm::CRC32 => Ok(format!("{:08x}", crc32(buffer))),
+        ChecksumAlgorithm::Blake2b => Err(OptimError::UnsupportedOperation(
+            "Blake2b checksums are not implemented (no Blake2 dependency is linked into this \
+             crate); use SHA256, SHA512, SHA1, MD5, or CRC32 instead"
+                .to_string(),
+        )),
+    }
+}
+
+/// Standard IEEE 802.3 CRC-32 (the algorithm used by zlib/PNG/gzip), computed
+/// bit-by-bit with no lookup table so no extra static data is required.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// SHA-1 (FIPS 180-4). Used only as a checksum here, never for anything
+/// security-sensitive; implemented directly since no `sha1` crate is a
+/// workspace dependency and adding one for a single legacy checksum format
+/// is not warranted.
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h0: u32 = 0x6745_2301;
+    let mut h1: u32 = 0xEFCD_AB89;
+    let mut h2: u32 = 0x98BA_DCFE;
+    let mut h3: u32 = 0x1032_5476;
+    let mut h4: u32 = 0xC3D2_E1F0;
+
+    let message_bit_len = (data.len() as u64) * 8;
+    let mut message = data.to_vec();
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&message_bit_len.to_be_bytes());
+
+    for chunk in message.chunks(64) {
+        let mut w = [0u32; 80];
+        for (i, word) in w.iter_mut().take(16).enumerate() {
+            *word = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+
+        let (mut a, mut b, mut c, mut d, mut e) = (h0, h1, h2, h3, h4);
+        for (i, word) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A82_7999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1u32),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDCu32),
+                _ => (b ^ c ^ d, 0xCA62_C1D6u32),
+            };
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+
+        h0 = h0.wrapping_add(a);
+        h1 = h1.wrapping_add(b);
+        h2 = h2.wrapping_add(c);
+        h3 = h3.wrapping_add(d);
+        h4 = h4.wrapping_add(e);
+    }
+
+    let mut out = [0u8; 20];
+    out[0..4].copy_from_slice(&h0.to_be_bytes());
+    out[4..8].copy_from_slice(&h1.to_be_bytes());
+    out[8..12].copy_from_slice(&h2.to_be_bytes());
+    out[12..16].copy_from_slice(&h3.to_be_bytes());
+    out[16..20].copy_from_slice(&h4.to_be_bytes());
+    out
+}
+
+fn sha1_hex(data: &[u8]) -> String {
+    sha1(data).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl ArtifactManager {
@@ -635,6 +776,30 @@ impl ArtifactManager {
                 std::io::ErrorKind::NotFound,
                 format!("File not found: {:?}", local_path),
             )));
+        }
+
+        // `compress`/`encrypt` have no backend implementation in this crate
+        // (compression would need an oxiarc-* dependency, encryption a
+        // symmetric-cipher dependency; neither is linked in). Requesting
+        // either must fail loudly rather than silently uploading the file
+        // unmodified while `ArtifactMetadata::{compression,encryption}`
+        // stays `None` -- a caller relying on "encrypt: true" to protect
+        // data at rest must never get silent plaintext instead.
+        if self.config.upload.compress {
+            return Err(OptimError::UnsupportedOperation(
+                "ArtifactUploadConfig::compress is set but no compression backend is \
+                 implemented in this crate; set compress = false, or compress the file \
+                 yourself before calling upload_artifact"
+                    .to_string(),
+            ));
+        }
+        if self.config.upload.encrypt {
+            return Err(OptimError::UnsupportedOperation(
+                "ArtifactUploadConfig::encrypt is set but no encryption backend is \
+                 implemented in this crate; set encrypt = false, or encrypt the file \
+                 yourself before calling upload_artifact"
+                    .to_string(),
+            ));
         }
 
         // Create artifact metadata
@@ -770,37 +935,10 @@ impl ArtifactManager {
         use std::io::Read;
 
         let mut file = fs::File::open(path).map_err(OptimError::IO)?;
-
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).map_err(OptimError::IO)?;
 
-        let checksum = match algorithm {
-            ChecksumAlgorithm::SHA256 => {
-                use sha2::{Digest, Sha256};
-                let mut hasher = Sha256::new();
-                hasher.update(&buffer);
-                hasher
-                    .finalize()
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>()
-            }
-            ChecksumAlgorithm::MD5 => {
-                let mut hasher = md5::Context::new();
-                hasher.consume(&buffer);
-                hasher
-                    .finalize()
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>()
-            }
-            _ => {
-                // Simplified implementation for other algorithms
-                format!("checksum_{}", buffer.len())
-            }
-        };
-
-        Ok(checksum)
+        compute_checksum(&buffer, algorithm)
     }
 
     /// Determine content type from file extension
@@ -910,6 +1048,8 @@ impl ArtifactStorage for LocalArtifactStorage {
     }
 
     fn get_metadata(&self, remote_key: &str) -> Result<ArtifactMetadata> {
+        use std::io::Read;
+
         let file_path = self.base_path.join(remote_key);
         let metadata = fs::metadata(&file_path).map_err(OptimError::IO)?;
 
@@ -919,11 +1059,26 @@ impl ArtifactStorage for LocalArtifactStorage {
             .unwrap_or("unknown")
             .to_string();
 
+        let mut file = fs::File::open(&file_path).map_err(OptimError::IO)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).map_err(OptimError::IO)?;
+        let checksum = compute_checksum(&buffer, ChecksumAlgorithm::SHA256)?;
+        let content_type = match file_path.extension().and_then(|ext| ext.to_str()) {
+            Some("json") => "application/json".to_string(),
+            Some("xml") => "application/xml".to_string(),
+            Some("html") | Some("htm") => "text/html".to_string(),
+            Some("txt") => "text/plain".to_string(),
+            Some("zip") => "application/zip".to_string(),
+            Some("tar") => "application/x-tar".to_string(),
+            Some("gz") => "application/gzip".to_string(),
+            _ => "application/octet-stream".to_string(),
+        };
+
         Ok(ArtifactMetadata {
             filename,
             size_bytes: metadata.len(),
-            content_type: "application/octet-stream".to_string(), // Simplified
-            checksum: "unknown".to_string(), // Would compute in real implementation
+            content_type,
+            checksum,
             checksum_algorithm: ChecksumAlgorithm::SHA256,
             compression: None,
             encryption: None,
@@ -1364,9 +1519,9 @@ impl RetentionManager {
         let run_id = uuid::Uuid::new_v4().to_string();
         let start_time = SystemTime::now();
 
-        let mut artifacts_processed = 0;
         let mut artifacts_deleted = 0;
         let mut artifacts_archived = 0;
+        let mut artifacts_skipped = 0;
         let mut space_freed = 0u64;
 
         // Apply cleanup rules
@@ -1388,8 +1543,6 @@ impl RetentionManager {
                 .collect();
 
             for artifact_key in artifacts_to_process {
-                artifacts_processed += 1;
-
                 match rule.action {
                     CleanupAction::Delete => {
                         if let Some(artifact) = registry.get_artifact(&artifact_key) {
@@ -1397,21 +1550,45 @@ impl RetentionManager {
                             storage.delete(&artifact_key)?;
                             registry.remove_artifact(&artifact_key);
                             artifacts_deleted += 1;
+                        } else {
+                            artifacts_skipped += 1;
                         }
                     }
                     CleanupAction::Archive => {
                         if let Some(artifact) = registry.get_artifact_mut(&artifact_key) {
                             artifact.status = ArtifactStatus::Archived;
                             artifacts_archived += 1;
+                        } else {
+                            artifacts_skipped += 1;
                         }
                     }
-                    _ => {
-                        // Other actions not implemented in this simplified version
+                    CleanupAction::Log => {
+                        // Log-only rule: record the match and leave the artifact
+                        // untouched; it is not counted as processed.
+                        log::info!(
+                            "cleanup rule '{}' matched artifact '{artifact_key}' (log-only, no action taken)",
+                            rule.name
+                        );
+                        artifacts_skipped += 1;
+                    }
+                    CleanupAction::MoveToStorageClass { .. }
+                    | CleanupAction::Compress
+                    | CleanupAction::TagForReview => {
+                        // Matched a rule, but this action has no implementation
+                        // yet: count it as skipped, never as processed.
+                        log::warn!(
+                            "cleanup rule '{}' matched artifact '{artifact_key}' but its \
+                             action ({:?}) is not implemented; leaving the artifact untouched",
+                            rule.name,
+                            rule.action
+                        );
+                        artifacts_skipped += 1;
                     }
                 }
             }
         }
 
+        let artifacts_processed = artifacts_deleted + artifacts_archived;
         let duration = SystemTime::now()
             .duration_since(start_time)
             .unwrap_or(Duration::from_secs(0));
@@ -1422,11 +1599,13 @@ impl RetentionManager {
             artifacts_processed,
             artifacts_deleted,
             artifacts_archived,
+            artifacts_skipped,
             space_freed_bytes: space_freed,
             duration,
             summary: format!(
-                "Processed {} artifacts, deleted {}, archived {}, freed {} bytes",
-                artifacts_processed, artifacts_deleted, artifacts_archived, space_freed
+                "Processed {artifacts_processed} artifact(s) (deleted {artifacts_deleted}, \
+                 archived {artifacts_archived}), skipped {artifacts_skipped}, freed \
+                 {space_freed} bytes"
             ),
         };
 
@@ -1446,7 +1625,18 @@ impl RetentionManager {
             }
             CleanupCondition::Status { status } => artifact.status == *status,
             CleanupCondition::Tag { tag } => artifact.tags.contains(tag),
-            _ => false, // Other conditions not implemented in this simplified version
+            CleanupCondition::Size { max_size_gb } => {
+                let size_gb = artifact.metadata.size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                size_gb > *max_size_gb
+            }
+            // `Count` is registry-wide (depends on ranking every artifact,
+            // not just this one) and `Custom` requires an expression
+            // evaluator; neither is implementable from a single
+            // `ArtifactRecord`. Matching `false` here is the conservative,
+            // honest choice (never clean up an artifact this rule cannot
+            // actually evaluate) rather than a silent no-op disguised as a
+            // real check.
+            CleanupCondition::Count { .. } | CleanupCondition::Custom { .. } => false,
         }
     }
 }
@@ -1573,6 +1763,41 @@ mod tests {
     fn test_checksum_algorithms() {
         assert_ne!(ChecksumAlgorithm::SHA256, ChecksumAlgorithm::MD5);
         assert_eq!(ChecksumAlgorithm::SHA256, ChecksumAlgorithm::SHA256);
+    }
+
+    #[test]
+    fn sha1_matches_known_test_vectors() {
+        assert_eq!(sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            sha1_hex(b"The quick brown fox jumps over the lazy dog"),
+            "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"
+        );
+    }
+
+    #[test]
+    fn crc32_matches_known_test_vectors() {
+        assert_eq!(crc32(b""), 0);
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[test]
+    fn compute_checksum_rejects_unimplemented_blake2b() {
+        let result = compute_checksum(b"data", ChecksumAlgorithm::Blake2b);
+        assert!(
+            result.is_err(),
+            "Blake2b must fail explicitly, not fabricate a value"
+        );
+    }
+
+    #[test]
+    fn compute_checksum_sha512_and_sha1_and_crc32_are_real() {
+        let sha512 = compute_checksum(b"abc", ChecksumAlgorithm::SHA512).expect("sha512 ok");
+        assert_eq!(sha512.len(), 128); // 64 bytes hex-encoded
+        let sha1 = compute_checksum(b"abc", ChecksumAlgorithm::SHA1).expect("sha1 ok");
+        assert_eq!(sha1, "a9993e364706816aba3e25717850c26c9cd0d89d");
+        let crc = compute_checksum(b"123456789", ChecksumAlgorithm::CRC32).expect("crc32 ok");
+        assert_eq!(crc, "cbf43926");
     }
 
     #[test]

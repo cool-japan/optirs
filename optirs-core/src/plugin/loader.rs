@@ -12,12 +12,52 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
+// RSA-PKCS#1v1.5 signature verification over a SHA-256 digest. The `rsa`
+// crate's transitive `sha2`/`digest` versions differ from this workspace's
+// own `sha2` dependency (0.10.x vs 0.11.x -- two distinct crate versions,
+// hence two distinct `Digest`/`AssociatedOid` traits), so the *prefixed*
+// `Pkcs1v15Sign::new::<D>()` constructor -- which needs `D: AssociatedOid`
+// from rsa's own `digest` version -- is not usable with our `Sha256` type.
+// `Pkcs1v15Sign::new_unprefixed()` signs/verifies the raw digest bytes
+// directly (no embedded ASN.1 DigestInfo hash-algorithm prefix), which is a
+// standard PKCS#1v1.5 mode and sidesteps the version mismatch since signer
+// and verifier here always agree out-of-band on SHA-256.
 #[cfg(feature = "crypto")]
-use rsa::{traits::PaddingScheme, RsaPublicKey};
+use rsa::{pkcs1v15::Pkcs1v15Sign, pkcs8::DecodePublicKey, RsaPublicKey};
 #[cfg(feature = "crypto")]
 use sha2::{Digest, Sha256};
+
+/// Compute the SHA-256 digest of a file's full contents. `crypto`-gated
+/// alongside the signature verification that consumes it.
 #[cfg(feature = "crypto")]
-use x509_parser::prelude::*;
+fn sha256_file(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&buffer);
+    Ok(hasher.finalize().to_vec())
+}
+
+/// Decode a hex string (as produced by `encode_hex`) into raw bytes,
+/// returning an honest error on malformed input rather than panicking.
+#[cfg(feature = "crypto")]
+fn decode_hex(s: &str) -> Result<Vec<u8>> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return Err(OptimError::InvalidConfig(
+            "hex string has an odd length".to_string(),
+        ));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|_| OptimError::InvalidConfig(format!("invalid hex byte at offset {i}")))
+        })
+        .collect()
+}
 
 /// Plugin loader for managing plugin loading and unloading
 #[derive(Debug)]
@@ -722,68 +762,24 @@ impl PluginLoader {
     // Private helper methods
 
     /// Load plugin from Git repository
+    /// Git-sourced plugin loading would require compiling arbitrary
+    /// downloaded code into this process (dlopen or equivalent), which this
+    /// crate does not implement (see the module-level note on dynamic
+    /// loading). Rather than fabricate a clone/build pipeline that can never
+    /// produce a callable optimizer, this returns an honest, immediate
+    /// error. Register optimizers at compile time instead via
+    /// `PluginRegistry::register_plugin`.
     fn load_plugin_from_git(
         &mut self,
-        url: &str,
-        branch: Option<&str>,
-        config: &PluginConfig,
+        _url: &str,
+        _branch: Option<&str>,
+        _config: &PluginConfig,
     ) -> Result<PluginLoadResult> {
-        let start_time = std::time::Instant::now();
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
-
-        // Create temporary directory for clone
-        let _temp_dir = std::env::temp_dir().join(format!(
-            "plugin_{}_{}",
-            config.name,
-            start_time.elapsed().as_nanos()
-        ));
-
-        // Clone repository (simplified implementation - would need git2 crate)
-        // This is a placeholder implementation
-        errors.push(
-            "Git plugin loading not yet fully implemented - requires git2 dependency".to_string(),
-        );
-        warnings.push("Git cloning functionality requires additional dependencies".to_string());
-
-        // Implement Git cloning (simulation for now - would use git2 crate in production)
-        let temp_dir = std::env::temp_dir().join(format!("plugin_git_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_dir)?;
-
-        // Simulate git clone operation
-        let clone_result = self.simulate_git_clone(url, branch, &temp_dir)?;
-        if clone_result.success {
-            // Look for plugin files in the cloned repository
-            let plugin_candidates = self.find_plugin_files(&temp_dir)?;
-
-            if let Some(plugin_path) = plugin_candidates.first() {
-                // Load the plugin from the found file
-                let load_result = self.load_from_file(plugin_path)?;
-
-                // Clean up temporary directory
-                let _ = std::fs::remove_dir_all(&temp_dir);
-
-                return Ok(load_result);
-            } else {
-                errors.push("No plugin files found in Git repository".to_string());
-            }
-        } else {
-            errors.extend(clone_result.errors);
-        }
-
-        // Clean up on failure
-        let _ = std::fs::remove_dir_all(&temp_dir);
-
-        let security_results = SecurityScanResult::default();
-
-        Ok(PluginLoadResult {
-            success: false,
-            plugin_info: None,
-            errors,
-            warnings,
-            load_time: start_time.elapsed(),
-            security_results,
-        })
+        Err(OptimError::UnsupportedOperation(
+            "dynamic loading from a Git repository is not supported; use static registration \
+             via PluginRegistry::register_plugin instead"
+                .to_string(),
+        ))
     }
 
     /// Load plugin from package registry
@@ -1476,7 +1472,8 @@ impl SecurityManager {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(&buffer);
-            Ok(format!("{:x}", hasher.finalize()))
+            let digest = hasher.finalize();
+            Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
         }
         #[cfg(not(feature = "crypto"))]
         {
@@ -1544,7 +1541,11 @@ impl CryptographicValidator {
         if !sig_path.exists() {
             return Ok(SignatureVerificationResult {
                 valid: false,
-                errors: vec!["No signature file found".to_string()],
+                errors: vec![format!(
+                    "No signature file found for plugin '{}' at {}",
+                    metadata.plugin.name,
+                    sig_path.display()
+                )],
                 warnings: Vec::new(),
                 chain_valid: false,
                 signer_info: None,
@@ -1552,26 +1553,95 @@ impl CryptographicValidator {
             });
         }
 
-        // In a real implementation, this would:
-        // 1. Load the signature file
-        // 2. Parse the signature and certificate chain
-        // 3. Verify the signature against the plugin file
-        // 4. Validate the certificate chain against trusted CAs
-        // 5. Check certificate validity dates and revocation status
-
         #[cfg(feature = "crypto")]
         {
-            // Placeholder for actual cryptographic verification
-            // This would use RSA/ECDSA verification with x509 certificate validation
+            // `plugin.sig` is expected to hold a hex-encoded RSA PKCS#1v1.5
+            // signature (see `PluginLoader::verify_package_signature`) over
+            // the SHA-256 digest of the plugin file at `path`. Full X.509
+            // certificate-chain validation (trust path, revocation, expiry)
+            // is not implemented -- `_trustedcas[i].public_key` is used
+            // directly as a flat trusted-key allowlist, and `chain_valid`
+            // reports the same result as `valid` since there is no separate
+            // chain to validate.
+            let signature_hex = std::fs::read_to_string(&sig_path).map_err(|e| {
+                OptimError::InvalidConfig(format!(
+                    "failed to read signature file {}: {e}",
+                    sig_path.display()
+                ))
+            })?;
+
+            if self._trustedcas.is_empty() {
+                return Ok(SignatureVerificationResult {
+                    valid: false,
+                    errors: vec![
+                        "No trusted public keys configured; cannot verify signature".to_string()
+                    ],
+                    warnings: Vec::new(),
+                    chain_valid: false,
+                    signer_info: None,
+                    algorithm: Some(self.config.required_algorithm),
+                });
+            }
+
+            let digest = match sha256_file(path) {
+                Ok(d) => d,
+                Err(e) => {
+                    return Ok(SignatureVerificationResult {
+                        valid: false,
+                        errors: vec![format!("failed to hash plugin file: {e}")],
+                        warnings: Vec::new(),
+                        chain_valid: false,
+                        signer_info: None,
+                        algorithm: Some(self.config.required_algorithm),
+                    });
+                }
+            };
+
+            let sig_bytes = match decode_hex(&signature_hex) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Ok(SignatureVerificationResult {
+                        valid: false,
+                        errors: vec![format!("malformed signature file: {e}")],
+                        warnings: Vec::new(),
+                        chain_valid: false,
+                        signer_info: None,
+                        algorithm: Some(self.config.required_algorithm),
+                    });
+                }
+            };
+
+            let mut errors = Vec::new();
+            let mut valid = false;
+            for ca in &self._trustedcas {
+                match RsaPublicKey::from_public_key_pem(&ca.public_key) {
+                    Ok(public_key) => {
+                        if public_key
+                            .verify(Pkcs1v15Sign::new_unprefixed(), &digest, &sig_bytes)
+                            .is_ok()
+                        {
+                            valid = true;
+                            break;
+                        }
+                    }
+                    Err(e) => errors.push(format!(
+                        "trusted CA '{}' has an unparseable public key: {e}",
+                        ca.name
+                    )),
+                }
+            }
+            if !valid {
+                errors.push(
+                    "signature did not verify against any configured trusted public key"
+                        .to_string(),
+                );
+            }
+
             Ok(SignatureVerificationResult {
-                valid: false,
-                errors: vec![
-                    "Cryptographic signature verification not yet fully implemented".to_string(),
-                ],
-                warnings: vec![
-                    "Full crypto implementation requires additional dependencies".to_string(),
-                ],
-                chain_valid: false,
+                valid,
+                errors: if valid { Vec::new() } else { errors },
+                warnings: Vec::new(),
+                chain_valid: valid,
                 signer_info: None,
                 algorithm: Some(self.config.required_algorithm),
             })
@@ -1580,7 +1650,10 @@ impl CryptographicValidator {
         {
             Ok(SignatureVerificationResult {
                 valid: false,
-                errors: vec!["Cryptographic features not enabled".to_string()],
+                errors: vec![format!(
+                    "Cryptographic features not enabled; cannot verify signature for plugin '{}'",
+                    metadata.plugin.name
+                )],
                 warnings: vec![
                     "Build with --features crypto for signature verification".to_string()
                 ],

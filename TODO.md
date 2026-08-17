@@ -1,8 +1,8 @@
-# OptiRS TODO - v0.3.1 (Stable Release)
+# OptiRS TODO - v0.3.2 (Stable Release)
 
 ## Project Status: Stable Release - Production Ready
 
-**Current Version**: v0.3.1
+**Current Version**: v0.3.2
 **Release Date**: 2026-03-27
 **Total Tests**: 2,004 unit/integration tests passing (`cargo nextest --workspace --all-features`; 9 skipped) + doc tests
 **SLoC**: 254,494 lines of Rust code (985 files, 325,228 total lines)
