@@ -698,3 +698,60 @@ fn the_unroll_horizon_is_derived_from_the_observed_trajectories() {
         "the horizon is still the hardcoded 8 regardless of input"
     );
 }
+
+/// A coordinate with no usable convex signal must not manufacture an absurd task.
+///
+/// The first version clamped a non-positive least-squares slope up to
+/// `min_curvature = 1e-6` and kept the intercept relation
+/// `θ* = mean_x − mean_y/a`, which places the optimum up to a **million** units
+/// from anything the trajectory visited — an enormous fake loss that then gets
+/// averaged into the meta-training batch.
+#[test]
+fn a_degenerate_coordinate_does_not_manufacture_an_absurd_optimum() {
+    // Coordinate 0 is a clean quadratic; coordinate 1 has a *negative* slope
+    // (gradient falls as the parameter rises), which no convex quadratic produces.
+    let points: Vec<TrajectoryPoint<f64>> = (0..6)
+        .map(|i| {
+            let p = [1.5 - 0.2 * i as f64, 0.5 + 0.2 * i as f64];
+            let g = [2.0 * (p[0] - 0.5), -3.0 * p[1] + 1.0];
+            trajectory_point(i, &p, &g, 1.0)
+        })
+        .collect();
+
+    let surrogate = DiagonalQuadraticTask::from_trajectory(&points).expect("surrogate");
+
+    // Both curvatures must be usable, not 1e-6.
+    for j in 0..2 {
+        assert!(
+            surrogate.curvature()[j] >= 1e-3,
+            "curvature {j} collapsed to {}",
+            surrogate.curvature()[j]
+        );
+    }
+    // The degenerate coordinate's optimum must stay near the visited range
+    // [0.5, 1.5], widened by one span — never ~1e6.
+    let opt = surrogate.optimum()[1];
+    assert!(
+        opt.abs() < 10.0,
+        "the degenerate coordinate's optimum ran away to {opt}"
+    );
+
+    // And the resulting task must have a sane loss at its own starting point.
+    let start_loss = surrogate.loss(&surrogate.initial_parameters());
+    assert!(
+        start_loss.is_finite() && start_loss < 1e3,
+        "the surrogate manufactured an absurd starting loss {start_loss}"
+    );
+
+    // A well-identified coordinate is still recovered exactly.
+    assert!(
+        (surrogate.curvature()[0] - 2.0).abs() < 1e-8,
+        "clean coordinate curvature {}",
+        surrogate.curvature()[0]
+    );
+    assert!(
+        (surrogate.optimum()[0] - 0.5).abs() < 1e-8,
+        "clean coordinate optimum {}",
+        surrogate.optimum()[0]
+    );
+}

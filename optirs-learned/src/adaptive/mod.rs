@@ -1,6 +1,7 @@
 //! Auto-generated module structure
 
 pub mod adaptiveconfig_traits;
+pub mod architecture_adapter;
 pub mod architecturesearchspace_traits;
 pub mod compressionparams_traits;
 pub mod compressionqualitymetrics_traits;
@@ -16,6 +17,7 @@ pub mod types;
 
 // Re-export all types
 pub use adaptiveconfig_traits::*;
+pub use architecture_adapter::*;
 pub use architecturesearchspace_traits::*;
 pub use compressionparams_traits::*;
 pub use compressionqualitymetrics_traits::*;

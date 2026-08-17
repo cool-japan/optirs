@@ -66,6 +66,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
     pub fn new() -> Result<Self> {
         Self::with_selection_budget(
             0.1,
+            None,
             HyperparameterNoiseMechanism::Exponential,
             T::one(),
             1.0,
@@ -77,8 +78,16 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
     /// `objective_range` is the *public* a-priori range of a single objective
     /// value (for example 1.0 for an accuracy in `[0, 1]`); it is what the
     /// summary statistics' sensitivity is derived from.
+    ///
+    /// `delta` is the total delta the selection may spend. It is **required** for
+    /// [`HyperparameterNoiseMechanism::Gaussian`], which is an
+    /// `(epsilon, delta)` mechanism, and must be `None` for the pure-epsilon
+    /// mechanisms so a caller cannot believe they bought a `delta` that nothing
+    /// consumes. An earlier revision hardcoded `Some(1e-6)` here, silently
+    /// overriding whatever the caller had configured.
     pub fn with_selection_budget(
         epsilon: f64,
+        delta: Option<f64>,
         mechanism_type: HyperparameterNoiseMechanism,
         utility_sensitivity: T,
         objective_range: f64,
@@ -88,12 +97,26 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
                 "the public objective range must be positive and finite, got {objective_range}"
             )));
         }
+        let gaussian = matches!(mechanism_type, HyperparameterNoiseMechanism::Gaussian);
+        match (gaussian, delta) {
+            (true, None) => {
+                return Err(OptimError::InvalidConfig(
+                    "Gaussian selection is an (epsilon, delta) mechanism, so a positive delta must                      be supplied; it is not defaulted, because a silently chosen delta is a                      silently changed guarantee"
+                        .to_string(),
+                ))
+            }
+            (false, Some(delta)) => {
+                return Err(OptimError::InvalidConfig(format!(
+                    "a delta of {delta} was supplied for {mechanism_type:?}, which is a                      pure-epsilon mechanism and consumes no delta"
+                )))
+            }
+            _ => {}
+        }
+
         let mut selection_mechanism = SelectionMechanism::new();
         selection_mechanism.set_mechanism_type(mechanism_type);
         let mut params = SelectionParameters::pure_epsilon(epsilon, utility_sensitivity);
-        if matches!(mechanism_type, HyperparameterNoiseMechanism::Gaussian) {
-            params.delta = Some(1e-6);
-        }
+        params.delta = delta;
         selection_mechanism.set_selection_parameters(params)?;
 
         Ok(Self {
@@ -102,7 +125,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
                 epsilon_consumed: 0.0,
                 delta_consumed: 0.0,
                 epsilon_remaining: epsilon,
-                delta_remaining: 0.0,
+                delta_remaining: delta.unwrap_or(0.0),
                 steps_taken: 0,
                 accounting_method: crate::privacy::AccountingMethod::RenyiDP,
                 estimated_steps_remaining: 1,
@@ -184,6 +207,12 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
         let per_draw_epsilon = selection_epsilon / k as f64;
         let mut params = self.selection_mechanism.selection_params().clone();
         params.epsilon = per_draw_epsilon;
+        // Unlike epsilon in this crate's DP-SGD convention, the Gaussian
+        // mechanism's delta *is* additive across applications, so the configured
+        // total is split across the k draws rather than charged in full k times.
+        if let Some(total_delta) = params.delta {
+            params.delta = Some(total_delta / k as f64);
+        }
         self.selection_mechanism.set_selection_parameters(params)?;
 
         let sensitivity = self
@@ -217,6 +246,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
             self.selection_budget.epsilon_consumed += outcome.epsilon_spent;
             self.selection_budget.epsilon_remaining =
                 (self.selection_budget.epsilon_remaining - outcome.epsilon_spent).max(0.0);
+            self.selection_budget.delta_consumed += outcome.delta_spent;
             self.selection_budget.steps_taken += 1;
             topconfigurations.push((
                 evaluations[chosen].configuration.clone(),
@@ -339,6 +369,7 @@ mod tests {
     fn aggregator(epsilon: f64, seed: u64) -> PrivateResultsAggregator<f64> {
         let mut aggregator = match PrivateResultsAggregator::with_selection_budget(
             epsilon,
+            None,
             HyperparameterNoiseMechanism::Exponential,
             1.0,
             1.0,
@@ -502,6 +533,7 @@ mod tests {
             assert!(
                 PrivateResultsAggregator::<f64>::with_selection_budget(
                     1.0,
+                    None,
                     HyperparameterNoiseMechanism::Exponential,
                     1.0,
                     range
@@ -510,6 +542,68 @@ mod tests {
                 "range {range} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn the_gaussian_mechanism_requires_a_caller_supplied_delta() {
+        // Regression: `with_selection_budget` used to hardcode `Some(1e-6)` for
+        // the Gaussian mechanism, silently overriding the caller's delta and
+        // charging a delta the reported budget never mentioned.
+        let message = match PrivateResultsAggregator::<f64>::with_selection_budget(
+            0.5,
+            None,
+            HyperparameterNoiseMechanism::Gaussian,
+            1.0,
+            1.0,
+        ) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("a Gaussian selection with no delta must be refused"),
+        };
+        assert!(message.contains("positive delta"), "got: {message}");
+
+        // And a pure-epsilon mechanism must not accept one.
+        assert!(
+            PrivateResultsAggregator::<f64>::with_selection_budget(
+                0.5,
+                Some(1e-6),
+                HyperparameterNoiseMechanism::Exponential,
+                1.0,
+                1.0
+            )
+            .is_err(),
+            "a pure-epsilon mechanism consumes no delta"
+        );
+    }
+
+    #[test]
+    fn the_gaussian_selection_splits_and_charges_its_delta() {
+        let mut aggregator = match PrivateResultsAggregator::<f64>::with_selection_budget(
+            0.5,
+            Some(1e-5),
+            HyperparameterNoiseMechanism::Gaussian,
+            1.0,
+            1.0,
+        ) {
+            Ok(aggregator) => aggregator,
+            Err(err) => panic!("construction failed: {err}"),
+        };
+        aggregator.seed_for_tests(5);
+        assert_eq!(aggregator.selection_budget().delta_remaining, 1e-5);
+
+        let results = match aggregator.aggregate_results(&evaluations()) {
+            Ok(results) => results,
+            Err(err) => panic!("aggregation failed: {err}"),
+        };
+        assert_eq!(results.topconfigurations.len(), PRIVATE_TOP_K);
+        // k draws at delta/k each must total exactly the configured delta.
+        let charged = aggregator.selection_budget().delta_consumed;
+        assert!(
+            (charged - 1e-5).abs() < 1e-18,
+            "charged delta {charged}, configured 1e-5"
+        );
+        let report = aggregator.selection_report();
+        assert_eq!(report.mechanism, "gaussian_report_noisy_max");
+        assert!((report.delta_spent - 1e-5).abs() < 1e-18);
     }
 
     #[test]

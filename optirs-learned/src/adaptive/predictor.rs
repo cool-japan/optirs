@@ -705,7 +705,10 @@ mod tests {
     #[test]
     fn different_inputs_give_different_predictions() {
         let mut net = network();
-        net.fit(&training_set(80)).expect("fit");
+        // A dense training set so the ridge fit generalizes reliably regardless of
+        // the random feature map's draw; the ordering assertion below is only
+        // meaningful if the fit is actually good.
+        net.fit(&training_set(200)).expect("fit");
 
         let easy = net.predict(&features(0.05, 0.05)).expect("predict easy");
         let hard = net.predict(&features(0.95, 0.95)).expect("predict hard");

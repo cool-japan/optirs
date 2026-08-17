@@ -4,8 +4,11 @@
 
 #[allow(unused_imports)]
 use crate::error::Result;
-use crate::transformer_based_optimizer::{TransformerOptimizer, TransformerOptimizerConfig};
+use crate::transformer_based_optimizer::{
+    ArchitectureUpdate, TransformerOptimizer, TransformerOptimizerConfig,
+};
 
+use super::architecture_adapter::DynamicArchitectureAdapter;
 use super::landscape::LandscapeStatistics;
 use super::performance_predictor::TransformerPerformancePredictor;
 use super::predictor::{PredictorFitReport, PredictorSample};
@@ -492,6 +495,13 @@ pub struct EnhancementResult<
     pub landscape_analysis: LandscapeAnalysis<T>,
     /// Convergence metrics
     pub convergence_metrics: ConvergenceMetrics<T>,
+    /// What `enhance_optimizer` actually did to the optimizer it was handed.
+    ///
+    /// `Rebuilt` means every learned parameter was discarded and re-initialized,
+    /// which is destructive; the caller must be able to see that rather than
+    /// having it happen silently. `enhanced_optimize_step` does not touch an
+    /// optimizer at all and always reports `Unchanged`.
+    pub architecture_update: ArchitectureUpdate,
 }
 /// Enhancement statistics for tracking performance
 #[derive(Debug, Clone)]
@@ -1345,11 +1355,16 @@ impl<
             .performance_predictor
             .predict_improvement(&landscape_analysis, &architecture_adaptation)?;
 
-        // F22: actually push the adaptation into the optimizer we were handed.
-        transformer.apply_architecture_config(&architecture_adaptation.adapted_config)?;
+        // F22: actually push the adaptation into the optimizer we were handed, and
+        // report what that did — a `Rebuilt` outcome discarded every learned
+        // parameter, and a caller that just finished training must be able to see
+        // that instead of discovering it from degraded results.
+        let architecture_update =
+            transformer.apply_architecture_config(&architecture_adaptation.adapted_config)?;
 
         let convergence_metrics = self.calculate_convergence_metrics(losshistory);
         Ok(EnhancementResult {
+            architecture_update,
             sequence_adaptation,
             attention_optimization,
             architecture_adaptation,
@@ -1473,6 +1488,9 @@ impl<
             architecture_adaptation,
             performance_prediction,
             convergence_metrics: self.calculate_convergence_metrics(losshistory),
+            // This entry point updates a caller-owned parameter vector, not an
+            // optimizer, so no architecture was touched.
+            architecture_update: ArchitectureUpdate::Unchanged,
         })
     }
     /// Apply adaptive updates to parameters

@@ -10,7 +10,7 @@ use std::fmt::Debug;
 
 use super::budget_manager::{HPOBudgetManager, DEFAULT_SELECTION_BUDGET_FRACTION};
 use super::functions::{NoisyOptimizer, ObjectiveFn};
-use super::results::{PrivateResultsAggregator, SelectionReport};
+use super::results::{PrivateResultsAggregator, SelectionReport, PRIVATE_TOP_K};
 use super::types::{
     unix_timestamp, EvaluationStatus, HPOEvaluation, HyperparameterNoiseMechanism, NoiseParameters,
     ObjectiveNoiseMechanism, OptimizationStats, ParameterConfiguration, ParameterSpace,
@@ -41,10 +41,14 @@ pub struct PrivateHyperparameterOptimizer<T: Float + Debug + Send + Sync + 'stat
 impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T> {
     /// Create new private hyperparameter optimizer.
     ///
-    /// When `config.private_model_selection` is set, the objective's global
-    /// sensitivity **must** be declared in `config.sensitivity_bounds` (under
-    /// `"objective"`, or as the only entry). Guessing it would silently
-    /// invalidate every epsilon derived from it, so construction fails instead.
+    /// The objective's global sensitivity **must** be declared in
+    /// `config.sensitivity_bounds` (under `"objective"`, or as the only entry).
+    /// Every evaluation releases its objective under a differentially private
+    /// noise mechanism whose scale is `sensitivity / epsilon`, so an undeclared
+    /// sensitivity has no safe default: substituting `1.0` silently rescales the
+    /// noise, and every epsilon reported afterwards would describe a guarantee
+    /// the run did not deliver. Construction therefore fails instead of guessing,
+    /// whether or not `private_model_selection` is set.
     pub fn new(config: PrivateHPOConfig<T>, parameterspace: ParameterSpace<T>) -> Result<Self> {
         if parameterspace.parameters.is_empty() {
             return Err(OptimError::InvalidConfig(
@@ -52,27 +56,32 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             ));
         }
 
-        let selection_sensitivity = if config.private_model_selection {
-            match config.sensitivity_bounds.objective_sensitivity() {
-                Some(sensitivity) => {
-                    let as_f64 = sensitivity.to_f64().unwrap_or(f64::NAN);
-                    if !as_f64.is_finite() || as_f64 <= 0.0 {
-                        return Err(OptimError::InvalidPrivacyConfig(format!(
-                            "the declared objective sensitivity is {as_f64}; it must be positive \
-                             and finite"
-                        )));
-                    }
-                    Some(sensitivity)
-                }
-                None => {
+        // The objective release always needs a sensitivity; the private selection
+        // needs the same number to calibrate the exponential mechanism.
+        let objective_sensitivity = match config.sensitivity_bounds.objective_sensitivity() {
+            Some(sensitivity) => {
+                let as_f64 = sensitivity.to_f64().unwrap_or(f64::NAN);
+                if !as_f64.is_finite() || as_f64 <= 0.0 {
                     return Err(OptimError::InvalidPrivacyConfig(format!(
-                        "private_model_selection is enabled but no objective sensitivity is \
-                         declared in sensitivity_bounds.global_sensitivity (expected the key \
-                         `{}`); the exponential mechanism cannot be calibrated without it",
-                        super::selection::OBJECTIVE_SENSITIVITY_KEY
-                    )))
+                        "the declared objective sensitivity is {as_f64}; it must be positive \
+                         and finite"
+                    )));
                 }
+                sensitivity
             }
+            None => {
+                return Err(OptimError::InvalidPrivacyConfig(format!(
+                    "no objective sensitivity is declared in \
+                     sensitivity_bounds.global_sensitivity (expected the key `{}`); the \
+                     objective's noise scale is sensitivity / epsilon and the exponential \
+                     mechanism is calibrated with the same number, so neither can be derived \
+                     without it",
+                    super::selection::OBJECTIVE_SENSITIVITY_KEY
+                )))
+            }
+        };
+        let selection_sensitivity = if config.private_model_selection {
+            Some(objective_sensitivity)
         } else {
             None
         };
@@ -94,31 +103,65 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             config.base_privacyconfig.batch_size,
             config.base_privacyconfig.dataset_size,
         );
+        // Only two search algorithms have a private implementation. The other
+        // five used to fall through to `PrivateRandomSearch`, so a caller asking
+        // for TPE (or a genetic search, or simulated annealing) silently got
+        // uniform random proposals and no indication that the algorithm it
+        // configured had never run.
+        let optimizer_name = optimizer_key(config.search_algorithm)?;
         let mut noisy_optimizers: HashMap<String, Box<dyn NoisyOptimizer<T>>> = HashMap::new();
         match config.search_algorithm {
             SearchAlgorithm::RandomSearch => {
                 noisy_optimizers.insert(
-                    "random_search".to_string(),
+                    optimizer_name.to_string(),
                     Box::new(PrivateRandomSearch::new(config.clone())?),
                 );
             }
             SearchAlgorithm::BayesianOptimization => {
                 noisy_optimizers.insert(
-                    "bayesian_opt".to_string(),
+                    optimizer_name.to_string(),
                     Box::new(PrivateBayesianOptimization::new(config.clone())?),
                 );
             }
-            _ => {
-                noisy_optimizers.insert(
-                    "random_search".to_string(),
-                    Box::new(PrivateRandomSearch::new(config.clone())?),
-                );
+            other => {
+                return Err(OptimError::UnsupportedOperation(format!(
+                    "SearchAlgorithm::{other:?} has no differentially private implementation in \
+                     this crate; configure SearchAlgorithm::RandomSearch or \
+                     SearchAlgorithm::BayesianOptimization"
+                )))
             }
         }
+
+        // The Gaussian selection mechanism is an (epsilon, delta) mechanism. Its
+        // delta comes from the base configuration's reporting delta -- never from
+        // a hardcoded constant -- and the classic Gaussian bound additionally
+        // requires each draw's epsilon to be at most 1, which is checked here so
+        // the failure surfaces at construction rather than mid-run.
+        let selection_delta = if matches!(
+            config.noise_mechanism,
+            HyperparameterNoiseMechanism::Gaussian
+        ) {
+            let delta = config.base_privacyconfig.target_delta;
+            if !delta.is_finite() || !(0.0..1.0).contains(&delta) || delta <= 0.0 {
+                return Err(OptimError::InvalidPrivacyConfig(format!(
+                    "Gaussian hyperparameter selection needs a reporting delta in (0, 1), but                      base_privacyconfig.target_delta is {delta}"
+                )));
+            }
+            let per_draw_epsilon = budget_manager.selection_epsilon() * 0.5 / PRIVATE_TOP_K as f64;
+            if per_draw_epsilon > 1.0 {
+                return Err(OptimError::InvalidPrivacyConfig(format!(
+                    "Gaussian selection would draw at epsilon {per_draw_epsilon} per selection,                      but the classic Gaussian bound requires epsilon <= 1; lower target_epsilon or                      choose HyperparameterNoiseMechanism::Exponential"
+                )));
+            }
+            Some(delta)
+        } else {
+            None
+        };
 
         let results_aggregator = match selection_sensitivity {
             Some(sensitivity) => PrivateResultsAggregator::with_selection_budget(
                 budget_manager.selection_epsilon(),
+                selection_delta,
                 config.noise_mechanism,
                 sensitivity,
                 1.0,
@@ -134,10 +177,6 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T>
             HyperparameterNoiseMechanism::Gaussian => HyperparameterNoiseMechanism::Gaussian,
             _ => HyperparameterNoiseMechanism::Laplace,
         };
-        let objective_sensitivity = config
-            .sensitivity_bounds
-            .objective_sensitivity()
-            .unwrap_or_else(T::one);
         let private_objective =
             PrivateObjective::with_noise_mechanism(ObjectiveNoiseMechanism::with_parameters(
                 objective_mechanism,
@@ -792,6 +831,10 @@ mod tests {
             (
                 HyperparameterNoiseMechanism::Laplace,
                 "laplace_report_noisy_max",
+            ),
+            (
+                HyperparameterNoiseMechanism::Gaussian,
+                "gaussian_report_noisy_max",
             ),
         ] {
             let mut hpo_config = config(true, Some(1.0));

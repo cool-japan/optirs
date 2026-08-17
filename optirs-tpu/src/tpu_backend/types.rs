@@ -592,10 +592,15 @@ pub struct ProgramMemoryRequirements {
 /// Program performance characteristics
 #[derive(Debug, Clone)]
 pub struct ProgramPerformanceCharacteristics {
-    /// Estimated execution time
+    /// Estimated execution time. `Duration::ZERO` when produced by
+    /// [`super::backend::TPUBackend`]'s compiler: that path only ever sees a
+    /// bare [`ComputationId`], with no op list or tensor shapes to time, so
+    /// zero honestly means "not measured" rather than a fabricated guess.
     pub estimated_execution_time: Duration,
 
-    /// Estimated FLOPS
+    /// Estimated FLOPS. `0` for the same reason as
+    /// [`Self::estimated_execution_time`] -- honestly absent, not a
+    /// placeholder round number.
     pub estimated_flops: u64,
 
     /// Memory bandwidth utilization

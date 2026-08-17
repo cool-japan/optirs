@@ -11,6 +11,8 @@
 
 use scirs2_core::numeric::Float;
 
+use super::core::{CoverageMetrics, FrontMetrics};
+
 /// Smallest denominator accepted before a ratio is reported as zero rather than
 /// as a division by (near) zero.
 const RATIO_EPSILON: f64 = 1e-12;
@@ -247,6 +249,50 @@ pub fn spacing<T: Float>(front: &[Vec<T>]) -> T {
         variance = variance + diff * diff;
     }
     (variance / count).sqrt()
+}
+
+/// Assemble a complete [`FrontMetrics`] from an already-measured hypervolume plus
+/// the front and population it was measured on.
+///
+/// Every algorithm in this module latches its hypervolume reference point
+/// differently (NSGA-II derives one from its first front, MOEA/D and NSGA-III
+/// derive one from the archive), so the indicator itself is computed by the
+/// caller and passed in; everything derived *from* the front's geometry is
+/// computed here so all three algorithms report the same quantities under the
+/// same names instead of each re-deriving them.
+///
+/// * `front` — the non-dominated solutions, in minimization space.
+/// * `population` — everything the optimizer currently holds, in minimization
+///   space; used for the additive epsilon indicator ("how far is the front from
+///   covering what we have seen").
+/// * `reference` — the hypervolume reference point in minimization space, or an
+///   empty slice when none has been established.
+/// * `previous_hypervolume` — the value from the previous update, or `None` on the
+///   first one (which yields `convergence == 1`: nothing has been shown to
+///   converge yet).
+pub fn front_metrics_in_minimization_space<T: Float>(
+    front: &[Vec<T>],
+    population: &[Vec<T>],
+    reference: &[T],
+    hypervolume: T,
+    previous_hypervolume: Option<T>,
+) -> FrontMetrics<T> {
+    let convergence = match previous_hypervolume {
+        Some(previous) => hypervolume_convergence(hypervolume, previous),
+        None => T::one(),
+    };
+    FrontMetrics {
+        hypervolume,
+        spread: spread(front),
+        spacing: spacing(front),
+        convergence,
+        num_solutions: front.len(),
+        coverage: CoverageMetrics {
+            objective_space_coverage: objective_space_coverage(front, reference),
+            reference_distance: mean_reference_distance(front, reference),
+            epsilon_dominance: additive_epsilon_indicator(front, population),
+        },
+    }
 }
 
 #[cfg(test)]

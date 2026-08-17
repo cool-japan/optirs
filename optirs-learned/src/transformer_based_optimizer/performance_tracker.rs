@@ -212,6 +212,14 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         // Update memory metrics
         self.metrics.memory_metrics.record_usage(usage);
 
+        // Feed the resource-utilization history too. Without this
+        // `average_memory_utilization()` stayed `None` forever even though the
+        // caller *was* supplying real samples — the same write-only-history bug
+        // the CPU metric had.
+        self.metrics
+            .resource_metrics
+            .record_memory_usage(usage.total_memory as f64);
+
         // Update trends
         self.trends.update_memory_usage(usage.total_memory);
 
@@ -1206,6 +1214,23 @@ impl ResourceMetricsCollection {
         self.cpu_usage_history.len()
     }
 
+    /// Record an observed memory usage in bytes. Called by
+    /// `TransformerPerformanceTracker::record_memory_usage`.
+    pub fn record_memory_usage(&mut self, bytes: f64) {
+        if !bytes.is_finite() || bytes < 0.0 {
+            return;
+        }
+        self.memory_usage_history.push_back(bytes);
+        while self.memory_usage_history.len() > 1000 {
+            self.memory_usage_history.pop_front();
+        }
+    }
+
+    /// Number of memory samples recorded.
+    pub fn memory_sample_count(&self) -> usize {
+        self.memory_usage_history.len()
+    }
+
     /// Mean recorded memory usage in bytes, or `None` when nothing has been
     /// recorded. Fed by `TransformerPerformanceTracker::record_memory_usage`.
     pub fn average_memory_utilization(&self) -> Option<f64> {
@@ -1350,5 +1375,28 @@ mod tests {
             "nothing sampled the CPU, so the report must say so"
         );
         assert_eq!(report.memory_utilization, None);
+    }
+
+    /// `memory_usage_history` also had no writers, so a caller that *was*
+    /// supplying real memory samples still got `None` back.
+    #[test]
+    fn recorded_memory_usage_reaches_the_report() {
+        let mut tracker = TransformerPerformanceTracker::<f32>::new();
+        tracker.record_loss(1.0);
+        let sample = |total: usize| MemoryUsage {
+            total_memory: total,
+            model_memory: total / 2,
+            cache_memory: total / 4,
+            temporary_memory: total / 4,
+        };
+        tracker.record_memory_usage(sample(4096));
+        tracker.record_memory_usage(sample(8192));
+
+        let report = tracker.generate_report();
+        let mean = report
+            .memory_utilization
+            .expect("two memory samples were recorded");
+        assert!((mean - 6144.0).abs() < 1e-9, "mean {mean}");
+        assert_eq!(tracker.metrics.resource_metrics.memory_sample_count(), 2);
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod algorithms;
 pub mod core;
+pub mod decomposition;
 pub mod hypervolume;
 pub mod metrics;
 pub mod moead;
@@ -17,6 +18,7 @@ pub mod weighted_sum;
 // Re-export all types
 pub use algorithms::*;
 pub use core::*;
+pub use decomposition::*;
 pub use hypervolume::*;
 pub use metrics::*;
 pub use moead::*;

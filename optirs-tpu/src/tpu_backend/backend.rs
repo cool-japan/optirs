@@ -230,9 +230,24 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> TPUBacke
         // It is impossible to measure real silicon utilization on a CPU reference,
         // so this is the best honest estimate derived from the actual program
         // configuration instead of a hard-coded 0.85.
+        //
+        // `estimated_flops`/`estimated_execution_time` cannot get the same
+        // treatment: this backend compiles from a bare `ComputationId` (see
+        // `execute_computation`'s signature) with no op list or tensor shapes
+        // attached, unlike `main_types.rs::compile_to_tpu`, which does hold the
+        // real `XLAComputationGraph` and sums genuine per-node FLOPs from it.
+        // `binary` here is `encode_program_binary`'s fixed-width descriptor
+        // encoding (header + id + version/opt-level codes + digest) -- its
+        // length never varies with the actual program, so scaling anything off
+        // `binary.len()`/`data_memory` would manufacture a number that changes
+        // with configuration but reflects no real workload, which is exactly
+        // the fabrication this backend does not do elsewhere in this function.
+        // Zero is the honest "not measured" value here, matching
+        // `ProfileExportManager::export_memory_data`'s precedent of an honestly
+        // empty result when the underlying data genuinely does not exist yet.
         let performance_characteristics = ProgramPerformanceCharacteristics {
-            estimated_execution_time: Duration::from_micros(100),
-            estimated_flops: 1_000_000,
+            estimated_execution_time: Duration::ZERO,
+            estimated_flops: 0,
             memory_bandwidth_utilization: estimate_bandwidth_utilization(opt_level),
             compute_utilization: estimate_compute_utilization(opt_level),
         };

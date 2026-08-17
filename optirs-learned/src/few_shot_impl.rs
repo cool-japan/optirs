@@ -288,25 +288,39 @@ mod tests {
         let net = PrototypicalNetwork::<f64>::from_dims(4, 3)
             .expect("failed to create PrototypicalNetwork");
         let features = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
+        let negated = features.mapv(|v: f64| -v);
         let encoded = net.encode(&features).expect("encode failed");
+        let mirrored = net.encode(&negated).expect("encode failed");
         assert_eq!(encoded.len(), 4);
+        assert_eq!(mirrored.len(), 4);
 
-        // ReLU output: non-negative, finite, and not identically zero.
-        assert!(encoded.iter().all(|v| v.is_finite() && *v >= 0.0));
-        let magnitude = encoded.iter().fold(0.0_f64, |a, &v| a.max(v));
+        // ReLU output: non-negative and finite.
+        for v in encoded.iter().chain(mirrored.iter()) {
+            assert!(v.is_finite() && *v >= 0.0, "bad ReLU output {v}");
+        }
+
+        // The encoder is followed by a ReLU, so for any single input roughly half
+        // the pre-activations are negative and an all-zero result is a perfectly
+        // possible (and previously flaky) outcome of a *correct* random
+        // initialization. Probing with `x` and `-x` removes that: the layer is
+        // linear, so `Wx` and `-Wx` have opposite signs componentwise, and
+        // `ReLU(Wx)` and `ReLU(-Wx)` can only both be all-zero when `Wx == 0` —
+        // which for a non-zero `x` means `W` itself is zero. That is exactly the
+        // bug this test exists to catch, and the check is now deterministic.
+        let magnitude = encoded
+            .iter()
+            .chain(mirrored.iter())
+            .fold(0.0_f64, |a, &v| a.max(v));
         assert!(
             magnitude > 0.0,
-            "the encoder produced the zero vector for a non-zero input; \
+            "the encoder produced the zero vector for both x and -x; \
              its weights are zero-initialized again"
         );
 
-        // Distinct inputs must give distinct embeddings.
-        let other = net
-            .encode(&Array1::from_vec(vec![-4.0, -3.0, -2.0, -1.0]))
-            .expect("encode failed");
+        // By the same argument, `x` and `-x` cannot produce identical embeddings.
         let delta = encoded
             .iter()
-            .zip(other.iter())
+            .zip(mirrored.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0_f64, f64::max);
         assert!(delta > 0.0, "the encoder ignores its input (delta {delta})");

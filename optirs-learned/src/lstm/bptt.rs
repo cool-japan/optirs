@@ -132,13 +132,19 @@ impl<T: Float + Debug + Send + Sync + 'static> DiagonalQuadraticTask<T> {
     /// is `a_j` and the intercept is `−a_j·θ*_j`, giving
     /// `θ*_j = −intercept / a_j`.
     ///
-    /// Coordinates whose parameter never varies (zero regression variance) carry
-    /// no information about `a_j`; they fall back to `a_j = 1` with `θ*_j` placed
-    /// so the observed gradient is reproduced at the observed point, which is the
-    /// unique choice consistent with the single sample available. A fitted slope
-    /// that is non-positive (a non-convex or noise-dominated coordinate) is
-    /// clamped to a small positive value so the surrogate stays strictly convex,
-    /// and the same intercept relation is preserved.
+    /// A coordinate only yields a usable curvature when the least-squares slope is
+    /// strictly positive. Coordinates whose parameter never varies (zero
+    /// regression variance) or whose slope is non-positive / noise-dominated fall
+    /// back to `a_j = 1`, with `θ*_j` placed so the observed mean gradient is
+    /// reproduced at the observed mean parameter — the only choice consistent with
+    /// the information available. **Not** clamping the slope up to a tiny
+    /// `min_curvature` is deliberate: `θ*_j = mean_x − mean_y/a_j` with
+    /// `a_j = 1e-6` would place the optimum up to a million units away and
+    /// manufacture an absurd task.
+    ///
+    /// `θ*_j` is additionally kept inside the parameter span the trajectory
+    /// actually visited, widened by one span, since the quadratic model has no
+    /// evidence outside that region.
     ///
     /// The starting point is the trajectory's first recorded parameter vector.
     ///
@@ -194,20 +200,54 @@ impl<T: Float + Debug + Send + Sync + 'static> DiagonalQuadraticTask<T> {
                 sxy = sxy + dx * (p.gradient[j] - mean_y);
             }
 
-            let slope = if sxx > T::zero() {
-                sxy / sxx
+            let fitted_slope = if sxx > T::zero() {
+                Some(sxy / sxx)
             } else {
                 // Degenerate coordinate: no variation to regress against.
-                T::one()
+                None
             };
-            let a = if slope > min_curvature {
-                slope
-            } else {
-                min_curvature
+
+            // A coordinate only yields a usable curvature when the fit is
+            // strictly convex. Otherwise (no variation, or a non-positive /
+            // noise-dominated slope) fall back to unit curvature. Clamping a
+            // near-zero slope up to `min_curvature` instead — as this used to do —
+            // is far worse than it looks: `θ* = mean_x − mean_y/a` with
+            // `a = 1e-6` places the optimum up to a *million* units away, which
+            // manufactures an absurd task and silently poisons the whole
+            // meta-training batch it is averaged into.
+            let a = match fitted_slope {
+                Some(slope) if slope > min_curvature => slope,
+                _ => T::one(),
             };
-            // intercept = mean_y - a·mean_x, and intercept = -a·θ*  =>  θ* = mean_x - mean_y/a
+
+            // intercept = mean_y − a·mean_x, and intercept = −a·θ*  =>  θ* = mean_x − mean_y/a
+            let mut opt = mean_x - mean_y / a;
+
+            // Even a legitimately small curvature can push the optimum far outside
+            // the region the trajectory actually visited, where the quadratic model
+            // has no evidence at all. Keep it within the observed span, widened by
+            // one span (or a unit margin for a single-point span).
+            let mut lo = points[0].parameters[j];
+            let mut hi = lo;
+            for p in points {
+                let v = p.parameters[j];
+                if v < lo {
+                    lo = v;
+                }
+                if v > hi {
+                    hi = v;
+                }
+            }
+            let span = hi - lo;
+            let margin = if span > T::zero() { span } else { T::one() };
+            if opt < lo - margin {
+                opt = lo - margin;
+            } else if opt > hi + margin {
+                opt = hi + margin;
+            }
+
             curvature[j] = a;
-            optimum[j] = mean_x - mean_y / a;
+            optimum[j] = opt;
         }
 
         Ok(Self {
