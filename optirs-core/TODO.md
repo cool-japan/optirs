@@ -55,7 +55,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 - [x] **AdaDelta** - Adaptive learning rate without manual tuning
   - [x] Automatic step size adaptation using RMS
   - [x] 10-step warmup boost for cold-start
-  - [x] Full convergence validation (7 tests)
+  - [x] Full convergence validation (13 tests)
 
 - [x] **AdaBound** - Dynamic bounds converging to SGD
   - [x] Dynamic learning rate bounds
@@ -87,7 +87,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] RAdam + Lookahead combination
   - [x] Variance rectification + trajectory smoothing
   - [x] Proper slow/fast weight synchronization
-  - [x] 7 comprehensive tests
+  - [x] 8 comprehensive tests
 
 - [x] **Lion** - Evolved Sign Momentum
   - [x] Sign-based updates
@@ -170,7 +170,10 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 - [x] `CosineAnnealing`, `CosineAnnealingWarmRestarts`
 - [x] `LinearWarmupDecay`, `OneCycle`, `CyclicLR`
 - [x] `ReduceOnPlateau`
-- [x] `CurriculumScheduler`, `NoiseInjectionScheduler`
+- [x] `CurriculumScheduler`, `NoiseInjectionScheduler` — `CurriculumScheduler::new` panics on
+  an empty stage list; this is the one remaining production `panic!` in this crate (every other
+  panic path was converted to a typed error during 0.3.2) and needs a fallible constructor to
+  close (see workspace `TODO.md`)
 - [x] `AttentionAwareScheduler`, `ViTLayerDecay`
 - [x] `CustomScheduler`, `CombinedScheduler`, `SchedulerBuilder` (compose schedules from closures)
 - [ ] Multi-step and polynomial decay - **not implemented**; no `MultiStepDecay` or
@@ -196,7 +199,10 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ---
 
-## Future Work (v0.3.1+)
+## Completed: Extended Features (v0.3.1 - v0.3.2)
+
+Originally tracked here as forward-looking work under the heading "Future Work"; every item
+below has since shipped. See `CHANGELOG.md` for the full 0.3.2 change list across the workspace.
 
 ### Meta-Learning Optimizers
 - [x] MAML (Model-Agnostic Meta-Learning) support — SecondOrder/FirstOrder/Reptile variants (`optirs-core/src/optimizers/maml.rs`, 14 tests)
@@ -212,7 +218,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 ### Distributed & Federated Learning
 - [x] FedAvg implementation (FedProx with mu=0 degenerates to FedAvg)
 - [x] FedProx with proximal term (distributed/fedprox.rs)
-- [x] Differential privacy integration — Rényi DP accountant with tight subsampled-Gaussian composition (`optirs-core/src/privacy/renyi_accountant.rs`; 20 tests)
+- [x] Differential privacy integration — Rényi DP accountant with tight subsampled-Gaussian composition (`optirs-core/src/privacy/renyi_accountant.rs`; 29 tests)
 - [x] Secure aggregation protocols — Bonawitz-style pairwise additive masking with quantization, modular arithmetic, dropout reconstruction (`optirs-core/src/privacy/secure_aggregation.rs`; 32 tests)
 - [x] Bandwidth-optimal ring all-reduce + all-gather — segmented reduce-scatter / all-gather collective with a `CollectiveTransport` trait and in-memory `LocalTransport`, reduce ops sum/mean/max/min/product (`optirs-core/src/distributed/ring_allreduce.rs`; 14 tests) (2026-06-24)
 - [x] Pipeline parallelism (GPipe + 1F1B) — micro-batch schedulers, exact DP minimax stage partitioning, bubble-fraction / utilization / activation-stash / makespan metrics (`optirs-core/src/distributed/pipeline_parallel.rs`; 13 tests) (2026-06-24)

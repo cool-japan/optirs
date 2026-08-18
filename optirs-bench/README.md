@@ -13,7 +13,9 @@ OptiRS-Bench provides comprehensive benchmarking and performance analysis capabi
 - **Memory Profiling**: Memory usage analysis and leak detection
 - **System Monitoring**: Real process/system resource monitoring (CPU, memory) via `sysinfo`
 - **Security Auditing**: Security analysis of optimization pipelines
-- **Cross-Platform Support**: Benchmarking across different platforms and hardware
+- **Cross-Platform Support**: Orchestrated benchmarking across platforms via local, Docker,
+  and SSH execution, with an explicit error when the runtime is absent rather than a
+  fabricated pass
 - **Continuous Integration**: Integration with CI/CD pipelines for automated testing
 - **Comparative Analysis**: Side-by-side comparison of optimization strategies
 
@@ -39,7 +41,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-bench = "0.3.2"  # workspace version; last version actually published is 0.3.1
+optirs-bench = "0.3.2"
 scirs2-core = "0.6.5"  # Required foundation
 ```
 
@@ -49,7 +51,7 @@ Enable specific benchmarking features:
 
 ```toml
 [dependencies]
-optirs-bench = { version = "0.3.2", features = ["profiling", "regression_detection", "security_auditing"] } # 0.3.2 not yet on crates.io -- see above
+optirs-bench = { version = "0.3.2", features = ["profiling", "regression_detection", "security_auditing"] }
 ```
 
 Available features:
@@ -60,7 +62,7 @@ Available features:
 
 ## Command-Line Tools
 
-`optirs-bench` ships 9 binaries (`autobins = false` in `Cargo.toml`; the `[[bin]]` list
+`optirs-bench` ships 10 binaries (`autobins = false` in `Cargo.toml`; the `[[bin]]` list
 there is authoritative). Two pairs of names differ only by hyphen vs. underscore and are
 genuinely different tools -- read the binary path, not just the name.
 

@@ -571,7 +571,8 @@ gQIDAQAB
 
 #[cfg(all(test, not(feature = "crypto")))]
 pub(super) mod no_crypto_signature_tests {
-    use super::*;
+    use super::super::types::{CryptographicValidator, SignatureVerificationConfig};
+    use super::super::types_7::PluginMetadata;
     use std::time::SystemTime;
 
     #[test]

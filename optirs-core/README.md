@@ -155,7 +155,7 @@ optirs-core = { version = "0.3.2", features = ["cross-platform-testing"] }
 ## Architecture
 
 OptiRS-Core is designed with modularity and performance in mind. Selected top-level modules
-(see `src/lib.rs` for the complete list of ~38 public modules):
+(see `src/lib.rs` for the complete list of 40 public modules):
 
 ```
 optirs-core/

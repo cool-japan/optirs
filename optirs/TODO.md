@@ -15,7 +15,7 @@ and this crate only gives them a single version number and one import root. Anyt
 looks like cross-crate API design belongs in `optirs-core` or the relevant sub-crate, not
 here.
 
-Consequently this crate has no unit tests. Its two doc-tested examples in `src/lib.rs` and
+Consequently this crate has no unit tests. Its four doc-tested examples in `src/lib.rs` and
 its two runnable examples are its test surface.
 
 ## Current state

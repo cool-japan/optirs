@@ -30,7 +30,7 @@
     "rust"
   ],
   "author": "COOLJAPAN OU (Team Kitasan)",
-  "license": "MIT OR Apache-2.0",
+  "license": "Apache-2.0",
   "files": [
     "pkg/",
     "optirs.d.ts"

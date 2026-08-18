@@ -197,7 +197,7 @@ All optimizers expose `.step(params, gradients)`, most expose `.step_list(params
 | `WasmViTLayerDecay` | `new(base_lr, decay_rate, num_layers)` / `static new_with_warmup(base_lr, decay_rate, num_layers, warmup_steps, total_steps)` | Vision Transformer per-layer decay; `.get_layer_learning_rate(i)` / `.get_all_layer_rates()` |
 | `WasmAttentionAwareScheduler` | `new(base_lr, warmup_steps, total_steps)` | Transformer component-specific LR via `.get_component_lr(name)` / `.set_component_scale(name, scale)` |
 | `WasmNoiseInjectionScheduler` | `static new_uniform/new_gaussian/new_cyclical/new_decaying(...)` (no plain constructor) | Adds noise on top of a constant base LR |
-| `WasmCurriculumScheduler` | `new(stages_json, final_lr)` *(throws)* / `static new_immediate(stages_json, final_lr)` | Stage-based curriculum; `stages_json` is `[{"learning_rate": 0.01, "duration": 100}, ...]` |
+| `WasmCurriculumScheduler` | `new(stages_json, final_lr)` *(throws)* / `static new_immediate(stages_json, final_lr)` *(throws)* | Stage-based curriculum; `stages_json` is `[{"learning_rate": 0.01, "duration": 100}, ...]` |
 
 All schedulers expose `.step()` (advance by one step, returns the new `f64` learning rate), a `.learning_rate` readonly getter, `.reset()`, and `.name()`.
 
@@ -276,6 +276,25 @@ import type { WasmOptimizerConfig } from '@cooljapan/optirs';
 - Compiled with `opt-level = 3`, `codegen-units = 1` (the workspace release profile; `lto` is currently **off**, see `Cargo.toml`'s `[profile.release]`)
 - No JavaScript overhead in core computation
 - SIMD is not enabled by default; opt in with `RUSTFLAGS="-C target-feature=+simd128"` if your deployment target supports the WASM SIMD proposal
+
+## Testing
+
+```bash
+cargo nextest run -p optirs-wasm --all-features
+```
+
+37 tests pass on the host target: 7 unit tests under `src/`, plus 30 integration tests in
+`tests/wasm_tests.rs`. The `#[wasm_bindgen]`-exported surface itself -- `create_optimizer`/
+`create_scheduler` returning a real, usable `JsValue`-wrapped instance, and
+`WasmGpuOptimizer`'s WebGPU detection/handshake -- is covered separately by
+`wasm_bindgen_test`s in `tests/wasm_bindgen_tests.rs` (7 tests) and
+`tests/wasm_bindgen_webgpu_tests.rs` (3 tests), which build and run only on the real
+`wasm32` target:
+
+```bash
+wasm-pack test --node --features wasm      # or: npm test
+wasm-pack test --node --features webgpu    # or: npm run test:webgpu
+```
 
 ## Links
 

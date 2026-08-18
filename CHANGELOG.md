@@ -5,7 +5,7 @@ All notable changes to OptiRS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.2] - 2026-08-17
+## [0.3.2] - 2026-08-18
 
 A production-hardening release. The organizing theme is honesty: throughout the
 workspace, code that *simulated* a result — fabricated p-values, hardcoded success
@@ -150,6 +150,13 @@ though, so code that named those types will no longer compile — see **Removed*
   `HvpMode::NestedAutodiff` and `MixedPartialMethod::NestedAutodiff` return explicit
   errors explaining that nested AD cannot exist behind the engine's black-box `Fn`
   objective signature.
+- **Evolution-strategies meta-training for `GnnOptimizer` and `NtmOptimizer`**
+  (`gnn_optimizer/meta_training.rs`, `ntm_optimizer/meta_training.rs`), implementing the
+  crate's `MetaTrainable` trait to flatten each architecture's learned weights into one
+  vector, load them back, and clear per-rollout state between generations. Both
+  optimizers previously drew their weights once from the configured seed and never
+  updated them again, so every "learned" step ran on a permanently random network; they
+  now actually train.
 
 #### Benchmarking (`optirs-bench`)
 

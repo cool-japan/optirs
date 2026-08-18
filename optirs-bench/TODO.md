@@ -2,8 +2,7 @@
 
 ## Module Status: Production Ready
 
-**Not yet released**: this branch is pre-`0.3.2`; the last published version is `0.3.1`.
-**Tests**: 458 tests passing, 2 skipped (`cargo nextest run -p optirs-bench --all-features`)
+**Tests**: 460 tests passing (`cargo nextest run -p optirs-bench --all-features`)
 **Features**: Statistical benchmarking, Memory profiling, Regression detection
 **SciRS2-Core usage**: array/numeric backend (`scirs2_core::ndarray`, `scirs2_core::numeric::Float`)
 throughout, per COOLJAPAN policy. The crate's benchmarking/profiling/metrics/regression
@@ -31,7 +30,7 @@ module (no such dependency is used).
 
 ### Command-Line Tools
 - [x] Baseline-vs-candidate comparison (`optirs-bench analyze`, `OptimizerComparison`)
-- [x] Output format options across the 9 binaries (Markdown/plain-text/CSV in
+- [x] Output format options across the 10 binaries (Markdown/plain-text/CSV in
       `optirs-bench report`; JSON/YAML/HTML/Markdown in the security/leak-report tools)
 - [ ] Dataset-specific benchmark suites -- not implemented; `OptimizerBenchmark` only
       ships the 3 built-in synthetic test functions (Quadratic, Rosenbrock, Sphere)
@@ -129,8 +128,7 @@ These require external systems / UIs / OS profilers and are intentionally NOT au
 
 ### Test Count
 ```
-458 tests passing
-2 skipped (hardware-specific)
+460 tests passing
 ```
 (`cargo nextest run -p optirs-bench --all-features`; re-measure rather than trusting this
 number as the crate grows -- it will go stale again.)
@@ -146,5 +144,5 @@ number as the crate grows -- it will go stale again.)
 
 ---
 
-**Status**: Production Ready (quality bar); not yet published -- last released version is `0.3.1`
-**Version**: v0.3.2 (workspace version, unreleased)
+**Status**: Production Ready
+**Version**: v0.3.2
