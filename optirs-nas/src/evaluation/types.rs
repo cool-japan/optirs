@@ -1,12 +1,29 @@
 //! Common types for evaluation system
 //!
 //! Contains shared enums and small structs used across multiple modules.
+//!
+//! Two families of types were removed from this module rather than left as a
+//! public vocabulary for subsystems that do not exist:
+//!
+//! * `ScheduleType`, `FeatureExtractionMethod`, `NormalizationMethod`,
+//!   `ScalingMethod`, `FeatureSelectionMethod` and `UncertaintyEstimationMethod`
+//!   described a neural-network performance predictor with a feature-engineering
+//!   pipeline that was never built. Their only occurrences were one initialiser
+//!   each inside [`super::predictor`], whose value nothing then read; the
+//!   predictor is a linear ridge model and now says so.
+//!   ([`crate::nas_engine::config::ScheduleType`], which *is* consulted, is a
+//!   different type and is unaffected.)
+//! * `ProblemType`, `CorrelationStructure`, `DistributionType`, `MetricType`,
+//!   `EvaluatorType`, `DataFormat`, `DataCharacteristics`, `SuccessMetrics`,
+//!   `TerminationConditions`, `EarlyStoppingCriteria`, `EvaluationCriterion`,
+//!   `IOSpecification` and `ValidationCriteria` described caller-supplied custom
+//!   benchmarks. [`super::benchmark::BenchmarkSuite`] could neither register nor
+//!   run one — see that module's notes.
 
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::time::Duration;
 
 /// Benchmark types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,7 +60,7 @@ pub enum BenchmarkType {
 }
 
 /// Types of test functions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TestFunctionType {
     /// Quadratic bowl
     Quadratic,
@@ -105,81 +122,6 @@ pub struct ResourceRequirements {
     pub storage_mb: usize,
 }
 
-/// Problem types
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProblemType {
-    Regression,
-    Classification,
-    Clustering,
-    DimensionalityReduction,
-    ReinforcementLearning,
-    GenerativeModeling,
-    FeatureSelection,
-    HyperparameterOptimization,
-}
-
-/// Correlation structures
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CorrelationStructure {
-    Independent,
-    Linear,
-    Nonlinear,
-    Hierarchical,
-    Spatial,
-    Temporal,
-}
-
-/// Distribution types
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DistributionType {
-    Gaussian,
-    Uniform,
-    Exponential,
-    PowerLaw,
-    Multimodal,
-    HeavyTailed,
-}
-
-/// Metric types
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MetricType {
-    Accuracy,
-    Loss,
-    F1Score,
-    AUC,
-    Precision,
-    Recall,
-    RMSE,
-    MAE,
-    R2,
-    LogLikelihood,
-    Perplexity,
-    Custom(u32),
-}
-
-/// Evaluator types
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EvaluatorType {
-    MLModel,
-    OptimizationFunction,
-    Simulator,
-    RealWorldAPI,
-    Custom,
-}
-
-/// Data formats
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DataFormat {
-    Dense,
-    Sparse,
-    Sequential,
-    Graph,
-    Image,
-    Text,
-    Audio,
-    Custom,
-}
-
 /// Activation functions
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivationFunction {
@@ -190,59 +132,6 @@ pub enum ActivationFunction {
     Swish,
     ELU,
     LeakyReLU,
-}
-
-/// Schedule types
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScheduleType {
-    Constant,
-    Exponential,
-    StepDecay,
-    CosineAnnealing,
-    ReduceOnPlateau,
-    OneCycle,
-}
-
-/// Feature extraction methods
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FeatureExtractionMethod {
-    ArchitectureEmbedding,
-    HyperparameterEncoding,
-    ResourceUsageFeatures,
-    PerformanceHistory,
-    DatasetCharacteristics,
-    OptimizationLandscape,
-}
-
-/// Normalization methods
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NormalizationMethod {
-    MinMax,
-    ZScore,
-    Robust,
-    Quantile,
-    PowerTransform,
-}
-
-/// Scaling methods
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScalingMethod {
-    Standard,
-    MinMax,
-    Robust,
-    MaxAbs,
-    Quantile,
-}
-
-/// Feature selection methods
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FeatureSelectionMethod {
-    VarianceThreshold,
-    UnivariateSelection,
-    RecursiveFeatureElimination,
-    SelectFromModel,
-    SequentialFeatureSelection,
-    MutualInformation,
 }
 
 /// Cache eviction policies
@@ -264,27 +153,6 @@ pub enum PredictorModelType {
     GaussianProcess,
     SupportVectorMachine,
     Ensemble,
-}
-
-/// Uncertainty estimation methods
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UncertaintyEstimationMethod {
-    MonteCarloDropout,
-    DeepEnsemble,
-    BayesianNeuralNetwork,
-    QuantileRegression,
-    ConformalPrediction,
-    GaussianProcessUncertainty,
-}
-
-/// Temporal pattern types
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TemporalPatternType {
-    Burst,
-    Steady,
-    Periodic,
-    Random,
-    Declining,
 }
 
 /// Statistical test types
@@ -321,130 +189,6 @@ pub enum MultipleComparisonCorrection {
     BenjaminiHochberg,
     BenjaminiYekutieli,
     Sidak,
-}
-
-/// Data characteristics
-#[derive(Debug, Clone)]
-pub struct DataCharacteristics<T: Float + Debug + Send + Sync + 'static> {
-    /// Noise level
-    pub noise_level: T,
-
-    /// Data sparsity
-    pub sparsity: T,
-
-    /// Correlation structure
-    pub correlation: CorrelationStructure,
-
-    /// Distribution type
-    pub distribution: DistributionType,
-
-    /// Outlier percentage
-    pub outlier_percentage: T,
-}
-
-/// Success metrics
-#[derive(Debug, Clone)]
-pub struct SuccessMetrics<T: Float + Debug + Send + Sync + 'static> {
-    /// Minimum performance threshold
-    pub min_performance: T,
-
-    /// Maximum convergence time
-    pub max_convergence_time: Duration,
-
-    /// Required stability
-    pub stability_threshold: T,
-
-    /// Resource efficiency requirement
-    pub efficiency_threshold: T,
-}
-
-/// Termination conditions
-#[derive(Debug, Clone)]
-pub struct TerminationConditions<T: Float + Debug + Send + Sync + 'static> {
-    /// Maximum iterations
-    pub max_iterations: usize,
-
-    /// Maximum time
-    pub max_time: Duration,
-
-    /// Convergence tolerance
-    pub convergence_tolerance: T,
-
-    /// Stagnation threshold
-    pub stagnation_threshold: usize,
-
-    /// Early stopping criteria
-    pub early_stopping: EarlyStoppingCriteria<T>,
-}
-
-/// Early stopping criteria
-#[derive(Debug, Clone)]
-pub struct EarlyStoppingCriteria<T: Float + Debug + Send + Sync + 'static> {
-    /// Patience (iterations without improvement)
-    pub patience: usize,
-
-    /// Minimum improvement threshold
-    pub min_improvement: T,
-
-    /// Validation metric
-    pub validation_metric: MetricType,
-
-    /// Relative improvement flag
-    pub relative_improvement: bool,
-}
-
-/// Evaluation criterion
-#[derive(Debug, Clone)]
-pub struct EvaluationCriterion<T: Float + Debug + Send + Sync + 'static> {
-    /// Criterion name
-    pub name: String,
-
-    /// Metric type
-    pub metric_type: MetricType,
-
-    /// Target value
-    pub target_value: T,
-
-    /// Tolerance
-    pub tolerance: T,
-
-    /// Weight in overall score
-    pub weight: T,
-}
-
-/// Input/output specification
-#[derive(Debug, Clone)]
-pub struct IOSpecification {
-    /// Input format
-    pub input_format: DataFormat,
-
-    /// Output format
-    pub output_format: DataFormat,
-
-    /// Batch processing support
-    pub supports_batching: bool,
-
-    /// Parallelization support
-    pub supports_parallel: bool,
-}
-
-/// Validation criteria
-#[derive(Debug, Clone)]
-pub struct ValidationCriteria<T: Float + Debug + Send + Sync + 'static> {
-    /// Cross-validation folds
-    pub cv_folds: usize,
-
-    /// Validation split ratio
-    pub validation_split: T,
-
-    /// Statistical significance level
-    pub significance_level: T,
-
-    /// Confidence intervals
-    pub confidence_level: T,
-
-    /// Bootstrap samples
-    pub bootstrap_samples: usize,
 }
 
 /// Performance ranking

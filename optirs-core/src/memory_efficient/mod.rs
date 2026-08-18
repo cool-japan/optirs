@@ -4,10 +4,53 @@
 // memory-efficient implementations of optimization algorithms.
 
 use crate::error::{OptimError, Result};
+use crate::utils::{scalar_or, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 use std::ops::{AddAssign, MulAssign, SubAssign};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Process-wide running total of bytes currently tracked by every
+/// [`gradient_checkpointing::MemoryTracker`] in this process (F82).
+///
+/// This is what turns the module-level [`adaptive::get_memory_usage_ratio`]
+/// from a hardcoded `0.5` placeholder into a real measurement: each
+/// tracker feeds its allocations/deallocations here, so the stateless
+/// ratio function reports actual tracked bytes over the real system-memory
+/// budget instead of a fabricated constant.
+static GLOBAL_TRACKED_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// Best-effort total physical system memory in bytes, read from the OS via
+/// a dependency-free (pure-Rust) path where one exists.
+///
+/// On Linux this parses `/proc/meminfo`; on platforms without a
+/// FFI-free API it falls back to a conservative 8 GiB. It is only ever
+/// used as the denominator of a usage ratio, so an approximate value
+/// degrades gracefully rather than producing a wrong absolute figure.
+fn total_system_memory_bytes() -> usize {
+    const FALLBACK: usize = 8 * 1024 * 1024 * 1024;
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
+            for line in contents.lines() {
+                if let Some(rest) = line.strip_prefix("MemTotal:") {
+                    // Format: `MemTotal:       16384000 kB`
+                    if let Some(kb) = rest
+                        .split_whitespace()
+                        .next()
+                        .and_then(|value| value.parse::<usize>().ok())
+                    {
+                        return kb.saturating_mul(1024);
+                    }
+                }
+            }
+        }
+    }
+
+    FALLBACK
+}
 
 /// Trait for in-place parameter updates
 pub trait InPlaceOptimizer<A: Float + ScalarOperand + Debug, D: Dimension> {
@@ -88,6 +131,30 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceOptimi
     }
 }
 
+/// Adam's two moment accumulators.
+///
+/// They are created together, always share the parameter shape, and are only
+/// ever absent before the first step -- so they live behind a *single*
+/// `Option` rather than two independent ones. That makes "one is initialised
+/// and the other is not" unrepresentable instead of a state the step function
+/// has to defend against with `expect`.
+#[derive(Debug, Clone)]
+struct AdamMoments<A: Float, D: Dimension> {
+    /// First moment estimate (momentum)
+    m: Array<A, D>,
+    /// Second moment estimate (RMSprop)
+    v: Array<A, D>,
+}
+
+impl<A: Float, D: Dimension> AdamMoments<A, D> {
+    fn zeros(shape: D) -> Self {
+        Self {
+            m: Array::zeros(shape.clone()),
+            v: Array::zeros(shape),
+        }
+    }
+}
+
 /// Memory-efficient Adam optimizer with in-place updates
 #[derive(Debug)]
 pub struct InPlaceAdam<A: Float, D: Dimension> {
@@ -97,10 +164,8 @@ pub struct InPlaceAdam<A: Float, D: Dimension> {
     epsilon: A,
     weight_decay: A,
     t: i32,
-    /// First moment estimate (momentum)
-    m: Option<Array<A, D>>,
-    /// Second moment estimate (RMSprop)
-    v: Option<Array<A, D>>,
+    /// Moment estimates, absent until the first step
+    moments: Option<AdamMoments<A, D>>,
 }
 
 impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A, D> {
@@ -108,13 +173,12 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A
     pub fn new(_learningrate: A) -> Self {
         Self {
             _learningrate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.999).expect("unwrap failed"),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
+            beta1: scalar_or(0.9, A::zero()),
+            beta2: scalar_or(0.999, A::zero()),
+            epsilon: scalar_or(1e-8, A::zero()),
             weight_decay: A::zero(),
             t: 0,
-            m: None,
-            v: None,
+            moments: None,
         }
     }
 
@@ -145,8 +209,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceAdam<A
     /// Reset optimizer state
     pub fn reset(&mut self) {
         self.t = 0;
-        self.m = None;
-        self.v = None;
+        self.moments = None;
     }
 }
 
@@ -155,18 +218,29 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> InPlaceOptimi
 {
     fn step_inplace(&mut self, params: &mut Array<A, D>, gradients: &Array<A, D>) -> Result<()> {
         self.t += 1;
-        let _t = A::from(self.t).expect("unwrap failed");
+        let _t = try_scalar::<A, _>(self.t)?;
 
-        // Initialize momentum and variance if needed
-        if self.m.is_none() {
-            self.m = Some(Array::zeros(params.raw_dim()));
-        }
-        if self.v.is_none() {
-            self.v = Some(Array::zeros(params.raw_dim()));
+        // Initialize the moment estimates on the first step. `get_or_insert_with`
+        // yields them directly, so there is no "initialised a line ago, now
+        // unwrap it again" round-trip to defend with `expect`.
+        let moments = self
+            .moments
+            .get_or_insert_with(|| AdamMoments::zeros(params.raw_dim()));
+
+        // A caller that changes the parameter shape between steps would
+        // otherwise reach `zip_mut_with` with mismatched shapes and panic
+        // inside ndarray. Carrying stale moments across a reshape is not
+        // meaningful either, so report it instead of guessing.
+        if moments.m.raw_dim() != params.raw_dim() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "InPlaceAdam moment state has shape {:?} but was given parameters of shape {:?}; \
+                 call `reset()` before optimizing a differently-shaped parameter set",
+                moments.m.shape(),
+                params.shape()
+            )));
         }
 
-        let m = self.m.as_mut().expect("unwrap failed");
-        let v = self.v.as_mut().expect("unwrap failed");
+        let AdamMoments { m, v } = moments;
 
         // Apply weight decay if configured
         let grad_with_decay = if self.weight_decay > A::zero() {
@@ -520,7 +594,7 @@ pub mod mixed_precision {
             A: Float + ScalarOperand,
             D: Dimension,
         {
-            let inv_scale = A::one() / A::from(self.scale).expect("unwrap failed");
+            let inv_scale = A::one() / scalar_or(self.scale, A::one());
             for g in gradients.iter_mut() {
                 *g = *g * inv_scale;
             }
@@ -770,6 +844,26 @@ pub mod gradient_checkpointing {
         }
     }
 
+    impl<A: Float, D: Dimension> Drop for GradientCheckpointer<A, D> {
+        /// Withdraw this checkpointer's tracked bytes from the process-wide
+        /// `GLOBAL_TRACKED_BYTES` counter when it goes out of scope.
+        ///
+        /// Without this, any checkpointer dropped without an explicit
+        /// `clear_checkpoints()` call first leaks its `allocated_bytes`
+        /// contribution into the global counter permanently: since
+        /// `adaptive::get_memory_usage_ratio` (F82) derives its numerator
+        /// from that counter, a long-running process that creates and drops
+        /// many checkpointers would see the reported ratio climb toward 1.0
+        /// forever regardless of real memory pressure, silently defeating
+        /// `CheckpointStrategy::MemoryAware`. `MemoryTracker::reset` is
+        /// idempotent (subtracts exactly `allocated_bytes`, which is 0 after
+        /// the first call), so this is safe even if `clear_checkpoints` already
+        /// ran.
+        fn drop(&mut self) {
+            self.memory_tracker.reset();
+        }
+    }
+
     /// Memory usage tracking
     #[derive(Debug, Clone)]
     pub struct MemoryTracker {
@@ -798,11 +892,16 @@ pub mod gradient_checkpointing {
         pub fn add_allocation(&mut self, bytes: usize) {
             self.allocated_bytes += bytes;
             self.peak_bytes = self.peak_bytes.max(self.allocated_bytes);
+            // Feed the process-wide counter that backs the module-level
+            // `get_memory_usage_ratio` (F82).
+            super::GLOBAL_TRACKED_BYTES.fetch_add(bytes, super::Ordering::Relaxed);
         }
 
         /// Remove an allocation
         pub fn remove_allocation(&mut self, bytes: usize) {
-            self.allocated_bytes = self.allocated_bytes.saturating_sub(bytes);
+            let removed = bytes.min(self.allocated_bytes);
+            self.allocated_bytes -= removed;
+            super::GLOBAL_TRACKED_BYTES.fetch_sub(removed, super::Ordering::Relaxed);
         }
 
         /// Get current memory usage
@@ -825,15 +924,18 @@ pub mod gradient_checkpointing {
 
         /// Reset memory tracking
         pub fn reset(&mut self) {
+            // Withdraw this tracker's contribution from the process-wide
+            // counter before clearing local state (F82).
+            super::GLOBAL_TRACKED_BYTES.fetch_sub(self.allocated_bytes, super::Ordering::Relaxed);
             self.allocated_bytes = 0;
             self.peak_bytes = 0;
         }
 
-        /// Estimate total system memory (simplified)
+        /// Estimate total physical system memory, reading the real value
+        /// from the OS where a pure-Rust path exists (see
+        /// [`super::total_system_memory_bytes`]).
         fn estimate_system_memory() -> usize {
-            // This is a simplified estimation
-            // In a real implementation, you would use system APIs
-            8 * 1024 * 1024 * 1024 // Assume 8GB
+            super::total_system_memory_bytes()
         }
     }
 
@@ -1098,12 +1200,23 @@ pub mod adaptive {
             .sum()
     }
 
-    /// Get approximate system memory usage ratio
+    /// Get the current memory-usage ratio in `[0, 1]` (F82).
+    ///
+    /// This reports the process-wide total of bytes currently tracked by
+    /// every [`super::gradient_checkpointing::MemoryTracker`] divided by the
+    /// real system-memory budget (see
+    /// `super::total_system_memory_bytes`). It replaces the previous
+    /// hardcoded `0.5` placeholder: the numerator is the actual sum of
+    /// tracked tensor bytes, so the value now moves with real allocations
+    /// instead of being a fabricated constant.
     pub fn get_memory_usage_ratio() -> f64 {
-        // This is a simplified estimation
-        // In a real implementation, you would use system APIs
-        // to get actual memory information
-        0.5 // Placeholder: assume 50% memory usage
+        let tracked = super::GLOBAL_TRACKED_BYTES.load(super::Ordering::Relaxed);
+        let total = super::total_system_memory_bytes();
+        if total == 0 {
+            0.0
+        } else {
+            (tracked as f64 / total as f64).clamp(0.0, 1.0)
+        }
     }
 }
 
@@ -1316,6 +1429,77 @@ mod tests {
         // Should be roughly 300 * size_of::<f64>()
         let expected_size = 300 * std::mem::size_of::<f64>();
         assert_eq!(estimated_size, expected_size);
+    }
+
+    /// F82: `get_memory_usage_ratio` must reflect real tracked bytes, not a
+    /// hardcoded `0.5`. Tracking a known allocation must raise the ratio,
+    /// and releasing it must return the ratio to its prior value.
+    #[test]
+    fn memory_usage_ratio_reflects_tracked_bytes() {
+        use gradient_checkpointing::MemoryTracker;
+
+        let before = adaptive::get_memory_usage_ratio();
+        assert!(
+            (0.0..=1.0).contains(&before),
+            "ratio out of range: {before}"
+        );
+
+        let mut tracker = MemoryTracker::new();
+        let bytes = 256 * 1024 * 1024; // 256 MiB
+        tracker.add_allocation(bytes);
+
+        let during = adaptive::get_memory_usage_ratio();
+        assert!(
+            during > before,
+            "ratio did not rise with tracked bytes (F82 regression): \
+             before={before}, during={during}"
+        );
+        assert!((0.0..=1.0).contains(&during));
+
+        tracker.remove_allocation(bytes);
+        let after = adaptive::get_memory_usage_ratio();
+        assert!(
+            (after - before).abs() < 1e-9,
+            "tracked bytes were not released (F82 regression): \
+             before={before}, after={after}"
+        );
+    }
+
+    /// Regression (found while implementing F82): a `GradientCheckpointer`
+    /// dropped *without* an explicit `clear_checkpoints()` call must still
+    /// release its tracked bytes from the process-wide counter, or
+    /// `adaptive::get_memory_usage_ratio` leaks upward forever across the
+    /// lifetime of the process (defeating `CheckpointStrategy::MemoryAware`
+    /// for every checkpointer created afterward).
+    #[test]
+    fn dropping_checkpointer_releases_tracked_bytes() {
+        let before = adaptive::get_memory_usage_ratio();
+
+        {
+            let mut checkpointer: gradient_checkpointing::GradientCheckpointer<
+                f64,
+                scirs2_core::ndarray::Ix1,
+            > = gradient_checkpointing::GradientCheckpointer::new(
+                gradient_checkpointing::CheckpointStrategy::Uniform { interval: 1 },
+            );
+            checkpointer.set_max_depth(4);
+            let activation = Array::from_vec(vec![1.0_f64; 1_000_000]); // ~8 MB
+            checkpointer.store_checkpoint(0, activation);
+
+            let during = adaptive::get_memory_usage_ratio();
+            assert!(
+                during > before,
+                "ratio did not rise with a stored checkpoint: before={before}, during={during}"
+            );
+            // `checkpointer` drops here without calling `clear_checkpoints()`.
+        }
+
+        let after = adaptive::get_memory_usage_ratio();
+        assert!(
+            (after - before).abs() < 1e-9,
+            "GradientCheckpointer leaked tracked bytes on drop (regression): \
+             before={before}, after={after}"
+        );
     }
 
     #[test]

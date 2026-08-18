@@ -77,37 +77,155 @@ pub mod hessian_approximation {
             let grad_minus = gradient_fn(&param_minus)?;
 
             // Hessian diagonal: derivative of gradient using central difference
-            let second_deriv =
-                (grad_plus[i] - grad_minus[i]) / (A::from(2.0).expect("unwrap failed") * epsilon);
+            let two = A::from(2.0).ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "diagonal_finite_difference: integer literal 2.0 must fit in A".to_string(),
+                )
+            })?;
+            let second_deriv = (grad_plus[i] - grad_minus[i]) / (two * epsilon);
             hessian_diag[i] = second_deriv;
         }
 
         Ok(hessian_diag)
     }
 
-    /// Update L-BFGS Hessian approximation
+    /// Relative threshold used by the curvature (positive-definiteness) test.
+    ///
+    /// A curvature pair `(s, y)` is only usable by the L-BFGS two-loop recursion when
+    /// `y·s > 0`. Accepting a pair with `y·s <= 0` destroys the positive-definiteness
+    /// of the implicit inverse-Hessian approximation and can turn the resulting
+    /// "search direction" into an ascent direction. We use the standard relative
+    /// test `y·s > eps * ||s|| * ||y||` so the check is scale invariant.
+    fn curvature_threshold<A: Float>() -> A {
+        A::from(1e-8).unwrap_or_else(A::epsilon)
+    }
+
+    /// Euclidean norm of an array, computed without allocating.
+    fn euclidean_norm<A, D>(v: &Array<A, D>) -> A
+    where
+        A: Float,
+        D: Dimension,
+    {
+        v.iter().fold(A::zero(), |acc, &x| acc + x * x).sqrt()
+    }
+
+    /// Dot product of two arrays of identical shape.
+    fn dot_product<A, D>(a: &Array<A, D>, b: &Array<A, D>) -> A
+    where
+        A: Float,
+        D: Dimension,
+    {
+        a.iter()
+            .zip(b.iter())
+            .fold(A::zero(), |acc, (&x, &y)| acc + x * y)
+    }
+
+    /// Returns `true` when the curvature pair `(s, y)` satisfies `y·s > eps·||s||·||y||`
+    /// and is therefore safe to store in the L-BFGS history.
+    pub fn is_curvature_pair_acceptable<A, D>(
+        param_diff: &Array<A, D>,
+        grad_diff: &Array<A, D>,
+    ) -> bool
+    where
+        A: Float,
+        D: Dimension,
+    {
+        if param_diff.len() != grad_diff.len() {
+            return false;
+        }
+        let ys = dot_product(param_diff, grad_diff);
+        if !ys.is_finite() || ys <= A::zero() {
+            return false;
+        }
+        let threshold =
+            curvature_threshold::<A>() * euclidean_norm(param_diff) * euclidean_norm(grad_diff);
+        ys > threshold
+    }
+
+    /// Update L-BFGS Hessian approximation.
+    ///
+    /// Curvature pairs that fail the positive-curvature test `y·s > eps·||s||·||y||`
+    /// are **skipped** (not stored): storing them would destroy the positive
+    /// definiteness of the implicit inverse-Hessian approximation.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the pair was accepted and stored, `false` if it was skipped.
     pub fn update_lbfgs_approximation<A, D>(
         s_history: &mut VecDeque<Array<A, D>>,
         y_history: &mut VecDeque<Array<A, D>>,
         param_diff: Array<A, D>,
         grad_diff: Array<A, D>,
         max_history: usize,
-    ) where
+    ) -> bool
+    where
         A: Float + ScalarOperand + Debug,
         D: Dimension,
     {
-        // Add new differences to _history
+        if !is_curvature_pair_acceptable(&param_diff, &grad_diff) {
+            return false;
+        }
+
+        // Add new differences to the history
         s_history.push_back(param_diff);
         y_history.push_back(grad_diff);
 
-        // Maintain maximum _history size
-        if s_history.len() > max_history {
+        // Maintain maximum history size
+        while s_history.len() > max_history {
             s_history.pop_front();
             y_history.pop_front();
         }
+        true
     }
 
-    /// Apply L-BFGS two-loop recursion to approximate H^(-1) * grad
+    /// Compute the L-BFGS initial inverse-Hessian scaling `gamma_k = (s·y) / (y·y)`
+    /// from the most recent *acceptable* curvature pair.
+    ///
+    /// Returns `None` when no stored pair passes the curvature test (in which case the
+    /// caller should fall back to a user-supplied scale).
+    pub fn initial_hessian_scaling<A, D>(
+        s_history: &VecDeque<Array<A, D>>,
+        y_history: &VecDeque<Array<A, D>>,
+    ) -> Option<A>
+    where
+        A: Float,
+        D: Dimension,
+    {
+        let m = s_history.len().min(y_history.len());
+        for i in (0..m).rev() {
+            let s_i = &s_history[i];
+            let y_i = &y_history[i];
+            if !is_curvature_pair_acceptable(s_i, y_i) {
+                continue;
+            }
+            let yy = dot_product(y_i, y_i);
+            if yy <= A::zero() || !yy.is_finite() {
+                continue;
+            }
+            let gamma = dot_product(s_i, y_i) / yy;
+            if gamma.is_finite() && gamma > A::zero() {
+                return Some(gamma);
+            }
+        }
+        None
+    }
+
+    /// Apply the L-BFGS two-loop recursion to approximate `H^(-1) * grad`.
+    ///
+    /// # Curvature filtering
+    ///
+    /// Pairs that fail the positive-curvature test `y·s > eps·||s||·||y||` are skipped:
+    /// they do not correspond to a positive-definite update and including them can turn
+    /// the result into an ascent direction. `s_history` / `y_history` populated through
+    /// [`update_lbfgs_approximation`] are already filtered, but a caller may also build a
+    /// [`super::HessianInfo::QuasiNewton`] history by hand, so the filter is applied here
+    /// as well.
+    ///
+    /// # Initial inverse-Hessian scaling
+    ///
+    /// `H_0 = gamma_k * I` with `gamma_k = (s·y) / (y·y)` computed from the most recent
+    /// acceptable curvature pair (Nocedal & Wright, eq. 7.20). `initial_hessian_scale` is
+    /// used as the fallback when no acceptable pair exists (including an empty history).
     pub fn lbfgs_two_loop_recursion<A, D>(
         gradient: &Array<A, D>,
         s_history: &VecDeque<Array<A, D>>,
@@ -130,76 +248,71 @@ pub mod hessian_approximation {
             return Ok(gradient * initial_hessian_scale);
         }
 
-        let mut q = gradient.clone();
-        let mut alphas = Vec::with_capacity(m);
+        // Precompute which pairs are usable and their rho values, so both loops
+        // agree and the `alphas` indices stay aligned with the history indices.
+        let mut rhos: Vec<Option<A>> = Vec::with_capacity(m);
+        for i in 0..m {
+            let s_i = &s_history[i];
+            let y_i = &y_history[i];
+            if s_i.len() != gradient.len() || y_i.len() != gradient.len() {
+                return Err(OptimError::DimensionMismatch(format!(
+                    "L-BFGS history entry {} has length {}/{}, expected {}",
+                    i,
+                    s_i.len(),
+                    y_i.len(),
+                    gradient.len()
+                )));
+            }
+            if is_curvature_pair_acceptable(s_i, y_i) {
+                rhos.push(Some(A::one() / dot_product(y_i, s_i)));
+            } else {
+                rhos.push(None);
+            }
+        }
 
-        // First loop: compute alphas and update q
+        // H_0 = gamma_k * I from the latest acceptable pair; fall back to the
+        // caller-supplied scale when every pair was rejected.
+        let scale = initial_hessian_scaling(s_history, y_history).unwrap_or(initial_hessian_scale);
+
+        let mut q = gradient.clone();
+        let mut alphas = vec![A::zero(); m];
+
+        // First loop (newest -> oldest): compute alphas and update q
         for i in (0..m).rev() {
+            let rho_i = match rhos[i] {
+                Some(rho) => rho,
+                None => continue,
+            };
             let s_i = &s_history[i];
             let y_i = &y_history[i];
 
-            // Compute rho_i = 1 / (y_i^T * s_i)
-            let y_dot_s = y_i
-                .iter()
-                .zip(s_i.iter())
-                .map(|(&y, &s)| y * s)
-                .fold(A::zero(), |acc, x| acc + x);
+            // alpha_i = rho_i * s_i^T * q
+            let alpha_i = rho_i * dot_product(s_i, &q);
+            alphas[i] = alpha_i;
 
-            if y_dot_s.abs() < A::from(1e-12).expect("unwrap failed") {
-                alphas.push(A::zero());
-                continue;
-            }
-
-            let rho_i = A::one() / y_dot_s;
-
-            // Compute alpha_i = rho_i * s_i^T * q
-            let s_dot_q = s_i
-                .iter()
-                .zip(q.iter())
-                .map(|(&s, &q_val)| s * q_val)
-                .fold(A::zero(), |acc, x| acc + x);
-            let alpha_i = rho_i * s_dot_q;
-            alphas.push(alpha_i);
-
-            // Update q = q - alpha_i * y_i
+            // q = q - alpha_i * y_i
             for (q_val, &y_val) in q.iter_mut().zip(y_i.iter()) {
                 *q_val = *q_val - alpha_i * y_val;
             }
         }
 
-        // Scale by initial Hessian approximation
-        q.mapv_inplace(|x| x * initial_hessian_scale);
+        // Scale by the initial inverse-Hessian approximation
+        q.mapv_inplace(|x| x * scale);
 
-        // Second loop: compute final result
-        alphas.reverse(); // Reverse to match forward iteration
+        // Second loop (oldest -> newest): compute the final result
         for i in 0..m {
+            let rho_i = match rhos[i] {
+                Some(rho) => rho,
+                None => continue,
+            };
             let s_i = &s_history[i];
             let y_i = &y_history[i];
 
-            // Compute rho_i = 1 / (y_i^T * s_i)
-            let y_dot_s = y_i
-                .iter()
-                .zip(s_i.iter())
-                .map(|(&y, &s)| y * s)
-                .fold(A::zero(), |acc, x| acc + x);
+            // beta = rho_i * y_i^T * q
+            let beta = rho_i * dot_product(y_i, &q);
 
-            if y_dot_s.abs() < A::from(1e-12).expect("unwrap failed") {
-                continue;
-            }
-
-            let rho_i = A::one() / y_dot_s;
-
-            // Compute beta = rho_i * y_i^T * q
-            let y_dot_q = y_i
-                .iter()
-                .zip(q.iter())
-                .map(|(&y, &q_val)| y * q_val)
-                .fold(A::zero(), |acc, x| acc + x);
-            let beta = rho_i * y_dot_q;
-
-            // Update q = q + (alpha_i - beta) * s_i
-            let alpha_i = alphas[i];
-            let coeff = alpha_i - beta;
+            // q = q + (alpha_i - beta) * s_i
+            let coeff = alphas[i] - beta;
             for (q_val, &s_val) in q.iter_mut().zip(s_i.iter()) {
                 *q_val = *q_val + coeff * s_val;
             }
@@ -221,18 +334,32 @@ pub mod hessian_approximation {
 }
 
 /// Newton's method optimizer
+///
+/// # Descent safeguarding
+///
+/// A raw Newton step `-H^{-1} g` is only a descent direction when `H` is positive
+/// definite. For a diagonal Hessian approximation this optimizer therefore uses
+/// `|h_ii|` (floored at [`Newton::min_curvature`]) as the denominator, which keeps the
+/// update a descent direction even where the curvature is negative or vanishing.
 #[derive(Debug, Clone)]
 pub struct Newton<A: Float> {
     learning_rate: A,
     regularization: A, // For numerical stability
+    min_curvature: A,  // Lower bound on |h_ii| used as the step denominator
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync + Send + Sync> Newton<A> {
+    /// Default lower bound on the absolute diagonal curvature.
+    fn default_min_curvature() -> A {
+        A::from(1e-8).unwrap_or_else(A::epsilon)
+    }
+
     /// Create a new Newton optimizer
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            regularization: A::from(1e-6).expect("unwrap failed"),
+            regularization: A::from(1e-6).unwrap_or_else(A::epsilon),
+            min_curvature: Self::default_min_curvature(),
         }
     }
 
@@ -240,6 +367,22 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + Send + Sync> Newton<A> {
     pub fn with_regularization(mut self, regularization: A) -> Self {
         self.regularization = regularization;
         self
+    }
+
+    /// Set the lower bound applied to `|h_ii|` before it is used as the step denominator.
+    ///
+    /// Values `<= 0` are ignored and the default is kept, since a non-positive floor
+    /// would re-admit division by (near-)zero curvature.
+    pub fn with_min_curvature(mut self, min_curvature: A) -> Self {
+        if min_curvature > A::zero() {
+            self.min_curvature = min_curvature;
+        }
+        self
+    }
+
+    /// Get the lower bound applied to `|h_ii|`.
+    pub fn min_curvature(&self) -> A {
+        self.min_curvature
     }
 }
 
@@ -262,13 +405,18 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync + Send + Sync>
 
                 let mut update = Array1::zeros(params.len());
                 for i in 0..params.len() {
+                    // Use |h_ii| (floored at `min_curvature`) as the denominator.
+                    //
+                    // Dividing by a *signed* curvature flips the sign of the update
+                    // wherever `h_ii < 0`, which turns the step into an ascent step at
+                    // exactly the points (saddles / concave regions) where a descent
+                    // step matters most. The absolute value keeps `-lr * g_i / |h_ii|`
+                    // a descent direction for every coordinate, and the floor removes
+                    // the division-by-(near-)zero case without silently switching to a
+                    // differently-scaled fallback.
                     let h_ii = hessian_diag[i] + self.regularization;
-                    if h_ii.abs() > A::from(1e-12).expect("unwrap failed") {
-                        update[i] = gradients[i] / h_ii;
-                    } else {
-                        // Fall back to gradient descent if Hessian is singular
-                        update[i] = gradients[i];
-                    }
+                    let denom = h_ii.abs().max(self.min_curvature);
+                    update[i] = gradients[i] / denom;
                 }
 
                 Ok(params - &(update * self.learning_rate))
@@ -335,7 +483,9 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             let s = params - prev_params; // Parameter difference
             let y = gradients - prev_grad; // Gradient difference
 
-            hessian_approximation::update_lbfgs_approximation(
+            // Pairs failing the curvature test `y·s > eps·||s||·||y||` are skipped by
+            // `update_lbfgs_approximation` to preserve positive definiteness.
+            let _accepted = hessian_approximation::update_lbfgs_approximation(
                 &mut self.s_history,
                 &mut self.y_history,
                 s,
@@ -405,7 +555,7 @@ mod tests {
 
         let hessian_diag =
             hessian_approximation::diagonal_finite_difference(&params, gradient_fn, 1e-5)
-                .expect("unwrap failed");
+                .expect("hessian_approximation::diagonal_finite_difference succeeds in test_diagonal_hessian_approximation");
 
         // For quadratic function f(x) = x^2, second derivative should be 2.0
         assert_relative_eq!(hessian_diag[0], 2.0, epsilon = 1e-1);
@@ -423,7 +573,7 @@ mod tests {
 
         let result =
             hessian_approximation::lbfgs_two_loop_recursion(&gradient, &s_history, &y_history, 1.0)
-                .expect("unwrap failed");
+                .expect("hessian_approximation::lbfgs_two_loop_recursion succeeds in test_lbfgs_two_loop_recursion");
 
         // Result should be different from original gradient due to curvature information
         assert_ne!(result, gradient);
@@ -440,7 +590,7 @@ mod tests {
         let hessian_info = HessianInfo::Diagonal(hessian_diag);
         let new_params = optimizer
             .step_second_order(&params, &gradients, &hessian_info)
-            .expect("unwrap failed");
+            .expect("step_second_order succeeds in test_newton_method");
 
         // Verify parameters were updated
         assert!(new_params[0] < params[0]);
@@ -455,10 +605,14 @@ mod tests {
         let gradients2 = Array1::from_vec(vec![0.05, 0.15, 0.25]);
 
         // First step
-        params = optimizer.step(&params, &gradients1).expect("unwrap failed");
+        params = optimizer
+            .step(&params, &gradients1)
+            .expect("optimizer.step succeeds in test_lbfgs_optimizer");
 
         // Second step (should use history)
-        let new_params = optimizer.step(&params, &gradients2).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients2)
+            .expect("optimizer.step succeeds in test_lbfgs_optimizer");
 
         // Verify parameters were updated
         assert_ne!(new_params, params);
@@ -469,9 +623,9 @@ mod tests {
     #[test]
     fn test_gauss_newton_approximation() {
         let jacobian = Array2::from_shape_vec((3, 2), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-            .expect("unwrap failed");
+            .expect("Array2::from_shape_vec succeeds in test_gauss_newton_approximation");
         let hessian_approx =
-            hessian_approximation::gauss_newton_approximation(&jacobian).expect("unwrap failed");
+            hessian_approximation::gauss_newton_approximation(&jacobian).expect("hessian_approximation::gauss_newton_approximation succeeds in test_gauss_newton_approximation");
 
         // Should be a 2x2 matrix (J^T * J)
         assert_eq!(hessian_approx.dim(), (2, 2));

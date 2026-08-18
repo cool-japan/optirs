@@ -6,12 +6,84 @@ use std::fmt::Debug;
 // of resource utilization across optimization tasks.
 
 #[allow(dead_code)]
-use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, SystemTime};
 
 use crate::error::{OptimError, Result};
+
+/// Group a sorted, deduplicated list of free resource IDs into contiguous
+/// runs (e.g. `[0,1,2,5,6,9]` -> `[[0,1,2],[5,6],[9]]`).
+fn contiguous_blocks(sorted_ids: &[usize]) -> Vec<Vec<usize>> {
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+    for &id in sorted_ids {
+        let extends_last = matches!(
+            blocks.last().and_then(|b: &Vec<usize>| b.last()),
+            Some(&last) if id == last + 1
+        );
+        if extends_last {
+            if let Some(block) = blocks.last_mut() {
+                block.push(id);
+            }
+        } else {
+            blocks.push(vec![id]);
+        }
+    }
+    blocks
+}
+
+/// Pick `count` IDs from `free_ids` (already sorted ascending) by taking the
+/// lowest-numbered free IDs, without regard to contiguity. Returns `None`
+/// (exhaustion) if fewer than `count` IDs are free.
+fn pick_first_fit(free_ids: &[usize], count: usize) -> Option<Vec<usize>> {
+    if free_ids.len() < count {
+        None
+    } else {
+        Some(free_ids[..count].to_vec())
+    }
+}
+
+/// Pick `count` IDs from `free_ids` (already sorted ascending) preferring the
+/// smallest contiguous block that can satisfy the request (minimizing
+/// fragmentation waste). Falls back to draining the largest blocks first when
+/// no single block is big enough. Returns `None` (exhaustion) if fewer than
+/// `count` IDs are free in total.
+fn pick_best_fit(free_ids: &[usize], count: usize) -> Option<Vec<usize>> {
+    if free_ids.len() < count {
+        return None;
+    }
+    if count == 0 {
+        return Some(Vec::new());
+    }
+
+    let blocks = contiguous_blocks(free_ids);
+
+    if let Some(best_block) = blocks
+        .iter()
+        .filter(|b| b.len() >= count)
+        .min_by_key(|b| b.len())
+    {
+        return Some(best_block[..count].to_vec());
+    }
+
+    // No single contiguous block is big enough: drain the largest blocks
+    // first, which still minimizes the number of fragments created.
+    let mut sorted_blocks = blocks;
+    sorted_blocks.sort_by_key(|block| std::cmp::Reverse(block.len()));
+    let mut chosen = Vec::with_capacity(count);
+    for block in sorted_blocks {
+        for id in block {
+            if chosen.len() == count {
+                break;
+            }
+            chosen.push(id);
+        }
+        if chosen.len() == count {
+            break;
+        }
+    }
+    Some(chosen)
+}
 
 /// Resource manager for optimization processes
 #[derive(Debug)]
@@ -21,12 +93,6 @@ pub struct ResourceManager<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource allocation tracker
     allocation_tracker: ResourceAllocationTracker<T>,
-
-    /// Resource optimization engine
-    optimization_engine: ResourceOptimizationEngine<T>,
-
-    /// Load balancer
-    load_balancer: LoadBalancer<T>,
 
     /// Allocation strategy
     allocation_strategy: ResourceAllocationStrategy,
@@ -196,12 +262,6 @@ pub struct ResourceAllocationTracker<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource utilization tracking
     utilization_tracker: UtilizationTracker<T>,
-
-    /// Allocation efficiency metrics
-    efficiency_metrics: AllocationEfficiencyMetrics<T>,
-
-    /// Conflict detector
-    conflict_detector: AllocationConflictDetector,
 }
 
 /// Resource allocation for a specific task
@@ -293,12 +353,6 @@ pub struct UtilizationTracker<T: Float + Debug + Send + Sync + 'static> {
 
     /// Current network utilization
     network_utilization: T,
-
-    /// Utilization history
-    utilization_history: VecDeque<UtilizationSnapshot<T>>,
-
-    /// Utilization trends
-    trends: UtilizationTrends<T>,
 }
 
 /// Utilization snapshot
@@ -326,25 +380,6 @@ pub struct UtilizationSnapshot<T: Float + Debug + Send + Sync + 'static> {
     pub overall_utilization: T,
 }
 
-/// Utilization trends analysis
-#[derive(Debug)]
-pub struct UtilizationTrends<T: Float + Debug + Send + Sync + 'static> {
-    /// CPU utilization trend
-    cpu_trend: TrendDirection,
-
-    /// Memory utilization trend
-    memory_trend: TrendDirection,
-
-    /// GPU utilization trend
-    gpu_trend: TrendDirection,
-
-    /// Trend strength
-    trend_strength: T,
-
-    /// Prediction accuracy
-    prediction_accuracy: T,
-}
-
 /// Trend direction
 #[derive(Debug, Clone, Copy)]
 pub enum TrendDirection {
@@ -353,41 +388,6 @@ pub enum TrendDirection {
     Stable,
     Oscillating,
     Unknown,
-}
-
-/// Allocation efficiency metrics
-#[derive(Debug)]
-pub struct AllocationEfficiencyMetrics<T: Float + Debug + Send + Sync + 'static> {
-    /// Resource utilization efficiency
-    utilization_efficiency: T,
-
-    /// Allocation fragmentation
-    fragmentation: T,
-
-    /// Load balancing effectiveness
-    load_balance_score: T,
-
-    /// Allocation latency
-    allocation_latency: Duration,
-
-    /// Success rate
-    success_rate: T,
-
-    /// Waste percentage
-    waste_percentage: T,
-}
-
-/// Allocation conflict detector
-#[derive(Debug)]
-pub struct AllocationConflictDetector {
-    /// Active conflict checks
-    active_checks: HashMap<String, ConflictCheck>,
-
-    /// Conflict resolution strategies
-    resolution_strategies: Vec<ConflictResolutionStrategy>,
-
-    /// Conflict history
-    conflict_history: VecDeque<AllocationConflict>,
 }
 
 /// Conflict check definition
@@ -489,25 +489,6 @@ pub enum ConflictType {
 
     /// Performance interference
     PerformanceInterference,
-}
-
-/// Resource optimization engine
-#[derive(Debug)]
-pub struct ResourceOptimizationEngine<T: Float + Debug + Send + Sync + 'static> {
-    /// Optimization objectives
-    objectives: Vec<OptimizationObjective>,
-
-    /// Optimization algorithms
-    algorithms: HashMap<String, Box<dyn ResourceOptimizationAlgorithm<T>>>,
-
-    /// Current optimization strategy
-    current_strategy: String,
-
-    /// Optimization history
-    optimization_history: VecDeque<OptimizationResult<T>>,
-
-    /// Performance predictors
-    predictors: HashMap<String, PerformancePredictor<T>>,
 }
 
 /// Resource optimization objectives
@@ -625,38 +606,6 @@ pub struct OptimizationResult<T: Float + Debug + Send + Sync + 'static> {
     pub algorithm_used: String,
 }
 
-/// Performance predictor for resources
-#[derive(Debug)]
-pub struct PerformancePredictor<T: Float + Debug + Send + Sync + 'static> {
-    /// Prediction model
-    model: PredictionModel<T>,
-
-    /// Historical performance data
-    historical_data: VecDeque<PerformanceDataPoint<T>>,
-
-    /// Prediction accuracy
-    accuracy: T,
-
-    /// Model update frequency
-    update_frequency: Duration,
-}
-
-/// Prediction model for performance
-#[derive(Debug)]
-pub struct PredictionModel<T: Float + Debug + Send + Sync + 'static> {
-    /// Model type
-    model_type: String,
-
-    /// Model parameters
-    parameters: HashMap<String, Array1<T>>,
-
-    /// Training data size
-    training_size: usize,
-
-    /// Model performance metrics
-    performance_metrics: HashMap<String, T>,
-}
-
 /// Performance data point
 #[derive(Debug, Clone)]
 pub struct PerformanceDataPoint<T: Float + Debug + Send + Sync + 'static> {
@@ -674,25 +623,6 @@ pub struct PerformanceDataPoint<T: Float + Debug + Send + Sync + 'static> {
 
     /// Timestamp
     pub timestamp: SystemTime,
-}
-
-/// Load balancer for resources
-#[derive(Debug)]
-pub struct LoadBalancer<T: Float + Debug + Send + Sync + 'static> {
-    /// Load balancing strategy
-    strategy: LoadBalancingStrategy,
-
-    /// Current load distribution
-    load_distribution: HashMap<String, T>,
-
-    /// Load balancing history
-    balancing_history: VecDeque<LoadBalancingEvent<T>>,
-
-    /// Load predictor
-    load_predictor: LoadPredictor<T>,
-
-    /// Balancing effectiveness
-    effectiveness: T,
 }
 
 /// Load balancing strategies
@@ -734,22 +664,6 @@ pub struct LoadBalancingEvent<T: Float + Debug + Send + Sync + 'static> {
 
     /// Balancing effectiveness
     pub effectiveness: T,
-}
-
-/// Load predictor
-#[derive(Debug)]
-pub struct LoadPredictor<T: Float + Debug + Send + Sync + 'static> {
-    /// Prediction horizon
-    horizon: Duration,
-
-    /// Prediction model
-    model: PredictionModel<T>,
-
-    /// Prediction accuracy
-    accuracy: T,
-
-    /// Recent predictions
-    recent_predictions: VecDeque<LoadPrediction<T>>,
 }
 
 /// Load prediction
@@ -917,28 +831,131 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 {
     /// Create new resource manager
     pub fn new(resource_pool: ResourcePool, config: ResourceManagerConfig<T>) -> Result<Self> {
+        Self::with_constraints(resource_pool, config, ResourceConstraints::default())
+    }
+
+    /// Create a manager with explicit resource constraints.
+    ///
+    /// Both `config` and `constraints` are validated, and both then *drive*
+    /// [`Self::allocate_resources`]. Until 0.3.2 they were stored and never
+    /// read: the utilization ceilings, the reserved floor and the
+    /// over-provisioning factor had no effect at all, and the three
+    /// `enable_*` switches advertised features with no implementation behind
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// * [`OptimError::InvalidConfig`] -- a utilization ceiling outside
+    ///   `(0, 1]`, a non-positive or non-finite `over_provisioning_factor`, or a
+    ///   reserved floor larger than the pool itself.
+    /// * [`OptimError::UnsupportedOperation`] -- `enable_predictive_allocation`,
+    ///   `enable_load_balancing` or `enable_conflict_detection` is set. No code
+    ///   path implements them, and silently ignoring a switch is how a caller
+    ///   ends up believing it got a guarantee it did not buy.
+    pub fn with_constraints(
+        resource_pool: ResourcePool,
+        config: ResourceManagerConfig<T>,
+        constraints: ResourceConstraints,
+    ) -> Result<Self> {
+        for (name, enabled) in [
+            (
+                "enable_predictive_allocation",
+                config.enable_predictive_allocation,
+            ),
+            ("enable_load_balancing", config.enable_load_balancing),
+            (
+                "enable_conflict_detection",
+                config.enable_conflict_detection,
+            ),
+        ] {
+            if enabled {
+                return Err(OptimError::UnsupportedOperation(format!(
+                    "ResourceManagerConfig::{name} was requested, but no code path implements it"
+                )));
+            }
+        }
+
+        let factor = config.over_provisioning_factor.to_f64().unwrap_or(f64::NAN);
+        if !factor.is_finite() || factor <= 0.0 {
+            return Err(OptimError::InvalidConfig(format!(
+                "over_provisioning_factor must be positive and finite, got {factor}"
+            )));
+        }
+
+        for (name, ceiling) in [
+            ("max_cpu_utilization", constraints.max_cpu_utilization),
+            ("max_memory_utilization", constraints.max_memory_utilization),
+            ("max_gpu_utilization", constraints.max_gpu_utilization),
+        ] {
+            if !ceiling.is_finite() || ceiling <= 0.0 || ceiling > 1.0 {
+                return Err(OptimError::InvalidConfig(format!(
+                    "{name} must lie in (0, 1], got {ceiling}"
+                )));
+            }
+        }
+
+        let reserved = &constraints.min_available_resources;
+        if reserved.cpu_cores > resource_pool.cpu_cores
+            || reserved.memory_mb > resource_pool.memory_mb
+            || reserved.gpu_devices > resource_pool.gpu_devices
+            || reserved.storage_gb > resource_pool.storage_gb
+        {
+            return Err(OptimError::InvalidConfig(
+                "min_available_resources reserves more than the pool contains, so no allocation \
+                 could ever succeed"
+                    .to_string(),
+            ));
+        }
+
         Ok(Self {
             resource_pool,
             allocation_tracker: ResourceAllocationTracker::new()?,
-            optimization_engine: ResourceOptimizationEngine::new()?,
-            load_balancer: LoadBalancer::new()?,
             allocation_strategy: ResourceAllocationStrategy::BestFit,
-            constraints: ResourceConstraints::default(),
+            constraints,
             config,
             stats: ResourceStatistics::default(),
         })
     }
 
+    /// The constraints this manager enforces.
+    pub fn constraints(&self) -> &ResourceConstraints {
+        &self.constraints
+    }
+
+    /// The configuration this manager was built with.
+    pub fn config(&self) -> &ResourceManagerConfig<T> {
+        &self.config
+    }
+
+    /// Effective capacity of a countable resource: the pool scaled by
+    /// `over_provisioning_factor` and by the resource's utilization ceiling,
+    /// less the reserved floor.
+    fn effective_capacity(&self, pool: usize, ceiling: f64, reserved: usize) -> usize {
+        let factor = self.config.over_provisioning_factor.to_f64().unwrap_or(1.0);
+        let scaled = (pool as f64 * factor * ceiling).floor();
+        let usable = if scaled.is_finite() && scaled > 0.0 {
+            scaled as usize
+        } else {
+            0
+        };
+        usable.saturating_sub(reserved)
+    }
+
     /// Allocate resources for a task
     pub fn allocate_resources(&mut self, request: ResourceRequest) -> Result<ResourceAllocation> {
-        // Check resource availability
+        // Check resource availability against the true free pool (derived from
+        // currently-tracked allocations, not a stale utilization snapshot).
         self.check_resource_availability(&request)?;
 
-        // Apply allocation strategy
+        // Apply allocation strategy (performs its own free-pool search and can
+        // still fail here if a concurrent caller raced us, since this method
+        // takes `&mut self` there is no such race within a single manager).
         let allocation = self.apply_allocation_strategy(&request)?;
 
-        // Track the allocation
-        self.allocation_tracker.track_allocation(&allocation)?;
+        // Track the allocation and refresh the utilization snapshot so the
+        // free pool used by the next call reflects this allocation.
+        self.allocation_tracker
+            .track_allocation(&allocation, &self.resource_pool)?;
 
         // Update statistics
         self.stats.total_allocations += 1;
@@ -948,9 +965,76 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
 
     /// Deallocate resources for a task
     pub fn deallocate_resources(&mut self, task_id: &str) -> Result<()> {
-        self.allocation_tracker.deallocate(task_id)?;
+        self.allocation_tracker
+            .deallocate(task_id, &self.resource_pool)?;
         self.stats.total_deallocations += 1;
         Ok(())
+    }
+
+    /// CPU core IDs currently held by any active allocation.
+    fn used_cpu_core_ids(&self) -> std::collections::HashSet<usize> {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .flat_map(|a| a.cpu_cores.iter().copied())
+            .collect()
+    }
+
+    /// GPU device IDs currently held by any active allocation.
+    fn used_gpu_device_ids(&self) -> std::collections::HashSet<usize> {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .flat_map(|a| a.gpu_devices.iter().copied())
+            .collect()
+    }
+
+    fn used_memory_mb(&self) -> usize {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .map(|a| a.memory_mb)
+            .sum()
+    }
+
+    fn used_storage_gb(&self) -> usize {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .map(|a| a.storage_gb)
+            .sum()
+    }
+
+    fn used_network_bandwidth(&self) -> f64 {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .map(|a| a.network_bandwidth)
+            .sum()
+    }
+
+    fn used_special_hardware(&self, name: &str) -> usize {
+        self.allocation_tracker
+            .current_allocations
+            .values()
+            .filter_map(|a| a.special_hardware.get(name).copied())
+            .sum()
+    }
+
+    /// Free (unallocated) CPU core IDs, in ascending order.
+    fn free_cpu_core_ids(&self) -> Vec<usize> {
+        let used = self.used_cpu_core_ids();
+        (0..self.resource_pool.cpu_cores)
+            .filter(|c| !used.contains(c))
+            .collect()
+    }
+
+    /// Free (unallocated) GPU device IDs, in ascending order.
+    fn free_gpu_device_ids(&self) -> Vec<usize> {
+        let used = self.used_gpu_device_ids();
+        (0..self.resource_pool.gpu_devices)
+            .filter(|g| !used.contains(g))
+            .collect()
     }
 
     /// Get current resource utilization
@@ -958,19 +1042,27 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         self.allocation_tracker.get_current_utilization()
     }
 
-    /// Optimize resource allocation
-    pub fn optimize_allocation(&mut self) -> Result<()> {
-        let current_state = self.get_current_state();
-        let objectives = vec![OptimizationObjective::MaximizeUtilization];
-
-        let _result = self
-            .optimization_engine
-            .optimize(&current_state, &objectives)?;
-
-        // Apply optimization result if beneficial
-        // Implementation would analyze and apply the optimization
-
-        Ok(())
+    /// Re-optimize the current allocation against an objective.
+    ///
+    /// **Not implemented.** Until 0.3.2 this method ran a
+    /// `ResourceOptimizationEngine` whose `optimize` returned the *current*
+    /// allocations unchanged with hardcoded `performance_improvement: 0.1`,
+    /// `optimization_cost: 0.05` and `confidence: 0.8`, discarded the result
+    /// (`let _result = ...`), and returned `Ok(())`. A caller could not tell
+    /// that nothing had been optimized. The engine and its `LoadBalancer` /
+    /// `LoadPredictor` / `PredictionModel` scaffolding stored fields that no
+    /// code path read, so there was nothing to salvage; they were deleted and
+    /// this method now says so.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`OptimError::UnsupportedOperation`].
+    pub fn optimize_allocation(&mut self, objective: OptimizationObjective) -> Result<()> {
+        Err(OptimError::UnsupportedOperation(format!(
+            "resource re-optimization for {objective:?} is not implemented: no code path computes \
+             or applies a revised allocation. Allocate explicitly with \
+             ResourceManager::allocate_resources, or release and re-request."
+        )))
     }
 
     /// Get resource statistics
@@ -978,38 +1070,130 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         &self.stats
     }
 
-    /// Check if resources are available for request
-    fn check_resource_availability(&self, request: &ResourceRequest) -> Result<bool> {
-        let current_utilization = self.get_utilization();
-
-        // Check CPU availability
-        let available_cpu = self.resource_pool.cpu_cores
-            - (current_utilization
-                .cpu_utilization
-                .iter()
-                .cloned()
-                .sum::<T>()
-                .to_usize()
-                .unwrap_or(0));
-        if available_cpu < request.cpu_cores {
-            return Err(OptimError::ResourceUnavailable(
-                "Insufficient CPU cores".to_string(),
-            ));
+    /// Check if resources are available for request, against the real free
+    /// pool derived from currently-tracked allocations (not a stale
+    /// utilization snapshot). Returns `Err(OptimError::ResourceUnavailable)`
+    /// naming the first exhausted resource type.
+    fn check_resource_availability(&self, request: &ResourceRequest) -> Result<()> {
+        // Constraint ceilings and the reserved floor bound what may be handed
+        // out, regardless of what is physically free.
+        let cpu_budget = self.effective_capacity(
+            self.resource_pool.cpu_cores,
+            self.constraints.max_cpu_utilization,
+            self.constraints.min_available_resources.cpu_cores,
+        );
+        let cpu_in_use = self.resource_pool.cpu_cores - self.free_cpu_core_ids().len();
+        if cpu_in_use + request.cpu_cores > cpu_budget {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "CPU constraint exceeded: {} in use plus {} requested exceeds the {} cores allowed \
+                 by max_cpu_utilization {} and min_available_resources",
+                cpu_in_use,
+                request.cpu_cores,
+                cpu_budget,
+                self.constraints.max_cpu_utilization
+            )));
         }
 
-        // Check memory availability
-        let available_memory = T::from(self.resource_pool.memory_mb).unwrap_or_else(|| T::zero())
-            * (T::one() - current_utilization.memory_utilization);
-        if available_memory < T::from(request.memory_mb).unwrap_or_else(|| T::zero()) {
-            return Err(OptimError::ResourceUnavailable(
-                "Insufficient memory".to_string(),
-            ));
+        let memory_budget = self.effective_capacity(
+            self.resource_pool.memory_mb,
+            self.constraints.max_memory_utilization,
+            self.constraints.min_available_resources.memory_mb,
+        );
+        let memory_in_use = self.used_memory_mb();
+        if memory_in_use + request.memory_mb > memory_budget {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "memory constraint exceeded: {}MB in use plus {}MB requested exceeds the {}MB \
+                 allowed by max_memory_utilization {} and min_available_resources",
+                memory_in_use,
+                request.memory_mb,
+                memory_budget,
+                self.constraints.max_memory_utilization
+            )));
         }
 
-        Ok(true)
+        let gpu_budget = self.effective_capacity(
+            self.resource_pool.gpu_devices,
+            self.constraints.max_gpu_utilization,
+            self.constraints.min_available_resources.gpu_devices,
+        );
+        let gpu_in_use = self.resource_pool.gpu_devices - self.free_gpu_device_ids().len();
+        if gpu_in_use + request.gpu_devices > gpu_budget {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "GPU constraint exceeded: {} in use plus {} requested exceeds the {} devices \
+                 allowed by max_gpu_utilization {} and min_available_resources",
+                gpu_in_use, request.gpu_devices, gpu_budget, self.constraints.max_gpu_utilization
+            )));
+        }
+
+        let free_cpu = self.free_cpu_core_ids().len();
+        if free_cpu < request.cpu_cores {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient CPU cores: requested {}, free {}",
+                request.cpu_cores, free_cpu
+            )));
+        }
+
+        let free_memory = self
+            .resource_pool
+            .memory_mb
+            .saturating_sub(self.used_memory_mb());
+        if free_memory < request.memory_mb {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient memory: requested {}MB, free {}MB",
+                request.memory_mb, free_memory
+            )));
+        }
+
+        let free_gpu = self.free_gpu_device_ids().len();
+        if free_gpu < request.gpu_devices {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient GPU devices: requested {}, free {}",
+                request.gpu_devices, free_gpu
+            )));
+        }
+
+        let free_storage = self
+            .resource_pool
+            .storage_gb
+            .saturating_sub(self.used_storage_gb());
+        if free_storage < request.storage_gb {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient storage: requested {}GB, free {}GB",
+                request.storage_gb, free_storage
+            )));
+        }
+
+        let free_bandwidth =
+            (self.resource_pool.network_bandwidth - self.used_network_bandwidth()).max(0.0);
+        if free_bandwidth < request.network_bandwidth {
+            return Err(OptimError::ResourceUnavailable(format!(
+                "insufficient network bandwidth: requested {}Mbps, free {}Mbps",
+                request.network_bandwidth, free_bandwidth
+            )));
+        }
+
+        for (hw_name, &requested_units) in &request.special_hardware {
+            let capacity = self
+                .resource_pool
+                .special_hardware
+                .get(hw_name)
+                .copied()
+                .unwrap_or(0);
+            let free = capacity.saturating_sub(self.used_special_hardware(hw_name));
+            if free < requested_units {
+                return Err(OptimError::ResourceUnavailable(format!(
+                    "insufficient special hardware '{hw_name}': requested {requested_units}, free {free}"
+                )));
+            }
+        }
+
+        Ok(())
     }
 
-    /// Apply allocation strategy
+    /// Apply allocation strategy. `WorstFit`, `PerformanceOptimized`,
+    /// `EnergyEfficient`, `FairShare`, and `PriorityBased` are not yet
+    /// implemented as independently-optimized strategies; they fall back to
+    /// the honest first-fit search rather than silently echoing the request.
     fn apply_allocation_strategy(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
         match self.allocation_strategy {
             ResourceAllocationStrategy::BestFit => self.best_fit_allocation(request),
@@ -1018,14 +1202,37 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         }
     }
 
-    /// Best fit allocation strategy
+    /// Best-fit allocation: among free CPU/GPU IDs, prefer the smallest
+    /// contiguous block that still satisfies the request (minimizing
+    /// fragmentation waste); falls back to draining the largest blocks first
+    /// when no single block is big enough. Fails with
+    /// `ResourceUnavailable` when the free pool cannot satisfy the request.
     fn best_fit_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
-        // Simplified best fit implementation
+        self.check_resource_availability(request)?;
+
+        let free_cpu = self.free_cpu_core_ids();
+        let cpu_cores = pick_best_fit(&free_cpu, request.cpu_cores).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "best-fit: cannot satisfy {} CPU cores from {} free",
+                request.cpu_cores,
+                free_cpu.len()
+            ))
+        })?;
+
+        let free_gpu = self.free_gpu_device_ids();
+        let gpu_devices = pick_best_fit(&free_gpu, request.gpu_devices).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "best-fit: cannot satisfy {} GPU devices from {} free",
+                request.gpu_devices,
+                free_gpu.len()
+            ))
+        })?;
+
         Ok(ResourceAllocation {
             task_id: request.task_id.clone(),
-            cpu_cores: (0..request.cpu_cores).collect(),
+            cpu_cores,
             memory_mb: request.memory_mb,
-            gpu_devices: (0..request.gpu_devices).collect(),
+            gpu_devices,
             storage_gb: request.storage_gb,
             network_bandwidth: request.network_bandwidth,
             special_hardware: request.special_hardware.clone(),
@@ -1035,19 +1242,35 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         })
     }
 
-    /// First fit allocation strategy
+    /// First-fit allocation: takes the lowest-numbered free CPU/GPU IDs in
+    /// ascending order, without regard to contiguity. Fails with
+    /// `ResourceUnavailable` when the free pool cannot satisfy the request.
     fn first_fit_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
-        // Simplified first fit implementation
-        self.default_allocation(request)
-    }
+        self.check_resource_availability(request)?;
 
-    /// Default allocation strategy
-    fn default_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
+        let free_cpu = self.free_cpu_core_ids();
+        let cpu_cores = pick_first_fit(&free_cpu, request.cpu_cores).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "first-fit: cannot satisfy {} CPU cores from {} free",
+                request.cpu_cores,
+                free_cpu.len()
+            ))
+        })?;
+
+        let free_gpu = self.free_gpu_device_ids();
+        let gpu_devices = pick_first_fit(&free_gpu, request.gpu_devices).ok_or_else(|| {
+            OptimError::ResourceUnavailable(format!(
+                "first-fit: cannot satisfy {} GPU devices from {} free",
+                request.gpu_devices,
+                free_gpu.len()
+            ))
+        })?;
+
         Ok(ResourceAllocation {
             task_id: request.task_id.clone(),
-            cpu_cores: (0..request.cpu_cores).collect(),
+            cpu_cores,
             memory_mb: request.memory_mb,
-            gpu_devices: (0..request.gpu_devices).collect(),
+            gpu_devices,
             storage_gb: request.storage_gb,
             network_bandwidth: request.network_bandwidth,
             special_hardware: request.special_hardware.clone(),
@@ -1057,15 +1280,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static + std::iter::Sum
         })
     }
 
-    /// Get current resource state
-    fn get_current_state(&self) -> ResourceState<T> {
-        ResourceState {
-            available_resources: self.resource_pool.clone(),
-            current_allocations: self.allocation_tracker.get_current_allocations(),
-            utilization: self.get_utilization(),
-            pending_requests: Vec::new(),
-            performance_metrics: HashMap::new(),
-        }
+    /// Default allocation strategy for strategies without a dedicated
+    /// implementation: behaves exactly like first-fit (real free-pool
+    /// search, honest failure on exhaustion) rather than echoing the
+    /// request unchecked.
+    fn default_allocation(&self, request: &ResourceRequest) -> Result<ResourceAllocation> {
+        self.first_fit_allocation(request)
     }
 }
 
@@ -1077,12 +1297,16 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceAllocat
             current_allocations: HashMap::new(),
             allocation_history: VecDeque::new(),
             utilization_tracker: UtilizationTracker::new()?,
-            efficiency_metrics: AllocationEfficiencyMetrics::default(),
-            conflict_detector: AllocationConflictDetector::new(),
         })
     }
 
-    pub fn track_allocation(&mut self, allocation: &ResourceAllocation) -> Result<()> {
+    /// Record a new allocation and refresh the utilization snapshot so the
+    /// free pool used by subsequent availability checks reflects it.
+    pub fn track_allocation(
+        &mut self,
+        allocation: &ResourceAllocation,
+        pool: &ResourcePool,
+    ) -> Result<()> {
         self.current_allocations
             .insert(allocation.task_id.clone(), allocation.clone());
 
@@ -1095,22 +1319,32 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceAllocat
         };
 
         self.allocation_history.push_back(event);
+        self.refresh_utilization(pool);
         Ok(())
     }
 
-    pub fn deallocate(&mut self, task_id: &str) -> Result<()> {
-        if let Some(allocation) = self.current_allocations.remove(task_id) {
-            let event = AllocationEvent {
-                event_type: AllocationEventType::Deallocated,
-                task_id: task_id.to_string(),
-                allocation,
-                timestamp: SystemTime::now(),
-                metadata: HashMap::new(),
-            };
+    /// Release a task's allocation, restoring its resources to the free pool
+    /// and refreshing the utilization snapshot. Errors if the task has no
+    /// active allocation (nothing to deallocate).
+    pub fn deallocate(&mut self, task_id: &str, pool: &ResourcePool) -> Result<()> {
+        match self.current_allocations.remove(task_id) {
+            Some(allocation) => {
+                let event = AllocationEvent {
+                    event_type: AllocationEventType::Deallocated,
+                    task_id: task_id.to_string(),
+                    allocation,
+                    timestamp: SystemTime::now(),
+                    metadata: HashMap::new(),
+                };
 
-            self.allocation_history.push_back(event);
+                self.allocation_history.push_back(event);
+                self.refresh_utilization(pool);
+                Ok(())
+            }
+            None => Err(OptimError::InvalidState(format!(
+                "cannot deallocate unknown task '{task_id}': no active allocation found"
+            ))),
         }
-        Ok(())
     }
 
     pub fn get_current_utilization(&self) -> UtilizationSnapshot<T> {
@@ -1119,6 +1353,59 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceAllocat
 
     pub fn get_current_allocations(&self) -> HashMap<String, ResourceAllocation> {
         self.current_allocations.clone()
+    }
+
+    /// Recompute the utilization snapshot fields from the ground-truth set
+    /// of current allocations, so `get_current_utilization()` reflects
+    /// reality instead of staying pinned at its initial (zero) value.
+    fn refresh_utilization(&mut self, pool: &ResourcePool) {
+        let mut cpu_used = vec![false; pool.cpu_cores];
+        let mut gpu_used = vec![false; pool.gpu_devices];
+        let mut memory_used = 0usize;
+        let mut storage_used = 0usize;
+        let mut bandwidth_used = 0.0f64;
+
+        for alloc in self.current_allocations.values() {
+            for &core in &alloc.cpu_cores {
+                if let Some(slot) = cpu_used.get_mut(core) {
+                    *slot = true;
+                }
+            }
+            for &gpu in &alloc.gpu_devices {
+                if let Some(slot) = gpu_used.get_mut(gpu) {
+                    *slot = true;
+                }
+            }
+            memory_used += alloc.memory_mb;
+            storage_used += alloc.storage_gb;
+            bandwidth_used += alloc.network_bandwidth;
+        }
+
+        self.utilization_tracker.cpu_utilization = cpu_used
+            .iter()
+            .map(|&used| if used { T::one() } else { T::zero() })
+            .collect();
+        self.utilization_tracker.gpu_utilization = gpu_used
+            .iter()
+            .map(|&used| if used { T::one() } else { T::zero() })
+            .collect();
+        self.utilization_tracker.memory_utilization = if pool.memory_mb > 0 {
+            T::from(memory_used).unwrap_or_else(|| T::zero())
+                / T::from(pool.memory_mb).unwrap_or_else(|| T::one())
+        } else {
+            T::zero()
+        };
+        self.utilization_tracker.storage_utilization = if pool.storage_gb > 0 {
+            T::from(storage_used).unwrap_or_else(|| T::zero())
+                / T::from(pool.storage_gb).unwrap_or_else(|| T::one())
+        } else {
+            T::zero()
+        };
+        self.utilization_tracker.network_utilization = if pool.network_bandwidth > 0.0 {
+            T::from(bandwidth_used / pool.network_bandwidth).unwrap_or_else(|| T::zero())
+        } else {
+            T::zero()
+        };
     }
 }
 
@@ -1130,8 +1417,6 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> UtilizationTrac
             gpu_utilization: Vec::new(),
             storage_utilization: T::zero(),
             network_utilization: T::zero(),
-            utilization_history: VecDeque::new(),
-            trends: UtilizationTrends::default(),
         })
     }
 
@@ -1154,81 +1439,6 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> UtilizationTrac
     }
 }
 
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> ResourceOptimizationEngine<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            objectives: Vec::new(),
-            algorithms: HashMap::new(),
-            current_strategy: "default".to_string(),
-            optimization_history: VecDeque::new(),
-            predictors: HashMap::new(),
-        })
-    }
-
-    pub fn optimize(
-        &mut self,
-        current_state: &ResourceState<T>,
-        objectives: &[OptimizationObjective],
-    ) -> Result<OptimizationResult<T>> {
-        // Simplified optimization implementation
-        Ok(OptimizationResult {
-            proposed_allocations: current_state.current_allocations.clone(),
-            performance_improvement: T::from(0.1).unwrap_or_else(|| T::zero()),
-            objectives_achieved: HashMap::new(),
-            optimization_cost: T::from(0.05).unwrap_or_else(|| T::zero()),
-            confidence: T::from(0.8).unwrap_or_else(|| T::zero()),
-            algorithm_used: self.current_strategy.clone(),
-        })
-    }
-}
-
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LoadBalancer<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            strategy: LoadBalancingStrategy::LeastLoaded,
-            load_distribution: HashMap::new(),
-            balancing_history: VecDeque::new(),
-            load_predictor: LoadPredictor::new()?,
-            effectiveness: T::from(0.5).unwrap_or_else(|| T::zero()),
-        })
-    }
-}
-
-impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LoadPredictor<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            horizon: Duration::from_secs(300),
-            model: PredictionModel {
-                model_type: "linear".to_string(),
-                parameters: HashMap::new(),
-                training_size: 0,
-                performance_metrics: HashMap::new(),
-            },
-            accuracy: T::from(0.5).unwrap_or_else(|| T::zero()),
-            recent_predictions: VecDeque::new(),
-        })
-    }
-}
-
-impl AllocationConflictDetector {
-    pub fn new() -> Self {
-        Self {
-            active_checks: HashMap::new(),
-            resolution_strategies: vec![
-                ConflictResolutionStrategy::PriorityBased,
-                ConflictResolutionStrategy::ResourceSharing,
-            ],
-            conflict_history: VecDeque::new(),
-        }
-    }
-}
-
-impl Default for AllocationConflictDetector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // Default implementations
 
 impl Default for ResourceConstraints {
@@ -1237,7 +1447,26 @@ impl Default for ResourceConstraints {
             max_cpu_utilization: 0.9,
             max_memory_utilization: 0.85,
             max_gpu_utilization: 0.9,
-            min_available_resources: ResourcePool::default(),
+            // Reserve nothing by default. This was `ResourcePool::default()`,
+            // which reserves an entire 8-core / 16 GB / 1-GPU machine as the
+            // *floor* that must stay free -- so on any pool that size or
+            // smaller no allocation could ever succeed. Nothing read the field
+            // before 0.3.2, which is why an obviously wrong default went
+            // unnoticed.
+            min_available_resources: ResourcePool {
+                cpu_cores: 0,
+                cpu_specs: Vec::new(),
+                memory_mb: 0,
+                memory_specs: MemorySpec::default(),
+                gpu_devices: 0,
+                gpu_specs: Vec::new(),
+                storage_gb: 0,
+                storage_specs: Vec::new(),
+                network_bandwidth: 0.0,
+                network_specs: NetworkSpec::default(),
+                special_hardware: HashMap::new(),
+                availability_times: HashMap::new(),
+            },
             isolation_requirements: HashMap::new(),
             performance_guarantees: Vec::new(),
         }
@@ -1286,31 +1515,6 @@ impl Default for NetworkSpec {
     }
 }
 
-impl<T: Float + Debug + Default + Send + Sync> Default for AllocationEfficiencyMetrics<T> {
-    fn default() -> Self {
-        Self {
-            utilization_efficiency: T::from(0.5).unwrap_or_else(|| T::zero()),
-            fragmentation: T::from(0.1).unwrap_or_else(|| T::zero()),
-            load_balance_score: T::from(0.8).unwrap_or_else(|| T::zero()),
-            allocation_latency: Duration::from_millis(10),
-            success_rate: T::from(0.95).unwrap_or_else(|| T::zero()),
-            waste_percentage: T::from(0.05).unwrap_or_else(|| T::zero()),
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + Send + Sync> Default for UtilizationTrends<T> {
-    fn default() -> Self {
-        Self {
-            cpu_trend: TrendDirection::Stable,
-            memory_trend: TrendDirection::Stable,
-            gpu_trend: TrendDirection::Stable,
-            trend_strength: T::from(0.1).unwrap_or_else(|| T::zero()),
-            prediction_accuracy: T::from(0.7).unwrap_or_else(|| T::zero()),
-        }
-    }
-}
-
 impl<T: Float + Debug + Default + Send + Sync> Default for ResourceStatistics<T> {
     fn default() -> Self {
         Self {
@@ -1323,5 +1527,313 @@ impl<T: Float + Debug + Default + Send + Sync> Default for ResourceStatistics<T>
             load_balance_effectiveness: T::from(0.8).unwrap_or_else(|| T::zero()),
             conflict_resolution_rate: T::from(0.9).unwrap_or_else(|| T::zero()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn small_pool(cpu_cores: usize, memory_mb: usize, gpu_devices: usize) -> ResourcePool {
+        ResourcePool {
+            cpu_cores,
+            cpu_specs: Vec::new(),
+            memory_mb,
+            memory_specs: MemorySpec::default(),
+            gpu_devices,
+            gpu_specs: Vec::new(),
+            storage_gb: 1000,
+            storage_specs: Vec::new(),
+            network_bandwidth: 1000.0,
+            network_specs: NetworkSpec::default(),
+            special_hardware: HashMap::new(),
+            availability_times: HashMap::new(),
+        }
+    }
+
+    fn test_config() -> ResourceManagerConfig<f64> {
+        ResourceManagerConfig {
+            allocation_timeout: Duration::from_secs(1),
+            monitoring_interval: Duration::from_secs(1),
+            optimization_interval: Duration::from_secs(1),
+            max_allocation_retries: 3,
+            enable_predictive_allocation: false,
+            enable_load_balancing: false,
+            over_provisioning_factor: 1.0,
+            enable_conflict_detection: false,
+        }
+    }
+
+    fn request(
+        task_id: &str,
+        cpu_cores: usize,
+        memory_mb: usize,
+        gpu_devices: usize,
+    ) -> ResourceRequest {
+        ResourceRequest {
+            task_id: task_id.to_string(),
+            cpu_cores,
+            memory_mb,
+            gpu_devices,
+            storage_gb: 0,
+            network_bandwidth: 0.0,
+            special_hardware: HashMap::new(),
+            priority: 5,
+            deadline: None,
+            requested_at: SystemTime::now(),
+        }
+    }
+
+    /// Constraints that reserve nothing and cap nothing, so a test exercising
+    /// *free-pool* exhaustion is not confounded by the utilization ceilings.
+    fn unconstrained() -> ResourceConstraints {
+        ResourceConstraints {
+            max_cpu_utilization: 1.0,
+            max_memory_utilization: 1.0,
+            max_gpu_utilization: 1.0,
+            ..ResourceConstraints::default()
+        }
+    }
+
+    fn manager(pool: ResourcePool) -> ResourceManager<f64> {
+        ResourceManager::<f64>::with_constraints(pool, test_config(), unconstrained())
+            .expect("manager construction failed")
+    }
+
+    /// The utilization ceilings and the reserved floor must actually bound what
+    /// is handed out. Until 0.3.2 `ResourceConstraints` was stored by
+    /// `ResourceManager::new` and never read, so every ceiling was inert.
+    #[test]
+    fn utilization_ceilings_and_reserved_floor_bound_allocation() {
+        let constraints = ResourceConstraints {
+            max_cpu_utilization: 0.5,
+            ..unconstrained()
+        };
+        let mut mgr = ResourceManager::<f64>::with_constraints(
+            small_pool(8, 8192, 0),
+            test_config(),
+            constraints,
+        )
+        .expect("manager construction");
+
+        // 4 of 8 cores is exactly the 50% ceiling.
+        mgr.allocate_resources(request("task-a", 4, 512, 0))
+            .expect("an allocation at the ceiling must succeed");
+        // One more core would exceed it, even though 4 cores are physically free.
+        let over = mgr.allocate_resources(request("task-b", 1, 512, 0));
+        assert!(
+            matches!(over, Err(OptimError::ResourceUnavailable(_))),
+            "the CPU ceiling must be enforced, got {over:?}"
+        );
+
+        // The reserved floor bites the same way.
+        let mut reserved = unconstrained();
+        reserved.min_available_resources.cpu_cores = 6;
+        let mut mgr = ResourceManager::<f64>::with_constraints(
+            small_pool(8, 8192, 0),
+            test_config(),
+            reserved,
+        )
+        .expect("manager construction");
+        mgr.allocate_resources(request("task-a", 2, 512, 0))
+            .expect("2 of the 2 unreserved cores must be allocatable");
+        assert!(mgr
+            .allocate_resources(request("task-b", 1, 512, 0))
+            .is_err());
+    }
+
+    /// A configuration reserving more than the pool holds can never satisfy any
+    /// request, so it is refused at construction rather than failing every call.
+    #[test]
+    fn an_impossible_reserved_floor_is_refused() {
+        let mut impossible = unconstrained();
+        impossible.min_available_resources.cpu_cores = 99;
+        assert!(matches!(
+            ResourceManager::<f64>::with_constraints(
+                small_pool(8, 8192, 0),
+                test_config(),
+                impossible
+            ),
+            Err(OptimError::InvalidConfig(_))
+        ));
+    }
+
+    /// Every `enable_*` switch names an unimplemented feature, so setting one
+    /// must be refused rather than silently ignored.
+    #[test]
+    fn unimplemented_manager_switches_are_refused() {
+        for apply in [
+            (|cfg: &mut ResourceManagerConfig<f64>| cfg.enable_predictive_allocation = true)
+                as fn(&mut ResourceManagerConfig<f64>),
+            |cfg: &mut ResourceManagerConfig<f64>| cfg.enable_load_balancing = true,
+            |cfg: &mut ResourceManagerConfig<f64>| cfg.enable_conflict_detection = true,
+        ] {
+            let mut config = test_config();
+            apply(&mut config);
+            assert!(matches!(
+                ResourceManager::<f64>::new(small_pool(8, 8192, 0), config),
+                Err(OptimError::UnsupportedOperation(_))
+            ));
+        }
+
+        let mut config = test_config();
+        config.over_provisioning_factor = 0.0;
+        assert!(matches!(
+            ResourceManager::<f64>::new(small_pool(8, 8192, 0), config),
+            Err(OptimError::InvalidConfig(_))
+        ));
+    }
+
+    /// Re-optimization is not implemented and must say so rather than returning
+    /// `Ok(())` after discarding an engine's fabricated result.
+    #[test]
+    fn optimize_allocation_reports_that_it_is_unimplemented() {
+        let mut mgr = manager(small_pool(4, 4096, 0));
+        assert!(matches!(
+            mgr.optimize_allocation(OptimizationObjective::MaximizeUtilization),
+            Err(OptimError::UnsupportedOperation(_))
+        ));
+    }
+
+    #[test]
+    fn oversubscription_now_fails() {
+        // Regression test for F10: the pool has 4 cores total; the first
+        // request takes all 4, so a second request for even 1 more core
+        // must fail instead of silently succeeding with duplicate IDs.
+        let mut mgr = manager(small_pool(4, 8192, 1));
+
+        let first = mgr
+            .allocate_resources(request("task-a", 4, 1024, 0))
+            .expect("first allocation should succeed");
+        assert_eq!(first.cpu_cores.len(), 4);
+
+        let second = mgr.allocate_resources(request("task-b", 1, 1024, 0));
+        assert!(
+            second.is_err(),
+            "allocating beyond the free pool must fail, not silently succeed"
+        );
+    }
+
+    #[test]
+    fn memory_exhaustion_fails() {
+        let mut mgr = manager(small_pool(8, 2048, 0));
+        mgr.allocate_resources(request("task-a", 1, 2000, 0))
+            .expect("first allocation should succeed");
+
+        let result = mgr.allocate_resources(request("task-b", 1, 100, 0));
+        assert!(result.is_err(), "memory exhaustion must fail allocation");
+    }
+
+    #[test]
+    fn decrement_and_restore_round_trip() {
+        let mut mgr = manager(small_pool(4, 4096, 0));
+
+        assert_eq!(mgr.free_cpu_core_ids().len(), 4);
+        mgr.allocate_resources(request("task-a", 2, 512, 0))
+            .expect("allocation should succeed");
+        assert_eq!(
+            mgr.free_cpu_core_ids().len(),
+            2,
+            "free pool must decrement by exactly what was allocated"
+        );
+
+        mgr.deallocate_resources("task-a")
+            .expect("deallocation should succeed");
+        assert_eq!(
+            mgr.free_cpu_core_ids().len(),
+            4,
+            "free pool must be fully restored after deallocation"
+        );
+    }
+
+    #[test]
+    fn deallocate_unknown_task_errors() {
+        let mut mgr = manager(small_pool(4, 4096, 0));
+        let result = mgr.deallocate_resources("never-allocated");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sequential_allocations_do_not_collide() {
+        let mut mgr = manager(small_pool(8, 8192, 0));
+
+        let a = mgr
+            .allocate_resources(request("task-a", 3, 512, 0))
+            .expect("task-a allocation should succeed");
+        let b = mgr
+            .allocate_resources(request("task-b", 3, 512, 0))
+            .expect("task-b allocation should succeed");
+
+        let a_ids: std::collections::HashSet<_> = a.cpu_cores.iter().copied().collect();
+        let b_ids: std::collections::HashSet<_> = b.cpu_cores.iter().copied().collect();
+        assert!(
+            a_ids.is_disjoint(&b_ids),
+            "concurrently active allocations must not share CPU core IDs: {a_ids:?} vs {b_ids:?}"
+        );
+    }
+
+    #[test]
+    fn best_fit_prefers_smallest_sufficient_contiguous_block() {
+        // Pool of 5 cores (0..5). Hold core 0, then release it after taking
+        // core 1 too, leaving free = {0,2,3,4}: a singleton block [0] and a
+        // contiguous block [2,3,4] (size 3). A best-fit request for 1 core
+        // must prefer the singleton [0] over splitting the larger block.
+        let mut mgr = manager(small_pool(5, 8192, 0));
+        mgr.allocation_strategy = ResourceAllocationStrategy::FirstFit;
+
+        let hold_a = mgr
+            .allocate_resources(request("hold-a", 1, 0, 0))
+            .expect("hold-a should succeed"); // takes core 0
+        assert_eq!(hold_a.cpu_cores, vec![0]);
+        let hold_b = mgr
+            .allocate_resources(request("hold-b", 1, 0, 0))
+            .expect("hold-b should succeed"); // takes core 1
+        assert_eq!(hold_b.cpu_cores, vec![1]);
+        mgr.deallocate_resources(&hold_a.task_id)
+            .expect("release hold-a");
+        // Free set is now {0, 2, 3, 4}.
+        assert_eq!(mgr.free_cpu_core_ids(), vec![0, 2, 3, 4]);
+
+        mgr.allocation_strategy = ResourceAllocationStrategy::BestFit;
+        let picked = mgr
+            .allocate_resources(request("best-fit-pick", 1, 0, 0))
+            .expect("best-fit allocation should succeed");
+        assert_eq!(
+            picked.cpu_cores,
+            vec![0],
+            "best-fit should prefer the exact-size singleton block over fragmenting the larger block"
+        );
+    }
+
+    #[test]
+    fn pick_first_fit_and_best_fit_behave_differently_on_fragmented_pool() {
+        // Free IDs with a fragmented layout: [0] and [2,3,4,5] (two blocks).
+        let free_ids = vec![0usize, 2, 3, 4, 5];
+
+        let first = pick_first_fit(&free_ids, 1).expect("first-fit should succeed");
+        assert_eq!(first, vec![0]);
+
+        // Best-fit for size 1 should also prefer the smallest sufficient
+        // block, which is the singleton [0] (size 1) over the size-4 block.
+        let best = pick_best_fit(&free_ids, 1).expect("best-fit should succeed");
+        assert_eq!(best, vec![0]);
+
+        // For size 4, only the [2,3,4,5] block suffices.
+        let best4 = pick_best_fit(&free_ids, 4).expect("best-fit size 4 should succeed");
+        assert_eq!(best4, vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn pick_functions_return_none_on_exhaustion() {
+        let free_ids = vec![0usize, 1, 2];
+        assert!(pick_first_fit(&free_ids, 4).is_none());
+        assert!(pick_best_fit(&free_ids, 4).is_none());
+    }
+
+    #[test]
+    fn contiguous_blocks_groups_runs_correctly() {
+        let ids = vec![0usize, 1, 2, 5, 6, 9];
+        let blocks = contiguous_blocks(&ids);
+        assert_eq!(blocks, vec![vec![0, 1, 2], vec![5, 6], vec![9]]);
     }
 }

@@ -1,144 +1,174 @@
-# OptiRS TPU TODO (v0.3.1)
+# OptiRS TPU TODO (v0.3.2)
 
-## Module Status: Production Ready
+## Module Status: Working CPU-reference implementation (no vendor TPU runtime)
 
-**Release Date**: 2026-03-27
-**Tests**: 58 tests passing (0 ignored)
-**Features**: XLA compilation, Pod coordination, Distributed training
-**SciRS2 Compliance**: 100%
-
----
-
-## Completed: SciRS2 Integration
-
-- [x] **Full SciRS2-Core Integration** - 100% complete
-- [x] **Distributed Computing Foundation** - Built on scirs2_core::distributed
-- [x] **Advanced Distributed Computing** - scirs2_core::advanced_distributed_computing::AllReduce
-- [x] **Distributed Arrays** - scirs2_core::array_protocol::DistributedArray support
-- [x] **JIT XLA Integration** - scirs2_core::jit::JitCompiler for XLA compilation
-- [x] **Cluster Management** - scirs2_core::distributed::ClusterManager and JobScheduler
-- [x] **Array Operations** - All TPU operations use scirs2_core::ndarray
+**Tests**: 205 tests passing (0 ignored), plus 2 passing doctests (1 more
+`ignore`d, a partial `main`-body example) via `cargo test --doc --all-features`.
+`cargo clippy --all-features --all-targets` and `cargo doc --all-features
+--no-deps` are both clean (no `unwrap`/`panic!` findings in production code).
+**Scope**: coordination, checkpointing, and an XLA-shaped compiler pipeline, all
+running on a CPU reference executor. No Google Cloud TPU provisioning, no vendor
+XLA/TPU runtime linkage (proprietary, not distributable as pure Rust).
 
 ---
 
-## Completed: Core TPU Infrastructure
+## Completed: Core TPU infrastructure (real, tested, pure Rust)
 
-### TPU Coordination
-- [x] SciRS2 TPU coordination via distributed::ClusterManager
-- [x] AllReduce implementation with scirs2_core::advanced_distributed_computing
-- [x] XLA JIT compilation via scirs2_core::jit::JitCompiler
-- [x] Distributed arrays via scirs2_core::array_protocol::DistributedArray
+### Optimizer integration
+- [x] `TPUOptimizer<O, A>` wraps any `optirs_core::Optimizer` and drives a real
+      compile → execute → profile pipeline (`tpu_step`)
+- [x] `TPUOptimizer` itself implements `optirs_core::Optimizer<A, Ix1>`, so it can
+      be used generically wherever an `Optimizer` is expected
+- [x] Single-device and data-parallel (pod) execution paths
 
-### XLA Integration
-- [x] HLO (High-Level Operations) graph generation
-- [x] XLA compilation pipeline integration
-- [x] Optimization pass configuration
-- [x] Custom operator compilation
-- [x] Memory layout optimization
+### XLA-shaped compiler pipeline (`xla`)
+- [x] Graph capture with real producer/consumer dependency tracking
+      (`add_operation` wires `metadata.producer`/`consumers`; `dependencies` is
+      derived from it, not left empty)
+- [x] `set_outputs` / `mark_terminal_operands_as_outputs` / `validate_computation`
+      (rejects a computation with operations but no declared outputs)
+- [x] Dead-code elimination with a fail-safe: refuses to run (rather than delete
+      the whole graph) when no outputs are declared
+- [x] Constant folding and common-subexpression elimination over a concrete,
+      clonable, comparable `ConstantValue` payload
+- [x] Kernel fusion with a real legality check (shape-compatible, single
+      consumer, not an external output) and multi-output tuple materialization
+- [x] Shape inference for reshape (validates element count, resolves at most one
+      `-1` dimension), convolution (stride/dilation/padding-aware), dot, and
+      broadcast
+- [x] Memory allocator with `free`, region coalescing, and per-operand
+      `live_range` (not a whole-program constant)
+- [x] Cycle detection: iterative DFS plus Kahn's-algorithm and Tarjan-SCC
+      cross-checks (`pod_coordination::synchronization::deadlock::graph`)
 
-### XLA Runtime
-- [x] XLA runtime library integration
-- [x] Device placement and memory management
-- [x] Stream execution and synchronization
-- [x] Performance profiling
-- [x] Error handling and recovery
+### Coordination (`coordination`)
+- [x] `PodCoordinator`: device/channel topology keyed by `(source, target)`
+      pairs, not source-only
+- [x] `synchronize_devices`: synchronous barrier accounting over live device
+      state, no `sleep`-and-report-success
+- [x] Fault detection / performance monitoring register real, queryable
+      in-struct state (`is_active`, `started_at`, `monitored_devices`)
+- [x] Device capabilities come from `PodConfig::device_capabilities` (defaults
+      to a TPU v4-shaped nominal spec), not a hardcoded literal independent of
+      configuration
 
-### Distributed Optimization
-- [x] Ring AllReduce for TPU pods
-- [x] Tree AllReduce for hierarchical communication
-- [x] Bandwidth-optimal communication patterns
-- [x] Compression support
-- [x] Overlap computation and communication
+### Fault tolerance (`fault_tolerance`)
+- [x] `create_checkpoint` serializes real coordination state to disk with a
+      SHA-256 integrity hash; `restore_checkpoint` re-verifies that hash before
+      applying anything
+- [x] Recovery strategies (`Restart`/`Replicate`/`Rollback`/`Isolate`/`Graceful`)
+      do real work through the checkpoint path; `migrate_workload` explicitly
+      returns `Err` (it needs a TPU runtime this crate does not have) instead of
+      claiming success
 
-### Code Standards
-- [x] Variable naming cleanup (snake_case throughout)
-- [x] Documentation updates
-- [x] Development guidelines
+### Synchronization (`synchronization`)
+- [x] Condvar barriers with a correctly-set predicate (no more indefinite block
+      until timeout) and a configurable, honored timeout
+- [x] Ring all-reduce / broadcast / reduce-scatter collectives
+
+### Monitoring (`monitoring`)
+- [x] Anomaly detection via a real z-score against tracked metric history
+- [x] Report IDs are unique (monotonic sequence + timestamp), not a constant
+      string; `overall_score` is derived from live health checks
 
 ---
 
-## Completed: Advanced Features
+## Out of scope for autonomous implementation
 
-### Performance Optimization
-- [x] Memory management via scirs2_core::memory_efficient
-- [x] HBM allocation strategies
-- [x] Memory fragmentation prevention
-- [x] Memory usage profiling
+Every remaining optirs-tpu item requires Google Cloud TPU APIs, cloud IAM/networking, or live pod hardware. These are intentionally NOT auto-implemented — faking them would invent cloud/hardware behavior. (Note: generic Byzantine-robust aggregation and federated optimization already exist as pure-Rust logic in `optirs-core` — `privacy/federated/byzantine_aggregation.rs` and `distributed/fedprox.rs`; the items below are specifically the Cloud-TPU-pod integrations of those ideas.)
 
-### Computation Optimization
-- [x] Matrix multiplication optimization
-- [x] Mixed precision training (bfloat16/float32)
-- [x] Batch size optimization
-- [x] Computation scheduling
-
-### Monitoring
-- [x] TPU utilization metrics via scirs2_core::metrics
-- [x] Memory usage monitoring
-- [x] Communication bandwidth analysis
-- [x] Training progress tracking
-
----
-
-## Future Work (v0.4.0+)
-
-### Google Cloud Integration
-- [ ] Cloud TPU API integration improvements
-- [ ] Preemptible TPU handling
+### Google Cloud Integration (Cloud TPU API / billing)
+- [ ] Cloud TPU API integration (pod provisioning/deallocation)
+- [ ] Preemptible/spot TPU handling
 - [ ] Multi-region TPU coordination
 - [ ] Cost tracking and optimization
-- [ ] Automatic resource scaling
+- [ ] Automatic resource scaling against live quota
 
-### Authentication and Security
-- [ ] Enhanced service account authentication
-- [ ] OAuth2 improvements
+### Authentication and Security (cloud IAM / networking)
+- [ ] Service account authentication
+- [ ] OAuth2 flows
 - [ ] VPC and firewall configuration
 - [ ] Audit logging
 - [ ] RBAC integration
 
-### Advanced Scaling
-- [ ] Dynamic scaling algorithms
+### Advanced Scaling (live pod orchestration)
+- [ ] Dynamic scaling algorithms against real utilization telemetry
 - [ ] Cost-aware scaling decisions
 - [ ] Predictive scaling
-- [ ] Graceful scaling without interruption
+- [ ] Graceful scaling without interrupting live training
 
-### Fault Tolerance
-- [ ] Enhanced checkpoint and resume
-- [ ] Automatic failure detection
-- [ ] Redundant computation
-- [ ] Byzantine fault tolerance
+### Hardware-dependent fault tolerance
+- [ ] Cross-device workload migration (`migrate_workload`) — needs a TPU
+      runtime to quiesce and re-enqueue an executing program
+- [ ] Automatic failure detection against real device telemetry (today's
+      detector runs on heartbeats the caller supplies)
+- [ ] Redundant computation across physically distinct pods
 
-### Research Features
+### Research Features (external hardware / cloud)
 - [ ] TPU Edge integration
 - [ ] Quantum-TPU hybrid optimization
-- [ ] Federated learning support
+- [ ] Federated learning across physically distributed pods
+
+### Smaller, self-contained gaps — resolved
+The six items formerly listed here are now done; kept as a short record
+rather than deleted outright, since each was a real, previously-fabricated
+behavior:
+- [x] `pod_coordination::synchronization::clocks::protocols`: real NTP-style
+      round-trip offset estimation (`NtpTimestamps`/`NtpPeer`/
+      `NtpSynchronizer::estimate_offset`, RFC 5905's four-timestamp algorithm,
+      with a physically-inconsistent exchange rejected via `Err` rather than
+      averaged into a bogus offset — never a fake offset).
+- [x] `pod_coordination::synchronization::clocks::utils::get_system_uptime`
+      (hardcoded `Duration::from_secs(86400)`) renamed to `process_uptime`
+      and implemented as a real `Instant`-anchored elapsed-time measurement
+      (there is no portable pure-Rust OS process-start-time API).
+- [x] `xla::backend::profiling_integration::ProfileExportManager::export_counter_data`
+      / `export_trace_data` / `export_memory_data` now serialize the real
+      data in the manager/collector/profiler they are given (via new
+      `PerformanceCounterManager::record_sample` and
+      `TraceCollector::record_event`, wired into real measured timings via
+      `XLABackend::compile_and_integrate` -> `ProfilingIntegration::
+      record_compile_timings`), rather than always writing a hardcoded empty
+      body. Memory export is bridged too: `TPUBackend::run_one_attempt` records
+      every real device-memory reservation and release into the same profiler
+      (`ProfilingIntegration::record_memory_allocation`/`record_memory_release`,
+      with a peak-occupancy snapshot taken while the reservation is held), so
+      the export is only empty when a program was compiled but never executed.
+- [x] `xla_compilation` (the legacy duplicate module) deleted; its one real
+      usage, `ComputationId`, now lives in `xla::frontend::graph_capture`
+      (the real, tested XLA pipeline) and is re-exported at both
+      `xla::ComputationId` and `tpu_backend::ComputationId`.
+- [x] The dead `coordination`/`xla`/`profiling` Cargo features (each gated
+      zero `cfg(feature = ...)` code) were removed from `Cargo.toml` rather
+      than retrofitted, since gating the modules they were named after would
+      have meant cfg-ing out functionality nearly everything else in the
+      crate depends on unconditionally.
+- [x] `pod_coordination::coordination::coordinator::TPUPodCoordinator<T>` now
+      delegates every method to the real, tested `coordination::PodCoordinator`
+      (translating `PodCoordinationConfig` into `coordination::PodConfig` —
+      see `PodCoordinationConfig::to_pod_config`'s doc comment for the
+      mapping) instead of holding only its config field. The two dead,
+      zero-consumer sibling types that sat in the same file (`Coordinator`,
+      `CoordinationContext`) and the unused `performance_metrics` submodule
+      were deleted rather than left as further empty shells.
 
 ---
 
 ## Testing Status
 
-### Coverage
-- [x] TPU resource management tests
-- [x] XLA integration tests
-- [x] Distributed communication tests
-- [x] Error handling tests
+```
+205 tests passing, 0 ignored (cargo nextest run -p optirs-tpu --all-features)
+```
 
-### Test Count
-```
-58 tests passing
-0 ignored
-```
+- [x] XLA compiler pipeline tests (graph capture, optimization passes, shape
+      inference, kernel fusion, memory planning, scheduling)
+- [x] Coordination tests (device init, barriers, load balancing, channel
+      topology)
+- [x] Fault-tolerance tests (checkpoint round-trip, integrity-check rejection)
+- [x] Synchronization tests (barrier concurrency, collectives)
 
 ---
 
-## Performance Achievements
-
-- Multi-pod scaling support
-- Efficient XLA compilation
-- Optimized communication patterns
-- Production-ready monitoring
-
----
-
-**Status**: ✅ Production Ready
-**Version**: v0.3.1
-**Release Date**: 2026-03-27
+**Status**: Working CPU-reference implementation; hardware/cloud execution is
+explicitly out of scope until a vendor runtime is available.
+**Version**: v0.3.2

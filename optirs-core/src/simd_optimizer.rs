@@ -6,10 +6,9 @@
 //! The module automatically selects the best SIMD backend available on the
 //! target platform (AVX2, SSE, NEON, or scalar fallback).
 
-use scirs2_core::ndarray::{Array, Array1, ArrayView, ArrayView1, Dimension, Ix1};
+use scirs2_core::ndarray::{Array1, ArrayView1};
 use scirs2_core::numeric::Float;
 use scirs2_core::simd_ops::SimdUnifiedOps;
-use std::fmt::Debug;
 
 /// Trait for SIMD-accelerated optimizer operations
 ///

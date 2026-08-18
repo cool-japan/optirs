@@ -4,6 +4,9 @@
 // sets of parameters to have different hyperparameters (learning rate,
 // weight decay, etc.) within the same optimizer.
 
+mod linalg;
+mod nuclear_norm;
+
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
@@ -11,6 +14,16 @@ use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::Path;
+
+use linalg::{
+    is_orthonormal, modified_gram_schmidt, power_iteration_spectral_norm,
+    project_positive_definite, to_matrix_2d, write_matrix_2d,
+};
+
+pub use nuclear_norm::{
+    nuclear_norm_of_matrix, nuclear_norm_prox, project_onto_nuclear_norm_ball,
+    truncated_svd_power_iteration, TruncatedSvd,
+};
 
 /// Parameter constraints that can be applied to parameter groups
 #[derive(Debug, Clone)]
@@ -122,47 +135,71 @@ impl<A: Float + Send + Sync> ParameterConstraint<A> {
                     params.fill(uniform_val);
                 }
             }
-            ParameterConstraint::Orthogonal { tolerance: _ } => {
-                // For now, implement a simple orthogonal projection for matrices
-                // This is a simplified implementation - full orthogonal constraints
-                // would require SVD decomposition
+            ParameterConstraint::Orthogonal { tolerance } => {
+                // Orthonormalize the columns of a 2D matrix via modified Gram-Schmidt.
                 if params.ndim() == 2 {
-                    // Apply Gram-Schmidt process for small matrices
-                    // For large matrices, this would need SVD-based orthogonalization
-                    return Err(OptimError::InvalidConfig(
-                        "Orthogonal constraint requires specialized linear algebra operations"
-                            .to_string(),
-                    ));
+                    let matrix = to_matrix_2d(params)?;
+                    let (rows, cols) = matrix.dim();
+
+                    // Skip work if the columns are already orthonormal within tolerance.
+                    if rows > 0 && cols > 0 && is_orthonormal(&matrix, *tolerance) {
+                        return Ok(());
+                    }
+
+                    let orthonormal = modified_gram_schmidt(&matrix);
+                    write_matrix_2d(params, &orthonormal)?;
                 } else {
                     return Err(OptimError::InvalidConfig(
                         "Orthogonal constraint only applies to 2D arrays (matrices)".to_string(),
                     ));
                 }
             }
-            ParameterConstraint::PositiveDefinite { mineigenvalue: _ } => {
-                // Positive definite constraint requires eigenvalue computation
-                return Err(OptimError::InvalidConfig(
-                    "Positive definite constraint requires specialized eigenvalue operations"
-                        .to_string(),
-                ));
+            ParameterConstraint::PositiveDefinite { mineigenvalue } => {
+                // Symmetrize, eigendecompose (cyclic Jacobi), clamp eigenvalues, reconstruct.
+                if params.ndim() != 2 {
+                    return Err(OptimError::InvalidConfig(
+                        "Positive definite constraint only applies to 2D arrays (matrices)"
+                            .to_string(),
+                    ));
+                }
+                let matrix = to_matrix_2d(params)?;
+                let (rows, cols) = matrix.dim();
+                if rows != cols {
+                    return Err(OptimError::InvalidConfig(
+                        "Positive definite constraint requires a square matrix".to_string(),
+                    ));
+                }
+
+                let projected = project_positive_definite(&matrix, *mineigenvalue);
+                write_matrix_2d(params, &projected)?;
             }
             ParameterConstraint::SpectralNorm { maxnorm } => {
-                // Spectral norm constraint requires SVD computation
-                // For now, approximate with Frobenius norm
-                let frobenius_norm = params.mapv(|x| x * x).sum().sqrt();
-                if frobenius_norm > *maxnorm {
-                    let scale = *maxnorm / frobenius_norm;
+                // Bound the largest singular value via power iteration on MᵀM.
+                if params.ndim() != 2 {
+                    return Err(OptimError::InvalidConfig(
+                        "Spectral norm constraint only applies to 2D arrays (matrices)".to_string(),
+                    ));
+                }
+                let matrix = to_matrix_2d(params)?;
+                let sigma_max = power_iteration_spectral_norm(&matrix);
+                if sigma_max > *maxnorm && sigma_max > A::zero() {
+                    let scale = *maxnorm / sigma_max;
                     params.mapv_inplace(|x| x * scale);
                 }
             }
             ParameterConstraint::NuclearNorm { maxnorm } => {
-                // Nuclear norm constraint requires SVD computation
-                // For now, approximate with L1 norm
-                let l1_norm = params.mapv(|x| x.abs()).sum();
-                if l1_norm > *maxnorm {
-                    let scale = *maxnorm / l1_norm;
-                    params.mapv_inplace(|x| x * scale);
+                // Project onto the nuclear-norm ball. The nuclear norm is the sum
+                // of the singular values, so the projection soft-thresholds the
+                // *singular values* (via a truncated SVD) — it is not entrywise
+                // L1 shrinkage, which would give a different matrix entirely.
+                if params.ndim() != 2 {
+                    return Err(OptimError::InvalidConfig(
+                        "Nuclear norm constraint only applies to 2D arrays (matrices)".to_string(),
+                    ));
                 }
+                let matrix = to_matrix_2d(params)?;
+                let projected = project_onto_nuclear_norm_ball(&matrix, *maxnorm);
+                write_matrix_2d(params, &projected)?;
             }
             ParameterConstraint::Custom { name } => {
                 return Err(OptimError::InvalidConfig(format!(
@@ -1289,8 +1326,9 @@ pub mod checkpointing {
 
 #[cfg(test)]
 mod tests {
+    use super::linalg::jacobi_eigen_symmetric;
     use super::*;
-    use scirs2_core::ndarray::Array1;
+    use scirs2_core::ndarray::{Array1, Array2};
 
     #[test]
     fn test_parameter_group_config() {
@@ -1341,10 +1379,14 @@ mod tests {
         assert_eq!(manager.total_params(), 3);
 
         // Test group access
-        let group1 = manager.get_group(id1).expect("unwrap failed");
+        let group1 = manager
+            .get_group(id1)
+            .expect("manager.get_group succeeds in test_group_manager");
         assert_eq!(group1.learning_rate(0.0), 0.01);
 
-        let group2 = manager.get_group(id2).expect("unwrap failed");
+        let group2 = manager
+            .get_group(id2)
+            .expect("manager.get_group succeeds in test_group_manager");
         assert_eq!(group2.learning_rate(0.0), 0.001);
     }
 
@@ -1355,13 +1397,22 @@ mod tests {
         // Test value clipping
         let mut params = Array1::from_vec(vec![-2.0, 0.5, 3.0]);
         let clip_constraint = ParameterConstraint::ValueClip { min: 0.0, max: 1.0 };
-        clip_constraint.apply(&mut params).expect("unwrap failed");
-        assert_eq!(params.as_slice().expect("unwrap failed"), &[0.0, 0.5, 1.0]);
+        clip_constraint
+            .apply(&mut params)
+            .expect("clip_constraint.apply succeeds in test_parameter_constraints");
+        assert_eq!(
+            params
+                .as_slice()
+                .expect("params.as_slice succeeds in test_parameter_constraints"),
+            &[0.0, 0.5, 1.0]
+        );
 
         // Test L2 norm constraint
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // norm = 5
         let l2_constraint = ParameterConstraint::L2NormConstraint { maxnorm: 2.0 };
-        l2_constraint.apply(&mut params).expect("unwrap failed");
+        l2_constraint
+            .apply(&mut params)
+            .expect("l2_constraint.apply succeeds in test_parameter_constraints");
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 2.0, epsilon = 1e-6);
 
@@ -1370,15 +1421,20 @@ mod tests {
         let non_neg_constraint = ParameterConstraint::NonNegative;
         non_neg_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
-        assert_eq!(params.as_slice().expect("unwrap failed"), &[0.0, 2.0, 0.0]);
+            .expect("apply succeeds in test_parameter_constraints");
+        assert_eq!(
+            params
+                .as_slice()
+                .expect("params.as_slice succeeds in test_parameter_constraints"),
+            &[0.0, 2.0, 0.0]
+        );
 
         // Test unit sphere constraint
         let mut params = Array1::from_vec(vec![3.0, 4.0]); // norm = 5
         let unit_sphere_constraint = ParameterConstraint::UnitSphere;
         unit_sphere_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_parameter_constraints");
         let new_norm = params.mapv(|x| x * x).sum().sqrt();
         assert_relative_eq!(new_norm, 1.0, epsilon = 1e-6);
     }
@@ -1393,11 +1449,15 @@ mod tests {
         let mut group = ParameterGroup::new(0, params, config);
 
         // Apply constraints
-        group.apply_constraints().expect("unwrap failed");
+        group
+            .apply_constraints()
+            .expect("group.apply_constraints succeeds in test_parameter_group_with_constraints");
 
         // Check that constraints were applied
         assert_eq!(
-            group.params[0].as_slice().expect("unwrap failed"),
+            group.params[0]
+                .as_slice()
+                .expect("as_slice succeeds in test_parameter_group_with_constraints"),
             &[0.0, 1.0]
         );
     }
@@ -1424,7 +1484,7 @@ mod tests {
         let simplex_constraint = ParameterConstraint::Simplex;
         simplex_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_simplex_constraint");
 
         // Check that values sum to 1 and are non-negative
         let sum: f64 = params.sum();
@@ -1446,7 +1506,7 @@ mod tests {
         let simplex_constraint = ParameterConstraint::Simplex;
         simplex_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_simplex_constraint_with_negatives");
 
         // Check that values sum to 1 and are non-negative
         let sum: f64 = params.sum();
@@ -1468,7 +1528,7 @@ mod tests {
         let simplex_constraint = ParameterConstraint::Simplex;
         simplex_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_simplex_constraint_all_zeros");
 
         // Should result in uniform distribution
         let sum: f64 = params.sum();
@@ -1481,31 +1541,52 @@ mod tests {
     #[test]
     fn test_spectral_norm_constraint() {
         use approx::assert_relative_eq;
+        use scirs2_core::ndarray::arr2;
 
-        // Test spectral norm constraint (approximated with Frobenius norm)
-        let mut params = Array1::from_vec(vec![3.0, 4.0]); // Frobenius norm = 5
+        // A 1x2 matrix has a single nonzero singular value σ_max = ‖row‖ = 5.
+        let mut params = arr2(&[[3.0, 4.0]]);
         let spectral_constraint = ParameterConstraint::SpectralNorm { maxnorm: 2.0 };
         spectral_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_spectral_norm_constraint");
 
-        let new_norm = params.mapv(|x| x * x).sum().sqrt();
-        assert_relative_eq!(new_norm, 2.0, epsilon = 1e-6);
+        // After scaling by 2/5 the spectral norm equals the cap.
+        let sigma = power_iteration_spectral_norm(&params);
+        assert_relative_eq!(sigma, 2.0, epsilon = 1e-6);
     }
 
     #[test]
     fn test_nuclear_norm_constraint() {
         use approx::assert_relative_eq;
+        use scirs2_core::ndarray::arr2;
 
-        // Test nuclear norm constraint (approximated with L1 norm)
-        let mut params = Array1::from_vec(vec![3.0, -4.0, 2.0]); // L1 norm = 9
+        // Diagonal matrix ⇒ singular values are |diagonal|: {3, 4, 2}, ‖·‖_* = 9.
+        let mut params = arr2(&[[3.0, 0.0, 0.0], [0.0, -4.0, 0.0], [0.0, 0.0, 2.0]]);
         let nuclear_constraint = ParameterConstraint::NuclearNorm { maxnorm: 3.0 };
         nuclear_constraint
             .apply(&mut params)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_nuclear_norm_constraint");
 
-        let new_l1_norm = params.mapv(|x| x.abs()).sum();
-        assert_relative_eq!(new_l1_norm, 3.0, epsilon = 1e-6);
+        // Projection onto the L1 ball of the spectrum {4, 3, 2} with radius 3
+        // uses θ = 2, leaving {2, 1, 0}. Entrywise L1 scaling would instead have
+        // produced 3/9 · [3, -4, 2] = [1, -1.333, 0.667].
+        let new_nuclear_norm = nuclear_norm_of_matrix(&params);
+        assert_relative_eq!(new_nuclear_norm, 3.0, epsilon = 1e-6);
+        assert_relative_eq!(params[[0, 0]], 1.0, epsilon = 1e-6);
+        assert_relative_eq!(params[[1, 1]], -2.0, epsilon = 1e-6);
+        assert_relative_eq!(params[[2, 2]], 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_nuclear_norm_constraint_rejects_non_matrix() {
+        // The nuclear norm is only defined for matrices; a 1-D array errors out.
+        let mut params = Array1::from_vec(vec![3.0, -4.0, 2.0]);
+        let nuclear_constraint = ParameterConstraint::NuclearNorm { maxnorm: 3.0 };
+
+        match nuclear_constraint.apply(&mut params) {
+            Ok(()) => panic!("nuclear norm constraint must reject 1-D parameters"),
+            Err(err) => assert!(err.to_string().contains("2D arrays")),
+        }
     }
 
     #[test]
@@ -1521,7 +1602,7 @@ mod tests {
 
     #[test]
     fn test_positive_definite_constraint_error() {
-        // Test that positive definite constraint returns appropriate error
+        // A 1D array is not a matrix, so the positive-definite constraint errors.
         let mut params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let pd_constraint = ParameterConstraint::PositiveDefinite {
             mineigenvalue: 0.01,
@@ -1529,7 +1610,7 @@ mod tests {
         let result = pd_constraint.apply(&mut params);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("eigenvalue"));
+        assert!(result.unwrap_err().to_string().contains("2D arrays"));
     }
 
     #[test]
@@ -1572,7 +1653,9 @@ mod tests {
         let mut group = ParameterGroup::new(0, params, config);
 
         // Apply constraints
-        group.apply_constraints().expect("unwrap failed");
+        group
+            .apply_constraints()
+            .expect("group.apply_constraints succeeds in test_constraint_combination");
 
         // Check that both non-negative and simplex constraints were applied
         let result = &group.params[0];
@@ -1584,5 +1667,228 @@ mod tests {
         assert_relative_eq!(result[0], 0.0, epsilon = 1e-6);
         assert_relative_eq!(result[1], 0.4, epsilon = 1e-6);
         assert_relative_eq!(result[2], 0.6, epsilon = 1e-6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Matrix constraints: Orthogonal, SpectralNorm, PositiveDefinite.
+    // -----------------------------------------------------------------------
+
+    /// Compute MᵀM for a 2D array (used to verify orthonormal columns).
+    fn gram_matrix(m: &Array2<f64>) -> Array2<f64> {
+        let (rows, cols) = m.dim();
+        let mut g = Array2::<f64>::zeros((cols, cols));
+        for i in 0..cols {
+            for j in 0..cols {
+                let mut dot = 0.0;
+                for k in 0..rows {
+                    dot += m[[k, i]] * m[[k, j]];
+                }
+                g[[i, j]] = dot;
+            }
+        }
+        g
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_square() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Non-orthonormal 3x3 matrix.
+        let mut params = arr2(&[[1.0, 2.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0]]);
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-10 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // Columns must be orthonormal: MᵀM ≈ I.
+        let g = gram_matrix(&params);
+        for i in 0..3 {
+            for j in 0..3 {
+                let target = if i == j { 1.0 } else { 0.0 };
+                assert_abs_diff_eq!(g[[i, j]], target, epsilon = 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_tall() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Non-square 4x2 matrix: orthonormalize the 2 columns.
+        let mut params = arr2(&[[1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]);
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-10 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // MᵀM (2x2) must be the identity.
+        let g = gram_matrix(&params);
+        for i in 0..2 {
+            for j in 0..2 {
+                let target = if i == j { 1.0 } else { 0.0 };
+                assert_abs_diff_eq!(g[[i, j]], target, epsilon = 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_already_orthonormal_unchanged() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Identity is already orthonormal; must be left untouched (early return).
+        let mut params = arr2(&[[1.0, 0.0], [0.0, 1.0]]);
+        let original = params.clone();
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-8 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        for (a, b) in params.iter().zip(original.iter()) {
+            assert_abs_diff_eq!(*a, *b, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_orthogonal_constraint_1d_errors() {
+        use scirs2_core::ndarray::Array1;
+        let mut params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+        let constraint = ParameterConstraint::Orthogonal { tolerance: 1e-6 };
+        let result = constraint.apply(&mut params);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("2D arrays"));
+    }
+
+    #[test]
+    fn test_spectral_norm_constraint_matrix() {
+        use scirs2_core::ndarray::arr2;
+
+        // Diagonal matrix with singular values {5, 1}; cap below the larger one.
+        let mut params = arr2(&[[5.0, 0.0], [0.0, 1.0]]);
+        let maxnorm = 2.0;
+        let constraint = ParameterConstraint::SpectralNorm { maxnorm };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // Recompute the spectral norm (largest singular value) and verify ≤ cap.
+        let sigma = power_iteration_spectral_norm(&params);
+        assert!(
+            sigma <= maxnorm + 1e-6,
+            "spectral norm {sigma} exceeds cap {maxnorm}"
+        );
+        // It should be scaled to (approximately) the cap, not collapsed.
+        assert!(
+            sigma > maxnorm - 1e-3,
+            "spectral norm {sigma} undershot cap"
+        );
+    }
+
+    #[test]
+    fn test_spectral_norm_constraint_nondiagonal() {
+        use scirs2_core::ndarray::arr2;
+
+        // A non-diagonal matrix whose true σ_max is well above the cap.
+        let mut params = arr2(&[[3.0, 1.0], [1.0, 3.0], [2.0, -2.0]]);
+        let maxnorm = 1.5;
+        let constraint = ParameterConstraint::SpectralNorm { maxnorm };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        let sigma = power_iteration_spectral_norm(&params);
+        assert!(
+            sigma <= maxnorm + 1e-5,
+            "spectral norm {sigma} exceeds cap {maxnorm}"
+        );
+    }
+
+    #[test]
+    fn test_spectral_norm_constraint_under_cap_unchanged() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // σ_max here is 1.0 (identity-like); cap of 10 leaves it untouched.
+        let mut params = arr2(&[[1.0, 0.0], [0.0, 1.0]]);
+        let original = params.clone();
+        let constraint = ParameterConstraint::SpectralNorm { maxnorm: 10.0 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        for (a, b) in params.iter().zip(original.iter()) {
+            assert_abs_diff_eq!(*a, *b, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_indefinite() {
+        use scirs2_core::ndarray::arr2;
+
+        // Symmetric indefinite matrix: eigenvalues are {3, -1}.
+        let mut params = arr2(&[[1.0, 2.0], [2.0, 1.0]]);
+        let min_eig = 0.0;
+        let constraint = ParameterConstraint::PositiveDefinite {
+            mineigenvalue: min_eig,
+        };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        // Verify all eigenvalues of the result are ≥ min_eig via Jacobi.
+        let (eigvals, _) = jacobi_eigen_symmetric(&params);
+        for &lambda in eigvals.iter() {
+            assert!(
+                lambda >= min_eig - 1e-8,
+                "eigenvalue {lambda} below floor {min_eig}"
+            );
+        }
+
+        // And xᵀMx ≥ 0 for several probe vectors (PSD check).
+        let probes = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, -1.0], [2.0, -3.0]];
+        for p in probes.iter() {
+            let mut quad = 0.0;
+            for i in 0..2 {
+                for j in 0..2 {
+                    quad += p[i] * params[[i, j]] * p[j];
+                }
+            }
+            assert!(quad >= -1e-8, "xᵀMx = {quad} is negative");
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_positive_floor() {
+        use scirs2_core::ndarray::arr2;
+
+        // Same indefinite matrix, but require a strictly positive floor.
+        let mut params = arr2(&[[0.0, 1.0], [1.0, 0.0]]); // eigenvalues {1, -1}
+        let min_eig = 0.5;
+        let constraint = ParameterConstraint::PositiveDefinite {
+            mineigenvalue: min_eig,
+        };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        let (eigvals, _) = jacobi_eigen_symmetric(&params);
+        for &lambda in eigvals.iter() {
+            assert!(
+                lambda >= min_eig - 1e-8,
+                "eigenvalue {lambda} below floor {min_eig}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_already_pd_unchanged() {
+        use approx::assert_abs_diff_eq;
+        use scirs2_core::ndarray::arr2;
+
+        // Already PD (eigenvalues {3, 1}); a floor of 0 must leave it ~unchanged.
+        let mut params = arr2(&[[2.0, 1.0], [1.0, 2.0]]);
+        let original = params.clone();
+        let constraint = ParameterConstraint::PositiveDefinite { mineigenvalue: 0.0 };
+        constraint.apply(&mut params).expect("constraint failed");
+
+        for (a, b) in params.iter().zip(original.iter()) {
+            assert_abs_diff_eq!(*a, *b, epsilon = 1e-8);
+        }
+    }
+
+    #[test]
+    fn test_positive_definite_constraint_non_square_errors() {
+        use scirs2_core::ndarray::arr2;
+        let mut params = arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+        let constraint = ParameterConstraint::PositiveDefinite { mineigenvalue: 0.0 };
+        let result = constraint.apply(&mut params);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("square"));
     }
 }

@@ -7,16 +7,11 @@ use std::fmt::Debug;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 
-use super::graph_capture::{
-    DataType, OperandId, OperationId, OperationType, TensorShape, XLAComputation, XLAOperation,
-};
-use crate::error::{OptimError, Result};
+use super::graph_capture::{DataType, OperandId, OperationType, XLAComputation, XLAOperation};
+use crate::error::Result;
 
 /// Operation lowering engine
 pub struct OperationLowering {
-    /// Lowering rules registry
-    lowering_rules: HashMap<String, LoweringRule>,
-
     /// Primitive operation mappings
     primitive_mappings: HashMap<OperationType, Vec<PrimitiveOperation>>,
 
@@ -256,7 +251,6 @@ impl OperationLowering {
     /// Create new operation lowering engine
     pub fn new() -> Self {
         let mut lowering = Self {
-            lowering_rules: HashMap::new(),
             primitive_mappings: HashMap::new(),
             decomposition_patterns: Vec::new(),
         };

@@ -9,6 +9,7 @@ use crate::cross_platform_tester::{
     PlatformTarget, TestCategory,
 };
 use crate::error::{OptimError, Result};
+use crate::system_sampler::{ProcessSample, SystemSampler};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -592,13 +593,18 @@ impl AutomatedTestRunner {
         loop {
             // Get next execution
             let mut execution = {
-                let mut queue = match execution_queue.lock() {
-                    Ok(queue) => queue,
-                    Err(_) => {
-                        eprintln!("Worker {} failed to acquire _queue lock", worker_id);
-                        break;
-                    }
-                };
+                // Regression (F51): a poisoned mutex (some other worker
+                // panicked while holding it) used to make every remaining
+                // worker either panic too (`.expect(...)`, elsewhere in this
+                // function) or give up on the whole queue immediately. The
+                // queued/completed `TestExecution` data itself has no
+                // invariant that a single interrupted mutation can violate,
+                // so recovering the poisoned guard's data and continuing is
+                // legitimate here -- one worker's panic no longer takes the
+                // rest of the run down with it.
+                let mut queue = execution_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
 
                 match queue
                     .iter_mut()
@@ -626,7 +632,12 @@ impl AutomatedTestRunner {
 
             // Update execution status
             {
-                let mut queue = execution_queue.lock().expect("lock poisoned");
+                // See the F51 note above: recover a poisoned lock instead of
+                // panicking (and thereby poisoning it again for the next
+                // worker that reaches this same point).
+                let mut queue = execution_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(exec) = queue.iter_mut().find(|e| e.id == execution.id) {
                     exec.end_time = Some(Instant::now());
                     exec.resource_usage = execution.resource_usage.clone();
@@ -657,9 +668,15 @@ impl AutomatedTestRunner {
     }
 
     /// Execute test for a specific platform
+    // NOTE: `config` is intentionally unused. `config.test_timeout_seconds` is not
+    // enforced here: `tester.run_test_suite()` below runs to completion
+    // synchronously with no cancellation hook, so bounding it for real would mean
+    // running it on a worker thread and joining with a timeout (and deciding what
+    // to do with a still-running thread on timeout) -- a real concurrency change,
+    // not a mechanical read of this parameter, so it is left as a tracked gap.
     fn execute_platform_test(
         execution: &mut TestExecution,
-        config: &AutomatedRunnerConfig,
+        _config: &AutomatedRunnerConfig,
     ) -> Result<()> {
         let start_time = Instant::now();
 
@@ -677,6 +694,12 @@ impl AutomatedTestRunner {
             execution.config.performance_thresholds.clone(),
         );
 
+        // Real resource tracking: take a baseline process sample right
+        // before the actual test run so the final delta (disk I/O, CPU%)
+        // reflects this execution rather than the process' whole lifetime.
+        let sampler = SystemSampler::new().ok();
+        let baseline_sample = sampler.as_ref().and_then(|s| s.sample_process().ok());
+
         // Run tests
         let mut tester = CrossPlatformTester::new(test_config)?;
         let _test_results = tester.run_test_suite()?;
@@ -685,21 +708,123 @@ impl AutomatedTestRunner {
         let report = tester.generate_report();
         execution.results = Some(report);
 
-        // Simulate resource usage tracking
-        execution.resource_usage = Some(ResourceUsage {
-            peak_cpu_usage: 75.0,
-            peak_memory_usage: 512,
-            average_cpu_usage: 45.0,
-            average_memory_usage: 256,
-            disk_io: (1024 * 1024, 512 * 1024), // 1MB read, 512KB write
-            network_io: (0, 0),
-            execution_duration: start_time.elapsed(),
-        });
+        // Real resource usage, measured via `SystemSampler` -- never
+        // fabricated. `refresh()` is called before the final sample so RSS
+        // and disk counters are current. Note that `refresh()` also resets
+        // `SystemSampler`'s internal CPU-delta anchor to "now", so the
+        // process-level `cpu_percent` on this final sample reflects the gap
+        // since `refresh()` (near-zero), not the work done between the
+        // baseline sample and here -- `build_resource_usage` accounts for
+        // this and falls back to real whole-system CPU usage in that case.
+        execution.resource_usage = match &sampler {
+            Some(sampler) => {
+                sampler.refresh();
+                match sampler.sample_process() {
+                    Ok(final_sample) => Some(Self::build_resource_usage(
+                        baseline_sample,
+                        final_sample,
+                        sampler,
+                        start_time.elapsed(),
+                    )),
+                    Err(e) => {
+                        eprintln!(
+                            "⚠️ Failed to sample resource usage for {:?}: {} (leaving resource_usage unset)",
+                            execution.platform, e
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                eprintln!(
+                    "⚠️ SystemSampler unavailable; resource usage not recorded for {:?}",
+                    execution.platform
+                );
+                None
+            }
+        };
 
         // Cleanup platform environment
         Self::cleanup_platform_environment(&execution.config)?;
 
         Ok(())
+    }
+
+    /// Build a real `ResourceUsage` from before/after process samples taken
+    /// around a test run. Uses honest two-point peak/average statistics --
+    /// it never invents additional data points. CPU falls back to
+    /// whole-system usage whenever neither process sample carries a
+    /// `cpu_percent` -- which in practice is the common case here, since a
+    /// caller that calls `refresh()` between the baseline and final sample
+    /// (to keep RSS/disk counters current) resets `SystemSampler`'s CPU
+    /// delta anchor and so cannot get a process-level CPU delta spanning
+    /// the whole run from a single before/after pair. When that happens,
+    /// only one system-wide reading is available, so peak and average CPU
+    /// are equal -- an honest reflection of having one data point, not a
+    /// fabricated pair.
+    fn build_resource_usage(
+        baseline: Option<ProcessSample>,
+        final_sample: ProcessSample,
+        sampler: &SystemSampler,
+        execution_duration: Duration,
+    ) -> ResourceUsage {
+        let bytes_to_mb = |bytes: u64| (bytes as f64 / (1024.0 * 1024.0)) as usize;
+
+        let mut memory_samples_mb = vec![bytes_to_mb(final_sample.rss_bytes)];
+        if let Some(baseline) = baseline {
+            memory_samples_mb.push(bytes_to_mb(baseline.rss_bytes));
+        }
+        let peak_memory_usage = memory_samples_mb.iter().copied().max().unwrap_or(0);
+        let average_memory_usage =
+            memory_samples_mb.iter().sum::<usize>() / memory_samples_mb.len().max(1);
+
+        let mut cpu_samples: Vec<f64> = Vec::new();
+        if let Some(cpu) = final_sample.cpu_percent {
+            cpu_samples.push(cpu);
+        }
+        if let Some(cpu) = baseline.and_then(|b| b.cpu_percent) {
+            cpu_samples.push(cpu);
+        }
+        if cpu_samples.is_empty() {
+            // No process-level CPU delta is available (the normal case
+            // when the caller refreshed between samples, or on a sampler's
+            // very first reading). Fall back to a real whole-system CPU
+            // reading rather than a fabricated number.
+            cpu_samples.push(sampler.sample_system().global_cpu_percent);
+        }
+        let peak_cpu_usage = cpu_samples.iter().cloned().fold(0.0_f64, f64::max);
+        let average_cpu_usage = cpu_samples.iter().sum::<f64>() / cpu_samples.len() as f64;
+
+        // Real disk I/O delta across the run (saturating: counters must
+        // never be treated as decreasing).
+        let disk_io = match baseline {
+            Some(baseline) => (
+                final_sample
+                    .disk_read_bytes
+                    .saturating_sub(baseline.disk_read_bytes),
+                final_sample
+                    .disk_written_bytes
+                    .saturating_sub(baseline.disk_written_bytes),
+            ),
+            None => (
+                final_sample.disk_read_bytes,
+                final_sample.disk_written_bytes,
+            ),
+        };
+
+        ResourceUsage {
+            peak_cpu_usage,
+            peak_memory_usage,
+            average_cpu_usage,
+            average_memory_usage,
+            disk_io,
+            // network I/O not measured: sysinfo has no portable
+            // per-process network accounting across our supported
+            // platforms, so this is honestly left at zero rather than
+            // fabricated.
+            network_io: (0, 0),
+            execution_duration,
+        }
     }
 
     /// Setup platform-specific environment
@@ -1029,10 +1154,24 @@ impl ResourceManager {
         }
     }
 
-    /// Get available system memory in MB
+    /// Get available system memory in MB, via a real measurement from
+    /// `SystemSampler`. Never fabricated: if the sampler cannot be
+    /// constructed (e.g. an exotic sandbox), this honestly reports `0`
+    /// (unknown/unavailable) rather than an invented default, and logs why.
     fn get_available_memory() -> usize {
-        // Simplified - in practice would use system APIs
-        8 * 1024 // 8GB default
+        match SystemSampler::new() {
+            Ok(sampler) => {
+                let system = sampler.sample_system();
+                (system.available_memory_bytes / (1024 * 1024)) as usize
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠️ Failed to measure available system memory via SystemSampler: {}",
+                    e
+                );
+                0
+            }
+        }
     }
 }
 
@@ -1118,5 +1257,166 @@ mod tests {
         let manager = ResourceManager::new(true);
         assert!(manager.available_cores > 0);
         assert!(manager.available_memory > 0);
+    }
+
+    #[test]
+    fn test_poisoned_execution_queue_lock_recovers_instead_of_cascading() {
+        // Regression (F51): `worker_thread` used to `.lock().expect("lock
+        // poisoned")` the shared execution queue, so one worker panicking
+        // while holding the lock poisoned it for every other worker, which
+        // then panicked too on their next lock attempt (or gave up
+        // silently). This exercises the exact recovery idiom
+        // (`unwrap_or_else(PoisonError::into_inner)`) now used at both lock
+        // sites in `worker_thread`, on the same `Arc<Mutex<VecDeque<..>>>`
+        // type, and asserts it returns the real (recovered) data instead of
+        // panicking.
+        let queue: Arc<Mutex<VecDeque<TestExecution>>> = Arc::new(Mutex::new(VecDeque::new()));
+
+        let poisoning_queue = Arc::clone(&queue);
+        let join_result = thread::spawn(move || {
+            let _guard = poisoning_queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("deliberately poison the mutex while holding the lock");
+        })
+        .join();
+        assert!(
+            join_result.is_err(),
+            "the spawned thread must have panicked"
+        );
+        assert!(
+            queue.is_poisoned(),
+            "the mutex must actually be poisoned for this test to prove anything"
+        );
+
+        // The recovery idiom must succeed (not panic) and hand back real
+        // (here, still-empty) data rather than refusing to proceed.
+        let recovered = queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(recovered.is_empty());
+    }
+
+    /// Regression test for F84: `build_resource_usage` must derive its
+    /// output from the real process samples it is given, not reproduce the
+    /// old fabricated constants (75.0 / 512 / 45.0 / 256 / 1MB+512KB).
+    #[test]
+    fn test_build_resource_usage_reflects_real_samples_not_fabricated_constants() {
+        let sampler = SystemSampler::new().expect("sampler should initialize");
+
+        let baseline = ProcessSample {
+            rss_bytes: 150 * 1024 * 1024,
+            virtual_bytes: 200 * 1024 * 1024,
+            cpu_percent: Some(13.5),
+            disk_read_bytes: 2_000_000,
+            disk_written_bytes: 500_000,
+            timestamp: Instant::now(),
+        };
+        let final_sample = ProcessSample {
+            rss_bytes: 333 * 1024 * 1024,
+            virtual_bytes: 400 * 1024 * 1024,
+            cpu_percent: Some(42.5),
+            disk_read_bytes: 9_500_000,
+            disk_written_bytes: 3_000_000,
+            timestamp: Instant::now(),
+        };
+
+        let usage = AutomatedTestRunner::build_resource_usage(
+            Some(baseline),
+            final_sample,
+            &sampler,
+            Duration::from_millis(250),
+        );
+
+        // Correctly derived from the injected samples.
+        assert_eq!(usage.peak_memory_usage, 333);
+        assert_eq!(usage.average_memory_usage, (150 + 333) / 2);
+        assert!((usage.peak_cpu_usage - 42.5).abs() < f64::EPSILON);
+        assert!((usage.average_cpu_usage - 28.0).abs() < 1e-9);
+        assert_eq!(usage.disk_io, (7_500_000, 2_500_000));
+        assert_eq!(usage.network_io, (0, 0));
+        assert_eq!(usage.execution_duration, Duration::from_millis(250));
+
+        // Must NOT match the old hardcoded/fabricated values.
+        assert_ne!(usage.peak_cpu_usage, 75.0);
+        assert_ne!(usage.peak_memory_usage, 512);
+        assert_ne!(usage.average_cpu_usage, 45.0);
+        assert_ne!(usage.average_memory_usage, 256);
+        assert_ne!(usage.disk_io, (1024 * 1024, 512 * 1024));
+    }
+
+    #[test]
+    fn test_build_resource_usage_without_baseline_uses_final_sample_only() {
+        let sampler = SystemSampler::new().expect("sampler should initialize");
+        let final_sample = ProcessSample {
+            rss_bytes: 64 * 1024 * 1024,
+            virtual_bytes: 100 * 1024 * 1024,
+            cpu_percent: None,
+            disk_read_bytes: 1_000,
+            disk_written_bytes: 2_000,
+            timestamp: Instant::now(),
+        };
+
+        let usage = AutomatedTestRunner::build_resource_usage(
+            None,
+            final_sample,
+            &sampler,
+            Duration::from_millis(10),
+        );
+
+        assert_eq!(usage.peak_memory_usage, 64);
+        assert_eq!(usage.average_memory_usage, 64);
+        // No process cpu_percent was available, so this honestly falls
+        // back to a real (never fabricated) whole-system CPU reading.
+        assert!(usage.peak_cpu_usage.is_finite() && usage.peak_cpu_usage >= 0.0);
+        assert!(usage.average_cpu_usage.is_finite() && usage.average_cpu_usage >= 0.0);
+        assert_eq!(usage.disk_io, (1_000, 2_000));
+    }
+
+    /// End-to-end-ish regression test: real `SystemSampler` measurements
+    /// taken around actual work must produce plausible, non-fabricated
+    /// resource usage (peak memory > 0, all values finite/non-negative).
+    /// This mirrors `execute_platform_test`'s baseline -> work -> refresh ->
+    /// final sequence, where the `refresh()` call resets the process CPU
+    /// delta anchor, so CPU here legitimately comes from the whole-system
+    /// fallback rather than a process-level delta -- that is expected, not
+    /// a regression.
+    #[test]
+    fn test_resource_usage_from_real_work_is_plausible_not_fabricated() {
+        let sampler = SystemSampler::new().expect("sampler should initialize");
+        let baseline = sampler
+            .sample_process()
+            .expect("baseline process sample should succeed");
+
+        // Do real work so RSS and accumulated CPU time actually move.
+        let mut data: Vec<u64> = Vec::with_capacity(2_000_000);
+        for i in 0..2_000_000u64 {
+            data.push(i.wrapping_mul(31));
+        }
+        std::hint::black_box(&data);
+        std::thread::sleep(Duration::from_millis(20));
+
+        sampler.refresh();
+        let final_sample = sampler
+            .sample_process()
+            .expect("final process sample should succeed");
+
+        let usage = AutomatedTestRunner::build_resource_usage(
+            Some(baseline),
+            final_sample,
+            &sampler,
+            Duration::from_millis(20),
+        );
+
+        assert!(usage.peak_memory_usage > 0, "peak memory must be real");
+        assert!(
+            usage.average_memory_usage > 0,
+            "average memory must be real"
+        );
+        assert!(usage.peak_cpu_usage.is_finite() && usage.peak_cpu_usage >= 0.0);
+        assert!(usage.average_cpu_usage.is_finite() && usage.average_cpu_usage >= 0.0);
+        assert_eq!(usage.network_io, (0, 0));
+        assert_eq!(usage.execution_duration, Duration::from_millis(20));
+        drop(data);
     }
 }

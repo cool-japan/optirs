@@ -5,6 +5,7 @@
 // and hardware utilization monitoring.
 
 use crate::error::Result;
+use crate::system_sampler::SystemSampler;
 use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -27,6 +28,8 @@ pub struct PerformanceProfiler<A: Float> {
     session_start: Instant,
     /// Current profiling step
     current_step: usize,
+    /// Real system/process telemetry (RSS, CPU time deltas).
+    sampler: SystemSampler,
 }
 
 /// Configuration for performance profiling
@@ -97,6 +100,12 @@ pub struct StepTiming {
     pub memory_allocation_time: Duration,
     /// Timestamp
     pub timestamp: Instant,
+    /// Caller-declared floating-point operation count for this step (via
+    /// [`StepProfiler::record_op_count`]). `None` when the caller did not
+    /// declare a count -- FLOPS is only ever derived from this real,
+    /// caller-supplied figure divided by real elapsed time, never
+    /// fabricated.
+    pub declared_ops: Option<u64>,
 }
 
 /// Memory usage tracking
@@ -461,8 +470,8 @@ pub struct HardwareMetrics {
 
 impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
     /// Create a new performance profiler
-    pub fn new(config: ProfilerConfig) -> Self {
-        Self {
+    pub fn new(config: ProfilerConfig) -> Result<Self> {
+        Ok(Self {
             config,
             metrics: PerformanceMetrics::new(),
             memory_tracker: MemoryTracker::new(),
@@ -470,7 +479,8 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
             hardware_monitor: HardwareMonitor::new(),
             session_start: Instant::now(),
             current_step: 0,
-        }
+            sampler: SystemSampler::new()?,
+        })
     }
 
     /// Start profiling an optimization step
@@ -509,10 +519,8 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
         Ok(())
     }
 
-    /// Update memory profiling metrics
+    /// Update memory profiling metrics using real process RSS.
     fn update_memory_metrics(&mut self) -> Result<()> {
-        // Simulate memory usage measurement
-        // In a real implementation, this would use system calls or profiling APIs
         let current_memory = self.estimate_memory_usage();
 
         self.memory_tracker.current_memory_bytes = current_memory;
@@ -527,6 +535,16 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
             fragmentation_ratio: self.estimate_fragmentation(),
         };
 
+        // Keep the aggregate fragmentation metrics in sync with the
+        // snapshot's own value (previously always stuck at its `Default`
+        // and never updated).
+        self.memory_tracker.fragmentation_metrics.current_ratio = snapshot.fragmentation_ratio;
+        self.memory_tracker.fragmentation_metrics.peak_ratio = self
+            .memory_tracker
+            .fragmentation_metrics
+            .peak_ratio
+            .max(snapshot.fragmentation_ratio);
+
         self.memory_tracker.memory_history.push_back(snapshot);
 
         // Maintain history size
@@ -534,53 +552,45 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
             self.memory_tracker.memory_history.pop_front();
         }
 
+        // Real average over history.
+        if !self.memory_tracker.memory_history.is_empty() {
+            self.memory_tracker.fragmentation_metrics.average_ratio = self
+                .memory_tracker
+                .memory_history
+                .iter()
+                .map(|s| s.fragmentation_ratio)
+                .sum::<f64>()
+                / self.memory_tracker.memory_history.len() as f64;
+        }
+
         Ok(())
     }
 
-    /// Update computational efficiency metrics
+    /// Update computational efficiency metrics. FLOPS is only recorded
+    /// when the caller declared a real op count for this step (via
+    /// [`StepProfiler::record_op_count`]) -- gates on missing data skip
+    /// the sample rather than fabricating one.
     fn update_efficiency_metrics(&mut self, steptiming: &StepTiming) -> Result<()> {
-        // Estimate FLOPS for this step
-        let estimated_flops = self.estimate_flops(steptiming);
-        self.efficiency_analyzer
-            .flops_history
-            .push_back(estimated_flops);
-
-        // Estimate arithmetic intensity
-        let arithmetic_intensity = self.estimate_arithmetic_intensity();
-        self.efficiency_analyzer
-            .arithmetic_intensity_history
-            .push_back(arithmetic_intensity);
-
-        // Maintain history size
-        if self.efficiency_analyzer.flops_history.len() > self.config.max_history_length {
-            self.efficiency_analyzer.flops_history.pop_front();
-        }
-        if self.efficiency_analyzer.arithmetic_intensity_history.len()
-            > self.config.max_history_length
-        {
-            self.efficiency_analyzer
-                .arithmetic_intensity_history
-                .pop_front();
+        if let Some(flops) = self.estimate_flops(steptiming) {
+            self.efficiency_analyzer.flops_history.push_back(flops);
+            if self.efficiency_analyzer.flops_history.len() > self.config.max_history_length {
+                self.efficiency_analyzer.flops_history.pop_front();
+            }
         }
 
         Ok(())
     }
 
-    /// Update hardware monitoring metrics
+    /// Update hardware monitoring metrics. CPU utilization is only
+    /// recorded when a real sample is available (skip on failure rather
+    /// than fabricate). Memory bandwidth is not tracked: no portable
+    /// hardware performance counters are available from safe Rust.
     fn update_hardware_metrics(&mut self) -> Result<()> {
-        // Simulate hardware metrics collection
-        let cpu_util = self.measure_cpu_utilization();
-        let memory_bw = self.measure_memory_bandwidth();
-
-        self.hardware_monitor.cpu_utilization.push_back(cpu_util);
-        self.hardware_monitor.memory_bandwidth.push_back(memory_bw);
-
-        // Maintain history size
-        if self.hardware_monitor.cpu_utilization.len() > self.config.max_history_length {
-            self.hardware_monitor.cpu_utilization.pop_front();
-        }
-        if self.hardware_monitor.memory_bandwidth.len() > self.config.max_history_length {
-            self.hardware_monitor.memory_bandwidth.pop_front();
+        if let Some(cpu_util) = self.measure_cpu_utilization() {
+            self.hardware_monitor.cpu_utilization.push_back(cpu_util);
+            if self.hardware_monitor.cpu_utilization.len() > self.config.max_history_length {
+                self.hardware_monitor.cpu_utilization.pop_front();
+            }
         }
 
         Ok(())
@@ -643,8 +653,8 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
         ComputationalAnalysis {
             average_flops: avg_flops,
             peak_flops,
-            arithmetic_intensity: self.calculate_average_arithmetic_intensity(),
-            vectorization_efficiency: self.analyze_vectorization_efficiency(),
+            arithmetic_intensity: None,
+            vectorization_efficiency: None,
             bottlenecks: self.identify_computational_bottlenecks(),
             optimization_opportunities: self.identify_optimization_opportunities(),
         }
@@ -668,8 +678,8 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
         HardwareAnalysis {
             cpu_utilization_avg: avg_cpu,
             cpu_utilization_peak: peak_cpu,
-            memory_bandwidth_utilization: self.calculate_memory_bandwidth_utilization(),
-            cache_performance: self.analyze_cache_performance(),
+            memory_bandwidth_utilization: None,
+            cache_performance: None,
             hardware_efficiency_score: self.calculate_hardware_efficiency_score(),
             underutilization_analysis: self.analyze_hardware_underutilization(),
         }
@@ -690,41 +700,39 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
             });
         }
 
-        // Computational recommendations
-        let avg_flops = if !self.efficiency_analyzer.flops_history.is_empty() {
-            self.efficiency_analyzer.flops_history.iter().sum::<f64>()
-                / self.efficiency_analyzer.flops_history.len() as f64
-        } else {
-            0.0
-        };
-
-        if avg_flops < 1e9 {
-            // Less than 1 GFLOPS
-            recommendations.push(EfficiencyRecommendation {
-                category: RecommendationCategory::Computation,
-                priority: RecommendationPriority::Medium,
-                title: "Low Computational Throughput".to_string(),
-                description: "Consider enabling SIMD optimizations or GPU acceleration".to_string(),
-                estimated_impact: 0.3,
-            });
+        // Computational recommendations. Only fire with real FLOPS data --
+        // an empty history must not silently read as "0 FLOPS, therefore
+        // low throughput".
+        if !self.efficiency_analyzer.flops_history.is_empty() {
+            let avg_flops = self.efficiency_analyzer.flops_history.iter().sum::<f64>()
+                / self.efficiency_analyzer.flops_history.len() as f64;
+            if avg_flops < 1e9 {
+                // Less than 1 GFLOPS
+                recommendations.push(EfficiencyRecommendation {
+                    category: RecommendationCategory::Computation,
+                    priority: RecommendationPriority::Medium,
+                    title: "Low Computational Throughput".to_string(),
+                    description: "Consider enabling SIMD optimizations or GPU acceleration"
+                        .to_string(),
+                    estimated_impact: 0.3,
+                });
+            }
         }
 
-        // Hardware utilization recommendations
-        let avg_cpu = if !self.hardware_monitor.cpu_utilization.is_empty() {
-            self.hardware_monitor.cpu_utilization.iter().sum::<f64>()
-                / self.hardware_monitor.cpu_utilization.len() as f64
-        } else {
-            0.0
-        };
-
-        if avg_cpu < 0.5 {
-            recommendations.push(EfficiencyRecommendation {
-                category: RecommendationCategory::Hardware,
-                priority: RecommendationPriority::Medium,
-                title: "Low CPU Utilization".to_string(),
-                description: "Consider increasing parallelism or batch size".to_string(),
-                estimated_impact: 0.25,
-            });
+        // Hardware utilization recommendations. Only fire with real CPU
+        // samples, for the same reason.
+        if !self.hardware_monitor.cpu_utilization.is_empty() {
+            let avg_cpu = self.hardware_monitor.cpu_utilization.iter().sum::<f64>()
+                / self.hardware_monitor.cpu_utilization.len() as f64;
+            if avg_cpu < 0.5 {
+                recommendations.push(EfficiencyRecommendation {
+                    category: RecommendationCategory::Hardware,
+                    priority: RecommendationPriority::Medium,
+                    title: "Low CPU Utilization".to_string(),
+                    description: "Consider increasing parallelism or batch size".to_string(),
+                    estimated_impact: 0.25,
+                });
+            }
         }
 
         recommendations
@@ -742,34 +750,49 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
 
     // Helper methods for calculations and estimations
 
+    /// Real process RSS via [`SystemSampler`].
     fn estimate_memory_usage(&self) -> usize {
-        // Simplified estimation - in practice would use system APIs
-        1024 * 1024 * (self.current_step % 100 + 50) // Simulate memory usage
+        self.sampler.refresh();
+        self.sampler
+            .sample_process()
+            .map(|sample| sample.rss_bytes as usize)
+            .unwrap_or(self.memory_tracker.current_memory_bytes)
     }
 
+    /// Not tracked: this profiler has no allocation-tracker bookkeeping of
+    /// its own. Returns a real, honest zero rather than a step-count-based
+    /// formula with no grounding in actual memory behavior. For a real,
+    /// bookkeeping-derived fragmentation heuristic use
+    /// `memory_optimizer::AllocationTracker` or
+    /// `memory_leak_detector::AllocationTracker`.
     fn estimate_fragmentation(&self) -> f64 {
-        // Simplified fragmentation estimation
-        (self.current_step as f64 * 0.001).min(0.5)
+        0.0
     }
 
-    fn estimate_flops(&self, _steptiming: &StepTiming) -> f64 {
-        // Simplified FLOPS estimation
-        1e8 + (self.current_step as f64 * 1e6)
+    /// Real FLOPS: caller-declared op count (via
+    /// [`StepProfiler::record_op_count`]) divided by real elapsed step
+    /// time. `None` when the caller declared no op count -- never a
+    /// fabricated estimate.
+    fn estimate_flops(&self, steptiming: &StepTiming) -> Option<f64> {
+        let ops = steptiming.declared_ops?;
+        let elapsed = steptiming.total_duration.as_secs_f64();
+        if elapsed > 0.0 {
+            Some(ops as f64 / elapsed)
+        } else {
+            None
+        }
     }
 
-    fn estimate_arithmetic_intensity(&self) -> f64 {
-        // Simplified arithmetic intensity estimation
-        2.0 + (self.current_step as f64 * 0.1) % 5.0
-    }
-
-    fn measure_cpu_utilization(&self) -> f64 {
-        // Simplified CPU utilization measurement
-        0.6 + (self.current_step as f64 * 0.1).sin() * 0.2
-    }
-
-    fn measure_memory_bandwidth(&self) -> f64 {
-        // Simplified memory bandwidth measurement
-        0.7 + (self.current_step as f64 * 0.05).cos() * 0.15
+    /// Real process CPU utilization (as a 0.0-1.0 fraction) derived from
+    /// process time deltas via [`SystemSampler`]. `None` on the first
+    /// sample (no prior delta to compare against) or if sampling fails --
+    /// never a fabricated sine wave.
+    fn measure_cpu_utilization(&self) -> Option<f64> {
+        self.sampler.refresh();
+        let sample = self.sampler.sample_process().ok()?;
+        sample
+            .cpu_percent
+            .map(|percent| (percent / 100.0).clamp(0.0, 1.0))
     }
 
     fn calculate_memory_efficiency_score(&self) -> f64 {
@@ -777,8 +800,14 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
         1.0 - self.memory_tracker.fragmentation_metrics.current_ratio
     }
 
+    /// Real leak signal over the real (RSS-derived) memory history: growth
+    /// rate is a genuine slope between the first and most recent
+    /// snapshots, and `confidence` scales continuously with how far growth
+    /// exceeds the 1KB/step threshold, rather than a fixed 0.7/0.1 binary
+    /// switch.
     fn detect_memory_leaks(&self) -> MemoryLeakIndicators {
-        // Simplified memory leak detection
+        const GROWTH_THRESHOLD_BYTES_PER_STEP: f64 = 1024.0;
+
         let growth_rate = if self.memory_tracker.memory_history.len() > 2 {
             let recent =
                 &self.memory_tracker.memory_history[self.memory_tracker.memory_history.len() - 1];
@@ -789,12 +818,23 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
             0.0
         };
 
+        let suspected_leak = growth_rate > GROWTH_THRESHOLD_BYTES_PER_STEP;
+        // Confidence grows with the ratio of observed growth to the
+        // threshold, saturating at 1.0 for >= 3x threshold.
+        let confidence = if suspected_leak {
+            (growth_rate / (GROWTH_THRESHOLD_BYTES_PER_STEP * 3.0)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         MemoryLeakIndicators {
-            suspected_leak: growth_rate > 1024.0, // Growing by more than 1KB per step
+            suspected_leak,
             growth_rate,
-            confidence: if growth_rate > 1024.0 { 0.7 } else { 0.1 },
-            evidence: if growth_rate > 1024.0 {
-                vec!["Consistent memory growth detected".to_string()]
+            confidence,
+            evidence: if suspected_leak {
+                vec![format!(
+                    "Memory grew by {growth_rate:.1} bytes/step (threshold {GROWTH_THRESHOLD_BYTES_PER_STEP:.0})"
+                )]
             } else {
                 vec![]
             },
@@ -816,48 +856,32 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
         optimizations
     }
 
-    fn calculate_average_arithmetic_intensity(&self) -> f64 {
-        if self
-            .efficiency_analyzer
-            .arithmetic_intensity_history
-            .is_empty()
-        {
-            0.0
-        } else {
-            self.efficiency_analyzer
-                .arithmetic_intensity_history
-                .iter()
-                .sum::<f64>()
-                / self.efficiency_analyzer.arithmetic_intensity_history.len() as f64
-        }
-    }
-
-    fn analyze_vectorization_efficiency(&self) -> f64 {
-        // Simplified vectorization analysis
-        0.7 // Assume 70% vectorization efficiency
-    }
-
     fn identify_computational_bottlenecks(&self) -> Vec<PerformanceBottleneck<A>> {
         let mut bottlenecks = Vec::new();
 
-        let avg_flops = if !self.efficiency_analyzer.flops_history.is_empty() {
-            self.efficiency_analyzer.flops_history.iter().sum::<f64>()
-                / self.efficiency_analyzer.flops_history.len() as f64
-        } else {
-            0.0
-        };
+        // Only report a compute-bound bottleneck when real FLOPS data
+        // exists: with an empty history, `avg_flops` would be a fabricated
+        // 0.0 that always looks "low throughput" even though nothing was
+        // measured at all.
+        if self.efficiency_analyzer.flops_history.is_empty() {
+            return bottlenecks;
+        }
+        let avg_flops = self.efficiency_analyzer.flops_history.iter().sum::<f64>()
+            / self.efficiency_analyzer.flops_history.len() as f64;
 
         if avg_flops < 1e9 {
-            bottlenecks.push(PerformanceBottleneck {
-                bottleneck_type: BottleneckType::ComputeBound,
-                severity: 0.6,
-                description: "Low computational throughput detected".to_string(),
-                optimizations: vec![
-                    "Enable SIMD optimizations".to_string(),
-                    "Consider GPU acceleration".to_string(),
-                ],
-                estimated_impact: A::from(0.3).expect("unwrap failed"),
-            });
+            if let Some(estimated_impact) = A::from(0.3) {
+                bottlenecks.push(PerformanceBottleneck {
+                    bottleneck_type: BottleneckType::ComputeBound,
+                    severity: 0.6,
+                    description: "Low computational throughput detected".to_string(),
+                    optimizations: vec![
+                        "Enable SIMD optimizations".to_string(),
+                        "Consider GPU acceleration".to_string(),
+                    ],
+                    estimated_impact,
+                });
+            }
         }
 
         bottlenecks
@@ -871,41 +895,30 @@ impl<A: Float + Debug + Send + Sync> PerformanceProfiler<A> {
         ]
     }
 
-    fn calculate_memory_bandwidth_utilization(&self) -> f64 {
-        if self.hardware_monitor.memory_bandwidth.is_empty() {
+    /// Real: FLOPS observed relative to a documented reference baseline of
+    /// 1 GFLOPS (a conservative "reasonably efficient scalar numeric code"
+    /// reference point), clamped to `[0, 1]`. `0.0` (an honest "no data",
+    /// not a fabricated placeholder) when no step declared an op count.
+    fn calculate_computational_efficiency_score(&self) -> f64 {
+        const REFERENCE_FLOPS: f64 = 1e9;
+        if self.efficiency_analyzer.flops_history.is_empty() {
+            return 0.0;
+        }
+        let avg_flops = self.efficiency_analyzer.flops_history.iter().sum::<f64>()
+            / self.efficiency_analyzer.flops_history.len() as f64;
+        (avg_flops / REFERENCE_FLOPS).clamp(0.0, 1.0)
+    }
+
+    /// Real: mean of process-CPU-time-delta samples. Memory bandwidth is
+    /// not folded in here since it is not tracked (no portable hardware
+    /// counters available); `0.0` on no samples.
+    fn calculate_hardware_efficiency_score(&self) -> f64 {
+        if self.hardware_monitor.cpu_utilization.is_empty() {
             0.0
         } else {
-            self.hardware_monitor.memory_bandwidth.iter().sum::<f64>()
-                / self.hardware_monitor.memory_bandwidth.len() as f64
-        }
-    }
-
-    fn analyze_cache_performance(&self) -> CachePerformanceAnalysis {
-        CachePerformanceAnalysis {
-            l1_hit_ratio: 0.95,
-            l2_hit_ratio: 0.85,
-            l3_hit_ratio: 0.75,
-            cache_efficiency_score: 0.85,
-            miss_penalty_impact: 0.1,
-        }
-    }
-
-    fn calculate_computational_efficiency_score(&self) -> f64 {
-        // Simplified computational efficiency calculation
-        0.75
-    }
-
-    fn calculate_hardware_efficiency_score(&self) -> f64 {
-        let cpu_score = if !self.hardware_monitor.cpu_utilization.is_empty() {
             self.hardware_monitor.cpu_utilization.iter().sum::<f64>()
                 / self.hardware_monitor.cpu_utilization.len() as f64
-        } else {
-            0.0
-        };
-
-        let memory_score = self.calculate_memory_bandwidth_utilization();
-
-        (cpu_score + memory_score) / 2.0
+        }
     }
 
     fn analyze_hardware_underutilization(&self) -> Vec<String> {
@@ -936,6 +949,7 @@ pub struct StepProfiler<A: Float> {
     update_duration: Option<Duration>,
     memory_start: Option<Instant>,
     memory_duration: Option<Duration>,
+    declared_ops: Option<u64>,
     _config: ProfilerConfig,
     _phantom: std::marker::PhantomData<A>,
 }
@@ -951,9 +965,19 @@ impl<A: Float + Send + Sync> StepProfiler<A> {
             update_duration: None,
             memory_start: None,
             memory_duration: None,
+            declared_ops: None,
             _config: config.clone(),
             _phantom: std::marker::PhantomData,
         }
+    }
+
+    /// Declare the real number of floating-point operations performed in
+    /// this step (e.g. from a caller-computed FLOP count for the
+    /// optimizer's update rule). Enables real FLOPS reporting; without a
+    /// declaration, FLOPS for this step is `None` rather than a
+    /// fabricated estimate.
+    pub fn record_op_count(&mut self, ops: u64) {
+        self.declared_ops = Some(ops);
     }
 
     /// Mark the start of gradient computation
@@ -1001,6 +1025,7 @@ impl<A: Float + Send + Sync> StepProfiler<A> {
             parameter_update_time: self.update_duration.unwrap_or(Duration::from_nanos(0)),
             memory_allocation_time: self.memory_duration.unwrap_or(Duration::from_nanos(0)),
             timestamp: self.start_time,
+            declared_ops: self.declared_ops,
         })
     }
 }
@@ -1033,10 +1058,16 @@ pub struct MemoryAnalysis {
 /// Computational performance analysis
 #[derive(Debug)]
 pub struct ComputationalAnalysis<A: Float> {
+    /// Real: mean of caller-declared FLOPS samples (0.0 if none recorded).
     pub average_flops: f64,
+    /// Real: max of caller-declared FLOPS samples (0.0 if none recorded).
     pub peak_flops: f64,
-    pub arithmetic_intensity: f64,
-    pub vectorization_efficiency: f64,
+    /// `None`: requires real memory-traffic byte tracking (FLOPs / bytes
+    /// moved), which is not implemented -- never a fabricated formula.
+    pub arithmetic_intensity: Option<f64>,
+    /// `None`: no real SIMD/vectorization introspection is available from
+    /// portable Rust.
+    pub vectorization_efficiency: Option<f64>,
     pub bottlenecks: Vec<PerformanceBottleneck<A>>,
     pub optimization_opportunities: Vec<String>,
 }
@@ -1044,10 +1075,16 @@ pub struct ComputationalAnalysis<A: Float> {
 /// Hardware performance analysis
 #[derive(Debug)]
 pub struct HardwareAnalysis {
+    /// Real: mean of process-CPU-time-delta samples (0.0 if none recorded).
     pub cpu_utilization_avg: f64,
+    /// Real: max of process-CPU-time-delta samples (0.0 if none recorded).
     pub cpu_utilization_peak: f64,
-    pub memory_bandwidth_utilization: f64,
-    pub cache_performance: CachePerformanceAnalysis,
+    /// `None`: no portable hardware memory-bandwidth counters are
+    /// available from safe Rust.
+    pub memory_bandwidth_utilization: Option<f64>,
+    /// `None`: no portable hardware cache-performance counters are
+    /// available from safe Rust.
+    pub cache_performance: Option<CachePerformanceAnalysis>,
     pub hardware_efficiency_score: f64,
     pub underutilization_analysis: Vec<String>,
 }
@@ -1327,17 +1364,24 @@ impl Default for HardwareMetrics {
 mod tests {
     use super::*;
 
+    fn new_profiler(config: ProfilerConfig) -> PerformanceProfiler<f64> {
+        match PerformanceProfiler::<f64>::new(config) {
+            Ok(p) => p,
+            Err(e) => panic!("failed to create PerformanceProfiler: {e:?}"),
+        }
+    }
+
     #[test]
     fn test_profiler_creation() {
         let config = ProfilerConfig::default();
-        let profiler = PerformanceProfiler::<f64>::new(config);
+        let profiler = new_profiler(config);
         assert_eq!(profiler.current_step, 0);
     }
 
     #[test]
     fn test_step_profiling() {
         let config = ProfilerConfig::default();
-        let mut profiler = PerformanceProfiler::<f64>::new(config);
+        let mut profiler = new_profiler(config);
 
         let mut step_profiler = profiler.start_step();
         step_profiler.start_gradient_computation();
@@ -1348,16 +1392,16 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         step_profiler.end_parameter_update();
 
-        profiler
-            .complete_step(step_profiler)
-            .expect("unwrap failed");
+        if let Err(e) = profiler.complete_step(step_profiler) {
+            panic!("complete_step failed: {e:?}");
+        }
         assert_eq!(profiler.current_step, 1);
     }
 
     #[test]
     fn test_performance_report_generation() {
         let config = ProfilerConfig::default();
-        let profiler = PerformanceProfiler::<f64>::new(config);
+        let profiler = new_profiler(config);
 
         let report = profiler.generate_performance_report();
         assert!(report.performance_score >= 0.0 && report.performance_score <= 1.0);
@@ -1366,18 +1410,67 @@ mod tests {
     #[test]
     fn test_memory_leak_detection() {
         let config = ProfilerConfig::default();
-        let profiler = PerformanceProfiler::<f64>::new(config);
+        let profiler = new_profiler(config);
 
         let leak_indicators = profiler.detect_memory_leaks();
         assert!(leak_indicators.confidence >= 0.0 && leak_indicators.confidence <= 1.0);
     }
 
+    /// With no steps run, there is no real data, so honest recommendations
+    /// must be empty (previously this always fired even with zero data,
+    /// because the fallback "no history" values of 0.0 always compared as
+    /// "low"). Once a step with a real, low, declared op count is
+    /// recorded, a genuine low-throughput recommendation should appear.
     #[test]
-    fn test_efficiency_recommendations() {
+    fn test_efficiency_recommendations_require_real_data() {
         let config = ProfilerConfig::default();
-        let profiler = PerformanceProfiler::<f64>::new(config);
+        let profiler = new_profiler(config);
+        let recommendations = profiler.generate_efficiency_recommendations();
+        assert!(
+            recommendations.is_empty(),
+            "no steps have been recorded yet, so there must be no fabricated recommendations"
+        );
+    }
+
+    #[test]
+    fn test_efficiency_recommendations_fire_on_real_low_throughput() {
+        let config = ProfilerConfig::default();
+        let mut profiler = new_profiler(config);
+
+        let mut step_profiler = profiler.start_step();
+        step_profiler.record_op_count(10); // trivially low real op count
+        if let Err(e) = profiler.complete_step(step_profiler) {
+            panic!("complete_step failed: {e:?}");
+        }
 
         let recommendations = profiler.generate_efficiency_recommendations();
-        assert!(!recommendations.is_empty());
+        assert!(
+            recommendations
+                .iter()
+                .any(|r| matches!(r.category, RecommendationCategory::Computation)),
+            "a real, tiny declared op count must yield a genuine low-throughput recommendation"
+        );
+    }
+
+    #[test]
+    fn test_flops_require_declared_op_count() {
+        let config = ProfilerConfig::default();
+        let mut profiler = new_profiler(config);
+
+        // A step with no declared op count must not contribute a
+        // fabricated FLOPS sample.
+        let step_profiler = profiler.start_step();
+        if let Err(e) = profiler.complete_step(step_profiler) {
+            panic!("complete_step failed: {e:?}");
+        }
+        assert!(profiler.efficiency_analyzer.flops_history.is_empty());
+
+        // A step with a declared op count must contribute a real sample.
+        let mut step_profiler = profiler.start_step();
+        step_profiler.record_op_count(1_000_000);
+        if let Err(e) = profiler.complete_step(step_profiler) {
+            panic!("complete_step failed: {e:?}");
+        }
+        assert_eq!(profiler.efficiency_analyzer.flops_history.len(), 1);
     }
 }

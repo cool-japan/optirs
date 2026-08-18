@@ -11,16 +11,12 @@ members = [
 ]
 resolver = "2"
 
+# Intentionally empty: every crate opts in via `[lints] workspace = true`, and
+# production builds must surface every rustc warning (no blanket allows).
 [workspace.lints.rust]
-unused_variables = "allow"
-unused_imports = "allow"
-mismatched_lifetime_syntaxes = "allow"
-dead_code = "allow"
-unpredictable_function_pointer_comparisons = "allow"
-unknown_lints = "allow"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["COOLJAPAN OU (Team KitaSan)"]
 description = "Advanced ML optimization and hardware acceleration library"
@@ -53,7 +49,6 @@ thiserror = "2.0.18"
 anyhow = "1.0"
 approx = "0.5.1"
 criterion = "0.8.2"
-once_cell = "1.21.4"
 tempfile = "3.27.0"
 tokio-test = "0.4.5"
 
@@ -61,7 +56,12 @@ tokio-test = "0.4.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-chrono = "0.4.44"
+chrono = "0.4.45"
+# COOLJAPAN bincode replacement (Pure Rust). "serde" feature gives the
+# serde::Serialize/Deserialize-compatible codec (oxicode::serde::*);
+# "checksum" gives CRC32 corruption detection (oxicode::checksum::*).
+# NEVER use `bincode` directly (banned in deny.toml).
+oxicode = { version = "0.2.6", default-features = false, features = ["std", "serde", "checksum"] }
 
 # GPU backends - cross-platform only
 cudarc = { version = "0.19", features = ["cuda-12000"] }
@@ -70,20 +70,17 @@ wgpu = { version = "29.0" }
 pollster = { version = "0.4" }
 
 # ML specific
-tokenizers = "0.22.2"
-autograd = "1.1.1"
-smallvec = "1.15.1"
-uuid = { version = "1.23.0", features = ["v4"] }
-rustc-hash = "2.1.1"
-matrixmultiply = "0.3.10"
+smallvec = "1.15.2"
+uuid = { version = "1.23.4", features = ["v4"] }
+rustc-hash = "2.1.2"
 
 # System information
-sysinfo = "0.38.4"
+sysinfo = "0.39.5"
 
 # Async dependencies
-tokio = { version = "1.50.0", features = ["full"] }
-futures = "0.3.32"
-futures-util = "0.3.32"
+tokio = { version = "1.52.3", features = ["full"] }
+futures = "0.3.34"
+toml = "1.1.4"
 async-trait = "0.1.89"
 
 # Logging
@@ -93,29 +90,35 @@ log = "0.4"
 sha2 = "0.11"
 md5 = "0.8.0"
 clap = { version = "4.6", features = ["derive"] }
-regex = "1.12.3"
 
 # Cryptography
 rsa = { version = "0.9" }
 x509-parser = { version = "0.18" }
+# Pure-Rust X25519 elliptic-curve Diffie-Hellman (curve25519-dalek backend, no C/C++).
+# Used by privacy::federated::pairwise_masking to derive the pairwise shared seeds of
+# the Bonawitz secure-aggregation protocol, so that the aggregation server -- which
+# holds no secret key -- cannot reconstruct any client's mask.
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 
 # OptiRS crates
-optirs-core = { version = "0.3.1", path = "./optirs-core" }
-optirs-gpu = { version = "0.3.1", path = "./optirs-gpu" }
-optirs-tpu = { version = "0.3.1", path = "./optirs-tpu" }
-optirs-learned = { version = "0.3.1", path = "./optirs-learned" }
-optirs-nas = { version = "0.3.1", path = "./optirs-nas" }
-optirs-bench = { version = "0.3.1", path = "./optirs-bench" }
+optirs-core = { version = "0.3.2", path = "./optirs-core" }
+optirs-gpu = { version = "0.3.2", path = "./optirs-gpu" }
+optirs-tpu = { version = "0.3.2", path = "./optirs-tpu" }
+optirs-learned = { version = "0.3.2", path = "./optirs-learned" }
+optirs-nas = { version = "0.3.2", path = "./optirs-nas" }
+optirs-bench = { version = "0.3.2", path = "./optirs-bench" }
 
 # WASM dependencies
-wasm-bindgen = "0.2.114"
+wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3.91"
+js-sys = "0.3.103"
 web-sys = "0.3"
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = "0.1.7"
 wasm-bindgen-test = "0.3"
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# Force getrandom 0.2 (transitive via rand/statrs/scirs2) to use the js backend on wasm32
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 # 🚨 CRITICAL: SciRS2 ECOSYSTEM DEPENDENCIES 🚨
 #
@@ -126,23 +129,21 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # Start minimal - add dependencies only when compilation errors prove necessity.
 #
 # ✅ ESSENTIAL (Always Required):
-scirs2-core = "0.4.0"# FOUNDATION - Core scientific primitives
-scirs2-optimize = "0.4.0"# ESSENTIAL - Base optimization interfaces
+scirs2-core = "0.6.5"# FOUNDATION - Core scientific primitives
+scirs2-optimize = "0.6.5"# ESSENTIAL - Base optimization interfaces
 
 # ⚠️ EVIDENCE-BASED (Added because compilation errors prove necessity):
-scirs2-neural = "0.4.0"# EVIDENCE: neuromorphic/spike_based.rs requires this
-scirs2-metrics = "0.4.0"# EVIDENCE: benchmarking and monitoring require this
-scirs2-stats = "0.4.0"# EVIDENCE: multiple modules use distributions
-scirs2-series = "0.4.0"# EVIDENCE: performance_tracking.rs requires this
-scirs2-datasets = "0.4.0"# EVIDENCE: cross_platform_tester.rs requires this
+scirs2-neural = "0.6.5"# EVIDENCE: neuromorphic/spike_based.rs requires this
+scirs2-metrics = "0.6.5"# EVIDENCE: benchmarking and monitoring require this
+scirs2-stats = "0.6.5"# EVIDENCE: multiple modules use distributions
+scirs2-datasets = "0.6.5"# EVIDENCE: cross_platform_tester.rs requires this
 
-# ⚠️ CONDITIONAL (Uncomment only if compilation fails):
-scirs2-linalg = "0.4.0"
-scirs2-signal = "0.4.0"
+# ⚠️ CONDITIONAL scirs2-linalg / scirs2-signal removed (Wave 0 pass): zero
+# references across all member manifests and source. Re-add to this table
+# (and to the consuming crate's [dependencies]) if a future module needs them.
 
 # ❌ NOT REQUIRED for OptiRS:
 # scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
-# TODO: Remove scirs2-autograd usage from optirs-core/src/optimizers/adam.rs
 
 [profile.release]
 opt-level = 3

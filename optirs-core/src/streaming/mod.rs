@@ -26,10 +26,10 @@ pub use enhanced_adaptive_lr::{
 pub use low_latency::{LowLatencyConfig, LowLatencyMetrics, LowLatencyOptimizer};
 pub use streaming_metrics::{MetricsSample, MetricsSummary, StreamingMetricsCollector};
 
-// Re-export split module types
-pub use advancedqosconfig_traits::*;
-pub use functions::*;
-pub use realtimeconfig_traits::*;
-pub use streamingconfig_traits::*;
-pub use streamingmetrics_traits::*;
+// Re-export split module types.
+//
+// `advancedqosconfig_traits`, `realtimeconfig_traits`, `streamingconfig_traits`,
+// `streamingmetrics_traits` and `functions` deliberately have no `pub use` here:
+// they contain only `impl Default for ...` blocks (and, in `functions`, a
+// test-only module), so a glob re-export of them would name nothing.
 pub use types::*;

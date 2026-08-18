@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::fmt::Debug;
 // Computation graph capture for XLA compilation
 //
@@ -6,12 +5,10 @@ use std::fmt::Debug;
 // from high-level operations, including graph validation and optimization
 // preparation.
 
-use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
-use super::super::{TPUConfig, XLAOptimizationLevel};
 use crate::error::{OptimError, Result};
 
 /// Computation graph builder
@@ -22,15 +19,6 @@ pub struct ComputationGraphBuilder<T: Float + Debug + Send + Sync + 'static> {
 
     /// Next computation ID
     next_computation_id: u64,
-
-    /// Operation registry
-    operation_registry: HashMap<String, OperationDefinition>,
-
-    /// Graph validation rules
-    validation_rules: Vec<ValidationRule>,
-
-    /// Performance hints
-    performance_hints: HashMap<String, PerformanceHint>,
 
     /// Phantom data for type parameter
     pub _phantom: std::marker::PhantomData<T>,
@@ -59,6 +47,13 @@ pub struct XLAComputation<T: Float + Debug + Send + Sync + 'static> {
 
     /// Operation dependencies
     pub dependencies: HashMap<OperationId, Vec<OperationId>>,
+
+    /// Monotonic allocator for [`OperandId`]s.
+    ///
+    /// This must never be derived from `operands.len()`: optimization passes
+    /// such as dead-code elimination remove operands, and reusing a freed index
+    /// would silently alias a live operand.
+    pub next_operand_id: usize,
 }
 
 /// Computation identifier
@@ -100,8 +95,104 @@ pub struct XLAOperation<T: Float + Debug + Send + Sync + 'static> {
     pub _phantom: std::marker::PhantomData<T>,
 }
 
+/// Materialized payload of an [`OperationType::Constant`] node.
+///
+/// The payload is stored in `f64` regardless of the graph's element type so
+/// that `OperationType` stays non-generic (it is embedded in `XLAOperation<T>`
+/// but carries no `T` of its own). Conversion to/from the graph element type
+/// happens at the boundary via `NumCast`.
+///
+/// Unlike the previous `Box<dyn Any>` representation this survives `Clone`,
+/// compares by value, and hashes consistently with `PartialEq`, which is what
+/// makes constant folding and common-subexpression elimination work at all.
+#[derive(Debug, Clone, Default)]
+pub struct ConstantValue {
+    /// Flattened row-major element data.
+    pub data: Vec<f64>,
+
+    /// Logical dimensions; empty means a rank-0 scalar.
+    pub dims: Vec<usize>,
+}
+
+impl ConstantValue {
+    /// Create a rank-0 scalar constant.
+    pub fn scalar(value: f64) -> Self {
+        Self {
+            data: vec![value],
+            dims: Vec::new(),
+        }
+    }
+
+    /// Create a constant from flattened data and dimensions.
+    ///
+    /// Returns `None` when `data.len()` does not match the product of `dims`.
+    pub fn new(data: Vec<f64>, dims: Vec<usize>) -> Option<Self> {
+        let expected: usize = dims.iter().product();
+        if data.len() == expected {
+            Some(Self { data, dims })
+        } else {
+            None
+        }
+    }
+
+    /// Number of elements held by this constant.
+    pub fn element_count(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Interpret the constant as a scalar, if it holds exactly one element.
+    pub fn as_scalar(&self) -> Option<f64> {
+        if self.data.len() == 1 {
+            self.data.first().copied()
+        } else {
+            None
+        }
+    }
+
+    /// Tensor shape described by this constant.
+    pub fn tensor_shape(&self) -> TensorShape {
+        TensorShape {
+            dimensions: self.dims.clone(),
+            dynamic_dimensions: vec![false; self.dims.len()],
+            element_count: self.data.len(),
+            tuple_shapes: Vec::new(),
+        }
+    }
+
+    /// True when every element equals `value` bit-for-bit after conversion.
+    pub fn is_uniform(&self, value: f64) -> bool {
+        !self.data.is_empty() && self.data.iter().all(|&v| v == value)
+    }
+}
+
+// `Vec<f64>` has no `Eq`/`Hash`, so both are implemented over the raw bit
+// patterns. Doing it this way keeps `eq` and `hash` in agreement, which the
+// CSE pass relies on when it keys operations by their expression hash.
+impl PartialEq for ConstantValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.dims == other.dims
+            && self.data.len() == other.data.len()
+            && self
+                .data
+                .iter()
+                .zip(other.data.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+    }
+}
+
+impl Eq for ConstantValue {}
+
+impl std::hash::Hash for ConstantValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.dims.hash(state);
+        for value in &self.data {
+            value.to_bits().hash(state);
+        }
+    }
+}
+
 /// Types of XLA operations
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OperationType {
     // Elementwise operations
     Add,
@@ -183,138 +274,12 @@ pub enum OperationType {
     GetTupleElement,
 
     // Special operations
-    Constant(Box<dyn Any>),
+    Constant(ConstantValue),
     Parameter,
     Iota,
 
     // Custom operations
     Custom(CustomOperation),
-}
-
-impl std::hash::Hash for OperationType {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use OperationType::*;
-        std::mem::discriminant(self).hash(state);
-        match self {
-            Constant(_) => {
-                // Don't hash the Any content
-            }
-            Reduce(r) => r.function.hash(state),
-            AllReduce(a) => a.function.hash(state),
-            Convolution(c) => {
-                c.strides.hash(state);
-                // Hash other fields if they implement Hash
-            }
-            Custom(c) => c.name.hash(state),
-            _ => {}
-        }
-    }
-}
-
-impl PartialEq for OperationType {
-    fn eq(&self, other: &Self) -> bool {
-        use OperationType::*;
-        match (self, other) {
-            (Add, Add) | (Multiply, Multiply) | (Subtract, Subtract) | (Divide, Divide) => true,
-            (Maximum, Maximum) | (Minimum, Minimum) | (Abs, Abs) | (Exp, Exp) => true,
-            (Log, Log) | (Sqrt, Sqrt) | (Rsqrt, Rsqrt) | (Square, Square) => true,
-            (Sign, Sign) | (Negate, Negate) | (Sin, Sin) | (Cos, Cos) => true,
-            (Tanh, Tanh) | (Ceil, Ceil) | (Floor, Floor) | (Round, Round) => true,
-            (Not, Not) | (And, And) | (Or, Or) | (Xor, Xor) => true,
-            (Equal, Equal) | (NotEqual, NotEqual) | (Less, Less) | (LessEqual, LessEqual) => true,
-            (Greater, Greater) | (GreaterEqual, GreaterEqual) => true,
-            (Reshape, Reshape) | (Transpose, Transpose) | (Slice, Slice) => true,
-            (DynamicSlice, DynamicSlice) | (Pad, Pad) | (Reverse, Reverse) => true,
-            (Broadcast, Broadcast) | (Concatenate, Concatenate) => true,
-            (Gather, Gather) | (Scatter, Scatter) => true,
-            (Dot, Dot) | (DotGeneral, DotGeneral) | (MatMul, MatMul) => true,
-            (Conditional, Conditional) | (While, While) | (Call, Call) => true,
-            (AllGather, AllGather)
-            | (AllToAll, AllToAll)
-            | (CollectivePermute, CollectivePermute) => true,
-            (ReduceScatter, ReduceScatter) | (BatchNorm, BatchNorm) | (Dropout, Dropout) => true,
-            (Copy, Copy) | (Tuple, Tuple) | (GetTupleElement, GetTupleElement) => true,
-            (Parameter, Parameter) | (Iota, Iota) | (ReduceWindow, ReduceWindow) => true,
-            (Reduce(a), Reduce(b)) => a == b,
-            (AllReduce(a), AllReduce(b)) => a == b,
-            (Convolution(a), Convolution(b)) => a == b,
-            (Custom(a), Custom(b)) => a == b,
-            (Constant(_), Constant(_)) => false, // Can't compare Box<dyn Any>
-            _ => false,
-        }
-    }
-}
-
-impl Eq for OperationType {}
-
-impl Clone for OperationType {
-    fn clone(&self) -> Self {
-        match self {
-            OperationType::Add => OperationType::Add,
-            OperationType::Multiply => OperationType::Multiply,
-            OperationType::Subtract => OperationType::Subtract,
-            OperationType::Divide => OperationType::Divide,
-            OperationType::Maximum => OperationType::Maximum,
-            OperationType::Minimum => OperationType::Minimum,
-            OperationType::Abs => OperationType::Abs,
-            OperationType::Exp => OperationType::Exp,
-            OperationType::Log => OperationType::Log,
-            OperationType::Sqrt => OperationType::Sqrt,
-            OperationType::Rsqrt => OperationType::Rsqrt,
-            OperationType::Square => OperationType::Square,
-            OperationType::Sign => OperationType::Sign,
-            OperationType::Negate => OperationType::Negate,
-            OperationType::Sin => OperationType::Sin,
-            OperationType::Cos => OperationType::Cos,
-            OperationType::Tanh => OperationType::Tanh,
-            OperationType::Ceil => OperationType::Ceil,
-            OperationType::Floor => OperationType::Floor,
-            OperationType::Round => OperationType::Round,
-            OperationType::Not => OperationType::Not,
-            OperationType::And => OperationType::And,
-            OperationType::Or => OperationType::Or,
-            OperationType::Xor => OperationType::Xor,
-            OperationType::Equal => OperationType::Equal,
-            OperationType::NotEqual => OperationType::NotEqual,
-            OperationType::Less => OperationType::Less,
-            OperationType::LessEqual => OperationType::LessEqual,
-            OperationType::Greater => OperationType::Greater,
-            OperationType::GreaterEqual => OperationType::GreaterEqual,
-            OperationType::MatMul => OperationType::MatMul,
-            OperationType::Dot => OperationType::Dot,
-            OperationType::Transpose => OperationType::Transpose,
-            OperationType::Reshape => OperationType::Reshape,
-            OperationType::Broadcast => OperationType::Broadcast,
-            OperationType::Slice => OperationType::Slice,
-            OperationType::Concatenate => OperationType::Concatenate,
-            OperationType::Gather => OperationType::Gather,
-            OperationType::Scatter => OperationType::Scatter,
-            OperationType::Reduce(r) => OperationType::Reduce(r.clone()),
-            OperationType::AllReduce(a) => OperationType::AllReduce(a.clone()),
-            OperationType::AllGather => OperationType::AllGather,
-            OperationType::AllToAll => OperationType::AllToAll,
-            OperationType::CollectivePermute => OperationType::CollectivePermute,
-            OperationType::ReduceScatter => OperationType::ReduceScatter,
-            OperationType::Convolution(c) => OperationType::Convolution(c.clone()),
-            OperationType::BatchNorm => OperationType::BatchNorm,
-            OperationType::Dropout => OperationType::Dropout,
-            OperationType::Constant(_) => OperationType::Constant(Box::new(())),
-            OperationType::Parameter => OperationType::Parameter,
-            OperationType::Iota => OperationType::Iota,
-            OperationType::Custom(c) => OperationType::Custom(c.clone()),
-            OperationType::DynamicSlice => OperationType::DynamicSlice,
-            OperationType::Pad => OperationType::Pad,
-            OperationType::Reverse => OperationType::Reverse,
-            OperationType::ReduceWindow => OperationType::ReduceWindow,
-            OperationType::DotGeneral => OperationType::DotGeneral,
-            OperationType::Conditional => OperationType::Conditional,
-            OperationType::While => OperationType::While,
-            OperationType::Call => OperationType::Call,
-            OperationType::Copy => OperationType::Copy,
-            OperationType::Tuple => OperationType::Tuple,
-            OperationType::GetTupleElement => OperationType::GetTupleElement,
-        }
-    }
 }
 
 /// Reduce operation configuration
@@ -632,6 +597,15 @@ pub struct InputSpecification<T: Float + Debug + Send + Sync + 'static> {
     /// Parameter name
     pub name: String,
 
+    /// Operand this parameter defines.
+    ///
+    /// Mirrors [`OutputSpecification::operand`]. Without it the input list can
+    /// only be matched back to the graph by comparing shapes, which aliases as
+    /// soon as two parameters share a shape; an executor binding argument
+    /// values, and shape inference seeding the graph, both need the exact
+    /// operand.
+    pub operand: OperandId,
+
     /// Shape specification
     pub shape: TensorShape,
 
@@ -650,6 +624,12 @@ pub struct InputSpecification<T: Float + Debug + Send + Sync + 'static> {
 pub struct OutputSpecification<T: Float + Debug + Send + Sync + 'static> {
     /// Output index
     pub index: usize,
+
+    /// Operand that carries this output value.
+    ///
+    /// Dead-code elimination roots its liveness walk here; without an explicit
+    /// operand link there is no way to tell which operation produces an output.
+    pub operand: OperandId,
 
     /// Shape specification
     pub shape: TensorShape,
@@ -835,6 +815,192 @@ pub struct ValidationRule {
     pub validator: String,
 }
 
+impl<T: Float + Debug + Send + Sync + 'static> XLAComputation<T> {
+    /// Allocate a fresh, never-reused [`OperandId`].
+    pub fn allocate_operand_id(&mut self) -> OperandId {
+        let id = OperandId(self.next_operand_id);
+        self.next_operand_id += 1;
+        id
+    }
+
+    /// Smallest [`OperationId`] not currently in use.
+    ///
+    /// Optimization passes that synthesize operations must use this rather than
+    /// `operations.len()`, which collides with surviving ids after a removal and
+    /// silently clobbers the dependency map.
+    pub fn next_free_operation_id(&self) -> OperationId {
+        let max = self
+            .operations
+            .iter()
+            .map(|op| op.id.0)
+            .max()
+            .map(|m| m.saturating_add(1))
+            .unwrap_or(0);
+        OperationId(max)
+    }
+
+    /// The operation producing `operand`, if any.
+    pub fn producer_of(&self, operand: OperandId) -> Option<&XLAOperation<T>> {
+        self.operations.iter().find(|op| op.output == operand)
+    }
+
+    /// The operand an operation writes its result to.
+    pub fn operation_output(&self, op_id: OperationId) -> Option<OperandId> {
+        self.operations
+            .iter()
+            .find(|op| op.id == op_id)
+            .map(|op| op.output)
+    }
+
+    /// Rederive the declared-input list from the surviving `Parameter`
+    /// operations, in operation order.
+    ///
+    /// `inputs` is the contract between a caller's argument list and the
+    /// graph's parameter operands: `ExecutionEngine::execute_task` binds the
+    /// nth argument to `inputs[n].operand`, and shape inference seeds from the
+    /// same list. If an optimization pass ever removed or reordered a
+    /// `Parameter` operation without this, the list would keep describing a
+    /// graph that no longer exists and arguments would silently bind to the
+    /// wrong operands.
+    ///
+    /// No current pass does that -- `Parameter` counts as side-effecting, so
+    /// dead-code elimination roots it and common-subexpression elimination
+    /// never keys on it -- but that is a property of today's pass set, not of
+    /// the type. Deriving the list here makes it a property of the type, and
+    /// the arity check in `execute_task` then catches a genuine parameter
+    /// removal as an honest error rather than a misbinding.
+    ///
+    /// Shapes and dtypes are refreshed from the operands as well, so a pass
+    /// that legitimately rewrites a parameter's shape stays described.
+    fn rebuild_inputs(&mut self) {
+        let mut rebuilt = Vec::with_capacity(self.inputs.len());
+        for operation in &self.operations {
+            if !matches!(operation.op_type, OperationType::Parameter) {
+                continue;
+            }
+            let Some(operand) = self.operands.get(&operation.output) else {
+                continue;
+            };
+            let index = rebuilt.len();
+            // Preserve the caller-visible name where the parameter already had
+            // one, so a rebuild does not rename a graph's arguments.
+            let name = self
+                .inputs
+                .iter()
+                .find(|spec| spec.operand == operation.output)
+                .map(|spec| spec.name.clone())
+                .unwrap_or_else(|| format!("param_{index}"));
+            let layout_hint = self
+                .inputs
+                .iter()
+                .find(|spec| spec.operand == operation.output)
+                .and_then(|spec| spec.layout_hint.clone());
+
+            rebuilt.push(InputSpecification {
+                index,
+                name,
+                operand: operation.output,
+                shape: operand.shape.clone(),
+                dtype: operand.dtype,
+                layout_hint,
+                _phantom: std::marker::PhantomData,
+            });
+        }
+        self.inputs = rebuilt;
+    }
+
+    /// Rewrite every use of operand `from` to instead read operand `to`.
+    ///
+    /// Covers operation inputs, declared computation outputs, and declared
+    /// inputs. Callers are expected to follow up with
+    /// [`Self::rebuild_dependencies`].
+    pub fn replace_operand_uses(&mut self, from: OperandId, to: OperandId) {
+        if from == to {
+            return;
+        }
+
+        for operation in &mut self.operations {
+            for input in &mut operation.inputs {
+                if *input == from {
+                    *input = to;
+                }
+            }
+        }
+
+        for output in &mut self.outputs {
+            if output.operand == from {
+                output.operand = to;
+            }
+        }
+
+        // Declared inputs point at operands too. No pass should be merging one
+        // parameter into another (`Parameter` is treated as side-effecting, so
+        // CSE never keys on it), but if one ever does, silently leaving
+        // `inputs` pointing at a deleted operand would make argument binding
+        // fail at run time rather than here.
+        for input in &mut self.inputs {
+            if input.operand == from {
+                input.operand = to;
+            }
+        }
+    }
+
+    /// Recompute producer/consumer metadata, the dependency map, and the
+    /// declared-input list from the current operation list.
+    ///
+    /// Passes that add or remove operations invalidate this derived state;
+    /// recomputing wholesale is cheaper to reason about than patching it
+    /// incrementally and cannot drift out of sync.
+    ///
+    /// Every optimization pass that mutates the operation list calls this, so
+    /// it is the one place that can keep `inputs` true: the declared-input list
+    /// is rederived here from the surviving `Parameter` operations, which is
+    /// what keeps a caller's argument list bound to the operands it named.
+    pub fn rebuild_dependencies(&mut self) {
+        self.rebuild_inputs();
+
+        for operand in self.operands.values_mut() {
+            operand.metadata.producer = None;
+            operand.metadata.consumers.clear();
+        }
+
+        for operation in &self.operations {
+            if let Some(operand) = self.operands.get_mut(&operation.output) {
+                operand.metadata.producer = Some(operation.id);
+            }
+        }
+
+        for operation in &self.operations {
+            for input_id in &operation.inputs {
+                if let Some(operand) = self.operands.get_mut(input_id) {
+                    if !operand.metadata.consumers.contains(&operation.id) {
+                        operand.metadata.consumers.push(operation.id);
+                    }
+                }
+            }
+        }
+
+        let mut dependencies: HashMap<OperationId, Vec<OperationId>> = HashMap::new();
+        for operation in &self.operations {
+            let mut deps: Vec<OperationId> = Vec::new();
+            for input_id in &operation.inputs {
+                if let Some(producer) = self
+                    .operands
+                    .get(input_id)
+                    .and_then(|operand| operand.metadata.producer)
+                {
+                    if !deps.contains(&producer) {
+                        deps.push(producer);
+                    }
+                }
+            }
+            dependencies.insert(operation.id, deps);
+        }
+
+        self.dependencies = dependencies;
+    }
+}
+
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
     for ComputationGraphBuilder<T>
 {
@@ -851,9 +1017,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         Self {
             next_op_id: 0,
             next_computation_id: 0,
-            operation_registry: HashMap::new(),
-            validation_rules: Vec::new(),
-            performance_hints: HashMap::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -875,10 +1038,18 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             },
             operands: HashMap::new(),
             dependencies: HashMap::new(),
+            next_operand_id: 0,
         }
     }
 
     /// Add operation to computation
+    ///
+    /// Besides appending the operation this wires up the operand graph in both
+    /// directions: the freshly created output operand records this operation as
+    /// its `producer`, and every input operand gains this operation as a
+    /// `consumer`. Topological sorting, scheduling, cycle detection and
+    /// dead-code elimination all read that metadata, so skipping it leaves the
+    /// dependency map permanently empty.
     pub fn add_operation(
         &mut self,
         computation: &mut XLAComputation<T>,
@@ -886,17 +1057,34 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         inputs: Vec<OperandId>,
         output_shape: TensorShape,
     ) -> Result<OperationId> {
+        // Reject dangling operands up front: silently producing an operation
+        // with unknown inputs is what made dependency tracking unverifiable.
+        for input_id in &inputs {
+            if !computation.operands.contains_key(input_id) {
+                return Err(OptimError::from(format!(
+                    "Operation input operand {:?} does not exist in computation '{}'",
+                    input_id, computation.metadata.name
+                )));
+            }
+        }
+
         let op_id = OperationId(self.next_op_id);
         self.next_op_id += 1;
 
-        // Create output operand
-        let output_operand_id = OperandId(computation.operands.len());
+        // Create output operand using a monotonic id (never `operands.len()`,
+        // which aliases after DCE removes entries).
+        let output_operand_id = OperandId(computation.next_operand_id);
+        computation.next_operand_id += 1;
+
         let output_operand = Operand {
             id: output_operand_id,
             shape: output_shape,
             layout: Layout::default(),
             dtype: DataType::F32, // Default type
-            metadata: OperandMetadata::default(),
+            metadata: OperandMetadata {
+                producer: Some(op_id),
+                ..Default::default()
+            },
             _phantom: std::marker::PhantomData,
         };
 
@@ -904,11 +1092,34 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             .operands
             .insert(output_operand_id, output_operand);
 
+        // Record this operation as a consumer of each input operand.
+        for &input_id in &inputs {
+            if let Some(operand) = computation.operands.get_mut(&input_id) {
+                if !operand.metadata.consumers.contains(&op_id) {
+                    operand.metadata.consumers.push(op_id);
+                }
+            }
+        }
+
+        // Update dependencies from the (now populated) producer metadata.
+        let mut input_ops: Vec<OperationId> = Vec::new();
+        for &operand_id in &inputs {
+            if let Some(producer) = computation
+                .operands
+                .get(&operand_id)
+                .and_then(|operand| operand.metadata.producer)
+            {
+                if !input_ops.contains(&producer) {
+                    input_ops.push(producer);
+                }
+            }
+        }
+
         // Create operation
         let operation = XLAOperation {
             id: op_id,
             op_type,
-            inputs: inputs.clone(),
+            inputs,
             output: output_operand_id,
             attributes: OperationAttributes::default(),
             performance: OperationPerformanceCharacteristics::default(),
@@ -917,28 +1128,117 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             _phantom: std::marker::PhantomData,
         };
 
+        let is_parameter = matches!(operation.op_type, OperationType::Parameter);
         computation.operations.push(operation);
-
-        // Update dependencies
-        let input_ops: Vec<OperationId> = inputs
-            .iter()
-            .filter_map(|&operand_id| {
-                computation
-                    .operands
-                    .get(&operand_id)
-                    .and_then(|operand| operand.metadata.producer)
-            })
-            .collect();
-
         computation.dependencies.insert(op_id, input_ops);
 
+        // A `Parameter` operation *is* an input declaration. Derived through
+        // the same single funnel the optimization passes use, so a graph's
+        // declared inputs are always exactly its surviving parameters rather
+        // than a list maintained in two places that can disagree.
+        if is_parameter {
+            computation.rebuild_inputs();
+        }
+
         Ok(op_id)
+    }
+
+    /// Declare the operands that constitute the computation's results.
+    ///
+    /// Every downstream pass treats the output set as the liveness root, so a
+    /// computation whose outputs were never declared looks entirely dead. Call
+    /// this after the graph has been built, or use
+    /// [`Self::mark_terminal_operands_as_outputs`] to infer it.
+    pub fn set_outputs(
+        &self,
+        computation: &mut XLAComputation<T>,
+        outputs: &[OperandId],
+    ) -> Result<()> {
+        let mut specs = Vec::with_capacity(outputs.len());
+
+        for (index, &operand_id) in outputs.iter().enumerate() {
+            let operand = computation.operands.get(&operand_id).ok_or_else(|| {
+                OptimError::from(format!(
+                    "Cannot mark unknown operand {:?} as output of computation '{}'",
+                    operand_id, computation.metadata.name
+                ))
+            })?;
+
+            specs.push(OutputSpecification {
+                index,
+                operand: operand_id,
+                shape: operand.shape.clone(),
+                dtype: operand.dtype,
+                layout: operand.layout.clone(),
+                _phantom: std::marker::PhantomData,
+            });
+        }
+
+        // Outputs live for the whole computation; record that on the operand so
+        // lifetime-driven passes (memory planning) do not recycle their buffers.
+        for &operand_id in outputs {
+            if let Some(operand) = computation.operands.get_mut(&operand_id) {
+                operand.metadata.usage_hint.lifetime = OperandLifetime::Output;
+            }
+        }
+
+        computation.outputs = specs;
+        Ok(())
+    }
+
+    /// Infer the output set as every operand that no operation consumes.
+    ///
+    /// Returns the number of outputs discovered. A graph in which every operand
+    /// feeds another operation has no terminal operand and yields zero, which
+    /// [`Self::validate_computation`] then rejects.
+    pub fn mark_terminal_operands_as_outputs(
+        &self,
+        computation: &mut XLAComputation<T>,
+    ) -> Result<usize> {
+        let consumed: HashSet<OperandId> = computation
+            .operations
+            .iter()
+            .flat_map(|op| op.inputs.iter().copied())
+            .collect();
+
+        // Iterate operations rather than the operand map so the output order is
+        // deterministic (HashMap iteration order is not).
+        let terminals: Vec<OperandId> = computation
+            .operations
+            .iter()
+            .map(|op| op.output)
+            .filter(|operand_id| !consumed.contains(operand_id))
+            .collect();
+
+        self.set_outputs(computation, &terminals)?;
+        Ok(terminals.len())
     }
 
     /// Validate computation graph
     pub fn validate_computation(&self, computation: &XLAComputation<T>) -> Result<()> {
         // Check for cycles
         self.check_for_cycles(computation)?;
+
+        // A computation with operations but no declared outputs is malformed:
+        // its entire body is unreachable and dead-code elimination would be
+        // within its rights to delete everything.
+        if !computation.operations.is_empty() && computation.outputs.is_empty() {
+            return Err(OptimError::from(format!(
+                "Computation '{}' declares no outputs; call set_outputs or \
+                 mark_terminal_operands_as_outputs before optimization",
+                computation.metadata.name
+            )));
+        }
+
+        // Every declared output must resolve to an operand that exists.
+        for output in &computation.outputs {
+            if !computation.operands.contains_key(&output.operand) {
+                return Err(OptimError::from(format!(
+                    "Computation '{}' output {} references unknown operand {:?}",
+                    computation.metadata.name, output.index, output.operand
+                )));
+            }
+        }
 
         // Check shape compatibility
         self.check_shape_compatibility(computation)?;
@@ -951,46 +1251,65 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
 
     /// Check for cycles in computation graph
     fn check_for_cycles(&self, computation: &XLAComputation<T>) -> Result<()> {
-        let mut visited = HashSet::new();
-        let mut rec_stack = HashSet::new();
-
         for operation in &computation.operations {
-            if !visited.contains(&operation.id)
-                && Self::has_cycle_util(computation, operation.id, &mut visited, &mut rec_stack)?
-            {
-                return Err(OptimError::from(
-                    "Cycle detected in computation graph".to_string(),
-                ));
+            if let Some(cycle_at) = Self::find_cycle_from(computation, operation.id) {
+                return Err(OptimError::from(format!(
+                    "Cycle detected in computation graph '{}' involving operation {:?}",
+                    computation.metadata.name, cycle_at
+                )));
             }
         }
 
         Ok(())
     }
 
-    /// Utility function for cycle detection
-    fn has_cycle_util(
-        computation: &XLAComputation<T>,
-        op_id: OperationId,
-        visited: &mut HashSet<OperationId>,
-        rec_stack: &mut HashSet<OperationId>,
-    ) -> Result<bool> {
-        visited.insert(op_id);
-        rec_stack.insert(op_id);
+    /// Iterative depth-first cycle search rooted at `start`.
+    ///
+    /// Uses an explicit stack rather than recursion so that deep computation
+    /// graphs cannot overflow the native stack. Nodes are three-coloured: absent
+    /// from `visited` (white), present in `on_stack` (grey), and visited but
+    /// popped (black). An edge into a grey node is a back edge, i.e. a cycle.
+    fn find_cycle_from(computation: &XLAComputation<T>, start: OperationId) -> Option<OperationId> {
+        enum Step {
+            Enter(OperationId),
+            Leave(OperationId),
+        }
 
-        if let Some(dependencies) = computation.dependencies.get(&op_id) {
-            for &dep_id in dependencies {
-                if !visited.contains(&dep_id) {
-                    if Self::has_cycle_util(computation, dep_id, visited, rec_stack)? {
-                        return Ok(true);
+        let mut visited: HashSet<OperationId> = HashSet::new();
+        let mut on_stack: HashSet<OperationId> = HashSet::new();
+        let mut stack: Vec<Step> = vec![Step::Enter(start)];
+
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Leave(op_id) => {
+                    on_stack.remove(&op_id);
+                }
+                Step::Enter(op_id) => {
+                    if on_stack.contains(&op_id) {
+                        return Some(op_id);
                     }
-                } else if rec_stack.contains(&dep_id) {
-                    return Ok(true);
+                    if !visited.insert(op_id) {
+                        continue;
+                    }
+
+                    on_stack.insert(op_id);
+                    stack.push(Step::Leave(op_id));
+
+                    if let Some(dependencies) = computation.dependencies.get(&op_id) {
+                        for &dep_id in dependencies {
+                            if on_stack.contains(&dep_id) {
+                                return Some(dep_id);
+                            }
+                            if !visited.contains(&dep_id) {
+                                stack.push(Step::Enter(dep_id));
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        rec_stack.remove(&op_id);
-        Ok(false)
+        None
     }
 
     /// Check shape compatibility
@@ -1020,22 +1339,31 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         }
 
         for (op_id, dependencies) in &computation.dependencies {
+            // An operation may have been removed by an earlier pass while its
+            // dependency entry lingers; skip such stale edges instead of
+            // panicking on the missing key.
+            if !in_degree.contains_key(op_id) {
+                continue;
+            }
             for &dep_id in dependencies {
-                adj_list
-                    .get_mut(&dep_id)
-                    .expect("unwrap failed")
-                    .push(*op_id);
-                *in_degree.get_mut(op_id).expect("unwrap failed") += 1;
+                let Some(neighbors) = adj_list.get_mut(&dep_id) else {
+                    continue;
+                };
+                neighbors.push(*op_id);
+                if let Some(degree) = in_degree.get_mut(op_id) {
+                    *degree += 1;
+                }
             }
         }
 
-        // Topological sort using Kahn's algorithm
+        // Topological sort using Kahn's algorithm. Seed the queue in operation
+        // order so the result is deterministic (HashMap iteration is not).
         let mut queue = VecDeque::new();
         let mut result = Vec::new();
 
-        for (&op_id, &degree) in &in_degree {
-            if degree == 0 {
-                queue.push_back(op_id);
+        for operation in &computation.operations {
+            if in_degree.get(&operation.id) == Some(&0usize) {
+                queue.push_back(operation.id);
             }
         }
 
@@ -1043,9 +1371,11 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             result.push(op_id);
 
             if let Some(neighbors) = adj_list.get(&op_id) {
-                for &neighbor in neighbors {
-                    let degree = in_degree.get_mut(&neighbor).expect("unwrap failed");
-                    *degree -= 1;
+                for &neighbor in neighbors.iter() {
+                    let Some(degree) = in_degree.get_mut(&neighbor) else {
+                        continue;
+                    };
+                    *degree = degree.saturating_sub(1);
                     if *degree == 0 {
                         queue.push_back(neighbor);
                     }
@@ -1082,7 +1412,52 @@ impl Default for UsageHint {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// Rank-0 scalar shape.
+    pub fn scalar_shape() -> TensorShape {
+        TensorShape {
+            dimensions: Vec::new(),
+            dynamic_dimensions: Vec::new(),
+            element_count: 1,
+            tuple_shapes: Vec::new(),
+        }
+    }
+
+    /// Shape with the given dimensions.
+    pub fn shape(dims: &[usize]) -> TensorShape {
+        TensorShape {
+            dimensions: dims.to_vec(),
+            dynamic_dimensions: vec![false; dims.len()],
+            element_count: dims.iter().product::<usize>().max(1),
+            tuple_shapes: Vec::new(),
+        }
+    }
+
+    /// Add an operation and return the operand carrying its result.
+    pub fn add_op<T>(
+        builder: &mut ComputationGraphBuilder<T>,
+        computation: &mut XLAComputation<T>,
+        op_type: OperationType,
+        inputs: Vec<OperandId>,
+        out_shape: TensorShape,
+    ) -> OperandId
+    where
+        T: Float + Debug + Default + Clone + Send + Sync,
+    {
+        let op_id = builder
+            .add_operation(computation, op_type, inputs, out_shape)
+            .expect("test graph construction must succeed");
+        computation
+            .operation_output(op_id)
+            .expect("freshly added operation must have an output operand")
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::*;
     use super::*;
 
     #[test]
@@ -1097,25 +1472,378 @@ mod tests {
         let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
         let mut computation = builder.create_computation("test");
 
-        let shape = TensorShape {
-            dimensions: vec![10, 10],
-            dynamic_dimensions: vec![false, false],
-            element_count: 100,
-            tuple_shapes: Vec::new(),
-        };
-
-        let result = builder.add_operation(&mut computation, OperationType::Add, vec![], shape);
+        let result = builder.add_operation(
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[10, 10]),
+        );
 
         assert!(result.is_ok());
         assert_eq!(computation.operations.len(), 1);
     }
 
+    /// A `Parameter` operation declares an input, and the declaration records
+    /// the exact operand it defines. `computation.inputs` used to stay empty no
+    /// matter how many parameters a graph had, which left shape inference with
+    /// nothing to seed from and gave an executor no way to bind arguments.
     #[test]
-    fn test_graph_validation() {
+    fn parameters_are_recorded_as_declared_inputs() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut computation = builder.create_computation("two_params");
+
+        let first = add_op(
+            &mut builder,
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[4]),
+        );
+        // Deliberately the same shape as the first: matching inputs to operands
+        // by shape (the old behaviour) cannot tell these two apart.
+        let second = add_op(
+            &mut builder,
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[4]),
+        );
+        add_op(
+            &mut builder,
+            &mut computation,
+            OperationType::Add,
+            vec![first, second],
+            shape(&[4]),
+        );
+
+        assert_eq!(computation.inputs.len(), 2, "only parameters are inputs");
+        assert_eq!(computation.inputs[0].index, 0);
+        assert_eq!(computation.inputs[1].index, 1);
+        assert_eq!(computation.inputs[0].operand, first);
+        assert_eq!(computation.inputs[1].operand, second);
+        assert_ne!(computation.inputs[0].operand, computation.inputs[1].operand);
+        assert_eq!(computation.inputs[0].shape.dimensions, vec![4]);
+    }
+
+    /// F3: an operand must know which operation produced it and which
+    /// operations consume it. Both were previously left permanently empty.
+    #[test]
+    fn producer_and_consumers_are_recorded() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("deps");
+
+        let a = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let b = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let sum = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Add,
+            vec![a, b],
+            scalar_shape(),
+        );
+
+        let sum_op = comp
+            .producer_of(sum)
+            .expect("sum operand must have a producer");
+        assert_eq!(
+            comp.operands
+                .get(&a)
+                .map(|operand| operand.metadata.consumers.clone()),
+            Some(vec![sum_op.id])
+        );
+        assert_eq!(
+            comp.operands
+                .get(&b)
+                .map(|operand| operand.metadata.consumers.clone()),
+            Some(vec![sum_op.id])
+        );
+
+        // The Add depends on both parameter operations.
+        let deps = comp
+            .dependencies
+            .get(&sum_op.id)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(deps.len(), 2, "add must depend on both parameters");
+    }
+
+    /// Operand ids must never be recycled, even after operands are removed.
+    #[test]
+    fn operand_ids_are_never_reused() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("ids");
+
+        let a = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let b = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+
+        // Simulate an optimization pass dropping an operand.
+        comp.operands.remove(&b);
+
+        let c = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+
+        assert_ne!(c, a);
+        assert_ne!(c, b, "a freed operand id must not be handed out again");
+    }
+
+    /// F1: outputs can be declared explicitly or inferred from terminal operands.
+    #[test]
+    fn terminal_operands_become_outputs() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("outputs");
+
+        let a = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let b = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let sum = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Add,
+            vec![a, b],
+            scalar_shape(),
+        );
+
+        let count = builder
+            .mark_terminal_operands_as_outputs(&mut comp)
+            .expect("marking terminal operands must succeed");
+
+        assert_eq!(count, 1);
+        assert_eq!(comp.outputs.len(), 1);
+        assert_eq!(comp.outputs[0].operand, sum);
+    }
+
+    /// F1: a graph with operations but no declared outputs is invalid.
+    #[test]
+    fn validation_rejects_output_less_graph() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("no_outputs");
+
+        let _ = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+
+        let err = builder
+            .validate_computation(&comp)
+            .expect_err("a graph with no declared outputs must be rejected");
+        assert!(
+            format!("{err}").contains("no outputs"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_computation_validates() {
         let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
         let computation = builder.create_computation("test");
+        assert!(builder.validate_computation(&computation).is_ok());
+    }
 
-        let result = builder.validate_computation(&computation);
-        assert!(result.is_ok());
+    /// Operations must come out in dependency order.
+    #[test]
+    fn topological_order_respects_dependencies() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("topo");
+
+        let a = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let b = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let sum = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Add,
+            vec![a, b],
+            scalar_shape(),
+        );
+        let squared = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Square,
+            vec![sum],
+            scalar_shape(),
+        );
+
+        let order = builder
+            .get_topological_order(&comp)
+            .expect("acyclic graph must sort");
+        assert_eq!(order.len(), 4);
+
+        let position = |operand: OperandId| {
+            let op_id = comp
+                .producer_of(operand)
+                .map(|op| op.id)
+                .expect("operand must have a producer");
+            order
+                .iter()
+                .position(|&id| id == op_id)
+                .expect("every operation appears in the order")
+        };
+
+        assert!(position(a) < position(sum));
+        assert!(position(b) < position(sum));
+        assert!(position(sum) < position(squared));
+    }
+
+    /// A planted cycle must be detected rather than silently accepted.
+    #[test]
+    fn cycle_detection_catches_planted_cycle() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("cyclic");
+
+        let a = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Parameter,
+            vec![],
+            scalar_shape(),
+        );
+        let b = add_op(
+            &mut builder,
+            &mut comp,
+            OperationType::Square,
+            vec![a],
+            scalar_shape(),
+        );
+
+        let first = comp
+            .producer_of(a)
+            .map(|op| op.id)
+            .expect("operand a has a producer");
+        let second = comp
+            .producer_of(b)
+            .map(|op| op.id)
+            .expect("operand b has a producer");
+
+        // Plant the back edge: `first` now also depends on `second`.
+        comp.dependencies.insert(first, vec![second]);
+
+        let err = builder
+            .validate_computation(&comp)
+            .expect_err("a cyclic dependency graph must be rejected");
+        assert!(
+            format!("{err}").contains("Cycle"),
+            "unexpected error: {err}"
+        );
+
+        assert!(
+            builder.get_topological_order(&comp).is_err(),
+            "topological sort must fail on a cyclic graph"
+        );
+    }
+
+    /// F2: constants must survive `Clone` and compare by value.
+    #[test]
+    fn constant_payload_survives_clone_and_compares_by_value() {
+        let original = OperationType::Constant(ConstantValue::scalar(2.5));
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned, "cloning must preserve the payload");
+
+        match cloned {
+            OperationType::Constant(value) => {
+                assert_eq!(value.as_scalar(), Some(2.5));
+            }
+            other => panic!("clone changed the variant: {other:?}"),
+        }
+
+        assert_ne!(
+            OperationType::Constant(ConstantValue::scalar(1.0)),
+            OperationType::Constant(ConstantValue::scalar(2.0)),
+            "different constants must not compare equal"
+        );
+        assert_eq!(
+            OperationType::Constant(ConstantValue::scalar(1.0)),
+            OperationType::Constant(ConstantValue::scalar(1.0)),
+            "identical constants must compare equal"
+        );
+    }
+
+    /// `Hash` and `PartialEq` must agree, or hash-map based passes break.
+    #[test]
+    fn constant_hash_agrees_with_equality() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hash_of = |op: &OperationType| {
+            let mut hasher = DefaultHasher::new();
+            op.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        let a = OperationType::Constant(ConstantValue::scalar(3.25));
+        let b = OperationType::Constant(ConstantValue::scalar(3.25));
+        let c = OperationType::Constant(ConstantValue::scalar(4.0));
+
+        assert_eq!(hash_of(&a), hash_of(&b));
+        assert_ne!(hash_of(&a), hash_of(&c));
+    }
+
+    #[test]
+    fn add_operation_rejects_unknown_input_operand() {
+        let mut builder: ComputationGraphBuilder<f32> = ComputationGraphBuilder::new();
+        let mut comp = builder.create_computation("dangling");
+
+        let result = builder.add_operation(
+            &mut comp,
+            OperationType::Square,
+            vec![OperandId(999)],
+            scalar_shape(),
+        );
+
+        assert!(result.is_err(), "dangling operand inputs must be rejected");
     }
 }

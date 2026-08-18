@@ -5,7 +5,7 @@
 // Fisher information matrix approximation.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array2;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -93,10 +93,10 @@ impl<
             })?;
 
             // Update input covariance matrix
-            state.update_input_covariance(activations, self.config.stat_decay);
+            state.update_input_covariance(activations, self.config.stat_decay)?;
 
             // Update output gradient covariance matrix
-            state.update_output_covariance(gradients, self.config.stat_decay);
+            state.update_output_covariance(gradients, self.config.stat_decay)?;
 
             state.last_cov_update = self.step_count;
             self.stats.cov_updates += 1;
@@ -138,36 +138,128 @@ impl<
         Ok(())
     }
 
-    /// Apply K-FAC update to gradients
-    pub fn apply_update(&mut self, layer_name: &str, gradients: &Array2<T>) -> Result<Array2<T>> {
+    /// Apply the K-FAC preconditioner to a **weight gradient**.
+    ///
+    /// The Kronecker approximation `F ≈ A ⊗ G` turns the natural gradient into
+    /// `ΔW = G^{-1} · ∇W · A^{-1}`, so the three matrices must line up as
+    ///
+    /// | matrix  | shape                                     |
+    /// |---------|-------------------------------------------|
+    /// | `G^{-1}`| `[out_dim, out_dim]`                       |
+    /// | `∇W`    | `[out_dim, input_cov_size]`                |
+    /// | `A^{-1}`| `[input_cov_size, input_cov_size]`         |
+    ///
+    /// where `input_cov_size` is `input_dim` (`input_dim + 1` when the layer has a
+    /// bias, because of the homogeneous column). Use
+    /// [`KFACLayerState::weight_gradient`] to build `∇W` from per-sample activations
+    /// and output gradients.
+    ///
+    /// Until the inverses have been computed the gradient is only scaled by the
+    /// learning rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::InvalidParameter`] when the layer is unknown and
+    /// [`OptimError::DimensionMismatch`] when `grad_w` does not have the
+    /// `[out_dim, input_cov_size]` shape - previously this combination panicked inside
+    /// the matrix product.
+    pub fn apply_update_weight(&self, layer_name: &str, grad_w: &Array2<T>) -> Result<Array2<T>> {
         let state = self.layer_states.get(layer_name).ok_or_else(|| {
             OptimError::InvalidParameter(format!("Layer {} not found", layer_name))
         })?;
 
+        let expected_rows = state.layerinfo.output_cov_size();
+        let expected_cols = state.layerinfo.input_cov_size();
+        let (rows, cols) = grad_w.dim();
+
+        if rows != expected_rows || cols != expected_cols {
+            return Err(OptimError::DimensionMismatch(format!(
+                "layer '{}': weight gradient has shape [{}, {}], expected [{}, {}] \
+                 (G^-1 is [{}, {}] and A^-1 is [{}, {}])",
+                layer_name,
+                rows,
+                cols,
+                expected_rows,
+                expected_cols,
+                expected_rows,
+                expected_rows,
+                expected_cols,
+                expected_cols
+            )));
+        }
+
         if !state.is_ready() {
             // If inverses aren't computed yet, return scaled gradients
-            return Ok(gradients * self.config.learning_rate);
+            return Ok(grad_w * self.config.learning_rate);
         }
 
-        let a_inv = state.a_cov_inv.as_ref().expect("unwrap failed");
-        let g_inv = state.g_cov_inv.as_ref().expect("unwrap failed");
+        let a_inv = state.a_cov_inv.as_ref().ok_or_else(|| {
+            OptimError::InvalidState(format!(
+                "layer '{}': input covariance inverse is missing",
+                layer_name
+            ))
+        })?;
+        let g_inv = state.g_cov_inv.as_ref().ok_or_else(|| {
+            OptimError::InvalidState(format!(
+                "layer '{}': output covariance inverse is missing",
+                layer_name
+            ))
+        })?;
 
-        // Apply K-FAC natural gradient update: G^{-1} * grad * A^{-1}
-        let natural_gradients = g_inv.dot(gradients).dot(a_inv);
-
-        // Scale by learning rate and apply weight decay
-        let mut update = natural_gradients * self.config.learning_rate;
-
-        if self.config.weight_decay > T::zero() {
-            // Add weight decay: update = update + weight_decay * parameters
-            // Note: In practice, parameters would be passed as an argument
-            // For now, we just apply learning rate scaling
+        if g_inv.nrows() != expected_rows || a_inv.nrows() != expected_cols {
+            return Err(OptimError::DimensionMismatch(format!(
+                "layer '{}': cached inverses have shapes [{}, {}] and [{}, {}], \
+                 incompatible with a [{}, {}] weight gradient",
+                layer_name,
+                g_inv.nrows(),
+                g_inv.ncols(),
+                a_inv.nrows(),
+                a_inv.ncols(),
+                rows,
+                cols
+            )));
         }
 
-        Ok(update)
+        // Apply K-FAC natural gradient update: G^{-1} * grad_W * A^{-1}
+        let natural_gradients = g_inv.dot(grad_w).dot(a_inv);
+
+        Ok(natural_gradients * self.config.learning_rate)
+    }
+
+    /// Apply the K-FAC preconditioner to a weight gradient.
+    ///
+    /// Thin wrapper over [`KFAC::apply_update_weight`], kept for callers that hold a
+    /// `&mut KFAC`. `gradients` must use the weight-gradient layout
+    /// `[out_dim, input_cov_size]`; per-sample gradient matrices (`[batch, out_dim]`)
+    /// are rejected with [`OptimError::DimensionMismatch`] rather than panicking.
+    pub fn apply_update(&mut self, layer_name: &str, gradients: &Array2<T>) -> Result<Array2<T>> {
+        self.apply_update_weight(layer_name, gradients)
+    }
+
+    /// Build a layer's weight gradient from per-sample activations and output gradients.
+    ///
+    /// `activations` is `[batch, input_dim]` and `output_gradients` is
+    /// `[batch, output_dim]`; the result is `[output_dim, input_cov_size]`.
+    pub fn weight_gradient(
+        &self,
+        layer_name: &str,
+        activations: &Array2<T>,
+        output_gradients: &Array2<T>,
+    ) -> Result<Array2<T>> {
+        let state = self.layer_states.get(layer_name).ok_or_else(|| {
+            OptimError::InvalidParameter(format!("Layer {} not found", layer_name))
+        })?;
+        state.weight_gradient(activations, output_gradients)
     }
 
     /// Perform a complete optimization step
+    ///
+    /// Each entry of `layer_gradients` maps a layer name to its per-sample
+    /// `(activations [batch, input_dim], output_gradients [batch, output_dim])`. The
+    /// returned updates are preconditioned **weight** updates of shape
+    /// `[output_dim, input_cov_size]` - the shape of the layer's weight matrix (plus
+    /// the bias column when the layer has a bias), not the shape of the per-sample
+    /// gradient matrix that was passed in.
     pub fn step<F>(
         &mut self,
         layer_gradients: HashMap<String, (&Array2<T>, &Array2<T>)>,
@@ -191,9 +283,10 @@ impl<
             self.update_inverse_matrices(layer_name)?;
         }
 
-        // Compute natural gradient updates
-        for (layer_name, (_, gradients)) in &layer_gradients {
-            let update = self.apply_update(layer_name, gradients)?;
+        // Compute natural gradient updates from the layer weight gradients
+        for (layer_name, (activations, gradients)) in &layer_gradients {
+            let grad_w = self.weight_gradient(layer_name, activations, gradients)?;
+            let update = self.apply_update_weight(layer_name, &grad_w)?;
             updates.insert(layer_name.clone(), update);
         }
 
@@ -289,7 +382,15 @@ impl<
 
     // Private helper methods
 
-    fn get_adaptive_damping(&self, layer_name: &str) -> Result<T> {
+    // NOTE: `layer_name` is accepted (and threaded through by the sole caller,
+    // `update_inverse_matrices`, which already operates per-layer) but this
+    // heuristic is intentionally a single *global* schedule driven by
+    // `self.acceptance_ratio`, not a per-layer one. Making it genuinely
+    // per-layer would mean tracking `acceptance_ratio` in a
+    // `HashMap<String, T>` keyed by layer and reworking the public
+    // `acceptance_ratio()` getter and `update_damping` signature, which is
+    // more than this warning-cleanup pass should take on silently.
+    fn get_adaptive_damping(&self, _layer_name: &str) -> Result<T> {
         if !self.config.auto_damping {
             return Ok(self.config.damping);
         }
@@ -381,13 +482,14 @@ mod tests {
             has_bias: false,
         };
 
-        kfac.register_layer(layer_info).expect("unwrap failed");
+        kfac.register_layer(layer_info)
+            .expect("kfac.register_layer succeeds in test_covariance_update");
 
         let activations =
             Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
-                .expect("unwrap failed");
-        let gradients =
-            Array2::from_shape_vec((2, 2), vec![0.1, 0.2, 0.3, 0.4]).expect("unwrap failed");
+                .expect("Array2::from_shape_vec succeeds in test_covariance_update");
+        let gradients = Array2::from_shape_vec((2, 2), vec![0.1, 0.2, 0.3, 0.4])
+            .expect("Array2::from_shape_vec succeeds in test_covariance_update");
 
         // Call step to increment step_count
         let mut layer_gradients = HashMap::new();
@@ -411,7 +513,8 @@ mod tests {
             has_bias: true,
         };
 
-        kfac.register_layer(layer_info).expect("unwrap failed");
+        kfac.register_layer(layer_info)
+            .expect("kfac.register_layer succeeds in test_memory_usage_estimation");
         let memory_usage = kfac.estimate_memory_usage();
 
         assert!(memory_usage > 0);

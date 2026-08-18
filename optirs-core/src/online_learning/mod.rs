@@ -4,11 +4,19 @@
 // including online learning, continual learning, and lifelong optimization systems.
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::{Array, Array1, Dimension, ScalarOperand};
+use crate::utils::{scalar_or, total_order, try_f64, try_scalar};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Random};
+use scirs2_core::random::thread_rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
+
+mod transfer;
+
+pub use transfer::{
+    cosine_similarity, TaskStatistics, TransferOutcome, DEFAULT_TASK_EMBEDDING_DIM,
+    DEFAULT_TRANSFER_THRESHOLD, MAX_TASK_EMBEDDING_DIM,
+};
 
 /// Online learning strategy
 #[derive(Debug, Clone)]
@@ -192,6 +200,9 @@ pub struct OnlineOptimizer<A: Float, D: Dimension> {
     performance_history: VecDeque<A>,
     /// Regret bounds tracking
     regret_bound: A,
+    /// Bounded history of the (possibly adapted) learning rate, used to
+    /// compute a real `lr_stability` metric (F81).
+    lr_history: VecDeque<A>,
 }
 
 /// Lifelong optimizer that learns continuously across tasks
@@ -202,7 +213,6 @@ pub struct LifelongOptimizer<A: Float, D: Dimension> {
     /// Task-specific optimizers
     task_optimizers: HashMap<String, OnlineOptimizer<A, D>>,
     /// Shared knowledge across tasks
-    #[allow(dead_code)]
     shared_knowledge: SharedKnowledge<A, D>,
     /// Task sequence and relationships
     task_graph: TaskGraph,
@@ -212,26 +222,38 @@ pub struct LifelongOptimizer<A: Float, D: Dimension> {
     current_task: Option<String>,
     /// Performance tracking across tasks
     task_performance: HashMap<String, Vec<A>>,
+    /// Last loss each task recorded while it was still the active task: the
+    /// reference a later re-evaluation is compared against to measure
+    /// catastrophic forgetting.
+    task_reference_loss: HashMap<String, A>,
+    /// Cosine similarity a new task must reach before it is warm-started from
+    /// an existing one, and the linkage at which tasks are clustered.
+    transfer_threshold: f64,
 }
 
 /// Shared knowledge representation for lifelong learning
 #[derive(Debug)]
 pub struct SharedKnowledge<A: Float, D: Dimension> {
-    /// Fisher Information Matrix (for EWC)
-    #[allow(dead_code)]
+    /// Diagonal empirical Fisher information `F_i = E[g_i^2]`, accumulated
+    /// across the gradients observed for the current task (EWC).
     fisher_information: Option<Array<A, D>>,
-    /// Important parameters (for EWC)
-    #[allow(dead_code)]
+    /// Number of gradients folded into `fisher_information` so far, capped at
+    /// the strategy's `fisher_samples` so the estimate keeps tracking as an
+    /// exponential moving average afterwards.
+    fisher_sample_count: usize,
+    /// Consolidated parameters `θ*` of the previously-learned tasks: the anchor
+    /// the EWC penalty pulls the active task back toward.
     important_parameters: Option<Array<A, D>>,
-    /// Task embeddings
-    #[allow(dead_code)]
-    task_embeddings: HashMap<String, Array1<A>>,
-    /// Cross-task transfer weights
-    #[allow(dead_code)]
-    transfer_weights: HashMap<(String, String), A>,
-    /// Meta-parameters learned across tasks
-    #[allow(dead_code)]
-    meta_parameters: Option<Array1<A>>,
+    /// Meta-parameters shared across tasks, maintained by the first-order
+    /// Reptile update in [`LifelongOptimizer::apply_meta_learning`].
+    meta_parameters: Option<Array<A, D>>,
+    /// Running gradient statistics per task, the raw material every task
+    /// embedding is derived from.
+    task_statistics: HashMap<String, TaskStatistics>,
+    /// Fixed-width task embeddings derived from `task_statistics`.
+    task_embeddings: HashMap<String, Vec<f64>>,
+    /// Warm-start strength actually applied, keyed by `(source, target)`.
+    transfer_weights: HashMap<(String, String), f64>,
 }
 
 /// Task relationship graph
@@ -239,12 +261,10 @@ pub struct SharedKnowledge<A: Float, D: Dimension> {
 pub struct TaskGraph {
     /// Task relationships (similarity scores)
     task_similarities: HashMap<(String, String), f64>,
-    /// Task dependencies
-    #[allow(dead_code)]
+    /// Tasks each task was warm-started from.
     task_dependencies: HashMap<String, Vec<String>>,
-    /// Task categories/clusters
-    #[allow(dead_code)]
-    task_clusters: HashMap<String, String>,
+    /// Agglomerative clustering of `task_similarities`.
+    task_clusters: Vec<Vec<String>>,
 }
 
 /// Memory buffer for important examples
@@ -307,14 +327,12 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
 
         let current_lr = match &strategy {
             OnlineLearningStrategy::AdaptiveSGD { initial_lr, .. } => {
-                A::from(*initial_lr).expect("unwrap failed")
+                scalar_or(*initial_lr, A::zero())
             }
-            OnlineLearningStrategy::OnlineNewton { .. } => A::from(0.01).expect("unwrap failed"),
-            OnlineLearningStrategy::FTRL { .. } => A::from(0.1).expect("unwrap failed"),
-            OnlineLearningStrategy::MirrorDescent { .. } => A::from(0.01).expect("unwrap failed"),
-            OnlineLearningStrategy::AdaptiveMultiTask { .. } => {
-                A::from(0.001).expect("unwrap failed")
-            }
+            OnlineLearningStrategy::OnlineNewton { .. } => scalar_or(0.01, A::zero()),
+            OnlineLearningStrategy::FTRL { .. } => scalar_or(0.1, A::zero()),
+            OnlineLearningStrategy::MirrorDescent { .. } => scalar_or(0.01, A::zero()),
+            OnlineLearningStrategy::AdaptiveMultiTask { .. } => scalar_or(0.001, A::zero()),
         };
 
         Self {
@@ -326,6 +344,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             step_count: 0,
             performance_history: VecDeque::new(),
             regret_bound: A::zero(),
+            lr_history: VecDeque::new(),
         }
     }
 
@@ -371,6 +390,13 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             }
         }
 
+        // Record the (possibly adapted) learning rate for the stability
+        // metric (F81).
+        self.lr_history.push_back(self.current_lr);
+        if self.lr_history.len() > 1000 {
+            self.lr_history.pop_front();
+        }
+
         // Update regret bound
         self.update_regret_bound(loss);
 
@@ -389,15 +415,16 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 self.gradient_accumulator = &self.gradient_accumulator + &gradient.mapv(|g| g * g);
 
                 // Compute adaptive learning rate
-                let adaptive_lr = self
-                    .gradient_accumulator
-                    .mapv(|acc| A::from(*epsilon).expect("unwrap failed") + A::sqrt(acc));
+                // Hoisted out of the closure: the conversion is loop-invariant and
+                // `?` cannot cross a closure boundary.
+                let eps = try_scalar::<A, _>(*epsilon)?;
+                let adaptive_lr = self.gradient_accumulator.mapv(|acc| eps + A::sqrt(acc));
 
                 // Update parameters
                 self.parameters = &self.parameters - &(gradient / &adaptive_lr * self.current_lr);
             }
             LearningRateAdaptation::RMSprop { decay, epsilon } => {
-                let decay_factor = A::from(*decay).expect("unwrap failed");
+                let decay_factor = try_scalar::<A, _>(*decay)?;
                 let one_minus_decay = A::one() - decay_factor;
 
                 // Update moving average of squared gradients
@@ -405,9 +432,8 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                     + &gradient.mapv(|g| g * g * one_minus_decay);
 
                 // Compute adaptive learning rate
-                let adaptive_lr = self
-                    .gradient_accumulator
-                    .mapv(|acc| A::sqrt(acc + A::from(*epsilon).expect("unwrap failed")));
+                let eps = try_scalar::<A, _>(*epsilon)?;
+                let adaptive_lr = self.gradient_accumulator.mapv(|acc| A::sqrt(acc + eps));
 
                 // Update parameters
                 self.parameters = &self.parameters - &(gradient / &adaptive_lr * self.current_lr);
@@ -417,8 +443,8 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 beta2,
                 epsilon,
             } => {
-                let beta1_val = A::from(*beta1).expect("unwrap failed");
-                let beta2_val = A::from(*beta2).expect("unwrap failed");
+                let beta1_val = try_scalar::<A, _>(*beta1)?;
+                let beta2_val = try_scalar::<A, _>(*beta2)?;
                 let one_minus_beta1 = A::one() - beta1_val;
                 let one_minus_beta2 = A::one() - beta2_val;
 
@@ -432,7 +458,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                         &*second_moment * beta2_val + &gradient.mapv(|g| g * g * one_minus_beta2);
 
                     // Bias correction
-                    let step_count_float = A::from(self.step_count).expect("unwrap failed");
+                    let step_count_float = try_scalar::<A, _>(self.step_count)?;
                     let bias_correction1 = A::one() - A::powf(beta1_val, step_count_float);
                     let bias_correction2 = A::one() - A::powf(beta2_val, step_count_float);
 
@@ -440,22 +466,22 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                     let corrected_second = &*second_moment / bias_correction2;
 
                     // Update parameters
-                    let adaptive_lr = corrected_second
-                        .mapv(|v| A::sqrt(v) + A::from(*epsilon).expect("unwrap failed"));
+                    let eps = try_scalar::<A, _>(*epsilon)?;
+                    let adaptive_lr = corrected_second.mapv(|v| A::sqrt(v) + eps);
                     self.parameters =
                         &self.parameters - &(corrected_first / adaptive_lr * self.current_lr);
                 }
             }
             LearningRateAdaptation::ExponentialDecay { decay_rate } => {
                 // Simple exponential decay
-                self.current_lr = self.current_lr * A::from(*decay_rate).expect("unwrap failed");
+                self.current_lr = self.current_lr * try_scalar::<A, _>(*decay_rate)?;
                 self.parameters = &self.parameters - gradient * self.current_lr;
             }
             LearningRateAdaptation::InverseScaling { power } => {
                 // Inverse scaling: lr = initial_lr / (step^power)
                 let step_power = A::powf(
-                    A::from(self.step_count).expect("unwrap failed"),
-                    A::from(*power).expect("unwrap failed"),
+                    try_scalar::<A, _>(self.step_count)?,
+                    try_scalar::<A, _>(*power)?,
                 );
                 let decayed_lr = self.current_lr / step_power;
                 self.parameters = &self.parameters - gradient * decayed_lr;
@@ -468,7 +494,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
     /// Online Newton's method update
     fn online_newton_update(&mut self, gradient: &Array<A, D>, damping: f64) -> Result<()> {
         // Simplified online Newton update with damping
-        let damping_val = A::from(damping).expect("unwrap failed");
+        let damping_val = try_scalar::<A, _>(damping)?;
 
         // Approximate Hessian diagonal with gradient squares (simplified)
         let hessian_approx = gradient.mapv(|g| g * g + damping_val);
@@ -493,14 +519,14 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
 
         // FTRL update rule (simplified)
         let step_factor = A::powf(
-            A::from(self.step_count).expect("unwrap failed"),
-            A::from(lr_power).expect("unwrap failed"),
+            try_scalar::<A, _>(self.step_count)?,
+            try_scalar::<A, _>(lr_power)?,
         );
         let learning_rate = self.current_lr / step_factor;
 
         // Apply L1 and L2 regularization
-        let l1_weight = A::from(l1_reg).expect("unwrap failed");
-        let l2_weight = A::from(l2_reg).expect("unwrap failed");
+        let l1_weight = try_scalar::<A, _>(l1_reg)?;
+        let l2_weight = try_scalar::<A, _>(l2_reg)?;
 
         self.parameters = self.gradient_accumulator.mapv(|g| {
             let abs_g = A::abs(g);
@@ -529,7 +555,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             }
             MirrorFunction::Entropy => {
                 // Entropy regularized update (for probability simplex)
-                let reg_val = A::from(regularization).expect("unwrap failed");
+                let reg_val = try_scalar::<A, _>(regularization)?;
                 let updated = self
                     .parameters
                     .mapv(|p| A::exp(A::ln(p) - self.current_lr * reg_val));
@@ -538,7 +564,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             }
             MirrorFunction::L1 => {
                 // L1 regularized update with soft thresholding
-                let threshold = self.current_lr * A::from(regularization).expect("unwrap failed");
+                let threshold = self.current_lr * try_scalar::<A, _>(regularization)?;
                 self.parameters = (&self.parameters - gradient * self.current_lr).mapv(|p| {
                     if A::abs(p) <= threshold {
                         A::zero()
@@ -568,7 +594,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
         if let Some(&best_loss) = self
             .performance_history
             .iter()
-            .min_by(|a, b| a.partial_cmp(b).expect("unwrap failed"))
+            .min_by(|a, b| total_order(*a, *b))
         {
             let regret = loss - best_loss;
             self.regret_bound = self.regret_bound + regret.max(A::zero());
@@ -586,12 +612,61 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             A::zero()
         } else {
             self.performance_history.iter().copied().sum::<A>()
-                / A::from(self.performance_history.len()).expect("unwrap failed")
+                / A::from(self.performance_history.len()).unwrap_or_else(A::one)
         };
 
-        let lr_stability = A::from(1.0).expect("unwrap failed"); // Simplified
-        let adaptation_speed = A::from(self.step_count as f64).expect("unwrap failed"); // Simplified
-        let memory_efficiency = A::from(0.8).expect("unwrap failed"); // Simplified
+        // Learning-rate stability (F81): high when the recent learning rate
+        // has low variance, mapped into `(0, 1]` via `1 / (1 + std(lr))`.
+        // Previously a hardcoded `1.0`.
+        let lr_stability = {
+            let n = self.lr_history.len();
+            if n < 2 {
+                A::one()
+            } else {
+                let count = A::from(n).unwrap_or_else(A::one);
+                let mean = self.lr_history.iter().copied().sum::<A>() / count;
+                let variance = self
+                    .lr_history
+                    .iter()
+                    .map(|&lr| (lr - mean) * (lr - mean))
+                    .sum::<A>()
+                    / count;
+                A::one() / (A::one() + variance.sqrt())
+            }
+        };
+
+        // Adaptation speed (F81): mean per-step loss improvement over a
+        // recent window (positive = loss decreasing), clamped at 0.
+        // Previously the raw `step_count`, which is a count, not a speed.
+        let adaptation_speed = {
+            let history_len = self.performance_history.len();
+            let window = 20usize.min(history_len);
+            if window < 2 {
+                A::zero()
+            } else {
+                let first = self.performance_history[history_len - window];
+                let last = self.performance_history[history_len - 1];
+                let steps = A::from(window - 1).unwrap_or_else(A::one);
+                ((first - last) / steps).max(A::zero())
+            }
+        };
+
+        // Memory efficiency (F81): parameter storage as a fraction of the
+        // optimizer's total array storage (parameters + accumulators).
+        // Higher means less auxiliary-state overhead. Previously a hardcoded
+        // `0.8`.
+        let memory_efficiency = {
+            let param_len = self.parameters.len();
+            let mut total = param_len + self.gradient_accumulator.len();
+            if let Some(second_moment) = &self.second_moment_accumulator {
+                total += second_moment.len();
+            }
+            if total == 0 {
+                A::zero()
+            } else {
+                A::from(param_len).unwrap_or_else(A::one) / A::from(total).unwrap_or_else(A::one)
+            }
+        };
 
         OnlinePerformanceMetrics {
             cumulative_regret: self.regret_bound,
@@ -601,6 +676,12 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             memory_efficiency,
         }
     }
+}
+
+/// Euclidean dot product of two equally-shaped arrays. Used by the
+/// Gradient Episodic Memory projection (F81).
+fn array_dot<A: Float + std::iter::Sum, D: Dimension>(a: &Array<A, D>, b: &Array<A, D>) -> A {
+    a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
 impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sync>
@@ -613,15 +694,17 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             task_optimizers: HashMap::new(),
             shared_knowledge: SharedKnowledge {
                 fisher_information: None,
+                fisher_sample_count: 0,
                 important_parameters: None,
+                meta_parameters: None,
+                task_statistics: HashMap::new(),
                 task_embeddings: HashMap::new(),
                 transfer_weights: HashMap::new(),
-                meta_parameters: None,
             },
             task_graph: TaskGraph {
                 task_similarities: HashMap::new(),
                 task_dependencies: HashMap::new(),
-                task_clusters: HashMap::new(),
+                task_clusters: Vec::new(),
             },
             memory_buffer: MemoryBuffer {
                 examples: VecDeque::new(),
@@ -631,11 +714,35 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             },
             current_task: None,
             task_performance: HashMap::new(),
+            task_reference_loss: HashMap::new(),
+            transfer_threshold: DEFAULT_TRANSFER_THRESHOLD,
         }
     }
 
     /// Start learning a new task
+    ///
+    /// Before switching, the outgoing task is *consolidated*: its final
+    /// parameters become the shared anchor `θ*` that the Elastic Weight
+    /// Consolidation penalty pulls subsequent tasks back toward, and the
+    /// Fisher-information sample counter is reset so the next task's estimate
+    /// starts from its own gradients rather than inheriting the old average.
+    /// The outgoing task's last loss is also pinned as the reference a later
+    /// re-evaluation is compared against ([`Self::record_task_performance`]).
     pub fn start_task(&mut self, task_id: String, initial_parameters: Array<A, D>) -> Result<()> {
+        if let Some(previous) = self.current_task.clone() {
+            if let Some(optimizer) = self.task_optimizers.get(&previous) {
+                self.shared_knowledge.important_parameters = Some(optimizer.parameters().clone());
+                self.shared_knowledge.fisher_sample_count = 0;
+            }
+            if let Some(&last_loss) = self
+                .task_performance
+                .get(&previous)
+                .and_then(|history| history.last())
+            {
+                self.task_reference_loss.insert(previous, last_loss);
+            }
+        }
+
         self.current_task = Some(task_id.clone());
 
         // Create task-specific optimizer
@@ -665,15 +772,51 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             .ok_or_else(|| OptimError::InvalidConfig("No current task set".to_string()))?
             .clone();
 
-        // Update task-specific optimizer
+        // For Gradient Episodic Memory, project the incoming gradient onto
+        // the halfspace that does not increase loss on stored past-task
+        // gradients BEFORE it is applied (F81). Other strategies use the raw
+        // gradient. Projecting here (rather than in a no-op after the step)
+        // is what makes the stored replay gradients actually shape learning.
+        let is_gem = matches!(
+            self.strategy,
+            LifelongStrategy::GradientEpisodicMemory { .. }
+        );
+        let ewc_weight = match self.strategy {
+            LifelongStrategy::ElasticWeightConsolidation {
+                importance_weight, ..
+            } => Some(importance_weight),
+            _ => None,
+        };
+        let effective_gradient = if is_gem {
+            self.project_gradient_gem(gradient)
+        } else if let Some(importance_weight) = ewc_weight {
+            // EWC: the total gradient is the task gradient plus the quadratic
+            // penalty gradient `λ * F ⊙ (θ - θ*)`. Adding it *before* the step
+            // (rather than in a no-op afterwards, as this used to) is what
+            // makes `importance_weight`, `fisher_information` and
+            // `important_parameters` actually shape learning.
+            match self.ewc_penalty_gradient(importance_weight) {
+                Some(penalty) => gradient + &penalty,
+                None => gradient.clone(),
+            }
+        } else {
+            gradient.clone()
+        };
+
+        // Update task-specific optimizer with the effective gradient
         if let Some(optimizer) = self.task_optimizers.get_mut(&task_id) {
-            optimizer.online_update(gradient, loss)?;
+            optimizer.online_update(&effective_gradient, loss)?;
         }
 
         // Track performance
         if let Some(performance) = self.task_performance.get_mut(&task_id) {
             performance.push(loss);
         }
+
+        // Fold the task's *own* gradient (not the EWC/GEM-adjusted one, which
+        // carries the regularizer rather than the task) into the running
+        // statistics that drive cross-task transfer.
+        self.record_task_observation(gradient)?;
 
         // Apply lifelong learning strategy
         match &self.strategy {
@@ -692,37 +835,139 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 self.apply_meta_learning(gradient)?;
             }
             LifelongStrategy::GradientEpisodicMemory { .. } => {
-                self.apply_gem_constraints(gradient)?;
+                // The projection was already applied above; record this
+                // step's *raw* gradient as an episodic-memory constraint for
+                // future updates to be projected against.
+                self.update_memory_buffer(gradient, loss)?;
             }
         }
 
         Ok(())
     }
 
-    /// Apply Elastic Weight Consolidation regularization
+    /// Fisher-information penalty gradient for Elastic Weight Consolidation.
+    ///
+    /// Returns `λ * F ⊙ (θ - θ*)`, the gradient of the EWC quadratic penalty
+    /// `λ/2 * Σ F_i (θ_i - θ*_i)^2` (Kirkpatrick et al., "Overcoming
+    /// catastrophic forgetting in neural networks", PNAS 2017), where `F` is
+    /// the diagonal empirical Fisher accumulated for the current task and `θ*`
+    /// is the consolidated parameter vector of the previously-learned tasks.
+    ///
+    /// Returns `None` — meaning "no penalty yet", not "failed" — while any of
+    /// the three inputs is missing (before the first task has been
+    /// consolidated there is nothing to forget) or when their shapes disagree,
+    /// which can only happen if tasks of different parameter dimensionality
+    /// are interleaved.
+    fn ewc_penalty_gradient(&self, importance_weight: f64) -> Option<Array<A, D>> {
+        let fisher = self.shared_knowledge.fisher_information.as_ref()?;
+        let anchor = self.shared_knowledge.important_parameters.as_ref()?;
+        let task_id = self.current_task.as_ref()?;
+        let parameters = self.task_optimizers.get(task_id)?.parameters();
+
+        if fisher.raw_dim() != anchor.raw_dim() || parameters.raw_dim() != anchor.raw_dim() {
+            return None;
+        }
+
+        let lambda = scalar_or(importance_weight, A::zero());
+        let mut penalty = Array::zeros(parameters.raw_dim());
+        for (((out, &f), &p), &a) in penalty
+            .iter_mut()
+            .zip(fisher.iter())
+            .zip(parameters.iter())
+            .zip(anchor.iter())
+        {
+            *out = lambda * f * (p - a);
+        }
+        Some(penalty)
+    }
+
+    /// Fold the observed gradient into the diagonal empirical Fisher estimate
+    /// used by Elastic Weight Consolidation.
+    ///
+    /// The diagonal Fisher of a log-likelihood model is `E[g_i^2]`, so it is
+    /// estimated here as a running mean of the squared gradients seen for the
+    /// current task. The averaging weight is `1/k` with `k` capped at the
+    /// strategy's `fisher_samples`: up to that many observations this is an
+    /// exact running mean, after which it becomes an exponential moving
+    /// average with the same weight, so the estimate keeps tracking a
+    /// non-stationary task instead of freezing.
+    ///
+    /// This replaces a no-op that ignored both its arguments and left
+    /// `fisher_information` permanently `None`.
     fn apply_ewc_regularization(
         &mut self,
         gradient: &Array<A, D>,
         _importance_weight: f64,
     ) -> Result<()> {
-        // Simplified EWC implementation
-        // In practice, this would compute Fisher Information Matrix and apply regularization
+        let fisher_samples = match self.strategy {
+            LifelongStrategy::ElasticWeightConsolidation { fisher_samples, .. } => {
+                fisher_samples.max(1)
+            }
+            _ => return Ok(()),
+        };
+
+        let shape_matches = self
+            .shared_knowledge
+            .fisher_information
+            .as_ref()
+            .is_some_and(|fisher| fisher.raw_dim() == gradient.raw_dim());
+
+        if shape_matches {
+            let count = (self.shared_knowledge.fisher_sample_count + 1).min(fisher_samples);
+            // `count >= 1`, so this weight is always in (0, 1].
+            let weight = A::one() / scalar_or(count as f64, A::one());
+            if let Some(fisher) = self.shared_knowledge.fisher_information.as_mut() {
+                for (f, &g) in fisher.iter_mut().zip(gradient.iter()) {
+                    *f = *f + (g * g - *f) * weight;
+                }
+            }
+            self.shared_knowledge.fisher_sample_count = count;
+        } else {
+            // First gradient for this parameter shape: seed the estimate with
+            // `g^2` rather than averaging against a zero/stale accumulator.
+            let mut fisher = Array::zeros(gradient.raw_dim());
+            for (f, &g) in fisher.iter_mut().zip(gradient.iter()) {
+                *f = g * g;
+            }
+            self.shared_knowledge.fisher_information = Some(fisher);
+            self.shared_knowledge.fisher_sample_count = 1;
+        }
+
         Ok(())
     }
 
-    /// Apply Progressive Networks strategy
-    fn apply_progressive_networks(&mut self, gradient: &Array<A, D>) -> Result<()> {
-        // Simplified Progressive Networks implementation
-        // In practice, this would manage lateral connections between task columns
-        Ok(())
+    /// Apply the Progressive Neural Networks strategy.
+    ///
+    /// Not implemented, and deliberately reported as such rather than silently
+    /// doing nothing: Progressive Networks (Rusu et al., arXiv:1606.04671)
+    /// works by *growing a new network column per task and adding lateral
+    /// connections from the frozen previous columns*. Both operations act on a
+    /// model's layer graph, which an optimizer-only crate does not represent —
+    /// there is no per-column parameter partition here to freeze, and
+    /// `lateral_strength` has nothing to scale. Previously this returned
+    /// `Ok(())` and ignored its argument, so selecting the strategy quietly
+    /// produced plain online SGD while reporting success.
+    fn apply_progressive_networks(&mut self, _gradient: &Array<A, D>) -> Result<()> {
+        Err(OptimError::UnsupportedOperation(
+            "LifelongStrategy::ProgressiveNetworks requires per-column model \
+             parameter partitioning and lateral connections, which optirs-core \
+             does not model; use ElasticWeightConsolidation, MemoryAugmented, \
+             MetaLearning or GradientEpisodicMemory instead"
+                .to_string(),
+        ))
     }
 
     /// Update memory buffer with important examples
     fn update_memory_buffer(&mut self, gradient: &Array<A, D>, loss: A) -> Result<()> {
         if let Some(task_id) = &self.current_task {
+            // `input`/`target` are not available at this call site (only the
+            // gradient and loss are passed in), so they are recorded as
+            // empty/zero and intentionally left unused. The `gradient` field
+            // below is the real replay signal consumed by
+            // `project_gradient_gem` (F81).
             let example = MemoryExample {
-                input: Array::zeros(gradient.raw_dim()),  // Placeholder
-                target: Array::zeros(gradient.raw_dim()), // Placeholder
+                input: Array::zeros(gradient.raw_dim()),
+                target: Array::zeros(gradient.raw_dim()),
                 task_id: task_id.clone(),
                 importance: loss,
                 gradient: Some(gradient.clone()),
@@ -747,7 +992,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                             .importance_scores
                             .iter()
                             .enumerate()
-                            .min_by(|a, b| a.1.partial_cmp(b.1).expect("unwrap failed"))
+                            .min_by(|a, b| total_order(a.1, b.1))
                             .map(|(idx, _)| idx)
                         {
                             self.memory_buffer.examples.remove(min_idx);
@@ -769,18 +1014,115 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
         Ok(())
     }
 
-    /// Apply meta-learning strategy
+    /// Apply the meta-learning strategy: a first-order Reptile update of the
+    /// shared meta-parameters.
+    ///
+    /// Reptile (Nichol, Achiam & Schulman, "On First-Order Meta-Learning
+    /// Algorithms", arXiv:1803.02999) needs no second derivatives: after the
+    /// inner-loop task update it simply moves the shared initialisation toward
+    /// the adapted task parameters,
+    /// `φ ← φ + meta_lr * (θ_task − φ)`,
+    /// which is exactly what is available at this call site. The meta-parameters
+    /// are seeded from the first task's parameters, so `φ` starts on the
+    /// parameter manifold instead of at an arbitrary origin.
+    ///
+    /// `gradient` is used only for its shape (the parameter update itself has
+    /// already been applied by the task optimizer, which is what makes this the
+    /// *first-order* variant). This replaces a no-op that left
+    /// `meta_parameters` permanently `None`.
     fn apply_meta_learning(&mut self, gradient: &Array<A, D>) -> Result<()> {
-        // Simplified meta-learning implementation
-        // In practice, this would update meta-parameters based on task performance
+        let meta_lr = match self.strategy {
+            LifelongStrategy::MetaLearning { meta_lr, .. } => meta_lr,
+            _ => return Ok(()),
+        };
+
+        let Some(task_id) = self.current_task.clone() else {
+            return Ok(());
+        };
+        let Some(optimizer) = self.task_optimizers.get(&task_id) else {
+            return Ok(());
+        };
+        let task_parameters = optimizer.parameters();
+        if task_parameters.raw_dim() != gradient.raw_dim() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "meta-learning update: task parameters have shape {:?} but the \
+                 gradient has shape {:?}",
+                task_parameters.raw_dim().slice(),
+                gradient.raw_dim().slice()
+            )));
+        }
+
+        let shape_matches = self
+            .shared_knowledge
+            .meta_parameters
+            .as_ref()
+            .is_some_and(|meta| meta.raw_dim() == task_parameters.raw_dim());
+
+        if shape_matches {
+            let step = scalar_or(meta_lr, A::zero());
+            let adapted = task_parameters.clone();
+            if let Some(meta) = self.shared_knowledge.meta_parameters.as_mut() {
+                for (phi, &theta) in meta.iter_mut().zip(adapted.iter()) {
+                    *phi = *phi + (theta - *phi) * step;
+                }
+            }
+        } else {
+            self.shared_knowledge.meta_parameters = Some(task_parameters.clone());
+        }
+
         Ok(())
     }
 
-    /// Apply Gradient Episodic Memory constraints
-    fn apply_gem_constraints(&mut self, gradient: &Array<A, D>) -> Result<()> {
-        // Simplified GEM implementation
-        // In practice, this would project gradients to satisfy memory constraints
-        Ok(())
+    /// Shared meta-parameters maintained by the Reptile update, if the
+    /// `MetaLearning` strategy is active and at least one task has been seen.
+    pub fn meta_parameters(&self) -> Option<&Array<A, D>> {
+        self.shared_knowledge.meta_parameters.as_ref()
+    }
+
+    /// Diagonal empirical Fisher information accumulated for the current task,
+    /// if the `ElasticWeightConsolidation` strategy is active and at least one
+    /// gradient has been observed.
+    pub fn fisher_information(&self) -> Option<&Array<A, D>> {
+        self.shared_knowledge.fisher_information.as_ref()
+    }
+
+    /// Consolidated parameters `θ*` of the previously-learned tasks, set when
+    /// [`Self::start_task`] switches away from a task.
+    pub fn consolidated_parameters(&self) -> Option<&Array<A, D>> {
+        self.shared_knowledge.important_parameters.as_ref()
+    }
+
+    /// Project `gradient` onto the halfspace that does not increase loss on
+    /// any gradient stored in the episodic memory buffer (Gradient Episodic
+    /// Memory, F81).
+    ///
+    /// For every stored memory gradient `g_mem` that conflicts with the
+    /// incoming gradient (`dot(gradient, g_mem) < 0`), the violating
+    /// component is removed:
+    /// `g <- g - (dot(g, g_mem) / dot(g_mem, g_mem)) * g_mem`.
+    /// Non-conflicting memories and shape-mismatched entries are skipped.
+    ///
+    /// This replaces the previous no-op and makes the replay gradients
+    /// stored in the memory buffer actually influence learning instead of
+    /// being dead data.
+    pub fn project_gradient_gem(&self, gradient: &Array<A, D>) -> Array<A, D> {
+        let mut projected = gradient.clone();
+        for example in &self.memory_buffer.examples {
+            if let Some(memory_gradient) = example.gradient.as_ref() {
+                if memory_gradient.raw_dim() != projected.raw_dim() {
+                    continue;
+                }
+                let dot_gm = array_dot(&projected, memory_gradient);
+                if dot_gm < A::zero() {
+                    let denom = array_dot(memory_gradient, memory_gradient);
+                    if denom > A::zero() {
+                        let scale = dot_gm / denom;
+                        projected = &projected - &memory_gradient.mapv(|g| g * scale);
+                    }
+                }
+            }
+        }
+        projected
     }
 
     /// Compute task similarity
@@ -810,7 +1152,7 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 .map(|v| v.len())
                 .sum::<usize>();
             if total_samples > 0 {
-                total_performance / A::from(total_samples).expect("unwrap failed")
+                total_performance / scalar_or(total_samples, A::one())
             } else {
                 A::zero()
             }
@@ -820,8 +1162,78 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             num_tasks,
             average_performance: avg_performance,
             memory_usage: self.memory_buffer.examples.len(),
-            transfer_efficiency: A::from(0.8).expect("unwrap failed"), // Placeholder
-            catastrophic_forgetting: A::from(0.1).expect("unwrap failed"), // Placeholder
+            // Mean strength of the warm starts actually performed; zero when no
+            // task has been transferred into.
+            transfer_efficiency: scalar_or(self.mean_transfer_weight(), A::zero()),
+            catastrophic_forgetting: scalar_or(self.measured_forgetting(), A::zero()),
+        }
+    }
+
+    /// Backward transfer measured from the losses recorded for tasks that are no
+    /// longer current.
+    ///
+    /// A task's *reference* loss is the last one recorded while it was the
+    /// active task. Anything recorded for it afterwards — a re-evaluation the
+    /// caller performs with [`Self::record_task_performance`] — is compared
+    /// against that reference, and the mean positive degradation across tasks is
+    /// the forgetting measure (Lopez-Paz & Ranzato, "Gradient Episodic Memory
+    /// for Continual Learning", NeurIPS 2017, report the same quantity with the
+    /// opposite sign).
+    ///
+    /// It is `0` until an old task is actually re-evaluated: forgetting is not
+    /// observable without measuring the old task again, and reporting a
+    /// non-zero constant instead — which this used to do — would be a
+    /// fabrication.
+    fn measured_forgetting(&self) -> f64 {
+        let mut total = 0.0;
+        let mut counted = 0usize;
+
+        for (task_id, reference) in &self.task_reference_loss {
+            let Some(history) = self.task_performance.get(task_id) else {
+                continue;
+            };
+            let Some(&latest) = history.last() else {
+                continue;
+            };
+            let (Ok(latest), Ok(reference)) = (try_f64(latest), try_f64(*reference)) else {
+                continue;
+            };
+            if !latest.is_finite() || !reference.is_finite() {
+                continue;
+            }
+            total += (latest - reference).max(0.0);
+            counted += 1;
+        }
+
+        if counted == 0 {
+            0.0
+        } else {
+            total / counted as f64
+        }
+    }
+
+    /// Record a loss measured for a task that is not the active one.
+    ///
+    /// This is how a caller feeds re-evaluation of previously-learned tasks back
+    /// in, which is what makes [`LifelongStats::catastrophic_forgetting`]
+    /// measurable. Recording against the active task is rejected: its losses
+    /// arrive through [`Self::update_current_task`], and mixing the two would
+    /// move the reference the measurement is taken against.
+    pub fn record_task_performance(&mut self, task_id: &str, loss: A) -> Result<()> {
+        if self.current_task.as_deref() == Some(task_id) {
+            return Err(OptimError::InvalidConfig(format!(
+                "task '{task_id}' is the active task; its losses are recorded by \
+                 update_current_task"
+            )));
+        }
+        match self.task_performance.get_mut(task_id) {
+            Some(history) => {
+                history.push(loss);
+                Ok(())
+            }
+            None => Err(OptimError::InvalidConfig(format!(
+                "unknown task '{task_id}'"
+            ))),
         }
     }
 }
@@ -845,6 +1257,7 @@ pub struct LifelongStats<A: Float> {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+    use scirs2_core::ndarray::{Array1, Ix1};
 
     #[test]
     fn test_online_optimizer_creation() {
@@ -1045,5 +1458,288 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(optimizer.step_count, 1);
         }
+    }
+
+    /// F81: the GEM projection must remove the component of a new gradient
+    /// that conflicts with a stored past-task gradient, so the previously
+    /// dead replay data actually shapes the update.
+    #[test]
+    fn gem_projection_removes_conflicting_component() {
+        let strategy = LifelongStrategy::GradientEpisodicMemory {
+            memory_per_task: 10,
+            violation_tolerance: 0.0,
+        };
+        let mut opt = LifelongOptimizer::<f64, scirs2_core::ndarray::Ix1>::new(strategy);
+        let params = Array1::from_vec(vec![0.0, 0.0, 0.0]);
+        opt.start_task("t".to_string(), params).expect("start_task");
+
+        // Store a past-task gradient g1 = [1, 0, 0] in episodic memory.
+        let g1 = Array1::from_vec(vec![1.0, 0.0, 0.0]);
+        opt.update_current_task(&g1, 0.5).expect("update");
+
+        // A conflicting new gradient g2 with dot(g2, g1) < 0.
+        let g2 = Array1::from_vec(vec![-1.0, 1.0, 0.0]);
+        let projected = opt.project_gradient_gem(&g2);
+
+        let dot: f64 = projected.iter().zip(g1.iter()).map(|(&x, &y)| x * y).sum();
+        assert!(
+            dot >= -1e-9,
+            "GEM projection did not remove the conflicting component (F81): dot={dot}"
+        );
+    }
+
+    /// F81: `get_performance_metrics` must derive its fields from real state
+    /// instead of returning hardcoded `1.0`/`step_count`/`0.8`.
+    #[test]
+    fn performance_metrics_are_derived_from_state() {
+        let strategy = OnlineLearningStrategy::AdaptiveSGD {
+            initial_lr: 0.01,
+            adaptation_method: LearningRateAdaptation::AdaGrad { epsilon: 1e-8 },
+        };
+        let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+        let mut opt = OnlineOptimizer::new(strategy, params);
+
+        let gradient = Array1::from_vec(vec![0.05, 0.05, 0.05]);
+        let mut loss = 1.0_f64;
+        for _ in 0..30 {
+            opt.online_update(&gradient, loss).expect("update");
+            loss *= 0.9;
+        }
+
+        let metrics = opt.get_performance_metrics();
+        assert!(
+            metrics.adaptation_speed > 0.0,
+            "adaptation_speed not derived from the loss trend (F81): {}",
+            metrics.adaptation_speed
+        );
+        assert!(
+            metrics.lr_stability > 0.0 && metrics.lr_stability <= 1.0,
+            "lr_stability out of range (F81): {}",
+            metrics.lr_stability
+        );
+        // AdaGrad keeps no second-moment array, so memory efficiency is
+        // params / (params + grad_accumulator) = 0.5, not the old 0.8.
+        assert!(
+            (metrics.memory_efficiency - 0.5).abs() < 1e-9,
+            "memory_efficiency not derived from real optimizer state (F81): {}",
+            metrics.memory_efficiency
+        );
+    }
+
+    // --- Lifelong-strategy wiring regression tests -----------------------
+    //
+    // `apply_ewc_regularization`, `apply_progressive_networks` and
+    // `apply_meta_learning` were all `Ok(())` no-ops that ignored their
+    // `gradient` argument, and `SharedKnowledge::{fisher_information,
+    // important_parameters, meta_parameters}` were `#[allow(dead_code)]`
+    // fields nothing ever wrote. These tests pin the real behaviour.
+
+    fn ewc_optimizer(importance_weight: f64) -> LifelongOptimizer<f64, Ix1> {
+        LifelongOptimizer::new(LifelongStrategy::ElasticWeightConsolidation {
+            importance_weight,
+            fisher_samples: 100,
+        })
+    }
+
+    /// The diagonal empirical Fisher must actually be accumulated from the
+    /// observed gradients (it stayed `None` forever before).
+    #[test]
+    fn ewc_accumulates_diagonal_fisher_information() {
+        let mut opt = ewc_optimizer(1.0);
+        opt.start_task("a".to_string(), Array1::zeros(3))
+            .expect("start_task");
+        assert!(
+            opt.fisher_information().is_none(),
+            "no gradient observed yet, so there can be no Fisher estimate"
+        );
+
+        let gradient = Array1::from_vec(vec![2.0, 0.0, -4.0]);
+        for _ in 0..5 {
+            opt.update_current_task(&gradient, 1.0)
+                .expect("update_current_task");
+        }
+
+        let fisher = opt
+            .fisher_information()
+            .expect("Fisher information must exist after observing gradients");
+        // A constant gradient g gives a running mean of exactly g^2.
+        assert!((fisher[0] - 4.0).abs() < 1e-9, "F[0] = {}", fisher[0]);
+        assert!((fisher[1] - 0.0).abs() < 1e-9, "F[1] = {}", fisher[1]);
+        assert!((fisher[2] - 16.0).abs() < 1e-9, "F[2] = {}", fisher[2]);
+    }
+
+    /// Switching tasks must consolidate the outgoing task's parameters into
+    /// the shared EWC anchor `theta*`.
+    #[test]
+    fn starting_a_new_task_consolidates_the_previous_parameters() {
+        let mut opt = ewc_optimizer(1.0);
+        opt.start_task("a".to_string(), Array1::from_vec(vec![1.0, 2.0]))
+            .expect("start_task a");
+        assert!(
+            opt.consolidated_parameters().is_none(),
+            "nothing has been consolidated before the first task switch"
+        );
+
+        opt.start_task("b".to_string(), Array1::zeros(2))
+            .expect("start_task b");
+        let anchor = opt
+            .consolidated_parameters()
+            .expect("task a must have been consolidated on switching to b");
+        assert_eq!(anchor.len(), 2);
+    }
+
+    /// The EWC penalty must pull the *new* task's parameters back toward the
+    /// consolidated anchor: with a large importance weight, a task whose own
+    /// gradient is zero must still move toward `theta*` instead of standing
+    /// still (which is what the old no-op produced).
+    #[test]
+    fn ewc_penalty_pulls_parameters_toward_the_consolidated_anchor() {
+        let mut opt = ewc_optimizer(1000.0);
+
+        // Task A settles at a non-zero parameter vector, and produces a
+        // gradient so a Fisher estimate exists for those coordinates.
+        opt.start_task("a".to_string(), Array1::from_vec(vec![5.0, 5.0]))
+            .expect("start_task a");
+        let probe = Array1::from_vec(vec![1.0, 1.0]);
+        opt.update_current_task(&probe, 1.0).expect("task a step");
+        let anchor = opt
+            .task_optimizers
+            .get("a")
+            .expect("task a optimizer")
+            .parameters()
+            .clone();
+
+        // Task B starts far away from the anchor with a zero task gradient:
+        // the only force acting on it is the EWC penalty.
+        opt.start_task("b".to_string(), Array1::from_vec(vec![50.0, 50.0]))
+            .expect("start_task b");
+        let before = opt
+            .task_optimizers
+            .get("b")
+            .expect("task b optimizer")
+            .parameters()
+            .clone();
+        let zero = Array1::zeros(2);
+        opt.update_current_task(&zero, 1.0).expect("task b step");
+        let after = opt
+            .task_optimizers
+            .get("b")
+            .expect("task b optimizer")
+            .parameters()
+            .clone();
+
+        assert_ne!(
+            before, after,
+            "EWC regression: a zero task gradient left the parameters \
+             untouched, so the penalty term is not being applied"
+        );
+        let moved_toward_anchor = (after[0] - anchor[0]).abs() < (before[0] - anchor[0]).abs();
+        assert!(
+            moved_toward_anchor,
+            "EWC penalty moved the parameter away from the anchor \
+             (anchor={}, before={}, after={})",
+            anchor[0], before[0], after[0]
+        );
+    }
+
+    /// A zero importance weight must disable the penalty entirely, so the
+    /// weight is genuinely read rather than ignored.
+    #[test]
+    fn zero_importance_weight_disables_the_ewc_penalty() {
+        let mut opt = ewc_optimizer(0.0);
+        opt.start_task("a".to_string(), Array1::from_vec(vec![5.0, 5.0]))
+            .expect("start_task a");
+        opt.update_current_task(&Array1::from_vec(vec![1.0, 1.0]), 1.0)
+            .expect("task a step");
+        opt.start_task("b".to_string(), Array1::from_vec(vec![50.0, 50.0]))
+            .expect("start_task b");
+
+        let before = opt
+            .task_optimizers
+            .get("b")
+            .expect("task b optimizer")
+            .parameters()
+            .clone();
+        opt.update_current_task(&Array1::zeros(2), 1.0)
+            .expect("task b step");
+        let after = opt
+            .task_optimizers
+            .get("b")
+            .expect("task b optimizer")
+            .parameters()
+            .clone();
+
+        assert_eq!(
+            before, after,
+            "with importance_weight = 0 the EWC penalty must vanish"
+        );
+    }
+
+    /// Reptile must move the shared meta-parameters toward the adapted task
+    /// parameters; they used to stay `None` forever.
+    #[test]
+    fn meta_learning_maintains_reptile_meta_parameters() {
+        let mut opt: LifelongOptimizer<f64, Ix1> =
+            LifelongOptimizer::new(LifelongStrategy::MetaLearning {
+                meta_lr: 0.5,
+                inner_steps: 1,
+                task_embedding_size: 4,
+            });
+        assert!(opt.meta_parameters().is_none());
+
+        opt.start_task("a".to_string(), Array1::from_vec(vec![0.0, 0.0]))
+            .expect("start_task a");
+        let gradient = Array1::from_vec(vec![1.0, -1.0]);
+        opt.update_current_task(&gradient, 1.0)
+            .expect("task a step");
+        let seeded = opt
+            .meta_parameters()
+            .expect("meta-parameters must be seeded from the first task")
+            .clone();
+
+        // A second task that starts far away must drag the meta-parameters
+        // toward it by exactly meta_lr of the gap.
+        opt.start_task("b".to_string(), Array1::from_vec(vec![10.0, 10.0]))
+            .expect("start_task b");
+        opt.update_current_task(&Array1::zeros(2), 1.0)
+            .expect("task b step");
+        let updated = opt.meta_parameters().expect("meta-parameters").clone();
+        let task_b = opt
+            .task_optimizers
+            .get("b")
+            .expect("task b optimizer")
+            .parameters()
+            .clone();
+
+        let expected = seeded[0] + (task_b[0] - seeded[0]) * 0.5;
+        assert!(
+            (updated[0] - expected).abs() < 1e-9,
+            "Reptile update wrong: seeded={}, task={}, expected={}, got={}",
+            seeded[0],
+            task_b[0],
+            expected,
+            updated[0]
+        );
+    }
+
+    /// Progressive Networks is not implementable without a model-column
+    /// partition, so it must report that honestly instead of silently running
+    /// plain online SGD and returning `Ok(())`.
+    #[test]
+    fn progressive_networks_reports_that_it_is_unsupported() {
+        let mut opt: LifelongOptimizer<f64, Ix1> =
+            LifelongOptimizer::new(LifelongStrategy::ProgressiveNetworks {
+                lateral_strength: 0.5,
+                growth_strategy: ColumnGrowthStrategy::PerTask,
+            });
+        opt.start_task("a".to_string(), Array1::zeros(2))
+            .expect("start_task");
+        let err = opt
+            .update_current_task(&Array1::from_vec(vec![1.0, 1.0]), 1.0)
+            .expect_err("ProgressiveNetworks must not fabricate success");
+        assert!(
+            matches!(err, OptimError::UnsupportedOperation(_)),
+            "expected UnsupportedOperation, got {err:?}"
+        );
     }
 }

@@ -1,14 +1,18 @@
 //! # OptiRS Core - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.3.1
-//! **Status:** Stable Release - Production Ready
+//! **Version:** 0.3.2
+//! **Status:** Pre-1.0 (0.3.x) - the public API may still change between 0.x releases
 //!
 //! `optirs-core` provides state-of-the-art optimization algorithms for machine learning,
 //! built exclusively on the [SciRS2](https://github.com/cool-japan/scirs) scientific computing ecosystem.
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
+//! - `scirs2-core` 0.6.5, `scirs2-optimize` 0.6.5 - Required foundation
+//! - `scirs2-neural`, `scirs2-stats` - Unconditional dependencies, pulled in for specific
+//!   modules (e.g. `neuromorphic`, distribution-based regularizers) but not behind a feature
+//! - `scirs2-metrics` - Optional, behind the `metrics-integration` feature
+//! - `scirs2-datasets` - Optional, behind the `cross-platform-testing` feature
 //!
 //! ## Quick Start
 //!
@@ -32,16 +36,23 @@
 //!
 //! ## Features
 //!
-//! ### 19 State-of-the-Art Optimizers
+//! ### 26 Optimizers
 //!
-//! **First-Order Methods:**
+//! 22 types implement the [`optimizers::Optimizer`] trait (`optirs_core::optimizers`, listed
+//! below). 4 more live in [`second_order`] (`optirs_core::second_order`) as a separate family
+//! not reachable through `Optimizer`: 2 implement [`second_order::SecondOrderOptimizer`]
+//! (Newton, and a second, independent L-BFGS implementation re-exported as `SecondOrderLBFGS`
+//! to avoid colliding with `optimizers::LBFGS`), and 2 expose their own inherent
+//! `step`/`step_with_loss` methods instead of a shared trait (NewtonCG, KFAC).
+//!
+//! **First-Order Methods (17):**
 //! - **SGD** - Stochastic Gradient Descent with optional momentum
-//! - **SimdSGD** - SIMD-accelerated SGD (2-4x faster)
+//! - **SimdSGD** - SIMD-accelerated SGD
 //! - **Adam** - Adaptive Moment Estimation
 //! - **AdamW** - Adam with decoupled weight decay
-//! - **AdaDelta** - Adaptive LR without manual tuning ⭐ NEW!
-//! - **AdaBound** - Smooth Adam→SGD transition ⭐ NEW!
-//! - **Ranger** - RAdam + Lookahead combination ⭐ NEW!
+//! - **AdaDelta** - Adaptive LR without manual tuning
+//! - **AdaBound** - Smooth Adam→SGD transition
+//! - **Ranger** - RAdam + Lookahead combination
 //! - **RMSprop** - Root Mean Square Propagation
 //! - **Adagrad** - Adaptive Gradient Algorithm
 //! - **LAMB** - Layer-wise Adaptive Moments for Batch training
@@ -53,14 +64,28 @@
 //! - **SparseAdam** - Adam optimized for sparse gradients
 //! - **GroupedAdam** - Adam with parameter groups
 //!
-//! **Second-Order Methods:**
-//! - **L-BFGS** - Limited-memory BFGS
-//! - **K-FAC** - Kronecker-Factored Approximate Curvature
-//! - **Newton-CG** - Newton Conjugate Gradient ⭐ NEW!
+//! **Quasi-Newton (1):**
+//! - **LBFGS** (`optimizers::LBFGS`) - Limited-memory BFGS with two-loop recursion
 //!
-//! ### Performance Optimizations (Phase 2 Complete)
+//! **Meta-Learning Optimizers (4)** - these also implement [`optimizers::Optimizer`], so they
+//! drop into the same training loop as any other entry above:
+//! - **MAML** - Model-Agnostic Meta-Learning (SecondOrder/FirstOrder/Reptile variants)
+//! - **MetaSGD** - Meta-learned per-parameter learning rates
+//! - **ReptileOptimizer** - First-order meta-learning
+//! - **NtmOptimizer** - Neural Turing Machine-style memory-augmented optimizer
 //!
-//! #### SIMD Acceleration (2-4x speedup)
+//! **`second_order` module (4)** - not part of `optimizers::Optimizer`:
+//! - **Newton** (`second_order::Newton`) - implements `SecondOrderOptimizer`; diagonal Newton
+//!   step with curvature flooring
+//! - **SecondOrderLBFGS** (`second_order::LBFGS`) - implements `SecondOrderOptimizer`; a
+//!   separate, simpler L-BFGS implementation from `optimizers::LBFGS` above
+//! - **NewtonCG** - own `step`/`step_with_loss` API; Newton Conjugate Gradient with
+//!   trust-region control
+//! - **KFAC** - own `step` API; Kronecker-Factored Approximate Curvature
+//!
+//! ### Performance Optimizations
+//!
+//! #### SIMD Acceleration
 //! ```rust
 //! use optirs_core::optimizers::{Optimizer, SimdSGD};
 //! use scirs2_core::ndarray::Array1;
@@ -75,7 +100,7 @@
 //! # }
 //! ```
 //!
-//! #### Parallel Processing (4-8x speedup)
+//! #### Parallel Processing
 //! ```rust
 //! use optirs_core::optimizers::{Adam, Optimizer};
 //! use optirs_core::parallel_optimizer::parallel_step_array1;
@@ -150,13 +175,18 @@
 //! # }
 //! ```
 //!
-//! ### Learning Rate Schedulers
+//! ### Learning Rate Schedulers (`optirs_core::schedulers`)
 //!
-//! - **ExponentialDecay** - Exponential learning rate decay
-//! - **StepDecay** - Step-wise reduction
-//! - **CosineAnnealing** - Cosine annealing schedule
-//! - **LinearWarmupDecay** - Linear warmup with decay
-//! - **OneCycle** - One cycle learning rate policy
+//! - **ConstantScheduler**, **ExponentialDecay**, **StepDecay**, **LinearDecay** - basic decays
+//! - **CosineAnnealing**, **CosineAnnealingWarmRestarts** - cosine schedules
+//! - **LinearWarmupDecay**, **OneCycle**, **CyclicLR** - warmup / cyclic policies
+//! - **ReduceOnPlateau** - metric-driven LR reduction
+//! - **CurriculumScheduler** - staged curriculum transitions
+//! - **NoiseInjectionScheduler** - stochastic LR perturbation
+//! - **AttentionAwareScheduler** - component-specific LR scaling for Transformer models
+//! - **ViTLayerDecay** - per-layer exponential LR decay for Vision Transformers
+//! - **CustomScheduler** / **CombinedScheduler** / **SchedulerBuilder** - compose schedules
+//!   from closures
 //!
 //! ### Advanced Features
 //!
@@ -164,9 +194,11 @@
 //! - **Gradient Accumulation** - Micro-batch training for large models
 //! - **Gradient Clipping** - Prevent exploding gradients
 //! - **Regularization** - L1, L2, weight decay
-//! - **Privacy-Preserving** - Differential privacy support
-//! - **Distributed Training** - Multi-GPU and TPU coordination
-//! - **Neural Architecture Search** - Automated architecture optimization
+//! - **Privacy-Preserving** - Differential privacy support (Rényi DP accountant, secure
+//!   aggregation)
+//! - **Distributed Training** - Parameter averaging, ring all-reduce/all-gather, pipeline
+//!   parallelism (GPipe/1F1B), elastic (join/leave) training. Device-level GPU/TPU
+//!   coordination lives in the separate `optirs-gpu` / `optirs-tpu` crates.
 //!
 //! ## Architecture
 //!
@@ -209,7 +241,7 @@
 //!
 //! All benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) with statistical analysis:
 //!
-//! - **optimizer_benchmarks** - Compare all 16 optimizers
+//! - **optimizer_benchmarks** - Compare optimizer implementations
 //! - **simd_benchmarks** - SIMD vs scalar performance
 //! - **parallel_benchmarks** - Multi-core scaling
 //! - **memory_efficient_benchmarks** - Memory optimization impact
@@ -223,16 +255,15 @@
 //!
 //! ### Test Coverage
 //!
-//! - **549 unit tests** - Core functionality
-//! - **54 doc tests** - Documentation examples
-//! - **603 total tests** - All passing
-//! - **Zero clippy warnings** - Production quality
+//! - **2202 tests** - library + integration tests (`cargo nextest run -p optirs-core --all-features`)
+//! - **95 doc tests** - Documentation examples
+//! - **Zero clippy warnings** - `cargo clippy -p optirs-core --all-features --all-targets`
 //!
 //! ## Examples
 //!
 //! See the `examples/` directory for comprehensive examples:
 //!
-//! - `basic_optimization.rs` - Getting started
+//! - `sgd_example.rs` - Getting started
 //! - `advanced_optimization.rs` - Schedulers, regularization, clipping
 //! - `performance_optimization.rs` - SIMD, parallel, GPU acceleration
 //! - `production_monitoring.rs` - Metrics and convergence detection
@@ -248,15 +279,6 @@
 //! ## License
 //!
 //! licensed under Apache-2.0
-
-#![allow(deprecated)]
-#![allow(unreachable_code)]
-#![allow(unused_mut)]
-#![allow(unused_parens)]
-#![allow(for_loops_over_fallibles)]
-#![allow(unexpected_cfgs)]
-#![allow(unused_attributes)]
-#![allow(missing_docs)]
 
 pub mod adaptive_selection;
 pub mod benchmarking;
@@ -293,12 +315,15 @@ pub mod parameter_groups;
 pub mod plugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod privacy;
+pub mod quantum_inspired;
 pub mod regularizers;
+pub mod reinforcement_learning;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod research;
 pub mod schedulers;
 pub mod second_order;
 pub mod self_tuning;
+pub mod sensitivity_analysis;
 pub mod simd_optimizer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod streaming;
@@ -372,7 +397,7 @@ pub use plugin::core::{
     PluginInfo,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use plugin::sdk::{BaseOptimizerPlugin, PluginTester};
+pub use plugin::sdk::BaseOptimizerPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 pub use plugin::{
     OptimizerPlugin, PluginCapabilities, PluginLoader, PluginRegistry, PluginValidationFramework,
@@ -382,12 +407,20 @@ pub use privacy::{
     AccountingMethod, ClippingStats, DifferentialPrivacyConfig, DifferentiallyPrivateOptimizer,
     MomentsAccountant, NoiseMechanism, PrivacyBudget, PrivacyValidation,
 };
+pub use quantum_inspired::{
+    HybridQuantumClassical, OptimizationPhase, QuantumAnnealing, QuantumOptimizerConfig,
+    VariationalQuantumOptimizer,
+};
 pub use second_order::{
     HessianInfo, Newton, NewtonCG, SecondOrderOptimizer, LBFGS as SecondOrderLBFGS,
 };
 pub use self_tuning::{
     OptimizerInfo, OptimizerTrait, PerformanceStats, SelfTuningConfig, SelfTuningOptimizer,
     SelfTuningStatistics, TargetMetric,
+};
+pub use sensitivity_analysis::{
+    MorrisAnalyzer, MorrisIndices, OatAnalyzer, OatResult, SensitivityAnalyzer, SensitivityIndices,
+    SobolAnalyzer,
 };
 pub use simd_optimizer::{should_use_simd, SimdOptimizer};
 #[cfg(not(target_arch = "wasm32"))]
@@ -401,5 +434,5 @@ pub use visualization::{
     OptimizationMetric, OptimizationVisualizer, OptimizerComparison, PlotType, VisualizationConfig,
 };
 
-#[cfg(feature = "metrics_integration")]
+#[cfg(feature = "metrics-integration")]
 pub use metrics::*;

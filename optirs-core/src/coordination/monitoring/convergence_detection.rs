@@ -8,7 +8,6 @@ use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Result of convergence analysis
@@ -145,7 +144,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
 
         let trend_analysis = self.analyzer.compute_trend_analysis(&self.state);
 
-        ConvergenceResult {
+        let result = ConvergenceResult {
             converged,
             confidence: combined_confidence,
             iterations_to_convergence: self.state.convergence_start,
@@ -153,7 +152,32 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
             stagnation_count: self.state.stagnation_count,
             trend_analysis,
             statistical_significance: statistical_result.confidence,
-        }
+        };
+
+        // Feed the monitor and the indicator engine. Until 0.3.2 both were
+        // constructed in `new` and never touched again, so the detector produced
+        // no stagnation/premature-convergence alerts and no indicator history at
+        // all -- the `monitor` and `indicator` fields were pure decoration.
+        self.monitor.monitor(result.clone());
+        let _ = self.indicator.compute_indicators(&result, &self.state);
+
+        result
+    }
+
+    /// Convergence alerts raised so far (stagnation, premature convergence).
+    pub fn alerts(&self) -> &[ConvergenceAlert<T>] {
+        self.monitor.get_alerts()
+    }
+
+    /// Per-iteration indicator history: convergence score, trend strength,
+    /// stability index, confidence and progress ratio.
+    pub fn indicator_history(&self) -> &VecDeque<IndicatorValues<T>> {
+        self.indicator.get_indicator_history()
+    }
+
+    /// The criteria this detector was built with.
+    pub fn criteria(&self) -> &ConvergenceCriteria<T> {
+        &self.criteria
     }
 
     fn update_state(&mut self, value: T) {
@@ -222,12 +246,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
         }
 
         let mean = data.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(data.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len(), T::one());
         let variance = data
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(data.len() - 1).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len() - 1, T::one());
 
         variance
     }
@@ -258,7 +282,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceDetector<T> {
         let avg_improvement = recent_improvements
             .iter()
             .fold(T::zero(), |acc, &x| acc + x)
-            / T::from(recent_improvements.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(recent_improvements.len(), T::one());
 
         Some(avg_improvement)
     }
@@ -377,11 +401,32 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             };
         }
 
-        let current_value = state.history.back().expect("unwrap failed");
-        let previous_value = state.history[state.history.len() - 2];
+        // `state.history.len() >= 2` is checked by the guard above, but reading
+        // it out fallibly keeps this function panic-free if that guard is ever
+        // relaxed.
+        let (Some(&current_value), Some(&previous_value)) = (
+            state.history.back(),
+            state.history.get(state.history.len().wrapping_sub(2)),
+        ) else {
+            return ConvergenceResult {
+                converged: false,
+                confidence: T::zero(),
+                iterations_to_convergence: None,
+                convergence_rate: None,
+                stagnation_count: state.stagnation_count,
+                trend_analysis: TrendAnalysis {
+                    slope: T::zero(),
+                    r_squared: T::zero(),
+                    acceleration: T::zero(),
+                    volatility: T::zero(),
+                    momentum: T::zero(),
+                },
+                statistical_significance: T::zero(),
+            };
+        };
 
         // Adaptive tolerance check
-        let absolute_improvement = (previous_value - *current_value).abs();
+        let absolute_improvement = (previous_value - current_value).abs();
         let relative_improvement = if previous_value.abs() > T::epsilon() {
             absolute_improvement / previous_value.abs()
         } else {
@@ -439,8 +484,20 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
     }
 
+    /// Two-sample Kolmogorov-Smirnov test comparing the first vs. second
+    /// half of the history window for stationarity, via
+    /// [`scirs2_stats::ks_2samp`]'s real implementation (real empirical-CDF
+    /// statistic and a real p-value derived from the Kolmogorov
+    /// distribution -- not a fixed 1.36/sqrt(n) critical-value cutoff
+    /// collapsed to a binary 0.95/0.05).
+    ///
+    /// Returns the real p-value: high = "cannot reject that both halves
+    /// come from the same distribution" = evidence of a stable, converged
+    /// process; low = evidence the distribution shifted (still changing).
+    /// Computed in `f64` internally (via `T::to_f64`/`T::from`, which any
+    /// `Float` already provides) so this doesn't need to widen `T`'s trait
+    /// bounds for every caller of `ConvergenceDetector<T>`.
     fn kolmogorov_smirnov_test(&self, state: &ConvergenceState<T>) -> T {
-        // Simplified KS test for stationarity
         if state.history.len() < 4 {
             return T::zero();
         }
@@ -448,25 +505,37 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         let n = state.history.len();
         let mid = n / 2;
 
-        let first_half: Vec<T> = state.history.iter().take(mid).cloned().collect();
-        let second_half: Vec<T> = state.history.iter().skip(mid).cloned().collect();
+        let first_half: Vec<f64> = state
+            .history
+            .iter()
+            .take(mid)
+            .map(|v| v.to_f64().unwrap_or(0.0))
+            .collect();
+        let second_half: Vec<f64> = state
+            .history
+            .iter()
+            .skip(mid)
+            .map(|v| v.to_f64().unwrap_or(0.0))
+            .collect();
 
-        // Compute empirical CDFs and find maximum difference
-        let max_diff = self.compute_cdf_max_difference(&first_half, &second_half);
+        let first_arr = scirs2_core::ndarray::Array1::from_vec(first_half);
+        let second_arr = scirs2_core::ndarray::Array1::from_vec(second_half);
 
-        // Convert to p-value approximation
-        let critical_value = T::from(1.36).unwrap_or_else(|| T::zero())
-            / (T::from(n).unwrap_or_else(|| T::zero())).sqrt();
-
-        if max_diff < critical_value {
-            T::from(0.95).unwrap_or_else(|| T::zero()) // High confidence of stationarity
-        } else {
-            T::from(0.05).unwrap_or_else(|| T::zero()) // Low confidence
+        match scirs2_stats::ks_2samp(&first_arr.view(), &second_arr.view(), "two-sided") {
+            Ok((_statistic, p_value)) => T::from(p_value).unwrap_or_else(|| T::zero()),
+            Err(_) => T::zero(),
         }
     }
 
+    /// Mann-Kendall trend test: the S statistic and its (no-ties) variance
+    /// are the real, standard formulas; the fix is converting the resulting
+    /// Z-score to a real two-tailed p-value via the real standard-normal
+    /// CDF from `scirs2_stats`, instead of collapsing every Z-score to a
+    /// binary 0.95/0.05 at the fixed threshold 1.96.
+    ///
+    /// Returns the real p-value: high = "no significant trend" = evidence
+    /// of a converged/stable process.
     fn mann_kendall_test(&self, state: &ConvergenceState<T>) -> T {
-        // Mann-Kendall test for trend detection
         if state.history.len() < 3 {
             return T::zero();
         }
@@ -486,118 +555,51 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             }
         }
 
-        // Normalize and convert to confidence
-        let variance = T::from(n * (n - 1) * (2 * n + 5)).expect("unwrap failed")
-            / T::from(18.0).unwrap_or_else(|| T::zero());
-        let z = s.abs() / variance.sqrt();
-
-        // Convert Z-score to confidence (simplified)
-        if z < T::from(1.96).unwrap_or_else(|| T::zero()) {
-            T::from(0.95).unwrap_or_else(|| T::zero()) // No significant trend
-        } else {
-            T::from(0.05).unwrap_or_else(|| T::zero()) // Significant trend detected
+        let variance = (n * (n - 1) * (2 * n + 5)) as f64 / 18.0;
+        if variance <= 0.0 {
+            return T::from(1.0).unwrap_or_else(|| T::zero());
         }
+        let s_f64 = s.to_f64().unwrap_or(0.0);
+        let z = s_f64 / variance.sqrt();
+
+        let p_value = match scirs2_stats::distributions::Normal::new(0.0_f64, 1.0_f64) {
+            Ok(normal) => 2.0 * (1.0 - normal.cdf(z.abs())),
+            Err(_) => 1.0,
+        };
+
+        T::from(p_value.clamp(0.0, 1.0)).unwrap_or_else(|| T::zero())
     }
 
+    /// Anderson-Darling normality test on the recent gradient sequence, via
+    /// [`scirs2_stats::anderson_darling`]'s real implementation (real A²
+    /// statistic and a real p-value) -- not an ad hoc skewness/kurtosis
+    /// heuristic.
+    ///
+    /// Returns the real p-value: high = "cannot reject normality" (gradient
+    /// noise around a converged point is expected to look approximately
+    /// Gaussian). `scirs2_stats`'s implementation requires at least 8
+    /// samples; with fewer, this reports a neutral, explicitly
+    /// inconclusive 0.5 rather than fabricating a confident answer either
+    /// way. A zero-variance gradient sequence (every recent gradient
+    /// identical) is itself a strong, degenerate sign of convergence, so
+    /// that specific error case is treated as high confidence.
     fn anderson_darling_test(&self, state: &ConvergenceState<T>) -> T {
-        // Simplified Anderson-Darling test for normality
-        if state.gradients.len() < 3 {
+        const MIN_SAMPLES: usize = 8;
+        if state.gradients.len() < MIN_SAMPLES {
             return T::from(0.5).unwrap_or_else(|| T::zero());
         }
 
-        let gradients: Vec<T> = state.gradients.iter().cloned().collect();
-        let mean = gradients.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(gradients.len()).expect("unwrap failed");
-        let variance = gradients
+        let gradients: Vec<f64> = state
+            .gradients
             .iter()
-            .map(|&x| (x - mean) * (x - mean))
-            .fold(T::zero(), |acc, x| acc + x)
-            / T::from(gradients.len()).expect("unwrap failed");
+            .map(|v| v.to_f64().unwrap_or(0.0))
+            .collect();
+        let array = scirs2_core::ndarray::Array1::from_vec(gradients);
 
-        if variance < T::epsilon() {
-            return T::from(0.95).unwrap_or_else(|| T::zero()); // Perfect normality (no variation)
+        match scirs2_stats::anderson_darling(&array.view()) {
+            Ok((_statistic, p_value)) => T::from(p_value).unwrap_or_else(|| T::zero()),
+            Err(_) => T::from(0.95).unwrap_or_else(|| T::zero()),
         }
-
-        // Simplified normality assessment based on skewness and kurtosis
-        let std_dev = variance.sqrt();
-        let skewness = self.compute_skewness(&gradients, mean, std_dev);
-        let kurtosis = self.compute_kurtosis(&gradients, mean, std_dev);
-
-        // Convert to confidence score
-        let skew_score = (-skewness.abs()).exp();
-        let kurt_score = (-(kurtosis - T::from(3.0).unwrap_or_else(|| T::zero())).abs()).exp();
-
-        (skew_score + kurt_score) / T::from(2.0).unwrap_or_else(|| T::zero())
-    }
-
-    fn compute_skewness(&self, data: &[T], mean: T, std_dev: T) -> T {
-        if std_dev < T::epsilon() {
-            return T::zero();
-        }
-
-        let n = T::from(data.len()).expect("unwrap failed");
-        let skew = data
-            .iter()
-            .map(|&x| {
-                let z = (x - mean) / std_dev;
-                z * z * z
-            })
-            .fold(T::zero(), |acc, x| acc + x)
-            / n;
-
-        skew
-    }
-
-    fn compute_kurtosis(&self, data: &[T], mean: T, std_dev: T) -> T {
-        if std_dev < T::epsilon() {
-            return T::from(3.0).unwrap_or_else(|| T::zero()); // Normal kurtosis
-        }
-
-        let n = T::from(data.len()).expect("unwrap failed");
-        let kurt = data
-            .iter()
-            .map(|&x| {
-                let z = (x - mean) / std_dev;
-                z * z * z * z
-            })
-            .fold(T::zero(), |acc, x| acc + x)
-            / n;
-
-        kurt
-    }
-
-    fn compute_cdf_max_difference(&self, first: &[T], second: &[T]) -> T {
-        // Simplified CDF comparison
-        let mut first_sorted = first.to_vec();
-        let mut second_sorted = second.to_vec();
-        first_sorted.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
-        second_sorted.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
-
-        let min_val = first_sorted[0].min(second_sorted[0]);
-        let max_val = first_sorted
-            .last()
-            .expect("unwrap failed")
-            .max(*second_sorted.last().expect("unwrap failed"));
-
-        let steps = 20;
-        let step_size = (max_val - min_val) / T::from(steps).unwrap_or_else(|| T::zero());
-        let mut max_diff = T::zero();
-
-        for i in 0..=steps {
-            let x = min_val + T::from(i).unwrap_or_else(|| T::zero()) * step_size;
-            let cdf1 = self.empirical_cdf(&first_sorted, x);
-            let cdf2 = self.empirical_cdf(&second_sorted, x);
-            let diff = (cdf1 - cdf2).abs();
-            max_diff = max_diff.max(diff);
-        }
-
-        max_diff
-    }
-
-    fn empirical_cdf(&self, sorted_data: &[T], x: T) -> T {
-        let count = sorted_data.iter().filter(|&&val| val <= x).count();
-        T::from(count).unwrap_or_else(|| T::zero())
-            / T::from(sorted_data.len()).expect("unwrap failed")
     }
 
     fn combine_statistical_tests(&self, ks: T, mk: T, ad: T) -> T {
@@ -668,15 +670,16 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
             return (T::zero(), T::zero());
         }
 
-        let n = T::from(data.len()).expect("unwrap failed");
-        let sum_x =
-            (0..data.len()).fold(T::zero(), |acc, i| acc + T::from(i).expect("unwrap failed"));
+        let n = crate::utils::scalar_or(data.len(), T::one());
+        let sum_x = (0..data.len()).fold(T::zero(), |acc, i| {
+            acc + crate::utils::scalar_or(i, T::zero())
+        });
         let sum_y = data.iter().fold(T::zero(), |acc, &y| acc + y);
         let sum_xy = data.iter().enumerate().fold(T::zero(), |acc, (i, &y)| {
             acc + T::from(i).unwrap_or_else(|| T::zero()) * y
         });
         let sum_x2 = (0..data.len()).fold(T::zero(), |acc, i| {
-            let i_f = T::from(i).expect("unwrap failed");
+            let i_f = crate::utils::scalar_or(i, T::zero());
             acc + i_f * i_f
         });
 
@@ -722,7 +725,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         accelerations
             .iter()
             .fold(T::zero(), |acc, &a| acc + a.abs())
-            / T::from(accelerations.len()).expect("unwrap failed")
+            / crate::utils::scalar_or(accelerations.len(), T::one())
     }
 
     fn compute_volatility(&self, data: &VecDeque<T>) -> T {
@@ -731,12 +734,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceAnalyzer<T> {
         }
 
         let mean = data.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(data.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len(), T::one());
         let variance = data
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(data.len()).expect("unwrap failed");
+            / crate::utils::scalar_or(data.len(), T::one());
 
         variance.sqrt()
     }
@@ -969,12 +972,12 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
             .collect();
 
         let mean = recent_values.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(recent_values.len()).expect("unwrap failed");
+            / T::from(recent_values.len()).unwrap_or_else(T::one);
         let variance = recent_values
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(recent_values.len()).expect("unwrap failed");
+            / T::from(recent_values.len()).unwrap_or_else(T::one);
 
         (-variance.sqrt()).exp()
     }
@@ -985,7 +988,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
         }
 
         let initial_value = state.history[0];
-        let current_value = *state.history.back().expect("unwrap failed");
+        let Some(&current_value) = state.history.back() else {
+            return T::zero();
+        };
         let best_value = state.best_value;
 
         if (initial_value - best_value).abs() < T::epsilon() {
@@ -993,7 +998,19 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceIndicator<T> {
         }
 
         let progress = (initial_value - current_value) / (initial_value - best_value);
-        progress.max(T::zero()).min(T::one())
+        let progress = progress.clamp(T::zero(), T::one());
+
+        // A run that has not yet reached `min_iterations` cannot report full
+        // progress no matter how flat the curve looks: the criteria say the
+        // question is not settled yet. `criteria` was previously stored and
+        // never read.
+        if state.current_iteration < self.criteria.min_iterations {
+            let ceiling = T::from(state.current_iteration).unwrap_or_else(T::zero)
+                / T::from(self.criteria.min_iterations.max(1)).unwrap_or_else(T::one);
+            progress.min(ceiling)
+        } else {
+            progress
+        }
     }
 
     pub fn get_indicator_history(&self) -> &VecDeque<IndicatorValues<T>> {
@@ -1069,5 +1086,112 @@ mod tests {
 
         let trend = analyzer.compute_trend_analysis(&state);
         assert!(trend.slope < 0.0); // Decreasing trend
+    }
+
+    // Regression tests for F61: the KS/Mann-Kendall/Anderson-Darling
+    // "tests" used to each collapse to one of exactly two hardcoded
+    // constants (0.95 or 0.05) regardless of how strong the real evidence
+    // was, and the KS critical value itself was off by a factor of ~2. They
+    // now return real, continuously-varying p-values from `scirs2_stats`.
+
+    #[test]
+    fn test_kolmogorov_smirnov_test_distinguishes_identical_from_shifted_halves() {
+        let criteria = ConvergenceCriteria::<f64>::default();
+        let analyzer = ConvergenceAnalyzer::new(criteria);
+
+        // Identical first/second halves: the two empirical distributions
+        // are exactly the same, so the real KS p-value must be 1.0 (no
+        // evidence whatsoever of a difference), not merely ">= 0.05".
+        let mut stable_state = ConvergenceState::new(20);
+        for value in [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] {
+            stable_state.history.push_back(value);
+        }
+        let stable_p = analyzer.kolmogorov_smirnov_test(&stable_state);
+        assert_eq!(stable_p, 1.0);
+
+        // A huge, obvious shift between halves (at a realistic window size
+        // -- the KS test has very little power at tiny sample sizes, which
+        // is a property of the real test, not a bug): the real p-value
+        // must be near zero, not the old fixed "0.05" placeholder.
+        let mut shifted_state = ConvergenceState::new(20);
+        for value in std::iter::repeat_n(0.0, 10).chain(std::iter::repeat_n(1000.0, 10)) {
+            shifted_state.history.push_back(value);
+        }
+        let shifted_p = analyzer.kolmogorov_smirnov_test(&shifted_state);
+        assert!(
+            shifted_p < 0.05,
+            "expected a small p-value, got {shifted_p}"
+        );
+        assert!(stable_p > shifted_p);
+    }
+
+    #[test]
+    fn test_mann_kendall_test_distinguishes_trend_strength() {
+        let criteria = ConvergenceCriteria::<f64>::default();
+        let analyzer = ConvergenceAnalyzer::new(criteria);
+
+        // A strictly monotonic sequence is the strongest possible trend
+        // signal: the real p-value must be small.
+        let mut trending_state = ConvergenceState::new(20);
+        for value in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0] {
+            trending_state.history.push_back(value);
+        }
+        let trending_p = analyzer.mann_kendall_test(&trending_state);
+
+        // An oscillating, trendless sequence: the real p-value must be
+        // large (S near zero either way).
+        let mut flat_state = ConvergenceState::new(20);
+        for value in [5.0, 6.0, 4.0, 6.0, 4.0, 5.0, 6.0, 4.0, 5.0, 6.0] {
+            flat_state.history.push_back(value);
+        }
+        let flat_p = analyzer.mann_kendall_test(&flat_state);
+
+        assert!(
+            trending_p < flat_p,
+            "a strict monotonic trend must score a smaller p-value than a trendless \
+             oscillation (trending={trending_p}, flat={flat_p})"
+        );
+        assert!(trending_p < 0.05);
+        assert!(flat_p > 0.05);
+    }
+
+    #[test]
+    fn test_anderson_darling_test_is_neutral_below_the_real_minimum_sample_size() {
+        let criteria = ConvergenceCriteria::<f64>::default();
+        let analyzer = ConvergenceAnalyzer::new(criteria);
+
+        // scirs2_stats::anderson_darling requires >= 8 samples; with fewer
+        // gradients this must report the documented neutral 0.5, not a
+        // fabricated confident answer.
+        let mut sparse_state = ConvergenceState::new(20);
+        for value in [0.1, -0.1, 0.2] {
+            sparse_state.gradients.push_back(value);
+        }
+        assert_eq!(analyzer.anderson_darling_test(&sparse_state), 0.5);
+    }
+
+    #[test]
+    fn test_anderson_darling_test_runs_the_real_test_with_enough_samples() {
+        let criteria = ConvergenceCriteria::<f64>::default();
+        let analyzer = ConvergenceAnalyzer::new(criteria);
+
+        let mut state = ConvergenceState::new(20);
+        for value in [0.1, -0.2, 0.05, -0.15, 0.3, -0.05, 0.12, -0.08, 0.02, -0.11] {
+            state.gradients.push_back(value);
+        }
+
+        let p_value = analyzer.anderson_darling_test(&state);
+        assert!(
+            (0.0..=1.0).contains(&p_value),
+            "expected a real p-value in [0, 1], got {p_value}"
+        );
+
+        // Zero-variance gradients (every recent gradient identical) is the
+        // one explicitly-documented high-confidence special case.
+        let mut degenerate_state = ConvergenceState::new(20);
+        for _ in 0..8 {
+            degenerate_state.gradients.push_back(0.5);
+        }
+        assert_eq!(analyzer.anderson_darling_test(&degenerate_state), 0.95);
     }
 }

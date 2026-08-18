@@ -8,10 +8,10 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use super::functions::StorageBackend;
 use super::types::{InMemoryStorageBackend, MetricQuery, PerformanceMetrics, StorageBackendStats};

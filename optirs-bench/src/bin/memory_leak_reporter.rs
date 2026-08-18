@@ -5,6 +5,7 @@
 
 use clap::{Arg, Command};
 // use optirs_core::benchmarking::advanced_memory_leak_detector::MemoryLeakConfig;
+use optirs_bench::leak_tool_reports;
 use optirs_core::error::{OptimError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -369,141 +370,243 @@ fn collect_memory_analysis_results(
     Ok(results)
 }
 
+/// Real Valgrind Memcheck XML parsing (F54): delegates to
+/// [`leak_tool_reports::parse_valgrind_xml`], which actually reads every
+/// `<error>`/`<kind>`/`<leakedbytes>`/`<leakedblocks>`/`<fn>` element rather
+/// than returning a fixed two-record fixture regardless of file content.
 #[allow(dead_code)]
 fn parse_valgrind_results(path: &Path) -> Result<ValgrindResults> {
-    // Simplified Valgrind XML parsing
     let content = fs::read_to_string(path)?;
+    let report = leak_tool_reports::parse_valgrind_xml(&content)?;
 
-    // In a real implementation, this would use an XML parser
-    // For now, we'll create mock results based on file presence
     Ok(ValgrindResults {
-        total_leaks: if content.contains("definitely lost") {
-            2
-        } else {
-            0
-        },
-        leaked_bytes: if content.contains("definitely lost") {
-            1024
-        } else {
-            0
-        },
-        leak_records: vec![
-            ValgrindLeak {
-                bytes_leaked: 512,
-                blocks_leaked: 1,
-                call_stack: vec![
-                    "malloc".to_string(),
-                    "optimizer_alloc".to_string(),
-                    "adam_update".to_string(),
-                ],
-                leak_kind: "definitely lost".to_string(),
-            },
-            ValgrindLeak {
-                bytes_leaked: 512,
-                blocks_leaked: 1,
-                call_stack: vec![
-                    "malloc".to_string(),
-                    "gradient_buffer_alloc".to_string(),
-                    "sgd_step".to_string(),
-                ],
-                leak_kind: "possibly lost".to_string(),
-            },
-        ],
+        total_leaks: report.total_leaks,
+        leaked_bytes: report.leaked_bytes,
+        leak_records: report
+            .leak_records
+            .into_iter()
+            .map(|r| ValgrindLeak {
+                bytes_leaked: r.bytes_leaked,
+                blocks_leaked: r.blocks_leaked,
+                call_stack: r.call_stack,
+                leak_kind: r.leak_kind,
+            })
+            .collect(),
     })
 }
 
+/// Real Massif raw-report parsing (F54): delegates to
+/// [`leak_tool_reports::parse_massif_report`], which reads the actual
+/// `time=`/`mem_heap_B=`/`mem_heap_extra_B=` fields per snapshot instead of
+/// returning a hardcoded 50 MiB / four-point timeline regardless of content.
 #[allow(dead_code)]
 fn parse_massif_results(path: &Path) -> Result<MassifResults> {
-    // Simplified Massif parsing
-    let _content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path)?;
+    let report = leak_tool_reports::parse_massif_report(&content)?;
 
     Ok(MassifResults {
-        peak_memory: 50 * 1024 * 1024, // 50MB
-        memorytimeline: vec![
-            (0, 10 * 1024 * 1024),    // 10MB at start
-            (1000, 25 * 1024 * 1024), // 25MB at 1s
-            (2000, 50 * 1024 * 1024), // 50MB at 2s (peak)
-            (3000, 40 * 1024 * 1024), // 40MB at 3s
-        ],
-        allocation_tree: vec![AllocationNode {
-            bytes: 30 * 1024 * 1024,
-            function: "optimizer_allocations".to_string(),
-            children: vec![
-                AllocationNode {
-                    bytes: 20 * 1024 * 1024,
-                    function: "adam_buffers".to_string(),
-                    children: vec![],
-                },
-                AllocationNode {
-                    bytes: 10 * 1024 * 1024,
-                    function: "gradient_buffers".to_string(),
-                    children: vec![],
-                },
-            ],
-        }],
+        peak_memory: report.peak_memory_bytes,
+        memorytimeline: report.memory_timeline,
+        allocation_tree: report
+            .allocation_tree
+            .into_iter()
+            .map(massif_node_to_local)
+            .collect(),
     })
 }
 
+fn massif_node_to_local(node: leak_tool_reports::MassifAllocationNode) -> AllocationNode {
+    AllocationNode {
+        bytes: node.bytes,
+        function: node.function,
+        children: node
+            .children
+            .into_iter()
+            .map(massif_node_to_local)
+            .collect(),
+    }
+}
+
+/// Real `heaptrack_print` text-summary parsing (F54): delegates to
+/// [`leak_tool_reports::parse_heaptrack_report`], which reads the actual
+/// `calls to allocation functions:` / `peak heap memory consumption:` /
+/// `<N> allocations with <size> ... total leaked in ...:` lines instead of
+/// returning `15420` allocations and one fixed leak record regardless of
+/// content.
 #[allow(dead_code)]
 fn parse_heaptrack_results(path: &Path) -> Result<HeaptrackResults> {
-    // Simplified HeapTrack parsing
-    let _content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path)?;
+    let report = leak_tool_reports::parse_heaptrack_report(&content)?;
 
     Ok(HeaptrackResults {
-        total_allocations: 15420,
-        peak_memory: 48 * 1024 * 1024,
-        leaked_allocations: vec![LeakedAllocation {
-            size: 1024,
-            call_stack: vec![
-                "malloc".to_string(),
-                "temporary_buffer_alloc".to_string(),
-                "optimizer_step".to_string(),
-            ],
-            allocation_time: 1500,
-        }],
+        total_allocations: report.total_allocations,
+        peak_memory: report.peak_memory_bytes,
+        leaked_allocations: report
+            .leaked_allocations
+            .into_iter()
+            .map(|a| LeakedAllocation {
+                size: a.size_bytes,
+                call_stack: a.call_stack,
+                // 0 means "not measured" -- heaptrack's text summary carries
+                // no per-allocation timestamp (see leak_tool_reports docs).
+                // `detect_memory_leaks` divides by this; a 0 here reports a
+                // 0.0 bytes/s leak rate for the affected record rather than
+                // dividing by a fabricated constant.
+                allocation_time: a.allocation_time_ms,
+            })
+            .collect(),
     })
 }
 
 #[allow(dead_code)]
+/// Real parsing of this crate's own custom-profiler JSON schema (F54): reads
+/// `memory_timeline` / `allocation_patterns` / `fragmentation_data` from the
+/// actual document instead of discarding it after a syntax check and
+/// returning a fixed four-point fixture. A top-level value that is not even a
+/// JSON object is rejected; a well-formed object missing some/all of these
+/// keys honestly yields empty vectors for them (a real "nothing recorded"),
+/// never the old invented numbers.
 fn parse_custom_profiler_results(path: &Path) -> Result<CustomProfilerResults> {
-    // Parse JSON from custom profiler
     let content = fs::read_to_string(path)?;
-    let _jsondata: serde_json::Value =
+    let json: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| OptimError::OptimizationError(e.to_string()))?;
 
+    let Some(obj) = json.as_object() else {
+        return Err(OptimError::InvalidConfig(format!(
+            "{}: custom profiler report must be a JSON object",
+            path.display()
+        )));
+    };
+
+    fn u64_pair_series(value: Option<&serde_json::Value>) -> Vec<(u64, usize)> {
+        value
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        let pair = entry.as_array()?;
+                        let time = pair.first()?.as_u64()?;
+                        let bytes = pair.get(1)?.as_u64()? as usize;
+                        Some((time, bytes))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    let memorytimeline = u64_pair_series(obj.get("memory_timeline"));
+
+    let allocation_patterns = obj
+        .get("allocation_patterns")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let pattern_type = entry.get("pattern_type")?.as_str()?.to_string();
+                    let frequency = entry
+                        .get("frequency_hz")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let size_distribution = entry
+                        .get("size_distribution")
+                        .and_then(|v| v.as_object())
+                        .map(|map| {
+                            map.iter()
+                                .filter_map(|(k, v)| {
+                                    Some((k.parse::<usize>().ok()?, v.as_u64()? as usize))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(AllocationPattern {
+                        pattern_type,
+                        frequency,
+                        size_distribution,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let fragmentationdata: Vec<(u64, f64)> = obj
+        .get("fragmentation_data")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let pair = entry.as_array()?;
+                    let time = pair.first()?.as_u64()?;
+                    let ratio = pair.get(1)?.as_f64()?;
+                    Some((time, ratio))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(CustomProfilerResults {
-        memorytimeline: vec![
-            (0, 5 * 1024 * 1024),
-            (1000, 15 * 1024 * 1024),
-            (2000, 25 * 1024 * 1024),
-            (3000, 35 * 1024 * 1024),
-        ],
-        allocation_patterns: vec![AllocationPattern {
-            pattern_type: "periodic".to_string(),
-            frequency: 0.5, // Hz
-            size_distribution: [(1024, 50), (2048, 30), (4096, 20)].into_iter().collect(),
-        }],
-        fragmentationdata: vec![(0, 0.1), (1000, 0.15), (2000, 0.25), (3000, 0.35)],
+        memorytimeline,
+        allocation_patterns,
+        fragmentationdata,
     })
 }
 
+/// Real parsing of macOS `leaks` tool output (F54): extracts the actual
+/// leak/byte counts from the `"<N> leaks for <M> total leaked bytes."`
+/// summary line and the actual per-leak `"Leak: ..."` lines, instead of
+/// counting how many lines happen to contain the substring `"leaks for"` and
+/// then returning two hardcoded leak descriptions regardless of content.
 #[allow(dead_code)]
 fn parse_macos_leaks_results(path: &Path) -> Result<MacosLeaksResults> {
     let content = fs::read_to_string(path)?;
 
-    // Simple parsing of macOS leaks output
-    let leak_count = content
+    if !content.contains("leaks for") && !content.contains("Leak:") {
+        return Err(OptimError::InvalidConfig(format!(
+            "{}: content does not look like `leaks` tool output (no '<N> leaks for <M> total \
+             leaked bytes.' summary line and no 'Leak:' entries found)",
+            path.display()
+        )));
+    }
+
+    let mut summary_leak_count = 0usize;
+    let mut leaked_bytes = 0usize;
+    for line in content.lines() {
+        if let Some(idx) = line.find(" leaks for ") {
+            if let Some(n) = line[..idx]
+                .split_whitespace()
+                .next_back()
+                .and_then(|token| token.parse::<usize>().ok())
+            {
+                summary_leak_count = n;
+            }
+            let after = &line[idx + " leaks for ".len()..];
+            if let Some(m) = after
+                .split_whitespace()
+                .next()
+                .and_then(|token| token.parse::<usize>().ok())
+            {
+                leaked_bytes = m;
+            }
+            break;
+        }
+    }
+
+    let leak_summaries: Vec<String> = content
         .lines()
-        .filter(|line| line.contains("leaks for"))
-        .count();
+        .filter(|line| line.trim_start().starts_with("Leak:"))
+        .map(|line| line.trim().to_string())
+        .collect();
+    // The summary line's count is authoritative when present; otherwise fall
+    // back to the number of individual "Leak:" entries actually found.
+    let leak_count = if summary_leak_count > 0 {
+        summary_leak_count
+    } else {
+        leak_summaries.len()
+    };
 
     Ok(MacosLeaksResults {
         leak_count,
-        leaked_bytes: leak_count * 1024, // Estimate
-        leak_summaries: vec![
-            "Leak in adam_optimizer: 1024 bytes".to_string(),
-            "Leak in gradient_computation: 512 bytes".to_string(),
-        ],
+        leaked_bytes,
+        leak_summaries,
     })
 }
 
@@ -567,8 +670,15 @@ fn detect_memory_leaks(
                     severity,
                     confidence,
                     leaked_memory_bytes: leaked_alloc.size,
-                    leak_rate_bytes_per_second: leaked_alloc.size as f64
-                        / (leaked_alloc.allocation_time as f64 / 1000.0),
+                    // `allocation_time == 0` means "not measured" (HeapTrack's
+                    // text summary carries no per-allocation timestamp -- see
+                    // `leak_tool_reports`), so the rate is honestly reported
+                    // as 0.0 (unknown) rather than a division by zero.
+                    leak_rate_bytes_per_second: if leaked_alloc.allocation_time > 0 {
+                        leaked_alloc.size as f64 / (leaked_alloc.allocation_time as f64 / 1000.0)
+                    } else {
+                        0.0
+                    },
                     leak_sources: vec![LeakSource {
                         source_type: "heap_allocation".to_string(),
                         location: leaked_alloc
@@ -1093,4 +1203,252 @@ fn generate_github_actionsreport(report: &MemoryLeakReport) -> Result<String> {
     output.push_str(&jsonreport);
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh, per-test scratch directory under the real temp dir, cleaned
+    /// up on drop so parallel test runs never collide and never leave files
+    /// behind.
+    struct ScratchDir(PathBuf);
+    impl ScratchDir {
+        fn new(label: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "optirs_bench_memory_leak_reporter_test_{label}_{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&dir).expect("create scratch dir");
+            Self(dir)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const VALGRIND_XML: &str = r#"<?xml version="1.0"?>
+<valgrindoutput>
+<error>
+  <kind>Leak_DefinitelyLost</kind>
+  <xwhat>
+    <leakedbytes>2048</leakedbytes>
+    <leakedblocks>4</leakedblocks>
+  </xwhat>
+  <stack>
+    <frame><fn>malloc</fn></frame>
+    <frame><fn>adam_update</fn></frame>
+  </stack>
+</error>
+</valgrindoutput>
+"#;
+
+    #[test]
+    fn test_parse_valgrind_results_reflects_real_file_content() {
+        // Regression (F54): the old parser returned a fixed two-record,
+        // 512+512-byte fixture no matter what the file said. A file
+        // declaring one 2048-byte leak must report exactly that.
+        let dir = ScratchDir::new("valgrind");
+        let path = dir.path().join("valgrind_memcheck.xml");
+        fs::write(&path, VALGRIND_XML).expect("write fixture");
+
+        let result = parse_valgrind_results(&path).expect("parses real valgrind xml");
+        assert_eq!(result.total_leaks, 1);
+        assert_eq!(result.leaked_bytes, 2048);
+        assert_eq!(result.leak_records.len(), 1);
+        assert_eq!(result.leak_records[0].bytes_leaked, 2048);
+        assert_eq!(result.leak_records[0].blocks_leaked, 4);
+        assert_eq!(result.leak_records[0].leak_kind, "definitely lost");
+        assert_eq!(
+            result.leak_records[0].call_stack,
+            vec!["malloc".to_string(), "adam_update".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_valgrind_results_rejects_garbage_file() {
+        // A file existing is not enough to fabricate a report from -- it
+        // must actually look like Valgrind XML output.
+        let dir = ScratchDir::new("valgrind_garbage");
+        let path = dir.path().join("valgrind_memcheck.xml");
+        fs::write(&path, "not valgrind output at all").expect("write fixture");
+
+        assert!(parse_valgrind_results(&path).is_err());
+    }
+
+    const MASSIF_TXT: &str = "desc: test\ntime_unit: i\n#-----------\nsnapshot=0\n#-----------\n\
+time=0\nmem_heap_B=1000000\nmem_heap_extra_B=0\nmem_stacks_B=0\nheap_tree=empty\n\
+#-----------\nsnapshot=1\n#-----------\ntime=500\nmem_heap_B=7000000\nmem_heap_extra_B=0\n\
+mem_stacks_B=0\nheap_tree=empty\n";
+
+    #[test]
+    fn test_parse_massif_results_reflects_real_file_content() {
+        // Regression (F54): the old parser ignored file content entirely and
+        // always returned a hardcoded 50 MiB peak / four-point timeline.
+        let dir = ScratchDir::new("massif");
+        let path = dir.path().join("massifreport.txt");
+        fs::write(&path, MASSIF_TXT).expect("write fixture");
+
+        let result = parse_massif_results(&path).expect("parses real massif report");
+        assert_eq!(result.peak_memory, 7_000_000);
+        assert_eq!(
+            result.memorytimeline,
+            vec![(0, 1_000_000), (500, 7_000_000)]
+        );
+    }
+
+    #[test]
+    fn test_parse_massif_results_rejects_garbage_file() {
+        let dir = ScratchDir::new("massif_garbage");
+        let path = dir.path().join("massifreport.txt");
+        fs::write(&path, "not a massif report").expect("write fixture");
+
+        assert!(parse_massif_results(&path).is_err());
+    }
+
+    const HEAPTRACK_TXT: &str = "calls to allocation functions: 777 (1.0/s)\n\
+peak heap memory consumption: 9.00M\n\
+\n5 allocations with 1.00K (1.0%) total leaked in some_fn:\n    some_fn\n    at file.c:1\n";
+
+    #[test]
+    fn test_parse_heaptrack_results_reflects_real_file_content() {
+        // Regression (F54): the old parser always returned 15420 allocations
+        // and one fixed 1024-byte leak record no matter what the file said.
+        let dir = ScratchDir::new("heaptrack");
+        let path = dir.path().join("heaptrack_analysis.txt");
+        fs::write(&path, HEAPTRACK_TXT).expect("write fixture");
+
+        let result = parse_heaptrack_results(&path).expect("parses real heaptrack report");
+        assert_eq!(result.total_allocations, 777);
+        assert_eq!(result.peak_memory, 9 * 1024 * 1024);
+        assert_eq!(result.leaked_allocations.len(), 1);
+        assert_eq!(result.leaked_allocations[0].size, 1024);
+        assert_eq!(result.leaked_allocations[0].allocation_time, 0);
+    }
+
+    #[test]
+    fn test_parse_heaptrack_results_rejects_garbage_file() {
+        let dir = ScratchDir::new("heaptrack_garbage");
+        let path = dir.path().join("heaptrack_analysis.txt");
+        fs::write(&path, "not a heaptrack report").expect("write fixture");
+
+        assert!(parse_heaptrack_results(&path).is_err());
+    }
+
+    #[test]
+    fn test_heaptrack_leak_with_unmeasured_time_has_zero_rate_not_infinity() {
+        // Regression: allocation_time == 0 ("not measured") must not divide
+        // by zero when detect_memory_leaks computes leak_rate_bytes_per_second.
+        let results = MemoryAnalysisResults {
+            valgrind_results: None,
+            massif_results: None,
+            heaptrack_results: Some(HeaptrackResults {
+                total_allocations: 1,
+                peak_memory: 0,
+                leaked_allocations: vec![LeakedAllocation {
+                    size: 2_000_000, // large enough to clear the severity threshold
+                    call_stack: vec!["some_fn".to_string()],
+                    allocation_time: 0,
+                }],
+            }),
+            custom_profiler_results: None,
+            macos_leaks_results: None,
+        };
+        let leaks = detect_memory_leaks(&results, 0.0, 0.0).expect("detects leaks");
+        assert_eq!(leaks.len(), 1);
+        assert!(leaks[0].leak_rate_bytes_per_second.is_finite());
+        assert_eq!(leaks[0].leak_rate_bytes_per_second, 0.0);
+    }
+
+    #[test]
+    fn test_parse_custom_profiler_results_reflects_real_file_content() {
+        // The old parser discarded the parsed JSON entirely and returned a
+        // fixed four-point timeline / one fixed pattern regardless of content.
+        let dir = ScratchDir::new("custom_profiler");
+        let path = dir.path().join("memory_profile.json");
+        fs::write(
+            &path,
+            r#"{
+                "memory_timeline": [[0, 111], [10, 222]],
+                "allocation_patterns": [
+                    {"pattern_type": "burst", "frequency_hz": 2.5,
+                     "size_distribution": {"64": 9, "128": 3}}
+                ],
+                "fragmentation_data": [[0, 0.01], [10, 0.02]]
+            }"#,
+        )
+        .expect("write fixture");
+
+        let result = parse_custom_profiler_results(&path).expect("parses real profiler json");
+        assert_eq!(result.memorytimeline, vec![(0, 111), (10, 222)]);
+        assert_eq!(result.fragmentationdata, vec![(0, 0.01), (10, 0.02)]);
+        assert_eq!(result.allocation_patterns.len(), 1);
+        assert_eq!(result.allocation_patterns[0].pattern_type, "burst");
+        assert_eq!(result.allocation_patterns[0].frequency, 2.5);
+        assert_eq!(
+            result.allocation_patterns[0].size_distribution.get(&64),
+            Some(&9)
+        );
+    }
+
+    #[test]
+    fn test_parse_custom_profiler_results_empty_object_is_honestly_empty() {
+        // A syntactically valid but content-free report must not be padded
+        // out with invented samples.
+        let dir = ScratchDir::new("custom_profiler_empty");
+        let path = dir.path().join("memory_profile.json");
+        fs::write(&path, "{}").expect("write fixture");
+
+        let result = parse_custom_profiler_results(&path).expect("empty object still parses");
+        assert!(result.memorytimeline.is_empty());
+        assert!(result.allocation_patterns.is_empty());
+        assert!(result.fragmentationdata.is_empty());
+    }
+
+    #[test]
+    fn test_parse_custom_profiler_results_rejects_non_object_json() {
+        let dir = ScratchDir::new("custom_profiler_non_object");
+        let path = dir.path().join("memory_profile.json");
+        fs::write(&path, "[1, 2, 3]").expect("write fixture");
+
+        assert!(parse_custom_profiler_results(&path).is_err());
+    }
+
+    const MACOS_LEAKS_TXT: &str = "Process 4242: 50000 nodes malloced for 2048 KB\n\
+Process 4242: 2 leaks for 640 total leaked bytes.\n\n\
+Leak: 0x600001111111  size=512  zone: MALLOC_TINY  instance of 'Foo'\n\
+Leak: 0x600001111222  size=128  zone: MALLOC_TINY  instance of 'Bar'\n";
+
+    #[test]
+    fn test_parse_macos_leaks_results_reflects_real_file_content() {
+        // The old parser counted lines containing "leaks for" (not the
+        // reported number) and always returned two hardcoded descriptions.
+        let dir = ScratchDir::new("macos_leaks");
+        let path = dir.path().join("macos_leaks.txt");
+        fs::write(&path, MACOS_LEAKS_TXT).expect("write fixture");
+
+        let result = parse_macos_leaks_results(&path).expect("parses real leaks output");
+        assert_eq!(result.leak_count, 2);
+        assert_eq!(result.leaked_bytes, 640);
+        assert_eq!(result.leak_summaries.len(), 2);
+        assert!(result.leak_summaries[0].contains("size=512"));
+        assert!(result.leak_summaries[1].contains("size=128"));
+    }
+
+    #[test]
+    fn test_parse_macos_leaks_results_rejects_garbage_file() {
+        let dir = ScratchDir::new("macos_leaks_garbage");
+        let path = dir.path().join("macos_leaks.txt");
+        fs::write(&path, "not leaks output at all").expect("write fixture");
+
+        assert!(parse_macos_leaks_results(&path).is_err());
+    }
 }

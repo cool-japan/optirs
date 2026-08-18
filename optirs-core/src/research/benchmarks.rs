@@ -5,13 +5,11 @@
 
 #[allow(unused_imports)]
 use crate::error::Result;
-use crate::optimizers::*;
-use crate::research::experiments::{Experiment, ExperimentResult};
-use crate::unified_api::OptimizerConfig;
+use crate::unified_api::{OptimizerConfig, Parameter, UnifiedAdam, UnifiedOptimizer, UnifiedSGD};
 use chrono::{DateTime, Utc};
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::{Array1, Ix1, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
+use scirs2_core::random::Random;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -817,6 +815,159 @@ impl AcademicBenchmarkSuite {
     }
 }
 
+/// One real, runnable optimizer selected by name for a benchmark run.
+///
+/// [`UnifiedOptimizer::step_param`] is generic over the parameter's
+/// dimension type, which makes the trait itself object-unsafe (`dyn
+/// UnifiedOptimizer<A>` cannot exist); this small enum is the standard
+/// workaround, letting [`BenchmarkRunner`] pick an algorithm by name at
+/// runtime while still driving each one through its real implementation.
+enum ChosenOptimizer<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> {
+    Sgd(UnifiedSGD<A>),
+    Adam(UnifiedAdam<A>),
+}
+
+impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> ChosenOptimizer<A> {
+    fn step_param(&mut self, param: &mut Parameter<A, Ix1>) -> Result<()> {
+        match self {
+            ChosenOptimizer::Sgd(optimizer) => optimizer.step_param(param),
+            ChosenOptimizer::Adam(optimizer) => optimizer.step_param(param),
+        }
+    }
+}
+
+/// Select a concrete optimizer implementation by (case-insensitive)
+/// `optimizer_name`, defaulting to plain SGD for anything not recognized as
+/// Adam -- this only chooses *which* real optimizer, `optimizer_config`'s
+/// learning rate/weight decay/etc. are honored either way.
+fn select_optimizer<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync>(
+    optimizer_name: &str,
+    config: OptimizerConfig<A>,
+) -> ChosenOptimizer<A> {
+    if optimizer_name.to_lowercase().contains("adam") {
+        ChosenOptimizer::Adam(UnifiedAdam::new(config))
+    } else {
+        ChosenOptimizer::Sgd(UnifiedSGD::new(config))
+    }
+}
+
+/// Evaluate a benchmark objective's value and analytic gradient at `x`.
+///
+/// [`FunctionType::Rosenbrock`] and [`FunctionType::Sphere`] get their real,
+/// classic closed-form definitions. Every other function type (including
+/// [`FunctionType::Custom`]) falls back to the convex quadratic bowl `f(x) =
+/// 0.5||x||^2` -- an honest, clearly-documented stand-in for "no dedicated
+/// implementation yet" rather than fabricated random noise presented as an
+/// optimization result.
+fn evaluate_objective<A: Float>(function_type: &FunctionType, x: &[A]) -> (A, Vec<A>) {
+    match function_type {
+        FunctionType::Rosenbrock => {
+            let mut value = A::zero();
+            let mut grad = vec![A::zero(); x.len()];
+            let hundred = A::from(100.0).unwrap_or_else(A::one);
+            let two = A::from(2.0).unwrap_or_else(A::one);
+            let four = A::from(4.0).unwrap_or_else(A::one);
+
+            for i in 0..x.len().saturating_sub(1) {
+                let xi = x[i];
+                let xi1 = x[i + 1];
+                let t1 = xi1 - xi * xi;
+                let t2 = A::one() - xi;
+                value = value + hundred * t1 * t1 + t2 * t2;
+                grad[i] = grad[i] + (-four * hundred * xi * t1) - two * t2;
+                grad[i + 1] = grad[i + 1] + two * hundred * t1;
+            }
+
+            (value, grad)
+        }
+        FunctionType::Sphere => {
+            let two = A::from(2.0).unwrap_or_else(A::one);
+            let value = x.iter().fold(A::zero(), |acc, &xi| acc + xi * xi);
+            let grad = x.iter().map(|&xi| two * xi).collect();
+            (value, grad)
+        }
+        _ => {
+            let half = A::from(0.5).unwrap_or_else(A::one);
+            let value = x.iter().fold(A::zero(), |acc, &xi| acc + xi * xi) * half;
+            let grad = x.to_vec();
+            (value, grad)
+        }
+    }
+}
+
+/// 95% two-sided confidence interval for a sample mean, using the
+/// Student-t distribution (appropriate for the typically small sample
+/// sizes -- a handful of independent benchmark runs -- these statistics are
+/// computed over) rather than a large-sample normal approximation. Returns
+/// `(mean, mean)` when there is no defined interval (fewer than 2 samples,
+/// or zero variance).
+fn confidence_interval_95(n: usize, mean: f64, sample_std: f64) -> (f64, f64) {
+    if n < 2 || sample_std <= 0.0 {
+        return (mean, mean);
+    }
+
+    let df = (n - 1) as f64;
+    let t_critical = student_t_critical_value(df, 0.975);
+    let margin = t_critical * sample_std / (n as f64).sqrt();
+    (mean - margin, mean + margin)
+}
+
+/// The critical value `t` such that `P(T <= t) = quantile` for a Student-t
+/// distribution with `df` degrees of freedom, found by bisecting the real
+/// CDF from `scirs2_stats` (the same technique
+/// `ContinuousDistribution::ppf`'s default implementation uses; `StudentT`
+/// does not implement that trait, so this reimplements just the bisection).
+fn student_t_critical_value(df: f64, quantile: f64) -> f64 {
+    // z_0.975, used as a fallback if the distribution can't be built.
+    const Z_975: f64 = 1.959963985;
+
+    let Ok(dist) = scirs2_stats::distributions::t(df, 0.0_f64, 1.0_f64) else {
+        return Z_975;
+    };
+
+    // Low-df Student-t is heavy-tailed (df=1 is the Cauchy distribution,
+    // whose 97.5th percentile is ~12.7), so a fixed bracket is not always
+    // wide enough: double the upper bound until it truly brackets the
+    // target quantile before bisecting.
+    let mut low = 0.0_f64;
+    let mut high = 2.0_f64;
+    while dist.cdf(high) < quantile && high < 1e12 {
+        high *= 2.0;
+    }
+
+    for _ in 0..200 {
+        let mid = 0.5 * (low + high);
+        if dist.cdf(mid) < quantile {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    0.5 * (low + high)
+}
+
+/// Wilson score 95% confidence interval for a binomial proportion
+/// (`successes` out of `trials`) -- a standard closed-form interval that,
+/// unlike a normal approximation, stays within `[0, 1]` and remains
+/// well-behaved for the small sample counts and extreme (near 0 or 1)
+/// proportions typical of an optimizer's success rate.
+fn wilson_score_interval_95(successes: usize, trials: usize) -> (f64, f64) {
+    if trials == 0 {
+        return (0.0, 0.0);
+    }
+
+    const Z: f64 = 1.959963985; // z_0.975
+    let n = trials as f64;
+    let p_hat = successes as f64 / n;
+    let z_sq = Z * Z;
+
+    let denominator = 1.0 + z_sq / n;
+    let center = (p_hat + z_sq / (2.0 * n)) / denominator;
+    let margin = (Z * ((p_hat * (1.0 - p_hat) / n) + z_sq / (4.0 * n * n)).sqrt()) / denominator;
+
+    ((center - margin).max(0.0), (center + margin).min(1.0))
+}
+
 impl BenchmarkRunner {
     /// Create a new benchmark runner
     pub fn new(suite: AcademicBenchmarkSuite, settings: BenchmarkSettings) -> Self {
@@ -864,7 +1015,8 @@ impl BenchmarkRunner {
             };
 
             for benchmark in &self.suite.benchmarks {
-                let problem_results = self.run_single_problem::<A>(benchmark, optimizer_config)?;
+                let problem_results =
+                    self.run_single_problem::<A>(benchmark, optimizer_name, optimizer_config)?;
                 optimizer_results
                     .problem_results
                     .insert(benchmark.id.clone(), problem_results);
@@ -892,6 +1044,7 @@ impl BenchmarkRunner {
     >(
         &self,
         benchmark: &BenchmarkProblem,
+        optimizer_name: &str,
         optimizer_config: &OptimizerConfig<A>,
     ) -> Result<ProblemResults> {
         let mut run_results = Vec::new();
@@ -903,7 +1056,8 @@ impl BenchmarkRunner {
                 42 + run_idx as u64
             };
 
-            let run_result = self.run_single_instance::<A>(benchmark, optimizer_config, seed)?;
+            let run_result =
+                self.run_single_instance::<A>(benchmark, optimizer_name, optimizer_config, seed)?;
             run_results.push(run_result);
         }
 
@@ -921,33 +1075,62 @@ impl BenchmarkRunner {
         })
     }
 
+    /// Run `optimizer_name`/`optimizer_config` against `benchmark`'s real
+    /// objective function for real: this seeds a deterministic starting
+    /// point from `seed`, then repeatedly evaluates the objective's analytic
+    /// gradient at the current point and applies one real optimizer step
+    /// (via [`UnifiedSGD`]/[`UnifiedAdam`], selected by `optimizer_name`),
+    /// recording the true trajectory of objective values.
+    ///
+    /// Previously this ignored both `optimizer_config` and `seed` entirely
+    /// and returned a value drawn from a fixed, function-type-specific `Rng`
+    /// range -- so every optimizer "converged" identically regardless of its
+    /// hyperparameters, and repeated runs with different seeds were
+    /// indistinguishable.
     fn run_single_instance<
         A: Float + std::fmt::Debug + Send + Sync + scirs2_core::ndarray::ScalarOperand + 'static,
     >(
         &self,
         benchmark: &BenchmarkProblem,
+        optimizer_name: &str,
         optimizer_config: &OptimizerConfig<A>,
         seed: u64,
     ) -> Result<RunResult> {
-        // This is a simplified implementation
-        // In practice, you'd implement the actual optimization problems
-
         let run_id = uuid::Uuid::new_v4().to_string();
         let start_time = std::time::Instant::now();
 
-        // Simulate optimization run
-        let final_objective = match benchmark.objective_function.function_type {
-            FunctionType::Quadratic => self.simulate_quadratic_optimization(seed),
-            FunctionType::Rosenbrock => self.simulate_rosenbrock_optimization(seed),
-            _ => self.simulate_generic_optimization(seed),
-        };
+        let dim = benchmark.dimensions.first().copied().unwrap_or(10).max(1);
+        let iterations = std::cmp::min(1000, self.settings.max_iterations).max(1);
 
+        let mut rng = Random::seed(seed);
+        let initial: Vec<A> = (0..dim)
+            .map(|_| A::from(rng.gen_range(-2.0_f64..2.0)).unwrap_or_else(A::zero))
+            .collect();
+
+        let mut param = Parameter::new(Array1::from_vec(initial), "x".to_string());
+        let mut optimizer = select_optimizer(optimizer_name, optimizer_config.clone());
+
+        let mut trajectory = Vec::with_capacity(iterations + 1);
+
+        for _ in 0..iterations {
+            let x: Vec<A> = param.data.iter().copied().collect();
+            let (value, grad) = evaluate_objective(&benchmark.objective_function.function_type, &x);
+            trajectory.push(value.to_f64().unwrap_or(f64::NAN));
+
+            param.set_grad(Array1::from_vec(grad));
+            optimizer.step_param(&mut param)?;
+        }
+
+        // Score the point the optimizer actually finished on.
+        let x: Vec<A> = param.data.iter().copied().collect();
+        let (final_objective_a, _) =
+            evaluate_objective(&benchmark.objective_function.function_type, &x);
+        trajectory.push(final_objective_a.to_f64().unwrap_or(f64::NAN));
+
+        let final_objective = final_objective_a.to_f64().unwrap_or(f64::INFINITY);
         let execution_time = start_time.elapsed().as_secs_f64();
-        let iterations = std::cmp::min(1000, self.settings.max_iterations);
-        let converged = final_objective < self.settings.convergence_tolerance;
-
-        // Generate synthetic trajectory
-        let trajectory = self.generate_synthetic_trajectory(final_objective, iterations);
+        let converged =
+            final_objective.is_finite() && final_objective < self.settings.convergence_tolerance;
 
         Ok(RunResult {
             run_id,
@@ -956,46 +1139,12 @@ impl BenchmarkRunner {
             converged,
             iterations,
             execution_time,
-            function_evaluations: iterations,
+            function_evaluations: iterations + 1,
             gradient_evaluations: iterations,
-            memory_usage: 1024 * 1024, // 1MB default
+            memory_usage: dim * std::mem::size_of::<f64>() * 4,
             trajectory,
             error_info: None,
         })
-    }
-
-    fn simulate_quadratic_optimization(&self, seed: u64) -> f64 {
-        use scirs2_core::random::{Random, Rng};
-
-        let mut rng = Random::default();
-        rng.gen_range(1e-8..1e-4) // Simulate good convergence for quadratic
-    }
-
-    fn simulate_rosenbrock_optimization(&self, seed: u64) -> f64 {
-        use scirs2_core::random::{Random, Rng};
-
-        let mut rng = Random::default();
-        rng.gen_range(1e-6..1e-2) // Simulate moderate convergence for Rosenbrock
-    }
-
-    fn simulate_generic_optimization(&self, seed: u64) -> f64 {
-        use scirs2_core::random::{Random, Rng};
-
-        let mut rng = Random::default();
-        rng.gen_range(1e-5..1e-1) // Generic optimization results
-    }
-
-    fn generate_synthetic_trajectory(&self, final_value: f64, iterations: usize) -> Vec<f64> {
-        let mut trajectory = Vec::with_capacity(iterations);
-        let initial_value = final_value * 1000.0; // Start 1000x higher
-
-        for i in 0..iterations {
-            let progress = i as f64 / iterations as f64;
-            let _value = initial_value * (1.0 - progress).powi(2) + final_value * progress;
-            trajectory.push(_value);
-        }
-
-        trajectory
     }
 
     fn calculate_aggregated_metrics(&self, run_results: &[RunResult]) -> HashMap<String, f64> {
@@ -1011,7 +1160,7 @@ impl BenchmarkRunner {
             );
 
             let mut sorted_objectives = final_objectives.clone();
-            sorted_objectives.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
+            sorted_objectives.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             metrics.insert(
                 "median_final_objective".to_string(),
                 sorted_objectives[sorted_objectives.len() / 2],
@@ -1059,15 +1208,24 @@ impl BenchmarkRunner {
         let objectives: Vec<f64> = run_results.iter().map(|r| r.final_objective).collect();
         let mean_objective = objectives.iter().sum::<f64>() / objectives.len() as f64;
 
-        let variance = objectives
-            .iter()
-            .map(|&x| (x - mean_objective).powi(2))
-            .sum::<f64>()
-            / objectives.len() as f64;
+        // Sample variance (Bessel's correction, divide by n-1): these
+        // `objectives` are a *sample* of independent runs used to infer the
+        // variability of the underlying optimizer/problem, which is exactly
+        // the setting the n-1 correction is for. n=1 has no defined sample
+        // variance (would divide by zero), so it is reported as 0.
+        let variance = if objectives.len() > 1 {
+            objectives
+                .iter()
+                .map(|&x| (x - mean_objective).powi(2))
+                .sum::<f64>()
+                / (objectives.len() - 1) as f64
+        } else {
+            0.0
+        };
         let std_objective = variance.sqrt();
 
         let mut sorted_objectives = objectives.clone();
-        sorted_objectives.sort_by(|a, b| a.partial_cmp(b).expect("unwrap failed"));
+        sorted_objectives.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let best_objective = sorted_objectives[0];
         let worst_objective = sorted_objectives[sorted_objectives.len() - 1];
@@ -1081,6 +1239,16 @@ impl BenchmarkRunner {
             sorted_objectives[q3_idx],
         );
 
+        let mut confidence_intervals = HashMap::new();
+        confidence_intervals.insert(
+            "mean_objective_95".to_string(),
+            confidence_interval_95(objectives.len(), mean_objective, std_objective),
+        );
+        confidence_intervals.insert(
+            "success_rate_95".to_string(),
+            wilson_score_interval_95(successful_runs, total_runs),
+        );
+
         ResultStatistics {
             successful_runs,
             total_runs,
@@ -1091,7 +1259,7 @@ impl BenchmarkRunner {
             worst_objective,
             median_objective,
             quartiles,
-            confidence_intervals: HashMap::new(), // Would calculate 95% CI, etc.
+            confidence_intervals,
         }
     }
 
@@ -1134,11 +1302,21 @@ impl BenchmarkRunner {
         let mut total_weight = 0.0;
 
         for metric in &self.suite.metrics {
+            // `EvaluationMetric::name` is a free-form display string (e.g.
+            // "Final Objective Value") that never matches the fixed keys
+            // `calculate_aggregated_metrics` actually inserts (e.g.
+            // "mean_final_objective") -- go through the metric *type*
+            // instead, which is the field `calculate_aggregated_metrics`'s
+            // keys were really chosen to represent.
+            let Some(key) = aggregated_metric_key(&metric.metric_type) else {
+                continue;
+            };
+
             let mut metric_score = 0.0;
             let mut metric_count = 0;
 
             for problem_result in results.problem_results.values() {
-                if let Some(&value) = problem_result.aggregated_metrics.get(&metric.name) {
+                if let Some(&value) = problem_result.aggregated_metrics.get(key) {
                     let normalized_score = match metric.better_direction {
                         BetterDirection::Lower => 1.0 / (1.0 + value),
                         BetterDirection::Higher => value,
@@ -1178,7 +1356,7 @@ impl BenchmarkRunner {
             })
             .collect();
 
-        optimizer_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
+        optimizer_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         for (rank, (optimizer_name, score)) in optimizer_scores.iter().enumerate() {
             if let Some(results) = all_results.get_mut(optimizer_name) {
@@ -1187,8 +1365,79 @@ impl BenchmarkRunner {
             }
         }
 
-        // Statistical tests would be implemented here
-        // For now, we'll skip detailed statistical analysis
+        // Pairwise two-sample Kolmogorov-Smirnov test between each pair of
+        // optimizers' pooled final-objective values (across all
+        // problems/runs), so `statistical_tests` reflects a real comparison
+        // instead of never being populated.
+        let pooled_objectives: HashMap<String, Vec<f64>> = all_results
+            .iter()
+            .map(|(name, results)| {
+                let values: Vec<f64> = results
+                    .problem_results
+                    .values()
+                    .flat_map(|p| p.run_results.iter().map(|r| r.final_objective))
+                    .filter(|v| v.is_finite())
+                    .collect();
+                (name.clone(), values)
+            })
+            .collect();
+
+        let names: Vec<String> = optimizer_scores.into_iter().map(|(name, _)| name).collect();
+        for i in 0..names.len() {
+            for j in (i + 1)..names.len() {
+                let (name_a, name_b) = (&names[i], &names[j]);
+                let (Some(values_a), Some(values_b)) =
+                    (pooled_objectives.get(name_a), pooled_objectives.get(name_b))
+                else {
+                    continue;
+                };
+                if values_a.len() < 2 || values_b.len() < 2 {
+                    continue;
+                }
+
+                let array_a = Array1::from_vec(values_a.clone());
+                let array_b = Array1::from_vec(values_b.clone());
+                let Ok((statistic, p_value)) =
+                    scirs2_stats::ks_2samp(&array_a.view(), &array_b.view(), "two-sided")
+                else {
+                    continue;
+                };
+
+                const SIGNIFICANCE_LEVEL: f64 = 0.05;
+                let test = StatisticalTest {
+                    test_name: "Kolmogorov-Smirnov (two-sample)".to_string(),
+                    optimizers: vec![name_a.clone(), name_b.clone()],
+                    test_statistic: statistic,
+                    p_value,
+                    significance_level: SIGNIFICANCE_LEVEL,
+                    significant: p_value < SIGNIFICANCE_LEVEL,
+                    effect_size: None,
+                };
+
+                if let Some(results) = all_results.get_mut(name_a) {
+                    results.statistical_tests.push(test.clone());
+                }
+                if let Some(results) = all_results.get_mut(name_b) {
+                    results.statistical_tests.push(test);
+                }
+            }
+        }
+    }
+}
+
+/// Map a benchmark metric's declared type to the key
+/// [`BenchmarkRunner::calculate_aggregated_metrics`] actually stores it
+/// under. `EvaluationMetric::name` is a free-form display string (e.g.
+/// "Final Objective Value") that does not match those keys (e.g.
+/// "mean_final_objective"); metric types not produced by
+/// `calculate_aggregated_metrics` are not scored (`None`) rather than
+/// silently, permanently failing to match anything.
+fn aggregated_metric_key(metric_type: &MetricType) -> Option<&'static str> {
+    match metric_type {
+        MetricType::FinalObjective => Some("mean_final_objective"),
+        MetricType::TimeToConvergence => Some("mean_execution_time"),
+        MetricType::SuccessRate => Some("success_rate"),
+        _ => None,
     }
 }
 
@@ -1227,7 +1476,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "timeout"]
     fn test_benchmark_suite_creation() {
         let suite = AcademicBenchmarkSuite::standard_ml_suite();
 
@@ -1237,7 +1485,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "timeout"]
     fn test_benchmark_problem_creation() {
         let problem = AcademicBenchmarkSuite::create_quadratic_problem();
 
@@ -1248,12 +1495,250 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "timeout"]
     fn test_benchmark_settings() {
         let settings = BenchmarkSettings::default();
 
         assert_eq!(settings.num_runs, 10);
         assert_eq!(settings.max_iterations, 1000);
         assert!(settings.parallel_execution);
+    }
+
+    fn make_runner(num_runs: usize, max_iterations: usize) -> BenchmarkRunner {
+        let suite = AcademicBenchmarkSuite::new("Test Suite");
+        let settings = BenchmarkSettings {
+            num_runs,
+            random_seeds: Vec::new(),
+            max_iterations,
+            max_time_seconds: 30.0,
+            convergence_tolerance: 1e-6,
+            parallel_execution: false,
+            num_threads: None,
+            save_detailed_results: false,
+            output_directory: None,
+        };
+        BenchmarkRunner::new(suite, settings)
+    }
+
+    // Regression tests for F19: `run_single_instance` used to ignore both
+    // `optimizer_config` and `seed` entirely, drawing the "final objective"
+    // from a fixed `Rng` range keyed only on the problem's `FunctionType`.
+
+    #[test]
+    fn test_run_single_instance_is_deterministic_given_a_seed() {
+        let runner = make_runner(1, 50);
+        let problem = AcademicBenchmarkSuite::create_quadratic_problem();
+        let config: OptimizerConfig<f64> = OptimizerConfig::new(0.1);
+
+        let run_a = runner
+            .run_single_instance::<f64>(&problem, "sgd", &config, 7)
+            .expect("run should succeed");
+        let run_b = runner
+            .run_single_instance::<f64>(&problem, "sgd", &config, 7)
+            .expect("run should succeed");
+
+        assert_eq!(run_a.final_objective, run_b.final_objective);
+        assert_eq!(run_a.trajectory, run_b.trajectory);
+    }
+
+    #[test]
+    fn test_run_single_instance_respects_optimizer_config() {
+        let runner = make_runner(1, 30);
+        let problem = AcademicBenchmarkSuite::create_quadratic_problem();
+
+        let stable_config: OptimizerConfig<f64> = OptimizerConfig::new(0.01);
+        // Far past the stability limit for gradient descent on a unit
+        // quadratic (which requires lr < 2.0): must diverge.
+        let unstable_config: OptimizerConfig<f64> = OptimizerConfig::new(50.0);
+
+        let stable = runner
+            .run_single_instance::<f64>(&problem, "sgd", &stable_config, 1)
+            .expect("run should succeed");
+        let unstable = runner
+            .run_single_instance::<f64>(&problem, "sgd", &unstable_config, 1)
+            .expect("run should succeed");
+
+        assert!(stable.final_objective.is_finite());
+        assert!(
+            unstable.final_objective > stable.final_objective,
+            "an unstable learning rate must not converge as well as a stable one \
+             (stable={}, unstable={}) -- the config must actually be used",
+            stable.final_objective,
+            unstable.final_objective
+        );
+    }
+
+    #[test]
+    fn test_run_single_instance_uses_the_seed_for_the_initial_point() {
+        let runner = make_runner(1, 5);
+        let problem = AcademicBenchmarkSuite::create_quadratic_problem();
+        let config: OptimizerConfig<f64> = OptimizerConfig::new(0.01);
+
+        let run_a = runner
+            .run_single_instance::<f64>(&problem, "sgd", &config, 1)
+            .expect("run should succeed");
+        let run_b = runner
+            .run_single_instance::<f64>(&problem, "sgd", &config, 2)
+            .expect("run should succeed");
+
+        // trajectory[0] is the objective at the seed-derived initial point,
+        // before any optimizer step.
+        assert_ne!(
+            run_a.trajectory[0], run_b.trajectory[0],
+            "different seeds must produce different starting points"
+        );
+    }
+
+    #[test]
+    fn test_select_optimizer_dispatches_by_name() {
+        let config: OptimizerConfig<f64> = OptimizerConfig::new(0.1);
+        assert!(matches!(
+            select_optimizer("Adam", config.clone()),
+            ChosenOptimizer::Adam(_)
+        ));
+        assert!(matches!(
+            select_optimizer("adamw", config.clone()),
+            ChosenOptimizer::Adam(_)
+        ));
+        assert!(matches!(
+            select_optimizer("sgd", config.clone()),
+            ChosenOptimizer::Sgd(_)
+        ));
+        assert!(matches!(
+            select_optimizer("unknown", config),
+            ChosenOptimizer::Sgd(_)
+        ));
+    }
+
+    // Regression test for F20: `EvaluationMetric::name` display strings
+    // never matched `calculate_aggregated_metrics`'s fixed keys, so
+    // `overall_score` was never populated and every optimizer's
+    // `overall_rank` stayed at its default of 0.
+    #[test]
+    fn test_run_benchmarks_produces_nonzero_distinct_ranks() {
+        let mut suite = AcademicBenchmarkSuite::new("Ranking Test Suite");
+        suite.add_benchmark(AcademicBenchmarkSuite::create_quadratic_problem());
+        suite.add_metric(AcademicBenchmarkSuite::create_final_objective_metric());
+        suite.add_metric(AcademicBenchmarkSuite::create_convergence_time_metric());
+        suite.add_metric(AcademicBenchmarkSuite::create_success_rate_metric());
+
+        let settings = BenchmarkSettings {
+            num_runs: 3,
+            random_seeds: Vec::new(),
+            max_iterations: 20,
+            max_time_seconds: 30.0,
+            convergence_tolerance: 1e-6,
+            parallel_execution: false,
+            num_threads: None,
+            save_detailed_results: false,
+            output_directory: None,
+        };
+        let runner = BenchmarkRunner::new(suite, settings);
+
+        let optimizers: Vec<(&str, OptimizerConfig<f64>)> = vec![
+            ("good_sgd", OptimizerConfig::new(0.1)),
+            ("bad_sgd", OptimizerConfig::new(50.0)),
+        ];
+
+        let results = runner
+            .run_benchmarks::<f64>(&optimizers)
+            .expect("benchmarks should run");
+
+        let good = &results["good_sgd"];
+        let bad = &results["bad_sgd"];
+
+        assert_ne!(
+            good.ranking.overall_rank, 0,
+            "rank must not stay at the default 0"
+        );
+        assert_ne!(
+            bad.ranking.overall_rank, 0,
+            "rank must not stay at the default 0"
+        );
+        assert_ne!(good.ranking.overall_rank, bad.ranking.overall_rank);
+        assert!(good.overall_scores.contains_key("overall_score"));
+        assert_eq!(
+            good.ranking.overall_rank, 1,
+            "the well-tuned optimizer should outrank the divergent one"
+        );
+    }
+
+    fn make_run_result(final_objective: f64) -> RunResult {
+        RunResult {
+            run_id: uuid::Uuid::new_v4().to_string(),
+            random_seed: 0,
+            final_objective,
+            converged: final_objective < 1.0,
+            iterations: 10,
+            execution_time: 0.001,
+            function_evaluations: 10,
+            gradient_evaluations: 10,
+            memory_usage: 0,
+            trajectory: vec![final_objective],
+            error_info: None,
+        }
+    }
+
+    // Regression tests for F90: `confidence_intervals` was always an empty
+    // map, and `std_objective` used the population-variance denominator `n`
+    // instead of the sample-variance denominator `n-1` appropriate for a
+    // sample of independent runs.
+    #[test]
+    fn test_calculate_statistics_reports_real_confidence_intervals_and_sample_std() {
+        let runner = make_runner(1, 1);
+        let run_results = vec![
+            make_run_result(1.0),
+            make_run_result(2.0),
+            make_run_result(3.0),
+            make_run_result(4.0),
+            make_run_result(5.0),
+        ];
+
+        let stats = runner.calculate_statistics(&run_results);
+
+        // Sample std (n-1 denominator) of [1,2,3,4,5] is sqrt(2.5); the
+        // population std (n denominator) would be sqrt(2.0) instead.
+        assert!(
+            (stats.std_objective - 2.5_f64.sqrt()).abs() < 1e-9,
+            "expected sample std sqrt(2.5) ~= {:.4}, got {}",
+            2.5_f64.sqrt(),
+            stats.std_objective
+        );
+
+        assert!(!stats.confidence_intervals.is_empty());
+        let (lower, upper) = stats.confidence_intervals["mean_objective_95"];
+        assert!(lower < stats.mean_objective && stats.mean_objective < upper);
+        let (rate_lower, rate_upper) = stats.confidence_intervals["success_rate_95"];
+        assert!((0.0..=1.0).contains(&rate_lower));
+        assert!((0.0..=1.0).contains(&rate_upper));
+    }
+
+    #[test]
+    fn test_student_t_critical_value_matches_known_table_value() {
+        // t_{0.975, df=1} is a well-known tabulated constant (~12.706).
+        let t = student_t_critical_value(1.0, 0.975);
+        assert!((t - 12.706).abs() < 0.01, "expected ~12.706, got {t}");
+    }
+
+    #[test]
+    fn test_wilson_score_interval_stays_within_unit_bounds() {
+        let (lower, upper) = wilson_score_interval_95(8, 10);
+        assert!((0.0..=1.0).contains(&lower));
+        assert!((0.0..=1.0).contains(&upper));
+        assert!(lower < 0.8 && upper > 0.8);
+    }
+
+    #[test]
+    fn test_calculate_statistics_sort_does_not_panic_on_nan() {
+        // Regression for the reachable NaN-panic half of F83/F90: a
+        // divergent run can legitimately produce a non-finite objective.
+        let runner = make_runner(1, 1);
+        let run_results = vec![
+            make_run_result(1.0),
+            make_run_result(f64::NAN),
+            make_run_result(2.0),
+        ];
+
+        let stats = runner.calculate_statistics(&run_results);
+        assert_eq!(stats.total_runs, 3);
     }
 }

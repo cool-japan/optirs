@@ -1,20 +1,11 @@
 // Synchronization Module
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
-pub mod barriers;
 pub mod clocks;
-pub mod config;
 pub mod consensus;
-pub mod core;
 pub mod deadlock;
 pub mod events;
-
-pub use barriers::*;
-pub use config::*;
-pub use core::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BarrierId(pub u64);

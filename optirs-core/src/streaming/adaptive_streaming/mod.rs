@@ -3,13 +3,32 @@
 // This module provides comprehensive adaptive streaming optimization for ML workloads.
 
 pub mod anomaly_detection;
+pub mod anomaly_ensemble;
+pub mod anomaly_ml;
+pub mod anomaly_scoring;
+pub mod anomaly_statistical;
 pub mod buffering;
 pub mod config;
 pub mod drift_detection;
+pub mod drift_models;
+pub mod drift_tests;
+pub mod meta_bandit;
 pub mod meta_learning;
+pub mod meta_transfer;
 pub mod optimizer;
 pub mod performance;
 pub mod resource_management;
+pub mod statistics;
+
+#[cfg(test)]
+mod config_wiring_tests;
+
+// NOTE: `anomaly_ensemble`, `anomaly_ml`, `anomaly_scoring`,
+// `anomaly_statistical`, `drift_models`, `drift_tests`, `meta_bandit` and
+// `statistics` are deliberately NOT glob-re-exported. The glob exports below
+// already collide across modules (see the aliased re-exports further down), and
+// adding more globs would reintroduce ambiguous names for every downstream
+// consumer. Reach for them through their module path instead.
 
 // Selective exports to avoid import conflicts
 pub use buffering::*;
@@ -28,11 +47,10 @@ pub use anomaly_detection::{
     EffectivenessMetrics, EnsembleAnomalyDetector, EnsembleConfig, EnsembleVotingStrategy,
     EscalationCondition, EscalationRule, FPMitigationStrategy, FPRateCalculator,
     FalsePositiveEvent, FalsePositivePatterns, FalsePositiveTracker as AnomalyDetectionFPTracker,
-    MLModelMetrics, OutcomeMeasurement, PendingResponse, ResponseAction,
-    ResponseEffectivenessTracker, ResponseExecution, ResponseExecutor, ResponseOutcome,
-    ResponsePriority, ResponseResourceLimits, TemporalPattern, TemporalPatternType,
-    ThresholdAdaptationParams, ThresholdAdaptationStrategy, ThresholdPerformanceFeedback,
-    TrendAnalysis, TrendDirection,
+    MLModelMetrics, OutcomeMeasurement, PendingResponse, ResponseAction, ResponseExecution,
+    ResponseExecutor, ResponseOutcome, ResponsePriority, ResponseResourceLimits, TemporalPattern,
+    TemporalPatternType, ThresholdAdaptationParams, ThresholdAdaptationStrategy,
+    ThresholdPerformanceFeedback, TrendAnalysis, TrendDirection,
 };
 
 // Drift detection module exports
@@ -66,14 +84,16 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray::Data<Elem = A>
-        + scirs2_core::ndarray::Dimension
-        + Send
-        + Sync
-        + 'static,
+    // `Data` is ndarray's *storage* trait, not a dimension trait: no type
+    // implements both it and `Dimension`, so this bound was unsatisfiable and
+    // neither factory could ever be instantiated by any caller.
+    D: scirs2_core::ndarray::Dimension + Send + Sync + 'static,
 {
     let config = StreamingConfig::default();
-    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).expect("unwrap failed")); // Default learning rate
+    let default_learning_rate = A::from(DEFAULT_LEARNING_RATE).ok_or_else(|| {
+        format!("element type cannot represent the default learning rate {DEFAULT_LEARNING_RATE}")
+    })?;
+    let base_optimizer = crate::optimizers::Adam::new(default_learning_rate);
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)
 }
 
@@ -91,15 +111,21 @@ where
         + std::iter::Sum
         + std::fmt::Debug
         + std::ops::DivAssign,
-    D: scirs2_core::ndarray::Data<Elem = A>
-        + scirs2_core::ndarray::Dimension
-        + Send
-        + Sync
-        + 'static,
+    // `Data` is ndarray's *storage* trait, not a dimension trait: no type
+    // implements both it and `Dimension`, so this bound was unsatisfiable and
+    // neither factory could ever be instantiated by any caller.
+    D: scirs2_core::ndarray::Dimension + Send + Sync + 'static,
 {
-    let base_optimizer = crate::optimizers::Adam::new(A::from(0.001).expect("unwrap failed")); // Default learning rate
+    let default_learning_rate = A::from(DEFAULT_LEARNING_RATE).ok_or_else(|| {
+        format!("element type cannot represent the default learning rate {DEFAULT_LEARNING_RATE}")
+    })?;
+    let base_optimizer = crate::optimizers::Adam::new(default_learning_rate);
     Ok(AdaptiveStreamingOptimizer::new(base_optimizer, config)?)
 }
+
+/// Learning rate used by the convenience constructors above when the caller
+/// does not supply one.
+pub const DEFAULT_LEARNING_RATE: f64 = 0.001;
 
 // Result type alias
 pub type StreamingResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

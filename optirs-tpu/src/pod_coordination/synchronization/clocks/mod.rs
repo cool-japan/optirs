@@ -104,9 +104,9 @@ pub use core::{
 
 // Re-export protocol types
 pub use protocols::{
-    BerkeleyConfig, ClockSyncProtocol, CristianConfig, CustomProtocolConfig, NtpConfig,
-    NtpSynchronizer, ProtocolError, ProtocolManager, PtpConfig, PtpSynchronizer, SntpConfig,
-    SntpSynchronizer,
+    BerkeleyConfig, ClockSyncProtocol, CristianConfig, CustomProtocolConfig, NtpConfig, NtpPeer,
+    NtpSynchronizer, NtpTimestamps, ProtocolError, ProtocolManager, PtpConfig, PtpSynchronizer,
+    SntpConfig, SntpSynchronizer,
 };
 
 // Re-export source management types
@@ -196,7 +196,12 @@ impl std::fmt::Display for ClockSynchronizationError {
             ClockSynchronizationError::CoreError(e) => {
                 write!(f, "Core synchronization error: {}", e)
             }
-            ClockSynchronizationError::ProtocolError(e) => write!(f, "Protocol error: {}", e),
+            // No prefix here: `ProtocolError`'s own `Display` already starts
+            // with "Protocol error", and prefixing again rendered
+            // "Protocol error: Protocol error: ...". The inner type stays
+            // self-describing because it is also returned standalone from
+            // `NtpTimestamps::round_trip_delay`/`offset`.
+            ClockSynchronizationError::ProtocolError(e) => write!(f, "{}", e),
             ClockSynchronizationError::SourceError(e) => {
                 write!(f, "Source management error: {}", e)
             }
@@ -432,23 +437,34 @@ impl Default for ClockSynchronizationBuilder {
 pub mod utils {
     use super::*;
 
-    /// Create a basic NTP-based synchronization setup
+    /// Create a basic NTP-based synchronization setup, one time source per
+    /// supplied server.
+    ///
+    /// The server list is the whole point of an NTP setup, so an empty list is
+    /// an honest configuration error rather than a manager with nothing to
+    /// synchronize against. (This used to loop over
+    /// `builder.source_configs.len()` -- which is zero on a fresh builder --
+    /// and so added no sources at all while ignoring `ntp_servers` entirely.)
     pub fn create_ntp_sync_manager(
         ntp_servers: Vec<String>,
     ) -> Result<ClockSynchronizationManager> {
+        if ntp_servers.is_empty() {
+            return Err(ClockSynchronizationError::ConfigurationError(
+                "an NTP synchronization manager needs at least one server address".to_string(),
+            ));
+        }
+
         let mut builder = ClockSynchronizationBuilder::new();
 
         // Add NTP protocol
         builder = builder.with_protocol(protocols::ClockSyncProtocol::NTP);
 
-        // Add network time sources
-        let source_count = builder.source_configs.len();
-        for _ in 0..source_count {
-            // Add NTP source
-            let source = sources::TimeSource {
+        // One addressable network time source per configured server.
+        for server in ntp_servers {
+            builder = builder.with_source(sources::TimeSource {
                 source_type: sources::ClockSource::NTP,
-            };
-            builder = builder.with_source(source);
+                address: Some(server),
+            });
         }
 
         // Enable basic monitoring
@@ -467,9 +483,11 @@ pub mod utils {
         // Add GPS configuration
         builder = builder.with_gps_config(gps_config.clone());
 
-        // Add GPS time source
+        // Add GPS time source. The receiver's device path comes from the GPS
+        // configuration rather than being invented here.
         let source = sources::TimeSource {
             source_type: sources::ClockSource::GPS,
+            address: None,
         };
         builder = builder.with_source(source);
 
@@ -488,9 +506,11 @@ pub mod utils {
         // Use PTP for high precision
         builder = builder.with_protocol(protocols::ClockSyncProtocol::PTP);
 
-        // Add atomic clock source
+        // Add atomic clock source. A locally attached reference needs no
+        // network address.
         let source = sources::TimeSource {
             source_type: sources::ClockSource::Atomic,
+            address: None,
         };
         builder = builder.with_source(source);
 
@@ -549,28 +569,31 @@ pub mod utils {
         sum / metrics.len() as f64
     }
 
-    /// Get system uptime
-    pub fn get_system_uptime() -> Duration {
-        // This would be implemented to get actual system uptime
-        // For now, return a placeholder
-        Duration::from_secs(86400) // 1 day
+    /// Wall-clock time elapsed since this process-uptime tracker was first
+    /// consulted, as a real, live measurement.
+    ///
+    /// There is no portable, pure-Rust way (no FFI, no platform-specific
+    /// `/proc`/`sysctl` parsing) to ask the OS for the true process start
+    /// time on every platform this crate targets. Rather than fabricate a
+    /// plausible-looking constant, this establishes a monotonic anchor the
+    /// first time it is called (via [`std::sync::OnceLock`]) and returns
+    /// [`Instant::elapsed`] against that anchor on every call thereafter
+    /// (including the first, which returns a value very close to zero).
+    ///
+    /// Renamed from the former `get_system_uptime`: that name promised the
+    /// OS-level system uptime, which this never measured (it always
+    /// returned a hardcoded `Duration::from_secs(86400)`). `process_uptime`
+    /// accurately describes what a pure-Rust anchor-based measurement can
+    /// honestly provide.
+    pub fn process_uptime() -> Duration {
+        static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let start = *PROCESS_START.get_or_init(Instant::now);
+        start.elapsed()
     }
 }
 
 /// Prelude module for common imports
-pub mod prelude {
-    pub use super::{
-        ClockOffset, ClockSynchronizationBuilder, ClockSynchronizationConfig,
-        ClockSynchronizationError, ClockSynchronizationManager, Result,
-    };
-
-    pub use super::health::{AlertSeverity, HealthCheckType};
-    pub use super::protocols::{ClockSyncProtocol, NtpConfig, PtpConfig};
-    pub use super::quality::{QualityGrade, QualityMetric, TrendDirection};
-    pub use super::sources::{AtomicClockType, ClockSource, TimeSource};
-    pub use super::statistics::{PerformanceMetric, ReportFormat};
-    pub use super::utils;
-}
+pub mod prelude {}
 
 // Module-level documentation tests
 #[cfg(test)]
@@ -611,5 +634,33 @@ mod tests {
         metrics.insert("stability".to_string(), 0.8);
         let score = utils::calculate_quality_score(&metrics);
         assert!((score - 0.85).abs() < 1e-10);
+    }
+
+    // Regression test: `process_uptime` (formerly `get_system_uptime`) used
+    // to always return a hardcoded `Duration::from_secs(86400)`. A fake
+    // constant would pass a naive "returns a Duration" check but can never
+    // reflect real elapsed time; this asserts it strictly increases with
+    // real wall-clock time and never equals the old fabricated value.
+    #[test]
+    fn process_uptime_reflects_real_elapsed_time_not_a_fixed_constant() {
+        let first = utils::process_uptime();
+        std::thread::sleep(Duration::from_millis(30));
+        let second = utils::process_uptime();
+
+        assert!(
+            second > first,
+            "process_uptime must strictly increase with real elapsed time \
+             (first={first:?}, second={second:?})"
+        );
+        assert!(
+            second - first >= Duration::from_millis(20),
+            "process_uptime delta should reflect the real 30ms sleep, got {:?}",
+            second - first
+        );
+        assert_ne!(
+            second,
+            Duration::from_secs(86400),
+            "must not be the old hardcoded fabricated constant"
+        );
     }
 }

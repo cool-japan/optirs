@@ -89,40 +89,111 @@ impl<
         self.running_mean_g = Some(Array1::zeros(output_size));
     }
 
-    /// Update the input covariance matrix with new activations
-    pub fn update_input_covariance(&mut self, activations: &Array2<T>, decay: T) {
+    /// Update the input covariance matrix with new activations.
+    ///
+    /// `activations` has shape `[batch, input_dim]`. When the layer carries a bias, a
+    /// homogeneous column of ones is appended so the bias is folded into the Kronecker
+    /// factor `A`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::DimensionMismatch`] if the activation width does not match
+    /// the layer's registered input covariance size.
+    pub fn update_input_covariance(&mut self, activations: &Array2<T>, decay: T) -> Result<()> {
         let batch_size = activations.nrows();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
 
         // Add bias term if needed
-        let input_data = if self.layerinfo.has_bias {
-            self.add_bias_column(activations)
-        } else {
-            activations.clone()
-        };
+        let input_data = self.homogeneous_input(activations)?;
 
-        // Compute sample covariance
-        let batch_cov = self.compute_sample_covariance(&input_data);
+        // Compute the uncentered second moment
+        let batch_cov = Self::second_moment(&input_data);
 
         // Update running covariance with exponential moving average
         self.a_cov = &self.a_cov * decay + &batch_cov * (T::one() - decay);
         self.num_updates += 1;
+        Ok(())
     }
 
-    /// Update the output gradient covariance matrix
-    pub fn update_output_covariance(&mut self, gradients: &Array2<T>, decay: T) {
+    /// Update the output gradient covariance matrix.
+    ///
+    /// `gradients` has shape `[batch, output_dim]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::DimensionMismatch`] if the gradient width does not match
+    /// the layer's registered output covariance size.
+    pub fn update_output_covariance(&mut self, gradients: &Array2<T>, decay: T) -> Result<()> {
         let batch_size = gradients.nrows();
         if batch_size == 0 {
-            return;
+            return Ok(());
         }
 
-        // Compute sample covariance
-        let batch_cov = self.compute_sample_covariance(gradients);
+        let expected = self.layerinfo.output_cov_size();
+        if gradients.ncols() != expected {
+            return Err(OptimError::DimensionMismatch(format!(
+                "layer '{}': output gradients have {} columns, expected {}",
+                self.layerinfo.name,
+                gradients.ncols(),
+                expected
+            )));
+        }
+
+        // Compute the uncentered second moment
+        let batch_cov = Self::second_moment(gradients);
 
         // Update running covariance with exponential moving average
         self.g_cov = &self.g_cov * decay + &batch_cov * (T::one() - decay);
+        Ok(())
+    }
+
+    /// Build the dense-layer weight gradient `[output_dim, input_cov_size]` from
+    /// per-sample activations `[batch, input_dim]` and output gradients
+    /// `[batch, output_dim]`.
+    ///
+    /// This is `grad_W = (1/n) * G^T · A_hom`, matching the `A ⊗ G` Kronecker
+    /// factorization: the resulting matrix is exactly what
+    /// [`super::core::KFAC::apply_update_weight`] preconditions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::DimensionMismatch`] if the batch dimensions disagree or
+    /// either width does not match the registered layer dimensions.
+    pub fn weight_gradient(
+        &self,
+        activations: &Array2<T>,
+        output_gradients: &Array2<T>,
+    ) -> Result<Array2<T>> {
+        let batch = activations.nrows();
+        if batch != output_gradients.nrows() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "layer '{}': activations have {} rows but output gradients have {}",
+                self.layerinfo.name,
+                batch,
+                output_gradients.nrows()
+            )));
+        }
+
+        let expected_out = self.layerinfo.output_cov_size();
+        if output_gradients.ncols() != expected_out {
+            return Err(OptimError::DimensionMismatch(format!(
+                "layer '{}': output gradients have {} columns, expected {}",
+                self.layerinfo.name,
+                output_gradients.ncols(),
+                expected_out
+            )));
+        }
+
+        let input_data = self.homogeneous_input(activations)?;
+
+        if batch == 0 {
+            return Ok(Array2::zeros((expected_out, input_data.ncols())));
+        }
+
+        let scale = T::from_usize(batch).unwrap_or_else(T::one);
+        Ok(output_gradients.t().dot(&input_data) / scale)
     }
 
     /// Compute the inverse of covariance matrices with regularization
@@ -226,47 +297,57 @@ impl<
         result
     }
 
-    fn compute_sample_covariance(&self, data: &Array2<T>) -> Array2<T> {
-        let batch_size = data.nrows() as f64;
-        if batch_size <= 1.0 {
+    /// Return the activations in the layout the Kronecker factor `A` expects,
+    /// appending the homogeneous bias column when the registered covariance size
+    /// calls for it.
+    fn homogeneous_input(&self, activations: &Array2<T>) -> Result<Array2<T>> {
+        let expected = self.layerinfo.input_cov_size();
+        let width = activations.ncols();
+
+        if expected == width {
+            Ok(activations.clone())
+        } else if expected == width + 1 {
+            Ok(self.add_bias_column(activations))
+        } else {
+            Err(OptimError::DimensionMismatch(format!(
+                "layer '{}': activations have {} columns, expected {} (or {} plus the bias column)",
+                self.layerinfo.name,
+                width,
+                expected,
+                expected.saturating_sub(1)
+            )))
+        }
+    }
+
+    /// Uncentered second moment `E[x x^T] = (1/n) * X^T X`.
+    ///
+    /// K-FAC's Kronecker factors are second moments, **not** mean-centered
+    /// covariances. Centering is wrong twice over here: it discards the mean, which
+    /// carries genuine curvature information in the Fisher approximation, and it zeroes
+    /// out the homogeneous bias column (whose entries are all ones), making `A`
+    /// structurally singular for every layer with a bias.
+    fn second_moment(data: &Array2<T>) -> Array2<T> {
+        let batch_size = data.nrows();
+        if batch_size == 0 {
             return Array2::eye(data.ncols());
         }
 
-        let batch_size_t = T::from(batch_size).unwrap_or_else(|| T::zero());
-
-        // Center the data
-        let mean = data
-            .mean_axis(scirs2_core::ndarray::Axis(0))
-            .expect("unwrap failed");
-        let centered = data - &mean;
-
-        // Compute covariance: (1/(n-1)) * X^T * X
-        let cov = centered.t().dot(&centered) / (batch_size_t - T::one());
-
-        cov
+        let n = T::from_usize(batch_size).unwrap_or_else(T::one);
+        data.t().dot(data) / n
     }
 
     fn compute_matrix_inverse(&self, matrix: &Array2<T>) -> Result<Array2<T>> {
-        // Simple matrix inversion using LU decomposition
-        // In practice, you would use a more robust method like SVD
-        let n = matrix.nrows();
-        if n != matrix.ncols() {
+        // Robust general inversion: Gauss-Jordan elimination with partial pivoting
+        // and K-FAC-style Tikhonov damping on (near-)singular inputs. Implemented
+        // once in `kfac::utils` and shared with the natural-gradient path so the
+        // Kronecker-factor inverses are real (not a silent identity).
+        if matrix.nrows() != matrix.ncols() {
             return Err(OptimError::InvalidParameter(
                 "Matrix must be square".to_string(),
             ));
         }
 
-        // For now, use a simple identity matrix as a placeholder
-        // In a real implementation, you would use a proper matrix inversion library
-        let mut inv = Array2::eye(n);
-
-        // Add small regularization to ensure numerical stability
-        let reg_term = T::from(1e-8).unwrap_or_else(|| T::zero());
-        for i in 0..n {
-            inv[[i, i]] = inv[[i, i]] + reg_term;
-        }
-
-        Ok(inv)
+        super::utils::general_matrix_inverse(matrix)
     }
 
     fn estimate_condition_number(&self, matrix: &Array2<T>) -> T {
@@ -326,12 +407,110 @@ mod tests {
         let mut state = KFACLayerState::<f64>::new(layer_info, 0.001);
         let activations =
             Array2::from_shape_vec((2, 4), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
-                .expect("unwrap failed");
+                .expect("Array2::from_shape_vec succeeds in test_covariance_update");
 
-        state.update_input_covariance(&activations, 0.95);
+        state
+            .update_input_covariance(&activations, 0.95)
+            .expect("covariance update succeeds");
 
         assert_eq!(state.num_updates, 1);
         assert!(state.a_cov[[0, 0]] != 1.0); // Should have changed from identity
+    }
+
+    #[test]
+    fn test_input_covariance_is_uncentered_and_keeps_bias_column() {
+        // Regression for the mean-centered covariance bug: K-FAC's Kronecker factor is
+        // the *uncentered* second moment E[a a^T]. Centering zeroes the homogeneous
+        // bias column (all ones), which makes A structurally singular.
+        let layer_info = LayerInfo {
+            name: "dense".to_string(),
+            input_dim: 2,
+            output_dim: 2,
+            layer_type: LayerType::Dense,
+            has_bias: true,
+        };
+        let mut state = KFACLayerState::<f64>::new(layer_info, 0.0);
+
+        // Batch of 3 samples, 2 input features (full rank once homogenized).
+        let activations = Array2::from_shape_vec((3, 2), vec![1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
+            .expect("shape is valid");
+
+        // decay = 0 so a_cov is exactly the batch statistic.
+        state
+            .update_input_covariance(&activations, 0.0)
+            .expect("covariance update succeeds");
+
+        assert_eq!(state.a_cov.dim(), (3, 3));
+
+        // Expected A = (1/3) * Â^T Â with Â = [[1,2,1],[3,4,1],[5,7,1]].
+        let expected = [
+            [35.0 / 3.0, 49.0 / 3.0, 3.0],
+            [49.0 / 3.0, 23.0, 13.0 / 3.0],
+            [3.0, 13.0 / 3.0, 1.0],
+        ];
+        for (i, row) in expected.iter().enumerate() {
+            for (j, &exp) in row.iter().enumerate() {
+                assert!(
+                    (state.a_cov[[i, j]] - exp).abs() < 1e-12,
+                    "A[{},{}] = {}, expected {}",
+                    i,
+                    j,
+                    state.a_cov[[i, j]],
+                    exp
+                );
+            }
+        }
+
+        // The bias block must be E[1*1] = 1, not the 0 that centering produces.
+        assert!((state.a_cov[[2, 2]] - 1.0).abs() < 1e-12);
+
+        // And the factor must be invertible (centering made it singular).
+        state
+            .compute_inverses(0.0, 0.0)
+            .expect("uncentered A is invertible");
+        let a_inv = state.a_cov_inv.as_ref().expect("a_inv present");
+        let prod = state.a_cov.dot(a_inv);
+        for i in 0..3 {
+            for j in 0..3 {
+                let expected_entry = if i == j { 1.0 } else { 0.0 };
+                assert!((prod[[i, j]] - expected_entry).abs() < 1e-8);
+            }
+        }
+    }
+
+    #[test]
+    fn test_weight_gradient_shape_and_value() {
+        let layer_info = LayerInfo {
+            name: "dense".to_string(),
+            input_dim: 2,
+            output_dim: 3,
+            layer_type: LayerType::Dense,
+            has_bias: false,
+        };
+        let state = KFACLayerState::<f64>::new(layer_info, 0.001);
+
+        // batch = 2
+        let activations =
+            Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).expect("shape is valid");
+        let out_grads = Array2::from_shape_vec((2, 3), vec![1.0, 0.0, -1.0, 2.0, 1.0, 0.0])
+            .expect("shape is valid");
+
+        let grad_w = state
+            .weight_gradient(&activations, &out_grads)
+            .expect("weight gradient computed");
+        assert_eq!(grad_w.dim(), (3, 2));
+
+        // grad_W = (1/2) * G^T A
+        let expected = [[3.5, 5.0], [1.5, 2.0], [-0.5, -1.0]];
+        for i in 0..3 {
+            for j in 0..2 {
+                assert!((grad_w[[i, j]] - expected[i][j]).abs() < 1e-12);
+            }
+        }
+
+        // Mismatched batch dimension is an error, not a panic.
+        let bad = Array2::<f64>::zeros((3, 3));
+        assert!(state.weight_gradient(&activations, &bad).is_err());
     }
 
     #[test]
@@ -350,6 +529,74 @@ mod tests {
         // Identity matrix should have condition number 1
         assert!((a_cond - 1.0).abs() < 1e-6);
         assert!((g_cond - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_inverses_are_real_not_identity() {
+        // End-to-end KFAC path: drive non-trivial covariances into the layer state
+        // and confirm the computed inverses are genuine (A · A_inv ≈ I) and are NOT
+        // a silent identity (the previous bug).
+        let layer_info = LayerInfo {
+            name: "dense".to_string(),
+            input_dim: 4,
+            output_dim: 4,
+            layer_type: LayerType::Dense,
+            has_bias: false,
+        };
+        let mut state = KFACLayerState::<f64>::new(layer_info, 0.0);
+
+        // Build a non-identity SPD input covariance: A = B^T B + I.
+        let b = Array2::from_shape_vec(
+            (4, 4),
+            vec![
+                1.0, 0.5, -0.3, 0.2, 0.0, 1.2, 0.7, -0.4, 0.3, -0.1, 0.9, 0.6, -0.2, 0.4, 0.1, 1.1,
+            ],
+        )
+        .expect("shape");
+        let mut a_cov = b.t().dot(&b);
+        for i in 0..4 {
+            a_cov[[i, i]] += 1.0;
+        }
+        state.a_cov = a_cov.clone();
+        // A different non-identity SPD output covariance.
+        let mut g_cov = Array2::<f64>::eye(4) * 3.0;
+        g_cov[[0, 1]] = 0.5;
+        g_cov[[1, 0]] = 0.5;
+        g_cov[[2, 3]] = -0.7;
+        g_cov[[3, 2]] = -0.7;
+        state.g_cov = g_cov.clone();
+
+        // Use zero damping so we can verify the inverse of the raw covariance.
+        state.compute_inverses(0.0, 0.0).expect("inverses computed");
+        assert!(state.is_ready());
+
+        let a_inv = state.a_cov_inv.as_ref().expect("a_inv present");
+        let g_inv = state.g_cov_inv.as_ref().expect("g_inv present");
+
+        // Real inverse: A · A_inv ≈ I and G · G_inv ≈ I.
+        let a_prod = a_cov.dot(a_inv);
+        let g_prod = g_cov.dot(g_inv);
+        let identity: Array2<f64> = Array2::eye(4);
+        for i in 0..4 {
+            for j in 0..4 {
+                assert!((a_prod[[i, j]] - identity[[i, j]]).abs() < 1e-6);
+                assert!((g_prod[[i, j]] - identity[[i, j]]).abs() < 1e-6);
+            }
+        }
+
+        // Regression: the inverse must NOT be the identity for a non-identity input.
+        let mut a_inv_is_identity = true;
+        for i in 0..4 {
+            for j in 0..4 {
+                if (a_inv[[i, j]] - identity[[i, j]]).abs() > 1e-9 {
+                    a_inv_is_identity = false;
+                }
+            }
+        }
+        assert!(
+            !a_inv_is_identity,
+            "Kronecker-factor inverse collapsed to identity (the old bug)"
+        );
     }
 
     #[test]

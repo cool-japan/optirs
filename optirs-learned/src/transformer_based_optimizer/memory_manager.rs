@@ -2,11 +2,10 @@
 
 use super::config::{CacheEvictionStrategy, MemoryConfig, TransformerBasedOptimizerConfig};
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::Array2;
 use scirs2_core::numeric::Float;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Memory management strategy types
@@ -27,7 +26,9 @@ pub enum MemoryManagementStrategy {
 }
 
 /// Transformer memory manager
-pub struct TransformerMemoryManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerMemoryManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Memory management strategy
     strategy: MemoryManagementStrategy,
 
@@ -52,11 +53,13 @@ pub struct TransformerMemoryManager<T: Float + Debug + Send + Sync + 'static> {
     /// Memory pressure monitor
     pressure_monitor: MemoryPressureMonitor,
 
-    /// Model dimension
+    /// Model dimension every stored tensor must be `model_dimension` wide.
     model_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerMemoryManager<T>
+{
     /// Create new memory manager
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let memory_config = config.memory_config.clone();
@@ -83,7 +86,7 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
         };
 
         let compression_manager = if memory_config.enable_compression {
-            Some(CompressionManager::new(0.5)?) // 50% compression ratio target
+            Some(CompressionManager::new()?)
         } else {
             None
         };
@@ -106,7 +109,22 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
     }
 
     /// Store tensor in memory with key
+    /// Store `tensor` under `key`.
+    ///
+    /// # Errors
+    /// Returns `Err` when the tensor's feature width differs from the model
+    /// dimension this manager was built for. The manager records the dimension
+    /// at construction but never checked it, so a caller could fill the cache
+    /// with tensors the transformer cannot consume and only find out at the
+    /// point of use.
     pub fn store(&mut self, key: String, tensor: Array2<T>) -> Result<()> {
+        if tensor.ncols() != self.model_dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "TransformerMemoryManager holds {}-wide tensors but was given {} columns",
+                self.model_dimension,
+                tensor.ncols()
+            )));
+        }
         let start_time = Instant::now();
 
         // Check memory pressure and evict if necessary
@@ -416,7 +434,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerMemoryManager<T> {
 }
 
 /// Memory cache implementation
-pub struct MemoryCache<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Stored tensors
     storage: HashMap<String, CacheEntry<T>>,
 
@@ -434,9 +454,15 @@ pub struct MemoryCache<T: Float + Debug + Send + Sync + 'static> {
 
     /// Eviction strategy
     eviction_strategy: CacheEvictionStrategy,
+
+    /// Insertion order, never re-ordered by an access. Backs FIFO eviction,
+    /// which was previously indistinguishable from LRU.
+    insertion_order: VecDeque<String>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MemoryCache<T>
+{
     pub fn new(max_size: usize, eviction_strategy: CacheEvictionStrategy) -> Result<Self> {
         Ok(Self {
             storage: HashMap::new(),
@@ -445,27 +471,42 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
             max_size,
             current_size: 0,
             eviction_strategy,
+            insertion_order: VecDeque::new(),
         })
     }
 
+    /// Insert a tensor, evicting as needed.
+    ///
+    /// The oversized-tensor check happens **before** any eviction. Previously the
+    /// eviction loop ran first, so storing a tensor larger than the whole cache
+    /// drained every existing entry and *then* returned an error — the caller got
+    /// a failure and an empty cache.
+    ///
+    /// # Errors
+    /// Returns `Err` when the tensor alone exceeds `max_size`. The cache is left
+    /// untouched in that case.
     pub fn store(&mut self, key: String, tensor: Array2<T>) -> Result<()> {
         let tensor_size = tensor.len() * std::mem::size_of::<T>();
 
-        // Check if we need to evict
-        while self.current_size + tensor_size > self.max_size && !self.storage.is_empty() {
-            self.evict_one()?;
-        }
-
         if tensor_size > self.max_size {
-            return Err(crate::error::OptimError::Other(
-                "Tensor too large for cache".to_string(),
-            ));
+            return Err(crate::error::OptimError::Other(format!(
+                "Tensor of {tensor_size} bytes is too large for a cache of {} bytes",
+                self.max_size
+            )));
         }
 
-        // Remove existing entry if present
+        // Remove any existing entry first: it frees space and prevents
+        // double-counting when the same key is overwritten.
         if let Some(old_entry) = self.storage.remove(&key) {
             self.current_size -= old_entry.size;
             self.remove_from_access_order(&key);
+            self.insertion_order.retain(|k| k != &key);
+            self.access_frequency.remove(&key);
+        }
+
+        // Now evict until the new entry fits.
+        while self.current_size + tensor_size > self.max_size && !self.storage.is_empty() {
+            self.evict_one()?;
         }
 
         // Add new entry
@@ -504,6 +545,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
         if let Some(entry) = self.storage.remove(key) {
             self.current_size -= entry.size;
             self.remove_from_access_order(key);
+            self.insertion_order.retain(|k| k != key);
             self.access_frequency.remove(key);
             Ok(true)
         } else {
@@ -518,6 +560,7 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
     pub fn clear(&mut self) -> Result<()> {
         self.storage.clear();
         self.access_order.clear();
+        self.insertion_order.clear();
         self.access_frequency.clear();
         self.current_size = 0;
         Ok(())
@@ -544,28 +587,43 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
     }
 
     fn evict_lfu(&mut self) -> Result<()> {
-        if let Some((min_freq, lfu_key)) = self
+        if let Some(lfu_key) = self
             .access_frequency
             .iter()
             .min_by_key(|(_, &freq)| freq)
-            .map(|(key, &freq)| (freq, key.clone()))
+            .map(|(key, _)| key.clone())
         {
             self.remove(&lfu_key)?;
         }
         Ok(())
     }
 
+    /// Evict the oldest **inserted** entry.
+    ///
+    /// FIFO is insertion order and must ignore accesses. This used to read
+    /// `access_order.front()`, which `update_access_tracking` re-orders on every
+    /// access — making FIFO an exact duplicate of LRU. It now uses a dedicated
+    /// `insertion_order` queue that accesses never touch.
     fn evict_fifo(&mut self) -> Result<()> {
-        if let Some(first_key) = self.access_order.front().cloned() {
+        if let Some(first_key) = self.insertion_order.front().cloned() {
             self.remove(&first_key)?;
         }
         Ok(())
     }
 
+    /// Evict a uniformly random entry.
+    ///
+    /// This used to take `storage.keys().next()`, i.e. whatever the hash order
+    /// put first — deterministic within a process and strongly biased, not
+    /// random. It now draws a uniform index over the live keys.
     fn evict_random(&mut self) -> Result<()> {
-        if let Some(random_key) = self.storage.keys().next().cloned() {
-            self.remove(&random_key)?;
+        if self.storage.is_empty() {
+            return Ok(());
         }
+        let keys: Vec<String> = self.storage.keys().cloned().collect();
+        let index = scirs2_core::random::thread_rng().gen_range(0..keys.len());
+        let victim = keys[index].clone();
+        self.remove(&victim)?;
         Ok(())
     }
 
@@ -573,6 +631,12 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
         // Update LRU order
         self.remove_from_access_order(key);
         self.access_order.push_back(key.to_string());
+
+        // Insertion order is recorded once and never re-ordered by an access,
+        // which is what separates FIFO eviction from LRU eviction.
+        if !self.insertion_order.iter().any(|k| k == key) {
+            self.insertion_order.push_back(key.to_string());
+        }
 
         // Update LFU frequency
         *self.access_frequency.entry(key.to_string()).or_insert(0) += 1;
@@ -594,7 +658,9 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryCache<T> {
 
 /// Cache entry
 #[derive(Debug, Clone)]
-pub struct CacheEntry<T: Float + Debug + Send + Sync + 'static> {
+pub struct CacheEntry<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub tensor: Array2<T>,
     pub size: usize,
     pub access_time: Instant,
@@ -602,12 +668,11 @@ pub struct CacheEntry<T: Float + Debug + Send + Sync + 'static> {
 }
 
 /// Compression manager
-pub struct CompressionManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct CompressionManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Compressed storage
     compressed_storage: HashMap<String, CompressedData<T>>,
-
-    /// Compression ratio target
-    compression_ratio: f64,
 
     /// Memory usage
     memory_usage: usize,
@@ -616,37 +681,124 @@ pub struct CompressionManager<T: Float + Debug + Send + Sync + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> CompressionManager<T> {
-    pub fn new(compression_ratio: f64) -> Result<Self> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    CompressionManager<T>
+{
+    /// A quantizing compression manager.
+    ///
+    /// There is no configurable target ratio: [`Self::compress`] always
+    /// quantizes to 8-bit codes, so the achieved ratio is fixed by
+    /// `size_of::<T>()` and reported per payload by
+    /// [`CompressedData::compression_ratio`]. The `compression_ratio` this used
+    /// to accept was stored and never consulted by the quantizer, which made it
+    /// a knob that silently did nothing.
+    pub fn new() -> Result<Self> {
         Ok(Self {
             compressed_storage: HashMap::new(),
-            compression_ratio,
             memory_usage: 0,
             _phantom: std::marker::PhantomData,
         })
     }
 
+    /// Compress a tensor by affine 8-bit quantization.
+    ///
+    /// Every element is mapped to a `u8` code by
+    /// `code = round((x - min) / step)` with `step = (max - min) / 255`, and the
+    /// payload is those codes plus the two `f64` parameters `min` and `step`.
+    /// `compressed_size` is therefore the **real** byte count of what is stored:
+    /// `codes.len() + 2·size_of::<f64>() + shape metadata`.
+    ///
+    /// This replaces a version that stored the input verbatim as `Vec<T>` and
+    /// reported `compressed_size = bytes / 2` — a fabricated 50% ratio for a
+    /// payload that had not shrunk at all.
+    ///
+    /// Quantization is lossy; the reconstruction error is bounded by `step / 2`
+    /// per element, which [`CompressedData::max_reconstruction_error`] reports. A constant
+    /// tensor (`max == min`) has `step = 0` and round-trips exactly.
+    ///
+    /// # Errors
+    /// Returns `Err` when the tensor is empty or contains a non-finite value
+    /// (there is no finite quantization range for `NaN`/`inf`).
     pub fn compress(&self, tensor: &Array2<T>) -> Result<CompressedData<T>> {
-        // Simplified compression - just store dimensions and flattened data
-        let shape = tensor.shape().to_vec();
-        let data: Vec<T> = tensor.iter().cloned().collect();
-        let data_len = data.len(); // Get length before move
+        if tensor.is_empty() {
+            return Err(crate::error::OptimError::InsufficientData(
+                "cannot compress an empty tensor".to_string(),
+            ));
+        }
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        for value in tensor.iter() {
+            let v = value.to_f64().unwrap_or(f64::NAN);
+            if !v.is_finite() {
+                return Err(crate::error::OptimError::ComputationError(
+                    "cannot quantize a tensor containing a non-finite value".to_string(),
+                ));
+            }
+            if v < min {
+                min = v;
+            }
+            if v > max {
+                max = v;
+            }
+        }
 
+        let levels = 255.0_f64;
+        let step = if max > min { (max - min) / levels } else { 0.0 };
+        let codes: Vec<u8> = tensor
+            .iter()
+            .map(|value| {
+                let v = value.to_f64().unwrap_or(0.0);
+                if step <= 0.0 {
+                    0u8
+                } else {
+                    (((v - min) / step).round()).clamp(0.0, levels) as u8
+                }
+            })
+            .collect();
+
+        let shape = tensor.shape().to_vec();
+        let metadata_bytes =
+            2 * std::mem::size_of::<f64>() + shape.len() * std::mem::size_of::<usize>();
         Ok(CompressedData::<T> {
             shape,
-            data,
+            codes,
+            quantization_min: min,
+            quantization_step: step,
             original_size: tensor.len() * std::mem::size_of::<T>(),
-            compressed_size: data_len * std::mem::size_of::<T>() / 2, // Simulated compression
+            compressed_size: codes_len_bytes(tensor.len()) + metadata_bytes,
+            _phantom: std::marker::PhantomData,
         })
     }
 
+    /// Reconstruct a quantized tensor: `x̂ = min + code · step`.
+    ///
+    /// # Errors
+    /// Returns `Err` when the stored shape is not two-dimensional or does not
+    /// match the number of stored codes.
     pub fn decompress(&self, compressed: &CompressedData<T>) -> Result<Array2<T>> {
-        let array = Array2::from_shape_vec(
-            (compressed.shape[0], compressed.shape[1]),
-            compressed.data.clone(),
-        )
-        .map_err(|_| crate::error::OptimError::Other("Decompression failed".to_string()))?;
-        Ok(array)
+        if compressed.shape.len() != 2 {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "compressed payload has a {}-dimensional shape, expected 2",
+                compressed.shape.len()
+            )));
+        }
+        let expected = compressed.shape[0] * compressed.shape[1];
+        if compressed.codes.len() != expected {
+            return Err(crate::error::OptimError::ComputationError(format!(
+                "compressed payload holds {} codes but its shape implies {expected}",
+                compressed.codes.len()
+            )));
+        }
+        let values: Vec<T> = compressed
+            .codes
+            .iter()
+            .map(|&code| {
+                let v = compressed.quantization_min + code as f64 * compressed.quantization_step;
+                scirs2_core::numeric::NumCast::from(v).unwrap_or_else(|| T::zero())
+            })
+            .collect();
+        Array2::from_shape_vec((compressed.shape[0], compressed.shape[1]), values)
+            .map_err(|_| crate::error::OptimError::Other("Decompression failed".to_string()))
     }
 
     pub fn store(&mut self, key: String, compressed: CompressedData<T>) -> Result<()> {
@@ -685,13 +837,58 @@ impl<T: Float + Debug + Send + Sync + 'static> CompressionManager<T> {
     }
 }
 
-/// Compressed data structure
+/// Number of payload bytes `count` 8-bit quantization codes occupy.
+fn codes_len_bytes(count: usize) -> usize {
+    count // one u8 per element
+}
+
+/// A quantized tensor.
+///
+/// The payload is `codes` (one `u8` per element) plus the affine dequantization
+/// parameters. The old version of this struct stored `data: Vec<T>` — the
+/// uncompressed input — while advertising a halved `compressed_size`.
 #[derive(Debug, Clone)]
-pub struct CompressedData<T: Float + Debug + Send + Sync + 'static> {
+pub struct CompressedData<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
+    /// Original tensor shape (2-D).
     pub shape: Vec<usize>,
-    pub data: Vec<T>, // Generic data type
+    /// Quantization codes, row-major.
+    pub codes: Vec<u8>,
+    /// Value the zero code maps to.
+    pub quantization_min: f64,
+    /// Value increment per code step (`0` for a constant tensor).
+    pub quantization_step: f64,
+    /// Bytes the uncompressed tensor occupied.
     pub original_size: usize,
+    /// Bytes this payload occupies, counted for real.
     pub compressed_size: usize,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    CompressedData<T>
+{
+    /// Achieved compression ratio `compressed_size / original_size`.
+    ///
+    /// A *measurement*, not the configured target: for `f64` input this is
+    /// roughly `1/8` plus metadata, and for `f32` roughly `1/4`.
+    pub fn compression_ratio(&self) -> f64 {
+        if self.original_size == 0 {
+            return 1.0;
+        }
+        self.compressed_size as f64 / self.original_size as f64
+    }
+
+    /// Worst-case absolute reconstruction error, `quantization_step / 2`.
+    pub fn max_reconstruction_error(&self) -> f64 {
+        self.quantization_step / 2.0
+    }
+
+    /// Number of quantized elements.
+    pub fn element_count(&self) -> usize {
+        self.codes.len()
+    }
 }
 
 /// Memory statistics
@@ -960,23 +1157,178 @@ mod tests {
         let cache = MemoryCache::<f32>::new(1024 * 1024, CacheEvictionStrategy::LRU);
         assert!(cache.is_ok());
 
-        let mut c = cache.expect("unwrap failed");
+        let mut c = cache.expect("MemoryCache::new should succeed");
         let tensor = Array2::<f32>::ones((10, 10));
         assert!(c.store("test".to_string(), tensor).is_ok());
         assert!(c.contains("test"));
     }
 
+    /// F59: storing a tensor larger than the whole cache used to drain every
+    /// existing entry and *then* report the error.
+    #[test]
+    fn an_oversized_tensor_is_rejected_without_evicting_anything() {
+        let mut cache = MemoryCache::<f64>::new(4096, CacheEvictionStrategy::LRU).expect("cache");
+        cache
+            .store("keep_a".to_string(), Array2::<f64>::ones((4, 4)))
+            .expect("store a");
+        cache
+            .store("keep_b".to_string(), Array2::<f64>::ones((4, 4)))
+            .expect("store b");
+        let before = cache.get_memory_usage();
+        assert!(before > 0);
+
+        // 100 x 100 f64 = 80_000 bytes, far larger than the 4096-byte cache.
+        let huge = Array2::<f64>::ones((100, 100));
+        assert!(cache.store("huge".to_string(), huge).is_err());
+
+        assert!(cache.contains("keep_a"), "keep_a was evicted for nothing");
+        assert!(cache.contains("keep_b"), "keep_b was evicted for nothing");
+        assert_eq!(
+            cache.get_memory_usage(),
+            before,
+            "the failed store changed the cache size"
+        );
+    }
+
+    /// F67: FIFO eviction must be *insertion* order. It used to read the same
+    /// access-ordered queue LRU uses, making the two strategies identical.
+    #[test]
+    fn fifo_eviction_ignores_accesses_unlike_lru() {
+        // Each 4x4 f64 tensor is 128 bytes; a 300-byte cache holds two.
+        let build = |strategy: CacheEvictionStrategy| {
+            let mut cache = MemoryCache::<f64>::new(300, strategy).expect("cache");
+            cache
+                .store("first".to_string(), Array2::<f64>::ones((4, 4)))
+                .expect("store first");
+            cache
+                .store("second".to_string(), Array2::<f64>::ones((4, 4)))
+                .expect("store second");
+            // Touch "first" so it becomes the most recently used.
+            assert!(cache.retrieve("first").expect("retrieve").is_some());
+            cache
+                .store("third".to_string(), Array2::<f64>::ones((4, 4)))
+                .expect("store third");
+            cache
+        };
+
+        let lru = build(CacheEvictionStrategy::LRU);
+        assert!(
+            lru.contains("first"),
+            "LRU must keep the recently accessed entry"
+        );
+        assert!(!lru.contains("second"), "LRU should drop 'second'");
+
+        let fifo = build(CacheEvictionStrategy::FIFO);
+        assert!(
+            !fifo.contains("first"),
+            "FIFO must drop the first-inserted entry regardless of access"
+        );
+        assert!(fifo.contains("second"), "FIFO should keep 'second'");
+        assert!(fifo.contains("third"));
+    }
+
+    /// F67: `Random` eviction used to take `storage.keys().next()`, which is hash
+    /// order — not random. Over many trials every candidate must get picked.
+    #[test]
+    fn random_eviction_actually_varies() {
+        let mut victims = std::collections::HashSet::new();
+        for _ in 0..200 {
+            let mut cache =
+                MemoryCache::<f64>::new(300, CacheEvictionStrategy::Random).expect("cache");
+            for key in ["a", "b"] {
+                cache
+                    .store(key.to_string(), Array2::<f64>::ones((4, 4)))
+                    .expect("store");
+            }
+            cache
+                .store("c".to_string(), Array2::<f64>::ones((4, 4)))
+                .expect("store c");
+            for key in ["a", "b"] {
+                if !cache.contains(key) {
+                    victims.insert(key.to_string());
+                }
+            }
+        }
+        assert_eq!(
+            victims.len(),
+            2,
+            "random eviction only ever chose {victims:?}"
+        );
+    }
+
+    /// F60: compression reported `bytes / 2` while storing the input verbatim.
+    /// The ratio must now be a measurement of a payload that really did shrink,
+    /// and the round trip must reconstruct within the quantization step.
+    #[test]
+    fn compression_reports_a_real_measured_ratio() {
+        let comp = CompressionManager::<f64>::new().expect("manager");
+        let tensor = Array2::from_shape_fn((8, 8), |(i, j)| (i as f64) - 0.5 * (j as f64));
+        let compressed = comp.compress(&tensor).expect("compress");
+
+        assert_eq!(compressed.element_count(), 64);
+        assert_eq!(compressed.original_size, 64 * std::mem::size_of::<f64>());
+        // 64 code bytes + 2 f64 params + 2 usize shape entries.
+        let expected = 64 + 2 * std::mem::size_of::<f64>() + 2 * std::mem::size_of::<usize>();
+        assert_eq!(
+            compressed.compressed_size, expected,
+            "compressed_size is not the real payload size"
+        );
+        assert!(
+            compressed.compressed_size < compressed.original_size,
+            "the payload did not shrink: {} vs {}",
+            compressed.compressed_size,
+            compressed.original_size
+        );
+        // The old fabricated value was exactly half.
+        let half = compressed.original_size / 2;
+        assert_ne!(
+            compressed.compressed_size, half,
+            "compressed_size is still the fabricated original/2"
+        );
+
+        let restored = comp.decompress(&compressed).expect("decompress");
+        assert_eq!(restored.dim(), tensor.dim());
+        let tolerance = compressed.max_reconstruction_error() + 1e-12;
+        for (a, b) in tensor.iter().zip(restored.iter()) {
+            assert!(
+                (a - b).abs() <= tolerance,
+                "reconstruction error {} exceeds the quantization bound {tolerance}",
+                (a - b).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn a_constant_tensor_round_trips_exactly() {
+        let comp = CompressionManager::<f64>::new().expect("manager");
+        let tensor = Array2::<f64>::from_elem((3, 4), 2.5);
+        let compressed = comp.compress(&tensor).expect("compress");
+        assert_eq!(compressed.quantization_step, 0.0);
+        assert_eq!(compressed.max_reconstruction_error(), 0.0);
+        let restored = comp.decompress(&compressed).expect("decompress");
+        assert_eq!(restored, tensor);
+    }
+
+    #[test]
+    fn compression_rejects_degenerate_input() {
+        let comp = CompressionManager::<f64>::new().expect("manager");
+        assert!(comp.compress(&Array2::<f64>::zeros((0, 3))).is_err());
+        let mut nan = Array2::<f64>::zeros((2, 2));
+        nan[[0, 0]] = f64::NAN;
+        assert!(comp.compress(&nan).is_err());
+    }
+
     #[test]
     fn test_compression_manager() {
-        let compression = CompressionManager::<f32>::new(0.5);
+        let compression = CompressionManager::<f32>::new();
         assert!(compression.is_ok());
 
-        let comp = compression.expect("unwrap failed");
+        let comp = compression.expect("CompressionManager::new should succeed");
         let tensor = Array2::<f32>::ones((5, 5));
         let compressed = comp.compress(&tensor);
         assert!(compressed.is_ok());
 
-        let decompressed = comp.decompress(&compressed.expect("unwrap failed"));
+        let decompressed = comp.decompress(&compressed.expect("decompress should succeed"));
         assert!(decompressed.is_ok());
     }
 

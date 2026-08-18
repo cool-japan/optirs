@@ -2,16 +2,19 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use super::meta_learning::MetaState;
-use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use crate::common::cast_scalar;
+use crate::error::{OptimError, Result};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Transformer optimizer state
-pub struct TransformerOptimizerState<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerOptimizerState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Current model parameters
     pub current_parameters: Array1<T>,
 
@@ -46,7 +49,9 @@ pub struct TransformerOptimizerState<T: Float + Debug + Send + Sync + 'static> {
     last_updated: std::time::Instant,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerOptimizerState<T>
+{
     /// Create new optimizer state
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let parameter_count = config.model_dimension * config.num_transformer_layers;
@@ -77,8 +82,18 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
         })
     }
 
-    /// Update state with optimization step
+    /// Update state with optimization step.
+    ///
+    /// `update` need not already match `current_parameters`'s length: the
+    /// meta-learned update network produces one "layer's worth" of update
+    /// (`model_dimension` elements), which is applied identically to every
+    /// transformer-layer segment of the (`model_dimension *
+    /// num_transformer_layers`)-sized parameter vector. See
+    /// `Self::project_update`.
     pub fn update_with_step(&mut self, update: &Array1<T>, loss: Option<T>) -> Result<()> {
+        let projected = Self::project_update(update, self.current_parameters.len())?;
+        let update = &projected;
+
         // Apply parameter update
         self.current_parameters = &self.current_parameters + update;
 
@@ -102,6 +117,36 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
         self.last_updated = std::time::Instant::now();
 
         Ok(())
+    }
+
+    /// Reconcile an update vector's length with the parameter vector it must
+    /// be added to.
+    ///
+    /// * If the lengths already match, the update is used as-is.
+    /// * If `target_len` is an exact multiple of `update.len()` (the normal
+    ///   case: a per-layer update tiled across every transformer layer), the
+    ///   update is repeated to fill `target_len`.
+    /// * Any other mismatch is a genuine configuration inconsistency and is
+    ///   reported as an error instead of panicking inside the `ndarray`
+    ///   addition (`current_parameters + update` panics on shape mismatch).
+    fn project_update(update: &Array1<T>, target_len: usize) -> Result<Array1<T>> {
+        let update_len = update.len();
+        if update_len == target_len {
+            return Ok(update.clone());
+        }
+        if update_len == 0 || !target_len.is_multiple_of(update_len) {
+            return Err(OptimError::InvalidConfig(format!(
+                "optimizer update has {update_len} elements, which cannot be \
+                 tiled to fill the {target_len}-element parameter vector \
+                 (expected {update_len} to evenly divide {target_len})"
+            )));
+        }
+        let repeats = target_len / update_len;
+        let mut tiled = Vec::with_capacity(target_len);
+        for _ in 0..repeats {
+            tiled.extend(update.iter().copied());
+        }
+        Ok(Array1::from_vec(tiled))
     }
 
     /// Create state snapshot
@@ -282,7 +327,9 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerOptimizerState<T> {
 }
 
 /// Parameter history management
-pub struct ParameterHistory<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterHistory<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Parameter snapshots
     snapshots: VecDeque<ParameterSnapshot<T>>,
 
@@ -296,7 +343,9 @@ pub struct ParameterHistory<T: Float + Debug + Send + Sync + 'static> {
     statistics: ParameterStatistics<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ParameterHistory<T>
+{
     pub fn new(max_size: usize, parameter_dimension: usize) -> Result<Self> {
         Ok(Self {
             snapshots: VecDeque::new(),
@@ -306,7 +355,21 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
         })
     }
 
+    /// Record a parameter snapshot.
+    ///
+    /// # Errors
+    /// Returns `Err` when `parameters` is not `parameter_dimension` long. The
+    /// history is later averaged and differenced across snapshots, so a
+    /// mixed-width history silently produces meaningless statistics; the
+    /// declared dimension used to be stored and never checked against anything.
     pub fn record_parameters(&mut self, parameters: &Array1<T>) -> Result<()> {
+        if parameters.len() != self.parameter_dimension {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "ParameterHistory holds {}-dimensional snapshots but was given {}",
+                self.parameter_dimension,
+                parameters.len()
+            )));
+        }
         let snapshot = ParameterSnapshot {
             parameters: parameters.clone(),
             timestamp: std::time::Instant::now(),
@@ -347,7 +410,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterHistory<T> {
 
 /// Optimization state tracking
 #[derive(Debug, Clone)]
-pub struct OptimizationState<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Current learning rate
     pub learning_rate: T,
 
@@ -370,7 +435,9 @@ pub struct OptimizationState<T: Float + Debug + Send + Sync + 'static> {
     pub convergence_tracker: ConvergenceTracker<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> OptimizationState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    OptimizationState<T>
+{
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let parameter_count = config.model_dimension * config.num_transformer_layers;
 
@@ -469,7 +536,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizationState<T> {
 
 /// Learning state tracking
 #[derive(Debug, Clone)]
-pub struct LearningState<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Loss history
     loss_history: VecDeque<T>,
 
@@ -486,7 +555,9 @@ pub struct LearningState<T: Float + Debug + Send + Sync + 'static> {
     performance_metrics: LearningPerformanceMetrics<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LearningState<T>
+{
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let meta_state = Some(MetaState::new(config.model_dimension)?);
         let learning_schedule = LearningSchedule::new(config.learning_rate, config.warmup_steps);
@@ -507,12 +578,23 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
         }
 
         self.performance_metrics.record_loss(loss);
+        self.learning_schedule.step();
 
         if let Some(ref mut meta) = self.meta_state {
             meta.update_loss_history(loss);
         }
 
         Ok(())
+    }
+
+    /// Learning rate the schedule is currently at.
+    pub fn current_learning_rate(&self) -> T {
+        self.learning_schedule.current_rate
+    }
+
+    /// The learning-rate schedule this state advances on every recorded loss.
+    pub fn learning_schedule(&self) -> &LearningSchedule<T> {
+        &self.learning_schedule
     }
 
     pub fn get_statistics(&self) -> LearningStatistics<T> {
@@ -526,14 +608,16 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
     }
 
     pub fn get_average_loss(&self) -> T {
-        if self.loss_history.is_empty() {
-            T::zero()
-        } else {
-            self.loss_history
-                .iter()
-                .fold(T::zero(), |acc, &loss| acc + loss)
-                / T::from(self.loss_history.len()).expect("unwrap failed")
-        }
+        let Some(count) = cast_scalar::<T, _>(self.loss_history.len())
+            .ok()
+            .filter(|c| *c > T::zero())
+        else {
+            return T::zero();
+        };
+        self.loss_history
+            .iter()
+            .fold(T::zero(), |acc, &loss| acc + loss)
+            / count
     }
 
     pub fn get_best_loss(&self) -> T {
@@ -552,11 +636,15 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
             return T::zero();
         }
 
-        let initial = recent_losses.last().expect("unwrap failed");
-        let final_loss = recent_losses.first().expect("unwrap failed");
+        // `recent_losses.len() >= 2` was checked above; the fallible reads keep
+        // that reasoning next to the accesses it justifies.
+        let (Some(&initial), Some(&final_loss)) = (recent_losses.last(), recent_losses.first())
+        else {
+            return T::zero();
+        };
 
-        if *initial > T::zero() {
-            (*initial - *final_loss) / *initial
+        if initial > T::zero() {
+            (initial - final_loss) / initial
         } else {
             T::zero()
         }
@@ -601,7 +689,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningState<T> {
 
 /// Memory state management
 #[derive(Debug, Clone)]
-pub struct MemoryState<T: Float + Debug + Send + Sync + 'static> {
+pub struct MemoryState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Attention caches
     attention_caches: HashMap<String, AttentionCache<T>>,
 
@@ -612,7 +702,9 @@ pub struct MemoryState<T: Float + Debug + Send + Sync + 'static> {
     cache_statistics: CacheStatistics,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> MemoryState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    MemoryState<T>
+{
     pub fn new() -> Result<Self> {
         Ok(Self {
             attention_caches: HashMap::new(),
@@ -633,8 +725,20 @@ impl<T: Float + Debug + Send + Sync + 'static> MemoryState<T> {
     }
 }
 
+/// Explicitly-saved checkpoints retained before the oldest is evicted. The
+/// optimizer configuration carries no checkpoint-retention setting, so this is a
+/// documented default rather than something derived from it.
+const DEFAULT_MAX_CHECKPOINTS: usize = 10;
+
+/// Name prefix that marks a checkpoint as produced by
+/// [`CheckpointManager::maybe_auto_save`] rather than an explicit save, so the
+/// two are retained under separate limits.
+const AUTO_SAVE_PREFIX: &str = "auto_";
+
 /// Checkpoint management
-pub struct CheckpointManager<T: Float + Debug + Send + Sync + 'static> {
+pub struct CheckpointManager<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Stored checkpoints
     checkpoints: HashMap<String, OptimizerStateSnapshot<T>>,
 
@@ -648,14 +752,92 @@ pub struct CheckpointManager<T: Float + Debug + Send + Sync + 'static> {
     auto_save_config: AutoSaveConfig,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    CheckpointManager<T>
+{
+    /// Build a checkpoint manager whose auto-save cadence follows `config`.
+    ///
+    /// The auto-save frequency used to be a fixed 100 steps regardless of the
+    /// optimizer's configuration; it now tracks
+    /// [`StateConfig::from_optimizer_config`], which derives it from
+    /// `performance_config.metrics_interval`.
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
+        let state_config = StateConfig::from_optimizer_config(config);
         Ok(Self {
             checkpoints: HashMap::new(),
             metadata: HashMap::new(),
-            max_checkpoints: 10,
-            auto_save_config: AutoSaveConfig::default(),
+            max_checkpoints: DEFAULT_MAX_CHECKPOINTS,
+            auto_save_config: AutoSaveConfig {
+                enabled: state_config.auto_save_enabled,
+                frequency: state_config.checkpoint_frequency,
+                ..AutoSaveConfig::default()
+            },
         })
+    }
+
+    /// The auto-save policy this manager was built with.
+    pub fn auto_save_config(&self) -> &AutoSaveConfig {
+        &self.auto_save_config
+    }
+
+    /// Save `snapshot` if `step` falls on the configured auto-save cadence.
+    ///
+    /// Returns the new checkpoint id, or `None` when auto-save is disabled or
+    /// `step` is not a save point. Auto-saves are named `auto_<step>` and are
+    /// capped at [`AutoSaveConfig::max_auto_saves`] independently of the
+    /// explicit-checkpoint limit, oldest evicted first, so a long run cannot
+    /// grow the store without bound. `step == 0` saves the initial state.
+    ///
+    /// Without this, `auto_save_config` was populated at construction and never
+    /// read by anything: the auto-save policy existed only as a value.
+    pub fn maybe_auto_save(
+        &mut self,
+        step: usize,
+        snapshot: OptimizerStateSnapshot<T>,
+    ) -> Result<Option<String>> {
+        if !self.auto_save_config.enabled
+            || self.auto_save_config.frequency == 0
+            || !step.is_multiple_of(self.auto_save_config.frequency)
+        {
+            return Ok(None);
+        }
+        let max_auto_saves = self.auto_save_config.max_auto_saves;
+        let id = self.save_checkpoint(format!("{AUTO_SAVE_PREFIX}{step}"), snapshot)?;
+        self.evict_surplus_auto_saves(max_auto_saves);
+        Ok(Some(id))
+    }
+
+    /// Number of auto-saved checkpoints currently retained.
+    pub fn auto_save_count(&self) -> usize {
+        self.metadata
+            .values()
+            .filter(|m| m.name.starts_with(AUTO_SAVE_PREFIX))
+            .count()
+    }
+
+    /// Drop the oldest auto-saves until at most `max_auto_saves` remain.
+    /// Explicit checkpoints are untouched.
+    fn evict_surplus_auto_saves(&mut self, max_auto_saves: usize) {
+        loop {
+            let mut autos: Vec<(String, std::time::Instant)> = self
+                .metadata
+                .iter()
+                .filter(|(_, m)| m.name.starts_with(AUTO_SAVE_PREFIX))
+                .map(|(id, m)| (id.clone(), m.created_at))
+                .collect();
+            if autos.len() <= max_auto_saves {
+                return;
+            }
+            autos.sort_by_key(|(_, created)| *created);
+            match autos.first() {
+                Some((oldest, _)) => {
+                    let oldest = oldest.clone();
+                    self.checkpoints.remove(&oldest);
+                    self.metadata.remove(&oldest);
+                }
+                None => return,
+            }
+        }
     }
 
     pub fn save_checkpoint(
@@ -727,14 +909,18 @@ impl<T: Float + Debug + Send + Sync + 'static> CheckpointManager<T> {
 /// Supporting data structures and types
 
 #[derive(Debug, Clone)]
-pub struct ParameterSnapshot<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterSnapshot<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub parameters: Array1<T>,
     pub timestamp: std::time::Instant,
     pub norm: T,
 }
 
 #[derive(Debug, Clone)]
-pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct ParameterStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub total_snapshots: usize,
     pub average_norm: T,
     pub max_norm: T,
@@ -742,13 +928,17 @@ pub struct ParameterStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub norm_trend: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for ParameterStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for ParameterStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ParameterStatistics<T>
+{
     pub fn new() -> Self {
         Self {
             total_snapshots: 0,
@@ -773,7 +963,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ParameterStatistics<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AdaptiveState<T: Float + Debug + Send + Sync + 'static> {
+pub struct AdaptiveState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// First moment estimates
     pub m: Array1<T>,
     /// Second moment estimates
@@ -787,7 +979,9 @@ pub struct AdaptiveState<T: Float + Debug + Send + Sync + 'static> {
     pub epsilon: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> AdaptiveState<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    AdaptiveState<T>
+{
     pub fn new(parameter_count: usize) -> Result<Self> {
         Ok(Self {
             m: Array1::zeros(parameter_count),
@@ -814,14 +1008,18 @@ impl<T: Float + Debug + Send + Sync + 'static> AdaptiveState<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct GradientAccumulator<T: Float + Debug + Send + Sync + 'static> {
+pub struct GradientAccumulator<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Accumulated gradients
     pub accumulated_gradients: Array1<T>,
     /// Accumulation count
     pub accumulation_count: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> GradientAccumulator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    GradientAccumulator<T>
+{
     pub fn new(parameter_count: usize) -> Result<Self> {
         Ok(Self {
             accumulated_gradients: Array1::zeros(parameter_count),
@@ -837,7 +1035,9 @@ impl<T: Float + Debug + Send + Sync + 'static> GradientAccumulator<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ConvergenceTracker<T: Float + Debug + Send + Sync + 'static> {
+pub struct ConvergenceTracker<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Recent loss values
     recent_losses: VecDeque<T>,
     /// Convergence threshold
@@ -846,13 +1046,17 @@ pub struct ConvergenceTracker<T: Float + Debug + Send + Sync + 'static> {
     stability_window: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for ConvergenceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for ConvergenceTracker<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ConvergenceTracker<T>
+{
     pub fn new() -> Self {
         Self {
             recent_losses: VecDeque::new(),
@@ -869,13 +1073,40 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
         }
     }
 
+    /// Whether the tracked stream has converged: the mean absolute step-to-step
+    /// loss change over the stability window is at or below
+    /// `convergence_threshold`.
+    ///
+    /// Returns `false` until the window has at least two observations. The
+    /// threshold used to be stored at construction and consulted by nothing, so
+    /// the tracker could report a rate and a stability score but never a verdict.
+    pub fn has_converged(&self) -> bool {
+        if self.recent_losses.len() < 2 {
+            return false;
+        }
+        let mut total = T::zero();
+        for pair in self.recent_losses.iter().collect::<Vec<_>>().windows(2) {
+            total = total + (*pair[1] - *pair[0]).abs();
+        }
+        let steps: T = scirs2_core::numeric::NumCast::from(self.recent_losses.len() - 1)
+            .unwrap_or_else(|| T::one());
+        (total / steps) <= self.convergence_threshold
+    }
+
+    /// The configured convergence threshold.
+    pub fn convergence_threshold(&self) -> T {
+        self.convergence_threshold
+    }
+
     pub fn get_convergence_rate(&self) -> T {
         if self.recent_losses.len() < 2 {
             return T::zero();
         }
 
-        let first = self.recent_losses[0];
-        let last = *self.recent_losses.back().expect("unwrap failed");
+        let (Some(&first), Some(&last)) = (self.recent_losses.front(), self.recent_losses.back())
+        else {
+            return T::zero();
+        };
 
         if first > T::zero() {
             (first - last) / first
@@ -889,14 +1120,19 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
             return T::zero();
         }
 
-        let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x)
-            / T::from(self.recent_losses.len()).expect("unwrap failed");
+        let Some(count) = cast_scalar::<T, _>(self.recent_losses.len())
+            .ok()
+            .filter(|c| *c > T::zero())
+        else {
+            return T::zero();
+        };
+        let mean = self.recent_losses.iter().fold(T::zero(), |acc, &x| acc + x) / count;
         let variance = self
             .recent_losses
             .iter()
             .map(|&x| (x - mean) * (x - mean))
             .fold(T::zero(), |acc, x| acc + x)
-            / T::from(self.recent_losses.len()).expect("unwrap failed");
+            / count;
 
         T::one() / (T::one() + variance.sqrt())
     }
@@ -921,7 +1157,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ConvergenceTracker<T> {
 
 /// State snapshots and serialization
 #[derive(Debug, Clone)]
-pub struct OptimizerStateSnapshot<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizerStateSnapshot<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub parameters: Array1<T>,
     pub optimization_state: OptimizationState<T>,
     pub learning_state: LearningState<T>,
@@ -948,12 +1186,24 @@ pub struct StateConfig {
 }
 
 impl StateConfig {
-    pub fn from_optimizer_config<T: Float + Debug + Send + Sync + 'static>(
+    /// Derive the state-tracking configuration from the optimizer's own
+    /// performance-tracking settings.
+    ///
+    /// Every field used to be a hard-coded literal, so a caller who shrank
+    /// `performance_config.max_history_size` to bound memory still got a
+    /// 1000-entry state history. `max_history_size` and `checkpoint_frequency`
+    /// now follow the optimizer's configured history bound and metric cadence.
+    /// `auto_save_enabled` and `validation_enabled` stay `true`: the optimizer
+    /// config carries no corresponding switch, so there is nothing honest to
+    /// derive them from.
+    pub fn from_optimizer_config<
+        T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+    >(
         config: &TransformerBasedOptimizerConfig<T>,
     ) -> Self {
         Self {
-            max_history_size: 1000,
-            checkpoint_frequency: 100,
+            max_history_size: config.performance_config.max_history_size,
+            checkpoint_frequency: config.performance_config.metrics_interval.max(1),
             auto_save_enabled: true,
             validation_enabled: true,
         }
@@ -971,7 +1221,9 @@ pub struct StateMetadata {
 
 /// Statistics and tracking structures
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StateStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct StateStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub total_updates: usize,
     pub last_update_magnitude: T,
     pub average_update_magnitude: T,
@@ -979,13 +1231,17 @@ pub struct StateStatistics<T: Float + Debug + Send + Sync + 'static> {
     pub update_frequency: f64,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for StateStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for StateStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> StateStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    StateStatistics<T>
+{
     pub fn new() -> Self {
         Self {
             total_updates: 0,
@@ -1034,7 +1290,9 @@ pub struct ValidationResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct StateSummary<T: Float + Debug + Send + Sync + 'static> {
+pub struct StateSummary<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub version: usize,
     pub parameter_count: usize,
     pub parameter_norm: T,
@@ -1049,7 +1307,9 @@ pub struct StateSummary<T: Float + Debug + Send + Sync + 'static> {
 
 /// Serializable state structures
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub parameters: Vec<T>,
     pub parameter_shape: Vec<usize>,
     pub optimization_state: SerializableOptimizationState<T>,
@@ -1059,7 +1319,9 @@ pub struct SerializableState<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableOptimizationState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableOptimizationState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub learning_rate: T,
     pub step_count: usize,
     pub last_update_magnitude: T,
@@ -1068,7 +1330,9 @@ pub struct SerializableOptimizationState<T: Float + Debug + Send + Sync + 'stati
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableLearningState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableLearningState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub loss_history: Vec<T>,
     pub average_loss: T,
     pub best_loss: T,
@@ -1076,7 +1340,9 @@ pub struct SerializableLearningState<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableConvergenceState<T: Float + Debug + Send + Sync + 'static> {
+pub struct SerializableConvergenceState<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub recent_losses: Vec<T>,
     pub convergence_rate: T,
     pub stability_score: T,
@@ -1084,7 +1350,9 @@ pub struct SerializableConvergenceState<T: Float + Debug + Send + Sync + 'static
 
 /// Additional supporting structures
 #[derive(Debug, Clone)]
-pub struct TaskAdaptationRecord<T: Float + Debug + Send + Sync + 'static> {
+pub struct TaskAdaptationRecord<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub task_id: String,
     pub adaptation_steps: usize,
     pub final_loss: T,
@@ -1092,38 +1360,84 @@ pub struct TaskAdaptationRecord<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningSchedule<T: Float + Debug + Send + Sync + 'static> {
+/// Linear-warmup-then-exponential-decay learning-rate schedule.
+///
+/// `initial_rate`, `warmup_steps` and `decay_factor` used to be stored and never
+/// consulted: the schedule had no way to advance, so `current_rate` stayed at
+/// `initial_rate` forever and [`LearningState`] held a schedule it never used.
+pub struct LearningSchedule<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub initial_rate: T,
     pub current_rate: T,
     pub warmup_steps: usize,
     pub decay_factor: T,
+    /// Steps taken so far, advanced by [`LearningSchedule::step`].
+    steps_taken: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LearningSchedule<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LearningSchedule<T>
+{
     pub fn new(initial_rate: T, warmup_steps: usize) -> Self {
         Self {
             initial_rate,
             current_rate: initial_rate,
             warmup_steps,
             decay_factor: scirs2_core::numeric::NumCast::from(0.95).unwrap_or_else(|| T::zero()),
+            steps_taken: 0,
         }
+    }
+
+    /// Rate at `step`: `initial_rate · step / warmup_steps` while warming up,
+    /// then `initial_rate · decay_factor^(step - warmup_steps)`.
+    ///
+    /// With `warmup_steps == 0` the warmup phase is skipped entirely.
+    pub fn rate_at(&self, step: usize) -> T {
+        if step < self.warmup_steps {
+            let progress: T =
+                scirs2_core::numeric::NumCast::from((step + 1) as f64 / self.warmup_steps as f64)
+                    .unwrap_or_else(T::one);
+            return self.initial_rate * progress;
+        }
+        let decayed: T = scirs2_core::numeric::NumCast::from((step - self.warmup_steps) as f64)
+            .unwrap_or_else(T::zero);
+        self.initial_rate * self.decay_factor.powf(decayed)
+    }
+
+    /// Advance one step and return the new rate.
+    pub fn step(&mut self) -> T {
+        self.current_rate = self.rate_at(self.steps_taken);
+        self.steps_taken += 1;
+        self.current_rate
+    }
+
+    /// Steps taken so far.
+    pub fn steps_taken(&self) -> usize {
+        self.steps_taken
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningPerformanceMetrics<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningPerformanceMetrics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub loss_trend: T,
     pub convergence_stability: T,
     pub adaptation_efficiency: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for LearningPerformanceMetrics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for LearningPerformanceMetrics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LearningPerformanceMetrics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    LearningPerformanceMetrics<T>
+{
     pub fn new() -> Self {
         Self {
             loss_trend: T::zero(),
@@ -1148,7 +1462,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LearningPerformanceMetrics<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct OptimizationProgress<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationProgress<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub step_count: usize,
     pub current_learning_rate: T,
     pub last_update_magnitude: T,
@@ -1157,7 +1473,9 @@ pub struct OptimizationProgress<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LearningStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct LearningStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub total_episodes: usize,
     pub average_loss: T,
     pub best_loss: T,
@@ -1166,7 +1484,9 @@ pub struct LearningStatistics<T: Float + Debug + Send + Sync + 'static> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AttentionCache<T: Float + Debug + Send + Sync + 'static> {
+pub struct AttentionCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub cached_keys: Array2<T>,
     pub cached_values: Array2<T>,
     pub cache_size: usize,
@@ -1266,7 +1586,7 @@ mod tests {
         let state = TransformerOptimizerState::new(&config);
         assert!(state.is_ok());
 
-        let s = state.expect("unwrap failed");
+        let s = state.expect("TransformerOptimizerState::new should succeed");
         assert_eq!(s.version, 0);
         assert!(!s.current_parameters.is_empty());
     }
@@ -1274,7 +1594,8 @@ mod tests {
     #[test]
     fn test_state_update() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let update = Array1::<f32>::ones(state.current_parameters.len());
         let result = state.update_with_step(&update, Some(1.5));
@@ -1282,15 +1603,69 @@ mod tests {
         assert_eq!(state.version, 1);
     }
 
+    /// F3 regression: on any config where `num_transformer_layers != 1` (the
+    /// default is 6), `current_parameters.len() == model_dimension *
+    /// num_transformer_layers` while the update network only ever produces
+    /// `model_dimension` elements. Adding the two mismatched-length arrays
+    /// directly used to panic inside `ndarray`'s `Add`; the update must
+    /// instead be tiled across every layer segment without panicking.
+    #[test]
+    fn test_update_with_step_tiles_per_layer_update_on_default_config() {
+        let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        assert_ne!(
+            config.num_transformer_layers, 1,
+            "test is only meaningful when layers > 1"
+        );
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
+        let total_len = state.current_parameters.len();
+        assert_eq!(
+            total_len,
+            config.model_dimension * config.num_transformer_layers
+        );
+
+        // Exactly what the adaptation network actually produces: one layer's
+        // worth of update, not the full parameter length.
+        let per_layer_update = Array1::<f32>::from_elem(config.model_dimension, 0.5);
+        let result = state.update_with_step(&per_layer_update, Some(1.0));
+        assert!(
+            result.is_ok(),
+            "a per-layer update must not panic or error on the default config: {result:?}"
+        );
+
+        // Every layer segment must have received the same per-layer update.
+        for layer in 0..config.num_transformer_layers {
+            let start = layer * config.model_dimension;
+            let segment = &state.current_parameters.as_slice().expect("contiguous")
+                [start..start + config.model_dimension];
+            for &v in segment {
+                approx::assert_abs_diff_eq!(v, 0.5, epsilon = 1e-6);
+            }
+        }
+    }
+
+    /// F3 regression: a genuinely incompatible update length (one that cannot
+    /// be tiled onto the parameter vector) must be a typed error, not a panic.
+    #[test]
+    fn test_update_with_step_rejects_untileable_length() {
+        let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
+        let bad_update = Array1::<f32>::ones(state.current_parameters.len() + 3);
+        let result = state.update_with_step(&bad_update, None);
+        assert!(result.is_err(), "an untileable update length must error");
+    }
+
     #[test]
     fn test_snapshot_creation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let snapshot = state.create_snapshot();
         assert!(snapshot.is_ok());
 
-        let snap = snapshot.expect("unwrap failed");
+        let snap = snapshot.expect("create_snapshot should succeed");
         assert_eq!(snap.version, 0);
         assert_eq!(snap.parameters.len(), state.current_parameters.len());
     }
@@ -1298,12 +1673,13 @@ mod tests {
     #[test]
     fn test_checkpoint_management() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let mut state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let mut state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let checkpoint_id = state.save_checkpoint("test_checkpoint".to_string());
         assert!(checkpoint_id.is_ok());
 
-        let id = checkpoint_id.expect("unwrap failed");
+        let id = checkpoint_id.expect("save_checkpoint should succeed");
         let load_result = state.load_checkpoint(&id);
         assert!(load_result.is_ok());
     }
@@ -1313,7 +1689,7 @@ mod tests {
         let history = ParameterHistory::<f32>::new(10, 5);
         assert!(history.is_ok());
 
-        let mut h = history.expect("unwrap failed");
+        let mut h = history.expect("ParameterHistory::new should succeed");
         let params = Array1::<f32>::ones(5);
         assert!(h.record_parameters(&params).is_ok());
 
@@ -1339,12 +1715,107 @@ mod tests {
     #[test]
     fn test_state_validation() {
         let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
-        let state = TransformerOptimizerState::new(&config).expect("unwrap failed");
+        let state = TransformerOptimizerState::new(&config)
+            .expect("TransformerOptimizerState::new should succeed");
 
         let validation = state.validate_state();
         assert!(validation.is_ok());
 
-        let report = validation.expect("unwrap failed");
+        let report = validation.expect("validate_state should succeed");
         assert!(report.is_valid);
+    }
+
+    /// `StateConfig::from_optimizer_config` used to ignore its argument entirely
+    /// and return four hard-coded literals, so shrinking the optimizer's history
+    /// bound had no effect on the state tracker.
+    #[test]
+    fn state_config_follows_the_optimizer_performance_config() {
+        let mut config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        config.performance_config.max_history_size = 42;
+        config.performance_config.metrics_interval = 7;
+
+        let derived = StateConfig::from_optimizer_config(&config);
+        assert_eq!(derived.max_history_size, 42);
+        assert_eq!(derived.checkpoint_frequency, 7);
+
+        // A zero interval would make the auto-save modulus undefined, so it is
+        // floored at 1 rather than propagated.
+        config.performance_config.metrics_interval = 0;
+        assert_eq!(
+            StateConfig::from_optimizer_config(&config).checkpoint_frequency,
+            1
+        );
+    }
+
+    /// `CheckpointManager::auto_save_config` was written at construction and
+    /// never read: there was no auto-save path at all, and the cadence was a
+    /// fixed 100 steps regardless of configuration.
+    #[test]
+    fn checkpoint_manager_auto_saves_on_the_configured_cadence() {
+        let mut config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        config.performance_config.metrics_interval = 3;
+        let state = TransformerOptimizerState::new(&config).expect("state");
+
+        let mut manager = CheckpointManager::<f32>::new(&config).expect("manager");
+        assert_eq!(manager.auto_save_config().frequency, 3);
+
+        // Off-cadence steps must not save.
+        for step in [1_usize, 2, 4, 5] {
+            assert_eq!(
+                manager
+                    .maybe_auto_save(step, state.create_snapshot().expect("snapshot"))
+                    .expect("auto save"),
+                None,
+                "step {step} is not a multiple of 3"
+            );
+        }
+        assert_eq!(manager.auto_save_count(), 0);
+
+        // On-cadence steps must save, and be capped at `max_auto_saves`.
+        let cap = manager.auto_save_config().max_auto_saves;
+        assert!(cap > 0, "default policy should retain some auto-saves");
+        for step in (0..).step_by(3).take(cap + 3) {
+            let id = manager
+                .maybe_auto_save(step, state.create_snapshot().expect("snapshot"))
+                .expect("auto save")
+                .expect("on-cadence step must produce a checkpoint");
+            assert!(id.starts_with("auto_"), "unexpected id {id}");
+        }
+        assert_eq!(
+            manager.auto_save_count(),
+            cap,
+            "surplus auto-saves must be evicted oldest-first"
+        );
+
+        // An explicit checkpoint is retained under its own limit and is not
+        // counted as (or evicted by) an auto-save.
+        manager
+            .save_checkpoint("manual".to_string(), state.create_snapshot().expect("snap"))
+            .expect("manual save");
+        manager
+            .maybe_auto_save(3_000, state.create_snapshot().expect("snap"))
+            .expect("auto save");
+        assert_eq!(manager.auto_save_count(), cap);
+        assert!(manager
+            .list_checkpoints()
+            .iter()
+            .any(|m| m.name == "manual"));
+    }
+
+    /// Auto-save must be a no-op when the policy is disabled.
+    #[test]
+    fn checkpoint_manager_auto_save_respects_a_disabled_policy() {
+        let config = super::super::config::TransformerBasedOptimizerConfig::<f32>::default();
+        let state = TransformerOptimizerState::new(&config).expect("state");
+        let mut manager = CheckpointManager::<f32>::new(&config).expect("manager");
+        manager.auto_save_config.enabled = false;
+
+        assert_eq!(
+            manager
+                .maybe_auto_save(0, state.create_snapshot().expect("snapshot"))
+                .expect("auto save"),
+            None
+        );
+        assert_eq!(manager.get_checkpoint_count(), 0);
     }
 }

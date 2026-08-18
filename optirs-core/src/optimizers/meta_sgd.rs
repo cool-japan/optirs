@@ -11,7 +11,7 @@ use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// Meta-SGD optimizer with per-parameter learnable learning rates
@@ -128,6 +128,107 @@ impl<A: Float + ScalarOperand + Debug> MetaSGD<A> {
         self.per_param_lr = None;
     }
 
+    /// Performs the inner adaptation loop, recomputing the gradient at every step
+    ///
+    /// Meta-SGD's inner loop is defined on *fresh* gradients: after each inner update
+    /// the loss gradient must be re-evaluated at the newly adapted parameters. The
+    /// plain [`Optimizer::step`] entry point cannot do that — it only receives a single
+    /// pre-computed gradient array, so it necessarily reuses the same gradient for
+    /// every inner step (a first-order approximation). Use this method whenever you
+    /// can evaluate gradients on demand.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - Current parameter values
+    /// * `grad_fn` - Closure returning the loss gradient at the parameters it is given
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error returned by `grad_fn`, and fails if the closure returns a
+    /// gradient whose shape does not match the parameters.
+    pub fn step_with_closure<D, F>(
+        &mut self,
+        params: &Array<A, D>,
+        mut grad_fn: F,
+    ) -> Result<Array<A, D>>
+    where
+        D: Dimension,
+        F: FnMut(&Array<A, D>) -> Result<Array<A, D>>,
+    {
+        let min_lr = A::from(1e-8).ok_or_else(|| {
+            OptimError::InvalidConfig("MetaSGD: failed to convert min_lr constant".to_string())
+        })?;
+        let max_lr = A::from(10.0).ok_or_else(|| {
+            OptimError::InvalidConfig("MetaSGD: failed to convert max_lr constant".to_string())
+        })?;
+
+        let params_dyn = params.to_owned().into_dyn();
+        self.ensure_per_param_lr(&params_dyn);
+
+        let per_param_lr = self
+            .per_param_lr
+            .as_ref()
+            .ok_or_else(|| {
+                OptimError::InvalidConfig("MetaSGD: per_param_lr not initialized".to_string())
+            })?
+            .clone();
+
+        let mut adapted = params.to_owned();
+        let mut cumulative_delta = Array::<A, IxDyn>::zeros(params_dyn.raw_dim());
+        let mut last_gradient: Option<Array<A, IxDyn>> = None;
+
+        for _ in 0..self.inner_steps {
+            let gradient = grad_fn(&adapted)?;
+            if gradient.shape() != adapted.shape() {
+                return Err(OptimError::DimensionMismatch(format!(
+                    "MetaSGD: gradient shape {:?} does not match parameter shape {:?}",
+                    gradient.shape(),
+                    adapted.shape()
+                )));
+            }
+            let gradient_dyn = gradient.into_dyn();
+
+            // delta = per_param_lr * grad(theta_k)
+            let delta = &per_param_lr * &gradient_dyn;
+            cumulative_delta = &cumulative_delta + &delta;
+
+            let adapted_dyn = adapted.into_dyn() - &delta;
+            adapted = adapted_dyn.into_dimensionality::<D>().map_err(|e| {
+                OptimError::DimensionMismatch(format!(
+                    "MetaSGD: failed to restore parameter dimensionality: {}",
+                    e
+                ))
+            })?;
+
+            last_gradient = Some(gradient_dyn);
+        }
+
+        // Meta-gradient uses the gradient evaluated at the final adapted parameters.
+        if let Some(final_gradient) = last_gradient {
+            let meta_gradient = &final_gradient * &cumulative_delta;
+            let mut updated_lr = &per_param_lr - &(&meta_gradient * self.alpha_lr);
+            Self::clamp_lr_array(&mut updated_lr, min_lr, max_lr);
+            self.per_param_lr = Some(updated_lr);
+        }
+
+        self.step_count += 1;
+        Ok(adapted)
+    }
+
+    /// Initializes (or re-initializes on shape change) the per-parameter learning rates
+    fn ensure_per_param_lr(&mut self, params_dyn: &Array<A, IxDyn>) {
+        let needs_init = match self.per_param_lr.as_ref() {
+            Some(lr) => lr.raw_dim() != params_dyn.raw_dim(),
+            None => true,
+        };
+        if needs_init {
+            self.per_param_lr = Some(Array::<A, IxDyn>::from_elem(
+                params_dyn.raw_dim(),
+                self.base_lr,
+            ));
+        }
+    }
+
     /// Clamp learning rate values to the valid range [min_val, max_val]
     fn clamp_lr_array(lr_array: &mut Array<A, IxDyn>, min_val: A, max_val: A) {
         lr_array.mapv_inplace(|v| {
@@ -147,37 +248,46 @@ where
     A: Float + ScalarOperand + Debug,
     D: Dimension,
 {
+    /// Performs one Meta-SGD outer step from a single pre-computed gradient
+    ///
+    /// # Inner-loop caveat
+    ///
+    /// The [`Optimizer`] trait supplies one gradient array per call, so when
+    /// `inner_steps > 1` this method necessarily **reuses the same gradient** for
+    /// every inner adaptation step instead of re-evaluating the loss at each inner
+    /// iterate. That is a deliberate first-order approximation of Meta-SGD, valid
+    /// when the inner steps are small, and it is what the trait contract allows.
+    ///
+    /// Use [`MetaSGD::step_with_closure`] to get the exact algorithm with gradients
+    /// recomputed at every inner step.
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "MetaSGD: gradient shape {:?} does not match parameter shape {:?}",
+                gradients.shape(),
+                params.shape()
+            )));
+        }
+
         let params_dyn = params.to_owned().into_dyn();
         let gradients_dyn = gradients.to_owned().into_dyn();
 
-        let min_lr = A::from(1e-8).expect("MetaSGD: failed to convert min_lr constant");
-        let max_lr = A::from(10.0).expect("MetaSGD: failed to convert max_lr constant");
+        let min_lr = A::from(1e-8).ok_or_else(|| {
+            OptimError::InvalidConfig("MetaSGD: failed to convert min_lr constant".to_string())
+        })?;
+        let max_lr = A::from(10.0).ok_or_else(|| {
+            OptimError::InvalidConfig("MetaSGD: failed to convert max_lr constant".to_string())
+        })?;
 
-        // Step 1: Initialize per-parameter learning rates if needed
-        if self.per_param_lr.is_none() {
-            let lr_init = Array::<A, IxDyn>::from_elem(params_dyn.raw_dim(), self.base_lr);
-            self.per_param_lr = Some(lr_init);
-        }
-
-        // Handle shape mismatch (if params shape changed since last call)
-        {
-            let current_lr = self
-                .per_param_lr
-                .as_ref()
-                .expect("MetaSGD: per_param_lr should be initialized");
-            if current_lr.raw_dim() != params_dyn.raw_dim() {
-                self.per_param_lr = Some(Array::<A, IxDyn>::from_elem(
-                    params_dyn.raw_dim(),
-                    self.base_lr,
-                ));
-            }
-        }
+        // Step 1: Initialize (or reset on shape change) per-parameter learning rates
+        self.ensure_per_param_lr(&params_dyn);
 
         let per_param_lr = self
             .per_param_lr
             .as_ref()
-            .expect("MetaSGD: per_param_lr should be initialized")
+            .ok_or_else(|| {
+                OptimError::InvalidConfig("MetaSGD: per_param_lr not initialized".to_string())
+            })?
             .clone();
 
         // Step 2-3: Apply inner adaptation steps using per-parameter learning rates
@@ -206,9 +316,12 @@ where
         self.step_count += 1;
 
         // Convert back to original dimension
-        Ok(adapted_params
-            .into_dimensionality::<D>()
-            .expect("MetaSGD: failed to convert back to original dimensionality"))
+        adapted_params.into_dimensionality::<D>().map_err(|e| {
+            OptimError::DimensionMismatch(format!(
+                "MetaSGD: failed to convert back to original dimensionality: {}",
+                e
+            ))
+        })
     }
 
     fn get_learning_rate(&self) -> A {
@@ -415,5 +528,48 @@ mod tests {
 
         optimizer.reset_per_param_lr();
         assert!(optimizer.get_per_param_lr().is_none());
+    }
+
+    /// Regression test for the reused-gradient inner loop.
+    ///
+    /// `Optimizer::step` can only reuse the single gradient it is handed, so multiple
+    /// inner steps move linearly. `step_with_closure` re-evaluates the gradient at each
+    /// inner iterate, which for f(x) = x^2 must produce a strictly different (and
+    /// smaller in magnitude) total displacement.
+    #[test]
+    fn test_meta_sgd_step_with_closure_recomputes_gradients() {
+        let params = Array1::from_vec(vec![1.0f64]);
+
+        let mut reused = MetaSGD::new(0.1_f64).with_alpha_lr(0.0).with_inner_steps(3);
+        let gradients = params.mapv(|x| 2.0 * x);
+        let reused_out = reused.step(&params, &gradients).expect("step failed");
+
+        let mut recomputed = MetaSGD::new(0.1_f64).with_alpha_lr(0.0).with_inner_steps(3);
+        let recomputed_out = recomputed
+            .step_with_closure(&params, |p: &Array1<f64>| Ok(p.mapv(|x| 2.0 * x)))
+            .expect("closure step failed");
+
+        // Reusing g = 2.0 three times: 1 - 3 * 0.1 * 2 = 0.4
+        assert!((reused_out[0] - 0.4).abs() < 1e-12, "got {}", reused_out[0]);
+
+        // Recomputing: x <- x * (1 - 0.2) each step => 0.8^3 = 0.512
+        assert!(
+            (recomputed_out[0] - 0.512).abs() < 1e-12,
+            "got {}",
+            recomputed_out[0]
+        );
+
+        assert!((reused_out[0] - recomputed_out[0]).abs() > 1e-3);
+        assert_eq!(recomputed.get_step_count(), 1);
+    }
+
+    /// The closure API must surface gradient-shape errors instead of panicking.
+    #[test]
+    fn test_meta_sgd_step_with_closure_shape_mismatch() {
+        let mut optimizer = MetaSGD::new(0.1_f64).with_inner_steps(1);
+        let params = Array1::from_vec(vec![1.0f64, 2.0]);
+
+        let result = optimizer.step_with_closure(&params, |_p: &Array1<f64>| Ok(Array1::zeros(3)));
+        assert!(result.is_err());
     }
 }

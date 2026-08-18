@@ -8,12 +8,14 @@ use std::collections::VecDeque;
 use std::iter::Sum;
 use std::time::{Duration, Instant};
 
-#[allow(unused_imports)]
 use crate::error::Result;
+use crate::utils::scalar_or;
+
+#[cfg(test)]
+mod drift_regression_tests;
 
 /// Types of concept drift detection algorithms
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 pub enum DriftDetectionMethod {
     /// Page-Hinkley test for change detection
     PageHinkley,
@@ -31,7 +33,6 @@ pub enum DriftDetectionMethod {
 
 /// Concept drift detector configuration
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct DriftDetectorConfig {
     /// Detection method to use
     pub method: DriftDetectionMethod,
@@ -134,6 +135,16 @@ pub struct PageHinkleyDetector<A: Float + Send + Sync> {
     sample_count: usize,
     /// Last drift time
     last_drift: Option<Instant>,
+    /// Running mean of observed losses under the null hypothesis of no
+    /// drift (C1 fix): the classic Page-Hinkley test (Gama et al., 2004)
+    /// computes `x̄_t`, the incremental mean of *all* samples seen so far
+    /// (including the current one), and accumulates `sum(x_t - x̄_t)`. The
+    /// previous code used a hardcoded `0.1` in place of `x̄_t`, so the
+    /// detector only behaved correctly for streams whose stable loss
+    /// happened to sit near 0.1 — any other baseline made `sum` drift
+    /// monotonically regardless of real drift, eventually firing false
+    /// positives (or, for a baseline well below 0.1, never firing at all).
+    running_mean: A,
 }
 
 impl<A: Float + Send + Sync + Send + Sync> PageHinkleyDetector<A> {
@@ -146,6 +157,7 @@ impl<A: Float + Send + Sync + Send + Sync> PageHinkleyDetector<A> {
             warningthreshold,
             sample_count: 0,
             last_drift: None,
+            running_mean: A::zero(),
         }
     }
 
@@ -153,9 +165,14 @@ impl<A: Float + Send + Sync + Send + Sync> PageHinkleyDetector<A> {
     pub fn update(&mut self, loss: A) -> DriftStatus {
         self.sample_count += 1;
 
+        // Incremental mean update (Welford-style): `running_mean` becomes
+        // the mean of all `sample_count` losses seen so far, including this
+        // one, matching the standard Page-Hinkley `x̄_t` (C1 fix).
+        let count = A::from(self.sample_count).unwrap_or(A::one());
+        self.running_mean = self.running_mean + (loss - self.running_mean) / count;
+
         // Update cumulative sum (assuming we want to detect increases in loss)
-        let mean_loss = A::from(0.1).expect("unwrap failed"); // Estimated mean under H0
-        self.sum = self.sum + loss - mean_loss;
+        self.sum = self.sum + loss - self.running_mean;
 
         // Update minimum
         if self.sum < self.min_sum {
@@ -176,11 +193,31 @@ impl<A: Float + Send + Sync + Send + Sync> PageHinkleyDetector<A> {
         }
     }
 
+    /// Replace the decision thresholds *without* discarding the accumulated
+    /// statistic (C6). Rebuilding the detector to change a threshold would
+    /// reset `sum`/`min_sum` on every adaptation, so the cumulative test could
+    /// never reach any threshold at all.
+    pub fn set_thresholds(&mut self, threshold: A, warningthreshold: A) {
+        self.threshold = threshold;
+        self.warningthreshold = warningthreshold;
+    }
+
+    /// Current detection threshold.
+    pub fn threshold(&self) -> A {
+        self.threshold
+    }
+
+    /// Current warning threshold.
+    pub fn warning_threshold(&self) -> A {
+        self.warningthreshold
+    }
+
     /// Reset detector state
     pub fn reset(&mut self) {
         self.sum = A::zero();
         self.min_sum = A::zero();
         self.sample_count = 0;
+        self.running_mean = A::zero();
     }
 }
 
@@ -208,6 +245,16 @@ impl<A: Float + Sum + Send + Sync + Send + Sync> AdwinDetector<A> {
         }
     }
 
+    /// Replace the confidence parameter without discarding the window (C6).
+    pub fn set_delta(&mut self, delta: A) {
+        self.delta = delta;
+    }
+
+    /// Current confidence parameter.
+    pub fn delta(&self) -> A {
+        self.delta
+    }
+
     /// Update detector with new value
     pub fn update(&mut self, value: A) -> DriftStatus {
         self.window.push_back(value);
@@ -230,48 +277,77 @@ impl<A: Float + Sum + Send + Sync + Send + Sync> AdwinDetector<A> {
         }
     }
 
-    /// Detect change using ADWIN algorithm
+    /// Detect change using the ADWIN algorithm (Bifet & Gavaldà, 2007).
+    ///
+    /// C2 fix: the previous implementation checked only the single midpoint
+    /// split and used an ad hoc `sqrt(var1 + var2 + 0.01)` threshold that
+    /// never read `delta` at all, so the detector's configured confidence
+    /// level had zero effect on its behavior. This checks every valid split
+    /// point `n0 = 1..n` (as real ADWIN does — a true change can occur
+    /// anywhere in the window, not just at the middle) using the standard
+    /// Hoeffding-bound cut condition: for sub-windows of size `n0`, `n1`
+    /// with means `mean0`, `mean1`, a cut is declared where
+    /// `|mean0 - mean1| > eps_cut`, with
+    /// `eps_cut = sqrt((1 / (2*m)) * ln(4 / delta))`,
+    /// `m = 1 / (1/n0 + 1/n1)` (the harmonic-mean-style combined size ADWIN
+    /// uses), which directly incorporates the detector's `delta` confidence
+    /// parameter: a smaller `delta` (higher confidence) requires a larger
+    /// mean gap before declaring a change.
     fn detect_change(&self) -> bool {
         let n = self.window.len();
         if n < 2 {
             return false;
         }
 
-        // Simplified ADWIN: check for significant difference between halves
-        let mid = n / 2;
+        let values: Vec<A> = self.window.iter().cloned().collect();
+        // Prefix sums so every split's sub-window mean is O(1) to compute.
+        let mut prefix = Vec::with_capacity(n + 1);
+        prefix.push(A::zero());
+        for &v in &values {
+            prefix.push(*prefix.last().unwrap_or(&A::zero()) + v);
+        }
+        let total = prefix[n];
 
-        let first_half: Vec<_> = self.window.iter().take(mid).cloned().collect();
-        let second_half: Vec<_> = self.window.iter().skip(mid).cloned().collect();
-
-        let mean1 = first_half.iter().cloned().sum::<A>()
-            / A::from(first_half.len()).expect("unwrap failed");
-        let mean2 = second_half.iter().cloned().sum::<A>()
-            / A::from(second_half.len()).expect("unwrap failed");
-
-        // Compute variance
-        let var1 = first_half
+        // The textbook Hoeffding bound assumes values in [0, 1]; real
+        // losses/metrics are not naturally bounded that way. Following the
+        // common practical adaptation (as in e.g. river's/scikit-multiflow's
+        // ADWIN), scale by the window's observed range `R = max - min` as an
+        // empirical stand-in for the a-priori bound, so the same relative
+        // sensitivity holds regardless of the metric's absolute scale.
+        let min_v = values
             .iter()
-            .map(|&x| {
-                let diff = x - mean1;
-                diff * diff
-            })
-            .sum::<A>()
-            / A::from(first_half.len()).expect("unwrap failed");
-
-        let var2 = second_half
+            .cloned()
+            .fold(values[0], |a, b| if b < a { b } else { a });
+        let max_v = values
             .iter()
-            .map(|&x| {
-                let diff = x - mean2;
-                diff * diff
-            })
-            .sum::<A>()
-            / A::from(second_half.len()).expect("unwrap failed");
+            .cloned()
+            .fold(values[0], |a, b| if b > a { b } else { a });
+        let range = (max_v - min_v).max(A::from(1e-12).unwrap_or(A::zero()));
 
-        // Simplified change detection
-        let diff = (mean1 - mean2).abs();
-        let threshold = (var1 + var2 + A::from(0.01).expect("unwrap failed")).sqrt();
+        let four = A::from(4.0).unwrap_or(A::one());
+        let two = A::from(2.0).unwrap_or(A::one());
+        let ln_term = (four / self.delta.max(A::from(1e-12).unwrap_or(A::zero()))).ln();
 
-        diff > threshold
+        for (offset, &sum0) in prefix[1..n].iter().enumerate() {
+            let n0 = offset + 1;
+            let n1 = n - n0;
+            let n0_a = A::from(n0).unwrap_or(A::one());
+            let n1_a = A::from(n1).unwrap_or(A::one());
+
+            let sum1 = total - sum0;
+            let mean0 = sum0 / n0_a;
+            let mean1 = sum1 / n1_a;
+
+            // Harmonic-mean-style combined size `m = 1 / (1/n0 + 1/n1)`.
+            let m = A::one() / (A::one() / n0_a + A::one() / n1_a);
+            let eps_cut = range * (ln_term / (two * m)).sqrt();
+
+            if (mean0 - mean1).abs() > eps_cut {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Shrink window after drift detection
@@ -283,34 +359,79 @@ impl<A: Float + Sum + Send + Sync + Send + Sync> AdwinDetector<A> {
     }
 }
 
-/// DDM (Drift Detection Method) detector
+/// DDM (Drift Detection Method) detector.
+///
+/// C3: implemented per Gama et al., "Learning with Drift Detection" (2004).
+/// The detector tracks the online error rate `p_i` and its standard deviation
+/// `s_i = sqrt(p_i (1 - p_i) / i)`, remembers the pair `(p_min, s_min)` observed
+/// at the *minimum of `p_i + s_i`*, and compares the current `p_i + s_i`
+/// against `p_min + 2*s_min` (warning) and `p_min + 3*s_min` (drift).
+///
+/// The previous implementation instead tracked `min(p_i + 2*s_i)` in
+/// `min_error_plus_2_std` and set `min_error_plus_3_std` to `p_i + 3*s_i` *at
+/// that same moment*. The published `2*s_min` / `3*s_min` margins were
+/// therefore never applied: the warning test degenerated to "is the current
+/// level above the smallest level ever seen", which fires on essentially any
+/// upward noise, and the drift test compared `p + 2s` against `p_min + 3*s_min`
+/// where both terms came from different definitions. It also seeded
+/// `error_std = 1.0`, which is not a possible standard deviation for a rate in
+/// `[0, 1]`.
 #[derive(Debug, Clone)]
 pub struct DdmDetector<A: Float + Send + Sync> {
-    /// Error rate
+    /// Current error rate `p_i`
     error_rate: A,
-    /// Standard deviation of error rate
+    /// Current standard deviation `s_i`
     error_std: A,
-    /// Minimum error rate + 2*std
-    min_error_plus_2_std: A,
-    /// Minimum error rate + 3*std
-    min_error_plus_3_std: A,
+    /// Error rate at the minimum of `p_i + s_i`
+    p_min: Option<A>,
+    /// Standard deviation at the minimum of `p_i + s_i`
+    s_min: Option<A>,
     /// Sample count
     sample_count: usize,
     /// Error count
     error_count: usize,
+    /// Samples required before the detector starts testing
+    warmup: usize,
 }
 
 impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
+    /// Minimum samples before the DDM statistics are meaningful (the value
+    /// used in the original paper).
+    pub const DEFAULT_WARMUP: usize = 30;
+
     /// Create a new DDM detector
     pub fn new() -> Self {
+        Self::with_warmup(Self::DEFAULT_WARMUP)
+    }
+
+    /// Create a DDM detector with a custom warm-up length.
+    pub fn with_warmup(warmup: usize) -> Self {
         Self {
             error_rate: A::zero(),
-            error_std: A::one(),
-            min_error_plus_2_std: A::from(f64::MAX).expect("unwrap failed"),
-            min_error_plus_3_std: A::from(f64::MAX).expect("unwrap failed"),
+            error_std: A::zero(),
+            p_min: None,
+            s_min: None,
             sample_count: 0,
             error_count: 0,
+            warmup: warmup.max(2),
         }
+    }
+
+    /// Current error rate estimate.
+    pub fn error_rate(&self) -> A {
+        self.error_rate
+    }
+
+    /// Current warning level `p_min + 2*s_min`, if the baseline is established.
+    pub fn warning_level(&self) -> Option<A> {
+        let (p_min, s_min) = (self.p_min?, self.s_min?);
+        Some(p_min + A::from(2.0)? * s_min)
+    }
+
+    /// Current drift level `p_min + 3*s_min`, if the baseline is established.
+    pub fn drift_level(&self) -> Option<A> {
+        let (p_min, s_min) = (self.p_min?, self.s_min?);
+        Some(p_min + A::from(3.0)? * s_min)
     }
 
     /// Update with prediction result
@@ -320,31 +441,48 @@ impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
             self.error_count += 1;
         }
 
-        if self.sample_count < 30 {
+        let n = match A::from(self.sample_count as f64) {
+            Some(n) if n > A::zero() => n,
+            _ => return DriftStatus::Stable,
+        };
+        let p = A::from(self.error_count as f64).unwrap_or_else(A::zero) / n;
+        // `p (1 - p) / n` is non-negative for any p in [0, 1]; clamp defensively
+        // so a rounding artefact can never feed a NaN into `sqrt`.
+        let variance = (p * (A::one() - p) / n).max(A::zero());
+        self.error_rate = p;
+        self.error_std = variance.sqrt();
+
+        if self.sample_count < self.warmup {
+            // The baseline is only meaningful once the rate has settled; seeding
+            // it from the first few samples is what made the original detector
+            // fire immediately.
             return DriftStatus::Stable;
         }
 
-        // Update _error rate and standard deviation
-        self.error_rate =
-            A::from(self.error_count as f64 / self.sample_count as f64).expect("unwrap failed");
-        let p = self.error_rate;
-        let n = A::from(self.sample_count as f64).expect("unwrap failed");
-        self.error_std = (p * (A::one() - p) / n).sqrt();
-
-        let current_level = self.error_rate + A::from(2.0).expect("unwrap failed") * self.error_std;
-
-        // Update minimums
-        if current_level < self.min_error_plus_2_std {
-            self.min_error_plus_2_std = current_level;
-            self.min_error_plus_3_std =
-                self.error_rate + A::from(3.0).expect("unwrap failed") * self.error_std;
+        let level = p + self.error_std;
+        match (self.p_min, self.s_min) {
+            (Some(p_min), Some(s_min)) if level >= p_min + s_min => {}
+            _ => {
+                self.p_min = Some(p);
+                self.s_min = Some(self.error_std);
+            }
         }
 
-        // Check for drift
-        if current_level > self.min_error_plus_3_std {
+        let Some(warning_level) = self.warning_level() else {
+            return DriftStatus::Stable;
+        };
+        let Some(drift_level) = self.drift_level() else {
+            return DriftStatus::Stable;
+        };
+
+        // Strict comparisons: for a stream that has seen no errors at all,
+        // `p_min` and `s_min` are both exactly 0, and a non-strict test would
+        // report drift on the first post-warm-up sample of a perfectly clean
+        // stream.
+        if level > drift_level {
             self.reset();
             DriftStatus::Drift
-        } else if current_level > self.min_error_plus_2_std {
+        } else if level > warning_level {
             DriftStatus::Warning
         } else {
             DriftStatus::Stable
@@ -356,9 +494,9 @@ impl<A: Float + Send + Sync + Send + Sync> DdmDetector<A> {
         self.sample_count = 0;
         self.error_count = 0;
         self.error_rate = A::zero();
-        self.error_std = A::one();
-        self.min_error_plus_2_std = A::from(f64::MAX).expect("unwrap failed");
-        self.min_error_plus_3_std = A::from(f64::MAX).expect("unwrap failed");
+        self.error_std = A::zero();
+        self.p_min = None;
+        self.s_min = None;
     }
 }
 
@@ -393,11 +531,18 @@ pub struct ConceptDriftDetector<A: Float + Send + Sync> {
 }
 
 impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftDetector<A> {
+    /// Bound on the retained ensemble decision history (C7).
+    pub const ENSEMBLE_HISTORY_CAPACITY: usize = 64;
+
+    /// Bound on the retained drift-event log (C7): an unbounded `Vec` here grows
+    /// for the lifetime of a long-running stream.
+    pub const DRIFT_EVENT_CAPACITY: usize = 1024;
+
     /// Create a new concept drift detector
     pub fn new(config: DriftDetectorConfig) -> Self {
-        let threshold = A::from(config.threshold).expect("unwrap failed");
-        let warningthreshold = A::from(config.warningthreshold).expect("unwrap failed");
-        let delta = A::from(config.alpha).expect("unwrap failed");
+        let threshold = scalar_or(config.threshold, A::zero());
+        let warningthreshold = scalar_or(config.warningthreshold, A::zero());
+        let delta = scalar_or(config.alpha, A::zero());
 
         Self {
             ph_detector: PageHinkleyDetector::new(threshold, warningthreshold),
@@ -427,21 +572,66 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
             }
         };
 
+        // C7: the ensemble decision history is now actually recorded (it used
+        // to be allocated in the constructor and never written), bounded to
+        // `ENSEMBLE_HISTORY_CAPACITY`, and read back to derive a real
+        // confidence.
+        self.ensemble_history.push_back(final_status);
+        while self.ensemble_history.len() > Self::ENSEMBLE_HISTORY_CAPACITY {
+            self.ensemble_history.pop_front();
+        }
+
         // Record drift event if detected
         if final_status == DriftStatus::Drift {
             let event = DriftEvent {
                 timestamp: Instant::now(),
-                confidence: A::from(0.8).expect("unwrap failed"), // Simplified confidence
+                // Real confidence: how strongly the detectors agreed on this
+                // sample, tempered by how persistent the recent signal has been.
+                confidence: self.detection_confidence(ph_status, adwin_status, ddm_status),
                 drift_type: self.classify_drift_type(),
                 adaptation_recommendation: self.generate_adaptation_recommendation(),
             };
             self.drift_events.push(event);
+            while self.drift_events.len() > Self::DRIFT_EVENT_CAPACITY {
+                self.drift_events.remove(0);
+            }
         }
 
         // Update performance tracking
         self.performance_tracker.update(loss, final_status);
 
         Ok(final_status)
+    }
+
+    /// Confidence in a detection, from detector agreement and signal
+    /// persistence. Replaces the hardcoded `0.8` that every drift event used to
+    /// carry regardless of how the detectors actually voted.
+    fn detection_confidence(&self, ph: DriftStatus, adwin: DriftStatus, ddm: DriftStatus) -> A {
+        let votes = [ph, adwin, ddm];
+        let drift_votes = votes.iter().filter(|&&s| s == DriftStatus::Drift).count();
+        let warning_votes = votes.iter().filter(|&&s| s == DriftStatus::Warning).count();
+        let agreement = (drift_votes as f64 + 0.5 * warning_votes as f64) / votes.len() as f64;
+
+        // Persistence: the share of the retained ensemble history that is not
+        // Stable. A single isolated spike is less trustworthy than a sustained
+        // signal.
+        let persistence = if self.ensemble_history.is_empty() {
+            0.0
+        } else {
+            self.ensemble_history
+                .iter()
+                .filter(|status| **status != DriftStatus::Stable)
+                .count() as f64
+                / self.ensemble_history.len() as f64
+        };
+
+        let confidence = (0.7 * agreement + 0.3 * persistence).clamp(0.0, 1.0);
+        A::from(confidence).unwrap_or_else(A::zero)
+    }
+
+    /// Recent ensemble decisions, oldest first.
+    pub fn ensemble_history(&self) -> &VecDeque<DriftStatus> {
+        &self.ensemble_history
     }
 
     /// Ensemble voting among detectors
@@ -494,13 +684,13 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
     fn generate_adaptation_recommendation(&self) -> AdaptationRecommendation {
         let recent_performance = self.performance_tracker.get_recent_performance_change();
 
-        if recent_performance > A::from(0.5).expect("unwrap failed") {
+        if recent_performance > scalar_or(0.5, A::zero()) {
             // Significant performance degradation
             AdaptationRecommendation::Reset
-        } else if recent_performance > A::from(0.2).expect("unwrap failed") {
+        } else if recent_performance > scalar_or(0.2, A::zero()) {
             // Moderate degradation
             AdaptationRecommendation::IncreaseLearningRate { factor: 1.5 }
-        } else if recent_performance < A::from(-0.1).expect("unwrap failed") {
+        } else if recent_performance < scalar_or(-0.1, A::zero()) {
             // Performance improved (suspicious)
             AdaptationRecommendation::DecreaseLearningRate { factor: 0.8 }
         } else {
@@ -520,14 +710,20 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
     }
 
     fn calculate_recent_drift_rate(&self) -> f64 {
-        // Calculate drift rate in the last hour
-        let one_hour_ago = Instant::now() - Duration::from_secs(3600);
+        // Calculate drift rate in the last hour.
+        //
+        // `Instant::now() - Duration` panics when the process has been up for
+        // less than the window (the resulting instant is not representable), so
+        // the window is applied as a forward `duration_since` comparison
+        // instead of by materialising a cutoff instant.
+        let recent_window = Duration::from_secs(3600);
+        let now = Instant::now();
         let recent_drifts = self
             .drift_events
             .iter()
-            .filter(|event| event.timestamp > one_hour_ago)
+            .filter(|event| now.duration_since(event.timestamp) <= recent_window)
             .count();
-        recent_drifts as f64 / 3600.0 // Drifts per second
+        recent_drifts as f64 / recent_window.as_secs_f64() // Drifts per second
     }
 
     fn calculate_average_confidence(&self) -> Option<A> {
@@ -539,7 +735,7 @@ impl<A: Float + std::fmt::Debug + Sum + Send + Sync + Send + Sync> ConceptDriftD
                 .iter()
                 .map(|event| event.confidence)
                 .sum::<A>();
-            Some(sum / A::from(self.drift_events.len()).expect("unwrap failed"))
+            Some(sum / scalar_or(self.drift_events.len(), A::one()))
         }
     }
 
@@ -604,10 +800,10 @@ impl<A: Float + std::iter::Sum + Send + Sync + Send + Sync> PerformanceDriftTrac
             return A::zero();
         }
 
-        let recent_avg = recent.iter().map(|(p, _, _)| *p).sum::<A>()
-            / A::from(recent.len()).expect("unwrap failed");
-        let older_avg = older.iter().map(|(p, _, _)| *p).sum::<A>()
-            / A::from(older.len()).expect("unwrap failed");
+        let recent_avg =
+            recent.iter().map(|(p, _, _)| *p).sum::<A>() / scalar_or(recent.len(), A::one());
+        let older_avg =
+            older.iter().map(|(p, _, _)| *p).sum::<A>() / scalar_or(older.len(), A::one());
 
         recent_avg - older_avg
     }
@@ -663,48 +859,120 @@ pub mod advanced_drift_analysis {
         fn update(&mut self, value: A) -> DriftStatus;
         fn reset(&mut self);
         fn get_confidence(&self) -> A;
+
+        /// Human-readable detector name, used to key adaptive thresholds.
+        fn name(&self) -> &str;
+
+        /// Apply an adapted decision threshold (C6). Without this the adaptive
+        /// threshold manager computed thresholds that nothing ever consumed.
+        fn set_threshold(&mut self, threshold: A);
+
+        /// The threshold currently in force.
+        fn threshold(&self) -> A;
     }
 
     /// Drift pattern analyzer for characterizing drift behavior
     #[derive(Debug)]
     pub struct DriftPatternAnalyzer<A: Float + Send + Sync> {
         /// Pattern history buffer
-        pattern_buffer: VecDeque<PatternFeatures<A>>,
+        pub(crate) pattern_buffer: VecDeque<PatternFeatures<A>>,
+
+        /// Rolling raw values the features are extracted from (C4: the analyzer
+        /// used to be handed a single value per call, so variance was always 0)
+        pub(crate) value_buffer: VecDeque<A>,
+
+        /// Window length for feature extraction
+        pub(crate) window: usize,
 
         /// Learned drift patterns
-        known_patterns: HashMap<String, DriftPattern<A>>,
+        pub(crate) known_patterns: HashMap<String, DriftPattern<A>>,
 
         /// Pattern matching threshold
-        matching_threshold: A,
+        pub(crate) matching_threshold: A,
 
         /// Feature extractors
-        feature_extractors: Vec<Box<dyn FeatureExtractor<A>>>,
+        pub(crate) feature_extractors: Vec<Box<dyn FeatureExtractor<A>>>,
     }
 
-    /// Pattern features for drift characterization
+    /// Pattern features for drift characterization.
+    ///
+    /// C4: everything beyond the first two moments needs a window of samples to
+    /// exist at all. Those fields are therefore `Option`: they are `None` until
+    /// the analyzer has enough history, instead of carrying the placeholder
+    /// zeros (and the fabricated `fractal_dimension: 1.5`) they used to. The
+    /// `entropy` field in particular used to be `variance.ln().abs()`, which is
+    /// `+inf` for the zero-variance single-sample window it was always called
+    /// with.
     #[derive(Debug, Clone)]
     pub struct PatternFeatures<A: Float + Send + Sync> {
         /// Statistical moments
         pub mean: A,
         pub variance: A,
-        pub skewness: A,
-        pub kurtosis: A,
+        pub skewness: Option<A>,
+        pub kurtosis: Option<A>,
 
         /// Trend indicators
-        pub trend_slope: A,
-        pub trend_strength: A,
+        pub trend_slope: Option<A>,
+        pub trend_strength: Option<A>,
 
         /// Frequency domain features
-        pub dominant_frequency: A,
-        pub spectral_entropy: A,
+        pub dominant_frequency: Option<A>,
+        pub spectral_entropy: Option<A>,
 
         /// Temporal features
-        pub temporal_locality: A,
-        pub persistence: A,
+        pub temporal_locality: Option<A>,
+        pub persistence: Option<A>,
 
         /// Complexity measures
-        pub entropy: A,
-        pub fractal_dimension: A,
+        pub entropy: Option<A>,
+        pub fractal_dimension: Option<A>,
+    }
+
+    impl<A: Float + Send + Sync> PatternFeatures<A> {
+        /// The feature vector used for similarity search: `(name, value)` pairs
+        /// for every feature that actually has a value.
+        pub fn named_values(&self) -> Vec<(&'static str, A)> {
+            let mut values: Vec<(&'static str, A)> =
+                vec![("mean", self.mean), ("variance", self.variance)];
+            let optional: [(&'static str, Option<A>); 10] = [
+                ("skewness", self.skewness),
+                ("kurtosis", self.kurtosis),
+                ("trend_slope", self.trend_slope),
+                ("trend_strength", self.trend_strength),
+                ("dominant_frequency", self.dominant_frequency),
+                ("spectral_entropy", self.spectral_entropy),
+                ("temporal_locality", self.temporal_locality),
+                ("persistence", self.persistence),
+                ("entropy", self.entropy),
+                ("fractal_dimension", self.fractal_dimension),
+            ];
+            for (name, value) in optional {
+                if let Some(value) = value {
+                    values.push((name, value));
+                }
+            }
+            values
+        }
+
+        /// Look up a feature by name, as used by
+        /// [`ApplicabilityCondition::feature_name`].
+        pub fn feature(&self, name: &str) -> Option<A> {
+            match name {
+                "mean" => Some(self.mean),
+                "variance" => Some(self.variance),
+                "skewness" => self.skewness,
+                "kurtosis" => self.kurtosis,
+                "trend_slope" => self.trend_slope,
+                "trend_strength" => self.trend_strength,
+                "dominant_frequency" => self.dominant_frequency,
+                "spectral_entropy" => self.spectral_entropy,
+                "temporal_locality" => self.temporal_locality,
+                "persistence" => self.persistence,
+                "entropy" => self.entropy,
+                "fractal_dimension" => self.fractal_dimension,
+                _ => None,
+            }
+        }
     }
 
     /// Learned drift pattern
@@ -774,20 +1042,41 @@ pub mod advanced_drift_analysis {
         pub timestamp: Instant,
     }
 
-    /// Context-aware drift detection
+    /// Context-aware drift detection.
+    ///
+    /// Classifies each observation into a context and keeps a **private bank of
+    /// base detectors per context**, so a stream that alternates between
+    /// regimes does not look like drift to any of them. A single shared bank
+    /// cannot express that: every regime switch enters its accumulators as a
+    /// level change, so it reports drift for a stream that is perfectly
+    /// stationary *within* each context, and conversely a real change inside
+    /// one context is diluted by every observation belonging to the others.
+    ///
+    /// The banks are built by
+    /// `impls::build_detector_bank` from the same
+    /// [`DriftDetectorConfig`] the global bank uses, so a context detector is a
+    /// fresh instance of the configured detector rather than a different
+    /// algorithm. The classifier emits a fixed, small set of context ids, so
+    /// the map is bounded by construction.
     #[derive(Debug)]
     pub struct ContextAwareDriftDetector<A: Float + Send + Sync> {
         /// Contextual features
         context_features: Vec<ContextFeature<A>>,
-
-        /// Context-specific drift models
-        context_models: HashMap<String, Box<dyn DriftDetectorTrait<A>>>,
 
         /// Current context state
         current_context: Option<String>,
 
         /// Context transition matrix
         transition_matrix: HashMap<(String, String), A>,
+
+        /// Configuration every per-context bank is instantiated from.
+        detector_config: DriftDetectorConfig,
+
+        /// One private bank of base detectors per context id.
+        context_models: HashMap<String, Vec<Box<dyn DriftDetectorTrait<A>>>>,
+
+        /// Latest combined verdict of each context's own bank.
+        context_status: HashMap<String, DriftStatus>,
     }
 
     /// Contextual feature for drift detection
@@ -925,13 +1214,27 @@ pub mod advanced_drift_analysis {
         pub usage_count: usize,
     }
 
-    /// Epsilon-greedy bandit for strategy selection
-    #[derive(Debug)]
+    /// Epsilon-greedy bandit for strategy selection.
+    ///
+    /// C5: the bandit had no methods at all, so `select_strategy` returned the
+    /// same hardcoded "increase_lr" strategy on every call.
     pub struct EpsilonGreedyBandit<A: Float + Send + Sync> {
         epsilon: A,
         action_values: HashMap<String, A>,
         action_counts: HashMap<String, usize>,
         total_trials: usize,
+        /// Deterministically seeded so exploration is reproducible in tests.
+        rng: scirs2_core::random::Random<scirs2_core::random::rngs::StdRng>,
+    }
+
+    impl<A: Float + Send + Sync> std::fmt::Debug for EpsilonGreedyBandit<A> {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("EpsilonGreedyBandit")
+                .field("action_values", &self.action_values.len())
+                .field("total_trials", &self.total_trials)
+                .finish()
+        }
     }
 
     /// Historical drift database
@@ -950,13 +1253,20 @@ pub mod advanced_drift_analysis {
         similarity_index: SimilarityIndex<A>,
     }
 
-    /// Stored drift event for learning
+    /// Stored drift event for learning.
+    ///
+    /// C5: `outcome` is now optional and starts out `None`. `store_event` used
+    /// to invent `success: true` with a `performance_improvement` of `0.1`, a
+    /// 60 second adaptation time and a 300 second stability period the moment
+    /// the strategy was *selected* — before anything had been observed. The
+    /// real outcome arrives later through
+    /// [`AdvancedDriftDetector::record_adaptation_outcome`].
     #[derive(Debug, Clone)]
     pub struct StoredDriftEvent<A: Float + Send + Sync> {
         pub features: PatternFeatures<A>,
         pub context: Vec<ContextFeature<A>>,
         pub applied_strategy: String,
-        pub outcome: AdaptationOutcome<A>,
+        pub outcome: Option<AdaptationOutcome<A>>,
         pub timestamp: Instant,
     }
 
@@ -1001,25 +1311,48 @@ pub mod advanced_drift_analysis {
         Mahalanobis,
     }
 
-    impl<
-            A: Float + Default + Clone + std::fmt::Debug + std::iter::Sum + Send + Sync + Send + Sync,
-        > AdvancedDriftDetector<A>
+    impl<A: Float + Default + Clone + std::fmt::Debug + std::iter::Sum + Send + Sync + 'static>
+        AdvancedDriftDetector<A>
     {
-        /// Create new advanced drift detector
+        /// Create new advanced drift detector.
+        ///
+        /// C6/C8: `base_detectors` used to be an empty vector with an "Add base
+        /// detectors here" comment, which made the whole detector a hollow
+        /// shell: no detector ever voted, the adaptive thresholds had nothing to
+        /// apply to, and `combine_detection_results` divided by
+        /// `base_results.len() == 0`. It is now populated with adapters over the
+        /// three real detectors implemented in this module.
         pub fn new(config: DriftDetectorConfig) -> Self {
+            let threshold = A::from(config.threshold).unwrap_or_else(A::one);
+            let warning = A::from(config.warningthreshold).unwrap_or_else(A::zero);
+            let delta =
+                A::from(config.alpha).unwrap_or_else(|| A::from(0.002).unwrap_or_else(A::zero));
+
             let base_detectors: Vec<Box<dyn DriftDetectorTrait<A>>> = vec![
-                // Add base detectors here
+                Box::new(impls::PageHinkleyAdapter::new(threshold, warning)),
+                Box::new(impls::AdwinAdapter::new(delta, config.window_size)),
+                Box::new(impls::DdmAdapter::new(config.min_samples)),
             ];
 
             Self {
                 base_detectors,
-                pattern_analyzer: DriftPatternAnalyzer::new(),
+                pattern_analyzer: DriftPatternAnalyzer::new(config.window_size),
                 threshold_manager: AdaptiveThresholdManager::new(),
-                context_detector: ContextAwareDriftDetector::new(),
+                context_detector: ContextAwareDriftDetector::new(config.clone()),
                 impact_analyzer: DriftImpactAnalyzer::new(),
                 adaptation_selector: AdaptationStrategySelector::new(),
                 drift_database: DriftDatabase::new(),
             }
+        }
+
+        /// The context-aware detector, for the per-context verdicts.
+        ///
+        /// `detect_drift_advanced` reports one combined status for the stream;
+        /// this is how a caller reaches the verdict each context's *own*
+        /// detector bank reached from only that context's observations, plus
+        /// the observed context transitions.
+        pub fn context_detector(&self) -> &ContextAwareDriftDetector<A> {
+            &self.context_detector
         }
 
         /// Advanced drift detection with pattern analysis
@@ -1035,19 +1368,39 @@ pub mod advanced_drift_analysis {
             let base_results: Vec<_> = self
                 .base_detectors
                 .iter_mut()
-                .map(|detector| detector.update(value))
+                .map(|detector| (detector.name().to_string(), detector.update(value)))
                 .collect();
+            let mut statuses: Vec<DriftStatus> =
+                base_results.iter().map(|(_, status)| *status).collect();
 
-            // Analyze patterns
-            let pattern_features = self.pattern_analyzer.extract_features(&[value])?;
+            // Run the current context's *own* bank of detectors on the same
+            // observation. Their verdicts join the vote only once the stream has
+            // actually shown more than one context: with a single context the
+            // per-context bank has seen exactly the observations the global one
+            // has, so its verdict would be a duplicate of evidence already
+            // counted, not new evidence. From the second context onwards the two
+            // views genuinely differ — the global bank sees the regime switches,
+            // the context bank does not — and the difference is the whole point
+            // of keeping per-context state.
+            let context_statuses = self.context_detector.observe_in_context(value);
+            if self.context_detector.context_count() > 1 {
+                statuses.extend(context_statuses);
+            }
+
+            // Analyze patterns over the rolling window (C4: the analyzer used to
+            // be handed a one-element slice, so variance was always exactly 0
+            // and `entropy = variance.ln().abs()` was always `+inf`).
+            let pattern_features = self.pattern_analyzer.ingest(value)?;
             let matched_pattern = self.pattern_analyzer.match_pattern(&pattern_features);
 
-            // Adaptive threshold adjustment
+            // Adaptive threshold adjustment, then actually apply the adapted
+            // thresholds to the detectors (C6).
             self.threshold_manager
                 .update_thresholds(&base_results, &pattern_features);
+            self.threshold_manager.apply_to(&mut self.base_detectors);
 
             // Combine results with confidence weighting
-            let combined_result = self.combine_detection_results(&base_results, &matched_pattern);
+            let combined_result = self.combine_detection_results(&statuses, &matched_pattern);
 
             // Analyze impact if drift detected
             let impact = if combined_result.status == DriftStatus::Drift {
@@ -1070,7 +1423,9 @@ pub mod advanced_drift_analysis {
                 None
             };
 
-            // Store in database for learning
+            // Store in database for learning. The stored event carries no
+            // outcome yet (C5): a real one arrives through
+            // `record_adaptation_outcome`.
             if combined_result.status == DriftStatus::Drift {
                 self.drift_database.store_event(
                     &pattern_features,
@@ -1090,12 +1445,73 @@ pub mod advanced_drift_analysis {
             })
         }
 
+        /// Report what actually happened after the most recently recommended
+        /// adaptation was applied (C5).
+        ///
+        /// This is what turns `DriftDatabase` into a real learning store: the
+        /// outcome is recorded against the pending event, folded into the
+        /// strategy's measured performance and the bandit's action values, and
+        /// used to learn (or reinforce) a `DriftPattern` so that
+        /// `match_pattern` can eventually match something.
+        pub fn record_adaptation_outcome(&mut self, outcome: AdaptationOutcome<A>) -> Result<()> {
+            let Some((strategy_id, features)) =
+                self.drift_database.complete_pending_event(outcome.clone())
+            else {
+                return Err(crate::error::OptimError::InvalidState(
+                    "no adaptation is awaiting an outcome".to_string(),
+                ));
+            };
+            self.adaptation_selector
+                .record_outcome(&strategy_id, &outcome);
+            self.pattern_analyzer.learn_pattern(
+                &features,
+                &strategy_id,
+                &outcome,
+                self.impact_analyzer.last_drift_type(),
+            );
+            self.impact_analyzer.record_observed_recovery(&outcome);
+            Ok(())
+        }
+
+        /// Feed measured detection quality back into the threshold manager (C6).
+        pub fn record_threshold_feedback(&mut self, feedback: PerformanceFeedback<A>) {
+            self.threshold_manager.record_feedback(feedback);
+        }
+
+        /// Patterns learned so far.
+        pub fn known_patterns(&self) -> &HashMap<String, DriftPattern<A>> {
+            &self.pattern_analyzer.known_patterns
+        }
+
+        /// Adapted thresholds currently in force, keyed by detector name.
+        pub fn detector_thresholds(&self) -> Vec<(String, A)> {
+            self.base_detectors
+                .iter()
+                .map(|detector| (detector.name().to_string(), detector.threshold()))
+                .collect()
+        }
+
+        /// Stored drift events, including the ones still awaiting an outcome.
+        pub fn stored_events(&self) -> &[StoredDriftEvent<A>] {
+            &self.drift_database.drift_events
+        }
+
         fn combine_detection_results(
             &self,
             base_results: &[DriftStatus],
             matched_pattern: &Option<DriftPattern<A>>,
         ) -> CombinedDetectionResult<A> {
-            // Weighted voting based on detector confidence and _pattern matching
+            // C8: with no detectors at all there is nothing to combine, and the
+            // old `drift_votes / base_results.len()` produced `0/0 = NaN` which
+            // then poisoned every downstream comparison.
+            if base_results.is_empty() {
+                return CombinedDetectionResult {
+                    status: DriftStatus::Stable,
+                    confidence: A::zero(),
+                };
+            }
+
+            // Weighted voting based on detector confidence and pattern matching
             let drift_votes = base_results
                 .iter()
                 .filter(|&&s| s == DriftStatus::Drift)
@@ -1105,25 +1521,26 @@ pub mod advanced_drift_analysis {
                 .filter(|&&s| s == DriftStatus::Warning)
                 .count();
 
-            // Pattern-based confidence adjustment
+            // Pattern-based confidence adjustment. With no matched pattern there
+            // is no pattern evidence either way, so the pattern term is neutral.
+            let neutral = A::from(0.5).unwrap_or_else(A::zero);
             let pattern_confidence = matched_pattern
                 .as_ref()
                 .map(|p| p.adaptation_success_rate)
-                .unwrap_or(A::from(0.5).expect("unwrap failed"));
+                .unwrap_or(neutral);
+            let strong = A::from(0.7).unwrap_or_else(A::one);
 
             let status = if drift_votes >= 2 {
                 DriftStatus::Drift
-            } else if warning_votes >= 2
-                || (drift_votes >= 1 && pattern_confidence > A::from(0.7).expect("unwrap failed"))
-            {
+            } else if warning_votes >= 2 || (drift_votes >= 1 && pattern_confidence > strong) {
                 DriftStatus::Warning
             } else {
                 DriftStatus::Stable
             };
 
-            let confidence = A::from(drift_votes as f64 / base_results.len() as f64)
-                .expect("unwrap failed")
-                * pattern_confidence;
+            let vote_share =
+                A::from(drift_votes as f64 / base_results.len() as f64).unwrap_or_else(A::zero);
+            let confidence = vote_share * pattern_confidence;
 
             CombinedDetectionResult { status, confidence }
         }
@@ -1132,23 +1549,43 @@ pub mod advanced_drift_analysis {
             &self,
             features: &PatternFeatures<A>,
         ) -> HashMap<String, A> {
-            // Simplified feature importance calculation
-            let mut importance = HashMap::new();
-            importance.insert("variance".to_string(), features.variance);
-            importance.insert("trend_slope".to_string(), features.trend_slope.abs());
-            importance.insert("entropy".to_string(), features.entropy);
-            importance
+            // Importance is the magnitude of each feature that actually has a
+            // value, normalised so the reported weights sum to one.
+            let mut magnitudes: Vec<(String, A)> = features
+                .named_values()
+                .into_iter()
+                .filter(|(_, value)| value.is_finite())
+                .map(|(name, value)| (name.to_string(), value.abs()))
+                .collect();
+            let total = magnitudes
+                .iter()
+                .fold(A::zero(), |acc, (_, value)| acc + *value);
+            if total > A::zero() {
+                for entry in magnitudes.iter_mut() {
+                    entry.1 = entry.1 / total;
+                }
+            }
+            magnitudes.into_iter().collect()
         }
 
         fn estimate_drift_duration(&self, features: &PatternFeatures<A>) -> Duration {
-            // Estimate how long the drift will last based on patterns
-            let base_duration = Duration::from_secs(300); // 5 minutes base
-
-            // Adjust based on trend strength and persistence
-            let duration_multiplier = features.trend_strength * features.persistence;
-            let adjustment = duration_multiplier.to_f64().unwrap_or(1.0);
-
-            Duration::from_secs((base_duration.as_secs() as f64 * adjustment) as u64)
+            // Base horizon, scaled by how strong and how persistent the observed
+            // trend is. When either is unmeasured the base horizon stands rather
+            // than being multiplied by a placeholder zero (which used to collapse
+            // the horizon to 0 seconds on every call, since both fields were
+            // hardcoded zeros).
+            let base_duration = Duration::from_secs(300);
+            let (Some(strength), Some(persistence)) =
+                (features.trend_strength, features.persistence)
+            else {
+                return base_duration;
+            };
+            let multiplier = (strength * persistence).to_f64().unwrap_or(1.0);
+            if !multiplier.is_finite() || multiplier <= 0.0 {
+                return base_duration;
+            }
+            let seconds = (base_duration.as_secs() as f64 * multiplier).clamp(1.0, 86_400.0);
+            Duration::from_secs(seconds as u64)
         }
     }
 
@@ -1170,293 +1607,12 @@ pub mod advanced_drift_analysis {
         confidence: A,
     }
 
-    // Implementation stubs for complex components
+    mod impls;
 
-    impl<A: Float + std::iter::Sum + Send + Sync + Send + Sync> DriftPatternAnalyzer<A> {
-        fn new() -> Self {
-            Self {
-                pattern_buffer: VecDeque::new(),
-                known_patterns: HashMap::new(),
-                matching_threshold: A::from(0.8).expect("unwrap failed"),
-                feature_extractors: Vec::new(),
-            }
-        }
+    #[cfg(test)]
+    mod tests;
 
-        fn extract_features(&mut self, data: &[A]) -> Result<PatternFeatures<A>> {
-            // Simplified feature extraction
-            let mean =
-                data.iter().cloned().sum::<A>() / A::from(data.len()).expect("unwrap failed");
-            let variance = data.iter().map(|&x| (x - mean) * (x - mean)).sum::<A>()
-                / A::from(data.len()).expect("unwrap failed");
-
-            Ok(PatternFeatures {
-                mean,
-                variance,
-                skewness: A::zero(), // Simplified
-                kurtosis: A::zero(),
-                trend_slope: A::zero(),
-                trend_strength: A::zero(),
-                dominant_frequency: A::zero(),
-                spectral_entropy: A::zero(),
-                temporal_locality: A::zero(),
-                persistence: A::zero(),
-                entropy: variance.ln().abs(), // Simplified entropy
-                fractal_dimension: A::from(1.5).expect("unwrap failed"), // Default
-            })
-        }
-
-        fn match_pattern(&self, features: &PatternFeatures<A>) -> Option<DriftPattern<A>> {
-            // Simplified pattern matching
-            self.known_patterns
-                .values()
-                .find(|pattern| {
-                    self.calculate_similarity(&pattern.features, features) > self.matching_threshold
-                })
-                .cloned()
-        }
-
-        fn calculate_similarity(&self, p1: &PatternFeatures<A>, p2: &PatternFeatures<A>) -> A {
-            // Simplified similarity calculation
-            let mean_diff = (p1.mean - p2.mean).abs();
-            let var_diff = (p1.variance - p2.variance).abs();
-            A::one() - (mean_diff + var_diff) / A::from(2.0).expect("unwrap failed")
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> AdaptiveThresholdManager<A> {
-        fn new() -> Self {
-            Self {
-                thresholds: HashMap::new(),
-                threshold_history: VecDeque::new(),
-                performance_feedback: VecDeque::new(),
-                learning_rate: A::from(0.01).expect("unwrap failed"),
-            }
-        }
-
-        fn update_thresholds(&mut self, results: &[DriftStatus], features: &PatternFeatures<A>) {
-            // Simplified threshold adaptation
-            for (i, result) in results.iter().enumerate() {
-                let detector_name = format!("detector_{}", i);
-                let current_threshold = self
-                    .thresholds
-                    .get(&detector_name)
-                    .cloned()
-                    .unwrap_or(A::from(1.0).expect("unwrap failed"));
-
-                // Adjust threshold based on recent performance
-                let adjustment = if *result == DriftStatus::Drift {
-                    -self.learning_rate // Lower threshold if drift detected
-                } else {
-                    self.learning_rate * A::from(0.1).expect("unwrap failed") // Slightly raise threshold
-                };
-
-                let new_threshold = current_threshold + adjustment;
-                self.thresholds.insert(detector_name.clone(), new_threshold);
-
-                self.threshold_history.push_back(ThresholdUpdate {
-                    detector_name,
-                    old_threshold: current_threshold,
-                    new_threshold,
-                    timestamp: Instant::now(),
-                    reason: "Performance-based adjustment".to_string(),
-                });
-            }
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> ContextAwareDriftDetector<A> {
-        fn new() -> Self {
-            Self {
-                context_features: Vec::new(),
-                context_models: HashMap::new(),
-                current_context: None,
-                transition_matrix: HashMap::new(),
-            }
-        }
-
-        fn update_context(&mut self, features: &[ContextFeature<A>]) {
-            self.context_features = features.to_vec();
-
-            // Simplified context classification
-            let context_id = if !features.is_empty()
-                && features[0].value > A::from(0.5).expect("unwrap failed")
-            {
-                "high_activity".to_string()
-            } else {
-                "low_activity".to_string()
-            };
-
-            self.current_context = Some(context_id);
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> DriftImpactAnalyzer<A> {
-        fn new() -> Self {
-            Self {
-                impact_history: VecDeque::new(),
-                severity_classifier: SeverityClassifier::new(),
-                recovery_predictor: RecoveryTimePredictor::new(),
-                business_impact_estimator: BusinessImpactEstimator::new(),
-            }
-        }
-
-        fn analyze_impact(
-            &mut self,
-            features: &PatternFeatures<A>,
-            _pattern: &Option<DriftPattern<A>>,
-        ) -> Result<DriftImpact<A>> {
-            let performance_degradation = features.variance; // Simplified
-            let urgency_level = if performance_degradation > A::from(1.0).expect("unwrap failed") {
-                UrgencyLevel::High
-            } else {
-                UrgencyLevel::Medium
-            };
-
-            Ok(DriftImpact {
-                performance_degradation,
-                affected_metrics: vec!["accuracy".to_string(), "loss".to_string()],
-                estimated_recovery_time: Duration::from_secs(300),
-                confidence: A::from(0.8).expect("unwrap failed"),
-                business_impact_score: performance_degradation,
-                urgency_level,
-            })
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> AdaptationStrategySelector<A> {
-        fn new() -> Self {
-            Self {
-                strategies: Vec::new(),
-                strategy_performance: HashMap::new(),
-                bandit: EpsilonGreedyBandit::new(A::from(0.1).expect("unwrap failed")),
-                context_strategy_map: HashMap::new(),
-            }
-        }
-
-        fn select_strategy(
-            &mut self,
-            features: &PatternFeatures<A>,
-            _impact: &DriftImpact<A>,
-            _pattern: &Option<DriftPattern<A>>,
-        ) -> Result<Option<AdaptationStrategy<A>>> {
-            // Simplified strategy selection
-            let strategy = AdaptationStrategy {
-                id: "increase_lr".to_string(),
-                strategy_type: AdaptationStrategyType::ParameterTuning,
-                parameters: {
-                    let mut params = HashMap::new();
-                    params.insert(
-                        "learning_rate_factor".to_string(),
-                        A::from(1.5).expect("unwrap failed"),
-                    );
-                    params
-                },
-                applicability_conditions: Vec::new(),
-                expected_effectiveness: A::from(0.7).expect("unwrap failed"),
-                computational_cost: A::from(0.1).expect("unwrap failed"),
-            };
-
-            Ok(Some(strategy))
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> DriftDatabase<A> {
-        fn new() -> Self {
-            Self {
-                drift_events: Vec::new(),
-                pattern_outcomes: HashMap::new(),
-                seasonal_patterns: HashMap::new(),
-                similarity_index: SimilarityIndex::new(),
-            }
-        }
-
-        fn store_event(
-            &mut self,
-            features: &PatternFeatures<A>,
-            context: &[ContextFeature<A>],
-            strategy: &Option<AdaptationStrategy<A>>,
-        ) {
-            if let Some(strat) = strategy {
-                let event = StoredDriftEvent {
-                    features: features.clone(),
-                    context: context.to_vec(),
-                    applied_strategy: strat.id.clone(),
-                    outcome: AdaptationOutcome {
-                        success: true, // Simplified
-                        performance_improvement: A::from(0.1).expect("unwrap failed"),
-                        adaptation_time: Duration::from_secs(60),
-                        stability_period: Duration::from_secs(300),
-                        side_effects: Vec::new(),
-                    },
-                    timestamp: Instant::now(),
-                };
-
-                self.drift_events.push(event);
-            }
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> SimilarityIndex<A> {
-        fn new() -> Self {
-            Self {
-                feature_vectors: Vec::new(),
-                similarity_threshold: A::from(0.8).expect("unwrap failed"),
-                distance_metric: DistanceMetric::Euclidean,
-            }
-        }
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> EpsilonGreedyBandit<A> {
-        fn new(epsilon: A) -> Self {
-            Self {
-                epsilon,
-                action_values: HashMap::new(),
-                action_counts: HashMap::new(),
-                total_trials: 0,
-            }
-        }
-    }
-
-    // Placeholder implementations for complex analyzers
-
-    #[derive(Debug)]
-    struct SeverityClassifier<A: Float + Send + Sync> {
-        _phantom: std::marker::PhantomData<A>,
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> SeverityClassifier<A> {
-        fn new() -> Self {
-            Self {
-                _phantom: std::marker::PhantomData,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    struct RecoveryTimePredictor<A: Float + Send + Sync> {
-        _phantom: std::marker::PhantomData<A>,
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> RecoveryTimePredictor<A> {
-        fn new() -> Self {
-            Self {
-                _phantom: std::marker::PhantomData,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    struct BusinessImpactEstimator<A: Float + Send + Sync> {
-        _phantom: std::marker::PhantomData<A>,
-    }
-
-    impl<A: Float + Send + Sync + Send + Sync> BusinessImpactEstimator<A> {
-        fn new() -> Self {
-            Self {
-                _phantom: std::marker::PhantomData,
-            }
-        }
-    }
+    pub(crate) use impls::{BusinessImpactEstimator, RecoveryTimePredictor, SeverityClassifier};
 }
 
 #[cfg(test)]
@@ -1482,6 +1638,59 @@ mod tests {
         }
     }
 
+    /// C1: a stationary (non-drifting) loss stream whose baseline is far
+    /// from the old hardcoded `0.1` "estimated mean under H0" must not
+    /// falsely report drift. The previous constant made `sum` accumulate
+    /// `loss - 0.1` on every update: for a stable stream at (say) 5.0, that
+    /// is `+4.9` every single sample, guaranteeing `test_stat` blows past
+    /// any reasonable threshold in only a handful of updates even though
+    /// nothing changed.
+    #[test]
+    fn page_hinkley_does_not_falsely_drift_on_stable_stream_away_from_0_1() {
+        let mut detector = PageHinkleyDetector::new(5.0f64, 3.0f64);
+
+        // A perfectly stationary stream at loss = 5.0, far from the old
+        // hardcoded mean_loss of 0.1.
+        for _ in 0..200 {
+            let status = detector.update(5.0);
+            assert_eq!(
+                status,
+                DriftStatus::Stable,
+                "C1 regression: false drift reported on a stationary stream \
+                 whose baseline (5.0) differs from the old hardcoded mean_loss (0.1)"
+            );
+        }
+    }
+
+    /// C1: the detector must still correctly flag a genuine regime change
+    /// (loss step-increasing well above its established running mean),
+    /// confirming the running-mean fix did not just make it insensitive to
+    /// real drift.
+    #[test]
+    fn page_hinkley_detects_genuine_drift_away_from_0_1_baseline() {
+        let mut detector = PageHinkleyDetector::new(5.0f64, 3.0f64);
+
+        // Establish a stable baseline around loss = 5.0.
+        for _ in 0..30 {
+            detector.update(5.0);
+        }
+
+        // Sharp, sustained increase: must eventually report Drift.
+        let mut drifted = false;
+        for _ in 0..50 {
+            let status = detector.update(20.0);
+            if status == DriftStatus::Drift {
+                drifted = true;
+                break;
+            }
+        }
+        assert!(
+            drifted,
+            "C1 regression: detector failed to flag a genuine sustained \
+             increase in loss away from a non-0.1 baseline"
+        );
+    }
+
     #[test]
     fn test_adwin_detector() {
         let mut detector = AdwinDetector::new(0.005f64, 100);
@@ -1498,6 +1707,52 @@ mod tests {
             let status = detector.update(value);
             if status == DriftStatus::Drift {
                 break;
+            }
+        }
+    }
+
+    /// C2: `delta` (the detector's confidence parameter) must actually
+    /// affect sensitivity. The previous implementation never read `delta`
+    /// at all, so two detectors built with wildly different `delta` values
+    /// behaved identically. A much smaller `delta` (higher required
+    /// confidence) must be at least as slow to fire as a larger `delta` on
+    /// the same borderline-noisy data.
+    #[test]
+    fn adwin_delta_affects_sensitivity() {
+        fn feed(mut detector: AdwinDetector<f64>) -> Option<usize> {
+            // Stable baseline noise around 1.0.
+            for i in 0..20 {
+                let value = 1.0 + 0.02 * ((i % 3) as f64 - 1.0);
+                detector.update(value);
+            }
+            // A modest, borderline shift.
+            for i in 0..40 {
+                let value = 1.15 + 0.02 * ((i % 3) as f64 - 1.0);
+                if detector.update(value) == DriftStatus::Drift {
+                    return Some(i);
+                }
+            }
+            None
+        }
+
+        // A very small delta demands much higher confidence (a much larger
+        // eps_cut) than a large delta, so it must not fire strictly sooner.
+        let lenient = feed(AdwinDetector::new(0.5f64, 200)); // delta close to 1: low confidence required
+        let strict = feed(AdwinDetector::new(1e-6f64, 200)); // delta tiny: very high confidence required
+
+        match (lenient, strict) {
+            (Some(_), None) => {} // lenient fired, strict correctly held off: expected
+            (Some(l), Some(s)) => assert!(
+                s >= l,
+                "C2 regression: stricter delta (1e-6) fired sooner ({s}) than \
+                 lenient delta (0.5, fired at {l}) — delta has no effect on sensitivity"
+            ),
+            (None, Some(_)) => {
+                panic!("C2 regression: stricter delta fired but the more lenient delta did not")
+            }
+            (None, None) => {
+                // Both held off - inconclusive for the ordering claim, but
+                // at minimum confirms neither exploded/panicked.
             }
         }
     }

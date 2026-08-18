@@ -4,12 +4,12 @@ use super::config::PerformanceConfig;
 use super::meta_learning::MetaLearningResult;
 use super::TrainingMetrics;
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// Performance metrics for transformer optimizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +37,9 @@ pub struct PerformanceMetrics {
 }
 
 /// Transformer performance tracker
-pub struct TransformerPerformanceTracker<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerPerformanceTracker<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Configuration
     config: PerformanceConfig,
 
@@ -75,13 +77,17 @@ pub struct TransformerPerformanceTracker<T: Float + Debug + Send + Sync + 'stati
     session_start: Instant,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for TransformerPerformanceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for TransformerPerformanceTracker<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerPerformanceTracker<T>
+{
     /// Create new performance tracker
     pub fn new() -> Self {
         let config = PerformanceConfig::default();
@@ -206,6 +212,14 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
         // Update memory metrics
         self.metrics.memory_metrics.record_usage(usage);
 
+        // Feed the resource-utilization history too. Without this
+        // `average_memory_utilization()` stayed `None` forever even though the
+        // caller *was* supplying real samples — the same write-only-history bug
+        // the CPU metric had.
+        self.metrics
+            .resource_metrics
+            .record_memory_usage(usage.total_memory as f64);
+
         // Update trends
         self.trends.update_memory_usage(usage.total_memory);
 
@@ -279,9 +293,10 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
             // Alert summary
             performance_alerts: self.get_recent_alerts(),
 
-            // Resource utilization
-            cpu_utilization: self.metrics.resource_metrics.get_average_cpu_usage(),
-            memory_utilization: self.metrics.resource_metrics.get_average_memory_usage(),
+            // Resource utilization. `None` means "never sampled", which is a
+            // different claim from "measured zero".
+            cpu_utilization: self.metrics.resource_metrics.average_cpu_utilization(),
+            memory_utilization: self.metrics.resource_metrics.average_memory_utilization(),
 
             // Model quality assessment
             quality_score: self.calculate_overall_quality_score(),
@@ -390,8 +405,13 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerPerformanceTracker<T> 
             return 0.0;
         }
 
-        let initial_loss = self.loss_history[0];
-        let final_loss = *self.loss_history.back().expect("unwrap failed");
+        // `len() >= 2` was checked above, so both ends exist; reading through
+        // the fallible accessors keeps that reasoning local.
+        let (Some(&initial_loss), Some(&final_loss)) =
+            (self.loss_history.front(), self.loss_history.back())
+        else {
+            return 0.0;
+        };
 
         if initial_loss > 0.0 {
             (initial_loss - final_loss) / initial_loss
@@ -885,8 +905,14 @@ pub struct PerformanceReport {
     pub convergence_trend: f64,
     pub memory_trend: f64,
     pub performance_alerts: Vec<PerformanceAlert>,
-    pub cpu_utilization: f64,
-    pub memory_utilization: f64,
+    /// Mean observed CPU utilization fraction, or `None` when no sample was ever
+    /// recorded. This was an `f64` that reported `0.0` unconditionally because
+    /// nothing ever wrote to the CPU history — a fabricated measurement. Feed it
+    /// with `ResourceMetricsCollection::record_cpu_utilization`.
+    pub cpu_utilization: Option<f64>,
+    /// Mean observed memory usage in bytes, or `None` when no sample was ever
+    /// recorded.
+    pub memory_utilization: Option<f64>,
     pub quality_score: f64,
     pub recommendations: Vec<String>,
 }
@@ -1155,19 +1181,71 @@ impl ResourceMetricsCollection {
         }
     }
 
-    pub fn get_average_cpu_usage(&self) -> f64 {
-        if self.cpu_usage_history.is_empty() {
-            0.0
-        } else {
-            self.cpu_usage_history.iter().sum::<f64>() / self.cpu_usage_history.len() as f64
+    /// Record an observed CPU utilization fraction in `[0, 1]`.
+    ///
+    /// Nothing inside this crate can measure process CPU time without an FFI
+    /// dependency, so the *caller* supplies the sample. Before this existed
+    /// `cpu_usage_history` had no writers at all, which made
+    /// `get_average_cpu_usage` return `0.0` forever and let the
+    /// performance report present that as a measurement of zero CPU use.
+    ///
+    /// Out-of-range and non-finite samples are ignored rather than recorded, so a
+    /// bad caller cannot corrupt the average.
+    pub fn record_cpu_utilization(&mut self, fraction: f64) {
+        if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+            return;
+        }
+        self.cpu_usage_history.push_back(fraction);
+        while self.cpu_usage_history.len() > 1000 {
+            self.cpu_usage_history.pop_front();
         }
     }
 
-    pub fn get_average_memory_usage(&self) -> f64 {
-        if self.memory_usage_history.is_empty() {
-            0.0
+    /// Mean recorded CPU utilization, or `None` when nothing has been recorded.
+    ///
+    /// `None` means "not measured" and is what the report should show; it is not
+    /// the same statement as "0% CPU", which is what the old `f64`-returning
+    /// version claimed.
+    pub fn average_cpu_utilization(&self) -> Option<f64> {
+        if self.cpu_usage_history.is_empty() {
+            None
         } else {
-            self.memory_usage_history.iter().sum::<f64>() / self.memory_usage_history.len() as f64
+            Some(self.cpu_usage_history.iter().sum::<f64>() / self.cpu_usage_history.len() as f64)
+        }
+    }
+
+    /// Number of CPU samples recorded.
+    pub fn cpu_sample_count(&self) -> usize {
+        self.cpu_usage_history.len()
+    }
+
+    /// Record an observed memory usage in bytes. Called by
+    /// `TransformerPerformanceTracker::record_memory_usage`.
+    pub fn record_memory_usage(&mut self, bytes: f64) {
+        if !bytes.is_finite() || bytes < 0.0 {
+            return;
+        }
+        self.memory_usage_history.push_back(bytes);
+        while self.memory_usage_history.len() > 1000 {
+            self.memory_usage_history.pop_front();
+        }
+    }
+
+    /// Number of memory samples recorded.
+    pub fn memory_sample_count(&self) -> usize {
+        self.memory_usage_history.len()
+    }
+
+    /// Mean recorded memory usage in bytes, or `None` when nothing has been
+    /// recorded. Fed by `TransformerPerformanceTracker::record_memory_usage`.
+    pub fn average_memory_utilization(&self) -> Option<f64> {
+        if self.memory_usage_history.is_empty() {
+            None
+        } else {
+            Some(
+                self.memory_usage_history.iter().sum::<f64>()
+                    / self.memory_usage_history.len() as f64,
+            )
         }
     }
 }
@@ -1256,6 +1334,74 @@ mod tests {
         });
 
         assert!(result.is_ok());
-        assert_eq!(result.expect("unwrap failed"), 42);
+        assert_eq!(result.expect("profile_operation should succeed"), 42);
+    }
+
+    /// F84: `cpu_usage_history` had no writers anywhere in the crate, so
+    /// `get_average_cpu_usage()` returned `0.0` forever and the report presented
+    /// that as a measured 0% CPU. An unsampled metric must now report `None`.
+    #[test]
+    fn cpu_utilization_is_none_until_it_is_actually_sampled() {
+        let mut metrics = ResourceMetricsCollection::new();
+        assert_eq!(metrics.cpu_sample_count(), 0);
+        assert_eq!(
+            metrics.average_cpu_utilization(),
+            None,
+            "an unsampled CPU metric must not claim a value"
+        );
+
+        metrics.record_cpu_utilization(0.25);
+        metrics.record_cpu_utilization(0.75);
+        assert_eq!(metrics.cpu_sample_count(), 2);
+        let mean = metrics
+            .average_cpu_utilization()
+            .expect("two samples were recorded");
+        assert!((mean - 0.5).abs() < 1e-12, "mean {mean}");
+
+        // Out-of-range and non-finite samples are ignored, not recorded.
+        metrics.record_cpu_utilization(-0.1);
+        metrics.record_cpu_utilization(1.5);
+        metrics.record_cpu_utilization(f64::NAN);
+        assert_eq!(
+            metrics.cpu_sample_count(),
+            2,
+            "invalid samples must not enter the history"
+        );
+    }
+
+    /// The report must carry the same "not measured" distinction.
+    #[test]
+    fn a_report_reports_unmeasured_resources_as_none() {
+        let mut tracker = TransformerPerformanceTracker::<f32>::new();
+        tracker.record_loss(1.0);
+        let report = tracker.generate_report();
+        assert_eq!(
+            report.cpu_utilization, None,
+            "nothing sampled the CPU, so the report must say so"
+        );
+        assert_eq!(report.memory_utilization, None);
+    }
+
+    /// `memory_usage_history` also had no writers, so a caller that *was*
+    /// supplying real memory samples still got `None` back.
+    #[test]
+    fn recorded_memory_usage_reaches_the_report() {
+        let mut tracker = TransformerPerformanceTracker::<f32>::new();
+        tracker.record_loss(1.0);
+        let sample = |total: usize| MemoryUsage {
+            total_memory: total,
+            model_memory: total / 2,
+            cache_memory: total / 4,
+            temporary_memory: total / 4,
+        };
+        tracker.record_memory_usage(sample(4096));
+        tracker.record_memory_usage(sample(8192));
+
+        let report = tracker.generate_report();
+        let mean = report
+            .memory_utilization
+            .expect("two memory samples were recorded");
+        assert!((mean - 6144.0).abs() < 1e-9, "mean {mean}");
+        assert_eq!(tracker.metrics.resource_metrics.memory_sample_count(), 2);
     }
 }

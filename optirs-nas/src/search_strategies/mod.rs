@@ -15,7 +15,6 @@ use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
-#[allow(unused_imports)]
 use crate::error::Result;
 use crate::nas_engine::{OptimizerArchitecture, SearchResult, SearchSpaceConfig};
 
@@ -54,6 +53,22 @@ pub trait SearchStrategy<T: Float + Debug + Send + Sync + 'static>: Send + Sync 
 
     /// Update strategy with evaluation results
     fn update_with_results(&mut self, results: &[SearchResult<T>]) -> Result<()>;
+
+    /// Whether this strategy has finished the schedule it was configured with.
+    ///
+    /// Defaults to `false`, which is the honest answer for a strategy with no
+    /// intrinsic stopping point (a controller, a GP surrogate, a DARTS relaxation:
+    /// they keep exploring until the engine's budget or early stopping ends the
+    /// run). [`progressive::ProgressiveNAS`] overrides it, because a progressive
+    /// search genuinely finishes when its complexity schedule is exhausted —
+    /// sampling on past that point is just random search at the final complexity
+    /// level.
+    ///
+    /// The engine reads this through
+    /// [`crate::nas_engine::engine::SearchStrategy::has_converged`].
+    fn is_search_complete(&self) -> bool {
+        false
+    }
 
     /// Get strategy name
     fn name(&self) -> &str;

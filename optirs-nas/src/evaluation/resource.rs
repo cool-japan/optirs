@@ -14,7 +14,7 @@ use crate::ResourceUsage;
 #[derive(Debug)]
 pub struct ResourceMonitor<T: Float + Debug + Send + Sync + 'static> {
     /// Current resource usage
-    current_usage: ResourceUsage,
+    current_usage: ResourceUsage<T>,
 
     /// Resource usage history
     usage_history: VecDeque<ResourceUsageSnapshot<T>>,
@@ -83,17 +83,7 @@ pub struct MonitoringConfig {
 impl<T: Float + Debug + Default + Send + Sync> ResourceMonitor<T> {
     pub(crate) fn new() -> Self {
         Self {
-            current_usage: ResourceUsage {
-                memory_usage: 0,
-                compute_time: 0.0,
-                energy_consumption: 0.0,
-                memory_gb: 0.0,
-                cpu_time_seconds: 0.0,
-                gpu_time_seconds: 0.0,
-                energy_kwh: 0.0,
-                cost_usd: 0.0,
-                network_gb: 0.0,
-            },
+            current_usage: ResourceUsage::default(),
             usage_history: VecDeque::new(),
             limits: ResourceLimits {
                 max_memory_mb: scirs2_core::numeric::NumCast::from(8192.0)
@@ -125,8 +115,13 @@ impl<T: Float + Debug + Default + Send + Sync> ResourceMonitor<T> {
     }
 
     /// Get current resource usage
-    pub fn get_current_usage(&self) -> &ResourceUsage {
+    pub fn get_current_usage(&self) -> &ResourceUsage<T> {
         &self.current_usage
+    }
+
+    /// Replace the tracked current usage with a freshly measured record.
+    pub fn set_current_usage(&mut self, usage: ResourceUsage<T>) {
+        self.current_usage = usage;
     }
 
     /// Get resource limits
@@ -167,12 +162,11 @@ impl<T: Float + Debug + Default + Send + Sync> ResourceMonitor<T> {
         self.usage_history.clear();
     }
 
-    /// Check if any resource limit is exceeded
+    /// Check whether the currently tracked usage stays inside the configured
+    /// limits. Returns `true` when every tracked resource is within budget.
     pub fn check_limits(&self) -> bool {
-        let memory_mb: f64 = self.current_usage.memory_gb * 1024.0;
-        let max_memory: f64 =
-            scirs2_core::numeric::NumCast::from(self.limits.max_memory_mb).unwrap_or(8192.0);
-
-        memory_mb <= max_memory
+        let mb_per_gb: T = scirs2_core::numeric::NumCast::from(1024.0).unwrap_or_else(|| T::one());
+        let memory_mb = self.current_usage.memory_gb * mb_per_gb;
+        memory_mb <= self.limits.max_memory_mb
     }
 }

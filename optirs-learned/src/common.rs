@@ -1,10 +1,43 @@
 //! Common types and configurations for learned optimizers
 
+use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2};
-use scirs2_core::numeric::Float;
+use scirs2_core::numeric::{Float, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
+
+/// Fallibly convert a primitive numeric value (an `f64` constant, a `usize`
+/// count, ...) into a generic scalar type `T`.
+///
+/// This replaces the `T::from(x).expect("unwrap failed")` pattern that was
+/// spread across this crate: a scalar type that genuinely cannot represent `x`
+/// now produces an honest [`OptimError::InvalidConfig`] instead of panicking in
+/// the middle of an optimizer step.
+pub(crate) fn cast_scalar<T: Float, V: ToPrimitive + Copy + Debug>(value: V) -> Result<T> {
+    T::from(value).ok_or_else(|| {
+        OptimError::InvalidConfig(format!(
+            "{value:?} cannot be represented in this optimizer's scalar type"
+        ))
+    })
+}
+
+/// [`cast_scalar`] for a value that must also be strictly positive, used for
+/// divisors so a zero denominator is reported rather than producing an
+/// infinity or a NaN.
+pub(crate) fn cast_positive<T: Float, V: ToPrimitive + Copy + Debug>(
+    value: V,
+    what: &str,
+) -> Result<T> {
+    let converted: T = cast_scalar(value)?;
+    if converted > T::zero() {
+        Ok(converted)
+    } else {
+        Err(OptimError::InsufficientData(format!(
+            "{what} must be positive, got {value:?}"
+        )))
+    }
+}
 
 /// Base configuration for learned optimizers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,9 +175,18 @@ pub struct OptimizerState<T: Float + Debug + Send + Sync + 'static> {
     pub metadata: StateMetadata,
 }
 
+/// Learning rate a freshly-created [`OptimizerState`] starts at.
+pub const DEFAULT_LEARNING_RATE: f64 = 0.001;
+
 impl<T: Float + Debug + Send + Sync + 'static> OptimizerState<T> {
-    pub fn new(num_params: usize) -> Self {
-        Self {
+    /// A zeroed state for `num_params` parameters at
+    /// [`DEFAULT_LEARNING_RATE`].
+    ///
+    /// # Errors
+    /// Returns `Err` when the default learning rate cannot be represented in
+    /// `T`. This used to panic.
+    pub fn new(num_params: usize) -> Result<Self> {
+        Ok(Self {
             parameters: Array1::zeros(num_params),
             gradients: Array1::zeros(num_params),
             momentum: None,
@@ -153,9 +195,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OptimizerState<T> {
             step: 0,
             step_count: 0,
             loss: None,
-            learning_rate: scirs2_core::numeric::NumCast::from(0.001).expect("unwrap failed"),
+            learning_rate: cast_scalar(DEFAULT_LEARNING_RATE)?,
             metadata: StateMetadata::default(),
-        }
+        })
     }
 }
 

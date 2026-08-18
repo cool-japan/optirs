@@ -11,7 +11,7 @@
 
 use optirs_core::optimizers::{Adam, Optimizer, SGD};
 use optirs_core::schedulers::{ExponentialDecay, LearningRateScheduler, StepDecay};
-use scirs2_core::ndarray::{array, Array1, Ix1};
+use scirs2_core::ndarray::{Array1, Ix1};
 use scirs2_core::random::{thread_rng, Distribution, Normal};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

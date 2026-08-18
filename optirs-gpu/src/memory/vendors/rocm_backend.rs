@@ -3,13 +3,105 @@
 // This module provides AMD ROCm/HIP-specific memory management functionality,
 // including device memory allocation, HIP streams, and performance optimization
 // features specific to AMD GPUs.
+//
+// # This is a host-memory simulation, not real ROCm
+//
+// `optirs-gpu` is Pure Rust with no FFI dependencies by default, and this
+// crate ships no ROCm/HIP runtime bindings. There is therefore no real
+// `hipMalloc` underneath this module: "device", "host", "coarse-grained",
+// "fine-grained" and "host-visible" memory are all the *same* system-heap
+// allocation (see `sim_alloc`/`sim_dealloc` below), and `RocmDeviceProperties`
+// /`RocmStats` are example numbers, not a query of real hardware. This
+// module models the ROCm memory-management *API shape* for testing that
+// shape in isolation; treat every allocation as host memory and every
+// device number as illustrative.
+//
+// This extends to data movement: `memcpy` and `memcpy_async` copy **zero
+// bytes**. They build a `HipOperation` record, hand it to
+// `HipStreamManager::execute_operation` (which returns immediately and never
+// dereferences `src_ptr`/`dst_ptr`), and increment
+// `RocmStats::memory_transfers` — that counter says "this many `memcpy`
+// calls were made," not "this many bytes moved." An earlier revision of
+// this module also injected a `std::thread::sleep` here to imitate transfer
+// latency by operation kind; that fake timing has been removed, so the
+// distinction between `MemcpyHostToDevice`/`MemcpyDeviceToHost`/
+// `MemcpyDeviceToDevice`/`MemcpyAsync` no longer affects anything
+// observable. `RocmStats::stream_operations` and `RocmStats::kernel_launches`
+// are declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Byte alignment every simulated allocation below uses.
+const SIM_ALLOC_ALIGN: usize = 256;
+
+/// Allocate `size` bytes through the system allocator, 256-byte aligned,
+/// without the two ways the naive `std::alloc::alloc(Layout::from_size_align_unchecked(size,
+/// 256))` this module used to call was undefined behaviour: a zero-size
+/// layout is unsound to pass to `GlobalAlloc::alloc`, and a real allocation
+/// failure returns null, which must never be treated as valid memory. See
+/// `cuda_backend::sim_alloc` for the full rationale (this mirrors it).
+///
+/// The payload is prefixed with one `SIM_ALLOC_ALIGN`-byte header recording
+/// the requested size, so [`sim_dealloc`] can reconstruct the exact `Layout`
+/// this function used — the `Layout::from_size_align_unchecked(1, 1)` this
+/// module used at free time was a mismatched-layout deallocation, itself
+/// unconditionally undefined behaviour.
+fn sim_alloc(size: usize) -> Result<*mut c_void, RocmError> {
+    if size == 0 {
+        return Ok(SIM_ALLOC_ALIGN as *mut c_void);
+    }
+    let total = SIM_ALLOC_ALIGN.checked_add(size).ok_or_else(|| {
+        RocmError::OutOfMemory(format!(
+            "{size}-byte request overflows the allocator's size limit"
+        ))
+    })?;
+    let layout = std::alloc::Layout::from_size_align(total, SIM_ALLOC_ALIGN)
+        .map_err(|e| RocmError::OutOfMemory(format!("invalid allocation layout: {e}")))?;
+    // SAFETY: `layout` has non-zero size (checked above) and a valid
+    // (power-of-two) alignment constructed by `Layout::from_size_align`.
+    let base = unsafe { std::alloc::alloc(layout) };
+    if base.is_null() {
+        return Err(RocmError::OutOfMemory(format!(
+            "allocator returned null for a {size}-byte request"
+        )));
+    }
+    // SAFETY: `base` is non-null and `layout`'s size is at least
+    // `SIM_ALLOC_ALIGN + size >= SIM_ALLOC_ALIGN >= size_of::<usize>()`, so
+    // writing one `usize` at the start of the block is in-bounds.
+    unsafe { (base as *mut usize).write(size) };
+    // SAFETY: `base` was allocated with `total = SIM_ALLOC_ALIGN + size`
+    // bytes, so offsetting by `SIM_ALLOC_ALIGN` stays within (or one past)
+    // the allocation.
+    Ok(unsafe { base.add(SIM_ALLOC_ALIGN) } as *mut c_void)
+}
+
+/// Free a pointer returned by [`sim_alloc`]. A no-op for a null pointer or
+/// the zero-size sentinel — neither was ever allocated.
+///
+/// Only ever called from this module (it is not `pub`) with a pointer
+/// `sim_alloc` returned that has not already been freed — the unsafety of
+/// the pointer arithmetic below is contained to that invariant, matching
+/// this module's existing style of confining `unsafe` to the raw
+/// `std::alloc` calls rather than marking `free()`'s public wrapper unsafe.
+fn sim_dealloc(ptr: *mut c_void) {
+    if ptr.is_null() || (ptr as usize) == SIM_ALLOC_ALIGN {
+        return;
+    }
+    // SAFETY: by this function's contract `ptr` came from `sim_alloc`.
+    let base = unsafe { (ptr as *mut u8).sub(SIM_ALLOC_ALIGN) };
+    // SAFETY: `sim_alloc` wrote a `usize` at `base` before returning.
+    let size = unsafe { (base as *const usize).read() };
+    if let Ok(layout) = std::alloc::Layout::from_size_align(SIM_ALLOC_ALIGN + size, SIM_ALLOC_ALIGN)
+    {
+        // SAFETY: `layout` is exactly the layout `sim_alloc` allocated
+        // `base` with.
+        unsafe { std::alloc::dealloc(base, layout) };
+    }
+}
 
 /// ROCm memory backend implementation
 pub struct RocmMemoryBackend {
@@ -213,8 +305,6 @@ pub enum HipOperationType {
 pub struct RocmMemoryPool {
     /// Memory type
     memory_type: RocmMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -297,7 +387,6 @@ impl RocmMemoryPool {
 
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -312,7 +401,9 @@ impl RocmMemoryPool {
         // Try to find suitable free block
         for i in 0..self.free_blocks.len() {
             if self.free_blocks[i].size >= size {
-                let mut block = self.free_blocks.remove(i).expect("unwrap failed");
+                let Some(mut block) = self.free_blocks.remove(i) else {
+                    continue;
+                };
 
                 // Split block if much larger
                 if block.size > size * 2 {
@@ -429,41 +520,11 @@ impl RocmMemoryPool {
     fn hip_malloc(&self, size: usize) -> Result<*mut c_void, RocmError> {
         // Simulate HIP memory allocation
         match self.memory_type {
-            RocmMemoryType::Device => {
-                // hipMalloc equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::Host => {
-                // hipMallocHost equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::CoarseGrained => {
-                // Coarse-grained device memory
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::FineGrained => {
-                // Fine-grained system memory
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::HostVisible => {
-                // Host-visible device memory
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
+            RocmMemoryType::Device => sim_alloc(size), // hipMalloc equivalent
+            RocmMemoryType::Host => sim_alloc(size),   // hipMallocHost equivalent
+            RocmMemoryType::CoarseGrained => sim_alloc(size), // coarse-grained device memory
+            RocmMemoryType::FineGrained => sim_alloc(size), // fine-grained system memory
+            RocmMemoryType::HostVisible => sim_alloc(size), // host-visible device memory
             _ => Err(RocmError::UnsupportedOperation(
                 "Unsupported memory type for allocation".to_string(),
             )),
@@ -512,28 +573,40 @@ impl HipStreamManager {
     }
 
     /// Create new stream
+    /// Create new stream
+    ///
+    /// Reuses a previously [`Self::destroy_stream`]d stream from
+    /// `stream_pool` when one is available (its operation queue is cleared
+    /// and it is given a fresh ID) instead of always allocating a new one.
     pub fn create_stream(&mut self, priority: Option<i32>) -> Result<u32, RocmError> {
         let stream_id = self.next_stream_id;
         self.next_stream_id += 1;
 
-        let stream = HipStream {
+        let mut stream = self.stream_pool.pop_front().unwrap_or_else(|| HipStream {
             handle: std::ptr::null_mut(), // Would be actual HIP stream
             id: stream_id,
             priority: priority.unwrap_or(self.config.default_priority),
             flags: HipStreamFlags::default(),
             created_at: Instant::now(),
             operations: std::collections::VecDeque::new(),
-        };
+        });
+        stream.id = stream_id;
+        stream.priority = priority.unwrap_or(self.config.default_priority);
+        stream.created_at = Instant::now();
+        stream.operations.clear();
 
         self.streams.push(stream);
         Ok(stream_id)
     }
 
     /// Destroy stream
+    ///
+    /// Returns the stream to `stream_pool` for [`Self::create_stream`] to
+    /// reuse instead of dropping it outright.
     pub fn destroy_stream(&mut self, stream_id: u32) -> Result<(), RocmError> {
         if let Some(pos) = self.streams.iter().position(|s| s.id == stream_id) {
             let stream = self.streams.remove(pos);
-            // Clean up stream resources
+            self.stream_pool.push_back(stream);
             Ok(())
         } else {
             Err(RocmError::InvalidStream("Stream not found".to_string()))
@@ -580,29 +653,14 @@ impl HipStreamManager {
         Ok(())
     }
 
-    fn execute_operation(&self, operation: HipOperation) -> Result<(), RocmError> {
-        // Simulate operation execution
-        match operation.op_type {
-            HipOperationType::MemcpyHostToDevice => {
-                // Simulate hipMemcpy
-                std::thread::sleep(Duration::from_micros(120));
-            }
-            HipOperationType::MemcpyDeviceToHost => {
-                // Simulate hipMemcpy
-                std::thread::sleep(Duration::from_micros(120));
-            }
-            HipOperationType::MemcpyDeviceToDevice => {
-                // Simulate hipMemcpy
-                std::thread::sleep(Duration::from_micros(60));
-            }
-            HipOperationType::MemcpyAsync => {
-                // Simulate hipMemcpyAsync
-                std::thread::sleep(Duration::from_micros(15));
-            }
-            _ => {
-                // Other operations
-            }
-        }
+    fn execute_operation(&self, _operation: HipOperation) -> Result<(), RocmError> {
+        // Host-memory simulation (see module docs): there is no real ROCm/HIP
+        // device to transfer to or from, so no data movement happens here.
+        // This used to also inject an artificial `std::thread::sleep` per
+        // operation type to mimic device-transfer latency; that fake timing
+        // has been removed rather than left as an undisclosed simulated
+        // number, so callers now see the true (near-zero) cost of this
+        // simulation instead of a fabricated one.
         Ok(())
     }
 }
@@ -763,34 +821,10 @@ impl RocmMemoryBackend {
     ) -> Result<*mut c_void, RocmError> {
         // Simulate direct HIP allocation
         match memory_type {
-            RocmMemoryType::Device => {
-                // hipMalloc
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::Host => {
-                // hipMallocHost
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::CoarseGrained => {
-                // Coarse-grained device memory
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            RocmMemoryType::FineGrained => {
-                // Fine-grained system memory
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
+            RocmMemoryType::Device => sim_alloc(size), // hipMalloc
+            RocmMemoryType::Host => sim_alloc(size),   // hipMallocHost
+            RocmMemoryType::CoarseGrained => sim_alloc(size), // coarse-grained device memory
+            RocmMemoryType::FineGrained => sim_alloc(size), // fine-grained system memory
             _ => Err(RocmError::UnsupportedMemoryType(
                 "Unsupported memory type".to_string(),
             )),
@@ -808,13 +842,10 @@ impl RocmMemoryBackend {
                 ));
             }
         } else {
-            // Direct deallocation
-            unsafe {
-                std::alloc::dealloc(
-                    ptr as *mut u8,
-                    std::alloc::Layout::from_size_align_unchecked(1, 1),
-                );
-            }
+            // Direct deallocation. `ptr` was returned by `sim_alloc` via
+            // `hip_malloc`/`direct_allocate` above, and this is the first
+            // time it is freed.
+            sim_dealloc(ptr);
         }
 
         self.stats.total_deallocations += 1;
@@ -859,7 +890,15 @@ impl RocmMemoryBackend {
         stream_id: u32,
     ) -> Result<(), RocmError> {
         let operation = HipOperation {
-            op_type: HipOperationType::MemcpyAsync,
+            // Mirrors the synchronous `memcpy`'s mapping above so the queued
+            // operation's recorded direction matches what the caller asked
+            // for instead of always reporting a generic `MemcpyAsync`.
+            op_type: match kind {
+                RocmMemcpyKind::HostToDevice => HipOperationType::MemcpyHostToDevice,
+                RocmMemcpyKind::DeviceToHost => HipOperationType::MemcpyDeviceToHost,
+                RocmMemcpyKind::DeviceToDevice => HipOperationType::MemcpyDeviceToDevice,
+                RocmMemcpyKind::HostToHost => HipOperationType::MemcpyAsync,
+            },
             src_ptr: Some(src as *mut c_void),
             dst_ptr: Some(dst),
             size,
@@ -926,13 +965,23 @@ impl RocmMemoryBackend {
     }
 
     /// Query memory attributes
+    ///
+    /// Looks up which pool actually allocated `ptr` and returns that pool's
+    /// real attributes (which vary by [`RocmMemoryType`] — see the
+    /// attribute construction in [`RocmMemoryPool::new`]) instead of an
+    /// unconditional default. A pointer this backend never allocated is an
+    /// honest `Err`, not a guess.
     pub fn query_memory_attributes(
         &self,
         ptr: *mut c_void,
     ) -> Result<RocmMemoryAttributes, RocmError> {
-        // In a real implementation, this would query the actual memory attributes
-        // For now, return default attributes
-        Ok(RocmMemoryAttributes::default())
+        self.memory_pools
+            .values()
+            .find(|pool| pool.allocated_blocks.contains_key(&ptr))
+            .map(|pool| pool.attributes.clone())
+            .ok_or_else(|| {
+                RocmError::InvalidPointer("pointer was not allocated by this backend".to_string())
+            })
     }
 }
 
@@ -1008,17 +1057,17 @@ impl ThreadSafeRocmBackend {
         size: usize,
         memory_type: RocmMemoryType,
     ) -> Result<*mut c_void, RocmError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.allocate(size, memory_type)
     }
 
     pub fn free(&self, ptr: *mut c_void, memory_type: RocmMemoryType) -> Result<(), RocmError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.free(ptr, memory_type)
     }
 
     pub fn get_stats(&self) -> RocmStats {
-        let backend = self.backend.lock().expect("lock poisoned");
+        let backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.get_stats().clone()
     }
 }
@@ -1026,6 +1075,39 @@ impl ThreadSafeRocmBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for F26: a zero-size request must not reach
+    /// `std::alloc::alloc` (unsound for a zero-size layout).
+    #[test]
+    fn sim_alloc_zero_size_is_a_safe_sentinel_not_a_ub_call() {
+        let ptr = sim_alloc(0).expect("zero-size request must succeed");
+        assert!(!ptr.is_null());
+        sim_dealloc(ptr);
+    }
+
+    /// A real allocation must be readable/writable across its full size and
+    /// must free through the same layout it was allocated with.
+    #[test]
+    fn sim_alloc_real_allocation_round_trips_and_frees_cleanly() {
+        for size in [1usize, 7, 256, 4096, 1_000_003] {
+            let ptr = sim_alloc(size).expect("allocation must succeed") as *mut u8;
+            assert!(!ptr.is_null());
+            unsafe {
+                for i in 0..size {
+                    ptr.add(i).write(0xAB);
+                }
+                for i in 0..size {
+                    assert_eq!(ptr.add(i).read(), 0xAB);
+                }
+                sim_dealloc(ptr as *mut c_void);
+            }
+        }
+    }
+
+    #[test]
+    fn sim_dealloc_null_is_a_no_op() {
+        sim_dealloc(std::ptr::null_mut());
+    }
 
     #[test]
     fn test_rocm_backend_creation() {

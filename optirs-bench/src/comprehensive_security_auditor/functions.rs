@@ -1,0 +1,797 @@
+//! Auto-generated module
+//!
+//! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
+
+use crate::error::{OptimError, Result};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use super::constants::EMBEDDED_ADVISORY_SNAPSHOT_DATE;
+use super::types::{
+    DeclaredDependency, DependencyScanConfig, DependencyScanResult, DependencyTree,
+    EmbeddedAdvisory, OutdatedDependency, ResolvedDependency, SecuritySeverity, SupplyChainRisk,
+    Vulnerability, VulnerabilityCategory, VulnerableDependency,
+};
+
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
+use super::comprehensivesecurityauditor_type::ComprehensiveSecurityAuditor;
+#[cfg(test)]
+use super::types::{
+    ConfigSecurityResult, LicenseComplianceResult, PolicyComplianceResult, RiskAssessment,
+    SecretDetectionResult, SecurityAuditConfig, SecurityAuditResult, StaticAnalysisResult,
+    SupplyChainAnalysisResult,
+};
+#[cfg(test)]
+use std::collections::HashSet;
+#[cfg(test)]
+use std::time::Duration;
+
+/// Shannon entropy in bits/char of `s`, from character frequency. Standard
+/// `-sum(p_i * log2(p_i))` formula; used by `detect_secrets` to flag
+/// unlabeled high-entropy token-shaped strings.
+pub(super) fn shannon_entropy(s: &str) -> f64 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    let mut counts: HashMap<char, usize> = HashMap::new();
+    for c in s.chars() {
+        *counts.entry(c).or_insert(0) += 1;
+    }
+    let len = s.chars().count() as f64;
+    counts.values().fold(0.0, |acc, &count| {
+        let p = count as f64 / len;
+        acc - p * p.log2()
+    })
+}
+
+/// `true` if `keyword` occurs in `text` bounded by non-identifier characters
+/// (matching neither `is_ident_byte` on either side), so a weak-crypto or
+/// security-pattern scan does not flag ordinary identifiers/URLs that merely
+/// contain the pattern as a substring -- e.g. `uses_weak_crypto("let cmd5 =
+/// 1;")` must not match `"md5"`, and a doc comment linking
+/// `https://example.com/md5sum-tool` must not either. ASCII-byte boundaries
+/// are sufficient here: every pattern this is called with is ASCII, and a
+/// non-ASCII UTF-8 continuation byte is never an identifier byte, so it can
+/// never register as a false "boundary".
+pub(super) fn contains_keyword(text: &str, keyword: &str) -> bool {
+    if keyword.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(keyword) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || !is_ident_byte(bytes[abs - 1]);
+        let after_index = abs + keyword.len();
+        let after_ok = after_index >= bytes.len() || !is_ident_byte(bytes[after_index]);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + keyword.len();
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Extract maximal runs (length >= 20) of base64/token-shaped characters
+/// (`[A-Za-z0-9+/=_-]`) from `line`, as entropy-check candidates.
+pub(super) fn high_entropy_runs(line: &str) -> Vec<String> {
+    let mut runs = Vec::new();
+    let mut current = String::new();
+    for c in line.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '_' | '-') {
+            current.push(c);
+        } else {
+            if current.chars().count() >= 20 {
+                runs.push(current.clone());
+            }
+            current.clear();
+        }
+    }
+    if current.chars().count() >= 20 {
+        runs.push(current);
+    }
+    runs
+}
+
+/// Parse a single `key = "value"` TOML line (no leading `[`), returning the
+/// unquoted value if `line` assigns a plain string to `key`. Handles only
+/// the flat `key = "value"` shape deliberately -- inline tables and arrays
+/// are handled by their own callers.
+pub(super) fn parse_toml_string_assignment(line: &str, key: &str) -> Option<String> {
+    let (lhs, rhs) = line.split_once('=')?;
+    if lhs.trim() != key {
+        return None;
+    }
+    let rhs = rhs.trim();
+    if rhs.len() >= 2 && rhs.starts_with('"') && rhs.ends_with('"') {
+        Some(rhs[1..rhs.len() - 1].to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract a quoted string field from inline-table syntax, e.g.
+/// `{ version = "1.2", features = ["x"] }` -> `extract_inline_table_field(_, "version") == Some("1.2")`.
+pub(super) fn extract_inline_table_field(inline_table: &str, field: &str) -> Option<String> {
+    let inner = inline_table
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}');
+    // Split on top-level commas only (none of the fields we look for here
+    // contain array values with embedded commas relevant to matching the
+    // field name itself, so a plain split is sufficient).
+    for part in inner.split(',') {
+        if let Some((key, value)) = part.split_once('=') {
+            if key.trim() == field {
+                let value = value.trim();
+                if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+                    return Some(value[1..value.len() - 1].to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse `Cargo.lock`'s `[[package]]` blocks into resolved `(name, version)`
+/// pairs. Cargo.lock is generated by Cargo itself and never uses inline
+/// tables or multi-line strings for these two fields, so a line-oriented
+/// parser is reliable here (unlike hand-written Cargo.toml, which can use
+/// any of TOML's dependency-table shapes -- see `parse_cargo_toml_dependencies`).
+pub(super) fn parse_cargo_lock_packages(content: &str) -> Vec<ResolvedDependency> {
+    let mut deps = Vec::new();
+    let mut in_package = false;
+    let mut name: Option<String> = None;
+    let mut version: Option<String> = None;
+
+    let flush = |name: &mut Option<String>,
+                 version: &mut Option<String>,
+                 deps: &mut Vec<ResolvedDependency>| {
+        if let (Some(n), Some(v)) = (name.take(), version.take()) {
+            deps.push(ResolvedDependency {
+                name: n,
+                version: v,
+            });
+        }
+    };
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line == "[[package]]" {
+            flush(&mut name, &mut version, &mut deps);
+            in_package = true;
+            continue;
+        }
+        if line.starts_with('[') && line != "[[package]]" {
+            in_package = false;
+            continue;
+        }
+        if in_package {
+            if let Some(value) = parse_toml_string_assignment(line, "name") {
+                name = Some(value);
+            } else if let Some(value) = parse_toml_string_assignment(line, "version") {
+                version = Some(value);
+            }
+        }
+    }
+    flush(&mut name, &mut version, &mut deps);
+    deps
+}
+
+/// Parse a `Cargo.toml`'s `[dependencies]`/`[dev-dependencies]`/
+/// `[build-dependencies]` tables (including `[target.'cfg(...)'.dependencies]`
+/// variants), handling all of: plain string version (`foo = "1.0"`), inline
+/// table (`foo = { version = "1.0", features = [...] }`), sub-table
+/// (`[dependencies.foo]` followed by `version = "1.0"`), and workspace
+/// inheritance (`foo = { workspace = true }` or, in sub-table form,
+/// `workspace = true`).
+pub(super) fn parse_cargo_toml_dependencies(content: &str) -> Vec<DeclaredDependency> {
+    let mut deps = Vec::new();
+    let mut in_dep_table = false;
+    let mut current_subtable_dep: Option<String> = None;
+
+    let is_dep_table_header = |line: &str| -> bool {
+        matches!(
+            line,
+            "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
+        ) || (line.ends_with(".dependencies]") && line.starts_with("[target."))
+    };
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if line.starts_with('[') {
+            if let Some(name) = line
+                .strip_prefix("[dependencies.")
+                .or_else(|| line.strip_prefix("[dev-dependencies."))
+                .or_else(|| line.strip_prefix("[build-dependencies."))
+                .and_then(|rest| rest.strip_suffix(']'))
+            {
+                current_subtable_dep = Some(name.trim_matches('"').to_string());
+                in_dep_table = false;
+                continue;
+            }
+            current_subtable_dep = None;
+            in_dep_table = is_dep_table_header(line);
+            continue;
+        }
+
+        if let Some(dep_name) = current_subtable_dep.clone() {
+            if let Some(v) = parse_toml_string_assignment(line, "version") {
+                let is_wildcard = v.trim() == "*";
+                deps.push(DeclaredDependency {
+                    name: dep_name,
+                    version_req: Some(v),
+                    is_git: false,
+                    is_workspace_inherited: false,
+                    is_wildcard,
+                });
+            } else if line == "workspace = true" {
+                deps.push(DeclaredDependency {
+                    name: dep_name,
+                    version_req: None,
+                    is_git: false,
+                    is_workspace_inherited: true,
+                    is_wildcard: false,
+                });
+            } else if parse_toml_string_assignment(line, "git").is_some() {
+                deps.push(DeclaredDependency {
+                    name: dep_name,
+                    version_req: None,
+                    is_git: true,
+                    is_workspace_inherited: false,
+                    is_wildcard: false,
+                });
+            }
+            continue;
+        }
+
+        if in_dep_table {
+            let Some((lhs, rhs)) = line.split_once('=') else {
+                continue;
+            };
+            let name = lhs.trim().trim_matches('"').to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let rhs = rhs.trim();
+
+            if rhs.len() >= 2 && rhs.starts_with('"') && rhs.ends_with('"') {
+                let version = rhs[1..rhs.len() - 1].to_string();
+                let is_wildcard = version.trim() == "*";
+                deps.push(DeclaredDependency {
+                    name,
+                    version_req: Some(version),
+                    is_git: false,
+                    is_workspace_inherited: false,
+                    is_wildcard,
+                });
+            } else if rhs.starts_with('{') {
+                let is_workspace = extract_inline_table_field(rhs, "workspace").as_deref()
+                    == Some("true")
+                    || rhs.replace(' ', "").contains("workspace=true");
+                let is_git = rhs.contains("git");
+                let version = extract_inline_table_field(rhs, "version");
+                let is_wildcard = version.as_deref() == Some("*");
+                deps.push(DeclaredDependency {
+                    name,
+                    version_req: version,
+                    is_git,
+                    is_workspace_inherited: is_workspace,
+                    is_wildcard,
+                });
+            }
+        }
+    }
+
+    deps
+}
+
+/// Parse the leading `major.minor.patch` numeric triple from a version
+/// string, ignoring any pre-release/build metadata suffix
+/// (`"1.2.3-beta.1"` -> `(1, 2, 3)`). Missing minor/patch components default
+/// to 0 (`"1"` -> `(1, 0, 0)`), matching Cargo's own version normalization.
+pub(super) fn parse_semver_triple(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.split(['-', '+']).next()?.trim();
+    let mut parts = core.split('.');
+    let major = parts.next()?.trim().parse().ok()?;
+    let minor = parts.next().unwrap_or("0").trim().parse().ok()?;
+    let patch = parts.next().unwrap_or("0").trim().parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// `true` if `a < b` as a `(major, minor, patch)` triple; `None` if either
+/// string cannot be parsed as a numeric semver triple.
+pub(super) fn semver_lt(a: &str, b: &str) -> Option<bool> {
+    Some(parse_semver_triple(a)? < parse_semver_triple(b)?)
+}
+
+pub(super) fn embedded_advisory_snapshot() -> &'static [EmbeddedAdvisory] {
+    &[
+        EmbeddedAdvisory {
+            id: "RUSTSEC-2020-0159",
+            package: "chrono",
+            title: "Potential segfault in `localtime_r` invocations",
+            affected_from: None,
+            fixed_in: "0.4.20",
+            cvss_score: Some(6.2),
+            severity: SecuritySeverity::Medium,
+            url: "https://rustsec.org/advisories/RUSTSEC-2020-0159",
+        },
+        EmbeddedAdvisory {
+            id: "RUSTSEC-2020-0071",
+            package: "time",
+            title: "Potential segfault in the time crate",
+            // 0.1.x used a different (unaffected) implementation; only the
+            // 0.2.x line before 0.2.23 is affected.
+            affected_from: Some("0.2.0"),
+            fixed_in: "0.2.23",
+            cvss_score: Some(6.2),
+            severity: SecuritySeverity::Medium,
+            url: "https://rustsec.org/advisories/RUSTSEC-2020-0071",
+        },
+        EmbeddedAdvisory {
+            id: "RUSTSEC-2023-0071",
+            package: "rsa",
+            title: "Marvin Attack: potential key recovery through timing sidechannels",
+            affected_from: None,
+            fixed_in: "0.9.6",
+            cvss_score: Some(5.9),
+            severity: SecuritySeverity::Medium,
+            url: "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+        },
+        EmbeddedAdvisory {
+            id: "RUSTSEC-2021-0145",
+            package: "atty",
+            title: "Potential unaligned read (crate unmaintained)",
+            affected_from: None,
+            // atty was never fixed; every published version is considered
+            // affected. Using a fixed_in above any real release means "always
+            // vulnerable if present at all".
+            fixed_in: "999.0.0",
+            cvss_score: None,
+            severity: SecuritySeverity::Low,
+            url: "https://rustsec.org/advisories/RUSTSEC-2021-0145",
+        },
+    ]
+}
+
+/// Whether `version` is vulnerable per `advisory`'s bounds. `None` when the
+/// version string cannot be parsed as a numeric semver triple (never
+/// silently treated as "not vulnerable" by the caller in that case -- see
+/// `find_known_vulnerabilities`, which surfaces unparsable versions
+/// separately rather than dropping them).
+pub(super) fn version_is_vulnerable(version: &str, advisory: &EmbeddedAdvisory) -> Option<bool> {
+    let below_fix = semver_lt(version, advisory.fixed_in)?;
+    if !below_fix {
+        return Some(false);
+    }
+    if let Some(from) = advisory.affected_from {
+        let at_or_above_from = !semver_lt(version, from)?;
+        return Some(at_or_above_from);
+    }
+    Some(true)
+}
+
+/// Find every embedded advisory that matches `name` at `version`.
+pub(super) fn find_known_vulnerabilities(
+    name: &str,
+    version: &str,
+) -> Vec<&'static EmbeddedAdvisory> {
+    embedded_advisory_snapshot()
+        .iter()
+        .filter(|advisory| advisory.package == name)
+        .filter(|advisory| version_is_vulnerable(version, advisory) == Some(true))
+        .collect()
+}
+
+/// Locate the Cargo registry cache's source directory for `name-version`
+/// (typically `$CARGO_HOME/registry/src/*/name-version/`), used to read a
+/// dependency's own `Cargo.toml` for offline license lookup (F9). Returns
+/// `None` when the crate is not present in the local cache (e.g. vendored,
+/// path dependency, or never downloaded) -- callers must treat that as
+/// `Unknown`, never as "no license".
+pub(super) fn find_registry_cache_dir(name: &str, version: &str) -> Option<PathBuf> {
+    let cargo_home = std::env::var("CARGO_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".cargo"))
+        })?;
+    let registry_src = cargo_home.join("registry").join("src");
+    let entries = std::fs::read_dir(&registry_src).ok()?;
+    let target_dir_name = format!("{name}-{version}");
+    for entry in entries.flatten() {
+        let index_dir = entry.path();
+        if !index_dir.is_dir() {
+            continue;
+        }
+        let candidate = index_dir.join(&target_dir_name);
+        if candidate.join("Cargo.toml").is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Read the `[package].license` (or `license-file`, reported as
+/// `"file:<path>"`) field from a crate's own `Cargo.toml`. `None` when the
+/// crate's manifest isn't reachable locally or declares neither field.
+pub(super) fn read_crate_license(name: &str, version: &str) -> Option<String> {
+    let dir = find_registry_cache_dir(name, version)?;
+    let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    let mut in_package = false;
+    for raw_line in manifest.lines() {
+        let line = raw_line.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if let Some(license) = parse_toml_string_assignment(line, "license") {
+            return Some(license);
+        }
+        if let Some(file) = parse_toml_string_assignment(line, "license-file") {
+            return Some(format!("file:{file}"));
+        }
+    }
+    None
+}
+
+/// Real, fully offline dependency scan: resolves dependencies from
+/// `Cargo.lock` (preferred) or `Cargo.toml` (fallback), matches each against
+/// [`embedded_advisory_snapshot`], and flags any dependency named in
+/// `config.blocked_dependencies` as a supply-chain risk. Outdated status is
+/// never reported (this crate has no registry client to check against, so
+/// there is no honest way to tell "not outdated" from "unknown"). Shared by
+/// both `ComprehensiveSecurityAuditor::scan_dependencies_with_rustsec` and
+/// `DependencyScanner::scan_dependencies` so there is exactly one
+/// implementation of this logic.
+pub(super) fn scan_dependencies_offline(
+    projectpath: &Path,
+    config: &DependencyScanConfig,
+) -> Result<DependencyScanResult> {
+    let lock_path = projectpath.join("Cargo.lock");
+    let toml_path = projectpath.join("Cargo.toml");
+
+    let resolved: Vec<ResolvedDependency> = if lock_path.exists() {
+        let content = std::fs::read_to_string(&lock_path).map_err(OptimError::IO)?;
+        parse_cargo_lock_packages(&content)
+    } else if toml_path.exists() {
+        let content = std::fs::read_to_string(&toml_path).map_err(OptimError::IO)?;
+        parse_cargo_toml_dependencies(&content)
+            .into_iter()
+            .filter_map(|dep| {
+                let version = dep.version_req?;
+                // Only usable as a stand-in "resolved" version when it looks
+                // like an exact/minimum version, not a bare wildcard.
+                if dep.is_wildcard {
+                    None
+                } else {
+                    Some(ResolvedDependency {
+                        name: dep.name,
+                        version: version
+                            .trim_start_matches(['^', '~', '=', '>', '<', ' '])
+                            .to_string(),
+                    })
+                }
+            })
+            .collect()
+    } else {
+        return Err(OptimError::InvalidConfig(format!(
+            "neither Cargo.lock nor Cargo.toml found under {}; cannot scan dependencies",
+            projectpath.display()
+        )));
+    };
+
+    let total_dependencies = resolved.len();
+    let mut vulnerable_dependencies = Vec::new();
+    let outdated_dependencies: Vec<OutdatedDependency> = Vec::new();
+
+    for dep in &resolved {
+        let matches = find_known_vulnerabilities(&dep.name, &dep.version);
+        if !matches.is_empty() {
+            let vulnerabilities: Vec<Vulnerability> = matches
+                .iter()
+                .map(|advisory| Vulnerability {
+                    id: advisory.id.to_string(),
+                    title: advisory.title.to_string(),
+                    description: format!(
+                        "{} {} matches {} (offline snapshot dated {}): affected {}, fixed in {}",
+                        dep.name,
+                        dep.version,
+                        advisory.id,
+                        EMBEDDED_ADVISORY_SNAPSHOT_DATE,
+                        advisory.affected_from.unwrap_or("0.0.0"),
+                        advisory.fixed_in
+                    ),
+                    severity: advisory.severity,
+                    cvss_score: advisory.cvss_score,
+                    published: SystemTime::now(),
+                    discovered: None,
+                    affected_versions: format!(
+                        "{}..{}",
+                        advisory.affected_from.unwrap_or("0.0.0"),
+                        advisory.fixed_in
+                    ),
+                    patched_versions: vec![format!(">= {}", advisory.fixed_in)],
+                    references: vec![advisory.url.to_string()],
+                    categories: vec![VulnerabilityCategory::Other("RustSec".to_string())],
+                })
+                .collect();
+            let severity = vulnerabilities
+                .iter()
+                .map(|v| v.severity)
+                .max()
+                .unwrap_or(SecuritySeverity::Low);
+            let fixed_version = matches.first().map(|a| a.fixed_in.to_string());
+            vulnerable_dependencies.push(VulnerableDependency {
+                name: dep.name.clone(),
+                current_version: dep.version.clone(),
+                cve_ids: matches.iter().map(|a| a.id.to_string()).collect(),
+                vulnerabilities,
+                affected_versions: format!("< {}", fixed_version.clone().unwrap_or_default()),
+                fixed_version,
+                severity,
+            });
+        }
+    }
+
+    // This crate has no registry client and none may be added, so "is this
+    // outdated" cannot be determined offline at all -- not even a per-crate
+    // `Unknown` marker, since pushing one for every one of potentially
+    // hundreds of dependencies would just be noise with no information
+    // content. `outdated_dependencies` is therefore always empty here; that
+    // is honestly different from "checked, found nothing outdated".
+
+    // `config.blocked_dependencies` is a policy denylist (e.g. a package the
+    // team has decided never to depend on for licensing or provenance
+    // reasons); a resolved dependency matching it is a real, checkable
+    // supply-chain risk regardless of whether it also has a CVE.
+    //
+    // `allowed_licenses`/`blocked_licenses`, `max_depth` and
+    // `scan_direct_deps`/`scan_transitive_deps` are NOT checked here:
+    // `ResolvedDependency` carries only `name`/`version` (no license data --
+    // getting it would mean querying a registry this offline scanner
+    // deliberately does not have), and `Cargo.lock`/`Cargo.toml` parsing does
+    // not currently distinguish direct from transitive depth. Honoring those
+    // fields is a real feature addition, not a mechanical wiring, so it is
+    // left as a tracked gap rather than silently ignored without comment.
+    let supply_chain_risks: Vec<SupplyChainRisk> = resolved
+        .iter()
+        .filter(|dep| config.blocked_dependencies.contains(&dep.name))
+        .map(|dep| SupplyChainRisk {
+            package: dep.name.clone(),
+            risk_type: "blocked_dependency".to_string(),
+            severity: SecuritySeverity::High,
+            description: format!(
+                "{} {} is on the configured blocked-dependency list",
+                dep.name, dep.version
+            ),
+        })
+        .collect();
+
+    let risk_score = (vulnerable_dependencies.len() as f64 * 0.3
+        + supply_chain_risks.len() as f64 * 0.2)
+        .min(1.0);
+
+    Ok(DependencyScanResult {
+        total_dependencies,
+        vulnerable_dependencies,
+        outdated_dependencies,
+        license_violations: Vec::new(),
+        supply_chain_risks,
+        dependency_tree: DependencyTree::default(),
+        risk_score,
+    })
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_auditor_creation() {
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+        assert!(auditor.config.enable_dependency_scanning);
+        assert!(auditor.config.enable_static_analysis);
+    }
+
+    /// `DependencyScanConfig::blocked_dependencies` must surface a matching
+    /// resolved dependency as a `supply_chain_risks` entry, and must leave an
+    /// unlisted dependency alone.
+    #[test]
+    fn scan_dependencies_offline_flags_blocked_dependency() {
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_bench_dep_scanner_blocked_test_{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp project dir");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+             left-pad = \"1.0\"\nserde = \"1.0\"\n",
+        )
+        .expect("write Cargo.toml");
+
+        let config = DependencyScanConfig {
+            blocked_dependencies: HashSet::from(["left-pad".to_string()]),
+            ..DependencyScanConfig::default()
+        };
+        let result = scan_dependencies_offline(&dir, &config);
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        let result = result.expect("scan succeeds on a well-formed temp project");
+        assert_eq!(result.total_dependencies, 2);
+        assert_eq!(result.supply_chain_risks.len(), 1);
+        assert_eq!(result.supply_chain_risks[0].package, "left-pad");
+        assert_eq!(result.supply_chain_risks[0].risk_type, "blocked_dependency");
+        assert!(result
+            .supply_chain_risks
+            .iter()
+            .all(|risk| risk.package != "serde"));
+        assert!(result.risk_score > 0.0);
+    }
+
+    /// An empty `blocked_dependencies` (the default) must leave
+    /// `supply_chain_risks` empty, matching the pre-wiring behavior.
+    #[test]
+    fn scan_dependencies_offline_reports_no_risk_with_no_blocklist() {
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_bench_dep_scanner_unblocked_test_{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp project dir");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+             serde = \"1.0\"\n",
+        )
+        .expect("write Cargo.toml");
+
+        let result = scan_dependencies_offline(&dir, &DependencyScanConfig::default());
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        let result = result.expect("scan succeeds on a well-formed temp project");
+        assert!(result.supply_chain_risks.is_empty());
+    }
+
+    #[test]
+    fn test_security_score_calculation() {
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+
+        let auditresult = SecurityAuditResult {
+            timestamp: SystemTime::now(),
+            duration: Duration::from_secs(10),
+            security_score: 0.0,
+            dependency_results: DependencyScanResult::default(),
+            static_analysis_results: StaticAnalysisResult::default(),
+            license_compliance_results: LicenseComplianceResult::default(),
+            supply_chain_results: SupplyChainAnalysisResult::default(),
+            secret_detection_results: SecretDetectionResult::default(),
+            config_security_results: ConfigSecurityResult::default(),
+            policy_compliance_results: PolicyComplianceResult::default(),
+            remediation_suggestions: Vec::new(),
+            risk_assessment: RiskAssessment::default(),
+        };
+
+        let score = auditor.calculate_security_score(&auditresult);
+        assert!((0.0..=1.0).contains(&score));
+    }
+
+    #[test]
+    fn test_secret_detection() {
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+
+        assert!(auditor.contains_potential_secret("password = \"secret123\""));
+        assert!(auditor.contains_potential_secret("api_key = 'abc123def456'"));
+        assert!(!auditor.contains_potential_secret("let x = 5;"));
+    }
+
+    #[test]
+    fn test_weak_crypto_detection() {
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+
+        assert!(auditor.uses_weak_crypto("use md5::Md5;"));
+        assert!(auditor.uses_weak_crypto("let hash = sha1(data);"));
+        assert!(!auditor.uses_weak_crypto("use sha256::Sha256;"));
+    }
+
+    #[test]
+    fn test_weak_crypto_detection_ignores_substring_false_positives() {
+        // Regression (F14): a bare `line.contains("md5")` / `.contains("sha1")`
+        // also fires on identifiers and URLs that merely contain the pattern as
+        // a substring, neither of which is an actual use of the weak
+        // algorithm. `uses_weak_crypto` must match on identifier boundaries.
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+
+        assert!(
+            !auditor.uses_weak_crypto("let cmd5_result = queue.next();"),
+            "\"cmd5_result\" must not be treated as an md5 use"
+        );
+        assert!(
+            !auditor.uses_weak_crypto("// see https://example.com/md5sum-tool for background"),
+            "an md5-containing URL in a comment must not be treated as an md5 use"
+        );
+        assert!(
+            !auditor.uses_weak_crypto("let sha1024_variant = pick_variant();"),
+            "\"sha1024_variant\" must not be treated as a sha1 use"
+        );
+        // The real thing must still be caught with word-boundary matching.
+        assert!(auditor.uses_weak_crypto("let digest = Md5::new();"));
+    }
+
+    #[test]
+    fn test_contains_keyword_is_boundary_matched() {
+        // contains_keyword itself is case-sensitive; callers that want
+        // case-insensitive matching (like `uses_weak_crypto`) lower-case the
+        // haystack before calling, as exercised here.
+        assert!(contains_keyword("use md5::Md5;", "md5"));
+        assert!(contains_keyword(&"MD5".to_lowercase(), "md5"));
+        assert!(!contains_keyword("cmd5_result", "md5"));
+        assert!(!contains_keyword("md5sum_tool", "md5"));
+        assert!(!contains_keyword("", "md5"));
+        assert!(!contains_keyword("md5", ""));
+    }
+
+    #[test]
+    fn test_cargo_dependency_parsing() {
+        let config = SecurityAuditConfig::default();
+        let auditor = ComprehensiveSecurityAuditor::new(config);
+
+        let cargocontent = r#"
+[dependencies]
+serde = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+log = "0.4"
+
+[dev-dependencies]
+test-dep = "0.1"
+"#;
+
+        let _ = auditor;
+        let deps = parse_cargo_toml_dependencies(cargocontent);
+        assert!(deps.len() >= 2);
+        assert!(deps.iter().any(|d| d.name == "serde"));
+        assert!(deps.iter().any(|d| d.name == "log"));
+        // Table-form dependency with a version requirement is parsed too.
+        assert!(deps
+            .iter()
+            .any(|d| d.name == "tokio" && d.version_req.is_some()));
+    }
+
+    #[test]
+    fn test_known_vulnerability_lookup() {
+        // The offline advisory matcher returns real semver-range matches; an
+        // unknown crate must never be flagged.
+        let hits = find_known_vulnerabilities("definitely-not-a-real-crate", "1.0.0");
+        assert!(hits.is_empty());
+    }
+}

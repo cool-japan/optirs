@@ -16,6 +16,9 @@ pub struct WasmAdaBound {
 impl WasmAdaBound {
     /// Create a new AdaBound optimizer with the given parameters.
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
+    // wasm-bindgen constructors must take flat scalar arguments (no builder
+    // pattern across the JS boundary); this mirrors `AdaBound::new`'s own
+    // 8-parameter constructor one-for-one, so the count isn't reducible here.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         lr: f64,
@@ -68,6 +71,13 @@ impl WasmAdaBound {
     ) -> Result<Vec<f64>, String> {
         if params.len() != gradients.len() {
             return Err("Parameters and gradients must have the same length".to_string());
+        }
+        // Must be checked before `is_multiple_of`: that check special-cases
+        // dim == 0 as "divisible" whenever params is also empty, which would
+        // otherwise fall through to `.chunks(dim)` below and panic (chunk
+        // size must be non-zero) instead of returning an honest error.
+        if dim == 0 {
+            return Err("dim must be non-zero".to_string());
         }
         if !params.len().is_multiple_of(dim) {
             return Err(format!(

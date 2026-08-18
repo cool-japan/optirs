@@ -13,7 +13,7 @@ pub use gradient_processing::{
     GradientProcessingParams, GradientProcessingStrategy, GradientProcessor, GradientStatistics,
 };
 pub use learning_rate_adaptation::{
-    LRAdaptationParams, LearningRateAdaptationStrategy, LearningRateAdapter, ScheduleState,
+    LRAdaptationParams, LearningRateAdaptationStrategy, LearningRateAdapter,
 };
 pub use momentum_integration::{
     MomentumIntegrator, MomentumParams, MomentumState, MomentumStatistics, MomentumStrategy,

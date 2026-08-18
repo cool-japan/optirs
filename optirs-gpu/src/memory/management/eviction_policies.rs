@@ -4,10 +4,8 @@
 // GPU memory efficiently by determining which data should be removed when
 // memory pressure occurs.
 
-#[allow(dead_code)]
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 /// Main eviction engine that manages multiple eviction policies
@@ -1312,7 +1310,7 @@ impl ThreadSafeEvictionEngine {
     }
 
     pub fn should_evict(&self, region_addr: usize) -> bool {
-        let engine = self.engine.read().expect("lock poisoned");
+        let engine = self.engine.read().unwrap_or_else(|e| e.into_inner());
         engine.should_evict(region_addr)
     }
 
@@ -1321,17 +1319,17 @@ impl ThreadSafeEvictionEngine {
         region_addr: usize,
         target_bytes: usize,
     ) -> Result<Vec<usize>, EvictionError> {
-        let mut engine = self.engine.write().expect("lock poisoned");
+        let mut engine = self.engine.write().unwrap_or_else(|e| e.into_inner());
         engine.evict(region_addr, target_bytes)
     }
 
     pub fn add_object(&self, region_addr: usize, object: CacheObject) -> Result<(), EvictionError> {
-        let mut engine = self.engine.write().expect("lock poisoned");
+        let mut engine = self.engine.write().unwrap_or_else(|e| e.into_inner());
         engine.add_object(region_addr, object)
     }
 
     pub fn get_stats(&self) -> EvictionStats {
-        let engine = self.engine.read().expect("lock poisoned");
+        let engine = self.engine.read().unwrap_or_else(|e| e.into_inner());
         engine.get_stats().clone()
     }
 }

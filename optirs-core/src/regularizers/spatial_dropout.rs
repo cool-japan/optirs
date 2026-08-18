@@ -4,9 +4,9 @@
 // - Spatial Dropout: drops entire feature maps (useful for CNNs)
 // - Feature Dropout: drops specific features across all spatial locations
 
-use scirs2_core::ndarray::{Array, Axis, Dimension, Ix3, ScalarOperand};
+use scirs2_core::ndarray::{Array, Axis, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
@@ -23,7 +23,7 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::Array4;
 /// use optirs_core::regularizers::SpatialDropout;
 ///
-/// let spatial_dropout = SpatialDropout::new(0.3).expect("unwrap failed"); // 30% dropout rate
+/// let spatial_dropout = SpatialDropout::new(0.3).expect("SpatialDropout::new succeeds"); // 30% dropout rate
 ///
 /// // 4D tensor (batch, channels, height, width)
 /// let features = Array4::<f64>::ones((2, 3, 4, 4));
@@ -79,7 +79,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
         let feature_size = features.shape()[self.feature_dim.0];
 
         // Create a mask for each feature map
-        let keep_prob_f64 = keep_prob.to_f64().expect("unwrap failed");
+        let keep_prob_f64 = keep_prob
+            .to_f64()
+            .expect("SpatialDropout: keep_prob in [0, 1] (validated at construction) fits in f64");
         let mut rng = thread_rng();
         let feature_mask: Vec<bool> = (0..feature_size)
             .map(|_| rng.random_bool(keep_prob_f64))
@@ -114,7 +116,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> SpatialDropout<A> {
 /// use scirs2_core::ndarray::Array3;
 /// use optirs_core::regularizers::FeatureDropout;
 ///
-/// let feature_dropout = FeatureDropout::new(0.5).expect("unwrap failed"); // 50% dropout rate
+/// let feature_dropout = FeatureDropout::new(0.5).expect("FeatureDropout::new succeeds"); // 50% dropout rate
 ///
 /// // 3D tensor (batch, features, sequence_length)
 /// let features = Array3::<f64>::ones((2, 10, 20));
@@ -170,7 +172,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> FeatureDropout<A> {
         let feature_size = features.shape()[self.feature_dim.0];
 
         // Create a consistent mask for each feature
-        let keep_prob_f64 = keep_prob.to_f64().expect("unwrap failed");
+        let keep_prob_f64 = keep_prob
+            .to_f64()
+            .expect("FeatureDropout: keep_prob in [0, 1] (validated at construction) fits in f64");
         let mut rng = thread_rng();
         let feature_mask: Vec<bool> = (0..feature_size)
             .map(|_| rng.random_bool(keep_prob_f64))
@@ -200,14 +204,14 @@ impl<
         D: Dimension + scirs2_core::ndarray::RemoveAxis + Send + Sync,
     > Regularizer<A, D> for SpatialDropout<A>
 {
-    fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
+    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         // Apply spatial dropout to gradients during training
         let masked_gradients = SpatialDropout::apply(self, gradients, true);
         *gradients = masked_gradients;
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // Spatial dropout doesn't add a penalty term
         Ok(A::zero())
     }
@@ -219,14 +223,14 @@ impl<
         D: Dimension + scirs2_core::ndarray::RemoveAxis + Send + Sync,
     > Regularizer<A, D> for FeatureDropout<A>
 {
-    fn apply(&self, params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
+    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
         // Apply feature dropout to gradients during training
         let masked_gradients = FeatureDropout::apply(self, gradients, true);
         *gradients = masked_gradients;
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // Feature dropout doesn't add a penalty term
         Ok(A::zero())
     }
@@ -236,12 +240,13 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray::array;
+    use scirs2_core::ndarray::{array, Ix3};
 
     #[test]
     fn test_spatial_dropout_creation() {
         // Valid creation
-        let sd = SpatialDropout::<f64>::new(0.3).expect("unwrap failed");
+        let sd = SpatialDropout::<f64>::new(0.3)
+            .expect("SpatialDropout::<f64>::new succeeds in test_spatial_dropout_creation");
         assert_eq!(sd.dropprob, 0.3);
 
         // Invalid probabilities
@@ -251,7 +256,8 @@ mod tests {
 
     #[test]
     fn test_spatial_dropout_4d() {
-        let sd = SpatialDropout::new(0.5).expect("unwrap failed");
+        let sd = SpatialDropout::new(0.5)
+            .expect("SpatialDropout::new succeeds in test_spatial_dropout_4d");
 
         // Create a 4D tensor (batch, channels, height, width)
         // Use values that are always non-zero to better test dropout
@@ -299,7 +305,8 @@ mod tests {
     #[test]
     fn test_feature_dropout_creation() {
         // Valid creation
-        let fd = FeatureDropout::<f64>::new(0.4).expect("unwrap failed");
+        let fd = FeatureDropout::<f64>::new(0.4)
+            .expect("FeatureDropout::<f64>::new succeeds in test_feature_dropout_creation");
         assert_eq!(fd.dropprob, 0.4);
 
         // Invalid probabilities
@@ -309,7 +316,8 @@ mod tests {
 
     #[test]
     fn test_feature_dropout_3d() {
-        let fd = FeatureDropout::new(0.5).expect("unwrap failed");
+        let fd = FeatureDropout::new(0.5)
+            .expect("FeatureDropout::new succeeds in test_feature_dropout_3d");
 
         // Create a 3D tensor (batch, features, sequence)
         let features = Array::from_shape_fn((2, 5, 10), |(_b, f, s)| f as f64 + s as f64);
@@ -349,8 +357,10 @@ mod tests {
 
     #[test]
     fn test_inference_mode() {
-        let sd = SpatialDropout::new(0.5).expect("unwrap failed");
-        let fd = FeatureDropout::new(0.5).expect("unwrap failed");
+        let sd =
+            SpatialDropout::new(0.5).expect("SpatialDropout::new succeeds in test_inference_mode");
+        let fd =
+            FeatureDropout::new(0.5).expect("FeatureDropout::new succeeds in test_inference_mode");
 
         let features = array![[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]];
 
@@ -364,18 +374,21 @@ mod tests {
 
     #[test]
     fn test_regularizer_trait() {
-        let sd = SpatialDropout::new(0.3).expect("unwrap failed");
+        let sd = SpatialDropout::new(0.3)
+            .expect("SpatialDropout::new succeeds in test_regularizer_trait");
         let params = array![[[1.0, 2.0], [3.0, 4.0]]];
         let mut gradient = array![[[0.1, 0.2], [0.3, 0.4]]];
 
         // Test Regularizer trait
-        let penalty = sd.penalty(&params).expect("unwrap failed");
+        let penalty = sd
+            .penalty(&params)
+            .expect("sd.penalty succeeds in test_regularizer_trait");
         assert_eq!(penalty, 0.0);
 
         let _penalty_apply = sd.apply(&params, true);
         let penalty_reg =
             <SpatialDropout<f64> as Regularizer<f64, Ix3>>::apply(&sd, &params, &mut gradient)
-                .expect("unwrap failed");
+                .expect("SpatialDropout as Regularizer::apply succeeds in test_regularizer_trait");
         assert_eq!(penalty_reg, 0.0);
 
         // Gradient should be modified

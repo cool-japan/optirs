@@ -4,12 +4,11 @@ use std::fmt::Debug;
 // This module implements various learning rate adaptation strategies that the
 // transformer optimizer can use to dynamically adjust learning rates during training.
 
-#[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 
 /// Learning rate adaptation strategies
 #[derive(Debug, Clone, Copy)]
@@ -70,53 +69,34 @@ pub struct LearningRateAdapter<T: Float + Debug + Send + Sync + 'static> {
 #[derive(Debug, Clone)]
 pub struct LRAdaptationParams<T: Float + Debug + Send + Sync + 'static> {
     /// Decay rate for exponential decay
-    decay_rate: T,
+    pub decay_rate: T,
 
     /// Decay steps for scheduled decay
-    decay_steps: usize,
+    pub decay_steps: usize,
 
     /// Power for polynomial decay
-    power: T,
+    pub power: T,
 
     /// Minimum learning rate
-    min_lr: T,
+    pub min_lr: T,
 
     /// Maximum learning rate
-    max_lr: T,
+    pub max_lr: T,
 
     /// Warmup steps
-    warmup_steps: usize,
+    pub warmup_steps: usize,
 
     /// Restart period for warm restart
-    restart_period: usize,
+    pub restart_period: usize,
 
     /// Patience for loss-based adaptation
-    patience: usize,
+    pub patience: usize,
 
     /// Factor for learning rate reduction
-    reduction_factor: T,
+    pub reduction_factor: T,
 
     /// Threshold for loss improvement
-    improvement_threshold: T,
-}
-
-/// Learning rate schedule state
-#[derive(Debug, Clone)]
-pub struct ScheduleState<T: Float + Debug + Send + Sync + 'static> {
-    /// Current cycle in warm restart
-    current_cycle: usize,
-
-    /// Steps in current cycle
-    cycle_steps: usize,
-
-    /// Whether in warmup phase
-    in_warmup: bool,
-
-    /// Last schedule update step
-    last_update_step: usize,
-
-    /// Schedule-specific state
-    state: T,
+    pub improvement_threshold: T,
 }
 
 impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAdapter<T> {
@@ -199,11 +179,13 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
         };
 
         // Apply warmup if in warmup phase
-        if self.step_count < self.adaptation_params.warmup_steps {
-            let warmup_factor = scirs2_core::numeric::NumCast::from(self.step_count as f64)
-                .unwrap_or_else(|| T::zero())
-                / scirs2_core::numeric::NumCast::from(self.adaptation_params.warmup_steps as f64)
-                    .unwrap_or_else(|| T::zero());
+        if self.adaptation_params.warmup_steps > 0
+            && self.step_count < self.adaptation_params.warmup_steps
+        {
+            let warmup_factor: T = scirs2_core::numeric::NumCast::from(
+                self.step_count as f64 / self.adaptation_params.warmup_steps as f64,
+            )
+            .unwrap_or_else(T::one);
             self.current_lr = self.current_lr * warmup_factor;
         }
 
@@ -216,15 +198,14 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
         Ok(self.current_lr)
     }
 
-    /// Exponential decay schedule
+    /// Exponential decay schedule: `lr = base_lr * decay_rate^(step / decay_steps)`.
+    ///
+    /// With `decay_rate < 1` this is monotonically decreasing in `step`.
     fn exponential_decay(&self) -> T {
-        let steps = scirs2_core::numeric::NumCast::from(self.step_count as f64)
-            .unwrap_or_else(|| T::zero());
-        let decay_steps =
-            scirs2_core::numeric::NumCast::from(self.adaptation_params.decay_steps as f64)
-                .unwrap_or_else(|| T::zero());
-        let decay_factor = (steps / decay_steps) * self.adaptation_params.decay_rate.ln();
-        self.base_lr * (-decay_factor).exp()
+        let decay_steps = self.adaptation_params.decay_steps.max(1) as f64;
+        let progress: T = scirs2_core::numeric::NumCast::from(self.step_count as f64 / decay_steps)
+            .unwrap_or_else(T::zero);
+        self.base_lr * self.adaptation_params.decay_rate.powf(progress)
     }
 
     /// Polynomial decay schedule
@@ -232,10 +213,10 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
         if self.step_count >= self.adaptation_params.decay_steps {
             self.adaptation_params.min_lr
         } else {
-            let progress = scirs2_core::numeric::NumCast::from(self.step_count as f64)
-                .unwrap_or_else(|| T::zero())
-                / scirs2_core::numeric::NumCast::from(self.adaptation_params.decay_steps as f64)
-                    .unwrap_or_else(|| T::zero());
+            let decay_steps = self.adaptation_params.decay_steps.max(1) as f64;
+            let progress: T =
+                scirs2_core::numeric::NumCast::from(self.step_count as f64 / decay_steps)
+                    .unwrap_or_else(T::zero);
             let decay_factor = (T::one() - progress).powf(self.adaptation_params.power);
             (self.base_lr - self.adaptation_params.min_lr) * decay_factor
                 + self.adaptation_params.min_lr
@@ -244,32 +225,25 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> LearningRateAda
 
     /// Cosine annealing schedule
     fn cosine_annealing(&self) -> T {
-        let steps = scirs2_core::numeric::NumCast::from(self.step_count as f64)
-            .unwrap_or_else(|| T::zero());
-        let total_steps =
-            scirs2_core::numeric::NumCast::from(self.adaptation_params.decay_steps as f64)
-                .unwrap_or_else(|| T::zero());
-        let pi =
-            scirs2_core::numeric::NumCast::from(std::f64::consts::PI).unwrap_or_else(|| T::zero());
-
-        let cosine_factor = (T::one() + (pi * steps / total_steps).cos())
-            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
+        let total_steps = self.adaptation_params.decay_steps.max(1) as f64;
+        let progress = (self.step_count as f64 / total_steps).min(1.0);
+        let cosine_factor: T = scirs2_core::numeric::NumCast::from(
+            0.5 * (1.0 + (std::f64::consts::PI * progress).cos()),
+        )
+        .unwrap_or_else(T::zero);
         self.adaptation_params.min_lr
             + (self.base_lr - self.adaptation_params.min_lr) * cosine_factor
     }
 
     /// Warm restart schedule
     fn warm_restart(&self) -> T {
-        let period = self.adaptation_params.restart_period;
+        let period = self.adaptation_params.restart_period.max(1);
         let cycle_position = self.step_count % period;
-        let progress = scirs2_core::numeric::NumCast::from(cycle_position as f64)
-            .unwrap_or_else(|| T::zero())
-            / scirs2_core::numeric::NumCast::from(period as f64).unwrap_or_else(|| T::zero());
-
-        let pi =
-            scirs2_core::numeric::NumCast::from(std::f64::consts::PI).unwrap_or_else(|| T::zero());
-        let cosine_factor = (T::one() + (pi * progress).cos())
-            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero());
+        let progress = cycle_position as f64 / period as f64;
+        let cosine_factor: T = scirs2_core::numeric::NumCast::from(
+            0.5 * (1.0 + (std::f64::consts::PI * progress).cos()),
+        )
+        .unwrap_or_else(T::zero);
 
         self.adaptation_params.min_lr
             + (self.base_lr - self.adaptation_params.min_lr) * cosine_factor
@@ -421,5 +395,93 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + 'static> Default for LRA
             improvement_threshold: scirs2_core::numeric::NumCast::from(0.01)
                 .unwrap_or_else(|| T::zero()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exponential_decay_actually_decays() {
+        let mut adapter =
+            LearningRateAdapter::<f64>::new(LearningRateAdaptationStrategy::ExponentialDecay, 1e-2);
+        let params = LRAdaptationParams::<f64> {
+            warmup_steps: 0,
+            min_lr: 0.0,
+            ..LRAdaptationParams::default()
+        };
+        adapter.set_parameters(params);
+
+        let lr_first = adapter
+            .update_learning_rate(None, None)
+            .expect("lr update must succeed");
+        let mut lr_last = lr_first;
+        for _ in 1..5000 {
+            lr_last = adapter
+                .update_learning_rate(None, None)
+                .expect("lr update must succeed");
+        }
+        assert!(
+            lr_last < lr_first,
+            "lr(5000)={lr_last} should be below lr(1)={lr_first}"
+        );
+        assert!(lr_last > 0.0);
+    }
+
+    #[test]
+    fn learning_rate_is_clamped_to_bounds() {
+        let mut adapter =
+            LearningRateAdapter::<f64>::new(LearningRateAdaptationStrategy::Fixed, 1e9);
+        let lr = adapter
+            .update_learning_rate(None, None)
+            .expect("lr update must succeed");
+        assert!(lr <= 1e-1 + 1e-12, "lr {lr} exceeded max_lr");
+    }
+
+    #[test]
+    fn zero_valued_schedule_parameters_do_not_panic() {
+        let params = LRAdaptationParams::<f64> {
+            decay_steps: 0,
+            restart_period: 0,
+            warmup_steps: 0,
+            ..LRAdaptationParams::default()
+        };
+        for strategy in [
+            LearningRateAdaptationStrategy::ExponentialDecay,
+            LearningRateAdaptationStrategy::PolynomialDecay,
+            LearningRateAdaptationStrategy::CosineAnnealing,
+            LearningRateAdaptationStrategy::WarmRestart,
+        ] {
+            let mut adapter =
+                LearningRateAdapter::<f64>::new_with_params(strategy, 1e-3, params.clone());
+            let lr = adapter
+                .update_learning_rate(None, None)
+                .expect("lr update must succeed");
+            assert!(lr.is_finite(), "{strategy:?} produced {lr}");
+        }
+    }
+
+    #[test]
+    fn zero_gradients_keep_learning_rate_finite() {
+        let mut adapter =
+            LearningRateAdapter::<f64>::new(LearningRateAdaptationStrategy::GradientAdaptive, 1e-3);
+        let zeros = Array1::<f64>::zeros(8);
+        let lr = adapter
+            .update_learning_rate(Some(0.0), Some(&zeros))
+            .expect("lr update must succeed");
+        assert!(lr.is_finite(), "lr {lr} is not finite");
+    }
+
+    #[test]
+    fn reset_restores_base_learning_rate() {
+        let mut adapter =
+            LearningRateAdapter::<f64>::new(LearningRateAdaptationStrategy::ExponentialDecay, 1e-2);
+        for _ in 0..50 {
+            let _ = adapter.update_learning_rate(None, None);
+        }
+        adapter.reset();
+        assert_eq!(adapter.current_learning_rate(), 1e-2);
+        assert_eq!(adapter.step_count(), 0);
     }
 }

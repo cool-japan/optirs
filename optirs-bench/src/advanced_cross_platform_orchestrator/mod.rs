@@ -43,6 +43,7 @@ pub mod aggregator;
 pub mod cloud;
 pub mod config;
 pub mod container;
+pub mod execution;
 pub mod matrix;
 pub mod orchestrator;
 pub mod resources;

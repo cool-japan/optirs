@@ -52,8 +52,16 @@ use crate::optimizers::Optimizer;
 ///     Array1::from_elem(1500, 0.1),
 /// ];
 ///
-/// let updated = parallel_opt.step_parallel_groups(&params_list, &grads_list).expect("unwrap failed");
+/// let updated = parallel_opt.step_parallel_groups(&params_list, &grads_list).expect("parallel_opt.step_parallel_groups succeeds");
 /// ```
+///
+/// # State handling
+///
+/// Stateful optimizers (Adam, AdamW, LAMB, RAdam, Lion, ...) keep per-parameter
+/// moment estimates. A dedicated optimizer instance is therefore materialized and
+/// **retained** for every parameter group, and each group's instance is mutated in
+/// place across calls. Without this, every call would optimize with a freshly reset
+/// clone and, for example, Adam would degenerate into sign-SGD.
 #[derive(Debug)]
 pub struct ParallelOptimizer<O, A, D>
 where
@@ -62,6 +70,8 @@ where
     D: Dimension,
 {
     base_optimizer: O,
+    /// Persistent per-group optimizer instances (index == parameter-group index)
+    group_optimizers: Vec<O>,
     _phantom_a: std::marker::PhantomData<A>,
     _phantom_d: std::marker::PhantomData<D>,
 }
@@ -80,8 +90,37 @@ where
     pub fn new(base_optimizer: O) -> Self {
         Self {
             base_optimizer,
+            group_optimizers: Vec::new(),
             _phantom_a: std::marker::PhantomData,
             _phantom_d: std::marker::PhantomData,
+        }
+    }
+
+    /// Number of parameter groups for which persistent state is currently held
+    pub fn num_groups(&self) -> usize {
+        self.group_optimizers.len()
+    }
+
+    /// Access the persistent optimizer instance of a parameter group
+    pub fn group_optimizer(&self, group: usize) -> Option<&O> {
+        self.group_optimizers.get(group)
+    }
+
+    /// Access the persistent optimizer instance of a parameter group mutably
+    pub fn group_optimizer_mut(&mut self, group: usize) -> Option<&mut O> {
+        self.group_optimizers.get_mut(group)
+    }
+
+    /// Drop all per-group state, restarting every group from the base optimizer
+    pub fn reset_group_state(&mut self) {
+        self.group_optimizers.clear();
+    }
+
+    /// Grow the per-group optimizer pool so that `count` groups have persistent state
+    fn ensure_group_optimizers(&mut self, count: usize) {
+        while self.group_optimizers.len() < count {
+            let fresh = self.base_optimizer.clone();
+            self.group_optimizers.push(fresh);
         }
     }
 
@@ -114,14 +153,18 @@ where
             )));
         }
 
-        // Use parallel iterator from scirs2_core
-        let results: Vec<Result<Array<A, D>>> = params_list
-            .par_iter()
+        // Materialize (once) and then reuse a persistent optimizer instance per group so
+        // that momentum / second-moment state survives across calls.
+        let num_groups = params_list.len();
+        self.ensure_group_optimizers(num_groups);
+
+        // Use parallel iterator from scirs2_core. Each group mutates its own optimizer,
+        // so the borrows are disjoint and no state is discarded.
+        let results: Vec<Result<Array<A, D>>> = self.group_optimizers[..num_groups]
+            .par_iter_mut()
+            .zip(params_list.par_iter())
             .zip(grads_list.par_iter())
-            .map(|(params, grads)| {
-                let mut opt_clone = self.base_optimizer.clone();
-                opt_clone.step(params, grads)
-            })
+            .map(|((optimizer, params), grads)| optimizer.step(params, grads))
             .collect();
 
         // Collect results and handle errors
@@ -148,9 +191,12 @@ where
         self.base_optimizer.get_learning_rate()
     }
 
-    /// Set the learning rate on the base optimizer
+    /// Set the learning rate on the base optimizer and on every per-group instance
     pub fn set_learning_rate(&mut self, learning_rate: A) {
         self.base_optimizer.set_learning_rate(learning_rate);
+        for optimizer in self.group_optimizers.iter_mut() {
+            optimizer.set_learning_rate(learning_rate);
+        }
     }
 }
 
@@ -224,20 +270,32 @@ impl Default for ParallelBatchProcessor {
     }
 }
 
-/// Helper function to process parameter groups in parallel
+/// Helper function to update several parameter groups with a single optimizer
 ///
-/// This is a convenience function for one-off parallel processing without
-/// creating a ParallelOptimizer instance.
+/// This is a convenience function for one-off multi-group processing without
+/// creating a [`ParallelOptimizer`] instance.
+///
+/// The update is delegated to [`Optimizer::step_list`], which keeps an independent
+/// state slot per parameter-group index. Consequently the optimizer state is
+/// preserved across calls and groups never share moments.
+///
+/// # Note on parallelism
+///
+/// A single `&mut O` cannot be mutated from several threads at once, so this helper
+/// walks the groups sequentially. Use [`ParallelOptimizer::step_parallel_groups`]
+/// when you want the groups themselves processed in parallel: it keeps one
+/// optimizer instance per group and therefore both parallelizes *and* preserves
+/// state.
 ///
 /// # Arguments
 ///
-/// * `optimizer` - The optimizer to use (will be cloned for each group)
+/// * `optimizer` - The optimizer to use (its per-index state is updated in place)
 /// * `params_list` - List of parameter arrays
 /// * `grads_list` - List of gradient arrays
 ///
 /// # Returns
 ///
-/// Updated parameter arrays processed in parallel
+/// Updated parameter arrays
 pub fn parallel_step<O, A, D>(
     optimizer: &mut O,
     params_list: &[Array<A, D>],
@@ -257,24 +315,14 @@ where
         )));
     }
 
-    let results: Vec<Result<Array<A, D>>> = params_list
-        .par_iter()
-        .zip(grads_list.par_iter())
-        .map(|(params, grads)| {
-            let mut opt_clone = optimizer.clone();
-            opt_clone.step(params, grads)
-        })
-        .collect();
-
-    let mut updated_params = Vec::with_capacity(results.len());
-    for result in results {
-        updated_params.push(result?);
-    }
-
-    Ok(updated_params)
+    let params_refs: Vec<&Array<A, D>> = params_list.iter().collect();
+    let grads_refs: Vec<&Array<A, D>> = grads_list.iter().collect();
+    optimizer.step_list(&params_refs, &grads_refs)
 }
 
-/// Parallel processing for Array1 specifically (optimized path)
+/// Multi-group processing for `Array1` specifically (optimized path)
+///
+/// See [`parallel_step`] for the state and parallelism semantics.
 pub fn parallel_step_array1<O, A>(
     optimizer: &mut O,
     params_list: &[Array1<A>],
@@ -292,27 +340,15 @@ where
         )));
     }
 
-    let results: Vec<Result<Array1<A>>> = params_list
-        .par_iter()
-        .zip(grads_list.par_iter())
-        .map(|(params, grads)| {
-            let mut opt_clone = optimizer.clone();
-            opt_clone.step(params, grads)
-        })
-        .collect();
-
-    let mut updated_params = Vec::with_capacity(results.len());
-    for result in results {
-        updated_params.push(result?);
-    }
-
-    Ok(updated_params)
+    let params_refs: Vec<&Array1<A>> = params_list.iter().collect();
+    let grads_refs: Vec<&Array1<A>> = grads_list.iter().collect();
+    optimizer.step_list(&params_refs, &grads_refs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::optimizers::SGD;
+    use crate::optimizers::{Adam, SGD};
     use approx::assert_relative_eq;
 
     #[test]
@@ -331,7 +367,7 @@ mod tests {
 
         let results = parallel_opt
             .step_parallel_groups(&params_list, &grads_list)
-            .expect("unwrap failed");
+            .expect("step_parallel_groups succeeds in test_parallel_optimizer_basic");
 
         assert_eq!(results.len(), 2);
         assert_relative_eq!(results[0][0], 0.99, epsilon = 1e-6);
@@ -350,7 +386,7 @@ mod tests {
 
         let results = parallel_opt
             .step_parallel_groups(&params_list, &grads_list)
-            .expect("unwrap failed");
+            .expect("step_parallel_groups succeeds in test_parallel_optimizer_multiple_groups");
 
         assert_eq!(results.len(), 10);
         // Verify first group was updated correctly
@@ -370,8 +406,8 @@ mod tests {
             Array1::from_vec(vec![0.3, 0.4]),
         ];
 
-        let results =
-            parallel_step(&mut optimizer, &params_list, &grads_list).expect("unwrap failed");
+        let results = parallel_step(&mut optimizer, &params_list, &grads_list)
+            .expect("parallel_step succeeds in test_parallel_step_function");
 
         assert_eq!(results.len(), 2);
         assert_relative_eq!(results[0][0], 0.99, epsilon = 1e-6);
@@ -416,6 +452,116 @@ mod tests {
         assert_relative_eq!(parallel_opt.get_learning_rate(), 0.2, epsilon = 1e-6);
     }
 
+    /// Regression test for the "parallel wrapper discards optimizer state" bug.
+    ///
+    /// The wrapper used to clone the base optimizer on every call and throw the clone
+    /// away, so Adam always ran at t=1 with zero moments, i.e. it degenerated into
+    /// sign-SGD (`lr * sign(g)`), and a zero gradient produced no movement at all.
+    #[test]
+    fn test_parallel_optimizer_preserves_adam_state() {
+        let optimizer = Adam::new(0.1f64);
+        let mut parallel_opt = ParallelOptimizer::new(optimizer);
+
+        let params = vec![Array1::from_vec(vec![0.0f64])];
+        let grads_first = vec![Array1::from_vec(vec![1.0f64])];
+        let grads_second = vec![Array1::from_vec(vec![0.0f64])];
+
+        let after_first = parallel_opt
+            .step_parallel_groups(&params, &grads_first)
+            .expect("first parallel step failed");
+        // t = 1 with a unit gradient is exactly -lr for Adam.
+        assert_relative_eq!(after_first[0][0], -0.1, epsilon = 1e-9);
+
+        let after_second = parallel_opt
+            .step_parallel_groups(&after_first, &grads_second)
+            .expect("second parallel step failed");
+
+        // A stateless (bugged) optimizer sees m = v = 0 and does not move at all.
+        assert!(
+            (after_second[0][0] - after_first[0][0]).abs() > 1e-3,
+            "optimizer state was discarded between calls: {} vs {}",
+            after_second[0][0],
+            after_first[0][0]
+        );
+
+        // With retained state: m = 0.09, v = 0.000999 => step ~= 0.067014
+        assert_relative_eq!(after_second[0][0], -0.167014, epsilon = 1e-5);
+        assert_eq!(parallel_opt.num_groups(), 1);
+    }
+
+    /// Two groups must never share optimizer state.
+    #[test]
+    fn test_parallel_optimizer_groups_have_independent_state() {
+        let optimizer = Adam::new(0.1f64);
+        let mut parallel_opt = ParallelOptimizer::new(optimizer);
+
+        let params = vec![
+            Array1::from_vec(vec![0.0f64]),
+            Array1::from_vec(vec![0.0f64, 0.0]),
+        ];
+        let grads = vec![
+            Array1::from_vec(vec![1.0f64]),
+            Array1::from_vec(vec![1.0f64, 1.0]),
+        ];
+
+        let first = parallel_opt
+            .step_parallel_groups(&params, &grads)
+            .expect("first parallel step failed");
+        assert_eq!(parallel_opt.num_groups(), 2);
+        assert_eq!(first[0].len(), 1);
+        assert_eq!(first[1].len(), 2);
+
+        let second = parallel_opt
+            .step_parallel_groups(&first, &grads)
+            .expect("second parallel step failed");
+
+        // Both groups are at t = 2 with identical gradients, so both must agree.
+        assert_relative_eq!(second[0][0], second[1][0], epsilon = 1e-12);
+        assert_relative_eq!(second[1][0], second[1][1], epsilon = 1e-12);
+
+        // And the second step must be smaller than the first (bias correction at t=2).
+        let first_delta = (first[0][0] - 0.0).abs();
+        let second_delta = (second[0][0] - first[0][0]).abs();
+        assert!(second_delta < first_delta);
+    }
+
+    /// `parallel_step_array1` keeps per-group state in the optimizer it is given.
+    #[test]
+    fn test_parallel_step_array1_preserves_state() {
+        let mut optimizer = Adam::new(0.1f64);
+
+        let params = vec![Array1::from_vec(vec![0.0f64])];
+        let grads_first = vec![Array1::from_vec(vec![1.0f64])];
+        let grads_second = vec![Array1::from_vec(vec![0.0f64])];
+
+        let first =
+            parallel_step_array1(&mut optimizer, &params, &grads_first).expect("first step failed");
+        let second = parallel_step_array1(&mut optimizer, &first, &grads_second)
+            .expect("second step failed");
+
+        assert_relative_eq!(first[0][0], -0.1, epsilon = 1e-9);
+        assert_relative_eq!(second[0][0], -0.167014, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_parallel_optimizer_learning_rate_propagates_to_groups() {
+        let optimizer = SGD::new(0.1f64);
+        let mut parallel_opt = ParallelOptimizer::new(optimizer);
+
+        let params = vec![Array1::from_vec(vec![1.0f64])];
+        let grads = vec![Array1::from_vec(vec![1.0f64])];
+
+        let _ = parallel_opt
+            .step_parallel_groups(&params, &grads)
+            .expect("step failed");
+        parallel_opt.set_learning_rate(0.5);
+
+        let updated = parallel_opt
+            .step_parallel_groups(&params, &grads)
+            .expect("step failed");
+        assert_relative_eq!(updated[0][0], 0.5, epsilon = 1e-9);
+    }
+
     #[test]
     fn test_parallel_step_array1() {
         let mut optimizer = SGD::new(0.1);
@@ -429,8 +575,8 @@ mod tests {
             Array1::from_vec(vec![0.1, 0.2, 0.3]),
         ];
 
-        let results =
-            parallel_step_array1(&mut optimizer, &params_list, &grads_list).expect("unwrap failed");
+        let results = parallel_step_array1(&mut optimizer, &params_list, &grads_list)
+            .expect("parallel_step_array1 succeeds in test_parallel_step_array1");
 
         assert_eq!(results.len(), 2);
         assert_relative_eq!(results[0][0], 0.99, epsilon = 1e-6);

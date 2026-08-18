@@ -2,11 +2,11 @@
 //
 // AdamW is a variant of Adam that correctly implements weight decay regularization.
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// AdamW optimizer
@@ -41,7 +41,7 @@ use crate::optimizers::Optimizer;
 /// let mut optimizer = AdamW::new(0.001);
 ///
 /// // Update parameters
-/// let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let new_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct AdamW<A: Float + ScalarOperand + Debug> {
@@ -55,12 +55,15 @@ pub struct AdamW<A: Float + ScalarOperand + Debug> {
     epsilon: A,
     /// Weight decay factor (decoupled from adaptive moment computation)
     weight_decay: A,
-    /// First moment vector
-    m: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
-    /// Second moment vector
-    v: Option<Vec<Array<A, scirs2_core::ndarray::IxDyn>>>,
-    /// Current timestep
-    t: usize,
+    /// First moment vectors, one slot per parameter-tensor index
+    m: Option<Vec<Array<A, IxDyn>>>,
+    /// Second moment vectors, one slot per parameter-tensor index
+    v: Option<Vec<Array<A, IxDyn>>>,
+    /// Per-parameter-index timestep counters
+    ///
+    /// Each parameter tensor passed through [`Optimizer::step_list`] keeps its own
+    /// timestep so that bias correction is computed independently per tensor.
+    t: Vec<usize>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> AdamW<A> {
@@ -72,13 +75,14 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdamW<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            beta1: A::from(0.9).expect("unwrap failed"),
-            beta2: A::from(0.999).expect("unwrap failed"),
-            epsilon: A::from(1e-8).expect("unwrap failed"),
-            weight_decay: A::from(0.01).expect("unwrap failed"), // Default weight decay is higher for AdamW
+            beta1: A::from(0.9).expect("AdamW: default beta1 (0.9) must fit in A"),
+            beta2: A::from(0.999).expect("AdamW: default beta2 (0.999) must fit in A"),
+            epsilon: A::from(1e-8).expect("AdamW: default epsilon (1e-8) must fit in A"),
+            // Default weight decay is higher for AdamW
+            weight_decay: A::from(0.01).expect("AdamW: default weight_decay (0.01) must fit in A"),
             m: None,
             v: None,
-            t: 0,
+            t: Vec::new(),
         }
     }
 
@@ -106,7 +110,7 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdamW<A> {
             weight_decay,
             m: None,
             v: None,
-            t: 0,
+            t: Vec::new(),
         }
     }
 
@@ -168,7 +172,131 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> AdamW<A> {
     pub fn reset(&mut self) {
         self.m = None;
         self.v = None;
-        self.t = 0;
+        self.t.clear();
+    }
+
+    /// Returns the timestep recorded for the parameter tensor at `index`
+    ///
+    /// Returns `0` when the index has never been stepped.
+    pub fn timestep(&self, index: usize) -> usize {
+        self.t.get(index).copied().unwrap_or(0)
+    }
+
+    /// Ensures state slots exist for `index` and match `dim`, then advances its timestep
+    fn advance_state(&mut self, index: usize, dim: &IxDyn) -> Result<usize> {
+        let m = self.m.get_or_insert_with(Vec::new);
+        let v = self.v.get_or_insert_with(Vec::new);
+        while m.len() <= index {
+            m.push(Array::zeros(dim.clone()));
+        }
+        while v.len() <= index {
+            v.push(Array::zeros(dim.clone()));
+        }
+        while self.t.len() <= index {
+            self.t.push(0);
+        }
+
+        // Reset the slot when the parameter shape for this index changed
+        if m[index].raw_dim() != *dim || v[index].raw_dim() != *dim {
+            m[index] = Array::zeros(dim.clone());
+            v[index] = Array::zeros(dim.clone());
+            self.t[index] = 0;
+        }
+
+        let next = self.t[index].checked_add(1).ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "Timestep counter overflow - too many optimization steps".to_string(),
+            )
+        })?;
+        self.t[index] = next;
+        Ok(next)
+    }
+
+    /// Applies an AdamW update in place for the parameter tensor at `index`
+    ///
+    /// This is the allocation-free hot path: moments and parameters are updated in
+    /// a single fused [`Zip`] traversal, so no temporary arrays are created.
+    pub fn step_inplace_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &mut Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<()> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
+        }
+
+        let dim = params.raw_dim().into_dyn();
+        let t = self.advance_state(index, &dim)?;
+        let exp = i32::try_from(t).map_err(|_| {
+            OptimError::InvalidConfig(
+                "Timestep too large for bias correction calculation".to_string(),
+            )
+        })?;
+
+        let beta1 = self.beta1;
+        let beta2 = self.beta2;
+        let lr = self.learning_rate;
+        let eps = self.epsilon;
+        let one = A::one();
+        let bias_correction1 = one - beta1.powi(exp);
+        let bias_correction2 = one - beta2.powi(exp);
+        // Decoupled weight decay: applied directly to the weights
+        let weight_decay_factor = one - lr * self.weight_decay;
+
+        let m = self
+            .m
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("AdamW state not initialized".to_string()))?;
+        let v = self
+            .v
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("AdamW state not initialized".to_string()))?;
+
+        let mut params_view = params.view_mut().into_dyn();
+        let gradients_view = gradients.view().into_dyn();
+
+        Zip::from(&mut params_view)
+            .and(&gradients_view)
+            .and(&mut m[index])
+            .and(&mut v[index])
+            .for_each(|p, &g, m_i, v_i| {
+                *m_i = *m_i * beta1 + g * (one - beta1);
+                *v_i = *v_i * beta2 + g * g * (one - beta2);
+                let m_hat = *m_i / bias_correction1;
+                let v_hat = *v_i / bias_correction2;
+                *p = *p * weight_decay_factor - lr * m_hat / (v_hat.sqrt() + eps);
+            });
+
+        Ok(())
+    }
+
+    /// Applies an AdamW update in place using the state slot of the first parameter tensor
+    pub fn step_inplace<D: Dimension>(
+        &mut self,
+        params: &mut Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<()> {
+        self.step_inplace_indexed(0, params, gradients)
+    }
+
+    /// Performs an AdamW update for the parameter tensor at `index`
+    ///
+    /// Each `index` owns an independent moment/timestep slot, so several parameter
+    /// tensors can be optimized by a single `AdamW` instance without interference.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        let mut updated = params.to_owned();
+        self.step_inplace_indexed(index, &mut updated, gradients)?;
+        Ok(updated)
     }
 }
 
@@ -178,61 +306,27 @@ where
     D: Dimension,
 {
     fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Convert to dynamic dimension for storage in state vectors
-        let params_dyn = params.to_owned().into_dyn();
-        let gradients_dyn = gradients.to_owned().into_dyn();
+        self.step_indexed(0, params, gradients)
+    }
 
-        // Initialize state if this is the first step
-        if self.m.is_none() {
-            self.m = Some(vec![Array::zeros(params_dyn.raw_dim())]);
-            self.v = Some(vec![Array::zeros(params_dyn.raw_dim())]);
-            self.t = 0;
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
         }
 
-        let m = self.m.as_mut().expect("unwrap failed");
-        let v = self.v.as_mut().expect("unwrap failed");
-
-        // Ensure we have state for this parameter set
-        if m.is_empty() {
-            m.push(Array::zeros(params_dyn.raw_dim()));
-            v.push(Array::zeros(params_dyn.raw_dim()));
-        } else if m[0].raw_dim() != params_dyn.raw_dim() {
-            // If the parameter dimensions have changed, reset state
-            m[0] = Array::zeros(params_dyn.raw_dim());
-            v[0] = Array::zeros(params_dyn.raw_dim());
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
         }
-
-        // Increment timestep
-        self.t += 1;
-
-        // Update biased first moment estimate
-        m[0] = &m[0] * self.beta1 + &(&gradients_dyn * (A::one() - self.beta1));
-
-        // Update biased second raw moment estimate
-        v[0] = &v[0] * self.beta2 + &(&gradients_dyn * &gradients_dyn * (A::one() - self.beta2));
-
-        // Compute bias-corrected first moment estimate
-        let m_hat = &m[0] / (A::one() - self.beta1.powi(self.t as i32));
-
-        // Compute bias-corrected second raw moment estimate
-        let v_hat = &v[0] / (A::one() - self.beta2.powi(self.t as i32));
-
-        // Compute square root of v_hat
-        let v_hat_sqrt = v_hat.mapv(|x| x.sqrt());
-
-        // Apply step with decoupled weight decay
-        // 1. Apply weight decay directly to the weights
-        let weight_decay_factor = A::one() - self.learning_rate * self.weight_decay;
-        let weight_decayed_params = &params_dyn * weight_decay_factor;
-
-        // 2. Apply adaptive momentum step
-        let step = &m_hat / &(&v_hat_sqrt + self.epsilon) * self.learning_rate;
-        let updated_params = &weight_decayed_params - step;
-
-        // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("unwrap failed"))
+        Ok(results)
     }
 
     fn get_learning_rate(&self) -> A {
@@ -259,7 +353,9 @@ mod tests {
         let mut optimizer = AdamW::new(0.01);
 
         // Run one step
-        let new_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let new_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_adamw_step");
 
         // Check that parameters have been updated
         assert!(new_params.iter().all(|&x| x != 0.0));
@@ -284,7 +380,9 @@ mod tests {
 
         // Run multiple steps
         for _ in 0..10 {
-            params = optimizer.step(&params, &gradients).expect("unwrap failed");
+            params = optimizer
+                .step(&params, &gradients)
+                .expect("optimizer.step succeeds in test_adamw_multiple_steps");
         }
 
         // Parameters should continue to move in the direction of the gradients
@@ -326,14 +424,16 @@ mod tests {
         let mut optimizer = AdamW::new(0.01);
 
         // Run one step
-        optimizer.step(&params, &gradients).expect("unwrap failed");
-        assert_eq!(optimizer.t, 1);
+        optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_adamw_reset");
+        assert_eq!(optimizer.timestep(0), 1);
         assert!(optimizer.m.is_some());
         assert!(optimizer.v.is_some());
 
         // Reset optimizer
         optimizer.reset();
-        assert_eq!(optimizer.t, 0);
+        assert_eq!(optimizer.timestep(0), 0);
         assert!(optimizer.m.is_none());
         assert!(optimizer.v.is_none());
     }

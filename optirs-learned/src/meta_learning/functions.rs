@@ -2,23 +2,15 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[allow(unused_imports)]
 use crate::error::Result;
-#[allow(dead_code)]
-use scirs2_core::ndarray::{Array1, Array2, Dimension};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::types::{
-    AdaptationStrategy, AntiForgettingStrategy, AugmentationStrategy, ContinualLearningSettings,
-    DistanceMetric, FewShotAlgorithm, FewShotSettings, GradientBalancingMethod,
-    InterferenceMitigationStrategy, MAMLConfig, MemoryReplaySettings, MemorySelectionCriteria,
-    MetaLearningAlgorithm, MetaLearningConfig, MetaTask, MetaTrainingResult,
-    MetricLearningSettings, MultiTaskSettings, QueryEvaluationResult, ReplayStrategy,
-    SharedRepresentationStrategy, SimilarityMeasure, TaskAdaptationResult,
-    TaskIdentificationMethod, TaskSamplingStrategy, TaskWeightingStrategy,
-    TransferLearningSettings, TransferStrategy,
+    MetaLearningAlgorithm, MetaTask, MetaTrainingResult, QueryEvaluationResult,
+    TaskAdaptationResult,
 };
 
 /// Meta-learner trait
@@ -47,7 +39,15 @@ pub trait MetaLearner<T: Float + Debug + Send + Sync + 'static>: Send + Sync {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::meta_learning::types::{
+        AdaptationStrategy, AntiForgettingStrategy, AugmentationStrategy,
+        ContinualLearningSettings, DistanceMetric, FewShotAlgorithm, FewShotSettings,
+        GradientBalancingMethod, InterferenceMitigationStrategy, MAMLConfig, MemoryReplaySettings,
+        MemorySelectionCriteria, MetaLearningAlgorithm, MetaLearningConfig, MetricLearningSettings,
+        MultiTaskSettings, ReplayStrategy, SharedRepresentationStrategy, SimilarityMeasure,
+        TaskIdentificationMethod, TaskSamplingStrategy, TaskWeightingStrategy,
+        TransferLearningSettings, TransferStrategy,
+    };
     #[test]
     fn test_meta_learning_config() {
         let config = MetaLearningConfig {

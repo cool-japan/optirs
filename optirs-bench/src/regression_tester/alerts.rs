@@ -3,9 +3,20 @@
 // This module provides a comprehensive alerting system that can notify stakeholders
 // through multiple channels (email, Slack, GitHub issues) when performance
 // regressions are detected.
+//
+// Delivery goes through `crate::notification_transport`: no HTTP/SMTP client
+// dependency is linked into this crate. By default (`TransportKind::Command`)
+// delivery shells out to the system `curl`; set
+// `OPTIRS_NOTIFICATION_TRANSPORT=file:<dir>`, `=log`, or `=disabled` to
+// redirect delivery for tests/offline CI. A channel that is enabled but has
+// no destination configured (see `AlertConfig::email`/`slack`/`github`)
+// returns an explicit `Err` -- it is never reported as "sent successfully".
 
-use crate::error::Result;
-use crate::regression_tester::config::{Alert, AlertConfig, AlertSeverity, AlertStatus};
+use crate::error::{OptimError, Result};
+use crate::notification_transport::{
+    self, DeliveryTarget, SmtpTarget, TransportKind, TransportMethod,
+};
+use crate::regression_tester::config::{Alert, AlertConfig, AlertSeverity};
 use crate::regression_tester::types::RegressionResult;
 use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
@@ -21,6 +32,8 @@ pub struct AlertSystem {
     config: AlertConfig,
     /// Alert history for tracking and cooldown management
     alert_history: VecDeque<Alert>,
+    /// Transport used for outbound delivery (curl by default; see module docs).
+    transport_kind: TransportKind,
 }
 
 impl AlertSystem {
@@ -29,6 +42,7 @@ impl AlertSystem {
         Self {
             config: AlertConfig::default(),
             alert_history: VecDeque::new(),
+            transport_kind: notification_transport::transport_kind_from_env(),
         }
     }
 
@@ -37,6 +51,7 @@ impl AlertSystem {
         Self {
             config,
             alert_history: VecDeque::new(),
+            transport_kind: notification_transport::transport_kind_from_env(),
         }
     }
 
@@ -97,51 +112,61 @@ impl AlertSystem {
         }
     }
 
-    /// Send alert notifications through configured channels
+    /// Send alert notifications through configured channels. Every attempted
+    /// channel's real outcome is logged via `log::debug!`/`log::error!`
+    /// (never `println!`/`eprintln!`), and a channel that is enabled without
+    /// a matching destination is treated as a delivery failure, not skipped
+    /// silently.
     fn send_alert_notifications(&self, alert: &Alert) -> Result<()> {
-        // Check if alerts are enabled and severity meets threshold
         if !self.config.enable_alerts || self.severity_below_threshold(alert) {
             return Ok(());
         }
 
-        // Check cooldown period
         if self.is_in_cooldown_period(alert)? {
             return Ok(());
         }
 
-        let mut notification_results = Vec::new();
+        let mut any_attempted = false;
+        let mut any_failed = false;
 
-        // Send email notifications
         if self.config.enable_email {
+            any_attempted = true;
             match self.send_email_notification(alert) {
-                Ok(()) => notification_results.push("Email sent successfully".to_string()),
-                Err(e) => notification_results.push(format!("Email failed: {}", e)),
+                Ok(()) => log::debug!("alert {}: email sent successfully", alert.id),
+                Err(e) => {
+                    any_failed = true;
+                    log::error!("alert {}: email delivery failed: {e}", alert.id);
+                }
             }
         }
 
-        // Send Slack notifications
         if self.config.enable_slack {
+            any_attempted = true;
             match self.send_slack_notification(alert) {
-                Ok(()) => {
-                    notification_results.push("Slack notification sent successfully".to_string())
+                Ok(()) => log::debug!("alert {}: Slack notification sent successfully", alert.id),
+                Err(e) => {
+                    any_failed = true;
+                    log::error!("alert {}: Slack delivery failed: {e}", alert.id);
                 }
-                Err(e) => notification_results.push(format!("Slack notification failed: {}", e)),
             }
         }
 
-        // Create GitHub issues
         if self.config.enable_github_issues {
+            any_attempted = true;
             match self.create_github_issue(alert) {
-                Ok(()) => {
-                    notification_results.push("GitHub issue created successfully".to_string())
+                Ok(()) => log::debug!("alert {}: GitHub issue created successfully", alert.id),
+                Err(e) => {
+                    any_failed = true;
+                    log::error!("alert {}: GitHub issue creation failed: {e}", alert.id);
                 }
-                Err(e) => notification_results.push(format!("GitHub issue creation failed: {}", e)),
             }
         }
 
-        // Log notification results
-        for result in notification_results {
-            eprintln!("Alert notification: {}", result);
+        if any_attempted && any_failed {
+            return Err(OptimError::InvalidConfig(format!(
+                "one or more alert channels failed to deliver for alert {}; see log output",
+                alert.id
+            )));
         }
 
         Ok(())
@@ -163,7 +188,6 @@ impl AlertSystem {
         let cooldown_duration = Duration::from_secs(self.config.cooldown_minutes * 60);
         let current_time = SystemTime::now();
 
-        // Check for similar recent alerts
         for recent_alert in self.alert_history.iter().rev().take(10) {
             if recent_alert.regression_id == alert.regression_id {
                 let recent_time = UNIX_EPOCH + Duration::from_secs(recent_alert.timestamp);
@@ -176,111 +200,161 @@ impl AlertSystem {
         Ok(false)
     }
 
-    /// Send email notification
-    fn send_email_notification(&self, alert: &Alert) -> Result<()> {
-        // In a real implementation, this would use an email service like:
-        // - SMTP with lettre crate
-        // - AWS SES
-        // - SendGrid
-        // - Mailgun
-
-        let email_body = self.format_email_body(alert);
-        let subject = format!("Performance Regression Alert: {}", alert.regression_id);
-
-        // Placeholder implementation - would integrate with actual email service
-        eprintln!("EMAIL ALERT:");
-        eprintln!("To: performance-team@company.com");
-        eprintln!("Subject: {}", subject);
-        eprintln!("Body:\n{}", email_body);
-        eprintln!("---");
-
-        // INTEGRATION STUB (v1.0.0): Email service integration planned for v1.1.0+
-        //
-        // For v1.0.0, alerts are printed to stderr for logging/monitoring integration.
-        // Production systems should redirect stderr to their alerting infrastructure.
-        //
-        // PLANNED (v1.1.0+): Direct email integration with lettre crate:
-        // let email = Message::builder()
-        //     .from("alerts@company.com".parse()?)
-        //     .to("performance-team@company.com".parse()?)
-        //     .subject(&subject)
-        //     .body(email_body)?;
-        // let mailer = SmtpTransport::relay("smtp.company.com")?.build();
-        // mailer.send(&email)?;
-
-        Ok(())
+    /// Build the "view details" link for an alert, or `None` when no
+    /// `dashboard_base_url` is configured (never a fabricated domain).
+    fn dashboard_link(&self, alert: &Alert) -> Option<String> {
+        self.config
+            .dashboard_base_url
+            .as_ref()
+            .map(|base| format!("{}/alerts/{}", base.trim_end_matches('/'), alert.id))
     }
 
-    /// Send Slack notification
+    /// Send email notification via SMTP (through `notification_transport`,
+    /// system `curl` by default). Returns `Err` when `enable_email` is set
+    /// without a matching `AlertConfig::email` destination -- never `Ok(())`.
+    fn send_email_notification(&self, alert: &Alert) -> Result<()> {
+        let email_config = self.config.email.as_ref().ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "enable_email is set but AlertConfig::email has no destination configured"
+                    .to_string(),
+            )
+        })?;
+        if email_config.recipients.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "AlertConfig::email has no recipients configured".to_string(),
+            ));
+        }
+
+        let subject = format!("Performance Regression Alert: {}", alert.regression_id);
+        let body = self.format_email_body(alert);
+        let message = format!(
+            "From: {}\r\nTo: {}\r\nSubject: {}\r\n\r\n{}\r\n",
+            email_config.from_address,
+            email_config.recipients.join(", "),
+            subject,
+            body
+        );
+
+        let smtp_target = SmtpTarget {
+            host: email_config.smtp_host.clone(),
+            port: email_config.smtp_port,
+            use_tls: email_config.use_tls,
+            username: email_config.username.clone(),
+            password: email_config.password.clone(),
+            from: email_config.from_address.clone(),
+            to: email_config.recipients.clone(),
+            timeout: Duration::from_secs(30),
+        };
+
+        let outcome =
+            notification_transport::deliver_email(&self.transport_kind, &smtp_target, &message)?;
+        if outcome.is_success() {
+            Ok(())
+        } else {
+            Err(OptimError::InvalidConfig(format!(
+                "email transport reported failure: {}",
+                outcome.detail()
+            )))
+        }
+    }
+
+    /// Send Slack notification via the configured incoming webhook.
     fn send_slack_notification(&self, alert: &Alert) -> Result<()> {
-        // In a real implementation, this would use:
-        // - Slack webhook URL
-        // - reqwest crate for HTTP requests
-        // - JSON payload formatting
+        let slack_config = self.config.slack.as_ref().ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "enable_slack is set but AlertConfig::slack has no destination configured"
+                    .to_string(),
+            )
+        })?;
+        if slack_config.webhook_url.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "AlertConfig::slack has no webhook_url configured".to_string(),
+            ));
+        }
 
         let slack_message = self.format_slack_message(alert);
+        let payload = serde_json::json!({
+            "channel": slack_config.channel,
+            "username": "Performance Bot",
+            "text": slack_message,
+        });
 
-        // Placeholder implementation - would make HTTP POST to Slack webhook
-        eprintln!("SLACK ALERT:");
-        eprintln!("Channel: #performance-alerts");
-        eprintln!("Message: {}", slack_message);
-        eprintln!("---");
-
-        // INTEGRATION STUB (v1.0.0): Slack API integration planned for v1.1.0+
-        //
-        // For v1.0.0, alerts are printed to stderr for logging/monitoring integration.
-        // Production systems should redirect stderr to their alerting infrastructure.
-        //
-        // PLANNED (v1.1.0+): Direct Slack webhook integration:
-        // let webhook_url = std::env::var("SLACK_WEBHOOK_URL")?;
-        // let payload = json!({
-        //     "text": slack_message,
-        //     "channel": "#performance-alerts",
-        //     "username": "Performance Bot"
-        // });
-        // let client = reqwest::Client::new();
-        // client.post(&webhook_url).json(&payload).send()?;
-
-        Ok(())
+        let target = DeliveryTarget::json_post(
+            slack_config.webhook_url.clone(),
+            slack_config.channel.clone(),
+        );
+        let outcome =
+            notification_transport::deliver(&self.transport_kind, &target, &payload.to_string())?;
+        if outcome.is_success() {
+            Ok(())
+        } else {
+            Err(OptimError::InvalidConfig(format!(
+                "Slack transport reported failure: {}",
+                outcome.detail()
+            )))
+        }
     }
 
-    /// Create GitHub issue
+    /// Create GitHub issue via the GitHub REST API.
     fn create_github_issue(&self, alert: &Alert) -> Result<()> {
-        // In a real implementation, this would use:
-        // - GitHub API with octocrab crate
-        // - Personal access token
-        // - Repository configuration
+        let github_config = self.config.github.as_ref().ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "enable_github_issues is set but AlertConfig::github has no destination configured"
+                    .to_string(),
+            )
+        })?;
+        if github_config.repository.is_empty() || github_config.token.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "AlertConfig::github requires both a non-empty token and repository".to_string(),
+            ));
+        }
 
         let issue_title = format!("Performance regression in {}", alert.regression_id);
         let issue_body = self.format_github_issue_body(alert);
+        let payload = serde_json::json!({
+            "title": issue_title,
+            "body": issue_body,
+            "labels": ["performance", "regression", "automated"],
+        });
 
-        // Placeholder implementation - would create actual GitHub issue
-        eprintln!("GITHUB ISSUE:");
-        eprintln!("Repository: company/performance-monitoring");
-        eprintln!("Title: {}", issue_title);
-        eprintln!("Body:\n{}", issue_body);
-        eprintln!("Labels: performance, regression, automated");
-        eprintln!("---");
+        let mut headers = std::collections::HashMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", github_config.token),
+        );
+        headers.insert(
+            "Accept".to_string(),
+            "application/vnd.github+json".to_string(),
+        );
 
-        // INTEGRATION STUB (v1.0.0): GitHub API integration planned for v1.1.0+
-        //
-        // For v1.0.0, issue information is printed to stderr for manual issue creation
-        // or integration with existing issue tracking systems.
-        //
-        // PLANNED (v1.1.0+): Direct GitHub API integration with octocrab:
-        // let token = std::env::var("GITHUB_TOKEN")?;
-        // let octocrab = octocrab::Octocrab::builder().personal_token(token).build()?;
-        // octocrab.issues("company", "performance-monitoring")
-        //     .create(&issue_title)
-        //     .body(&issue_body)
-        //     .labels(vec!["performance", "regression", "automated"])
-        //     .send().await?;
-
-        Ok(())
+        let target = DeliveryTarget {
+            url: format!(
+                "https://api.github.com/repos/{}/issues",
+                github_config.repository
+            ),
+            method: TransportMethod::Post,
+            headers,
+            timeout: Duration::from_secs(30),
+            channel: github_config.repository.clone(),
+        };
+        let outcome =
+            notification_transport::deliver(&self.transport_kind, &target, &payload.to_string())?;
+        if outcome.is_success() {
+            Ok(())
+        } else {
+            Err(OptimError::InvalidConfig(format!(
+                "GitHub transport reported failure: {}",
+                outcome.detail()
+            )))
+        }
     }
 
     /// Format email body for alert
     fn format_email_body(&self, alert: &Alert) -> String {
+        let link = self
+            .dashboard_link(alert)
+            .map(|l| format!("\nView full details at: {l}\n"))
+            .unwrap_or_default();
         format!(
             "Performance Regression Alert\n\
             =============================\n\n\
@@ -289,14 +363,10 @@ impl AlertSystem {
             Severity: {:?}\n\
             Test: {}\n\n\
             Details:\n\
-            {}\n\n\
-            Please investigate this performance regression immediately.\n\
-            \n\
-            View full details at: https://performance-dashboard.company.com/alerts/{}\n\
-            \n\
-            Best regards,\n\
-            Performance Monitoring System",
-            alert.id, alert.timestamp, alert.severity, alert.regression_id, alert.message, alert.id
+            {}\n\
+            {}\n\
+            Please investigate this performance regression.\n",
+            alert.id, alert.timestamp, alert.severity, alert.regression_id, alert.message, link
         )
     }
 
@@ -308,25 +378,32 @@ impl AlertSystem {
             AlertSeverity::Medium => "🟡",
             AlertSeverity::Low => "🔵",
         };
+        let link = self
+            .dashboard_link(alert)
+            .map(|l| format!("\n<{l}|View Details>"))
+            .unwrap_or_default();
 
         format!(
             "{} *Performance Regression Alert*\n\
             *Test:* {}\n\
             *Severity:* {:?}\n\
             *Details:* {}\n\
-            *Time:* <t:{}:F>\n\
-            <https://performance-dashboard.company.com/alerts/{}|View Details>",
+            *Time:* <t:{}:F>{}",
             severity_emoji,
             alert.regression_id,
             alert.severity,
             alert.message,
             alert.timestamp,
-            alert.id
+            link
         )
     }
 
     /// Format GitHub issue body for alert
     fn format_github_issue_body(&self, alert: &Alert) -> String {
+        let link = self
+            .dashboard_link(alert)
+            .map(|l| format!("- [Performance Dashboard]({l})\n"))
+            .unwrap_or_default();
         format!(
             "## Performance Regression Detected\n\n\
             **Alert ID:** {}\n\
@@ -342,17 +419,10 @@ impl AlertSystem {
             - [ ] Analyze profiling data for performance bottlenecks\n\
             - [ ] Compare with baseline performance metrics\n\n\
             ### Links\n\
-            - [Performance Dashboard](https://performance-dashboard.company.com/alerts/{})\n\
-            - [Test Results](https://ci.company.com/tests/{})\n\n\
+            {}\n\
             ---\n\
             *This issue was automatically created by the performance monitoring system.*",
-            alert.id,
-            alert.timestamp,
-            alert.severity,
-            alert.regression_id,
-            alert.message,
-            alert.id,
-            alert.regression_id
+            alert.id, alert.timestamp, alert.severity, alert.regression_id, alert.message, link
         )
     }
 
@@ -414,25 +484,23 @@ impl AlertSystem {
             .as_secs();
         let cutoff_time = now.saturating_sub(max_age.as_secs());
 
-        // Debug output
-        println!(
-            "Cleanup: now = {}, max_age = {} secs, cutoff_time = {}",
-            now,
-            max_age.as_secs(),
-            cutoff_time
+        log::debug!(
+            "cleanup_old_alerts: now={now}, max_age={:?}, cutoff_time={cutoff_time}",
+            max_age
         );
 
         let original_len = self.alert_history.len();
         self.alert_history.retain(|alert| {
             let keep = alert.timestamp >= cutoff_time;
-            println!(
-                "Alert timestamp {}: {} >= {} = {}",
-                alert.timestamp, alert.timestamp, cutoff_time, keep
+            log::debug!(
+                "alert {} timestamp {} >= cutoff {cutoff_time}: {keep}",
+                alert.id,
+                alert.timestamp
             );
             keep
         });
         let removed = original_len - self.alert_history.len();
-        println!("Removed {} alerts", removed);
+        log::debug!("cleanup_old_alerts: removed {removed} alert(s)");
         removed
     }
 
@@ -495,9 +563,11 @@ pub struct SeverityCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::regression_tester::config::{
+        AlertStatus, EmailAlertConfig, GitHubAlertConfig, SlackAlertConfig,
+    };
     use crate::regression_tester::types::{
-        ChangePointAnalysis, OutlierAnalysis, RegressionAnalysis, StatisticalTestResult,
-        TrendAnalysis, TrendDirection,
+        ChangePointAnalysis, OutlierAnalysis, RegressionAnalysis, TrendAnalysis, TrendDirection,
     };
 
     fn create_test_regression(severity: f64, test_id: &str) -> RegressionResult<f64> {
@@ -606,6 +676,7 @@ mod tests {
             enable_github_issues: false,
             severity_threshold: 0.8,
             cooldown_minutes: 30,
+            ..Default::default()
         };
 
         let alert_system = AlertSystem::with_config(custom_config.clone());
@@ -620,7 +691,6 @@ mod tests {
     fn test_alert_statistics() {
         let mut alert_system = AlertSystem::new();
 
-        // Add alerts with different severities
         let _ = alert_system.send_alert(&create_test_regression(0.9, "critical"));
         let _ = alert_system.send_alert(&create_test_regression(0.7, "high"));
         let _ = alert_system.send_alert(&create_test_regression(0.4, "medium"));
@@ -655,7 +725,6 @@ mod tests {
     fn test_cleanup_old_alerts() {
         let mut alert_system = AlertSystem::new();
 
-        // Add some alerts
         for i in 0..5 {
             let regression = create_test_regression(0.8, &format!("test_{}", i));
             let _ = alert_system.send_alert(&regression);
@@ -663,10 +732,84 @@ mod tests {
 
         assert_eq!(alert_system.alert_history().len(), 5);
 
-        // Wait longer than the cleanup duration to ensure alerts are "old"
         std::thread::sleep(Duration::from_secs(2));
         let removed = alert_system.cleanup_old_alerts(Duration::from_secs(1));
         assert_eq!(removed, 5);
         assert_eq!(alert_system.alert_history().len(), 0);
+    }
+
+    #[test]
+    fn enabled_email_without_destination_is_explicit_err() {
+        let mut alert_system = AlertSystem::with_config(AlertConfig {
+            enable_alerts: true,
+            enable_email: true,
+            severity_threshold: 0.0,
+            cooldown_minutes: 0,
+            ..Default::default()
+        });
+        let regression = create_test_regression(0.9, "no_email_destination");
+        let result = alert_system.send_alert(&regression);
+        assert!(
+            result.is_err(),
+            "enabling email without a destination must never report success"
+        );
+    }
+
+    #[test]
+    fn enabled_channels_with_destinations_deliver_via_file_transport() {
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_bench_alert_transport_test_{}",
+            std::process::id()
+        ));
+        std::env::set_var(
+            "OPTIRS_NOTIFICATION_TRANSPORT",
+            format!("file:{}", dir.display()),
+        );
+
+        let mut alert_system = AlertSystem::with_config(AlertConfig {
+            enable_alerts: true,
+            enable_email: true,
+            enable_slack: true,
+            enable_github_issues: true,
+            severity_threshold: 0.0,
+            cooldown_minutes: 0,
+            email: Some(EmailAlertConfig {
+                smtp_host: "smtp.example.invalid".to_string(),
+                smtp_port: 587,
+                use_tls: false,
+                username: None,
+                password: None,
+                from_address: "alerts@example.invalid".to_string(),
+                recipients: vec!["oncall@example.invalid".to_string()],
+            }),
+            slack: Some(SlackAlertConfig {
+                webhook_url: "https://hooks.slack.example.invalid/services/T/B/X".to_string(),
+                channel: "#performance-alerts".to_string(),
+            }),
+            github: Some(GitHubAlertConfig {
+                token: "test-token".to_string(),
+                repository: "example/repo".to_string(),
+            }),
+            dashboard_base_url: Some("https://dashboards.example.invalid".to_string()),
+        });
+
+        let regression = create_test_regression(0.9, "all_channels");
+        let result = alert_system.send_alert(&regression);
+        std::env::remove_var("OPTIRS_NOTIFICATION_TRANSPORT");
+
+        assert!(
+            result.is_ok(),
+            "all channels configured should succeed: {result:?}"
+        );
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .expect("outbox dir should exist")
+            .collect();
+        assert!(
+            entries.len() >= 3,
+            "expected at least 3 outbox files (email, slack, github), found {}",
+            entries.len()
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

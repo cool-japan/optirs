@@ -45,12 +45,12 @@ use std::marker::PhantomData;
 /// // First step to compute perturbed parameters and store perturbed gradients
 /// let params = Array1::zeros(10);
 /// let gradients = Array1::ones(10);
-/// let (perturbed_params_) = optimizer.first_step(&params, &gradients).expect("unwrap failed");
+/// let (perturbed_params_) = optimizer.first_step(&params, &gradients).expect("optimizer.first_step succeeds");
 ///
 /// // Second step to update original parameters using gradients at perturbed parameters
 /// // Normally, you would compute new gradients at perturbed_params
 /// let new_gradients = Array1::ones(10) * 0.5; // Example new gradients
-/// let updated_params = optimizer.second_step(&params, &new_gradients).expect("unwrap failed");
+/// let updated_params = optimizer.second_step(&params, &new_gradients).expect("optimizer.second_step succeeds");
 /// ```
 pub struct SAM<A, O, D>
 where
@@ -84,8 +84,8 @@ where
     pub fn new(inner_optimizer: O) -> Self {
         Self {
             inner_optimizer,
-            rho: A::from(0.05).expect("unwrap failed"),
-            epsilon: A::from(1e-12).expect("unwrap failed"),
+            rho: A::from(0.05).expect("SAM: default rho (0.05) must fit in A"),
+            epsilon: A::from(1e-12).expect("SAM: default epsilon (1e-12) must fit in A"),
             adaptive: false,
             perturbed_params: None,
             original_params: None,
@@ -98,7 +98,7 @@ where
         Self {
             inner_optimizer,
             rho,
-            epsilon: A::from(1e-12).expect("unwrap failed"),
+            epsilon: A::from(1e-12).expect("SAM: default epsilon (1e-12) must fit in A"),
             adaptive,
             perturbed_params: None,
             original_params: None,
@@ -289,17 +289,33 @@ where
     O: Optimizer<A, D> + Clone + Send + Sync,
     D: Dimension,
 {
-    fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // This single-step implementation is a convenience that combines first_step and second_step
-        // However, it's less efficient than using the two-step process because it uses the same gradients
-        // for both steps, which doesn't fully implement the SAM algorithm
-
-        // First step: compute perturbed parameters
-        let _ = self.first_step(params, gradients)?;
-
-        // Second step: update with the same gradients
-        // Note: In a real implementation, you should compute new gradients at the perturbed point
-        self.second_step(params, gradients)
+    /// Not supported: SAM is intrinsically a two-gradient algorithm
+    ///
+    /// Sharpness-Aware Minimization needs the gradient evaluated at the *perturbed*
+    /// parameters `theta + e(theta)`, which cannot be derived from the single gradient
+    /// array this trait method receives. A previous implementation silently ran both
+    /// SAM phases on the same gradient, which cancels the perturbation exactly and
+    /// makes `SAM<Adam>` behave identically to plain `Adam` — a silent correctness bug
+    /// rather than an approximation.
+    ///
+    /// Use the explicit two-phase API instead:
+    ///
+    /// 1. [`SAM::first_step`] with the gradient at `theta` to obtain the perturbed
+    ///    parameters,
+    /// 2. re-evaluate the gradient at those perturbed parameters,
+    /// 3. [`SAM::second_step`] with that second gradient to update `theta`.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`OptimError::InvalidConfig`].
+    fn step(&mut self, _params: &Array<A, D>, _gradients: &Array<A, D>) -> Result<Array<A, D>> {
+        Err(OptimError::InvalidConfig(
+            "SAM requires two gradient evaluations and does not support the single-step \
+             Optimizer::step API. Call first_step(params, grads) to get the perturbed \
+             parameters, recompute the gradients there, then call \
+             second_step(params, perturbed_grads)."
+                .to_string(),
+        ))
     }
 
     fn set_learning_rate(&mut self, learning_rate: A) {
@@ -312,7 +328,6 @@ where
 }
 
 /// Calculate the L2 norm of an array
-#[allow(dead_code)]
 fn calculate_norm<A, D>(array: &Array<A, D>) -> Result<A>
 where
     A: Float + ScalarOperand + Debug,
@@ -373,7 +388,7 @@ mod tests {
 
         let (perturbed_params, perturb_size) = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_first_step");
 
         // Verify perturbed parameters
         assert_abs_diff_eq!(perturbed_params[0], expected_params[0], epsilon = 1e-6);
@@ -396,7 +411,7 @@ mod tests {
         // With the more stable implementation, we'll just verify the behavior makes sense
         let (perturbed_params, perturb_size) = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_adaptive");
 
         // Verify perturbed parameters make sense
         assert!(perturb_size > 0.0 && perturb_size < 1.0); // Perturbation size should be reasonable
@@ -423,7 +438,7 @@ mod tests {
         // First step to set up perturbed parameters
         let _ = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_second_step");
 
         // Simulate computing new gradients at perturbed point
         let new_gradients = Array1::from_vec(vec![0.15, 0.25, 0.35]);
@@ -431,7 +446,7 @@ mod tests {
         // Second step should update original parameters with new gradients
         let updated_params = optimizer
             .second_step(&params, &new_gradients)
-            .expect("unwrap failed");
+            .expect("second_step succeeds in test_sam_second_step");
 
         // Expected update: params - lr * new_gradients
         let expected_params =
@@ -453,7 +468,7 @@ mod tests {
         // First step
         let _ = optimizer
             .first_step(&params, &gradients)
-            .expect("unwrap failed");
+            .expect("first_step succeeds in test_sam_reset");
 
         // Reset
         optimizer.reset();
@@ -474,5 +489,56 @@ mod tests {
 
         let result = optimizer.first_step(&params, &zero_gradients);
         assert!(result.is_err());
+    }
+
+    /// Regression test: `Optimizer::step` must refuse rather than silently degenerate.
+    ///
+    /// Running both SAM phases on the same gradient makes the ascent and descent steps
+    /// cancel, so `SAM<O>` produced exactly the same trajectory as the bare inner
+    /// optimizer `O` while claiming to be sharpness-aware.
+    #[test]
+    fn test_sam_optimizer_step_is_rejected() {
+        let sgd = SGD::new(0.1);
+        let mut optimizer: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(sgd);
+
+        let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+        let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
+
+        let result =
+            Optimizer::<f64, scirs2_core::ndarray::Ix1>::step(&mut optimizer, &params, &gradients);
+
+        let error = match result {
+            Ok(_) => panic!("SAM::step must not silently degenerate to the inner optimizer"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            error.contains("first_step") && error.contains("second_step"),
+            "error message must point at the two-phase API, got: {error}"
+        );
+    }
+
+    /// The documented two-phase flow must actually differ from the inner optimizer.
+    #[test]
+    fn test_sam_two_phase_differs_from_inner_optimizer() {
+        let mut sam: SAM<f64, SGD<f64>, scirs2_core::ndarray::Ix1> = SAM::new(SGD::new(0.1));
+        let mut plain = SGD::new(0.1);
+
+        let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+        let grads_at_theta = Array1::from_vec(vec![0.1, 0.2, 0.3]);
+        // Gradient re-evaluated at the perturbed point differs from the first one.
+        let grads_at_perturbed = Array1::from_vec(vec![0.15, 0.25, 0.35]);
+
+        let (_perturbed, _size) = sam
+            .first_step(&params, &grads_at_theta)
+            .expect("first_step failed");
+        let sam_out = sam
+            .second_step(&params, &grads_at_perturbed)
+            .expect("second_step failed");
+
+        let plain_out = plain
+            .step(&params, &grads_at_theta)
+            .expect("plain step failed");
+
+        assert!((sam_out[0] - plain_out[0]).abs() > 1e-9);
     }
 }

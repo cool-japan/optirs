@@ -32,9 +32,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+toml = { workspace = true }  # real plugin.toml manifest parsing (src/plugin/loader/manifest.rs)
 chrono = { workspace = true }
 sha2 = { workspace = true }
+oxicode = { workspace = true }  # FileCheckpointStorage on-disk codec (coordination/orchestration/checkpoint_manager)
+x25519-dalek = { workspace = true }  # X25519 ECDH for federated secure-aggregation pairwise seeds
 log = { workspace = true }
+rsa = { workspace = true, optional = true }         # OPTIONAL: only used behind crypto feature (plugin signature verification)
 
 # 🚨 SciRS2 FOUNDATION INTEGRATION 🚨
 #
@@ -56,13 +60,14 @@ scirs2-metrics = { workspace = true, optional = true }  # OPTIONAL: only used be
 scirs2-stats = { workspace = true }       # EVIDENCE: multiple modules use distributions
 scirs2-datasets = { workspace = true, optional = true }    # OPTIONAL: cross_platform_tester.rs (benchmarking only)
 
-# ⚠️ CONDITIONAL (Uncomment only if compilation fails):
+# ⚠️ CONDITIONAL (not currently in [workspace.dependencies] - zero usage as of
+# Wave 0; re-add there first, then uncomment here, if compilation ever proves
+# necessity):
 # scirs2-linalg = { workspace = true }      # Only if second-order methods need matrix ops beyond ndarray
 # scirs2-signal = { workspace = true }      # Only if gradient smoothing specifically requires it
 
 # ❌ NOT REQUIRED for OptiRS:
 # scirs2-autograd - OptiRS receives pre-computed gradients, doesn't compute them
-# TODO: Remove scirs2-autograd usage from src/optimizers/adam.rs
 
 # System utilities (allowed - not scientific computing)
 # These are excluded on wasm32 targets
@@ -82,7 +87,12 @@ default = ["std"]
 std = []
 cross-platform-testing = ["scirs2-datasets"]
 metrics-integration = ["scirs2-metrics"]
+crypto = ["dep:rsa"] # plugin signature verification (see src/plugin/loader.rs)
 # parallel and simd features removed - use scirs2_core::parallel_ops and scirs2_core::simd_ops directly
+
+[[test]]
+name = "metrics_integration_tests"
+required-features = ["metrics-integration"]
 
 [[bench]]
 name = "optimizer_benchmarks"

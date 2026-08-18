@@ -119,7 +119,8 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> ViTLayerDecayBuilder<A> {
 /// The scheduler combines three concepts:
 ///
 /// 1. **Linear warmup**: Learning rate linearly increases from 0 to `base_lr` over
-///    `warmup_steps` steps.
+///    `warmup_steps` steps. With `warmup_steps == 0` there is no warmup phase and the
+///    schedule starts at `base_lr` - including before the first `step()`.
 /// 2. **Cosine decay**: After warmup, learning rate follows a cosine schedule from
 ///    `base_lr` down to 0 over the remaining steps.
 /// 3. **Layer-wise decay**: Each transformer layer receives a scaled learning rate:
@@ -191,7 +192,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> ViTLayerDecay<A> {
         warmup_steps: usize,
         total_steps: usize,
     ) -> Self {
-        Self {
+        let mut scheduler = Self {
             base_lr,
             decay_rate,
             num_layers,
@@ -199,7 +200,12 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> ViTLayerDecay<A> {
             total_steps,
             current_step: 0,
             current_lr: A::zero(),
-        }
+        };
+        // Seed `current_lr` from the schedule itself so `get_learning_rate()` is already
+        // meaningful before the first `step()`. With no warmup this is `base_lr`; with a
+        // warmup configured it is zero, which is what a linear warmup means.
+        scheduler.current_lr = scheduler.base_lr * scheduler.compute_schedule_factor();
+        scheduler
     }
 
     /// Create a builder for fluent construction
@@ -212,15 +218,12 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> ViTLayerDecay<A> {
     /// During warmup: linear ramp from 0 to 1
     /// After warmup: cosine decay from 1 to 0
     fn compute_schedule_factor(&self) -> A {
-        if self.current_step == 0 {
-            return A::zero();
-        }
-
-        if self.current_step <= self.warmup_steps {
+        if self.warmup_steps > 0 && self.current_step <= self.warmup_steps {
             // Linear warmup: factor = current_step / warmup_steps
-            if self.warmup_steps == 0 {
-                return A::one();
-            }
+            //
+            // At step 0 this is deliberately 0 - a configured warmup ramps up *from* zero.
+            // When no warmup is configured the branch is skipped entirely so step 0
+            // already reports the configured base learning rate.
             from_usize::<A>(self.current_step) / from_usize::<A>(self.warmup_steps)
         } else {
             // Cosine decay after warmup
@@ -316,7 +319,7 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A> fo
 
     fn reset(&mut self) {
         self.current_step = 0;
-        self.current_lr = A::zero();
+        self.current_lr = self.base_lr * self.compute_schedule_factor();
     }
 }
 
@@ -449,6 +452,39 @@ mod tests {
 
         // Out-of-range layer should return zero
         assert_abs_diff_eq!(scheduler.get_layer_learning_rate(12), 0.0);
+    }
+
+    #[test]
+    fn test_initial_lr_without_warmup_is_base_lr() {
+        // No warmup configured: the very first read must already be the configured LR.
+        let scheduler = ViTLayerDecay::<f64>::new(0.001, 0.75, 12, 0, 1000);
+        assert_abs_diff_eq!(scheduler.get_learning_rate(), 0.001, epsilon = 1e-12);
+
+        // Per-layer rates are live before the first step too.
+        let rates = scheduler.get_all_layer_rates();
+        assert_abs_diff_eq!(rates[11], 0.001, epsilon = 1e-12);
+        assert_abs_diff_eq!(rates[0], 0.001 * 0.75_f64.powi(11), epsilon = 1e-12);
+
+        // The builder defaults to no warmup, so the same holds there.
+        let built = ViTLayerDecay::<f64>::builder().base_lr(0.005).build();
+        assert_abs_diff_eq!(built.get_learning_rate(), 0.005, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_reset_restores_initial_schedule_value() {
+        let mut no_warmup = ViTLayerDecay::<f64>::new(0.001, 0.75, 12, 0, 1000);
+        for _ in 0..500 {
+            no_warmup.step();
+        }
+        no_warmup.reset();
+        assert_abs_diff_eq!(no_warmup.get_learning_rate(), 0.001, epsilon = 1e-12);
+
+        let mut with_warmup = ViTLayerDecay::<f64>::new(0.001, 0.75, 12, 100, 1000);
+        for _ in 0..500 {
+            with_warmup.step();
+        }
+        with_warmup.reset();
+        assert_abs_diff_eq!(with_warmup.get_learning_rate(), 0.0, epsilon = 1e-12);
     }
 
     #[test]

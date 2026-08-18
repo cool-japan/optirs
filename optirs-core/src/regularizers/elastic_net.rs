@@ -30,7 +30,7 @@ use crate::regularizers::{Regularizer, L1, L2};
 /// let mut gradients = Array1::from_vec(vec![0.1, 0.2, -0.3, 0.0]);
 ///
 /// // Apply regularization
-/// let penalty = regularizer.apply(&params, &mut gradients).expect("unwrap failed");
+/// let penalty = regularizer.apply(&params, &mut gradients).expect("regularizer.apply succeeds");
 ///
 /// // Gradients will be modified to include both L1 and L2 penalty gradients
 /// ```

@@ -13,7 +13,6 @@ pub use priority_management::{
     PriorityLevel, PriorityManager, PriorityQueue, PriorityUpdateStrategy, StaticPriorityStrategy,
 };
 pub use resource_allocation::{
-    ResourceAllocationStrategy, ResourceAllocationTracker, ResourceManager,
-    ResourceOptimizationEngine, ResourcePool,
+    ResourceAllocationStrategy, ResourceAllocationTracker, ResourceManager, ResourcePool,
 };
 pub use task_scheduler::{ScheduledTask, SchedulingStrategy, TaskPriority, TaskScheduler};

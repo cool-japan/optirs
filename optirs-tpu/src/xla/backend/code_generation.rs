@@ -10,11 +10,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::super::frontend::{
-    ConvolutionConfig, DataType, Layout, OperandId, OperationId, OperationType, TensorShape,
-    XLAComputation, XLAOperation,
+    DataType, Layout, OperandId, OperationType, TensorShape, XLAComputation, XLAOperation,
 };
 use super::super::optimization::MemoryPlan;
-use super::super::{GeneratedCode, TPUConfig, TPUVersion};
+use super::super::{GeneratedCode, TPUConfig};
 use crate::error::{OptimError, Result};
 
 /// TPU code generator
@@ -302,10 +301,12 @@ pub struct KernelGenerator<T: Float + Debug + Send + Sync + 'static> {
     /// Generated kernels
     kernels: Vec<TPUKernel>,
 
-    /// Kernel templates
-    templates: HashMap<String, KernelTemplate>,
-
-    /// Kernel optimization passes
+    /// Kernel optimization passes, applied by [`Self::generate_kernels`].
+    ///
+    /// There is no `templates` map any more: kernels are emitted directly from
+    /// the scheduled instruction stream (see `generate_kernels`), nothing ever
+    /// looked a [`KernelTemplate`] up, and a permanently empty template registry
+    /// only advertised a substitution mechanism that does not exist.
     optimization_passes: Vec<Box<dyn KernelOptimizationPass>>,
 
     _phantom: std::marker::PhantomData<T>,
@@ -441,6 +442,21 @@ pub trait KernelOptimizationPass {
     fn is_applicable(&self, kernel: &TPUKernel) -> bool;
 }
 
+/// Every register an operand reads, including the base/index registers of a
+/// memory operand.
+fn operand_registers(operand: &TPUOperand) -> Vec<TPURegister> {
+    match operand {
+        TPUOperand::Register(register) => vec![register.clone()],
+        TPUOperand::Memory(address) => address
+            .base
+            .iter()
+            .chain(address.index.iter())
+            .cloned()
+            .collect(),
+        TPUOperand::Immediate(_) | TPUOperand::Label(_) => Vec::new(),
+    }
+}
+
 /// Register allocator for TPU
 pub struct RegisterAllocator {
     /// Available registers by type
@@ -515,17 +531,17 @@ pub enum SchedulingStrategy {
     Trace,
 }
 
-/// Resource model for TPU
+/// Resource model for TPU.
+///
+/// Only the execution units are modelled. A pipeline-stage list and a
+/// unit-conflict map used to be declared here and were never consulted: the
+/// scheduler below issues one instruction per step, so it has no co-issue
+/// decision to make and no structural hazard to resolve. Declaring a hazard
+/// model that nothing enforces would overstate what the scheduler does.
 #[derive(Debug)]
 pub struct ResourceModel {
     /// Available execution units
     execution_units: Vec<ExecutionUnit>,
-
-    /// Pipeline stages
-    pipeline_stages: Vec<PipelineStage>,
-
-    /// Resource conflicts
-    conflicts: HashMap<String, Vec<String>>,
 }
 
 /// Execution unit model
@@ -706,9 +722,24 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> TPUCode
             writeln!(kernel_code).map_err(|e| OptimError::from(e.to_string()))?;
         }
 
-        // Generate initialization code
+        // Generate initialization code. The target the generator was built for
+        // is emitted here rather than being carried around unused: the runtime
+        // needs to know which architecture and how many cores the code assumes.
         writeln!(init_code, "// Initialization").map_err(|e| OptimError::from(e.to_string()))?;
-        writeln!(init_code, "init_tpu();").map_err(|e| OptimError::from(e.to_string()))?;
+        writeln!(
+            init_code,
+            "// target: {:?}, cores: {}, opt: {:?}",
+            self.target_config.tpu_version,
+            self.target_config.num_cores,
+            self.target_config.xla_optimization_level
+        )
+        .map_err(|e| OptimError::from(e.to_string()))?;
+        writeln!(
+            init_code,
+            "init_tpu({:?}, {});",
+            self.target_config.tpu_version, self.target_config.num_cores
+        )
+        .map_err(|e| OptimError::from(e.to_string()))?;
 
         // Generate cleanup code
         writeln!(cleanup_code, "// Cleanup").map_err(|e| OptimError::from(e.to_string()))?;
@@ -1003,29 +1034,45 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> KernelG
     pub fn new(_target_config: &TPUConfig) -> Self {
         Self {
             kernels: Vec::new(),
-            templates: HashMap::new(),
             optimization_passes: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
     }
 
-    /// Generate kernels from scheduled instructions
+    /// Emit the kernels for a scheduled instruction stream and run every
+    /// registered optimization pass over them.
     pub fn generate_kernels(
         &mut self,
         instructions: &[TPUInstruction],
-        _memory_plan: &MemoryPlan<T>,
+        memory_plan: &MemoryPlan<T>,
     ) -> Result<Vec<TPUKernel>> {
-        let kernel = TPUKernel {
+        let mut kernel = TPUKernel {
             name: "main_kernel".to_string(),
             instructions: instructions.to_vec(),
             parameters: vec![],
-            local_memory: 0,
+            // The kernel's scratch requirement is the memory plan's own total,
+            // not zero.
+            local_memory: memory_plan.total_memory,
             register_requirements: RegisterRequirements::default(),
             performance: KernelPerformance::default(),
         };
 
+        // Apply the registered passes. The registry is empty unless a caller
+        // adds one via `register_optimization_pass`, so this is an extension
+        // point rather than a claim that optimizations happen.
+        for pass in &self.optimization_passes {
+            if pass.is_applicable(&kernel) {
+                pass.optimize(&mut kernel)?;
+            }
+        }
+
         self.kernels.push(kernel.clone());
         Ok(vec![kernel])
+    }
+
+    /// Register a kernel-level optimization pass.
+    pub fn register_optimization_pass(&mut self, pass: Box<dyn KernelOptimizationPass>) {
+        self.optimization_passes.push(pass);
     }
 
     /// Reset generator state
@@ -1061,13 +1108,213 @@ impl RegisterAllocator {
     }
 
     /// Allocate registers for instructions
+    /// Linear-scan register allocation over the instruction stream.
+    ///
+    /// The instruction generator emits *virtual* registers (a `(type, index)`
+    /// pair per value). This computes each virtual register's live interval from
+    /// its definition and last use, sweeps the instructions in order freeing
+    /// physical registers as intervals end, and assigns a physical register from
+    /// the pool declared in `available_registers`. When a type's pool is
+    /// exhausted the live value whose next use is furthest away is spilled --
+    /// the standard linear-scan choice -- and the decision is recorded with a
+    /// real cost derived from the memory plan's own bandwidth measurement rather
+    /// than a placeholder.
+    ///
+    /// This replaces a body that did nothing at all, which meant `assignments`,
+    /// `pressure_tracking` and `spill_decisions` were permanently empty and the
+    /// register pools were never consulted.
     pub fn allocate_registers<T: Float + Debug + Send + Sync + 'static>(
         &mut self,
-        _instructions: &[TPUInstruction],
-        _memory_plan: &MemoryPlan<T>,
+        instructions: &[TPUInstruction],
+        memory_plan: &MemoryPlan<T>,
     ) -> Result<()> {
-        // Simplified register allocation
+        self.assignments.clear();
+        self.pressure_tracking.clear();
+        self.spill_decisions.clear();
+
+        // Live intervals for every virtual register, keyed by (type, index).
+        let mut definition: HashMap<(RegisterType, usize), usize> = HashMap::new();
+        let mut last_use: HashMap<(RegisterType, usize), usize> = HashMap::new();
+        for (position, instruction) in instructions.iter().enumerate() {
+            if let Some(result) = &instruction.result {
+                let key = (result.reg_type.clone(), result.index);
+                definition.entry(key.clone()).or_insert(position);
+                last_use.insert(key, position);
+            }
+            for operand in &instruction.operands {
+                for register in operand_registers(operand) {
+                    let key = (register.reg_type.clone(), register.index);
+                    last_use.insert(key, position);
+                }
+            }
+        }
+
+        // Free physical register pools, taken from the declared availability.
+        let mut free: HashMap<RegisterType, Vec<usize>> = self
+            .available_registers
+            .iter()
+            .map(|(reg_type, indices)| {
+                let mut pool: Vec<usize> = indices.iter().copied().collect();
+                // Descending so `pop` hands out the lowest index first.
+                pool.sort_unstable_by_key(|index| std::cmp::Reverse(*index));
+                (reg_type.clone(), pool)
+            })
+            .collect();
+
+        // Virtual registers currently holding a physical one, with the interval
+        // end that lets them be released (and the spill victim be chosen).
+        let mut active: Vec<((RegisterType, usize), usize, usize)> = Vec::new();
+
+        // Spilling a value costs a store plus a reload; scale it by the plan's
+        // measured bandwidth utilization so a bandwidth-bound program reports a
+        // higher spill cost than a compute-bound one.
+        let bandwidth_pressure = memory_plan
+            .performance_info
+            .bandwidth_utilization
+            .clamp(0.0, 1.0);
+
+        for (position, instruction) in instructions.iter().enumerate() {
+            // Release everything whose last use is behind us.
+            active.retain(|(key, physical, end)| {
+                if *end < position {
+                    if let Some(pool) = free.get_mut(&key.0) {
+                        pool.push(*physical);
+                        pool.sort_unstable_by_key(|index| std::cmp::Reverse(*index));
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+
+            if let Some(result) = &instruction.result {
+                let key = (result.reg_type.clone(), result.index);
+                let end = last_use.get(&key).copied().unwrap_or(position);
+                let operand = OperandId(instruction.id);
+
+                match free.get_mut(&result.reg_type).and_then(|pool| pool.pop()) {
+                    Some(physical) => {
+                        active.push((key, physical, end));
+                        self.assignments.insert(
+                            operand,
+                            TPURegister {
+                                reg_type: result.reg_type.clone(),
+                                index: physical,
+                                data_type: result.data_type,
+                                size: result.size,
+                            },
+                        );
+                    }
+                    None => {
+                        // Spill the active value of this type whose use is
+                        // furthest in the future; if this definition is itself
+                        // the furthest, spill it instead.
+                        let victim = active
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, (candidate, _, _))| candidate.0 == result.reg_type)
+                            .max_by_key(|(_, (_, _, candidate_end))| *candidate_end)
+                            .map(|(slot, (candidate, physical, candidate_end))| {
+                                (slot, candidate.clone(), *physical, *candidate_end)
+                            });
+
+                        match victim {
+                            Some((slot, victim_key, physical, victim_end)) if victim_end > end => {
+                                active.remove(slot);
+                                // The decision names the value that was evicted
+                                // (the victim), not the definition that took its
+                                // register.
+                                self.spill_decisions.push(SpillDecision {
+                                    operand: OperandId(victim_key.1),
+                                    register: TPURegister {
+                                        reg_type: result.reg_type.clone(),
+                                        index: physical,
+                                        data_type: result.data_type,
+                                        size: result.size,
+                                    },
+                                    spill_location: MemoryAddress {
+                                        base: None,
+                                        offset: (self.spill_decisions.len() * result.size.max(1))
+                                            as i64,
+                                        index: None,
+                                        scale: 1,
+                                        memory_space: MemorySpace::Local,
+                                    },
+                                    cost: result.size as f64 * (1.0 + bandwidth_pressure),
+                                });
+                                active.push((key, physical, end));
+                                self.assignments.insert(
+                                    operand,
+                                    TPURegister {
+                                        reg_type: result.reg_type.clone(),
+                                        index: physical,
+                                        data_type: result.data_type,
+                                        size: result.size,
+                                    },
+                                );
+                            }
+                            _ => {
+                                // This value itself is the cheapest to spill.
+                                self.spill_decisions.push(SpillDecision {
+                                    operand,
+                                    register: result.clone(),
+                                    spill_location: MemoryAddress {
+                                        base: None,
+                                        offset: (self.spill_decisions.len() * result.size.max(1))
+                                            as i64,
+                                        index: None,
+                                        scale: 1,
+                                        memory_space: MemorySpace::Local,
+                                    },
+                                    cost: result.size as f64 * (1.0 + bandwidth_pressure),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Record the pressure actually observed at this point.
+            let mut pressure_by_type: HashMap<RegisterType, usize> = HashMap::new();
+            for (key, _, _) in &active {
+                *pressure_by_type.entry(key.0.clone()).or_insert(0) += 1;
+            }
+            let total_pressure = pressure_by_type.values().sum();
+            let spill_cost = self
+                .spill_decisions
+                .iter()
+                .map(|decision| decision.cost)
+                .sum();
+            self.pressure_tracking.insert(
+                position as u64,
+                RegisterPressure {
+                    pressure_by_type,
+                    total_pressure,
+                    spill_cost,
+                },
+            );
+        }
+
         Ok(())
+    }
+
+    /// Physical register chosen for the value produced by an instruction.
+    pub fn assignment(&self, operand: OperandId) -> Option<&TPURegister> {
+        self.assignments.get(&operand)
+    }
+
+    /// Spill decisions made during the last allocation.
+    pub fn spills(&self) -> &[SpillDecision] {
+        &self.spill_decisions
+    }
+
+    /// Highest register pressure observed during the last allocation.
+    pub fn peak_pressure(&self) -> usize {
+        self.pressure_tracking
+            .values()
+            .map(|pressure| pressure.total_pressure)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Reset allocator state
@@ -1082,11 +1329,36 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
     /// Create new instruction scheduler
     pub fn new(_target_config: &TPUConfig) -> Self {
         Self {
-            strategy: SchedulingStrategy::List,
+            strategy: SchedulingStrategy::CriticalPath,
             resource_model: ResourceModel {
-                execution_units: vec![],
-                pipeline_stages: vec![],
-                conflicts: HashMap::new(),
+                // A real (if simplified) machine model: the units a TPU core
+                // actually has, with the opcodes each can retire and their
+                // latencies. An empty model gave the scheduler nothing to
+                // schedule against.
+                execution_units: vec![
+                    ExecutionUnit {
+                        name: "matrix".to_string(),
+                        supported_ops: vec![TPUOpcode::MatMul, TPUOpcode::MatMulAccumulate],
+                        latency: 8,
+                        throughput: 1.0,
+                    },
+                    ExecutionUnit {
+                        name: "vector".to_string(),
+                        supported_ops: vec![
+                            TPUOpcode::VectorAdd,
+                            TPUOpcode::VectorMultiply,
+                            TPUOpcode::VectorDot,
+                        ],
+                        latency: 2,
+                        throughput: 2.0,
+                    },
+                    ExecutionUnit {
+                        name: "scalar".to_string(),
+                        supported_ops: vec![TPUOpcode::ScalarAdd, TPUOpcode::ScalarMultiply],
+                        latency: 1,
+                        throughput: 4.0,
+                    },
+                ],
             },
             dependency_graph: InstructionDependencyGraph {
                 dependencies: HashMap::new(),
@@ -1097,13 +1369,258 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Instruc
         }
     }
 
-    /// Schedule instructions
+    /// Schedule instructions into dependency-respecting order.
+    ///
+    /// This builds the real dependency graph (read-after-write, write-after-read
+    /// and write-after-write over the virtual registers the instruction
+    /// generator emitted), derives the critical path from it using the resource
+    /// model's per-opcode latencies, and then list-schedules the ready set.
+    /// It replaces a body that returned the input untouched, which left
+    /// `strategy`, `resource_model` and `dependency_graph` permanently unread.
+    ///
+    /// The produced instructions carry their real `scheduling_info`
+    /// (`earliest_cycle` from the dependency height, `scheduled_cycle` from the
+    /// chosen order, and the dependency list), so a later pass can see the
+    /// schedule rather than having to recompute it.
     pub fn schedule_instructions(
         &mut self,
         instructions: &[TPUInstruction],
     ) -> Result<Vec<TPUInstruction>> {
-        // Simplified scheduling - return instructions as-is
-        Ok(instructions.to_vec())
+        self.build_dependency_graph(instructions);
+
+        let order: Vec<usize> = match &self.strategy {
+            SchedulingStrategy::List => self.list_schedule(instructions, false),
+            SchedulingStrategy::CriticalPath => self.list_schedule(instructions, true),
+            // These need loop structure / trace profiling that the instruction
+            // stream alone does not carry. Saying so is better than silently
+            // falling back to a different algorithm than the caller asked for.
+            SchedulingStrategy::SoftwarePipelining | SchedulingStrategy::Trace => {
+                return Err(OptimError::from(format!(
+                    "instruction scheduling strategy {:?} is not implemented",
+                    self.strategy
+                )))
+            }
+        };
+
+        let by_position: HashMap<usize, &TPUInstruction> = instructions
+            .iter()
+            .map(|instruction| (instruction.id, instruction))
+            .collect();
+
+        let mut scheduled = Vec::with_capacity(order.len());
+        let mut cycle: u64 = 0;
+        for id in &order {
+            let Some(source) = by_position.get(id) else {
+                continue;
+            };
+            let mut instruction = (*source).clone();
+            let dependencies = self
+                .dependency_graph
+                .dependencies
+                .get(id)
+                .cloned()
+                .unwrap_or_default();
+            instruction.scheduling_info.dependencies = dependencies;
+            instruction.scheduling_info.earliest_cycle = cycle;
+            instruction.scheduling_info.scheduled_cycle = Some(cycle);
+            cycle += self.opcode_latency(&instruction.opcode) as u64;
+            instruction.scheduling_info.latest_cycle = cycle;
+            scheduled.push(instruction);
+        }
+
+        Ok(scheduled)
+    }
+
+    /// The dependency graph produced by the last [`Self::schedule_instructions`]
+    /// call.
+    pub fn dependency_graph(&self) -> &InstructionDependencyGraph {
+        &self.dependency_graph
+    }
+
+    /// Select the scheduling strategy.
+    pub fn set_strategy(&mut self, strategy: SchedulingStrategy) {
+        self.strategy = strategy;
+    }
+
+    /// Latency of an opcode according to the resource model, defaulting to one
+    /// cycle for opcodes no modelled unit claims.
+    fn opcode_latency(&self, opcode: &TPUOpcode) -> u32 {
+        self.resource_model
+            .execution_units
+            .iter()
+            .find(|unit| unit.supported_ops.contains(opcode))
+            .map(|unit| unit.latency)
+            .unwrap_or(1)
+    }
+
+    /// Build RAW/WAR/WAW dependencies over the virtual registers.
+    fn build_dependency_graph(&mut self, instructions: &[TPUInstruction]) {
+        self.dependency_graph.dependencies.clear();
+        self.dependency_graph.dependency_types.clear();
+        self.dependency_graph.critical_path.clear();
+
+        let mut last_writer: HashMap<(RegisterType, usize), usize> = HashMap::new();
+        let mut readers_since_write: HashMap<(RegisterType, usize), Vec<usize>> = HashMap::new();
+
+        for instruction in instructions {
+            let mut predecessors: Vec<usize> = Vec::new();
+
+            // Read-after-write on every register this instruction reads.
+            for operand in &instruction.operands {
+                for register in operand_registers(operand) {
+                    let key = (register.reg_type.clone(), register.index);
+                    if let Some(writer) = last_writer.get(&key) {
+                        if *writer != instruction.id {
+                            predecessors.push(*writer);
+                            self.dependency_graph
+                                .dependency_types
+                                .insert((*writer, instruction.id), DependencyType::True);
+                        }
+                    }
+                    readers_since_write
+                        .entry(key)
+                        .or_default()
+                        .push(instruction.id);
+                }
+            }
+
+            if let Some(result) = &instruction.result {
+                let key = (result.reg_type.clone(), result.index);
+                // Write-after-write against the previous definition.
+                if let Some(writer) = last_writer.get(&key) {
+                    if *writer != instruction.id {
+                        predecessors.push(*writer);
+                        self.dependency_graph
+                            .dependency_types
+                            .insert((*writer, instruction.id), DependencyType::Output);
+                    }
+                }
+                // Write-after-read against everything that read the old value.
+                if let Some(readers) = readers_since_write.get(&key) {
+                    for reader in readers {
+                        if *reader != instruction.id {
+                            predecessors.push(*reader);
+                            self.dependency_graph
+                                .dependency_types
+                                .insert((*reader, instruction.id), DependencyType::Anti);
+                        }
+                    }
+                }
+                last_writer.insert(key.clone(), instruction.id);
+                readers_since_write.remove(&key);
+            }
+
+            predecessors.sort_unstable();
+            predecessors.dedup();
+            self.dependency_graph
+                .dependencies
+                .insert(instruction.id, predecessors);
+        }
+
+        self.dependency_graph.critical_path = self.compute_critical_path(instructions);
+    }
+
+    /// Longest latency-weighted chain through the dependency graph.
+    fn compute_critical_path(&self, instructions: &[TPUInstruction]) -> Vec<usize> {
+        // Heights over the DAG, computed in the instruction stream's order,
+        // which is already a topological order of the dependencies built above.
+        let mut height: HashMap<usize, u32> = HashMap::new();
+        let mut best_predecessor: HashMap<usize, usize> = HashMap::new();
+        let mut deepest: Option<(usize, u32)> = None;
+
+        for instruction in instructions {
+            let latency = self.opcode_latency(&instruction.opcode);
+            let mut base = 0u32;
+            if let Some(predecessors) = self.dependency_graph.dependencies.get(&instruction.id) {
+                for predecessor in predecessors {
+                    if let Some(candidate) = height.get(predecessor) {
+                        if *candidate > base {
+                            base = *candidate;
+                            best_predecessor.insert(instruction.id, *predecessor);
+                        }
+                    }
+                }
+            }
+            let total = base + latency;
+            height.insert(instruction.id, total);
+            match deepest {
+                Some((_, best)) if best >= total => {}
+                _ => deepest = Some((instruction.id, total)),
+            }
+        }
+
+        let mut path = Vec::new();
+        let mut cursor = deepest.map(|(id, _)| id);
+        while let Some(id) = cursor {
+            path.push(id);
+            cursor = best_predecessor.get(&id).copied();
+        }
+        path.reverse();
+        path
+    }
+
+    /// List-schedule the ready set. With `prefer_critical_path` the ready
+    /// instruction on the critical path is issued first; otherwise ties are
+    /// broken by instruction id, which reproduces program order.
+    fn list_schedule(
+        &self,
+        instructions: &[TPUInstruction],
+        prefer_critical_path: bool,
+    ) -> Vec<usize> {
+        let critical: HashMap<usize, usize> = self
+            .dependency_graph
+            .critical_path
+            .iter()
+            .enumerate()
+            .map(|(position, id)| (*id, position))
+            .collect();
+
+        let mut remaining: Vec<usize> = instructions
+            .iter()
+            .map(|instruction| instruction.id)
+            .collect();
+        let mut issued: HashSet<usize> = HashSet::new();
+        let mut order = Vec::with_capacity(remaining.len());
+
+        while !remaining.is_empty() {
+            let mut ready: Vec<usize> = remaining
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.dependency_graph
+                        .dependencies
+                        .get(id)
+                        .map(|predecessors| {
+                            predecessors
+                                .iter()
+                                .all(|predecessor| issued.contains(predecessor))
+                        })
+                        .unwrap_or(true)
+                })
+                .collect();
+
+            if ready.is_empty() {
+                // A dependency cycle cannot happen for a straight-line stream,
+                // but if one ever did, issuing the remainder in program order is
+                // still a valid (if unscheduled) answer -- better than looping.
+                ready = remaining.clone();
+            }
+
+            if prefer_critical_path {
+                ready.sort_by_key(|id| (critical.get(id).copied().unwrap_or(usize::MAX), *id));
+            } else {
+                ready.sort_unstable();
+            }
+
+            let Some(next) = ready.first().copied() else {
+                break;
+            };
+            issued.insert(next);
+            order.push(next);
+            remaining.retain(|id| *id != next);
+        }
+
+        order
     }
 }
 
@@ -1124,10 +1641,38 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> CodeOpt
         }
     }
 
-    /// Optimize generated code
-    pub fn optimize(&mut self, _code: &mut GeneratedCode) -> Result<()> {
-        // Code optimization implementation
+    /// Run every registered pass over the generated code, recording per-pass
+    /// statistics.
+    ///
+    /// The registry is empty unless a caller adds a pass, so this is a real
+    /// extension point: it applies what is registered and reports what each pass
+    /// changed, instead of the previous body that ignored `passes` and
+    /// `pass_stats` entirely.
+    pub fn optimize(&mut self, code: &mut GeneratedCode) -> Result<()> {
+        for pass in &self.passes {
+            if !pass.is_applicable(code) {
+                continue;
+            }
+            let lines_before = code.kernel_code.lines().count();
+            let changed = pass.optimize(code)?;
+            let lines_after = code.kernel_code.lines().count();
+            let entry = self.pass_stats.entry(pass.name().to_string()).or_default();
+            if changed {
+                entry.instructions_eliminated += lines_before.saturating_sub(lines_after);
+                entry.cycles_saved += lines_before.saturating_sub(lines_after) as u64;
+            }
+        }
         Ok(())
+    }
+
+    /// Register a code-level optimization pass.
+    pub fn register_pass(&mut self, pass: Box<dyn CodeOptimizationPass<T>>) {
+        self.passes.push(pass);
+    }
+
+    /// Per-pass statistics from the last [`Self::optimize`] call onwards.
+    pub fn pass_statistics(&self) -> &HashMap<String, OptimizationStats> {
+        &self.pass_stats
     }
 }
 
@@ -1191,5 +1736,198 @@ mod tests {
         assert_eq!(instruction.opcode, TPUOpcode::VectorAdd);
         assert_eq!(instruction.operands.len(), 2);
         assert!(instruction.result.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Register allocation
+    // -----------------------------------------------------------------------
+
+    fn vector_reg(index: usize) -> TPURegister {
+        TPURegister {
+            reg_type: RegisterType::Vector,
+            index,
+            data_type: DataType::F32,
+            size: 4,
+        }
+    }
+
+    /// `id`-th instruction: `dest = src_a + src_b` on vector registers.
+    fn vector_add(id: usize, src_a: usize, src_b: usize, dest: usize) -> TPUInstruction {
+        TPUInstruction {
+            id,
+            opcode: TPUOpcode::VectorAdd,
+            operands: vec![
+                TPUOperand::Register(vector_reg(src_a)),
+                TPUOperand::Register(vector_reg(src_b)),
+            ],
+            result: Some(vector_reg(dest)),
+            attributes: InstructionAttributes::default(),
+            scheduling_info: SchedulingInfo::default(),
+        }
+    }
+
+    fn empty_plan() -> MemoryPlan<f32> {
+        MemoryPlan::empty()
+    }
+
+    /// A short program fits in the pool: every definition gets a physical
+    /// register, nothing spills, and the recorded pressure is real.
+    #[test]
+    fn register_allocation_assigns_and_tracks_pressure() {
+        let config = test_tpu_config();
+        let mut allocator = RegisterAllocator::new(&config);
+        let plan = empty_plan();
+
+        // v2 = v0 + v1 ; v3 = v2 + v2 ; v4 = v3 + v3
+        let instructions = vec![
+            vector_add(0, 0, 1, 2),
+            vector_add(1, 2, 2, 3),
+            vector_add(2, 3, 3, 4),
+        ];
+        allocator
+            .allocate_registers(&instructions, &plan)
+            .expect("allocation must succeed");
+
+        assert!(
+            allocator.spills().is_empty(),
+            "64 vector registers is plenty"
+        );
+        for id in 0..3usize {
+            assert!(
+                allocator.assignment(OperandId(id)).is_some(),
+                "instruction {id} produced a value and must own a register"
+            );
+        }
+        assert!(allocator.peak_pressure() >= 1);
+        // v2's interval ends at instruction 1, so its register is reusable
+        // afterwards: pressure must not simply equal the definition count.
+        assert!(allocator.peak_pressure() <= 3);
+    }
+
+    /// More simultaneously-live values than the pool has registers forces real
+    /// spill decisions rather than silently over-allocating.
+    #[test]
+    fn register_allocation_spills_when_the_pool_runs_out() {
+        let config = test_tpu_config();
+        let mut allocator = RegisterAllocator::new(&config);
+        let plan = empty_plan();
+
+        // 80 definitions (v100..v179), then 80 consumers reading them back in
+        // reverse order. Every definition therefore stays live until its
+        // consumer, so all 80 are simultaneously live at the last definition --
+        // against a 64-entry vector pool.
+        let mut instructions: Vec<TPUInstruction> =
+            (0..80).map(|id| vector_add(id, 0, 0, id + 100)).collect();
+        for j in 0..80usize {
+            let source = 179 - j;
+            instructions.push(vector_add(80 + j, source, source, 300 + j));
+        }
+
+        allocator
+            .allocate_registers(&instructions, &plan)
+            .expect("allocation must succeed");
+
+        assert!(
+            !allocator.spills().is_empty(),
+            "80 simultaneously live values cannot fit in 64 vector registers"
+        );
+        assert!(
+            allocator.peak_pressure() <= 64,
+            "pressure must never exceed the pool size, saw {}",
+            allocator.peak_pressure()
+        );
+        for spill in allocator.spills() {
+            assert!(spill.cost > 0.0, "a spill must carry a real cost");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Instruction scheduling
+    // -----------------------------------------------------------------------
+
+    /// The scheduler must respect read-after-write order and stamp real
+    /// scheduling information onto every instruction.
+    #[test]
+    fn scheduling_respects_dependencies_and_stamps_cycles() {
+        let config = test_tpu_config();
+        let mut scheduler: InstructionScheduler<f32> = InstructionScheduler::new(&config);
+
+        // v2 = v0 + v1 ; v3 = v2 + v2  (instruction 1 depends on instruction 0)
+        let instructions = vec![vector_add(0, 0, 1, 2), vector_add(1, 2, 2, 3)];
+        let scheduled = scheduler
+            .schedule_instructions(&instructions)
+            .expect("scheduling must succeed");
+
+        assert_eq!(scheduled.len(), 2);
+        assert_eq!(scheduled[0].id, 0, "the producer must issue first");
+        assert_eq!(scheduled[1].id, 1);
+        assert_eq!(scheduled[1].scheduling_info.dependencies, vec![0]);
+        assert_eq!(scheduled[0].scheduling_info.scheduled_cycle, Some(0));
+        assert!(
+            scheduled[1].scheduling_info.earliest_cycle
+                > scheduled[0].scheduling_info.earliest_cycle,
+            "a dependent instruction cannot issue in the producer's cycle"
+        );
+
+        // The dependency graph is real, and so is the critical path.
+        let graph = scheduler.dependency_graph();
+        assert_eq!(graph.dependencies.get(&1), Some(&vec![0]));
+        assert!(matches!(
+            graph.dependency_types.get(&(0, 1)),
+            Some(DependencyType::True)
+        ));
+        assert_eq!(graph.critical_path, vec![0, 1]);
+    }
+
+    /// Independent instructions keep program order and carry no dependencies.
+    #[test]
+    fn scheduling_leaves_independent_instructions_alone() {
+        let config = test_tpu_config();
+        let mut scheduler: InstructionScheduler<f32> = InstructionScheduler::new(&config);
+
+        let instructions = vec![
+            vector_add(0, 0, 1, 10),
+            vector_add(1, 2, 3, 11),
+            vector_add(2, 4, 5, 12),
+        ];
+        let scheduled = scheduler
+            .schedule_instructions(&instructions)
+            .expect("scheduling must succeed");
+
+        let ids: Vec<usize> = scheduled.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![0, 1, 2]);
+        for instruction in &scheduled {
+            assert!(instruction.scheduling_info.dependencies.is_empty());
+        }
+    }
+
+    /// Strategies with no implementation say so instead of quietly doing
+    /// something else.
+    #[test]
+    fn unimplemented_scheduling_strategies_report_an_error() {
+        let config = test_tpu_config();
+        let mut scheduler: InstructionScheduler<f32> = InstructionScheduler::new(&config);
+        scheduler.set_strategy(SchedulingStrategy::SoftwarePipelining);
+
+        let instructions = vec![vector_add(0, 0, 1, 2)];
+        assert!(scheduler.schedule_instructions(&instructions).is_err());
+    }
+
+    fn test_tpu_config() -> super::super::super::TPUConfig {
+        use super::super::super::{super::PodTopology, TPUConfig, TPUVersion};
+        TPUConfig {
+            tpu_version: TPUVersion::V4,
+            num_cores: 8,
+            enable_xla: true,
+            xla_optimization_level: crate::main_types::XLAOptimizationLevel::Standard,
+            mixed_precision: true,
+            batch_size_per_core: 32,
+            enable_pod_coordination: false,
+            pod_topology: PodTopology::Pod2x2,
+            memory_optimization: crate::main_types::TPUMemoryOptimization::Balanced,
+            gradient_compression: true,
+            prefetch_depth: 2,
+            experimental_features: false,
+        }
     }
 }

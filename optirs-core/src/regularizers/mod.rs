@@ -5,10 +5,25 @@
 // ElasticNet, and Dropout.
 
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
-use scirs2_core::numeric::Float;
+use scirs2_core::numeric::{Float, ToPrimitive};
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
+
+/// Fallibly converts any primitive numeric value (an `f64` literal, a `usize`
+/// count, ...) into a regularizer's generic scalar type `A`.
+///
+/// Centralizes what used to be `A::from(x).expect("unwrap failed")` /
+/// `A::from_usize(x).expect("unwrap failed")` call sites across the
+/// regularizer implementations: instead of panicking, a type that genuinely
+/// cannot represent `x` now produces an honest [`OptimError`].
+pub(crate) fn cast_scalar<A: Float, T: ToPrimitive>(value: T) -> Result<A> {
+    A::from(value).ok_or_else(|| {
+        OptimError::InvalidConfig(
+            "failed to convert a numeric value to the regularizer's scalar type".to_string(),
+        )
+    })
+}
 
 /// Trait for regularizers that can be applied to parameters and gradients
 pub trait Regularizer<A, D>

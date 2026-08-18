@@ -91,14 +91,21 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
     /// Compute the diagonal Fisher information matrix by sampling gradients.
     ///
     /// `parameters` - current model parameters keyed by name.
-    /// `gradients_fn` - callable that returns stochastic gradients for a single sample.
+    /// `gradients_fn` - callable that returns stochastic gradients for the
+    /// sample identified by its second argument. The sample index runs over
+    /// `0..num_samples_fisher`, so each of the `N` Fisher samples is drawn from
+    /// a *different* datum; calling the closure `N` times with identical
+    /// arguments would make the "expectation" a single squared gradient.
     ///
     /// The Fisher diagonal is approximated as E[g_i^2] where g_i is the gradient
     /// of the log-likelihood with respect to parameter i.
+    ///
+    /// Returns `Err` if the closure reports a gradient for a parameter that was
+    /// not supplied, or one whose length differs from that parameter's.
     pub fn compute_fisher_diagonal(
         &mut self,
         parameters: &HashMap<String, Array1<T>>,
-        gradients_fn: impl Fn(&HashMap<String, Array1<T>>) -> Result<HashMap<String, Array1<T>>>,
+        gradients_fn: impl Fn(&HashMap<String, Array1<T>>, usize) -> Result<HashMap<String, Array1<T>>>,
     ) -> Result<()> {
         if parameters.is_empty() {
             return Err(OptimError::InsufficientData(
@@ -120,22 +127,33 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
 
         let n_samples = T::from(self.num_samples_fisher).unwrap_or_else(|| T::one());
 
-        for _ in 0..self.num_samples_fisher {
-            let grads = gradients_fn(parameters)?;
+        for sample_idx in 0..self.num_samples_fisher {
+            let grads = gradients_fn(parameters, sample_idx)?;
             for (name, grad) in &grads {
-                if let Some(accum) = fisher_accum.get_mut(name) {
-                    if accum.len() != grad.len() {
-                        return Err(OptimError::ComputationError(format!(
-                            "gradient dimension mismatch for '{}': expected {}, got {}",
-                            name,
-                            accum.len(),
-                            grad.len()
-                        )));
-                    }
-                    // Accumulate g_i^2
-                    for (a, g) in accum.iter_mut().zip(grad.iter()) {
-                        *a = *a + (*g) * (*g);
-                    }
+                let accum = fisher_accum.get_mut(name).ok_or_else(|| {
+                    OptimError::InvalidConfig(format!(
+                        "gradient reported for unknown parameter '{}'; \
+                         known parameters: {:?}",
+                        name,
+                        {
+                            let mut keys: Vec<&str> =
+                                parameters.keys().map(|s| s.as_str()).collect();
+                            keys.sort_unstable();
+                            keys
+                        }
+                    ))
+                })?;
+                if accum.len() != grad.len() {
+                    return Err(OptimError::ComputationError(format!(
+                        "gradient dimension mismatch for '{}': expected {}, got {}",
+                        name,
+                        accum.len(),
+                        grad.len()
+                    )));
+                }
+                // Accumulate g_i^2
+                for (a, g) in accum.iter_mut().zip(grad.iter()) {
+                    *a = *a + (*g) * (*g);
                 }
             }
         }
@@ -178,7 +196,16 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                     .last()
                     .and_then(|map| map.get(name))
                 {
-                    // gamma * old + new
+                    // gamma * old + new. The two Fisher diagonals for the same
+                    // parameter name can genuinely disagree in length (a layer
+                    // resized between tasks), and indexing `old_fisher[i]` over
+                    // `new_fisher`'s range used to panic on that (finding F71).
+                    Self::require_same_len(
+                        name,
+                        "previous Fisher diagonal",
+                        new_fisher.len(),
+                        old_fisher.len(),
+                    )?;
                     let mut result = Array1::from_elem(new_fisher.len(), T::zero());
                     for i in 0..result.len() {
                         result[i] = self.gamma * old_fisher[i] + new_fisher[i];
@@ -229,6 +256,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                     OptimError::InvalidState(format!("Fisher information for '{}' not found", name))
                 })?;
 
+                Self::require_same_len(name, "current parameter", anchor.len(), current.len())?;
+                Self::require_same_len(name, "Fisher diagonal", anchor.len(), fisher.len())?;
+
                 for i in 0..anchor.len() {
                     let diff = current[i] - anchor[i];
                     total_penalty = total_penalty + fisher[i] * diff * diff;
@@ -237,12 +267,35 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
         } else {
             // Standard EWC: sum penalty over all tasks, each with its own anchor
             for (task_idx, task_fisher) in self.task_fisher_diagonals.iter().enumerate() {
-                let task_anchor = &self.task_anchor_parameters[task_idx];
+                // `task_anchor_parameters` and `task_fisher_diagonals` are pushed
+                // together by `consolidate`, but a caller that mutated one
+                // through a future API (or a partially-applied deserialization)
+                // could desynchronise them; indexing used to panic.
+                let task_anchor = self.task_anchor_parameters.get(task_idx).ok_or_else(|| {
+                    OptimError::InvalidState(format!(
+                        "no anchor parameters stored for task {task_idx}: {} anchors for {} Fisher \
+                         diagonals",
+                        self.task_anchor_parameters.len(),
+                        self.task_fisher_diagonals.len()
+                    ))
+                })?;
                 for (name, anchor) in task_anchor {
                     let current = parameters.get(name).ok_or_else(|| {
                         OptimError::InvalidState(format!("parameter '{}' not found in input", name))
                     })?;
                     if let Some(fisher) = task_fisher.get(name) {
+                        Self::require_same_len(
+                            name,
+                            "current parameter",
+                            anchor.len(),
+                            current.len(),
+                        )?;
+                        Self::require_same_len(
+                            name,
+                            "Fisher diagonal",
+                            anchor.len(),
+                            fisher.len(),
+                        )?;
                         for i in 0..anchor.len() {
                             let diff = current[i] - anchor[i];
                             total_penalty = total_penalty + fisher[i] * diff * diff;
@@ -291,13 +344,28 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                     OptimError::InvalidState(format!("gradient entry for '{}' not found", name))
                 })?;
 
+                Self::require_same_len(name, "current parameter", anchor.len(), current.len())?;
+                Self::require_same_len(name, "Fisher diagonal", anchor.len(), fisher.len())?;
+                Self::require_same_len(name, "gradient buffer", anchor.len(), grad.len())?;
+
                 for i in 0..anchor.len() {
                     grad[i] = grad[i] + self.lambda * fisher[i] * (current[i] - anchor[i]);
                 }
             }
         } else {
             for (task_idx, task_fisher) in self.task_fisher_diagonals.iter().enumerate() {
-                let task_anchor = &self.task_anchor_parameters[task_idx];
+                // `task_anchor_parameters` and `task_fisher_diagonals` are pushed
+                // together by `consolidate`, but a caller that mutated one
+                // through a future API (or a partially-applied deserialization)
+                // could desynchronise them; indexing used to panic.
+                let task_anchor = self.task_anchor_parameters.get(task_idx).ok_or_else(|| {
+                    OptimError::InvalidState(format!(
+                        "no anchor parameters stored for task {task_idx}: {} anchors for {} Fisher \
+                         diagonals",
+                        self.task_anchor_parameters.len(),
+                        self.task_fisher_diagonals.len()
+                    ))
+                })?;
                 for (name, anchor) in task_anchor {
                     let current = parameters.get(name).ok_or_else(|| {
                         OptimError::InvalidState(format!("parameter '{}' not found in input", name))
@@ -310,6 +378,19 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
                             ))
                         })?;
 
+                        Self::require_same_len(
+                            name,
+                            "current parameter",
+                            anchor.len(),
+                            current.len(),
+                        )?;
+                        Self::require_same_len(
+                            name,
+                            "Fisher diagonal",
+                            anchor.len(),
+                            fisher.len(),
+                        )?;
+                        Self::require_same_len(name, "gradient buffer", anchor.len(), grad.len())?;
                         for i in 0..anchor.len() {
                             grad[i] = grad[i] + self.lambda * fisher[i] * (current[i] - anchor[i]);
                         }
@@ -319,6 +400,25 @@ impl<T: Float + Debug + Send + Sync + 'static> ElasticWeightConsolidation<T> {
         }
 
         Ok(gradients)
+    }
+
+    /// Reject a per-parameter array whose length does not match its anchor.
+    ///
+    /// F71: `ewc_penalty` / `ewc_gradient` / `consolidate` all looped
+    /// `for i in 0..anchor.len()` and indexed the *current* parameters, the Fisher
+    /// diagonal and the gradient buffer with `i`. They checked that each name was
+    /// **present** but never that the arrays were the same **length**, so a model
+    /// whose layer was resized between tasks — the exact situation continual
+    /// learning exists for — produced an index-out-of-bounds panic instead of a
+    /// diagnosable error.
+    fn require_same_len(name: &str, what: &str, expected: usize, got: usize) -> Result<()> {
+        if expected != got {
+            return Err(OptimError::InvalidState(format!(
+                "{what} for '{name}' has length {got} but its anchor has length {expected}; \
+                 EWC needs matching shapes"
+            )));
+        }
+        Ok(())
     }
 
     /// Return the number of tasks that have been consolidated so far.
@@ -382,15 +482,23 @@ impl<T: Float + Debug + Send + Sync + 'static> NetworkColumn<T> {
             z[i] = z[i] + sum;
         }
 
-        // ReLU activation (except for the last layer which is linear)
-        let is_last_layer = layer_idx == self.weights.len() - 1;
-        let a = if is_last_layer {
+        let a = self.apply_activation(&z, layer_idx);
+        Ok((z, a))
+    }
+
+    /// Apply layer `layer_idx`'s activation to a pre-activation vector.
+    ///
+    /// ReLU everywhere except the final layer, which is linear. Split out of
+    /// [`Self::forward_layer`] so a caller that needs to inject a lateral
+    /// contribution into the pre-activation (progressive networks) still applies
+    /// exactly the same nonlinearity.
+    fn apply_activation(&self, z: &Array1<T>, layer_idx: usize) -> Array1<T> {
+        let is_last_layer = layer_idx + 1 == self.weights.len();
+        if is_last_layer {
             z.clone()
         } else {
             z.mapv(|v| if v > T::zero() { v } else { T::zero() })
-        };
-
-        Ok((z, a))
+        }
     }
 }
 
@@ -582,13 +690,23 @@ impl<T: Float + Debug + Send + Sync + 'static> ProgressiveNetworks<T> {
             let mut h = input.clone();
 
             for l in 0..num_layers {
-                // Lateral contribution from previous columns (only for col > 0 and l > 0)
-                if col > 0 && l > 0 {
+                // Lateral contribution from previous columns (only for col > 0 and l > 0).
+                //
+                // Progressive Neural Networks (Rusu et al. 2016, eq. 1) add the
+                // lateral term to the **pre-activation** of layer `l`:
+                //
+                //     h_l^(k) = f( W_l^(k) h_{l-1}^(k) + Σ_{j<k} U_l^(k:j) h_{l-1}^(j) )
+                //
+                // The previous implementation added it to the layer *input*
+                // instead. `U_l` has `layer_sizes[l+1]` rows while the input has
+                // `layer_sizes[l]` entries, so an `if h.len() ==
+                // lateral_contribution.len()` guard silently dropped the whole
+                // lateral term for every network whose layer widths differ — i.e.
+                // no transfer at all, with no diagnostic.
+                let lateral_contribution = if col > 0 && l > 0 {
                     let laterals = &self.lateral_connections[col];
                     if !laterals.is_empty() && l < laterals.len() {
                         let lat_w = &laterals[l];
-                        // Concatenate activations from all previous columns at layer l-1
-                        // (previous layer's output for each previous column)
                         let mut lateral_input_parts: Vec<T> = Vec::new();
                         for prev_col_acts in all_activations.iter().take(col) {
                             if l - 1 < prev_col_acts.len() {
@@ -597,36 +715,54 @@ impl<T: Float + Debug + Send + Sync + 'static> ProgressiveNetworks<T> {
                             }
                         }
 
-                        if !lateral_input_parts.is_empty() {
+                        if lateral_input_parts.is_empty() {
+                            None
+                        } else {
                             let lateral_input = Array1::from_vec(lateral_input_parts);
-
-                            // Check dimension compatibility
-                            if lat_w.ncols() == lateral_input.len() {
-                                let lat_out_dim = lat_w.nrows();
-                                let lat_in_dim = lat_w.ncols();
-                                let mut lateral_contribution =
-                                    Array1::from_elem(lat_out_dim, T::zero());
-                                for i in 0..lat_out_dim {
-                                    let mut sum = T::zero();
-                                    for j in 0..lat_in_dim {
-                                        sum = sum + lat_w[[i, j]] * lateral_input[j];
-                                    }
-                                    lateral_contribution[i] = sum;
-                                }
-
-                                // Add lateral contribution to input before this layer
-                                // Dimensions must match: h and lateral_contribution
-                                if h.len() == lateral_contribution.len() {
-                                    for i in 0..h.len() {
-                                        h[i] = h[i] + lateral_contribution[i];
-                                    }
-                                }
+                            if lat_w.ncols() != lateral_input.len() {
+                                return Err(OptimError::NetworkError(format!(
+                                    "lateral weight at column {col} layer {l} expects \
+                                     {} inputs but the previous columns supplied {}",
+                                    lat_w.ncols(),
+                                    lateral_input.len()
+                                )));
                             }
+                            let lat_out_dim = lat_w.nrows();
+                            let mut contribution = Array1::from_elem(lat_out_dim, T::zero());
+                            for i in 0..lat_out_dim {
+                                let mut sum = T::zero();
+                                for j in 0..lat_w.ncols() {
+                                    sum = sum + lat_w[[i, j]] * lateral_input[j];
+                                }
+                                contribution[i] = sum;
+                            }
+                            Some(contribution)
                         }
+                    } else {
+                        None
                     }
-                }
+                } else {
+                    None
+                };
 
-                let (_pre, post) = column.forward_layer(&h, l)?;
+                let (mut pre, post_without_lateral) = column.forward_layer(&h, l)?;
+                let post = match lateral_contribution {
+                    Some(contribution) => {
+                        if contribution.len() != pre.len() {
+                            return Err(OptimError::NetworkError(format!(
+                                "lateral contribution at column {col} layer {l} has \
+                                 {} entries but the pre-activation has {}",
+                                contribution.len(),
+                                pre.len()
+                            )));
+                        }
+                        for i in 0..pre.len() {
+                            pre[i] = pre[i] + contribution[i];
+                        }
+                        column.apply_activation(&pre, l)
+                    }
+                    None => post_without_lateral,
+                };
                 col_activations.push(post.clone());
                 h = post;
             }
@@ -706,6 +842,96 @@ mod tests {
     // EWC Tests
     // -----------------------------------------------------------------------
 
+    /// F71: every EWC loop was `for i in 0..anchor.len()` indexing the *current*
+    /// parameters, the Fisher diagonal and the gradient buffer with `i`. Presence
+    /// of each name was checked; length never was. A model whose layer was resized
+    /// between tasks — the whole point of continual learning — panicked with an
+    /// index-out-of-bounds instead of returning a diagnosable error.
+    #[test]
+    fn ewc_reports_length_mismatches_instead_of_panicking() {
+        // Consolidate on width-4 parameters, then evaluate against width-2 ones.
+        let build = |online: bool| -> ElasticWeightConsolidation<F> {
+            let mut ewc: ElasticWeightConsolidation<F> = ElasticWeightConsolidation::new(1.0)
+                .with_num_samples(2)
+                .with_online(online);
+            let wide = make_params(&["w"], 4, 1.0);
+            ewc.compute_fisher_diagonal(&wide, |params, _| {
+                Ok(params
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.mapv(|v| v * 0.5)))
+                    .collect())
+            })
+            .expect("fisher");
+            ewc.consolidate(&wide).expect("consolidate");
+            ewc
+        };
+
+        for online in [false, true] {
+            let ewc = build(online);
+            let narrow = make_params(&["w"], 2, 1.0);
+
+            let penalty = ewc.ewc_penalty(&narrow);
+            assert!(
+                penalty.is_err(),
+                "online={online}: a width-2 parameter against a width-4 anchor must be an error"
+            );
+            let text = penalty.expect_err("checked above").to_string();
+            assert!(
+                text.contains("length") && text.contains('w'),
+                "online={online}: unhelpful error {text}"
+            );
+
+            let gradient = ewc.ewc_gradient(&narrow);
+            assert!(
+                gradient.is_err(),
+                "online={online}: ewc_gradient must reject the mismatch too"
+            );
+
+            // The matching case must still work, so the guard is not just a
+            // blanket rejection.
+            let wide = make_params(&["w"], 4, 2.0);
+            let ok_penalty = ewc.ewc_penalty(&wide).expect("matching widths");
+            assert!(
+                ok_penalty > 0.0,
+                "online={online}: a displaced parameter must incur a positive penalty"
+            );
+            let grads = ewc.ewc_gradient(&wide).expect("matching widths");
+            assert_eq!(grads["w"].len(), 4);
+            assert!(
+                grads["w"].iter().all(|g| *g > 0.0),
+                "online={online}: gradient must push back toward the anchor"
+            );
+        }
+    }
+
+    /// The online branch of `consolidate` merges the previous Fisher diagonal into
+    /// the new one elementwise; a shorter previous diagonal used to panic.
+    #[test]
+    fn online_consolidation_reports_a_fisher_length_change() {
+        let mut ewc: ElasticWeightConsolidation<F> = ElasticWeightConsolidation::new(1.0)
+            .with_num_samples(2)
+            .with_online(true);
+        let grads = |params: &HashMap<String, Array1<F>>, _: usize| {
+            Ok(params
+                .iter()
+                .map(|(name, value)| (name.clone(), value.mapv(|v| v * 0.5)))
+                .collect())
+        };
+
+        let narrow = make_params(&["w"], 2, 1.0);
+        ewc.compute_fisher_diagonal(&narrow, grads).expect("fisher");
+        ewc.consolidate(&narrow).expect("first consolidate");
+
+        // Second task: same name, wider parameter.
+        let wide = make_params(&["w"], 5, 1.0);
+        ewc.compute_fisher_diagonal(&wide, grads)
+            .expect("fisher for the wider task");
+        let err = ewc
+            .consolidate(&wide)
+            .expect_err("a Fisher length change must be reported, not panic");
+        assert!(err.to_string().contains("length"), "{}", err);
+    }
+
     #[test]
     fn test_ewc_creation_and_configuration() {
         let ewc: ElasticWeightConsolidation<F> = ElasticWeightConsolidation::new(1000.0)
@@ -729,7 +955,9 @@ mod tests {
 
         // Gradients function: returns constant gradients (simulating quadratic loss)
         // For a quadratic loss f(x) = 0.5 * x^2, grad = x = [1, 1, 1]
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w1".to_string(), Array1::from_vec(vec![1.0, 2.0, 3.0]));
             g.insert("w2".to_string(), Array1::from_vec(vec![0.5, 0.5, 0.5]));
@@ -763,7 +991,9 @@ mod tests {
         let anchor = make_params(&["w"], 2, 1.0);
 
         // Constant Fisher = [1.0, 1.0]
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 1.0]));
             Ok(g)
@@ -797,7 +1027,9 @@ mod tests {
 
         let anchor = make_params(&["w"], 2, 1.0);
 
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 1.0]));
             Ok(g)
@@ -828,7 +1060,9 @@ mod tests {
 
         let params_task1 = make_params(&["w"], 2, 1.0);
 
-        let grad_fn = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn = |_p: &HashMap<String, Array1<F>>,
+                       _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 2.0]));
             Ok(g)
@@ -871,7 +1105,9 @@ mod tests {
 
         // Task 1
         let params1 = make_params(&["w"], 2, 0.0);
-        let grad_fn1 = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn1 = |_p: &HashMap<String, Array1<F>>,
+                        _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![1.0, 1.0]));
             Ok(g)
@@ -890,7 +1126,9 @@ mod tests {
 
         // Task 2
         let params2 = make_params(&["w"], 2, 1.0);
-        let grad_fn2 = |_p: &HashMap<String, Array1<F>>| -> Result<HashMap<String, Array1<F>>> {
+        let grad_fn2 = |_p: &HashMap<String, Array1<F>>,
+                        _sample: usize|
+         -> Result<HashMap<String, Array1<F>>> {
             let mut g = HashMap::new();
             g.insert("w".to_string(), Array1::from_vec(vec![2.0, 2.0]));
             Ok(g)
@@ -1050,6 +1288,74 @@ mod tests {
         // Freeze out-of-range column should error
         let err = pn.freeze_column(99);
         assert!(err.is_err(), "freezing out-of-range column should fail");
+    }
+
+    /// F39: the lateral contribution was added to the layer *input* while being
+    /// sized for the layer *output*, so an `if h.len() == contribution.len()`
+    /// guard silently dropped every lateral term whenever consecutive layer
+    /// widths differed — i.e. no transfer at all, with no diagnostic.
+    ///
+    /// With `hidden_sizes = [8, 4]` and input 4 / output 2, *every* consecutive
+    /// pair of widths differs (4→8→4→2), so under the old code the second column
+    /// was mathematically identical to a standalone column. Zeroing the lateral
+    /// weights must therefore change the output.
+    #[test]
+    fn lateral_connections_actually_contribute_with_varying_layer_widths() {
+        let mut pn: ProgressiveNetworks<F> = ProgressiveNetworks::new(vec![8, 4]);
+        pn.add_task_column(4, 2).expect("column 0");
+        pn.add_task_column(4, 2).expect("column 1");
+
+        let input = Array1::from_vec(vec![0.6, -0.4, 0.9, -1.1]);
+        let with_laterals = pn.forward(&input, 1).expect("forward with laterals");
+
+        // Confirm the lateral weights are non-trivial to begin with.
+        let lateral_magnitude = pn.lateral_connections[1]
+            .iter()
+            .flat_map(|m| m.iter())
+            .fold(0.0_f64, |acc, v| acc.max(v.abs()));
+        assert!(
+            lateral_magnitude > 0.0,
+            "column 1 has no lateral weights to contribute"
+        );
+
+        // Zero them out: if the laterals were being applied, the output changes.
+        for matrix in pn.lateral_connections[1].iter_mut() {
+            matrix.fill(0.0);
+        }
+        let without_laterals = pn.forward(&input, 1).expect("forward without laterals");
+
+        let delta = with_laterals
+            .iter()
+            .zip(without_laterals.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f64, f64::max);
+        assert!(
+            delta > 1e-9,
+            "zeroing the lateral weights changed nothing (max delta {delta}); \
+             the lateral contribution is still being silently dropped"
+        );
+
+        // Column 0 has no laterals, so it must be unaffected either way.
+        let col0 = pn.forward(&input, 0).expect("forward column 0");
+        assert_eq!(col0.len(), 2);
+    }
+
+    /// F39: an inconsistent lateral weight shape must now be an error rather
+    /// than a silent skip.
+    #[test]
+    fn a_mis_shaped_lateral_weight_is_an_error() {
+        let mut pn: ProgressiveNetworks<F> = ProgressiveNetworks::new(vec![8, 4]);
+        pn.add_task_column(4, 2).expect("column 0");
+        pn.add_task_column(4, 2).expect("column 1");
+
+        // Corrupt one lateral matrix's input width.
+        pn.lateral_connections[1][1] = Array2::from_elem((4, 3), 0.1);
+        let input = Array1::from_vec(vec![0.6, -0.4, 0.9, -1.1]);
+        assert!(
+            pn.forward(&input, 1).is_err(),
+            "a lateral weight whose width does not match the concatenated \
+             previous activations must be reported, not ignored"
+        );
     }
 
     #[test]

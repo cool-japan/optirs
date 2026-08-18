@@ -20,6 +20,7 @@ use std::fmt::Debug;
 
 use crate::error::Result;
 use crate::optimizers::Optimizer;
+use crate::utils::try_scalar;
 
 /// Gradient accumulator for memory-efficient training
 ///
@@ -37,11 +38,11 @@ use crate::optimizers::Optimizer;
 /// // Accumulate gradients from 4 micro-batches
 /// for _ in 0..4 {
 ///     let micro_batch_grads = Array1::from_elem(1000, 0.1);
-///     accumulator.accumulate(&micro_batch_grads.view()).expect("unwrap failed");
+///     accumulator.accumulate(&micro_batch_grads.view()).expect("shapes match the accumulator");
 /// }
 ///
 /// // Get averaged gradients
-/// let avg_grads = accumulator.average().expect("unwrap failed");
+/// let avg_grads = accumulator.average().expect("at least one micro-batch was accumulated");
 /// ```
 pub struct GradientAccumulator<A: Float> {
     accumulated: Array1<A>,
@@ -96,7 +97,7 @@ impl<A: Float + ScalarOperand + Debug + Zero> GradientAccumulator<A> {
             ));
         }
 
-        let scale = A::from(self.count).expect("unwrap failed");
+        let scale = try_scalar::<A, _>(self.count)?;
         let averaged = &self.accumulated / scale;
 
         // Reset accumulator

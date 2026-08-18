@@ -8,7 +8,7 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use super::types::{AggregationStrategy, AlertAggregation, DeduplicationSettings};
 

@@ -17,7 +17,6 @@
 pub mod algorithms;
 pub mod graph;
 pub mod ml;
-pub mod performance;
 pub mod prevention;
 pub mod recovery;
 pub mod types;
@@ -67,19 +66,11 @@ pub use graph::{
     OptimizationStatistics, PerformanceImpact,
 };
 
-// Re-export performance types
-pub use performance::{
-    AllocationStrategy, AutoTuning, CachingStrategies, ComputationCaching, CpuLimits,
-    CpuManagement, CpuMonitoring, DeadlockPerformanceConfig as PerformanceConfig,
-    DeadlockStatistics, DetectionTimePercentiles, DetectionTimeStatistics, EvictionPolicy,
-    GarbageCollection, GcStrategy, HealthChecking, HorizontalScaling, IoLimits, IoManagement,
-    IoMonitoring, IoOptimization, IoScheduling, LoadBalancing, LoadBalancingMetric,
-    LoadBalancingMonitoring, LoadBalancingStrategy, LoadBalancingThresholds, MemoryLimits,
-    MemoryManagement, MemoryMonitoring, PerformanceMetric, PerformanceMonitoring,
-    PerformanceOptimization as PerfOptimization, PerformanceTargets, PerformanceThresholds,
-    ResultCaching, ScalabilityConfiguration, ScalingTrigger, SpawningStrategy,
-    SystemImpactStatistics, ThreadManagement, UpdateStrategy, VerticalLimits, VerticalMetric,
-    VerticalPerformanceMonitoring, VerticalScaling,
+// Re-export performance types from the shared pod performance module.
+// The former `deadlock/performance.rs` was a re-export shim with no code
+// of its own and has been removed.
+pub use crate::pod_coordination::performance::{
+    DeadlockPerformanceConfig as PerformanceConfig, DeadlockStatistics,
 };
 
 // Re-export recovery types
@@ -155,17 +146,35 @@ impl DeadlockDetector {
         self.detection_state.status = DetectionStatus::Running;
         self.detection_state.last_detection = std::time::Instant::now();
 
-        // Use the graph's cycle detection
-        if self.dependency_graph.has_cycle() {
-            self.detection_state.status = DetectionStatus::DeadlockDetected;
-            self.detection_state.active_deadlocks += 1;
-            self.statistics.detection_count += 1;
-
-            // Return detected deadlock IDs (simplified)
-            Ok(vec!["deadlock_1".to_string()])
-        } else {
+        if !self.config.enable {
             self.detection_state.status = DetectionStatus::Idle;
-            Ok(Vec::new())
+            return Ok(Vec::new());
+        }
+
+        // Search the wait-for graph with the configured traversal strategy.
+        match self
+            .dependency_graph
+            .find_cycle_with(&self.config.cycle_detection)
+        {
+            Some(cycle) => {
+                self.detection_state.status = DetectionStatus::DeadlockDetected;
+                self.detection_state.active_deadlocks += 1;
+                self.statistics.detection_count += 1;
+
+                // Identify the deadlock by the nodes that form the cycle, so
+                // the caller can act on it rather than receiving a fixed label.
+                let members = cycle
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join("->");
+                log::warn!("deadlock detected in wait-for graph: {members}");
+                Ok(vec![format!("deadlock[{members}]")])
+            }
+            None => {
+                self.detection_state.status = DetectionStatus::Idle;
+                Ok(Vec::new())
+            }
         }
     }
 

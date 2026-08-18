@@ -13,7 +13,7 @@ use optirs_core::memory_efficient_optimizer::{
     ChunkedOptimizer, GradientAccumulator, MemoryUsageEstimator,
 };
 use optirs_core::optimizers::{Adam, Optimizer, SimdSGD, SGD};
-use optirs_core::parallel_optimizer::{parallel_step_array1, ParallelOptimizer};
+use optirs_core::parallel_optimizer::parallel_step_array1;
 use scirs2_core::ndarray::Array1;
 use std::time::Instant;
 

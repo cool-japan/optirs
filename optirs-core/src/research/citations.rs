@@ -367,6 +367,71 @@ pub struct CitationDiscovery {
     api_keys: HashMap<String, String>,
 }
 
+impl CitationDiscovery {
+    /// Create a discovery service with no search engines registered yet.
+    pub fn new() -> Self {
+        Self {
+            search_engines: Vec::new(),
+            api_keys: HashMap::new(),
+        }
+    }
+
+    /// Register a search engine (builder style).
+    pub fn with_search_engine(mut self, engine: SearchEngine) -> Self {
+        self.search_engines.push(engine);
+        self
+    }
+
+    /// Register a search engine on an existing instance.
+    pub fn add_search_engine(&mut self, engine: SearchEngine) {
+        self.search_engines.push(engine);
+    }
+
+    /// Store the API key/token used to authenticate against `engine_name`.
+    pub fn set_api_key(&mut self, engine_name: &str, key: &str) {
+        self.api_keys
+            .insert(engine_name.to_string(), key.to_string());
+    }
+
+    /// All currently registered search engines.
+    pub fn search_engines(&self) -> &[SearchEngine] {
+        &self.search_engines
+    }
+
+    /// Whether an API key/token has been configured for `engine_name`.
+    pub fn has_credentials(&self, engine_name: &str) -> bool {
+        self.api_keys.contains_key(engine_name)
+    }
+
+    /// The registered engines that advertise support for `query_type`,
+    /// ordered by ascending rate limit (most conservative first) so callers
+    /// naturally prefer the engine least likely to be throttled.
+    ///
+    /// This performs no network I/O: `CitationDiscovery` only tracks engine
+    /// configuration and routes queries to the right engine locally. Issuing
+    /// the actual HTTP request against the selected engine's `endpoint` is
+    /// left to the caller.
+    pub fn engines_for(&self, query_type: &QueryType) -> Vec<&SearchEngine> {
+        let mut engines: Vec<&SearchEngine> = self
+            .search_engines
+            .iter()
+            .filter(|engine| engine.query_types.contains(query_type))
+            .collect();
+        engines.sort_by(|a, b| {
+            a.rate_limit
+                .partial_cmp(&b.rate_limit)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        engines
+    }
+}
+
+impl Default for CitationDiscovery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Search engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchEngine {
@@ -551,7 +616,14 @@ impl CitationManager {
             .collect()
     }
 
-    /// Generate formatted citation in specified style
+    /// Generate formatted citation in specified style.
+    ///
+    /// For numbered/superscript/author-number in-text styles, the citation's
+    /// ordinal number is only well-defined relative to a bibliography (the
+    /// order it appears in). Called in isolation like this, it is formatted
+    /// as position 1; to get correct, distinct numbers for a set of
+    /// citations use [`Self::generate_bibliography`], which assigns each
+    /// citation its real position in the (sorted) list.
     pub fn format_citation(&self, key: &str, style: Option<&str>) -> Result<String> {
         let citation = self
             .get_citation(key)
@@ -562,7 +634,7 @@ impl CitationManager {
             OptimError::InvalidConfig(format!("Style '{}' not found", style_name))
         })?;
 
-        self.format_citation_with_style(citation, citation_style)
+        self.format_citation_with_style(citation, citation_style, 1)
     }
 
     /// Generate bibliography for multiple citations
@@ -585,8 +657,8 @@ impl CitationManager {
         self.sort_citations(&mut citations, &citation_style.sorting_rules);
 
         let mut bibliography = String::new();
-        for citation in citations {
-            let formatted = self.format_citation_with_style(citation, citation_style)?;
+        for (index, citation) in citations.into_iter().enumerate() {
+            let formatted = self.format_citation_with_style(citation, citation_style, index + 1)?;
             bibliography.push_str(&formatted);
             bibliography.push('\n');
         }
@@ -664,12 +736,13 @@ impl CitationManager {
         &self,
         citation: &Citation,
         style: &CitationStyle,
+        position: usize,
     ) -> Result<String> {
         match style.intext_format {
             InTextFormat::AuthorYear => self.format_author_year(citation, style),
-            InTextFormat::Numbered => self.format_numbered(citation, style),
-            InTextFormat::Superscript => self.format_superscript(citation, style),
-            InTextFormat::AuthorNumber => self.format_author_number(citation, style),
+            InTextFormat::Numbered => self.format_numbered(citation, style, position),
+            InTextFormat::Superscript => self.format_superscript(citation, style, position),
+            InTextFormat::AuthorNumber => self.format_author_number(citation, style, position),
             InTextFormat::Footnote => self.format_footnote(citation, style),
         }
     }
@@ -684,18 +757,32 @@ impl CitationManager {
         Ok(format!("({}, {})", authors, year))
     }
 
-    fn format_numbered(&self, citation: &Citation, style: &CitationStyle) -> Result<String> {
-        // In a real implementation, you'd need to assign numbers based on order
-        Ok(format!("[{}]", 1)) // Placeholder
+    fn format_numbered(
+        &self,
+        _citation: &Citation,
+        _style: &CitationStyle,
+        position: usize,
+    ) -> Result<String> {
+        Ok(format!("[{position}]"))
     }
 
-    fn format_superscript(&self, citation: &Citation, style: &CitationStyle) -> Result<String> {
-        Ok("¹".to_string()) // Placeholder
+    fn format_superscript(
+        &self,
+        _citation: &Citation,
+        _style: &CitationStyle,
+        position: usize,
+    ) -> Result<String> {
+        Ok(to_superscript(position))
     }
 
-    fn format_author_number(&self, citation: &Citation, style: &CitationStyle) -> Result<String> {
+    fn format_author_number(
+        &self,
+        citation: &Citation,
+        style: &CitationStyle,
+        position: usize,
+    ) -> Result<String> {
         let authors = self.format_authors(&citation.authors, &style.formatting_rules);
-        Ok(format!("{} [1]", authors)) // Placeholder
+        Ok(format!("{authors} [{position}]"))
     }
 
     fn format_footnote(&self, citation: &Citation, style: &CitationStyle) -> Result<String> {
@@ -804,11 +891,13 @@ impl CitationManager {
         }
 
         let mut chars = s.chars();
-        let first = chars
-            .next()
-            .expect("unwrap failed")
-            .to_uppercase()
-            .collect::<String>();
+        // The emptiness guard above makes `next()` a `Some`, but reading it out
+        // fallibly means a future change to that guard cannot turn this into a
+        // panic.
+        let Some(leading) = chars.next() else {
+            return String::new();
+        };
+        let first = leading.to_uppercase().collect::<String>();
         first + &chars.as_str().to_lowercase()
     }
 
@@ -1054,63 +1143,246 @@ impl CitationManager {
     }
 }
 
+/// Render a 1-based citation position as Unicode superscript digits, e.g.
+/// `12` -> `"¹²"`. Used by the [`InTextFormat::Superscript`] citation style.
+fn to_superscript(position: usize) -> String {
+    const DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    position
+        .to_string()
+        .chars()
+        .map(|c| c.to_digit(10).map(|d| DIGITS[d as usize]).unwrap_or(c))
+        .collect()
+}
+
+/// Split raw BibTeX source into `(entry_type, key, fields)` tuples.
+///
+/// This is a brace-depth-aware tokenizer rather than a line-oriented scanner:
+/// it walks the input character by character so that field values spanning
+/// multiple physical lines and values containing nested braces (both
+/// extremely common in real-world `.bib` files) are captured correctly. It
+/// is shared by [`BibTeXProcessor::parse_bibtex`] and
+/// [`crate::research::publications::Bibliography::parse_bibtex`] so the
+/// parsing logic has a single source of truth.
+pub(crate) fn parse_bibtex_entries(
+    content: &str,
+) -> Vec<(String, String, HashMap<String, String>)> {
+    let chars: Vec<char> = content.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    let mut entries = Vec::new();
+
+    while i < n {
+        while i < n && chars[i] != '@' {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        i += 1; // skip '@'
+
+        let type_start = i;
+        while i < n && chars[i] != '{' && chars[i] != '(' {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        let entry_type: String = chars[type_start..i]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_lowercase();
+        let open_char = chars[i];
+        let close_char = if open_char == '{' { '}' } else { ')' };
+        i += 1; // skip opening delimiter
+
+        let body_start = i;
+        let mut depth = 1usize;
+        while i < n && depth > 0 {
+            if chars[i] == open_char {
+                depth += 1;
+            } else if chars[i] == close_char {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            i += 1;
+        }
+        let body: String = chars[body_start..i].iter().collect();
+        if i < n {
+            i += 1; // skip closing delimiter
+        }
+
+        if entry_type.is_empty() {
+            continue;
+        }
+
+        if let Some(comma_pos) = body.find(',') {
+            let key = body[..comma_pos].trim().to_string();
+            let fields = parse_bibtex_fields(&body[comma_pos + 1..]);
+            if !key.is_empty() {
+                entries.push((entry_type, key, fields));
+            }
+        }
+    }
+
+    entries
+}
+
+/// Parse the `field = value, field = value, ...` body of a single BibTeX
+/// entry into a name -> value map, honoring brace-delimited values (with
+/// nesting), quote-delimited values, and bare (unquoted) values such as
+/// `year = 2024`. Internal line breaks inside a value are collapsed to a
+/// single space, matching how BibTeX treats whitespace as insignificant.
+fn parse_bibtex_fields(body: &str) -> HashMap<String, String> {
+    let chars: Vec<char> = body.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    let mut fields = HashMap::new();
+
+    while i < n {
+        while i < n && (chars[i].is_whitespace() || chars[i] == ',') {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+
+        let name_start = i;
+        while i < n && chars[i] != '=' {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        let field_name = chars[name_start..i]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_lowercase();
+        i += 1; // skip '='
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+
+        let raw_value: String = if chars[i] == '{' {
+            i += 1;
+            let val_start = i;
+            let mut depth = 1usize;
+            while i < n && depth > 0 {
+                match chars[i] {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let value = chars[val_start..i].iter().collect();
+            if i < n {
+                i += 1; // skip closing '}'
+            }
+            value
+        } else if chars[i] == '"' {
+            i += 1;
+            let val_start = i;
+            while i < n && chars[i] != '"' {
+                i += 1;
+            }
+            let value = chars[val_start..i].iter().collect();
+            if i < n {
+                i += 1; // skip closing '"'
+            }
+            value
+        } else {
+            let val_start = i;
+            while i < n && chars[i] != ',' {
+                i += 1;
+            }
+            chars[val_start..i].iter().collect::<String>()
+        };
+
+        if !field_name.is_empty() {
+            let normalized = raw_value.split_whitespace().collect::<Vec<_>>().join(" ");
+            fields.insert(field_name, normalized);
+        }
+
+        while i < n && chars[i] != ',' {
+            i += 1;
+        }
+    }
+
+    fields
+}
+
 impl BibTeXProcessor {
     /// Create a new BibTeX processor
     pub fn new(settings: BibTeXSettings) -> Self {
         Self { settings }
     }
 
-    /// Parse BibTeX content into citations
-    pub fn parse_bibtex(&self, content: &str) -> Result<Vec<Citation>> {
-        // Simplified BibTeX parser
-        // In a real implementation, you'd want a proper BibTeX parser
-        let mut citations = Vec::new();
-        let lines: Vec<&str> = content.lines().collect();
-        let mut current_entry: Option<(String, PublicationType, HashMap<String, String>)> = None;
+    /// The settings this processor applies.
+    pub fn settings(&self) -> &BibTeXSettings {
+        &self.settings
+    }
 
-        for line in lines {
-            let line = line.trim();
-
-            if line.starts_with('@') {
-                // Save previous entry
-                if let Some((key, pub_type, fields)) = current_entry.take() {
-                    if let Ok(citation) = self.fields_to_citation(key, pub_type, fields) {
-                        citations.push(citation);
-                    }
-                }
-
-                // Parse new entry
-                if let Some(pos) = line.find('{') {
-                    let entry_type = line[1..pos].to_lowercase();
-                    let pub_type = self.bibtex_type_to_publication_type(&entry_type);
-
-                    let key_part = &line[pos + 1..];
-                    if let Some(comma_pos) = key_part.find(',') {
-                        let key = key_part[..comma_pos].trim().to_string();
-                        current_entry = Some((key, pub_type, HashMap::new()));
-                    }
-                }
-            } else if line.contains('=') && current_entry.is_some() {
-                // Parse field
-                if let Some(eq_pos) = line.find('=') {
-                    let field_name = line[..eq_pos].trim().to_lowercase();
-                    let field_value = line[eq_pos + 1..]
-                        .trim()
-                        .trim_start_matches('{')
-                        .trim_end_matches("},")
-                        .trim_start_matches('"')
-                        .trim_end_matches("\",")
-                        .to_string();
-
-                    if let Some((_, _, ref mut fields)) = current_entry {
-                        fields.insert(field_name, field_value);
-                    }
-                }
+    /// Normalise a BibTeX field value according to the configured settings.
+    ///
+    /// * `preserve_case == false` strips BibTeX's protective braces (`{DNA}`
+    ///   becomes `DNA`), which is what makes a style's own capitalisation rules
+    ///   apply. With it set, the braces are kept verbatim.
+    /// * `utf8_conversion` decodes the common LaTeX accent escapes into the
+    ///   characters they denote, so a parsed citation is usable outside LaTeX.
+    fn apply_settings(&self, value: String) -> String {
+        let mut value = if self.settings.preserve_case {
+            value
+        } else {
+            value.replace(['{', '}'], "")
+        };
+        if self.settings.utf8_conversion {
+            for (escape, replacement) in [
+                ("\\\"a", "ä"),
+                ("\\\"o", "ö"),
+                ("\\\"u", "ü"),
+                ("\\'e", "é"),
+                ("\\'a", "á"),
+                ("\\`e", "è"),
+                ("\\^o", "ô"),
+                ("\\~n", "ñ"),
+                ("\\c c", "ç"),
+                ("\\ss", "ß"),
+                ("---", "\u{2014}"),
+                ("--", "\u{2013}"),
+            ] {
+                value = value.replace(escape, replacement);
             }
         }
+        value
+    }
 
-        // Save last entry
-        if let Some((key, pub_type, fields)) = current_entry {
+    /// Parse BibTeX content into citations.
+    ///
+    /// Unlike a line-oriented scanner, this walks the input character by
+    /// character and tracks brace depth, so field values that span multiple
+    /// physical lines (very common for `abstract`/`note` fields) or that
+    /// contain nested braces (e.g. `title = {The {Quick} Brown Fox}`) are
+    /// captured in full instead of being truncated at the first newline.
+    pub fn parse_bibtex(&self, content: &str) -> Result<Vec<Citation>> {
+        let mut citations = Vec::new();
+
+        for (entry_type, key, fields) in parse_bibtex_entries(content) {
+            if matches!(entry_type.as_str(), "comment" | "string" | "preamble") {
+                continue;
+            }
+            let pub_type = self.bibtex_type_to_publication_type(&entry_type);
             if let Ok(citation) = self.fields_to_citation(key, pub_type, fields) {
                 citations.push(citation);
             }
@@ -1140,7 +1412,11 @@ impl BibTeXProcessor {
         pub_type: PublicationType,
         fields: HashMap<String, String>,
     ) -> Result<Citation> {
-        let title = fields.get("title").cloned().unwrap_or_default();
+        // `settings` actually shapes the parse now. Until 0.3.2 it was stored
+        // by `new` and never read, so `preserve_case` and `utf8_conversion`
+        // were inert: a title's protective braces survived into the rendered
+        // citation and LaTeX escapes were never decoded.
+        let title = self.apply_settings(fields.get("title").cloned().unwrap_or_default());
 
         // Parse authors
         let authors = if let Some(author_str) = fields.get("author") {
@@ -1367,5 +1643,179 @@ mod tests {
 
         let results = manager.search_citations("Smith");
         assert_eq!(results.len(), 1);
+    }
+
+    // Regression test for F77: the previous line-oriented BibTeX parser
+    // truncated any field value that spanned multiple physical lines (very
+    // common for `abstract`/`note` fields) at the first newline, and mangled
+    // values containing nested braces.
+    #[test]
+    fn test_parse_bibtex_handles_multiline_and_nested_braces() {
+        let processor = BibTeXProcessor::new(BibTeXSettings::default());
+        let bibtex = r#"
+@article{smith2023multiline,
+  title = {The {Quick} Brown Fox},
+  author = {Smith, John and Doe, Jane},
+  year = {2023},
+  journal = {Journal of Testing},
+  abstract = {This abstract deliberately spans
+              multiple physical lines to verify
+              that continuation lines are not dropped.},
+}
+"#;
+
+        let citations = processor
+            .parse_bibtex(bibtex)
+            .expect("parse should succeed");
+        assert_eq!(citations.len(), 1);
+        let citation = &citations[0];
+        assert_eq!(citation.key, "smith2023multiline");
+        assert_eq!(citation.title, "The {Quick} Brown Fox");
+        assert_eq!(citation.year, Some(2023));
+        assert_eq!(citation.authors.len(), 2);
+
+        let abstract_text = citation
+            .abstracttext
+            .as_ref()
+            .expect("abstract should be captured");
+        assert!(
+            abstract_text.contains("multiple physical lines"),
+            "continuation lines were dropped: {abstract_text:?}"
+        );
+        assert!(
+            !abstract_text.contains('\n'),
+            "internal newlines should be normalized to spaces: {abstract_text:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_bibtex_handles_multiple_entries() {
+        let processor = BibTeXProcessor::new(BibTeXSettings::default());
+        let bibtex = "@article{first2020,\n  title = {First},\n  year = {2020},\n}\n\
+@inproceedings{second2021,\n  title = {Second},\n  year = {2021},\n}\n";
+
+        let citations = processor
+            .parse_bibtex(bibtex)
+            .expect("parse should succeed");
+        assert_eq!(citations.len(), 2);
+        assert_eq!(citations[0].key, "first2020");
+        assert_eq!(citations[1].key, "second2021");
+        assert_eq!(
+            citations[1].publication_type,
+            PublicationType::InProceedings
+        );
+    }
+
+    // Regression test for F24: `CitationDiscovery` was exported with fully
+    // private fields and zero methods (not even a constructor).
+    #[test]
+    fn test_citation_discovery_is_constructible_and_routes_queries() {
+        let doi_engine = SearchEngine {
+            name: "crossref".to_string(),
+            endpoint: "https://api.crossref.org".to_string(),
+            rate_limit: 5.0,
+            query_types: vec![QueryType::DOI, QueryType::Title],
+        };
+        let arxiv_engine = SearchEngine {
+            name: "arxiv".to_string(),
+            endpoint: "https://export.arxiv.org/api".to_string(),
+            rate_limit: 1.0,
+            query_types: vec![QueryType::ArXiv, QueryType::Title],
+        };
+
+        let mut discovery = CitationDiscovery::new()
+            .with_search_engine(doi_engine)
+            .with_search_engine(arxiv_engine);
+        discovery.set_api_key("crossref", "secret-token");
+
+        assert_eq!(discovery.search_engines().len(), 2);
+        assert!(discovery.has_credentials("crossref"));
+        assert!(!discovery.has_credentials("arxiv"));
+
+        let doi_engines = discovery.engines_for(&QueryType::DOI);
+        assert_eq!(doi_engines.len(), 1);
+        assert_eq!(doi_engines[0].name, "crossref");
+
+        // Both engines support Title search; the lower rate-limit engine
+        // (arxiv, 1 req/s) should be preferred over crossref (5 req/s).
+        let title_engines = discovery.engines_for(&QueryType::Title);
+        assert_eq!(title_engines.len(), 2);
+        assert_eq!(title_engines[0].name, "arxiv");
+
+        assert!(discovery.engines_for(&QueryType::ISBN).is_empty());
+    }
+
+    fn make_citation(key: &str, last_name: &str, year: u32) -> Citation {
+        let now = Utc::now();
+        Citation {
+            key: key.to_string(),
+            publication_type: PublicationType::Article,
+            title: format!("Paper by {last_name}"),
+            authors: vec![Author {
+                first_name: "A".to_string(),
+                last_name: last_name.to_string(),
+                middle_name: None,
+                suffix: None,
+                orcid: None,
+                affiliation: None,
+            }],
+            year: Some(year),
+            venue: Some("Journal".to_string()),
+            volume: None,
+            issue: None,
+            pages: None,
+            doi: None,
+            url: None,
+            abstracttext: None,
+            keywords: Vec::new(),
+            notes: None,
+            custom_fields: HashMap::new(),
+            attachments: Vec::new(),
+            groups: Vec::new(),
+            import_source: None,
+            created_at: now,
+            modified_at: now,
+        }
+    }
+
+    // Regression test for F25: every entry in a numbered-style bibliography
+    // was rendered as "[1]" regardless of its real position in the list.
+    #[test]
+    fn test_generate_bibliography_assigns_distinct_numbers() {
+        let mut manager = CitationManager::new();
+        manager
+            .add_citation(make_citation("adams2020", "Adams", 2020))
+            .expect("add should succeed");
+        manager
+            .add_citation(make_citation("zimmerman2021", "Zimmerman", 2021))
+            .expect("add should succeed");
+
+        let bibliography = manager
+            .generate_bibliography(
+                &["adams2020".to_string(), "zimmerman2021".to_string()],
+                Some("IEEE"),
+            )
+            .expect("bibliography generation should succeed");
+
+        let lines: Vec<&str> = bibliography.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 2);
+        // Author-ascending sort puts Adams (position 1) before Zimmerman (position 2).
+        assert!(
+            lines[0].starts_with("[1]"),
+            "first entry should be numbered [1]: {:?}",
+            lines[0]
+        );
+        assert!(
+            lines[1].starts_with("[2]"),
+            "second entry should be numbered [2], not a duplicate [1]: {:?}",
+            lines[1]
+        );
+    }
+
+    #[test]
+    fn test_to_superscript_renders_multi_digit_positions() {
+        assert_eq!(to_superscript(1), "¹");
+        assert_eq!(to_superscript(12), "¹²");
+        assert_eq!(to_superscript(103), "¹⁰³");
     }
 }

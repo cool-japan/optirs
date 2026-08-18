@@ -423,8 +423,7 @@ impl GpuMemorySystem {
         let memory_regions: HashMap<usize, management::MemoryRegion> = self
             .memory_regions
             .iter()
-            .enumerate()
-            .map(|(i, (ptr, alloc))| {
+            .map(|(ptr, alloc)| {
                 let mut objects = HashMap::new();
                 objects.insert(
                     *ptr as usize,
@@ -486,8 +485,7 @@ impl GpuMemorySystem {
             let memory_regions: HashMap<usize, management::MemoryRegion> = self
                 .memory_regions
                 .iter()
-                .enumerate()
-                .map(|(i, (ptr, alloc))| {
+                .map(|(ptr, alloc)| {
                     let mut objects = HashMap::new();
                     objects.insert(
                         *ptr as usize,
@@ -551,7 +549,7 @@ impl GpuMemorySystem {
     }
 
     /// Update allocation statistics
-    fn update_allocation_stats(&mut self, size: usize, duration: Duration) {
+    fn update_allocation_stats(&mut self, size: usize, _duration: Duration) {
         self.stats.total_allocations += 1;
         self.stats.bytes_allocated += size as u64;
         self.stats.active_allocations += 1;
@@ -692,22 +690,30 @@ impl ThreadSafeGpuMemorySystem {
         size: usize,
         alignment: Option<usize>,
     ) -> Result<*mut c_void, GpuMemorySystemError> {
-        let mut system = self.system.lock().expect("lock poisoned");
+        let mut system = self.system.lock().map_err(|_| {
+            GpuMemorySystemError::InternalError("memory system lock poisoned".into())
+        })?;
         system.allocate(size, alignment)
     }
 
     pub fn free(&self, ptr: *mut c_void) -> Result<(), GpuMemorySystemError> {
-        let mut system = self.system.lock().expect("lock poisoned");
+        let mut system = self.system.lock().map_err(|_| {
+            GpuMemorySystemError::InternalError("memory system lock poisoned".into())
+        })?;
         system.free(ptr)
     }
 
     pub fn get_stats(&self) -> SystemStats {
-        let mut system = self.system.lock().expect("lock poisoned");
+        // Infallible accessor: recover the guard even if a previous holder
+        // panicked, rather than propagating the poison as a panic.
+        let mut system = self.system.lock().unwrap_or_else(|e| e.into_inner());
         system.get_stats()
     }
 
     pub fn optimize(&self) -> Result<(), GpuMemorySystemError> {
-        let mut system = self.system.lock().expect("lock poisoned");
+        let mut system = self.system.lock().map_err(|_| {
+            GpuMemorySystemError::InternalError("memory system lock poisoned".into())
+        })?;
         system.optimize()
     }
 }

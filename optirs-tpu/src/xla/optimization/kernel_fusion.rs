@@ -6,14 +6,13 @@ use std::fmt::Debug;
 // multi-output fusion to reduce memory traffic and improve performance.
 
 use scirs2_core::numeric::Float;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::super::frontend::{
-    DataType, OperandId, OperationAttributes, OperationId, OperationType, TensorShape,
-    XLAComputation, XLAOperation,
+    OperandId, OperationAttributes, OperationId, OperationType, XLAComputation, XLAOperation,
 };
-use super::{OptimizationPass, OptimizationPipelineConfig};
-use crate::error::{OptimError, Result};
+use super::OptimizationPipelineConfig;
+use crate::error::Result;
 
 /// Kernel fusion engine for XLA computations
 pub struct KernelFusionEngine<T: Float + Debug + Send + Sync + 'static> {
@@ -171,6 +170,9 @@ pub struct ElementwiseFusionPass<T: Float + Debug + Send + Sync + 'static> {
 
     /// Supported elementwise operations
     supported_ops: HashSet<OperationType>,
+
+    /// Upper bound on the number of operations in a single fused cluster
+    max_cluster_size: usize,
 }
 
 /// Producer-consumer fusion pass
@@ -355,62 +357,74 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> KernelF
 
     /// Fuse kernels in computation
     pub fn fuse_kernels(&mut self, computation: XLAComputation<T>) -> Result<XLAComputation<T>> {
+        let (fused, _changed) = self.fuse_kernels_tracked(computation)?;
+        Ok(fused)
+    }
+
+    /// Fuse kernels, reporting whether the computation actually changed.
+    ///
+    /// `fusions_by_type` counts fusions that were *materialized*, not
+    /// opportunities that were merely enumerated. Strategies that are not
+    /// implemented contribute no entry at all rather than reporting the size of
+    /// their pattern table as if it were work performed.
+    pub fn fuse_kernels_tracked(
+        &mut self,
+        computation: XLAComputation<T>,
+    ) -> Result<(XLAComputation<T>, bool)> {
         let mut current_computation = computation;
         self.fusion_stats.ops_before_fusion = current_computation.operations.len();
+        self.fusion_stats.fusions_by_type.clear();
 
-        // Apply elementwise fusion
+        // Elementwise fusion is the one strategy with a real implementation.
         if self.config.enable_elementwise_fusion {
-            current_computation = self.elementwise_fusion.apply_fusion(current_computation)?;
-            self.fusion_stats.fusions_by_type.insert(
-                "elementwise".to_string(),
-                self.elementwise_fusion.clusters.len(),
-            );
+            let fused = self
+                .elementwise_fusion
+                .apply_fusion_tracked(&mut current_computation)?;
+            if fused > 0 {
+                self.fusion_stats
+                    .fusions_by_type
+                    .insert("elementwise".to_string(), fused);
+            }
         }
-
-        // Apply producer-consumer fusion
-        if self.config.enable_producer_consumer_fusion {
-            current_computation = self
-                .producer_consumer_fusion
-                .apply_fusion(current_computation)?;
-            self.fusion_stats.fusions_by_type.insert(
-                "producer_consumer".to_string(),
-                self.producer_consumer_fusion.chains.len(),
-            );
-        }
-
-        // Apply loop fusion
-        if self.config.enable_loop_fusion {
-            current_computation = self.loop_fusion.apply_fusion(current_computation)?;
-            self.fusion_stats
-                .fusions_by_type
-                .insert("loop".to_string(), self.loop_fusion.fusion_candidates.len());
-        }
-
-        // Apply multi-output fusion
-        if self.config.enable_multi_output_fusion {
-            current_computation = self.multi_output_fusion.apply_fusion(current_computation)?;
-            self.fusion_stats.fusions_by_type.insert(
-                "multi_output".to_string(),
-                self.multi_output_fusion.opportunities.len(),
-            );
-        }
-
-        // Apply convolution fusion
-        if self.config.enable_convolution_fusion {
-            current_computation = self.convolution_fusion.apply_fusion(current_computation)?;
-            self.fusion_stats.fusions_by_type.insert(
-                "convolution".to_string(),
-                self.convolution_fusion.patterns.len(),
-            );
-        }
-
-        // Apply custom fusion
-        current_computation = self.custom_fusion.apply_fusion(current_computation)?;
 
         self.fusion_stats.ops_after_fusion = current_computation.operations.len();
         self.fusion_stats.total_fusions = self.fusion_stats.fusions_by_type.values().sum();
+        self.fusion_stats.memory_savings = self
+            .elementwise_fusion
+            .clusters
+            .iter()
+            .map(|cluster| cluster.memory_requirements)
+            .sum();
+        self.fusion_stats.estimated_speedup = self
+            .elementwise_fusion
+            .clusters
+            .iter()
+            .map(|cluster| cluster.estimated_benefit)
+            .sum::<f64>();
 
-        Ok(current_computation)
+        Ok((current_computation, self.fusion_stats.total_fusions > 0))
+    }
+
+    /// Fusion strategies that are configured but not implemented.
+    ///
+    /// Producer-consumer, loop, multi-output, convolution and custom fusion
+    /// have no implementation in this crate. Enabling them is reported here
+    /// instead of being silently accepted while the pass does nothing.
+    pub fn unimplemented_strategies(&self) -> Vec<&'static str> {
+        let mut unimplemented = Vec::new();
+        if self.config.enable_producer_consumer_fusion {
+            unimplemented.push("producer_consumer");
+        }
+        if self.config.enable_loop_fusion {
+            unimplemented.push("loop");
+        }
+        if self.config.enable_multi_output_fusion {
+            unimplemented.push("multi_output");
+        }
+        if self.config.enable_convolution_fusion {
+            unimplemented.push("convolution");
+        }
+        unimplemented
     }
 
     /// Get fusion statistics
@@ -433,7 +447,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> KernelF
 
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> ElementwiseFusionPass<T> {
     /// Create new elementwise fusion pass
-    pub fn new(_config: &FusionConfig) -> Self {
+    pub fn new(config: &FusionConfig) -> Self {
         let mut supported_ops = HashSet::new();
         supported_ops.insert(OperationType::Add);
         supported_ops.insert(OperationType::Multiply);
@@ -449,6 +463,7 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
         Self {
             clusters: Vec::new(),
             supported_ops,
+            max_cluster_size: config.max_cluster_size.max(2),
         }
     }
 
@@ -457,9 +472,15 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
         &mut self,
         mut computation: XLAComputation<T>,
     ) -> Result<XLAComputation<T>> {
-        self.find_elementwise_clusters(&computation)?;
-        self.create_fused_operations(&mut computation)?;
+        self.apply_fusion_tracked(&mut computation)?;
         Ok(computation)
+    }
+
+    /// Apply elementwise fusion, reporting how many clusters were actually
+    /// materialized into fused operations.
+    pub fn apply_fusion_tracked(&mut self, computation: &mut XLAComputation<T>) -> Result<usize> {
+        self.find_elementwise_clusters(computation)?;
+        self.create_fused_operations(computation)
     }
 
     /// Find elementwise fusion clusters
@@ -483,6 +504,10 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
     }
 
     /// Build elementwise cluster starting from an operation
+    ///
+    /// The cluster grows backwards through producers. A producer joins only if
+    /// fusing it is legal (see [`Self::can_fuse_operations`]); otherwise its
+    /// result stays an external input of the cluster.
     fn build_elementwise_cluster(
         &self,
         start_op: &XLAOperation<T>,
@@ -490,46 +515,87 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
         visited: &mut HashSet<OperationId>,
     ) -> Result<FusionCluster<T>> {
         let mut cluster_ops = vec![start_op.id];
+        let mut cluster_set: HashSet<OperationId> = HashSet::new();
+        cluster_set.insert(start_op.id);
+
         let mut queue = VecDeque::new();
-        let mut inputs = HashSet::new();
-        let mut outputs = HashSet::new();
+        let mut inputs: Vec<OperandId> = Vec::new();
 
         queue.push_back(start_op.id);
         visited.insert(start_op.id);
 
         while let Some(op_id) = queue.pop_front() {
-            if let Some(operation) = computation.operations.iter().find(|op| op.id == op_id) {
-                // Add inputs from outside cluster
-                for &input_id in &operation.inputs {
-                    if let Some(producer) = self.find_producer_operation(input_id, computation) {
-                        if self.is_elementwise_operation(&producer.op_type)
+            let Some(operation) = computation.operations.iter().find(|op| op.id == op_id) else {
+                continue;
+            };
+
+            for &input_id in &operation.inputs {
+                let producer = self.find_producer_operation(input_id, computation);
+
+                let fusible = match producer {
+                    Some(producer) => {
+                        self.is_elementwise_operation(&producer.op_type)
                             && !visited.contains(&producer.id)
-                            && self.can_fuse_operations(operation, producer)
-                        {
-                            cluster_ops.push(producer.id);
-                            queue.push_back(producer.id);
-                            visited.insert(producer.id);
-                        } else {
-                            inputs.insert(input_id);
+                            && cluster_ops.len() < self.max_cluster_size
+                            && self.can_fuse_operations(producer, operation, computation)
+                    }
+                    None => false,
+                };
+
+                match (fusible, producer) {
+                    (true, Some(producer)) => {
+                        cluster_ops.push(producer.id);
+                        cluster_set.insert(producer.id);
+                        queue.push_back(producer.id);
+                        visited.insert(producer.id);
+                    }
+                    _ => {
+                        if !inputs.contains(&input_id) {
+                            inputs.push(input_id);
                         }
-                    } else {
-                        inputs.insert(input_id);
                     }
                 }
-
-                // Check if output is used outside cluster
-                outputs.insert(operation.output);
             }
         }
 
+        // Operands the cluster produces that something outside still needs.
+        // Anything else is purely internal and disappears into the fused body.
+        let declared_outputs: HashSet<OperandId> =
+            computation.outputs.iter().map(|o| o.operand).collect();
+
+        let mut outputs: Vec<OperandId> = Vec::new();
+        for &op_id in &cluster_ops {
+            let Some(operation) = computation.operations.iter().find(|op| op.id == op_id) else {
+                continue;
+            };
+
+            let escapes = declared_outputs.contains(&operation.output)
+                || computation.operations.iter().any(|other| {
+                    !cluster_set.contains(&other.id) && other.inputs.contains(&operation.output)
+                });
+
+            if escapes && !outputs.contains(&operation.output) {
+                outputs.push(operation.output);
+            }
+        }
+
+        // Drop any operand that is both produced and consumed inside the
+        // cluster from the external input list.
+        let produced_inside: HashSet<OperandId> = cluster_ops
+            .iter()
+            .filter_map(|id| computation.operations.iter().find(|op| op.id == *id))
+            .map(|op| op.output)
+            .collect();
+        inputs.retain(|operand| !produced_inside.contains(operand));
+
         let estimated_benefit = self.estimate_elementwise_benefit(&cluster_ops);
-        let memory_requirements = self.estimate_memory_requirements(&cluster_ops);
+        let memory_requirements = self.estimate_memory_requirements(&cluster_ops, computation);
 
         let cluster = FusionCluster {
             id: format!("elementwise_cluster_{}", start_op.id.0),
             operations: cluster_ops,
-            inputs: inputs.into_iter().collect(),
-            outputs: outputs.into_iter().collect(),
+            inputs,
+            outputs,
             fusion_type: FusionType::Elementwise,
             estimated_benefit,
             memory_requirements,
@@ -545,10 +611,49 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
         self.supported_ops.contains(op_type)
     }
 
-    /// Check if two operations can be fused
-    fn can_fuse_operations(&self, _op1: &XLAOperation<T>, _op2: &XLAOperation<T>) -> bool {
-        // Simplified fusion compatibility check
-        true
+    /// Legality check for fusing `producer` into the consumer's cluster.
+    ///
+    /// Two conditions must hold:
+    ///
+    /// 1. **Shape compatibility** — elementwise fusion evaluates the whole
+    ///    cluster over one iteration space, so producer and consumer must agree
+    ///    on their output shape.
+    /// 2. **No external consumers** — if anything other than `consumer` reads
+    ///    the producer's result, fusing it would either duplicate the
+    ///    computation or leave a dangling operand.
+    ///
+    /// Returning `true` unconditionally (the previous behaviour) produced
+    /// clusters that silently changed program semantics.
+    fn can_fuse_operations(
+        &self,
+        producer: &XLAOperation<T>,
+        consumer: &XLAOperation<T>,
+        computation: &XLAComputation<T>,
+    ) -> bool {
+        let producer_shape = computation.operands.get(&producer.output).map(|o| &o.shape);
+        let consumer_shape = computation.operands.get(&consumer.output).map(|o| &o.shape);
+
+        match (producer_shape, consumer_shape) {
+            (Some(a), Some(b)) if a.dimensions == b.dimensions => {}
+            _ => return false,
+        }
+
+        // A value the computation returns must remain individually addressable.
+        if computation
+            .outputs
+            .iter()
+            .any(|output| output.operand == producer.output)
+        {
+            return false;
+        }
+
+        let external_consumers = computation
+            .operations
+            .iter()
+            .filter(|op| op.id != consumer.id && op.inputs.contains(&producer.output))
+            .count();
+
+        external_consumers == 0
     }
 
     /// Find producer operation for operand
@@ -564,50 +669,180 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Element
     }
 
     /// Estimate benefit of elementwise fusion
+    ///
+    /// Fusing `n` operations removes `n - 1` intermediate round trips to
+    /// memory. `saturating_sub` keeps a single-operation cluster from
+    /// underflowing `usize`.
     fn estimate_elementwise_benefit(&self, operations: &[OperationId]) -> f64 {
-        // Benefit increases with cluster size (memory access reduction)
-        (operations.len() - 1) as f64 * 0.2
+        operations.len().saturating_sub(1) as f64 * 0.2
     }
 
-    /// Estimate memory requirements for cluster
-    fn estimate_memory_requirements(&self, operations: &[OperationId]) -> usize {
-        // Simplified estimation
-        operations.len() * 1024 // 1KB per operation
+    /// Estimate the live memory a cluster needs, from real operand extents.
+    fn estimate_memory_requirements(
+        &self,
+        operations: &[OperationId],
+        computation: &XLAComputation<T>,
+    ) -> usize {
+        operations
+            .iter()
+            .filter_map(|id| computation.operations.iter().find(|op| op.id == *id))
+            .filter_map(|op| computation.operands.get(&op.output))
+            .map(|operand| {
+                operand
+                    .shape
+                    .element_count
+                    .saturating_mul(std::mem::size_of::<T>())
+            })
+            .sum()
     }
 
-    /// Create fused operations in computation
-    fn create_fused_operations(&self, computation: &mut XLAComputation<T>) -> Result<()> {
+    /// Materialize each cluster as a fused operation.
+    ///
+    /// Clusters with several escaping results emit a `Tuple`-producing fused
+    /// operation followed by one `GetTupleElement` per result, so that every
+    /// original operand keeps a definition. The previous implementation kept
+    /// only `outputs[0]` and silently dropped the rest.
+    ///
+    /// Returns the number of clusters actually fused.
+    fn create_fused_operations(&self, computation: &mut XLAComputation<T>) -> Result<usize> {
+        let mut fused = 0usize;
+
         for cluster in &self.clusters {
-            // Remove original operations
+            if cluster.operations.len() < 2 {
+                continue;
+            }
+
+            let Some(&primary_output) = cluster.outputs.first() else {
+                // A cluster nothing reads is dead code, not a fusion
+                // opportunity; leave it for dead-code elimination.
+                continue;
+            };
+
+            // Insert where the last cluster member sat: in a dependency-ordered
+            // operation list every external input is defined before that point,
+            // and every consumer comes after it.
+            let insert_at = computation
+                .operations
+                .iter()
+                .rposition(|op| cluster.operations.contains(&op.id))
+                .map(|pos| pos + 1)
+                .unwrap_or(computation.operations.len());
+
+            let mut new_ops: Vec<XLAOperation<T>> = Vec::new();
+            let mut next_op_id = computation.next_free_operation_id().0;
+
+            let fused_custom = super::super::frontend::graph_capture::CustomOperation {
+                name: format!("fused_{}", cluster.id),
+                custom_attributes: HashMap::new(),
+                backend_config: Some("elementwise_fusion".to_string()),
+            };
+
+            if cluster.outputs.len() == 1 {
+                new_ops.push(XLAOperation {
+                    id: super::super::frontend::graph_capture::OperationId(next_op_id),
+                    op_type: OperationType::Custom(fused_custom),
+                    inputs: cluster.inputs.clone(),
+                    output: primary_output,
+                    attributes: OperationAttributes::default(),
+                    performance: Default::default(),
+                    memory_requirements: Default::default(),
+                    source_location: None,
+                    _phantom: std::marker::PhantomData,
+                });
+            } else {
+                // Multi-output cluster: the fused op yields a tuple, and each
+                // original operand is re-defined by a GetTupleElement.
+                let tuple_operand = computation.allocate_operand_id();
+                let tuple_shape = {
+                    let mut shape = super::super::frontend::graph_capture::TensorShape::default();
+                    shape.tuple_shapes = cluster
+                        .outputs
+                        .iter()
+                        .filter_map(|id| computation.operands.get(id))
+                        .map(|operand| operand.shape.clone())
+                        .collect();
+                    shape
+                };
+
+                let template = computation.operands.get(&primary_output).cloned();
+                let tuple_operand_value = super::super::frontend::graph_capture::Operand {
+                    id: tuple_operand,
+                    shape: tuple_shape,
+                    layout: template
+                        .as_ref()
+                        .map(|o| o.layout.clone())
+                        .unwrap_or_default(),
+                    dtype: template
+                        .as_ref()
+                        .map(|o| o.dtype)
+                        .unwrap_or(super::super::frontend::graph_capture::DataType::F32),
+                    metadata: Default::default(),
+                    _phantom: std::marker::PhantomData,
+                };
+                computation
+                    .operands
+                    .insert(tuple_operand, tuple_operand_value);
+
+                new_ops.push(XLAOperation {
+                    id: super::super::frontend::graph_capture::OperationId(next_op_id),
+                    op_type: OperationType::Custom(fused_custom),
+                    inputs: cluster.inputs.clone(),
+                    output: tuple_operand,
+                    attributes: OperationAttributes::default(),
+                    performance: Default::default(),
+                    memory_requirements: Default::default(),
+                    source_location: None,
+                    _phantom: std::marker::PhantomData,
+                });
+
+                for (index, &operand) in cluster.outputs.iter().enumerate() {
+                    next_op_id = next_op_id.saturating_add(1);
+                    let mut attributes = OperationAttributes::default();
+                    attributes.attributes.insert(
+                        "tuple_index".to_string(),
+                        super::super::frontend::graph_capture::AttributeValue::Int(index as i64),
+                    );
+
+                    new_ops.push(XLAOperation {
+                        id: super::super::frontend::graph_capture::OperationId(next_op_id),
+                        op_type: OperationType::GetTupleElement,
+                        inputs: vec![tuple_operand],
+                        output: operand,
+                        attributes,
+                        performance: Default::default(),
+                        memory_requirements: Default::default(),
+                        source_location: None,
+                        _phantom: std::marker::PhantomData,
+                    });
+                }
+            }
+
+            // Remove the originals, then splice the replacement in.
+            let removed_before_insert = computation.operations
+                [..insert_at.min(computation.operations.len())]
+                .iter()
+                .filter(|op| cluster.operations.contains(&op.id))
+                .count();
+
             computation
                 .operations
                 .retain(|op| !cluster.operations.contains(&op.id));
 
-            // Create fused operation
-            let fused_op = XLAOperation {
-                id: super::super::frontend::graph_capture::OperationId(
-                    computation.operations.len(),
-                ),
-                op_type: OperationType::Custom(
-                    super::super::frontend::graph_capture::CustomOperation {
-                        name: format!("fused_{}", cluster.id),
-                        custom_attributes: HashMap::new(),
-                        backend_config: Some("elementwise_fusion".to_string()),
-                    },
-                ),
-                inputs: cluster.inputs.clone(),
-                output: cluster.outputs[0], // Use first output as primary
-                attributes: OperationAttributes::default(),
-                performance: Default::default(),
-                memory_requirements: Default::default(),
-                source_location: None,
-                _phantom: std::marker::PhantomData,
-            };
+            let splice_at = insert_at
+                .saturating_sub(removed_before_insert)
+                .min(computation.operations.len());
+            for (offset, op) in new_ops.into_iter().enumerate() {
+                computation.operations.insert(splice_at + offset, op);
+            }
 
-            computation.operations.push(fused_op);
+            fused += 1;
         }
 
-        Ok(())
+        if fused > 0 {
+            computation.rebuild_dependencies();
+        }
+
+        Ok(fused)
     }
 }
 
@@ -623,17 +858,119 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
         }
     }
 
-    /// Apply producer-consumer fusion
+    /// Run producer-consumer chain detection over a computation.
+    ///
+    /// This is a *detection* pass: it identifies the chains and scores them, and
+    /// returns the computation unchanged. Materializing a chain into a single
+    /// fused operation is [`ElementwiseFusionPass`]'s job -- it already builds
+    /// real fused operations out of elementwise clusters, and duplicating that
+    /// rewrite here would fuse the same operations twice.
     pub fn apply_fusion(&mut self, computation: XLAComputation<T>) -> Result<XLAComputation<T>> {
         self.find_producer_consumer_chains(&computation)?;
-        // Implementation would create fused operations
         Ok(computation)
     }
 
-    /// Find producer-consumer chains
-    fn find_producer_consumer_chains(&mut self, _computation: &XLAComputation<T>) -> Result<()> {
+    /// Chains found by the most recent [`Self::apply_fusion`] call, highest
+    /// scoring first.
+    pub fn chains(&self) -> &[ProducerConsumerChain] {
+        &self.chains
+    }
+
+    /// Find producer-consumer chains.
+    ///
+    /// A chain is a maximal run of operations where each operation's output
+    /// operand is consumed by exactly one other operation, so the intermediate
+    /// tensor never has to be written out to memory if the pair is fused. The
+    /// run stops at `max_chain_length`, at an operand with several consumers,
+    /// and at an operand that is a declared computation output (which must be
+    /// materialized regardless).
+    ///
+    /// The score is the real memory traffic a fusion would save: the byte size
+    /// of every intermediate tensor inside the chain.
+    fn find_producer_consumer_chains(&mut self, computation: &XLAComputation<T>) -> Result<()> {
         self.chains.clear();
-        // Chain detection logic would go here
+        if self.max_chain_length < 2 {
+            return Ok(());
+        }
+
+        // How many operations consume each operand, and which operation
+        // produces it.
+        let mut consumers: HashMap<OperandId, Vec<OperationId>> = HashMap::new();
+        let mut producer: HashMap<OperandId, OperationId> = HashMap::new();
+        for operation in &computation.operations {
+            producer.insert(operation.output, operation.id);
+            for input in &operation.inputs {
+                consumers.entry(*input).or_default().push(operation.id);
+            }
+        }
+
+        let by_id: HashMap<OperationId, &XLAOperation<T>> = computation
+            .operations
+            .iter()
+            .map(|operation| (operation.id, operation))
+            .collect();
+
+        let outputs: HashSet<OperandId> = computation
+            .outputs
+            .iter()
+            .map(|spec| spec.operand)
+            .collect();
+
+        let mut claimed: HashSet<OperationId> = HashSet::new();
+
+        for operation in &computation.operations {
+            if claimed.contains(&operation.id) {
+                continue;
+            }
+
+            let mut chain = vec![operation.id];
+            let mut score = 0.0f64;
+            let mut current = operation;
+
+            while chain.len() < self.max_chain_length {
+                // The intermediate must be consumed exactly once and must not be
+                // a computation output.
+                if outputs.contains(&current.output) {
+                    break;
+                }
+                let Some(next_ids) = consumers.get(&current.output) else {
+                    break;
+                };
+                if next_ids.len() != 1 {
+                    break;
+                }
+                let Some(next) = next_ids.first().and_then(|id| by_id.get(id)).copied() else {
+                    break;
+                };
+                if claimed.contains(&next.id) {
+                    break;
+                }
+
+                // Bytes that would not have to round-trip through memory.
+                if let Some(operand) = computation.operands.get(&current.output) {
+                    score += operand.shape.element_count as f64;
+                }
+
+                chain.push(next.id);
+                current = next;
+            }
+
+            if chain.len() >= 2 {
+                for id in &chain {
+                    claimed.insert(*id);
+                }
+                // Every intermediate that stays in registers is memory the
+                // fused kernel never touches.
+                let memory_reduction = score as usize;
+                self.chains.push(ProducerConsumerChain {
+                    operations: chain,
+                    score,
+                    memory_reduction,
+                });
+            }
+        }
+
+        self.chains.sort_by(|a, b| b.score.total_cmp(&a.score));
         Ok(())
     }
 }

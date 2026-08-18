@@ -2,17 +2,57 @@
 
 use super::attention::MultiHeadAttention;
 use super::config::TransformerArchConfig;
-use super::feedforward::FeedForwardNetwork;
+use super::feedforward::{FeedForwardCache, FeedForwardNetwork};
 use super::layers::{
     DropoutLayer, EmbeddingLayer, LayerNormalization, OutputProjection, ResidualConnections,
 };
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array2, Array3};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
+/// Activations cached during a training forward pass so that
+/// [`TransformerArchitecture::backward`] can compute gradients without
+/// recomputing the forward pass.
+#[derive(Debug, Clone)]
+pub struct ArchitectureCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
+    /// Raw input to the embedding projection
+    pub embedding_input: Array2<T>,
+
+    /// Per-layer caches, in forward order
+    pub layers: Vec<LayerCache<T>>,
+
+    /// Input to the final layer normalization
+    pub final_norm_input: Array2<T>,
+
+    /// Input to the output projection
+    pub projection_input: Array2<T>,
+}
+
+/// Activations cached for a single transformer layer.
+#[derive(Debug, Clone)]
+pub struct LayerCache<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
+    /// Input to the layer
+    pub input: Array2<T>,
+
+    /// Output of the attention sub-layer including its residual
+    pub attention_residual: Array2<T>,
+
+    /// Input to the feed-forward normalization
+    pub ff_norm_input: Array2<T>,
+
+    /// Activations of the feed-forward sub-layer
+    pub feed_forward: FeedForwardCache<T>,
+}
+
 /// Core transformer architecture
-pub struct TransformerArchitecture<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerArchitecture<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Transformer layers
     layers: Vec<TransformerLayer<T>>,
 
@@ -32,7 +72,9 @@ pub struct TransformerArchitecture<T: Float + Debug + Send + Sync + 'static> {
     config: TransformerArchConfig,
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> TransformerArchitecture<T> {
+impl<T: Float + Debug + 'static + scirs2_core::ndarray::ScalarOperand + Send + Sync>
+    TransformerArchitecture<T>
+{
     /// Create new transformer architecture
     pub fn new(config: TransformerArchConfig) -> Result<Self> {
         let mut layers = Vec::new();
@@ -124,10 +166,93 @@ impl<T: Float + Debug + 'static + Send + Sync> TransformerArchitecture<T> {
     pub fn get_config(&self) -> &TransformerArchConfig {
         &self.config
     }
+
+    /// Switch every dropout in the architecture between training and inference.
+    pub fn set_training(&mut self, training: bool) {
+        self.dropout.set_training(training);
+        for layer in &mut self.layers {
+            layer.set_training(training);
+        }
+    }
+
+    /// Forward pass that records the activations needed for [`Self::backward`].
+    ///
+    /// Dropout is bypassed so that the cached activations correspond exactly to
+    /// the values the gradients are computed against.
+    pub fn forward_with_cache(
+        &mut self,
+        input: &Array2<T>,
+    ) -> Result<(Array2<T>, ArchitectureCache<T>)> {
+        let embedding_input = input.clone();
+        let mut hidden_states = self.input_embedding.forward(input)?;
+
+        let mut layer_caches = Vec::with_capacity(self.layers.len());
+        for layer in &mut self.layers {
+            let (next, cache) = layer.forward_with_cache(&hidden_states)?;
+            layer_caches.push(cache);
+            hidden_states = next;
+        }
+
+        let final_norm_input = hidden_states.clone();
+        let projection_input = self.layer_norm.forward(&hidden_states)?;
+        let output = self.output_projection.forward(&projection_input)?;
+
+        Ok((
+            output,
+            ArchitectureCache {
+                embedding_input,
+                layers: layer_caches,
+                final_norm_input,
+                projection_input,
+            },
+        ))
+    }
+
+    /// Backward pass over the readout, feed-forward and embedding parameters.
+    ///
+    /// Gradients flow exactly through the output projection, the final layer
+    /// normalization, each layer's feed-forward sub-layer (with its own layer
+    /// normalization) and the input projection. The attention sub-layer is
+    /// treated as a first-order (residual-path) pass-through: its identity
+    /// branch carries the gradient exactly, while the attention Jacobian itself
+    /// is not differentiated, so the attention projections stay frozen. This is
+    /// the first-order approximation the module documents; end-to-end
+    /// differentiation of the attention weights is not implemented.
+    ///
+    /// Returns the total squared gradient magnitude that was applied, which is
+    /// zero exactly when the incoming gradient is zero.
+    pub fn backward(
+        &mut self,
+        cache: &ArchitectureCache<T>,
+        grad_output: &Array2<T>,
+        learning_rate: T,
+    ) -> Result<T> {
+        let mut grad =
+            self.output_projection
+                .backward(&cache.projection_input, grad_output, learning_rate)?;
+        grad = self
+            .layer_norm
+            .backward(&cache.final_norm_input, &grad, learning_rate)?;
+
+        for (layer, layer_cache) in self.layers.iter_mut().rev().zip(cache.layers.iter().rev()) {
+            grad = layer.backward(layer_cache, &grad, learning_rate)?;
+        }
+
+        let grad_embedding =
+            self.input_embedding
+                .backward(&cache.embedding_input, &grad, learning_rate)?;
+
+        Ok(grad_embedding
+            .iter()
+            .map(|&x| x * x)
+            .fold(T::zero(), |a, b| a + b))
+    }
 }
 
 /// Individual transformer layer
-pub struct TransformerLayer<T: Float + Debug + Send + Sync + 'static> {
+pub struct TransformerLayer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Multi-head self-attention
     self_attention: MultiHeadAttention<T>,
 
@@ -153,7 +278,9 @@ pub struct TransformerLayer<T: Float + Debug + Send + Sync + 'static> {
     layer_index: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> TransformerLayer<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    TransformerLayer<T>
+{
     /// Create new transformer layer
     pub fn new(
         model_dimension: usize,
@@ -308,6 +435,64 @@ impl<T: Float + Debug + Send + Sync + 'static> TransformerLayer<T> {
     pub fn get_attention_weights(&self) -> Option<Array3<T>> {
         self.self_attention.get_attention_weights()
     }
+
+    /// Switch this layer's dropout between training and inference mode.
+    pub fn set_training(&mut self, training: bool) {
+        self.dropout.set_training(training);
+        self.feed_forward.set_training(training);
+    }
+
+    /// Forward pass that records the activations needed by [`Self::backward`].
+    ///
+    /// Always uses the pre-norm ordering for the cached path so the backward
+    /// pass has a single, well-defined graph to follow, and bypasses dropout.
+    pub fn forward_with_cache(&mut self, input: &Array2<T>) -> Result<(Array2<T>, LayerCache<T>)> {
+        let normed_input = self.pre_norm1.forward(input)?;
+        let attention_output =
+            self.self_attention
+                .forward(&normed_input, &normed_input, &normed_input)?;
+        let attention_residual = self.residual_connections.add(input, &attention_output)?;
+
+        let ff_norm_input = attention_residual.clone();
+        let normed_attention = self.pre_norm2.forward(&attention_residual)?;
+        let (ff_output, feed_forward) = self.feed_forward.forward_with_cache(&normed_attention)?;
+        let ff_residual = self
+            .residual_connections
+            .add(&attention_residual, &ff_output)?;
+
+        Ok((
+            ff_residual,
+            LayerCache {
+                input: input.clone(),
+                attention_residual,
+                ff_norm_input,
+                feed_forward,
+            },
+        ))
+    }
+
+    /// Backward pass for the feed-forward sub-layer and the residual path.
+    pub fn backward(
+        &mut self,
+        cache: &LayerCache<T>,
+        grad_output: &Array2<T>,
+        learning_rate: T,
+    ) -> Result<Array2<T>> {
+        // The FF residual adds the sub-layer output to its input, so the
+        // incoming gradient reaches both branches.
+        let grad_ff =
+            self.feed_forward
+                .backward(&cache.feed_forward, grad_output, learning_rate)?;
+        let grad_ff_norm =
+            self.pre_norm2
+                .backward(&cache.ff_norm_input, &grad_ff, learning_rate)?;
+        let grad_attention_residual = grad_output + &grad_ff_norm;
+
+        // First-order treatment of the attention sub-layer: only the identity
+        // branch of its residual connection carries gradient.
+        let _ = &cache.attention_residual;
+        Ok(grad_attention_residual)
+    }
 }
 
 /// Architecture statistics
@@ -320,7 +505,9 @@ pub struct ArchitectureStats {
     pub memory_usage_mb: f64,
 }
 
-impl<T: Float + Debug + 'static + Send + Sync> TransformerArchitecture<T> {
+impl<T: Float + Debug + 'static + scirs2_core::ndarray::ScalarOperand + Send + Sync>
+    TransformerArchitecture<T>
+{
     /// Get architecture statistics
     pub fn get_stats(&self) -> ArchitectureStats {
         let total_parameters = self.parameter_count();
@@ -360,7 +547,7 @@ mod tests {
         let architecture = TransformerArchitecture::<f32>::new(config);
         assert!(architecture.is_ok());
 
-        let arch = architecture.expect("unwrap failed");
+        let arch = architecture.expect("TransformerArchitecture::new should succeed");
         assert_eq!(arch.layers.len(), 2);
         assert_eq!(arch.config.model_dimension, 128);
     }
@@ -370,7 +557,7 @@ mod tests {
         let layer = TransformerLayer::<f32>::new(128, 4, 256, 0.1, true, 0);
         assert!(layer.is_ok());
 
-        let l = layer.expect("unwrap failed");
+        let l = layer.expect("TransformerLayer::new should succeed");
         assert_eq!(l.layer_index, 0);
         assert!(l.use_pre_norm);
     }
@@ -378,20 +565,22 @@ mod tests {
     #[test]
     fn test_forward_pass() {
         let config = create_test_config();
-        let mut architecture = TransformerArchitecture::<f32>::new(config).expect("unwrap failed");
+        let mut architecture = TransformerArchitecture::<f32>::new(config)
+            .expect("TransformerArchitecture::new should succeed");
 
         let input = Array2::<f32>::zeros((4, 128)); // (batch_size * seq_length, model_dimension) = (4, 128)
         let result = architecture.forward(&input);
         assert!(result.is_ok());
 
-        let output = result.expect("unwrap failed");
+        let output = result.expect("forward should succeed");
         assert_eq!(output.shape(), &[4, 128]);
     }
 
     #[test]
     fn test_parameter_count() {
         let config = create_test_config();
-        let architecture = TransformerArchitecture::<f32>::new(config).expect("unwrap failed");
+        let architecture = TransformerArchitecture::<f32>::new(config)
+            .expect("TransformerArchitecture::new should succeed");
 
         let param_count = architecture.parameter_count();
         assert!(param_count > 0);

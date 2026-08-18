@@ -12,10 +12,12 @@
 // - Better generalization than either optimizer alone
 
 use crate::error::{OptimError, Result};
-use scirs2_core::ndarray::ScalarOperand;
+use crate::optimizers::Optimizer;
+use scirs2_core::ndarray::{Ix1, ScalarOperand};
 use scirs2_core::ndarray_ext::{Array1, ArrayView1};
-use scirs2_core::numeric::{Float, Zero};
+use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// Ranger optimizer configuration
 ///
@@ -58,15 +60,15 @@ pub struct Ranger<T: Float + ScalarOperand> {
 impl<T: Float + ScalarOperand> Default for Ranger<T> {
     fn default() -> Self {
         Self::new(
-            T::from(0.001).expect("unwrap failed"), // learning_rate
-            T::from(0.9).expect("unwrap failed"),   // beta1
-            T::from(0.999).expect("unwrap failed"), // beta2
-            T::from(1e-8).expect("unwrap failed"),  // epsilon
-            T::zero(),                              // weight_decay
-            5,                                      // lookahead_k
-            T::from(0.5).expect("unwrap failed"),   // lookahead_alpha
+            T::from(0.001).expect("Ranger: default learning_rate (0.001) must fit in T"),
+            T::from(0.9).expect("Ranger: default beta1 (0.9) must fit in T"),
+            T::from(0.999).expect("Ranger: default beta2 (0.999) must fit in T"),
+            T::from(1e-8).expect("Ranger: default epsilon (1e-8) must fit in T"),
+            T::zero(),
+            5,
+            T::from(0.5).expect("Ranger: default lookahead_alpha (0.5) must fit in T"),
         )
-        .expect("unwrap failed")
+        .expect("Ranger: default hyperparameters always satisfy validation")
     }
 }
 
@@ -94,9 +96,8 @@ impl<T: Float + ScalarOperand> Ranger<T> {
     ///     0.0,    // weight_decay
     ///     5,      // lookahead_k
     ///     0.5     // lookahead_alpha
-    /// ).expect("unwrap failed");
+    /// ).expect("Ranger::new succeeds for finite, in-range default hyperparameters");
     /// ```
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         learning_rate: T,
         beta1: T,
@@ -107,38 +108,36 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         lookahead_alpha: T,
     ) -> Result<Self> {
         // Validate parameters
-        if learning_rate.to_f64().expect("unwrap failed") <= 0.0 {
+        let lr_f64 = crate::optimizers::scalar_to_f64(learning_rate)?;
+        let beta1_f64 = crate::optimizers::scalar_to_f64(beta1)?;
+        let beta2_f64 = crate::optimizers::scalar_to_f64(beta2)?;
+        let eps_f64 = crate::optimizers::scalar_to_f64(epsilon)?;
+        let wd_f64 = crate::optimizers::scalar_to_f64(weight_decay)?;
+        let lookahead_alpha_f64 = crate::optimizers::scalar_to_f64(lookahead_alpha)?;
+
+        if lr_f64 <= 0.0 {
             return Err(OptimError::InvalidParameter(format!(
-                "learning_rate must be positive, got {}",
-                learning_rate.to_f64().expect("unwrap failed")
+                "learning_rate must be positive, got {lr_f64}"
             )));
         }
-        if beta1.to_f64().expect("unwrap failed") <= 0.0
-            || beta1.to_f64().expect("unwrap failed") >= 1.0
-        {
+        if beta1_f64 <= 0.0 || beta1_f64 >= 1.0 {
             return Err(OptimError::InvalidParameter(format!(
-                "beta1 must be in (0, 1), got {}",
-                beta1.to_f64().expect("unwrap failed")
+                "beta1 must be in (0, 1), got {beta1_f64}"
             )));
         }
-        if beta2.to_f64().expect("unwrap failed") <= 0.0
-            || beta2.to_f64().expect("unwrap failed") >= 1.0
-        {
+        if beta2_f64 <= 0.0 || beta2_f64 >= 1.0 {
             return Err(OptimError::InvalidParameter(format!(
-                "beta2 must be in (0, 1), got {}",
-                beta2.to_f64().expect("unwrap failed")
+                "beta2 must be in (0, 1), got {beta2_f64}"
             )));
         }
-        if epsilon.to_f64().expect("unwrap failed") <= 0.0 {
+        if eps_f64 <= 0.0 {
             return Err(OptimError::InvalidParameter(format!(
-                "epsilon must be positive, got {}",
-                epsilon.to_f64().expect("unwrap failed")
+                "epsilon must be positive, got {eps_f64}"
             )));
         }
-        if weight_decay.to_f64().expect("unwrap failed") < 0.0 {
+        if wd_f64 < 0.0 {
             return Err(OptimError::InvalidParameter(format!(
-                "weight_decay must be non-negative, got {}",
-                weight_decay.to_f64().expect("unwrap failed")
+                "weight_decay must be non-negative, got {wd_f64}"
             )));
         }
         if lookahead_k == 0 {
@@ -146,12 +145,9 @@ impl<T: Float + ScalarOperand> Ranger<T> {
                 "lookahead_k must be positive".to_string(),
             ));
         }
-        if lookahead_alpha.to_f64().expect("unwrap failed") <= 0.0
-            || lookahead_alpha.to_f64().expect("unwrap failed") > 1.0
-        {
+        if lookahead_alpha_f64 <= 0.0 || lookahead_alpha_f64 > 1.0 {
             return Err(OptimError::InvalidParameter(format!(
-                "lookahead_alpha must be in (0, 1], got {}",
-                lookahead_alpha.to_f64().expect("unwrap failed")
+                "lookahead_alpha must be in (0, 1], got {lookahead_alpha_f64}"
             )));
         }
 
@@ -184,9 +180,21 @@ impl<T: Float + ScalarOperand> Ranger<T> {
     /// let params = array![1.0, 2.0, 3.0];
     /// let grads = array![0.1, 0.2, 0.3];
     ///
-    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("unwrap failed");
+    /// let updated_params = optimizer.step(params.view(), grads.view()).expect("optimizer.step succeeds");
     /// ```
-    pub fn step(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
+    pub fn step<'a, P, G>(&mut self, params: P, grads: G) -> Result<Array1<T>>
+    where
+        P: Into<ArrayView1<'a, T>>,
+        G: Into<ArrayView1<'a, T>>,
+        T: 'a,
+    {
+        self.step_view(params.into(), grads.into())
+    }
+
+    /// Perform a single optimization step on borrowed views
+    ///
+    /// This is the concrete implementation behind [`Ranger::step`].
+    pub fn step_view(&mut self, params: ArrayView1<T>, grads: ArrayView1<T>) -> Result<Array1<T>> {
         let n = params.len();
 
         if grads.len() != n {
@@ -198,20 +206,18 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         }
 
         // Initialize state on first step
-        if self.momentum.is_none() {
-            self.momentum = Some(Array1::zeros(n));
-            self.velocity = Some(Array1::zeros(n));
+        if self.slow_weights.is_none() {
             self.slow_weights = Some(params.to_owned());
         }
 
         self.step_count += 1;
-        let t = T::from(self.step_count).expect("unwrap failed");
+        let t: T = crate::optimizers::cast_scalar(self.step_count)?;
 
-        let momentum = self.momentum.as_mut().expect("unwrap failed");
-        let velocity = self.velocity.as_mut().expect("unwrap failed");
+        let momentum = self.momentum.get_or_insert_with(|| Array1::zeros(n));
+        let velocity = self.velocity.get_or_insert_with(|| Array1::zeros(n));
 
         let one = T::one();
-        let two = T::from(2).expect("unwrap failed");
+        let two: T = crate::optimizers::cast_scalar(2)?;
 
         // Apply weight decay if configured
         let effective_grads = if self.weight_decay > T::zero() {
@@ -242,12 +248,12 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         // RAdam: Apply variance rectification
         let mut updated_params = params.to_owned();
 
-        if rho_t.to_f64().expect("unwrap failed") > 4.0 {
+        if crate::optimizers::scalar_to_f64(rho_t)? > 4.0 {
             // Use adaptive learning rate with variance rectification
-            let rect_term =
-                ((rho_t - T::from(4).expect("unwrap failed")) * (rho_t - two) * rho_inf
-                    / ((rho_inf - T::from(4).expect("unwrap failed")) * (rho_inf - two) * rho_t))
-                    .sqrt();
+            let four: T = crate::optimizers::cast_scalar(4)?;
+            let rect_term = ((rho_t - four) * (rho_t - two) * rho_inf
+                / ((rho_inf - four) * (rho_inf - two) * rho_t))
+                .sqrt();
 
             for i in 0..n {
                 let m_hat = momentum[i] / bias_correction1;
@@ -265,7 +271,7 @@ impl<T: Float + ScalarOperand> Ranger<T> {
 
         // Lookahead: Update slow weights every k steps
         if self.step_count.is_multiple_of(self.lookahead_k) {
-            let slow = self.slow_weights.as_mut().expect("unwrap failed");
+            let slow = self.slow_weights.get_or_insert_with(|| params.to_owned());
             for i in 0..n {
                 slow[i] = slow[i] + self.lookahead_alpha * (updated_params[i] - slow[i]);
             }
@@ -309,20 +315,40 @@ impl<T: Float + ScalarOperand> Ranger<T> {
         if self.step_count == 0 {
             return false;
         }
-        let t = T::from(self.step_count).expect("unwrap failed");
+        let t = T::from(self.step_count)
+            .expect("Ranger: step_count must be representable in T (f32/f64)");
         let one = T::one();
-        let two = T::from(2).expect("unwrap failed");
+        let two = T::from(2).expect("Ranger: integer literal 2 must be representable in T");
         let bias_correction2 = one - self.beta2.powf(t);
         let rho_inf = two / (one - self.beta2) - one;
         let rho_t = rho_inf - two * t * self.beta2.powf(t) / bias_correction2;
-        rho_t.to_f64().expect("unwrap failed") > 4.0
+        rho_t
+            .to_f64()
+            .expect("Ranger: T (f32/f64) always converts to f64")
+            > 4.0
+    }
+}
+
+impl<T> Optimizer<T, Ix1> for Ranger<T>
+where
+    T: Float + ScalarOperand + Debug + Send + Sync,
+{
+    fn step(&mut self, params: &Array1<T>, gradients: &Array1<T>) -> Result<Array1<T>> {
+        self.step_view(params.view(), gradients.view())
+    }
+
+    fn get_learning_rate(&self) -> T {
+        self.learning_rate
+    }
+
+    fn set_learning_rate(&mut self, learning_rate: T) {
+        self.learning_rate = learning_rate;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq;
     use scirs2_core::ndarray_ext::array;
 
     #[test]
@@ -334,8 +360,8 @@ mod tests {
 
     #[test]
     fn test_ranger_custom_creation() {
-        let optimizer =
-            Ranger::<f32>::new(0.002, 0.95, 0.9999, 1e-7, 0.01, 6, 0.6).expect("unwrap failed");
+        let optimizer = Ranger::<f32>::new(0.002, 0.95, 0.9999, 1e-7, 0.01, 6, 0.6)
+            .expect("Ranger::<f32>::new succeeds in test_ranger_custom_creation");
         assert_eq!(optimizer.step_count(), 0);
     }
 
@@ -347,7 +373,7 @@ mod tests {
 
         let updated_params = optimizer
             .step(params.view(), grads.view())
-            .expect("unwrap failed");
+            .expect("step succeeds in test_ranger_single_step");
         assert_eq!(updated_params.len(), 3);
         assert_eq!(optimizer.step_count(), 1);
 
@@ -358,15 +384,15 @@ mod tests {
 
     #[test]
     fn test_ranger_slow_updates() {
-        let mut optimizer =
-            Ranger::<f32>::new(0.001, 0.9, 0.999, 1e-8, 0.0, 3, 0.5).expect("unwrap failed");
+        let mut optimizer = Ranger::<f32>::new(0.001, 0.9, 0.999, 1e-8, 0.0, 3, 0.5)
+            .expect("Ranger::<f32>::new succeeds in test_ranger_slow_updates");
         let mut params = array![1.0, 2.0, 3.0];
 
         for _ in 0..3 {
             let grads = array![0.1, 0.2, 0.3];
             params = optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_ranger_slow_updates");
         }
         assert_eq!(optimizer.slow_update_count(), 1);
     }
@@ -384,7 +410,7 @@ mod tests {
             5,     // lookahead_k
             0.5,   // lookahead_alpha
         )
-        .expect("unwrap failed");
+        .expect("Ranger::new succeeds in test_ranger_convergence");
         let mut params = array![5.0];
 
         // Ranger combines RAdam (adaptive LR) with Lookahead (slow updates)
@@ -392,7 +418,7 @@ mod tests {
             let grads = params.mapv(|x| 2.0 * x);
             params = optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_ranger_convergence");
         }
 
         assert!(
@@ -411,7 +437,7 @@ mod tests {
         for _ in 0..10 {
             optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_ranger_reset");
         }
 
         optimizer.reset();
@@ -433,8 +459,25 @@ mod tests {
         for _ in 0..10 {
             optimizer
                 .step(params.view(), grads.view())
-                .expect("unwrap failed");
+                .expect("step succeeds in test_ranger_rectification");
         }
         assert!(optimizer.is_rectified());
+    }
+
+    /// Ranger must be usable through the generic `Optimizer` trait.
+    #[test]
+    fn test_ranger_optimizer_trait() {
+        let mut optimizer = Ranger::<f64>::default();
+        let params = array![1.0f64, 2.0, 3.0];
+        let grads = array![0.1f64, 0.2, 0.3];
+
+        let updated =
+            Optimizer::<f64, scirs2_core::ndarray::Ix1>::step(&mut optimizer, &params, &grads)
+                .expect("trait step failed");
+        assert_eq!(updated.len(), 3);
+
+        // The generic inherent `step` also accepts plain references.
+        let again = optimizer.step(&params, &grads).expect("ref step failed");
+        assert_eq!(again.len(), 3);
     }
 }

@@ -19,9 +19,19 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # Core dependencies
-optirs-core = { workspace = true }
-optirs-learned = { workspace = true, optional = true }
-scirs2-core = { workspace = true }  # Required for SciRS2 policy compliance
+#
+# NOTE: `optirs-core` and `optirs-learned` were declared here but never used
+# (no `optirs_core::` / `optirs_learned::` path appears anywhere in this
+# crate). `optirs-learned` was pulled in only by the `learned_integration`
+# feature, which had no module behind it. Both are removed so `optirs-nas`
+# builds and tests standalone; the benchmark harness in `evaluation::benchmark`
+# implements its optimizer update rules directly, which also makes NAS scores
+# reproducible independently of sibling-crate changes.
+#
+# The `random` feature is declared explicitly rather than relied upon through
+# feature unification with a sibling crate: every search strategy samples from
+# `scirs2_core::random`, so this crate must request it itself.
+scirs2-core = { workspace = true, features = ["random"] }  # SciRS2 policy compliance
 
 # ❌ FORBIDDEN DEPENDENCIES REMOVED - Use SciRS2-Core abstractions instead
 # ndarray - Use scirs2_core::ndarray
@@ -56,10 +66,26 @@ approx = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-default = ["bayesian"]
-bayesian = []
-evolutionary = []
-reinforcement = []
-progressive = []
-multi_objective = []
-learned_integration = ["dep:optirs-learned"]
+# This crate deliberately declares NO optional features.
+#
+# It previously declared `bayesian`, `evolutionary`, `reinforcement`,
+# `progressive` and `multi_objective` (all in `default`), documented as gating
+# "the corresponding module in `search_strategies`". Not one `cfg(feature = ...)`
+# existed anywhere in the crate: every flag was inert, so `--no-default-features`
+# built exactly the same code as the default build and the documentation was
+# simply false. Removing them is the honest resolution — a flag that gates nothing
+# is worse than no flag, because it tells users they can trim the build when they
+# cannot.
+#
+# Real gating is not a drop-in change and is not being pretended at here: the
+# engine holds a `multi_objective::ParetoFront` field, `nas_engine::results`
+# re-exports it, and `nas_engine::engine` dispatches to every strategy through
+# `strategy_adapters`. Gating those modules means cfg-ing struct fields, trait
+# objects and dispatch arms across `nas_engine/`, and yields 2^5 build
+# configurations that nothing in CI exercises. If per-strategy builds are wanted,
+# that refactor should land together with the cfg matrix that proves it works.
+#
+# The `learned_integration` feature is likewise gone: it pulled in `optirs-learned`
+# with no module behind it (see the dependency comment above — that removal, and
+# the removal of the unused `optirs-core` dependency, must not be reverted).
+default = []

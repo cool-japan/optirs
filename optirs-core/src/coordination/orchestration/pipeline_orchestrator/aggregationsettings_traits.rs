@@ -9,9 +9,9 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use super::types::{AggregationFunction, AggregationSettings};
 

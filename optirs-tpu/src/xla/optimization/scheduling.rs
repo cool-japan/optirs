@@ -6,15 +6,12 @@ use std::fmt::Debug;
 // latency hiding, and multi-core parallelization.
 
 use scirs2_core::numeric::Float;
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 
-use super::super::frontend::{
-    OperandId, OperationId, OperationMemoryRequirements, OperationPerformanceCharacteristics,
-    OperationType, XLAComputation, XLAOperation,
-};
+use super::super::frontend::{OperandId, OperationId, OperationType, XLAComputation, XLAOperation};
 use super::{HardwareTarget, OptimizationPipelineConfig};
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 
 /// Execution scheduler for XLA computations
 pub struct ExecutionScheduler<T: Float + Debug + Send + Sync + 'static> {
@@ -26,12 +23,6 @@ pub struct ExecutionScheduler<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource manager
     resource_manager: ResourceManager,
-
-    /// Latency optimizer
-    latency_optimizer: LatencyOptimizer<T>,
-
-    /// Parallelization engine
-    parallelization_engine: ParallelizationEngine<T>,
 
     /// Performance predictor
     performance_predictor: PerformancePredictor<T>,
@@ -100,9 +91,6 @@ pub struct DependencyAnalyzer<T: Float + Debug + Send + Sync + 'static> {
 
     /// Critical path analysis
     critical_path_analyzer: CriticalPathAnalyzer<T>,
-
-    /// Data flow analyzer
-    dataflow_analyzer: DataFlowAnalyzer<T>,
 }
 
 /// Dependency graph representation
@@ -130,8 +118,6 @@ pub struct CriticalPathAnalyzer<T: Float + Debug + Send + Sync + 'static> {
     critical_operations: Vec<OperationId>,
 
     /// Path analysis cache
-    analysis_cache: HashMap<String, PathAnalysis>,
-
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -146,20 +132,6 @@ pub struct PathAnalysis {
 
     /// Bottleneck operations
     pub bottlenecks: Vec<OperationId>,
-}
-
-/// Data flow analyzer
-pub struct DataFlowAnalyzer<T: Float + Debug + Send + Sync + 'static> {
-    /// Data flow patterns
-    flow_patterns: HashMap<OperationId, DataFlowPattern>,
-
-    /// Producer-consumer relationships
-    producer_consumer: HashMap<OperandId, (OperationId, Vec<OperationId>)>,
-
-    /// Memory access patterns
-    memory_patterns: HashMap<OperationId, MemoryAccessPattern>,
-
-    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Data flow pattern
@@ -233,19 +205,14 @@ pub enum LocalityType {
 }
 
 /// Resource manager for scheduling
-pub struct ResourceManager {
-    /// Available compute resources
-    compute_resources: Vec<ComputeResource>,
-
-    /// Available memory resources
-    memory_resources: Vec<MemoryResource>,
-
-    /// Resource allocation tracking
-    allocations: HashMap<OperationId, ResourceAllocation>,
-
-    /// Resource utilization timeline
-    utilization_timeline: BTreeMap<u64, ResourceUtilization>,
-}
+/// Resource manager for the scheduler.
+///
+/// It holds no resource inventory of its own: the compute/memory resource
+/// lists, the per-operation allocation map and the utilization timeline that
+/// used to be declared here were all built empty and never read.
+/// `assign_resources` derives assignments from the hardware target it is given,
+/// which is the only resource description that was ever consulted.
+pub struct ResourceManager;
 
 /// Compute resource information
 #[derive(Debug, Clone)]
@@ -368,18 +335,6 @@ pub struct ResourceUtilization {
     pub overall_utilization: f64,
 }
 
-/// Latency optimizer for hiding operation latencies
-pub struct LatencyOptimizer<T: Float + Debug + Send + Sync + 'static> {
-    /// Latency hiding strategies
-    strategies: Vec<LatencyHidingStrategy>,
-
-    /// Operation latency model
-    latency_model: LatencyModel<T>,
-
-    /// Prefetch opportunities
-    prefetch_opportunities: Vec<PrefetchOpportunity>,
-}
-
 /// Latency hiding strategies
 #[derive(Debug, Clone)]
 pub enum LatencyHidingStrategy {
@@ -394,20 +349,6 @@ pub enum LatencyHidingStrategy {
 
     /// Speculative execution
     SpeculativeExecution,
-}
-
-/// Latency model for operations
-pub struct LatencyModel<T: Float + Debug + Send + Sync + 'static> {
-    /// Per-operation latencies
-    operation_latencies: HashMap<OperationType, f64>,
-
-    /// Communication latencies
-    communication_latencies: HashMap<String, f64>,
-
-    /// Memory latencies by level
-    memory_latencies: HashMap<MemoryLevel, f64>,
-
-    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Prefetch opportunity
@@ -426,18 +367,6 @@ pub struct PrefetchOpportunity {
     pub benefit: f64,
 }
 
-/// Parallelization engine
-pub struct ParallelizationEngine<T: Float + Debug + Send + Sync + 'static> {
-    /// Parallelization strategies
-    strategies: Vec<ParallelizationStrategy>,
-
-    /// Parallel execution graph
-    parallel_graph: ParallelExecutionGraph,
-
-    /// Load balancer
-    load_balancer: LoadBalancer<T>,
-}
-
 /// Parallelization strategies
 #[derive(Debug, Clone)]
 pub enum ParallelizationStrategy {
@@ -452,19 +381,6 @@ pub enum ParallelizationStrategy {
 
     /// Task parallelism
     TaskParallel,
-}
-
-/// Parallel execution graph
-#[derive(Debug)]
-pub struct ParallelExecutionGraph {
-    /// Parallel execution blocks
-    pub blocks: Vec<ParallelBlock>,
-
-    /// Inter-block dependencies
-    pub block_dependencies: HashMap<String, Vec<String>>,
-
-    /// Synchronization points
-    pub sync_points: Vec<SynchronizationPoint>,
 }
 
 /// Parallel execution block
@@ -509,18 +425,6 @@ pub enum SynchronizationType {
     Collective,
 }
 
-/// Load balancer
-pub struct LoadBalancer<T: Float + Debug + Send + Sync + 'static> {
-    /// Load balancing strategy
-    strategy: LoadBalancingStrategy,
-
-    /// Work distribution
-    work_distribution: WorkDistribution,
-
-    /// Performance monitoring
-    performance_monitor: PerformanceMonitor<T>,
-}
-
 /// Load balancing strategies
 #[derive(Debug, Clone)]
 pub enum LoadBalancingStrategy {
@@ -535,30 +439,6 @@ pub enum LoadBalancingStrategy {
 
     /// Work stealing
     WorkStealing,
-}
-
-/// Work distribution information
-#[derive(Debug)]
-pub struct WorkDistribution {
-    /// Work units per resource
-    pub work_per_resource: HashMap<String, f64>,
-
-    /// Load imbalance factor
-    pub imbalance_factor: f64,
-
-    /// Distribution efficiency
-    pub efficiency: f64,
-}
-
-/// Performance monitor
-pub struct PerformanceMonitor<T: Float + Debug + Send + Sync + 'static> {
-    /// Performance metrics
-    metrics: HashMap<String, PerformanceMetric>,
-
-    /// Monitoring timeline
-    timeline: Vec<PerformanceSnapshot>,
-
-    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Performance metric
@@ -607,16 +487,12 @@ pub struct PerformanceSnapshot {
 }
 
 /// Performance predictor
+/// Performance predictor for a scheduled operation list.
+///
+/// It carries no model registry, historical-sample buffer or per-model accuracy
+/// table: all three were empty and unread, and `predict_performance` has no
+/// trained model behind it -- see its own documentation.
 pub struct PerformancePredictor<T: Float + Debug + Send + Sync + 'static> {
-    /// Prediction models
-    models: HashMap<String, PredictionModel>,
-
-    /// Historical data
-    historical_data: Vec<PerformanceDataPoint>,
-
-    /// Prediction accuracy
-    accuracy: HashMap<String, f64>,
-
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -916,8 +792,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Executi
             config: config.clone(),
             dependency_analyzer: DependencyAnalyzer::new(),
             resource_manager: ResourceManager::new(&pipeline_config.target_hardware),
-            latency_optimizer: LatencyOptimizer::new(),
-            parallelization_engine: ParallelizationEngine::new(),
             performance_predictor: PerformancePredictor::new(),
             scheduling_stats: SchedulingStatistics::default(),
         }
@@ -928,6 +802,8 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Executi
         &mut self,
         computation: XLAComputation<T>,
     ) -> Result<XLAComputation<T>> {
+        let started = std::time::Instant::now();
+
         // Analyze dependencies
         let dependency_graph = self
             .dependency_analyzer
@@ -936,11 +812,47 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Executi
         // Create execution plan
         let execution_plan = self.create_execution_plan(&computation, &dependency_graph)?;
 
+        // Record what the schedule actually achieved. Previously
+        // `scheduling_stats` was default-constructed and never updated, so
+        // `scheduling_statistics()` reported zeros after every schedule.
+        let operations = execution_plan.scheduled_operations.len();
+        let makespan = execution_plan
+            .scheduled_operations
+            .iter()
+            .map(|operation| operation.end_time)
+            .fold(0u64, u64::max);
+        let busy: u64 = execution_plan
+            .scheduled_operations
+            .iter()
+            .map(|operation| operation.end_time.saturating_sub(operation.start_time))
+            .sum();
+        self.scheduling_stats.operations_scheduled += operations;
+        self.scheduling_stats.avg_scheduling_time = started.elapsed().as_secs_f64();
+        self.scheduling_stats.critical_path_length = makespan as f64;
+        self.scheduling_stats.resource_utilization = if makespan == 0 {
+            0.0
+        } else {
+            (busy as f64 / makespan as f64).min(1.0)
+        };
+        // A perfectly serial schedule has efficiency 0; one whose makespan is
+        // much shorter than the summed work has exploited real parallelism.
+        self.scheduling_stats.parallelization_efficiency = if busy == 0 {
+            0.0
+        } else {
+            1.0 - (makespan as f64 / busy as f64).min(1.0)
+        };
+        self.scheduling_stats.scheduling_overhead = started.elapsed().as_secs_f64();
+
         // Apply schedule optimizations
         let optimized_computation =
             self.apply_schedule_optimizations(computation, &execution_plan)?;
 
         Ok(optimized_computation)
+    }
+
+    /// Statistics from every [`Self::optimize_schedule`] call so far.
+    pub fn scheduling_statistics(&self) -> &SchedulingStatistics {
+        &self.scheduling_stats
     }
 
     /// Create execution plan for computation
@@ -1251,7 +1163,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Depende
         Self {
             dependency_graph: DependencyGraph::new(),
             critical_path_analyzer: CriticalPathAnalyzer::new(),
-            dataflow_analyzer: DataFlowAnalyzer::new(),
         }
     }
 
@@ -1300,20 +1211,18 @@ impl DependencyGraph {
                     .iter()
                     .find(|op| op.output == input_operand)
                 {
-                    self.dependencies
-                        .get_mut(&operation.id)
-                        .expect("unwrap failed")
-                        .push(producer_op.id);
-
-                    self.dependents
-                        .get_mut(&producer_op.id)
-                        .expect("unwrap failed")
-                        .push(operation.id);
-
-                    *self
-                        .in_degrees
-                        .get_mut(&operation.id)
-                        .expect("unwrap failed") += 1;
+                    // All three maps are pre-populated for every operation id
+                    // in the loop above, so these entries are always present;
+                    // guard with `if let` to avoid panicking regardless.
+                    if let Some(deps) = self.dependencies.get_mut(&operation.id) {
+                        deps.push(producer_op.id);
+                    }
+                    if let Some(dependents) = self.dependents.get_mut(&producer_op.id) {
+                        dependents.push(operation.id);
+                    }
+                    if let Some(in_degree) = self.in_degrees.get_mut(&operation.id) {
+                        *in_degree += 1;
+                    }
                 }
             }
         }
@@ -1346,73 +1255,132 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Critica
         Self {
             critical_path_lengths: HashMap::new(),
             critical_operations: vec![],
-            analysis_cache: HashMap::new(),
             _phantom: std::marker::PhantomData,
         }
     }
 
+    /// Per-operation latency proxy used to weight the critical path.
+    ///
+    /// Uses the measured `execution_time_us` when available, otherwise a
+    /// type-based estimate consistent with the scheduler's own cost model.
+    fn operation_cost(operation: &XLAOperation<T>) -> f64 {
+        if operation.performance.execution_time_us > 0 {
+            operation.performance.execution_time_us as f64
+        } else {
+            match &operation.op_type {
+                OperationType::Add | OperationType::Multiply | OperationType::Subtract => 10.0,
+                OperationType::Dot | OperationType::DotGeneral => 100.0,
+                OperationType::Convolution(_) => 500.0,
+                OperationType::Reduce(_) => 50.0,
+                _ => 20.0,
+            }
+        }
+    }
+
+    /// Compute, for every operation, the length of the longest (most costly)
+    /// dependency path from that operation to a sink — its critical-path
+    /// length. Higher values must be scheduled earlier because they gate the
+    /// largest amount of remaining work.
+    ///
+    /// This is a real DAG longest-path: operations are ordered topologically
+    /// (Kahn's algorithm over the actual dependency graph) and relaxed in
+    /// reverse, so `lp[node] = cost(node) + max(lp[successor])`.
     pub fn compute_critical_paths(
         &mut self,
-        _computation: &XLAComputation<T>,
-        _dependency_graph: &DependencyGraph,
+        computation: &XLAComputation<T>,
+        dependency_graph: &DependencyGraph,
     ) -> Result<HashMap<OperationId, f64>> {
-        // Simplified critical path computation
-        Ok(self.critical_path_lengths.clone())
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
-    for DataFlowAnalyzer<T>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> DataFlowAnalyzer<T> {
-    pub fn new() -> Self {
-        Self {
-            flow_patterns: HashMap::new(),
-            producer_consumer: HashMap::new(),
-            memory_patterns: HashMap::new(),
-            _phantom: std::marker::PhantomData,
+        // Per-operation cost.
+        let mut cost: HashMap<OperationId, f64> =
+            HashMap::with_capacity(computation.operations.len());
+        for op in &computation.operations {
+            cost.insert(op.id, Self::operation_cost(op));
         }
+
+        // Topological order (sources first) via Kahn's algorithm.
+        let mut in_degrees = dependency_graph.in_degrees.clone();
+        let mut ready: VecDeque<OperationId> = in_degrees
+            .iter()
+            .filter(|(_, &d)| d == 0)
+            .map(|(&id, _)| id)
+            .collect();
+        let mut topo_order: Vec<OperationId> = Vec::with_capacity(in_degrees.len());
+        while let Some(node) = ready.pop_front() {
+            topo_order.push(node);
+            if let Some(succs) = dependency_graph.dependents.get(&node) {
+                for &succ in succs {
+                    if let Some(d) = in_degrees.get_mut(&succ) {
+                        *d = d.saturating_sub(1);
+                        if *d == 0 {
+                            ready.push_back(succ);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Relax in reverse topological order: longest path to a sink.
+        let mut lp: HashMap<OperationId, f64> = HashMap::with_capacity(cost.len());
+        for &node in topo_order.iter().rev() {
+            let node_cost = *cost.get(&node).unwrap_or(&0.0);
+            let mut best_succ = 0.0f64;
+            if let Some(succs) = dependency_graph.dependents.get(&node) {
+                for &succ in succs {
+                    if let Some(&v) = lp.get(&succ) {
+                        best_succ = best_succ.max(v);
+                    }
+                }
+            }
+            lp.insert(node, node_cost + best_succ);
+        }
+
+        // Nodes excluded from the topological order (e.g. inside a cycle) still
+        // receive their own cost as an honest lower bound.
+        for op in &computation.operations {
+            lp.entry(op.id)
+                .or_insert_with(|| *cost.get(&op.id).unwrap_or(&0.0));
+        }
+
+        // Trace the actual critical path: start at the source with the largest
+        // length, then follow the most-costly successor at each step.
+        let mut critical_ops: Vec<OperationId> = Vec::new();
+        let start = lp
+            .iter()
+            .filter(|(id, _)| dependency_graph.in_degrees.get(id).copied().unwrap_or(0) == 0)
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(&id, _)| id);
+        if let Some(start) = start {
+            let mut visited: HashSet<OperationId> = HashSet::new();
+            let mut current = start;
+            while visited.insert(current) {
+                critical_ops.push(current);
+                let next = dependency_graph.dependents.get(&current).and_then(|succs| {
+                    succs
+                        .iter()
+                        .filter(|s| lp.contains_key(*s))
+                        .max_by(|a, b| {
+                            lp.get(*a)
+                                .unwrap_or(&0.0)
+                                .total_cmp(lp.get(*b).unwrap_or(&0.0))
+                        })
+                        .copied()
+                });
+                match next {
+                    Some(n) => current = n,
+                    None => break,
+                }
+            }
+        }
+
+        self.critical_operations = critical_ops;
+        self.critical_path_lengths = lp.clone();
+        Ok(lp)
     }
 }
 
 impl ResourceManager {
-    pub fn new(target_hardware: &HardwareTarget) -> Self {
-        let compute_resources = vec![
-            ComputeResource {
-                id: "matrix_unit_0".to_string(),
-                resource_type: ComputeResourceType::MatrixUnit,
-                capacity: 275e12, // 275 TOPS
-                utilization: 0.0,
-                power: 400.0, // 400W
-            },
-            ComputeResource {
-                id: "vector_unit_0".to_string(),
-                resource_type: ComputeResourceType::VectorUnit,
-                capacity: 100e9, // 100 GOPS
-                utilization: 0.0,
-                power: 100.0, // 100W
-            },
-        ];
-
-        let memory_resources = vec![MemoryResource {
-            id: "hbm_0".to_string(),
-            level: MemoryLevel::HBM,
-            capacity: target_hardware.memory_capacity,
-            bandwidth: target_hardware.memory_bandwidth * 1e9, // Convert to bytes/s
-            usage: 0,
-        }];
-
-        Self {
-            compute_resources,
-            memory_resources,
-            allocations: HashMap::new(),
-            utilization_timeline: BTreeMap::new(),
-        }
+    pub fn new(_target_hardware: &HardwareTarget) -> Self {
+        Self
     }
 
     pub fn assign_resources(
@@ -1436,121 +1404,16 @@ impl ResourceManager {
     }
 }
 
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
-    for LatencyOptimizer<T>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LatencyOptimizer<T> {
-    pub fn new() -> Self {
-        Self {
-            strategies: vec![
-                LatencyHidingStrategy::ComputeCommsOverlap,
-                LatencyHidingStrategy::Prefetching,
-                LatencyHidingStrategy::Pipelining,
-            ],
-            latency_model: LatencyModel::new(),
-            prefetch_opportunities: vec![],
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
-    for LatencyModel<T>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LatencyModel<T> {
-    pub fn new() -> Self {
-        let mut operation_latencies = HashMap::new();
-        operation_latencies.insert(OperationType::Add, 10.0);
-        operation_latencies.insert(OperationType::Multiply, 15.0);
-        operation_latencies.insert(OperationType::Dot, 100.0);
-
-        let mut memory_latencies = HashMap::new();
-        memory_latencies.insert(MemoryLevel::L1Cache, 1.0);
-        memory_latencies.insert(MemoryLevel::L2Cache, 10.0);
-        memory_latencies.insert(MemoryLevel::HBM, 100.0);
-
-        Self {
-            operation_latencies,
-            communication_latencies: HashMap::new(),
-            memory_latencies,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
-    for ParallelizationEngine<T>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> ParallelizationEngine<T> {
-    pub fn new() -> Self {
-        Self {
-            strategies: vec![
-                ParallelizationStrategy::DataParallel,
-                ParallelizationStrategy::TaskParallel,
-            ],
-            parallel_graph: ParallelExecutionGraph {
-                blocks: vec![],
-                block_dependencies: HashMap::new(),
-                sync_points: vec![],
-            },
-            load_balancer: LoadBalancer::new(),
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
-    for LoadBalancer<T>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> LoadBalancer<T> {
-    pub fn new() -> Self {
-        Self {
-            strategy: LoadBalancingStrategy::RoundRobin,
-            work_distribution: WorkDistribution {
-                work_per_resource: HashMap::new(),
-                imbalance_factor: 0.0,
-                efficiency: 1.0,
-            },
-            performance_monitor: PerformanceMonitor::new(),
-        }
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
-    for PerformanceMonitor<T>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> PerformanceMonitor<T> {
-    pub fn new() -> Self {
-        Self {
-            metrics: HashMap::new(),
-            timeline: vec![],
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
+// NOTE: `LatencyOptimizer`, `LatencyModel`, `ParallelizationEngine`,
+// `ParallelExecutionGraph`, this module's `LoadBalancer`, `WorkDistribution` and
+// this module's `PerformanceMonitor` used to live here. Every one of them was
+// constructed by `ExecutionScheduler::new` and then never read: no latency was
+// ever hidden, no work was ever distributed and no metric was ever recorded
+// through them. Latency-aware ordering that *is* real lives in
+// `xla::backend::code_generation`'s instruction scheduler (critical path over a
+// modelled machine), load balancing in `tpu_backend::DeviceManager` and
+// `coordination::LoadBalancer`, and per-execution monitoring in
+// `tpu_backend::PerformanceMonitor`.
 
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
     for PerformancePredictor<T>
@@ -1563,13 +1426,17 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> Default
 impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> PerformancePredictor<T> {
     pub fn new() -> Self {
         Self {
-            models: HashMap::new(),
-            historical_data: vec![],
-            accuracy: HashMap::new(),
             _phantom: std::marker::PhantomData,
         }
     }
 
+    /// Predicted performance for a schedule.
+    ///
+    /// There is no trained model here, so this reports the default (all-zero)
+    /// predictions rather than inventing plausible numbers. Real derived
+    /// estimates are available from
+    /// [`super::PerformanceAnalyzer::analyze`], which computes FLOPs and
+    /// timing from the graph and the memory plan.
     pub fn predict_performance(
         &mut self,
         _scheduled_operations: &[ScheduledOperation],

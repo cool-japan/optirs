@@ -1,31 +1,40 @@
 //! # OptiRS NAS - Neural Architecture Search
 //!
-//! **Version:** 0.3.1
-//! **Status:** Research Phase (Early Development)
+//! **Version:** 0.3.2
+//! **Status:** Research-grade implementations; APIs may still change between releases
 //!
-//! ⚠️ **Warning:** This crate is in early research phase. APIs are unstable and may change
-//! significantly. Not recommended for production use.
+//! ⚠️ **Warning:** Architecture search is compute-heavy and the search-space / objective
+//! APIs are still evolving. Validate a discovered architecture against your own baselines
+//! before relying on it in production.
 //!
 //! `optirs-nas` provides neural architecture search and automated optimizer discovery
 //! built on [SciRS2](https://github.com/cool-japan/scirs).
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
-//! - `optirs-core` 0.1.0 - Core optimizers
+//! - `scirs2-core` 0.6.5 - required foundation (arrays, RNG, numeric traits)
 //!
-//! ## Implementation Status (v0.1.0)
+//! This crate has **no intra-workspace dependencies**: `optirs-core` and
+//! `optirs-learned` were declared once but never referenced, and were removed so
+//! `optirs-nas` builds and tests standalone. The benchmark harness in
+//! [`evaluation::BenchmarkSuite`] implements its optimizer update rules directly, which
+//! also makes NAS scores reproducible independently of sibling-crate changes.
 //!
-//! - 🚧 Bayesian optimization (in development)
-//! - 🚧 Evolutionary algorithms (planned)
-//! - 🚧 RL-based search (planned)
-//! - 🚧 Multi-objective optimization (in development)
-//! - 📝 Research framework only
-//! - 📝 No production-ready implementations yet
+//! ## Implementation Status (v0.3.2)
 //!
-//! ## Status: Research Phase
-//!
-//! This crate implements state-of-the-art architecture search algorithms.
+//! - ✅ Bayesian optimization ([`search_strategies::bayesian`] - Gaussian-process surrogate search)
+//! - ✅ Hyperparameter search ([`hyperparameter`] - grid enumeration, TPE, a GP-free
+//!   kernel-regression surrogate, and evolutionary search)
+//! - ✅ Evolutionary algorithms ([`search_strategies::evolutionary`] - population-based search)
+//! - ✅ RL-based search ([`search_strategies::rl_search`] - neural-controller sampling)
+//! - ✅ Differentiable search ([`search_strategies::differentiable`] - DARTS-style gradient search)
+//! - ✅ Multi-objective optimization ([`multi_objective`] - NSGA-II, NSGA-III, MOEA/D,
+//!   weighted-sum, Pareto frontier, exact hypervolume)
+//! - ✅ Hardware-aware cost modeling ([`hardware_cost`] - latency/memory/energy estimation)
+//! - ✅ AutoML pipeline coordination ([`automl_pipeline`]), cross-domain transfer, few-shot and
+//!   progressive search
+//! - 📝 Real, tested algorithms throughout - still labeled research-grade because search-space
+//!   and objective APIs may change across releases
 //!
 //! ## Features
 //!
@@ -39,7 +48,13 @@
 //! - **Pareto Frontier** - Balance accuracy, speed, memory
 //! - **Weighted Sum** - Customizable objective functions
 //! - **NSGA-II** - Non-dominated sorting genetic algorithm
-//! - **Constraint Satisfaction** - Hardware and resource constraints
+//! - **NSGA-III** - Reference-point-based many-objective sorting
+//! - **MOEA/D** - Decomposition-based optimization (Tchebycheff/PBI/ASF/weighted-sum)
+//! - Interactive preference articulation and Pareto-level constraint handling
+//!   (`MultiObjectiveConfig::user_preferences`/`constraint_handling`) are declared
+//!   but not yet consulted by any optimizer; hard resource limits are enforced
+//!   separately by [`nas_engine::resources::ResourceMonitor`], not by the
+//!   multi-objective layer.
 //!
 //! ### Progressive Search
 //! - **Start Simple** - Begin with small architectures
@@ -53,28 +68,84 @@
 //! - **Energy Consumption** - Optimize for mobile/edge devices
 //! - **Cost Optimization** - Minimize cloud compute costs
 //!
-//! ## Example Usage (Future)
+//! ## Example Usage
 //!
-//! ```rust,ignore
-//! use optirs_nas::{NASEngine, SearchConfig, SearchStrategy};
+//! The engine type is [`nas_engine::NeuralArchitectureSearch`], configured with a
+//! [`nas_engine::NASConfig`]. This example compiles and runs as a doctest, so it
+//! cannot drift away from the real API.
 //!
-//! // Configure architecture search
-//! let config = SearchConfig {
-//!     search_budget: 1000,
-//!     objectives: vec!["accuracy", "latency", "memory"],
-//!     strategy: SearchStrategy::BayesianOptimization,
+//! ```rust
+//! use optirs_nas::nas_engine::resources::SystemResourceTracker;
+//! use optirs_nas::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
+//! use optirs_nas::nas_engine::{
+//!     create_minimal_nas_config, NeuralArchitectureSearch, SearchStrategyType,
+//! };
+//! use std::time::Duration;
+//!
+//! # fn main() -> Result<(), optirs_nas::error::OptimError> {
+//! // A small, ready-made configuration: a populated search space, a Random
+//! // strategy and a tiny budget.
+//! let mut config = create_minimal_nas_config::<f64>();
+//! config.search_strategy = SearchStrategyType::Evolutionary;
+//! config.search_budget = 2;
+//! config.population_size = 4;
+//!
+//! let mut engine = NeuralArchitectureSearch::new(config)?;
+//! // The engine reports which strategy is *actually* running, not just what was
+//! // requested.
+//! assert_eq!(engine.search_strategy_name(), "EvolutionaryStrategy");
+//!
+//! // Pin the telemetry so this example's outcome does not depend on how much
+//! // memory the host happens to have free. `resource_monitor_mut` is the supported
+//! // injection point for real telemetry too.
+//! engine.resource_monitor_mut().set_trackers(vec![Box::new(
+//!     SystemResourceTracker::with_telemetry(
+//!         "example".to_string(),
+//!         Duration::from_secs(5),
+//!         Box::new(FixedTelemetry::new("example", TelemetrySample::unknown())),
+//!     ),
+//! )]);
+//!
+//! // A short search: two generations against the built-in evaluator.
+//! let results = engine.run_search()?;
+//! assert!(!results.search_history.is_empty());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Hyperparameter search is independent of the engine and can be driven directly:
+//!
+//! ```rust
+//! use optirs_nas::hyperparameter::{
+//!     DistributionType, HyperparameterOptimizer, HyperparameterSpace,
+//!     OptimizationStrategy, ParameterRange,
 //! };
 //!
-//! let mut engine = NASEngine::new(config)?;
+//! # fn main() -> Result<(), optirs_nas::error::OptimError> {
+//! let mut space: HyperparameterSpace<f64> = HyperparameterSpace::new();
+//! space.add_parameter(
+//!     "learning_rate".to_string(),
+//!     ParameterRange {
+//!         name: "learning_rate".to_string(),
+//!         min_value: 1e-5,
+//!         max_value: 1e-1,
+//!         distribution: DistributionType::Uniform,
+//!         log_scale: true,
+//!         discrete_values: None,
+//!     },
+//! );
 //!
-//! // Define search space
-//! let space = engine.optimizer_search_space()?;
+//! // Grid search enumerates the grid; it does not sample at random.
+//! let mut optimizer =
+//!     HyperparameterOptimizer::with_seed(space, OptimizationStrategy::Grid, 7);
+//! optimizer.set_grid_resolution(4);
+//! assert_eq!(optimizer.grid_size(), Some(4));
 //!
-//! // Run search
-//! let best_architecture = engine.search(&space, &dataset)?;
-//!
-//! // Use discovered optimizer
-//! let optimizer = best_architecture.instantiate()?;
+//! let suggestion = optimizer.suggest_configuration()?;
+//! let learning_rate = suggestion.parameters["learning_rate"];
+//! assert!((1e-5..=1e-1).contains(&learning_rate));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Supported Search Spaces
@@ -85,20 +156,24 @@
 //! - **Regularization** - L1/L2, dropout rates, gradient clipping
 //! - **Architecture Components** - Optimizer composition and ensembles
 //!
-//! ## Performance
-//!
-//! - **Automated Discovery** - Find better optimizers than hand-tuning
-//! - **Hardware-Specific** - Optimized for your exact hardware
-//! - **Multi-Objective** - No trade-offs between accuracy and speed
-//! - **Generalization** - Architectures transfer across tasks
-//!
 //! ## Architecture
 //!
-//! Built exclusively on SciRS2:
-//! - **NAS**: `scirs2_core::neural_architecture_search`
-//! - **Quantum Opt**: `scirs2_core::quantum_optimization`
-//! - **Parallel**: `scirs2_core::parallel::LoadBalancer`
-//! - **Search Space**: `scirs2_core::neural_architecture_search::SearchSpace`
+//! Every algorithm in this crate is implemented here; `scirs2-core` supplies the
+//! numeric substrate only:
+//!
+//! - **Arrays**: `scirs2_core::ndarray` ([`scirs2_core::ndarray::Array1`] / `Array2` / `Array3`)
+//! - **Numeric traits**: `scirs2_core::numeric` ([`scirs2_core::numeric::Float`], `NumCast`)
+//! - **RNG**: `scirs2_core::random` (`Random`, `Rng`)
+//!
+//! The search machinery itself lives in this crate:
+//! - **Search space**: [`nas_engine::SearchSpaceConfig`]
+//! - **Engine**: [`nas_engine::NeuralArchitectureSearch`]
+//! - **Strategies**: [`search_strategies`]
+//! - **Multi-objective**: [`multi_objective`]
+//!
+//! (Earlier revisions of this document referenced
+//! `scirs2_core::neural_architecture_search` and
+//! `scirs2_core::quantum_optimization`; neither module exists.)
 //!
 //! ## References
 //!
@@ -110,24 +185,76 @@
 //!
 //! Research contributions welcome! Follow SciRS2 integration guidelines.
 
+/// Compiles and runs every `rust` code block in `README.md` as a doctest, so the
+/// README cannot drift away from the API.
+///
+/// The previous README documented roughly twenty types that do not exist
+/// (`NASEngine`, `BayesianOptimizer`, `ProgressiveNAS::new().with_initial_depth(..)`,
+/// `HardwareAwareNAS`, `DistributedNAS`, ...) and `.await`ed every call in a crate
+/// with no `async fn` at all. Nothing caught it because nothing compiled it.
+///
+/// `#[cfg(doctest)]` keeps this out of the published documentation and out of
+/// normal builds; it exists only so `cargo test --doc` picks the file up.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 pub mod architecture;
 pub mod architecture_embedding;
+pub mod architecture_knowledge_graph;
+pub mod automl_pipeline;
+pub mod cross_domain_transfer;
 pub mod domain_specific_nas;
 pub mod error;
 pub mod evaluation;
+pub mod few_shot_architecture;
+pub mod hardware_cost;
 pub mod hyperparameter;
 pub mod multi_objective;
+pub mod multimodal_nas;
 pub mod nas_engine;
+pub(crate) mod numeric;
 pub mod progressive;
 pub mod search_strategies;
+pub mod speech_nas;
 
 pub use architecture::ArchitectureSpace;
 pub use architecture_embedding::{AggregationMethod, ArchitectureEmbedder};
+pub use architecture_knowledge_graph::{
+    ArchKnowledgeEdge, ArchKnowledgeNode, ArchitectureKnowledgeGraph, NodeId, PerformanceRecord,
+    RelationType,
+};
+pub use automl_pipeline::{
+    AutomlPipelineConfig, AutomlPipelineCoordinator, CandidateModel, EnsembleStrategy,
+    FeatureEngineeringStep, PipelineEvaluation, PreprocessingStep, ScoredPipeline, SvmKernel,
+    TrainValSplit,
+};
+pub use cross_domain_transfer::{
+    CrossDomainTransferEngine, DomainProfile, DomainSimilarityMetric, DomainSimilarityReport,
+    TransferRecommendation, TransferabilityWeights,
+};
 pub use domain_specific_nas::{
     DomainNASEngine, DomainSearchSpace, DomainType as NASDomainType, NASConstraint,
 };
 pub use error::{OptimError, Result};
+pub use few_shot_architecture::{
+    ArchitectureExample, DistanceMetric, FewShotAlgorithm, FewShotArchitectureOptimizer,
+    FewShotConfig, FewShotPrediction,
+};
+pub use hardware_cost::{
+    ActivationKind, Bottleneck, CostReport, HardwareCostModel, HardwareProfile, LatencyLookupTable,
+    LatencyPrediction, LatencySource, LayerKind, LayerSignature, LayerSpec, PerLayerCost, PoolKind,
+    RooflineResult,
+};
+pub use multimodal_nas::{
+    FusionOp, Modality, ModalityEncoder, MultimodalArchitecture, MultimodalEvaluation,
+    MultimodalLayer, MultimodalNasEngine, MultimodalSearchSpace, MultimodalValidationError,
+};
 pub use search_strategies::SearchStrategy;
+pub use speech_nas::{
+    layer_position_constraint, LayerPositionConstraint, SpeechLayerType, SpeechModelConfig,
+    SpeechModelEvaluation, SpeechNasEngine, SpeechSearchSpace,
+};
 
 // Re-export key types
 use serde::{Deserialize, Serialize};
@@ -176,123 +303,53 @@ pub enum EvaluationMetric {
     TrainingTime,
 }
 
-/// Evaluation results for an architecture
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationResults {
-    /// Final evaluation metrics
-    pub metrics: EvaluationMetric,
-    /// Training history
-    pub history: Vec<f64>,
-    /// Validation accuracy
-    pub validation_accuracy: f64,
-    /// Metric scores by type
-    pub metric_scores: std::collections::HashMap<EvaluationMetric, f64>,
-    /// Overall aggregated score
-    pub overall_score: f64,
-    /// Confidence intervals for metrics
-    pub confidence_intervals: std::collections::HashMap<EvaluationMetric, (f64, f64)>,
-    /// Time taken for evaluation
-    pub evaluation_time: std::time::Duration,
-    /// Whether evaluation was successful
-    pub success: bool,
-    /// Error message if evaluation failed
-    pub error_message: Option<String>,
-    /// Benchmark results
-    pub benchmark_results: Vec<BenchmarkResult>,
-    /// Cross-validation results
-    pub cv_results: CrossValidationResults,
-    /// Training trajectory over time
-    pub training_trajectory: Vec<TrainingPoint>,
-}
+// ---------------------------------------------------------------------------
+// Canonical result / architecture types
+// ---------------------------------------------------------------------------
+//
+// The generic, element-type-parameterised definitions in
+// [`nas_engine::results`] are the single source of truth for architectures,
+// evaluation results and resource accounting. They are re-exported here so
+// `optirs_nas::OptimizerArchitecture<T>` and
+// `nas_engine::results::OptimizerArchitecture<T>` name the *same* type. Earlier
+// releases carried a second, `f64`-only copy of each of these structs at the
+// crate root; those duplicates are gone.
 
-/// Benchmark result for a specific task
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BenchmarkResult {
-    /// Benchmark name
-    pub name: String,
-    /// Score achieved
-    pub score: f64,
-    /// Execution time
-    pub execution_time: std::time::Duration,
-}
+pub use nas_engine::config::NASConfig;
+pub use nas_engine::results::{
+    BenchmarkResult, CrossValidationResults, EvaluationResults, OptimizerArchitecture,
+    ResourceUsage, TrainingSnapshot,
+};
 
-/// Cross-validation results
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrossValidationResults {
-    /// Mean score across folds
-    pub mean_score: f64,
-    /// Standard deviation across folds
-    pub std_score: f64,
-    /// Individual fold scores
-    pub fold_scores: Vec<f64>,
-    /// Number of folds used
-    pub num_folds: usize,
-}
-
-/// Training point for trajectory tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrainingPoint {
-    /// Training step/epoch
-    pub step: usize,
-    /// Training loss
-    pub training_loss: f64,
-    /// Validation loss
-    pub validation_loss: Option<f64>,
-    /// Timestamp (elapsed time in seconds since start)
-    pub timestamp_secs: f64,
-}
-
-/// Optimizer architecture representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OptimizerArchitecture {
-    /// Architecture identifier
-    pub id: String,
-    /// Architecture parameters
-    pub parameters: std::collections::HashMap<String, f64>,
-    /// Architecture structure
-    pub structure: Vec<String>,
-}
-
-/// Resource usage tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceUsage {
-    /// Memory usage in bytes
-    pub memory_usage: usize,
-    /// Compute time in seconds
-    pub compute_time: f64,
-    /// Energy consumption in joules
-    pub energy_consumption: f64,
-    /// Memory usage in GB
-    pub memory_gb: f64,
-    /// CPU time in seconds
-    pub cpu_time_seconds: f64,
-    /// GPU time in seconds
-    pub gpu_time_seconds: f64,
-    /// Energy consumption in kWh
-    pub energy_kwh: f64,
-    /// Cost in USD
-    pub cost_usd: f64,
-    /// Network usage in GB
-    pub network_gb: f64,
-}
-
-/// NAS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NASConfig {
-    /// Search budget (number of architectures to evaluate)
-    pub search_budget: usize,
-    /// Population size for evolutionary algorithms
-    pub population_size: usize,
-    /// Number of generations
-    pub generations: usize,
-}
-
-impl Default for NASConfig {
+impl Default for EvaluationConfig {
     fn default() -> Self {
         Self {
-            search_budget: 1000,
-            population_size: 50,
-            generations: 20,
+            epochs: 20,
+            batch_size: 32,
+            learning_rate: 1e-3,
+            performance_prediction: false,
+        }
+    }
+}
+
+impl EvaluationConfig {
+    /// Derive an evaluation configuration from the richer, generic
+    /// [`nas_engine::config::EvaluationConfig`] carried by [`NASConfig`].
+    ///
+    /// The engine-level configuration describes budgets and statistical
+    /// testing; the evaluation subsystem only needs the step budget, batch size
+    /// and base learning rate, plus whether performance prediction is enabled.
+    /// `max_epochs` is clamped to at least one step so an evaluation always
+    /// performs real work.
+    pub fn from_engine_config<T>(config: &nas_engine::config::EvaluationConfig<T>) -> Self
+    where
+        T: scirs2_core::numeric::Float + std::fmt::Debug + Send + Sync + 'static,
+    {
+        Self {
+            epochs: config.evaluation_budget.max_epochs.max(1) as u32,
+            batch_size: 32,
+            learning_rate: 1e-3,
+            performance_prediction: false,
         }
     }
 }

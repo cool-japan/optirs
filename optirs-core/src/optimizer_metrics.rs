@@ -20,13 +20,14 @@
 //! - `scirs2_core::metrics::Histogram` for distributions
 //! - `scirs2_core::metrics::Timer` for timing operations
 
-use scirs2_core::ndarray::{Array1, ArrayView1, ScalarOperand};
+use scirs2_core::ndarray::{ArrayView1, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
+use crate::utils::try_f64;
 
 /// Optimizer performance metrics
 ///
@@ -70,7 +71,11 @@ impl OptimizerMetrics {
         }
     }
 
-    /// Update metrics after an optimization step
+    /// Update metrics after an optimization step.
+    ///
+    /// Returns `Err` if the gradient or parameter statistics cannot be
+    /// computed (mismatched parameter lengths, or values with no `f64`
+    /// representation).
     pub fn update_step<A: Float>(
         &mut self,
         step_duration: Duration,
@@ -78,20 +83,21 @@ impl OptimizerMetrics {
         gradients: &ArrayView1<A>,
         params_before: &ArrayView1<A>,
         params_after: &ArrayView1<A>,
-    ) {
+    ) -> Result<()> {
+        // Statistics first: they are the only fallible part, and running them
+        // before mutating the step counters keeps a rejected call from
+        // advancing `step_count`/`total_step_time` for a step whose metrics
+        // were never recorded.
+        self.gradient_stats.update(gradients)?;
+        self.parameter_stats.update(params_before, params_after)?;
+        self.convergence.update(&self.parameter_stats);
+
         self.step_count += 1;
         self.total_step_time += step_duration;
         self.avg_step_time = self.total_step_time / self.step_count as u32;
         self.current_learning_rate = learning_rate;
 
-        // Update gradient statistics
-        self.gradient_stats.update(gradients);
-
-        // Update parameter statistics
-        self.parameter_stats.update(params_before, params_after);
-
-        // Update convergence metrics
-        self.convergence.update(&self.parameter_stats);
+        Ok(())
     }
 
     /// Get throughput (steps per second)
@@ -132,52 +138,37 @@ pub struct GradientStatistics {
 }
 
 impl GradientStatistics {
-    /// Update gradient statistics
-    pub fn update<A: Float>(&mut self, gradients: &ArrayView1<A>) {
+    /// Update gradient statistics.
+    ///
+    /// Returns `Err` when a gradient value has no `f64` representation, rather
+    /// than panicking part-way through and leaving the statistics in a
+    /// half-updated state.
+    pub fn update<A: Float>(&mut self, gradients: &ArrayView1<A>) -> Result<()> {
         let n = gradients.len();
         if n == 0 {
-            return;
+            return Ok(());
         }
 
-        // Calculate statistics
-        let sum: f64 = gradients
+        // Convert once, up front: every statistic below is computed in f64, and
+        // doing the (fallible) narrowing in one pass means a failure aborts
+        // before any field has been overwritten.
+        let values: Vec<f64> = gradients
             .iter()
-            .map(|&g| g.to_f64().expect("unwrap failed"))
-            .sum();
-        self.mean = sum / n as f64;
+            .map(|&g| try_f64(g))
+            .collect::<Result<Vec<f64>>>()?;
 
-        let variance: f64 = gradients
-            .iter()
-            .map(|&g| {
-                let diff = g.to_f64().expect("unwrap failed") - self.mean;
-                diff * diff
-            })
-            .sum::<f64>()
-            / n as f64;
+        let count = n as f64;
+        let mean = values.iter().sum::<f64>() / count;
+        let variance = values.iter().map(|&v| (v - mean) * (v - mean)).sum::<f64>() / count;
+
+        self.mean = mean;
         self.std_dev = variance.sqrt();
+        self.max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        self.min = values.iter().copied().fold(f64::INFINITY, f64::min);
+        self.norm = values.iter().map(|&v| v * v).sum::<f64>().sqrt();
+        self.num_zeros = values.iter().filter(|v| v.abs() < 1e-10).count();
 
-        self.max = gradients
-            .iter()
-            .map(|&g| g.to_f64().expect("unwrap failed"))
-            .fold(f64::NEG_INFINITY, f64::max);
-        self.min = gradients
-            .iter()
-            .map(|&g| g.to_f64().expect("unwrap failed"))
-            .fold(f64::INFINITY, f64::min);
-
-        self.norm = gradients
-            .iter()
-            .map(|&g| {
-                let val = g.to_f64().expect("unwrap failed");
-                val * val
-            })
-            .sum::<f64>()
-            .sqrt();
-
-        self.num_zeros = gradients
-            .iter()
-            .filter(|&&g| g.to_f64().expect("unwrap failed").abs() < 1e-10)
-            .count();
+        Ok(())
     }
 }
 
@@ -195,62 +186,60 @@ pub struct ParameterStatistics {
 }
 
 impl ParameterStatistics {
-    /// Update parameter statistics
+    /// Update parameter statistics.
+    ///
+    /// Returns `Err` when the two parameter views disagree on length (which
+    /// `zip` would otherwise silently truncate, understating the update
+    /// magnitude) or when a value has no `f64` representation.
     pub fn update<A: Float>(
         &mut self,
         params_before: &ArrayView1<A>,
         params_after: &ArrayView1<A>,
-    ) {
+    ) -> Result<()> {
         let n = params_after.len();
         if n == 0 {
-            return;
+            return Ok(());
+        }
+        if params_before.len() != n {
+            return Err(OptimError::DimensionMismatch(format!(
+                "parameter statistics need the pre- and post-step parameters to have the same \
+                 length, got {} before and {n} after",
+                params_before.len()
+            )));
         }
 
-        // Calculate mean
-        let sum: f64 = params_after
+        // Narrow once, up front, so a failure aborts before any field is
+        // overwritten and no value is converted twice.
+        let after: Vec<f64> = params_after
             .iter()
-            .map(|&p| p.to_f64().expect("unwrap failed"))
-            .sum();
-        self.mean = sum / n as f64;
+            .map(|&p| try_f64(p))
+            .collect::<Result<Vec<f64>>>()?;
+        let before: Vec<f64> = params_before
+            .iter()
+            .map(|&p| try_f64(p))
+            .collect::<Result<Vec<f64>>>()?;
 
-        // Calculate std dev
-        let variance: f64 = params_after
+        let count = n as f64;
+        let mean = after.iter().sum::<f64>() / count;
+        let variance = after.iter().map(|&v| (v - mean) * (v - mean)).sum::<f64>() / count;
+        let update_magnitude = before
             .iter()
-            .map(|&p| {
-                let diff = p.to_f64().expect("unwrap failed") - self.mean;
-                diff * diff
-            })
+            .zip(after.iter())
+            .map(|(&b, &a)| (a - b) * (a - b))
             .sum::<f64>()
-            / n as f64;
+            .sqrt();
+        let params_norm = before.iter().map(|&v| v * v).sum::<f64>().sqrt();
+
+        self.mean = mean;
         self.std_dev = variance.sqrt();
-
-        // Calculate update magnitude
-        self.update_magnitude = params_before
-            .iter()
-            .zip(params_after.iter())
-            .map(|(&before, &after)| {
-                let diff = after.to_f64().expect("unwrap failed")
-                    - before.to_f64().expect("unwrap failed");
-                diff * diff
-            })
-            .sum::<f64>()
-            .sqrt();
-
-        // Calculate relative change
-        let params_norm: f64 = params_before
-            .iter()
-            .map(|&p| {
-                let val = p.to_f64().expect("unwrap failed");
-                val * val
-            })
-            .sum::<f64>()
-            .sqrt();
-
+        self.update_magnitude = update_magnitude;
         self.relative_change = if params_norm > 1e-10 {
-            self.update_magnitude / params_norm
+            update_magnitude / params_norm
         } else {
             0.0
         };
+
+        Ok(())
     }
 }
 
@@ -325,8 +314,7 @@ impl MetricsCollector {
                 gradients,
                 params_before,
                 params_after,
-            );
-            Ok(())
+            )
         } else {
             Err(crate::error::OptimError::InvalidConfig(format!(
                 "Optimizer '{}' not registered",
@@ -470,7 +458,9 @@ mod tests {
     fn test_gradient_statistics() {
         let mut stats = GradientStatistics::default();
         let grads = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
-        stats.update(&grads.view());
+        stats
+            .update(&grads.view())
+            .expect("f64 gradients are representable");
 
         assert!((stats.mean - 3.0).abs() < 1e-6);
         assert!(stats.max > 4.9);
@@ -483,7 +473,9 @@ mod tests {
         let mut stats = ParameterStatistics::default();
         let before = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let after = Array1::from_vec(vec![0.9, 1.9, 2.9]);
-        stats.update(&before.view(), &after.view());
+        stats
+            .update(&before.view(), &after.view())
+            .expect("f64 parameters of equal length are representable");
 
         assert!(stats.update_magnitude > 0.0);
         assert!(stats.relative_change > 0.0);
@@ -547,13 +539,15 @@ mod tests {
         let before = Array1::from_vec(vec![1.0]);
         let after = Array1::from_vec(vec![0.99]);
 
-        metrics.update_step(
-            Duration::from_millis(10),
-            0.01,
-            &grads.view(),
-            &before.view(),
-            &after.view(),
-        );
+        metrics
+            .update_step(
+                Duration::from_millis(10),
+                0.01,
+                &grads.view(),
+                &before.view(),
+                &after.view(),
+            )
+            .expect("well-formed f64 step must record");
 
         assert_eq!(metrics.step_count, 1);
 

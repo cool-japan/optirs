@@ -15,7 +15,6 @@ use optirs_core::optimizer_metrics::{
 };
 use optirs_core::optimizers::{Adam, Optimizer, SGD};
 use scirs2_core::ndarray::Array1;
-use scirs2_core::random::{thread_rng, Distribution, Normal};
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -78,7 +77,7 @@ fn basic_metrics() -> Result<(), Box<dyn std::error::Error>> {
             &gradients.view(),
             &params_before.view(),
             &params.view(),
-        );
+        )?;
 
         if step % 3 == 0 {
             println!(
@@ -235,7 +234,7 @@ fn gradient_analysis() -> Result<(), Box<dyn std::error::Error>> {
     for (name, values) in scenarios {
         let gradients = Array1::from_vec(values);
         let mut stats = GradientStatistics::default();
-        stats.update(&gradients.view());
+        stats.update(&gradients.view())?;
 
         println!("\n{}:", name);
         println!("  Mean: {:.6}", stats.mean);
@@ -275,7 +274,7 @@ fn metrics_export() -> Result<(), Box<dyn std::error::Error>> {
             &gradients.view(),
             &params.view(),
             &params.view(),
-        );
+        )?;
     }
 
     // Export to JSON

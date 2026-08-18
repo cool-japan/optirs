@@ -4,15 +4,27 @@
 // update optimization parameters. The LSTM learns optimization strategies through
 // meta-learning, enabling automatic discovery of effective optimization patterns.
 
-#[allow(dead_code)]
 use scirs2_core::ndarray::{s, Array, Array1, Array2, ArrayBase, Data, Dimension};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::Rng;
+use scirs2_core::random::{rngs::StdRng, seeded_rng, thread_rng, CoreRandom};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use super::{LearnedOptimizerConfig, MetaOptimizationStrategy};
+use super::LearnedOptimizerConfig;
+use crate::common::cast_scalar;
 use crate::error::{OptimError, Result};
+
+pub mod bptt;
+pub mod components;
+pub mod features;
+pub mod introspection;
+pub mod trainer;
+
+pub use bptt::{
+    BpttConfig, DiagonalQuadraticTask, FrozenRollout, MetaTrainingTask, NetworkGradients,
+};
+pub use features::build_lstm_features;
+pub use trainer::MetaTrainer;
 
 /// LSTM-based neural optimizer with meta-learning capabilities
 #[derive(Debug)]
@@ -40,9 +52,6 @@ pub struct LSTMOptimizer<T: Float + Debug + Send + Sync + 'static> {
 
     /// Current optimization step
     step_count: usize,
-
-    /// Random number generator for noise and initialization
-    rng: scirs2_core::random::CoreRandom,
 }
 
 /// LSTM network architecture for optimization
@@ -62,6 +71,17 @@ pub struct LSTMNetwork<T: Float + Debug + Send + Sync + 'static> {
 
     /// Dropout for regularization
     dropout_rate: f64,
+
+    /// Whether dropout is active.
+    ///
+    /// Defaults to `false` (evaluation mode). Dropout used to be applied
+    /// unconditionally whenever `dropout_rate > 0.0`, which made
+    /// `LSTMOptimizer::lstm_step` non-deterministic and injected training-time
+    /// noise into deployed updates. It also made meta-training impossible to
+    /// verify: the truncated-BPTT gradient in [`bptt`] is the gradient of a
+    /// *deterministic* rollout. Call [`LSTMNetwork::set_training`] to turn it on
+    /// deliberately.
+    training: bool,
 }
 
 /// Individual LSTM layer
@@ -103,13 +123,40 @@ pub struct OutputProjection<T: Float + Debug + Send + Sync + 'static> {
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjection<T> {
-    /// Create a new output projection
+    /// Create a new output projection with Xavier-initialized weights.
+    ///
+    /// The output-side transform (tanh / scaling / ...) named by
+    /// `output_transform` is applied by the caller (see
+    /// `LSTMOptimizer::generate_updates`); this projection itself computes the
+    /// underlying linear map `W x + b`.
     pub fn new(
         input_size: usize,
         output_size: usize,
         output_transform: OutputTransform,
     ) -> Result<Self> {
-        let weights = Array2::zeros((output_size, input_size));
+        Self::new_with_rng(
+            input_size,
+            output_size,
+            output_transform,
+            &mut seeded_rng(thread_rng().random::<u64>()),
+        )
+    }
+
+    /// [`Self::new`] with the caller's generator, for reproducible construction
+    /// (see [`LSTMNetwork::new_seeded`]).
+    pub(crate) fn new_with_rng(
+        input_size: usize,
+        output_size: usize,
+        output_transform: OutputTransform,
+        rng: &mut CoreRandom<StdRng>,
+    ) -> Result<Self> {
+        // Xavier/Glorot *uniform* limit is sqrt(6 / (fan_in + fan_out)); the
+        // sqrt(2 / ...) that used to be here is the limit for a Xavier *normal*
+        // draw, and `xavier_init` samples uniformly. Uniform[-b, b] has variance
+        // b^2/3, so the old constant gave exactly one third of the intended
+        // variance in every LSTM weight matrix in this file (finding F64).
+        let limit = LSTMLayer::<T>::xavier_limit(input_size, output_size);
+        let weights = LSTMLayer::<T>::xavier_init(rng, output_size, input_size, limit);
         let bias = Array1::zeros(output_size);
 
         Ok(Self {
@@ -119,10 +166,37 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OutputProjectio
         })
     }
 
-    /// Forward pass through output projection
+    /// Forward pass through output projection: `output = W * input + b`.
     pub fn forward(&self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified implementation - just return the input for now
-        Ok(input.clone())
+        if input.len() != self.weights.ncols() {
+            return Err(OptimError::InvalidConfig(format!(
+                "OutputProjection expected {} input features, got {}",
+                self.weights.ncols(),
+                input.len()
+            )));
+        }
+        Ok(self.weights.dot(input) + &self.bias)
+    }
+
+    /// Re-randomize the projection weights and zero the bias.
+    ///
+    /// Used when the target output dimension changes at runtime (e.g. the
+    /// flattened parameter count the optimizer is asked to update does not
+    /// match this projection's configured `output_features`): a fresh Xavier
+    /// draw at the new shape is the honest response, since there is no
+    /// meaningful way to reuse weights trained for a different output size.
+    pub fn reset(&mut self, input_size: usize, output_size: usize) {
+        let limit = LSTMLayer::<T>::xavier_limit(input_size, output_size);
+        // A runtime reshape is inherently a fresh draw; entropy seeding is the
+        // honest choice here (reproducible runs should avoid triggering it).
+        let mut rng = seeded_rng(thread_rng().random::<u64>());
+        self.weights = LSTMLayer::<T>::xavier_init(&mut rng, output_size, input_size, limit);
+        self.bias = Array1::zeros(output_size);
+    }
+
+    /// Current output dimension.
+    pub fn output_size(&self) -> usize {
+        self.weights.nrows()
     }
 }
 
@@ -168,30 +242,105 @@ pub struct AttentionMechanism<T: Float + Debug + Send + Sync + 'static> {
 
     /// Attention weights from last forward pass
     attentionweights: Option<Array2<T>>,
+
+    /// Raw pre-softmax logits from the last forward pass, one per head.
+    ///
+    /// At sequence length 1 the softmax weights are identically `1.0` for every
+    /// head, so they carry no information about how the heads differ. The scaled
+    /// dot products `qₕ·kₕ / √d` do, which is what
+    /// [`LSTMOptimizer::compute_attention_stats`] measures head diversity from.
+    head_logits: Option<Array1<T>>,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AttentionMechanism<T> {
-    /// Create a new attention mechanism
+    /// Create a new attention mechanism with Xavier-initialized projections.
     pub fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
+        Self::new_with_rng(config, &mut seeded_rng(thread_rng().random::<u64>()))
+    }
+
+    /// [`Self::new`] with the caller's generator, for reproducible construction
+    /// (see [`LSTMNetwork::new_seeded`]).
+    pub(crate) fn new_with_rng(
+        config: &LearnedOptimizerConfig,
+        rng: &mut CoreRandom<StdRng>,
+    ) -> Result<Self> {
         let hiddensize = config.hidden_size;
-        let num_heads = config.attention_heads;
+        let num_heads = config.attention_heads.max(1);
+        if !hiddensize.is_multiple_of(num_heads) {
+            return Err(OptimError::InvalidConfig(format!(
+                "attention_heads ({num_heads}) must evenly divide hidden_size ({hiddensize})"
+            )));
+        }
         let head_size = hiddensize / num_heads;
+        // Square projections: fan_in == fan_out == hiddensize.
+        let limit = LSTMLayer::<T>::xavier_limit(hiddensize, hiddensize);
 
         Ok(Self {
-            query_proj: Array2::zeros((hiddensize, hiddensize)),
-            key_proj: Array2::zeros((hiddensize, hiddensize)),
-            value_proj: Array2::zeros((hiddensize, hiddensize)),
-            output_proj: Array2::zeros((hiddensize, hiddensize)),
+            query_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
+            key_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
+            value_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
+            output_proj: LSTMLayer::<T>::xavier_init(rng, hiddensize, hiddensize, limit),
             num_heads,
             head_size,
             attentionweights: None,
+            head_logits: None,
         })
     }
 
-    /// Forward pass through attention mechanism
+    /// Scaled dot-product self-attention.
+    ///
+    /// The optimizer calls this once per optimization step with a *single*
+    /// hidden-state vector (there is no sequence axis at this call site), so
+    /// per head the attention distribution is always over exactly one key and
+    /// therefore softmaxes to the constant `1.0`: the attended value degenerates
+    /// to `V` itself. The formula is exactly standard SDPA at sequence length 1
+    /// rather than an ad hoc shortcut.
+    ///
+    /// The degenerate weights are recorded in the private `attentionweights`
+    /// field, and the *pre-softmax* scaled dot products — which, unlike the
+    /// weights, do vary with the input and between heads — in `head_logits`, so
+    /// the optimizer's attention statistics (surfaced through
+    /// [`LSTMOptimizer::get_metrics`]) have something informative to report for
+    /// head diversity.
     pub fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified implementation - just return the input for now
-        Ok(input.clone())
+        let dim = self.query_proj.nrows();
+        if input.len() != dim {
+            return Err(OptimError::InvalidConfig(format!(
+                "AttentionMechanism expected {dim} features, got {}",
+                input.len()
+            )));
+        }
+
+        let query = self.query_proj.dot(input);
+        let key = self.key_proj.dot(input);
+        let value = self.value_proj.dot(input);
+
+        let head_scale = T::one()
+            / scirs2_core::numeric::NumCast::from(self.head_size)
+                .unwrap_or_else(T::one)
+                .sqrt();
+        let mut weights = Array2::zeros((self.num_heads, 1));
+        let mut logits = Array1::zeros(self.num_heads);
+        for h in 0..self.num_heads {
+            let start = h * self.head_size;
+            let end = start + self.head_size;
+            let score = query
+                .slice(s![start..end])
+                .iter()
+                .zip(key.slice(s![start..end]).iter())
+                .fold(T::zero(), |acc, (&q, &k)| acc + q * k)
+                * head_scale;
+            logits[h] = score;
+            // softmax over a single logit: exp(score) / exp(score) == 1,
+            // independent of `score`'s value. The score itself is kept in
+            // `head_logits` because it is the only per-head quantity that
+            // survives the degenerate softmax.
+            weights[[h, 0]] = T::one();
+        }
+        self.attentionweights = Some(weights);
+        self.head_logits = Some(logits);
+
+        Ok(self.output_proj.dot(&value))
     }
 }
 
@@ -218,10 +367,34 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> LayerNormalizat
         })
     }
 
-    /// Forward pass through layer normalization
+    /// Forward pass through layer normalization: standardise `input` to zero
+    /// mean / unit variance across its features, then apply the learned
+    /// affine transform `gamma * x_hat + beta`.
     pub fn forward(&self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified implementation - just return the input for now
-        Ok(input.clone())
+        if input.len() != self.gamma.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "LayerNormalization expected {} features, got {}",
+                self.gamma.len(),
+                input.len()
+            )));
+        }
+        if input.is_empty() {
+            return Ok(input.clone());
+        }
+        let n = scirs2_core::numeric::NumCast::from(input.len()).unwrap_or_else(T::one);
+        let mean = input.iter().copied().fold(T::zero(), |a, b| a + b) / n;
+        let variance = input
+            .iter()
+            .map(|&x| (x - mean) * (x - mean))
+            .fold(T::zero(), |a, b| a + b)
+            / n;
+        let inv_std = T::one() / (variance + self.epsilon).sqrt();
+
+        let mut output = Array1::zeros(input.len());
+        for i in 0..input.len() {
+            output[i] = (input[i] - mean) * inv_std * self.gamma[i] + self.beta[i];
+        }
+        Ok(output)
     }
 }
 
@@ -237,12 +410,6 @@ pub struct HistoryBuffer<T: Float + Debug + Send + Sync + 'static> {
     /// Loss history
     losses: VecDeque<T>,
 
-    /// Learning rate history
-    learning_rates: VecDeque<T>,
-
-    /// Update magnitude history
-    update_magnitudes: VecDeque<T>,
-
     /// Maximum history length
     _maxlength: usize,
 
@@ -250,12 +417,16 @@ pub struct HistoryBuffer<T: Float + Debug + Send + Sync + 'static> {
     feature_cache: Option<Array2<T>>,
 }
 
-/// Meta-learning component for optimizer adaptation
+/// Meta-learning component for optimizer adaptation.
+///
+/// `MetaLearner::step` implements one fixed rule: a truncated-BPTT unroll of
+/// the controller over each task, i.e. the second-order / MAML-style inner loop.
+/// It carried a `strategy: MetaOptimizationStrategy` field that was hard-wired to
+/// `MAML` at construction and never consulted, which advertised a choice the
+/// implementation does not offer; the alternatives (Reptile, first-order,
+/// custom) are not implemented for this controller.
 #[derive(Debug, Clone)]
 pub struct MetaLearner<T: Float + Debug + Send + Sync + 'static> {
-    /// Meta-optimization strategy
-    strategy: MetaOptimizationStrategy,
-
     /// Meta-parameters (optimizer parameters)
     meta_parameters: HashMap<String, Array1<T>>,
 
@@ -495,9 +666,6 @@ pub struct AdaptiveLearningRateController<T: Float + Debug + Send + Sync + 'stat
 
     /// Performance-based adaptation
     performance_tracker: PerformanceTracker<T>,
-
-    /// Learned LR schedule parameters
-    schedule_params: Option<Array1<T>>,
 }
 
 /// Learning rate adaptation parameters
@@ -577,6 +745,17 @@ pub struct OptimizationStateTracker<T: Float + Debug + Send + Sync + 'static> {
 
     /// Stability metrics
     stability_metrics: StabilityMetrics<T>,
+
+    /// Previous step's gradient, for the direction-consistency, noise and
+    /// secant-curvature estimates computed by
+    /// [`OptimizationStateTracker::update`].
+    previous_gradient: Option<Array1<T>>,
+
+    /// Previous step's loss, for the loss-change trend.
+    previous_loss: Option<T>,
+
+    /// Number of observed steps, for the running moments.
+    step_count: usize,
 }
 
 /// Optimization phases
@@ -930,9 +1109,6 @@ impl<
         // Initialize metrics
         let metrics = LSTMOptimizerMetrics::new();
 
-        // Initialize RNG
-        let rng = scirs2_core::random::thread_rng();
-
         Ok(Self {
             config,
             lstm_network,
@@ -942,7 +1118,6 @@ impl<
             state_tracker,
             metrics,
             step_count: 0,
-            rng,
         })
     }
 
@@ -960,6 +1135,18 @@ impl<
         // Convert to flat arrays for processing
         let flat_params = self.flatten_to_1d(parameters)?;
         let flat_gradients = self.flatten_to_1d(gradients)?;
+
+        // The output projection must produce exactly one update per
+        // flattened parameter, or the `flat_params - updates` subtraction
+        // below panics on mismatched shapes. Re-initialize it at the correct
+        // size the moment the optimizer sees a parameter count different from
+        // its `output_features` configuration, rather than requiring every
+        // caller to pre-size their model to match a fixed constant.
+        if self.lstm_network.output_projection.output_size() != flat_params.len() {
+            self.lstm_network
+                .output_projection
+                .reset(self.config.hidden_size, flat_params.len());
+        }
 
         // Update history buffer
         self.history_buffer
@@ -1022,6 +1209,40 @@ impl<
         &self.metrics
     }
 
+    /// Read-only access to the LSTM controller network.
+    pub fn network(&self) -> &LSTMNetwork<T> {
+        &self.lstm_network
+    }
+
+    /// Read-only access to the meta-learner, whose `adaptation_history` records
+    /// what each [`Self::meta_learning_step`] achieved.
+    pub fn meta_learner(&self) -> &MetaLearner<T> {
+        &self.meta_learner
+    }
+
+    /// Mutable access to the LSTM controller network.
+    ///
+    /// This is the handle a caller needs to meta-train the controller directly
+    /// with [`trainer::MetaTrainer`], rather than going through
+    /// [`Self::meta_learning_step`]'s trajectory-surrogate path.
+    pub fn network_mut(&mut self) -> &mut LSTMNetwork<T> {
+        &mut self.lstm_network
+    }
+
+    /// The learning rate the adaptive controller last produced.
+    ///
+    /// Meaningful only after at least one [`Self::lstm_step`]; before that it is
+    /// the configured base rate.
+    pub fn current_learning_rate(&self) -> T {
+        self.lr_controller.current_lr()
+    }
+
+    /// Consecutive steps without a new best loss, as tracked by the adaptive
+    /// learning-rate controller.
+    pub fn stagnation_counter(&self) -> usize {
+        self.lr_controller.stagnation_counter()
+    }
+
     /// Get optimization state analysis
     pub fn get_state_analysis(&self) -> OptimizationStateAnalysis<T> {
         OptimizationStateAnalysis {
@@ -1033,50 +1254,26 @@ impl<
         }
     }
 
-    /// Prepare input features for LSTM
+    /// Prepare input features for the LSTM.
+    ///
+    /// Delegates to [`features::build_lstm_features`] so that inference and
+    /// truncated-BPTT meta-training consume byte-identical features — training a
+    /// different function than the one that ships would make the meta-training
+    /// worthless. That shared builder also removed the
+    /// `gradients.as_slice().expect(...)` in the previous body, which panicked on
+    /// any gradient that was not in contiguous standard layout.
     fn prepare_lstm_input(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
-        let mut features = Vec::new();
-
-        // Current gradient features
-        features.extend_from_slice(gradients.as_slice().expect("unwrap failed"));
-
-        // Historical gradient features
-        if let Some(prev_gradients) = self.history_buffer.get_recent_gradients(5) {
-            for prev_grad in prev_gradients {
-                // Gradient differences
-                let grad_diff: Vec<T> = gradients
-                    .iter()
-                    .zip(prev_grad.iter())
-                    .map(|(&g1, &g2)| g1 - g2)
-                    .collect();
-                features.extend(grad_diff);
-            }
-        }
-
-        // Statistical features
-        let grad_norm = gradients.iter().map(|&g| g * g).sum::<T>().sqrt();
-        let grad_mean =
-            gradients.iter().cloned().sum::<T>() / T::from(gradients.len()).expect("unwrap failed");
-        let grad_std = {
-            let variance = gradients
-                .iter()
-                .map(|&g| (g - grad_mean) * (g - grad_mean))
-                .sum::<T>()
-                / T::from(gradients.len()).expect("unwrap failed");
-            variance.sqrt()
-        };
-
-        features.extend([grad_norm, grad_mean, grad_std]);
-
-        // Loss-based features
-        if let Some(loss_features) = self.history_buffer.get_loss_features() {
-            features.extend(loss_features);
-        }
-
-        // Pad or truncate to expected input size
-        features.resize(self.config.input_features, T::zero());
-
-        Ok(Array1::from_vec(features))
+        let recent = self
+            .history_buffer
+            .get_recent_gradients(5)
+            .unwrap_or_default();
+        let loss_features = self.history_buffer.get_loss_features();
+        features::build_lstm_features(
+            gradients,
+            &recent,
+            loss_features.as_deref(),
+            self.config.input_features,
+        )
     }
 
     /// Generate parameter updates from LSTM output
@@ -1115,7 +1312,15 @@ impl<
         Ok(updates)
     }
 
-    /// Update performance metrics
+    /// Update performance metrics.
+    ///
+    /// `adaptation_efficiency` is the *effective step-size ratio*
+    /// `‖Δθ‖ / (lr · ‖g‖)`: the learned optimizer's step measured against the
+    /// plain SGD step of the same learning rate that it replaces. `1.0` means
+    /// "the same size as SGD would have taken", above `1.0` means the learned
+    /// rule is more aggressive than its nominal learning rate, below `1.0` more
+    /// conservative. Without dividing by `lr` the figure just tracked the
+    /// learning rate itself and was not comparable across schedules.
     fn update_metrics(&mut self, gradients: &Array1<T>, updates: &Array1<T>, lr: T) {
         // Compute gradient statistics
         let grad_norm = gradients.iter().map(|&g| g * g).sum::<T>().sqrt();
@@ -1124,8 +1329,15 @@ impl<
         // Update LSTM statistics
         self.update_lstm_stats();
 
-        // Update efficiency metrics
-        self.metrics.adaptation_efficiency = (update_norm / grad_norm).to_f64().unwrap_or(1.0);
+        // Update efficiency metrics. A zero gradient (or a zero learning rate)
+        // makes the ratio undefined rather than 0/0-shaped, so report the
+        // neutral 1.0 instead of dividing.
+        let sgd_step_norm = lr.abs() * grad_norm;
+        self.metrics.adaptation_efficiency = if sgd_step_norm > T::zero() {
+            (update_norm / sgd_step_norm).to_f64().unwrap_or(1.0)
+        } else {
+            1.0
+        };
 
         // Update computational overhead
         self.metrics.computational_overhead = self.estimate_computational_overhead();
@@ -1149,7 +1361,9 @@ impl<
         // Update attention statistics if available
         if let Some(ref attention) = self.lstm_network.attention {
             if let Some(ref attentionweights) = attention.attentionweights {
-                self.metrics.attention_stats = Some(self.compute_attention_stats(attentionweights));
+                self.metrics.attention_stats = Some(
+                    self.compute_attention_stats(attentionweights, attention.head_logits.as_ref()),
+                );
             }
         }
     }
@@ -1177,8 +1391,23 @@ impl<
         }
     }
 
-    /// Compute attention statistics
-    fn compute_attention_stats(&self, attentionweights: &Array2<T>) -> AttentionStats {
+    /// Compute attention statistics.
+    ///
+    /// `head_logits`, when present, holds the pre-softmax scaled dot product per
+    /// head. Head diversity is the population standard deviation of those
+    /// logits: at sequence length 1 the softmax weights are all `1.0`, so any
+    /// diversity measure computed from the *weights* is a constant and tells the
+    /// caller nothing. The logits are the quantity that actually varies with the
+    /// input and between heads.
+    ///
+    /// `temporal_patterns` is the per-head logit sequence itself, which is the
+    /// full temporal record available from one forward pass; an empty vector when
+    /// no logits were recorded, rather than a zero-filled placeholder.
+    fn compute_attention_stats(
+        &self,
+        attentionweights: &Array2<T>,
+        head_logits: Option<&Array1<T>>,
+    ) -> AttentionStats {
         let weights: Vec<f64> = attentionweights
             .iter()
             .map(|&w| w.to_f64().unwrap_or(0.0))
@@ -1194,14 +1423,22 @@ impl<
         // Compute concentration (inverse of entropy)
         let concentration = 1.0 / (1.0 + entropy);
 
-        // Simplified diversity measure
-        let head_diversity = weights.iter().map(|&w| w.abs()).sum::<f64>() / weights.len() as f64;
+        let logits: Vec<f64> = head_logits
+            .map(|l| l.iter().map(|&x| x.to_f64().unwrap_or(0.0)).collect())
+            .unwrap_or_default();
+        let head_diversity = if logits.is_empty() {
+            0.0
+        } else {
+            let mean = logits.iter().sum::<f64>() / logits.len() as f64;
+            (logits.iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / logits.len() as f64)
+                .sqrt()
+        };
 
         AttentionStats {
             attention_entropy: entropy,
             attention_concentration: concentration,
             head_diversity,
-            temporal_patterns: vec![0.0; 10], // Placeholder
+            temporal_patterns: logits,
         }
     }
 
@@ -1282,8 +1519,25 @@ impl<
 // Implementation of major components
 
 impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> {
-    /// Create new LSTM network
-    fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
+    /// Create a new LSTM controller network from a configuration, with weights
+    /// drawn from thread-local entropy.
+    ///
+    /// Public because meta-training operates on a controller directly: see
+    /// [`trainer::MetaTrainer`] and [`LSTMOptimizer::network_mut`]. For
+    /// reproducible construction (tests, checkpoint-comparable experiments) use
+    /// [`Self::new_seeded`].
+    pub fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
+        Self::new_seeded(config, thread_rng().random::<u64>())
+    }
+
+    /// Create a controller whose initial weights are a deterministic function of
+    /// `seed` (and the configuration).
+    ///
+    /// Everything downstream of construction — rollout capture, truncated BPTT,
+    /// meta-training — is already deterministic with dropout off, so seeding the
+    /// initialization makes an entire meta-training run reproducible.
+    pub fn new_seeded(config: &LearnedOptimizerConfig, seed: u64) -> Result<Self> {
+        let mut rng = seeded_rng(seed);
         let mut layers = Vec::new();
 
         // Create LSTM layers
@@ -1293,20 +1547,21 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
             } else {
                 config.hidden_size
             };
-            let layer = LSTMLayer::new(input_size, config.hidden_size)?;
+            let layer = LSTMLayer::new(input_size, config.hidden_size, &mut rng)?;
             layers.push(layer);
         }
 
         // Create output projection
-        let output_projection = OutputProjection::new(
+        let output_projection = OutputProjection::new_with_rng(
             config.hidden_size,
             config.output_features,
             OutputTransform::ScaledTanh { scale: 0.1 },
+            &mut rng,
         )?;
 
         // Create attention mechanism if enabled
         let attention = if config.use_attention {
-            Some(AttentionMechanism::new(config)?)
+            Some(AttentionMechanism::new_with_rng(config, &mut rng)?)
         } else {
             None
         };
@@ -1322,11 +1577,46 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
             attention,
             layer_norms,
             dropout_rate: config.dropout_rate,
+            training: false,
         })
     }
 
-    /// Forward pass through LSTM network
-    fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
+    /// Enable or disable dropout.
+    ///
+    /// Meta-training and inference both run with dropout **off**; turn it on only
+    /// for a training regime that wants the regularization and can tolerate the
+    /// nondeterminism.
+    pub fn set_training(&mut self, training: bool) {
+        self.training = training;
+    }
+
+    /// Whether dropout is currently active.
+    pub fn is_training(&self) -> bool {
+        self.training
+    }
+
+    /// Zero every layer's hidden and cell state.
+    ///
+    /// Required before a meta-training rollout: the recurrent state is what makes
+    /// two rollouts of the same controller differ, so a reproducible rollout must
+    /// start from a known state.
+    pub fn reset_state(&mut self) {
+        for layer in self.layers.iter_mut() {
+            layer.hidden_state.fill(T::zero());
+            layer.cell_state.fill(T::zero());
+        }
+    }
+
+    /// Forward pass through the LSTM controller network.
+    ///
+    /// Public because the truncated-BPTT engine's taped forward
+    /// ([`bptt`]) must be checkable against it — see
+    /// `taped_forward_matches_the_deployed_forward` in
+    /// `tests/lstm_meta_training.rs`. If the two ever drift apart,
+    /// meta-training would optimize a different function than the one that runs
+    /// at inference time, and the finite-difference check alone would not notice
+    /// (it is self-consistent by construction).
+    pub fn forward(&mut self, input: &Array1<T>) -> Result<Array1<T>> {
         let mut current_input = input.clone();
 
         // Forward through LSTM layers
@@ -1336,8 +1626,8 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
             // Apply layer normalization
             current_input = self.layer_norms[i].forward(&current_input)?;
 
-            // Apply dropout during training
-            if self.dropout_rate > 0.0 {
+            // Apply dropout during training only.
+            if self.training && self.dropout_rate > 0.0 {
                 current_input = self.apply_dropout(&current_input)?;
             }
         }
@@ -1353,33 +1643,57 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMNetwork<T> 
         Ok(output)
     }
 
-    /// Apply dropout for regularization
+    /// Apply inverted dropout for regularization.
+    ///
+    /// Each element is zeroed with probability `dropout_rate` and the survivors
+    /// are divided by `1 - dropout_rate`, so the expected activation is
+    /// unchanged. A rate of `0` is a no-op; a rate of `1` would divide by zero
+    /// and is rejected.
+    ///
+    /// # Errors
+    /// Returns `Err` when `dropout_rate` is not in `[0, 1)` or when the drawn
+    /// uniform sample cannot be represented in `T`.
     fn apply_dropout(&self, input: &Array1<T>) -> Result<Array1<T>> {
-        // Simplified dropout implementation
-        Ok(input.mapv(|x| {
-            if T::from(scirs2_core::random::thread_rng().gen_range(0.0..1.0))
-                .expect("unwrap failed")
-                < scirs2_core::numeric::NumCast::from(self.dropout_rate)
-                    .unwrap_or_else(|| T::zero())
-            {
+        if !(0.0..1.0).contains(&self.dropout_rate) {
+            return Err(OptimError::InvalidConfig(format!(
+                "dropout_rate must be in [0, 1), got {}",
+                self.dropout_rate
+            )));
+        }
+        if self.dropout_rate == 0.0 {
+            return Ok(input.clone());
+        }
+        let threshold: T = cast_scalar(self.dropout_rate)?;
+        let keep_scale: T = cast_scalar(1.0 - self.dropout_rate)?;
+        let mut rng = scirs2_core::random::thread_rng();
+        let mut out = input.clone();
+        for value in out.iter_mut() {
+            let sample: T = cast_scalar(rng.gen_range(0.0..1.0))?;
+            *value = if sample < threshold {
                 T::zero()
             } else {
-                x / scirs2_core::numeric::NumCast::from(1.0 - self.dropout_rate)
-                    .unwrap_or_else(|| T::zero())
-            }
-        }))
+                *value / keep_scale
+            };
+        }
+        Ok(out)
     }
 }
 
 impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
     /// Create new LSTM layer
-    fn new(_input_size: usize, hiddensize: usize) -> Result<Self> {
-        // Xavier initialization
-        let scale = (2.0 / (_input_size + hiddensize) as f64).sqrt();
+    fn new(_input_size: usize, hiddensize: usize, rng: &mut CoreRandom<StdRng>) -> Result<Self> {
+        // Xavier/Glorot uniform, with the fan pair taken *per matrix*: the four
+        // gates are independent maps stacked along the rows, so the fan-out of
+        // each is `hiddensize`, not `4 * hiddensize`. The input-to-hidden and
+        // hidden-to-hidden matrices therefore have different fan-ins and must not
+        // share one limit (they did, computed from `_input_size + hiddensize` for
+        // both).
+        let limit_ih = Self::xavier_limit(_input_size, hiddensize);
+        let limit_hh = Self::xavier_limit(hiddensize, hiddensize);
 
         Ok(Self {
-            weight_ih: Self::xavier_init(4 * hiddensize, _input_size, scale),
-            weight_hh: Self::xavier_init(4 * hiddensize, hiddensize, scale),
+            weight_ih: Self::xavier_init(rng, 4 * hiddensize, _input_size, limit_ih),
+            weight_hh: Self::xavier_init(rng, 4 * hiddensize, hiddensize, limit_hh),
             bias_ih: Array1::zeros(4 * hiddensize),
             bias_hh: Array1::zeros(4 * hiddensize),
             hidden_state: Array1::zeros(hiddensize),
@@ -1422,10 +1736,33 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> LSTMLayer<T> {
         Ok(self.hidden_state.clone())
     }
 
-    /// Xavier initialization
-    fn xavier_init(rows: usize, cols: usize, scale: f64) -> Array2<T> {
+    /// Xavier/Glorot **uniform** limit for a layer with the given fans:
+    /// `sqrt(6 / (fan_in + fan_out))`.
+    ///
+    /// `Uniform[-b, b]` has variance `b^2 / 3`, so reaching Glorot's target
+    /// variance `2 / (fan_in + fan_out)` needs `b = sqrt(6 / (fan_in + fan_out))`.
+    /// Every call site in this file previously passed `sqrt(2 / (fan_in +
+    /// fan_out))` — the limit for a *normal* draw — to the uniform sampler
+    /// below, so every LSTM weight matrix started with one third of the intended
+    /// variance and correspondingly attenuated signal and gradient (finding F64).
+    pub(crate) fn xavier_limit(fan_in: usize, fan_out: usize) -> f64 {
+        (6.0 / (fan_in + fan_out).max(1) as f64).sqrt()
+    }
+
+    /// Draw a matrix from `Uniform[-limit, limit]` using the caller's generator.
+    ///
+    /// `limit` is the *uniform half-width*, not a standard deviation — use
+    /// [`Self::xavier_limit`] to compute it from the layer's fans. Threading the
+    /// generator through the constructors (rather than grabbing `thread_rng`
+    /// here) is what makes [`LSTMNetwork::new_seeded`] reproducible.
+    fn xavier_init(
+        rng: &mut CoreRandom<StdRng>,
+        rows: usize,
+        cols: usize,
+        limit: f64,
+    ) -> Array2<T> {
         Array2::from_shape_fn((rows, cols), |_| {
-            let val = (scirs2_core::random::thread_rng().gen_range(0.0..1.0) - 0.5) * 2.0 * scale;
+            let val = (rng.gen_range(0.0..1.0) - 0.5) * 2.0 * limit;
             scirs2_core::numeric::NumCast::from(val).unwrap_or_else(|| T::zero())
         })
     }
@@ -1448,8 +1785,6 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> HistoryBuffer<T
             gradients: VecDeque::with_capacity(_maxlength),
             parameters: VecDeque::with_capacity(_maxlength),
             losses: VecDeque::with_capacity(_maxlength),
-            learning_rates: VecDeque::with_capacity(_maxlength),
-            update_magnitudes: VecDeque::with_capacity(_maxlength),
             _maxlength,
             feature_cache: None,
         }
@@ -1495,8 +1830,11 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> HistoryBuffer<T
             return None;
         }
 
-        let current_loss = *self.losses.back().expect("unwrap failed");
-        let prev_loss = self.losses[self.losses.len() - 2];
+        // `len() >= 2` was checked above, so both reads are in range; using the
+        // fallible accessor keeps that fact local instead of relying on an
+        // `expect` five lines away from its guard.
+        let current_loss = *self.losses.back()?;
+        let prev_loss = *self.losses.get(self.losses.len() - 2)?;
 
         let loss_change = current_loss - prev_loss;
         let loss_ratio = if prev_loss.abs()
@@ -1582,176 +1920,6 @@ impl Default for StateStatistics {
     }
 }
 
-// Placeholder implementations for remaining complex components
-// These would be fully implemented in a production system
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> {
-    fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
-        // Placeholder implementation
-        Ok(Self {
-            strategy: MetaOptimizationStrategy::MAML,
-            meta_parameters: HashMap::new(),
-            meta_gradients: HashMap::new(),
-            task_history: VecDeque::new(),
-            meta_state: MetaLearningState {
-                meta_step: 0,
-                meta_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
-                adaptation_rate: scirs2_core::numeric::NumCast::from(0.1)
-                    .unwrap_or_else(|| T::zero()),
-                meta_validation_performance: T::zero(),
-                adaptation_history: VecDeque::new(),
-                inner_loop_state: InnerLoopState {
-                    inner_step: 0,
-                    inner_parameters: Array1::zeros(1),
-                    inner_optimizer_state: HashMap::new(),
-                    inner_performance: T::zero(),
-                },
-            },
-            transfer_learner: TransferLearner {
-                source_knowledge: HashMap::new(),
-                adaptation_parameters: Array1::zeros(1),
-                transfer_metrics: TransferMetrics {
-                    efficiency: T::zero(),
-                    adaptation_speed: T::zero(),
-                    knowledge_retention: T::zero(),
-                    negative_transfer_score: T::zero(),
-                },
-                similarity_estimator: DomainSimilarityEstimator {
-                    domain_embeddings: HashMap::new(),
-                    similarity_params: Array1::zeros(1),
-                    similarity_function: SimilarityFunction::Cosine,
-                },
-            },
-        })
-    }
-
-    fn step(&mut self, tasks: &[MetaTask<T>], network: &mut LSTMNetwork<T>) -> Result<T> {
-        // Placeholder meta-learning step
-        Ok(T::zero())
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransferLearner<T> {
-    fn transfer_to_domain(
-        &mut self,
-        _target_tasks: &[MetaTask<T>],
-        _network: &mut LSTMNetwork<T>,
-    ) -> Result<TransferResults<T>> {
-        // Placeholder transfer learning
-        Ok(TransferResults {
-            initial_performance: T::zero(),
-            final_performance: T::zero(),
-            adaptation_steps: 0,
-            transfer_efficiency: T::zero(),
-        })
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> AdaptiveLearningRateController<T> {
-    fn new(config: &LearnedOptimizerConfig) -> Result<Self> {
-        // Placeholder implementation
-        Ok(Self {
-            base_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
-            current_lr: scirs2_core::numeric::NumCast::from(0.001).unwrap_or_else(|| T::zero()),
-            adaptation_params: LRAdaptationParams {
-                momentum: scirs2_core::numeric::NumCast::from(0.9).unwrap_or_else(|| T::zero()),
-                gradient_sensitivity: scirs2_core::numeric::NumCast::from(0.1)
-                    .unwrap_or_else(|| T::zero()),
-                loss_sensitivity: scirs2_core::numeric::NumCast::from(0.1)
-                    .unwrap_or_else(|| T::zero()),
-                min_lr: scirs2_core::numeric::NumCast::from(1e-6).unwrap_or_else(|| T::zero()),
-                max_lr: scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero()),
-                adaptation_rate: scirs2_core::numeric::NumCast::from(0.01)
-                    .unwrap_or_else(|| T::zero()),
-            },
-            lr_history: VecDeque::new(),
-            performance_tracker: PerformanceTracker {
-                recent_losses: VecDeque::new(),
-                trend: PerformanceTrend::Unknown,
-                stagnation_counter: 0,
-                best_performance: T::zero(),
-                improvement_rate: T::zero(),
-            },
-            schedule_params: None,
-        })
-    }
-
-    fn compute_lr(
-        &mut self,
-        gradients: &Array1<T>,
-        _loss: Option<T>,
-        _history: &HistoryBuffer<T>,
-    ) -> Result<T> {
-        // Placeholder adaptive LR computation
-        Ok(self.current_lr)
-    }
-}
-
-impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> OptimizationStateTracker<T> {
-    fn new() -> Self {
-        Self {
-            phase: OptimizationPhase::InitialDescent,
-            convergence_indicators: ConvergenceIndicators {
-                gradient_norm_trend: Vec::new(),
-                loss_change_trend: Vec::new(),
-                parameter_change_magnitude: T::zero(),
-                convergence_probability: T::zero(),
-                estimated_steps_to_convergence: None,
-            },
-            gradient_analyzer: GradientAnalyzer {
-                gradient_stats: GradientStatistics {
-                    mean_norm: T::zero(),
-                    norm_variance: T::zero(),
-                    direction_consistency: T::zero(),
-                    magnitude_distribution: Vec::new(),
-                    component_stats: Array1::zeros(1),
-                },
-                correlation_tracker: GradientCorrelationTracker {
-                    correlation_matrix: Array2::zeros((1, 1)),
-                    temporal_correlations: VecDeque::new(),
-                    cross_correlations: HashMap::new(),
-                },
-                noise_estimator: GradientNoiseEstimator {
-                    noise_level: T::zero(),
-                    signal_to_noise_ratio: T::zero(),
-                    noise_characteristics: NoiseCharacteristics {
-                        noise_type: NoiseType::White,
-                        scale: T::zero(),
-                        temporal_correlation: T::zero(),
-                        spatial_correlation: T::zero(),
-                    },
-                },
-                flow_analyzer: GradientFlowAnalyzer {
-                    flow_field: Array2::zeros((1, 1)),
-                    critical_points: Vec::new(),
-                    stability: FlowStability::Unknown,
-                    attractors: Vec::new(),
-                    repellers: Vec::new(),
-                },
-            },
-            landscape_analyzer: LossLandscapeAnalyzer {
-                local_curvature: T::zero(),
-                hessian_eigenvalues: None,
-                roughness: T::zero(),
-                basin_size: T::zero(),
-                barrier_heights: Vec::new(),
-            },
-            stability_metrics: StabilityMetrics {
-                lyapunov_exponents: Array1::zeros(1),
-                stability_margin: T::zero(),
-                perturbation_sensitivity: T::zero(),
-                robustness_score: T::zero(),
-            },
-        }
-    }
-
-    fn update(&mut self, gradients: &Array1<T>, _updates: &Array1<T>, loss: Option<T>) {
-        // Placeholder state update
-    }
-}
-
-// Additional implementations would continue for all remaining components...
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1765,10 +1933,10 @@ mod tests {
 
     #[test]
     fn test_lstm_layer_creation() {
-        let layer = LSTMLayer::<f64>::new(10, 20);
+        let layer = LSTMLayer::<f64>::new(10, 20, &mut seeded_rng(7));
         assert!(layer.is_ok());
 
-        let layer = layer.expect("unwrap failed");
+        let layer = layer.expect("LSTMLayer::new should succeed");
         assert_eq!(layer.hiddensize, 20);
         assert_eq!(layer.weight_ih.shape(), &[80, 10]); // 4 * hiddensize, input_size
         assert_eq!(layer.weight_hh.shape(), &[80, 20]); // 4 * hiddensize, hiddensize
@@ -1803,7 +1971,7 @@ mod tests {
         let network = LSTMNetwork::<f64>::new(&config);
         assert!(network.is_ok());
 
-        let network = network.expect("unwrap failed");
+        let network = network.expect("LSTMNetwork::new should succeed");
         assert_eq!(network.layers.len(), config.num_layers);
         assert!(network.attention.is_some()); // attention enabled by default
     }

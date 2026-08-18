@@ -3,7 +3,7 @@
 // Orthogonal regularization encourages weight matrices to be orthogonal,
 // which helps with gradient flow and prevents vanishing/exploding gradients.
 
-use scirs2_core::ndarray::{Array, Array3, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
+use scirs2_core::ndarray::{Array, ArrayBase, Data, Dimension, Ix2, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
 use std::fmt::Debug;
 
@@ -26,7 +26,7 @@ use crate::regularizers::Regularizer;
 /// let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
 ///
 /// // Apply orthogonal regularization  
-/// let penalty = ortho_reg.apply(&weights, &mut gradient).expect("unwrap failed");
+/// let penalty = ortho_reg.apply(&weights, &mut gradient).expect("ortho_reg.apply succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct OrthogonalRegularization<A: Float> {
@@ -89,7 +89,9 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> OrthogonalR
             diff[[i, i]] = diff[[i, i]] - A::one();
         }
 
-        weights.dot(&diff) * (A::from_f64(2.0).expect("unwrap failed") * self.lambda)
+        let two =
+            A::from_f64(2.0).expect("OrthogonalRegularization: integer literal 2.0 must fit in A");
+        weights.dot(&diff) * (two * self.lambda)
     }
 }
 
@@ -146,7 +148,7 @@ impl<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use scirs2_core::ndarray::array;
+    use scirs2_core::ndarray::{array, Array3};
 
     #[test]
     fn test_orthogonal_creation() {
@@ -207,7 +209,9 @@ mod tests {
         let mut gradient = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradient = gradient.clone();
 
-        let penalty = ortho.apply(&params, &mut gradient).expect("unwrap failed");
+        let penalty = ortho
+            .apply(&params, &mut gradient)
+            .expect("ortho.apply succeeds in test_regularizer_trait");
 
         // Penalty should be positive
         assert!(penalty > 0.0);
@@ -216,7 +220,9 @@ mod tests {
         assert_ne!(gradient, original_gradient);
 
         // Penalty from apply should match penalty method
-        let penalty2 = ortho.penalty(&params).expect("unwrap failed");
+        let penalty2 = ortho
+            .penalty(&params)
+            .expect("ortho.penalty succeeds in test_regularizer_trait");
         assert_relative_eq!(penalty, penalty2, epsilon = 1e-10);
     }
 
@@ -228,7 +234,9 @@ mod tests {
         let params = Array3::<f64>::zeros((2, 2, 2));
         let mut gradient = Array3::<f64>::zeros((2, 2, 2));
 
-        let penalty = ortho.apply(&params, &mut gradient).expect("unwrap failed");
+        let penalty = ortho
+            .apply(&params, &mut gradient)
+            .expect("ortho.apply succeeds in test_non_2d_array");
         assert_eq!(penalty, 0.0);
 
         // Gradient should be unchanged

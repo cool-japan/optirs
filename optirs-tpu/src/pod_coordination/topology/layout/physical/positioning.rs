@@ -1,7 +1,5 @@
 // Positioning Module
 
-use crate::pod_coordination::types::*;
-
 pub type NodeId = u64;
 
 #[derive(Debug, Clone, Default)]

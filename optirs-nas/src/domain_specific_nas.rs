@@ -7,7 +7,6 @@
 
 use crate::architecture::{
     Architecture, ComponentPosition, ComponentType, Connection, ConnectionType, OptimizerComponent,
-    PerformanceMetrics,
 };
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::ScalarOperand;
@@ -47,6 +46,8 @@ pub enum DomainType {
     Reinforcement,
     /// Scientific computing and simulation optimization
     Scientific,
+    /// Multimodal tasks fusing several input modalities (image, text, audio)
+    Multimodal,
 }
 
 /// Domain-specific search space defining allowed components and constraints
@@ -239,6 +240,35 @@ impl<T: Float + Debug + Send + Sync + 'static + ScalarOperand> DomainNASEngine<T
                     recommended_hyperparameters: recommended,
                 }
             }
+            DomainType::Multimodal => {
+                let mut recommended = HashMap::new();
+                recommended.insert("learning_rate".to_string(), 0.0002);
+                recommended.insert("warmup_steps".to_string(), 2000.0);
+                recommended.insert("beta1".to_string(), 0.9);
+                recommended.insert("beta2".to_string(), 0.999);
+                recommended.insert("weight_decay".to_string(), 0.01);
+                DomainSearchSpace {
+                    domain,
+                    allowed_components: vec![
+                        ComponentType::Adam,
+                        ComponentType::AdamW,
+                        ComponentType::LAMB,
+                        ComponentType::GradientClipping,
+                        ComponentType::BatchNorm,
+                        ComponentType::CosineAnnealingLR,
+                        ComponentType::WeightDecay,
+                        ComponentType::L2Regularizer,
+                    ],
+                    constraints: vec![
+                        NASConstraint::MaxDepth(40),
+                        NASConstraint::RequiresComponent(ComponentType::GradientClipping),
+                        NASConstraint::MaxMemoryMb(12288.0),
+                    ],
+                    min_depth: 4,
+                    max_depth: 40,
+                    recommended_hyperparameters: recommended,
+                }
+            }
         }
     }
 
@@ -246,8 +276,6 @@ impl<T: Float + Debug + Send + Sync + 'static + ScalarOperand> DomainNASEngine<T
     ///
     /// Returns a list of valid architectures sorted by score (descending).
     pub fn search(&mut self, budget: usize) -> Result<Vec<Architecture>> {
-        use scirs2_core::random::Rng;
-
         if budget == 0 {
             return Err(OptimError::InvalidConfig(
                 "Search budget must be greater than 0".to_string(),
@@ -414,8 +442,6 @@ impl<T: Float + Debug + Send + Sync + 'static + ScalarOperand> DomainNASEngine<T
         rng: &mut scirs2_core::random::Random,
         index: usize,
     ) -> Architecture {
-        use scirs2_core::random::Rng;
-
         let allowed = &self.search_space.allowed_components;
         let num_components = rng.gen_range(
             self.search_space.min_depth.max(1)..=self.search_space.max_depth.min(allowed.len() * 3),
@@ -582,6 +608,17 @@ impl<T: Float + Debug + Send + Sync + 'static + ScalarOperand> DomainNASEngine<T
                     bonus = bonus + small_bonus;
                 }
                 if has_component(ComponentType::ElasticNetRegularizer) {
+                    bonus = bonus + small_bonus;
+                }
+            }
+            DomainType::Multimodal => {
+                if has_component(ComponentType::AdamW) || has_component(ComponentType::LAMB) {
+                    bonus = bonus + small_bonus;
+                }
+                if has_component(ComponentType::GradientClipping) {
+                    bonus = bonus + small_bonus;
+                }
+                if has_component(ComponentType::BatchNorm) {
                     bonus = bonus + small_bonus;
                 }
             }

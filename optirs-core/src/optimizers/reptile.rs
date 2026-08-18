@@ -9,11 +9,11 @@
 // Reference: Nichol, A., Achiam, J., & Schulman, J. (2018).
 // "On First-Order Meta-Learning Algorithms"
 
-use scirs2_core::ndarray::{Array, Dimension, IxDyn, ScalarOperand};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
 
 /// Reptile meta-learning optimizer
@@ -168,9 +168,11 @@ where
         self.step_count += 1;
 
         // Convert back to original dimension
-        Ok(updated_params
-            .into_dimensionality::<D>()
-            .expect("Reptile: failed to convert back to original dimensionality"))
+        updated_params.into_dimensionality::<D>().map_err(|e| {
+            OptimError::DimensionMismatch(format!(
+                "Reptile: failed to convert back to original dimensionality: {e}"
+            ))
+        })
     }
 
     fn get_learning_rate(&self) -> A {

@@ -3,13 +3,116 @@
 // This module provides NVIDIA CUDA-specific memory management functionality,
 // including device memory allocation, unified memory, streams, and performance
 // optimization features specific to CUDA GPUs.
+//
+// # This is a host-memory simulation, not real CUDA
+//
+// `optirs-gpu` is Pure Rust with no FFI dependencies by default, and
+// `scirs2-core` 0.6.x removed its CUDA backend entirely (see
+// `crate::optimizers`'s module docs). There is therefore no real `cudaMalloc`
+// underneath this module: "device", "host", "unified" and "mapped" memory
+// are all the *same* system-heap allocation (see `sim_alloc`/`sim_dealloc`
+// below), and `CudaDeviceProperties`/`CudaStats` are example numbers, not a
+// query of real hardware. This module models the CUDA memory-management
+// *API shape* (pools, streams, statistics) for testing that shape in
+// isolation; treat every allocation as host memory and every device number
+// as illustrative. Real CUDA execution belongs in the `oxicuda-*` crates,
+// feature-gated off by default per COOLJAPAN policy.
+//
+// This extends to data movement: `memcpy` and `memcpy_async` copy **zero
+// bytes**. They build a `CudaOperation` record, hand it to
+// `CudaStreamManager::execute_operation` (which returns immediately and
+// never dereferences `src_ptr`/`dst_ptr`), and increment
+// `CudaStats::memory_transfers` — that counter says "this many `memcpy`
+// calls were made," not "this many bytes moved." An earlier revision of
+// this module also injected a `std::thread::sleep` here to imitate transfer
+// latency by operation kind; that fake timing has been removed, so the
+// distinction between `MemcpyHostToDevice`/`MemcpyDeviceToHost`/
+// `MemcpyDeviceToDevice`/`MemcpyAsync` no longer affects anything
+// observable. `CudaStats::stream_operations` and `CudaStats::kernel_launches`
+// are declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Byte alignment every simulated allocation below uses.
+const SIM_ALLOC_ALIGN: usize = 256;
+
+/// Allocate `size` bytes through the system allocator, 256-byte aligned,
+/// without the two ways the naive `std::alloc::alloc(Layout::from_size_align_unchecked(size,
+/// 256))` this module used to call was undefined behaviour:
+///
+/// * `GlobalAlloc::alloc`'s safety contract requires a *non-zero*-size
+///   layout; `size == 0` is handled here as the same "dangling, well-aligned,
+///   never-dereferenced sentinel" convention `Vec`/`Box` use for zero-sized
+///   allocations, without calling the allocator at all.
+/// * A real allocation failure returns a null pointer, which the caller must
+///   never treat as valid memory; this returns `Err` instead of a wrapped
+///   null.
+///
+/// The payload is prefixed with one `SIM_ALLOC_ALIGN`-byte header that
+/// records the requested size, so [`sim_dealloc`] can reconstruct the exact
+/// `Layout` this function used — deallocating with a *different* layout than
+/// the one used to allocate is itself undefined behaviour, which the
+/// `Layout::from_size_align_unchecked(1, 1)` this module used at free time
+/// was unconditionally invoking.
+fn sim_alloc(size: usize) -> Result<*mut c_void, CudaError> {
+    if size == 0 {
+        return Ok(SIM_ALLOC_ALIGN as *mut c_void);
+    }
+    let total = SIM_ALLOC_ALIGN.checked_add(size).ok_or_else(|| {
+        CudaError::OutOfMemory(format!(
+            "{size}-byte request overflows the allocator's size limit"
+        ))
+    })?;
+    let layout = std::alloc::Layout::from_size_align(total, SIM_ALLOC_ALIGN)
+        .map_err(|e| CudaError::OutOfMemory(format!("invalid allocation layout: {e}")))?;
+    // SAFETY: `layout` has non-zero size (checked above) and a valid
+    // (power-of-two) alignment constructed by `Layout::from_size_align`.
+    let base = unsafe { std::alloc::alloc(layout) };
+    if base.is_null() {
+        return Err(CudaError::OutOfMemory(format!(
+            "allocator returned null for a {size}-byte request"
+        )));
+    }
+    // SAFETY: `base` is non-null and `layout`'s size is at least
+    // `SIM_ALLOC_ALIGN + size >= SIM_ALLOC_ALIGN >= size_of::<usize>()`, so
+    // writing one `usize` at the start of the block is in-bounds.
+    unsafe { (base as *mut usize).write(size) };
+    // SAFETY: `base` was allocated with `total = SIM_ALLOC_ALIGN + size`
+    // bytes, so offsetting by `SIM_ALLOC_ALIGN` stays within (or one past)
+    // the allocation.
+    Ok(unsafe { base.add(SIM_ALLOC_ALIGN) } as *mut c_void)
+}
+
+/// Free a pointer returned by [`sim_alloc`]. A no-op for a null pointer or
+/// the zero-size sentinel — neither was ever allocated, so neither is passed
+/// to the system allocator.
+///
+/// Only ever called from this module (it is not `pub`) with a pointer
+/// `sim_alloc` returned that has not already been freed — the unsafety of
+/// the pointer arithmetic below is contained to that invariant, matching
+/// this module's existing style of confining `unsafe` to the raw
+/// `std::alloc` calls rather than marking `free()`'s public wrapper unsafe.
+fn sim_dealloc(ptr: *mut c_void) {
+    if ptr.is_null() || (ptr as usize) == SIM_ALLOC_ALIGN {
+        return;
+    }
+    // SAFETY: by this function's contract `ptr` came from `sim_alloc`, which
+    // always returns `base + SIM_ALLOC_ALIGN` for a real allocation, so
+    // stepping back `SIM_ALLOC_ALIGN` bytes recovers `base`.
+    let base = unsafe { (ptr as *mut u8).sub(SIM_ALLOC_ALIGN) };
+    // SAFETY: `sim_alloc` wrote a `usize` at `base` before returning.
+    let size = unsafe { (base as *const usize).read() };
+    if let Ok(layout) = std::alloc::Layout::from_size_align(SIM_ALLOC_ALIGN + size, SIM_ALLOC_ALIGN)
+    {
+        // SAFETY: `layout` is exactly the layout `sim_alloc` allocated
+        // `base` with.
+        unsafe { std::alloc::dealloc(base, layout) };
+    }
+}
 
 /// CUDA memory backend implementation
 pub struct CudaMemoryBackend {
@@ -210,8 +313,6 @@ pub enum CudaOperationType {
 pub struct CudaMemoryPool {
     /// Memory type
     memory_type: CudaMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -239,7 +340,6 @@ impl CudaMemoryPool {
     pub fn new(memory_type: CudaMemoryType, max_size: usize) -> Self {
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -253,7 +353,9 @@ impl CudaMemoryPool {
         // Try to find suitable free block
         for i in 0..self.free_blocks.len() {
             if self.free_blocks[i].size >= size {
-                let mut block = self.free_blocks.remove(i).expect("unwrap failed");
+                let Some(mut block) = self.free_blocks.remove(i) else {
+                    continue;
+                };
 
                 // Split block if much larger
                 if block.size > size * 2 {
@@ -367,34 +469,10 @@ impl CudaMemoryPool {
     fn cuda_malloc(&self, size: usize) -> Result<*mut c_void, CudaError> {
         // Simulate CUDA memory allocation
         match self.memory_type {
-            CudaMemoryType::Device => {
-                // cudaMalloc equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            CudaMemoryType::Host => {
-                // cudaMallocHost equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            CudaMemoryType::Unified => {
-                // cudaMallocManaged equivalent
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            CudaMemoryType::Mapped => {
-                // cudaHostAlloc with mapping flags
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
+            CudaMemoryType::Device => sim_alloc(size), // cudaMalloc equivalent
+            CudaMemoryType::Host => sim_alloc(size),   // cudaMallocHost equivalent
+            CudaMemoryType::Unified => sim_alloc(size), // cudaMallocManaged equivalent
+            CudaMemoryType::Mapped => sim_alloc(size), // cudaHostAlloc with mapping flags
             _ => Err(CudaError::UnsupportedOperation(
                 "Unsupported memory type for allocation".to_string(),
             )),
@@ -443,28 +521,39 @@ impl CudaStreamManager {
     }
 
     /// Create new stream
+    ///
+    /// Reuses a previously [`Self::destroy_stream`]d stream from
+    /// `stream_pool` when one is available (its operation queue is cleared
+    /// and it is given a fresh ID) instead of always allocating a new one.
     pub fn create_stream(&mut self, priority: Option<i32>) -> Result<u32, CudaError> {
         let stream_id = self.next_stream_id;
         self.next_stream_id += 1;
 
-        let stream = CudaStream {
+        let mut stream = self.stream_pool.pop_front().unwrap_or_else(|| CudaStream {
             handle: std::ptr::null_mut(), // Would be actual CUDA stream
             id: stream_id,
             priority: priority.unwrap_or(self.config.default_priority),
             flags: CudaStreamFlags::default(),
             created_at: Instant::now(),
             operations: std::collections::VecDeque::new(),
-        };
+        });
+        stream.id = stream_id;
+        stream.priority = priority.unwrap_or(self.config.default_priority);
+        stream.created_at = Instant::now();
+        stream.operations.clear();
 
         self.streams.push(stream);
         Ok(stream_id)
     }
 
     /// Destroy stream
+    ///
+    /// Returns the stream to `stream_pool` for [`Self::create_stream`] to
+    /// reuse instead of dropping it outright.
     pub fn destroy_stream(&mut self, stream_id: u32) -> Result<(), CudaError> {
         if let Some(pos) = self.streams.iter().position(|s| s.id == stream_id) {
             let stream = self.streams.remove(pos);
-            // Clean up stream resources
+            self.stream_pool.push_back(stream);
             Ok(())
         } else {
             Err(CudaError::InvalidStream("Stream not found".to_string()))
@@ -511,29 +600,14 @@ impl CudaStreamManager {
         Ok(())
     }
 
-    fn execute_operation(&self, operation: CudaOperation) -> Result<(), CudaError> {
-        // Simulate operation execution
-        match operation.op_type {
-            CudaOperationType::MemcpyHostToDevice => {
-                // Simulate cudaMemcpy
-                std::thread::sleep(Duration::from_micros(100));
-            }
-            CudaOperationType::MemcpyDeviceToHost => {
-                // Simulate cudaMemcpy
-                std::thread::sleep(Duration::from_micros(100));
-            }
-            CudaOperationType::MemcpyDeviceToDevice => {
-                // Simulate cudaMemcpy
-                std::thread::sleep(Duration::from_micros(50));
-            }
-            CudaOperationType::MemcpyAsync => {
-                // Simulate cudaMemcpyAsync
-                std::thread::sleep(Duration::from_micros(10));
-            }
-            _ => {
-                // Other operations
-            }
-        }
+    fn execute_operation(&self, _operation: CudaOperation) -> Result<(), CudaError> {
+        // Host-memory simulation (see module docs): there is no real CUDA
+        // device to transfer to or from, so no data movement happens here.
+        // This used to also inject an artificial `std::thread::sleep` per
+        // operation type to mimic device-transfer latency; that fake timing
+        // has been removed rather than left as an undisclosed simulated
+        // number, so callers now see the true (near-zero) cost of this
+        // simulation instead of a fabricated one.
         Ok(())
     }
 }
@@ -673,20 +747,8 @@ impl CudaMemoryBackend {
     ) -> Result<*mut c_void, CudaError> {
         // Simulate direct CUDA allocation
         match memory_type {
-            CudaMemoryType::Device => {
-                // cudaMalloc
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
-            CudaMemoryType::Host => {
-                // cudaMallocHost
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
-            }
+            CudaMemoryType::Device => sim_alloc(size), // cudaMalloc
+            CudaMemoryType::Host => sim_alloc(size),   // cudaMallocHost
             CudaMemoryType::Unified => {
                 // cudaMallocManaged
                 if !self.device_properties.managed_memory {
@@ -694,10 +756,7 @@ impl CudaMemoryBackend {
                         "Unified memory not supported".to_string(),
                     ));
                 }
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, 256))
-                        as *mut c_void
-                })
+                sim_alloc(size)
             }
             _ => Err(CudaError::UnsupportedMemoryType(
                 "Unsupported memory type".to_string(),
@@ -716,13 +775,11 @@ impl CudaMemoryBackend {
                 ));
             }
         } else {
-            // Direct deallocation
-            unsafe {
-                std::alloc::dealloc(
-                    ptr as *mut u8,
-                    std::alloc::Layout::from_size_align_unchecked(1, 1),
-                );
-            }
+            // Direct deallocation. `ptr` was returned by `sim_alloc` via
+            // `cuda_malloc`/`direct_allocate` above (the only producers of
+            // pointers this path frees), and this is the first time it is
+            // freed — `free` is not reentrant-called for the same pointer.
+            sim_dealloc(ptr);
         }
 
         self.stats.total_deallocations += 1;
@@ -767,7 +824,15 @@ impl CudaMemoryBackend {
         stream_id: u32,
     ) -> Result<(), CudaError> {
         let operation = CudaOperation {
-            op_type: CudaOperationType::MemcpyAsync,
+            // Mirrors the synchronous `memcpy`'s mapping above so the queued
+            // operation's recorded direction matches what the caller asked
+            // for instead of always reporting a generic `MemcpyAsync`.
+            op_type: match kind {
+                CudaMemcpyKind::HostToDevice => CudaOperationType::MemcpyHostToDevice,
+                CudaMemcpyKind::DeviceToHost => CudaOperationType::MemcpyDeviceToHost,
+                CudaMemcpyKind::DeviceToDevice => CudaOperationType::MemcpyDeviceToDevice,
+                CudaMemcpyKind::HostToHost => CudaOperationType::MemcpyAsync,
+            },
             src_ptr: Some(src as *mut c_void),
             dst_ptr: Some(dst),
             size,
@@ -897,17 +962,17 @@ impl ThreadSafeCudaBackend {
         size: usize,
         memory_type: CudaMemoryType,
     ) -> Result<*mut c_void, CudaError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.allocate(size, memory_type)
     }
 
     pub fn free(&self, ptr: *mut c_void, memory_type: CudaMemoryType) -> Result<(), CudaError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.free(ptr, memory_type)
     }
 
     pub fn get_stats(&self) -> CudaStats {
-        let backend = self.backend.lock().expect("lock poisoned");
+        let backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.get_stats().clone()
     }
 }
@@ -915,6 +980,47 @@ impl ThreadSafeCudaBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for F26: a zero-size request must not reach
+    /// `std::alloc::alloc` (unsound for a zero-size layout) and must round
+    /// trip through `sim_dealloc` as a safe no-op.
+    #[test]
+    fn sim_alloc_zero_size_is_a_safe_sentinel_not_a_ub_call() {
+        let ptr = sim_alloc(0).expect("zero-size request must succeed");
+        assert!(!ptr.is_null());
+        // The sentinel returned for a zero-size request; freeing it must be
+        // a no-op, never a call into the system allocator.
+        sim_dealloc(ptr);
+    }
+
+    /// A real allocation must be readable/writable across its full
+    /// requested size (proves the header/offset bookkeeping did not corrupt
+    /// the returned pointer) and must free through the *same* layout it was
+    /// allocated with.
+    #[test]
+    fn sim_alloc_real_allocation_round_trips_and_frees_cleanly() {
+        for size in [1usize, 7, 256, 4096, 1_000_003] {
+            let ptr = sim_alloc(size).expect("allocation must succeed") as *mut u8;
+            assert!(!ptr.is_null());
+            // SAFETY: `ptr` was just allocated with `size` bytes available.
+            unsafe {
+                for i in 0..size {
+                    ptr.add(i).write(0xAB);
+                }
+                for i in 0..size {
+                    assert_eq!(ptr.add(i).read(), 0xAB);
+                }
+                sim_dealloc(ptr as *mut c_void);
+            }
+        }
+    }
+
+    #[test]
+    fn sim_dealloc_null_is_a_no_op() {
+        // `sim_dealloc` documents a null pointer as a no-op, which is
+        // exactly what this exercises.
+        sim_dealloc(std::ptr::null_mut());
+    }
 
     #[test]
     fn test_cuda_backend_creation() {

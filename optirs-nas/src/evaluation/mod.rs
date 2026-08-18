@@ -13,28 +13,24 @@ mod types;
 
 // Re-export main types
 pub use benchmark::{
-    BenchmarkMetadata, BenchmarkResults, BenchmarkSuite, CustomBenchmark, CustomBenchmarkConfig,
-    CustomEvaluator, ProblemDefinition, StandardBenchmark, TestFunction, TestResult,
+    BenchmarkMetadata, BenchmarkResults, BenchmarkSuite, StandardBenchmark, TestFunction,
+    TestResult,
 };
 pub use cache::{CacheMetadata, CachedEvaluation, EvaluationCache};
 pub use evaluator::PerformanceEvaluator;
+// The predictor's public surface is the predictor itself plus the three types its
+// state is made of. The two dozen names that used to be listed here
+// (`FeatureExtractor`, `PredictionCache`, `LearningRateSchedule`, `DataSplits`, ...)
+// were structs nobody could construct — all fields private, all constructors private
+// — and that no code path read; see `predictor::PerformancePredictor` for the list.
 pub use predictor::{
-    CacheConfig, CacheStatistics, CalibrationCurve, CalibrationData, DataSplits,
-    EarlyStoppingState, FeatureCache, FeatureEngineeringPipeline, FeatureExtractor,
-    FeatureInteractions, FeatureScaling, FeatureSelection, LearningRateSchedule, ModelArchitecture,
-    ModelParameters, ModelTrainingState, PerformancePredictor, PolynomialFeatures, PredictionCache,
-    PredictionResult, PredictorModel, PredictorTrainingData, RegularizationParameters,
-    ResourceUsageRecord, TrainingMetadata, UncertaintyEstimator, UncertaintyParameters,
+    ModelParameters, ModelTrainingState, PerformancePredictor, PredictorModel,
+    PredictorTrainingData,
 };
 pub use resource::{MonitoringConfig, ResourceLimits, ResourceMonitor, ResourceUsageSnapshot};
 pub use statistical::{DescriptiveStats, StatisticalAnalyzer, StatisticalTest};
 pub use types::{
-    ActivationFunction, AnalysisMethod, BenchmarkType, CacheEvictionPolicy, CorrelationStructure,
-    DataCharacteristics, DataFormat, DifficultyLevel, DistributionType, EarlyStoppingCriteria,
-    EvaluationCriterion, EvaluatorType, FeatureExtractionMethod, FeatureSelectionMethod,
-    IOSpecification, MetricType, MultipleComparisonCorrection, NormalizationMethod,
-    PerformanceRanking, PredictorModelType, ProblemType, ResourceRequirements, ResourceSummary,
-    ScalingMethod, ScheduleType, StatisticalSummary, StatisticalTestType, SuccessMetrics,
-    TemporalPatternType, TerminationConditions, TestFunctionType, UncertaintyEstimationMethod,
-    ValidationCriteria,
+    ActivationFunction, AnalysisMethod, BenchmarkType, CacheEvictionPolicy, DifficultyLevel,
+    MultipleComparisonCorrection, PerformanceRanking, PredictorModelType, ResourceRequirements,
+    ResourceSummary, StatisticalSummary, StatisticalTestType, TestFunctionType,
 };

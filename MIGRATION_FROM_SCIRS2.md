@@ -1,7 +1,6 @@
 # Migration Guide: From SciRS2-Optim to OptiRS
 
-**Version:** 0.3.0
-**Status:** Stable Release - Production Ready with SciRS2 Integration
+**Version:** 0.3.2
 
 This guide helps users migrate from `scirs2-optim` (the optimization module within SciRS2) to the standalone **OptiRS** library, which provides extended optimization capabilities while maintaining full compatibility with the SciRS2 ecosystem.
 
@@ -21,7 +20,7 @@ OptiRS was created to provide:
 ### SciRS2-Optim (Integrated)
 ```toml
 [dependencies]
-scirs2-optim = "0.3.0"  # Part of SciRS2 ecosystem
+scirs2-optim = "*"  # Part of SciRS2 ecosystem
 ```
 
 - Integrated into SciRS2 as a module
@@ -32,8 +31,8 @@ scirs2-optim = "0.3.0"  # Part of SciRS2 ecosystem
 ### OptiRS (Standalone)
 ```toml
 [dependencies]
-optirs-core = "0.3.0"
-scirs2-core = "0.3.4"  # Required foundation
+optirs-core = "0.3.2"
+scirs2-core = "0.6.5"  # Required foundation
 ```
 
 - Standalone library focused on ML optimization
@@ -48,18 +47,18 @@ scirs2-core = "0.3.4"  # Required foundation
 **Before (SciRS2-Optim):**
 ```toml
 [dependencies]
-scirs2-optim = "0.3.0"
+scirs2-optim = "*"
 ```
 
 **After (OptiRS):**
 ```toml
 [dependencies]
-optirs-core = "0.3.0"
-scirs2-core = "0.3.0"  # Required foundation
+optirs-core = "0.3.2"
+scirs2-core = "0.6.5"  # Required foundation
 
 # Optional modules
-optirs-gpu = { version = "0.3.0", optional = true }
-optirs-bench = { version = "0.3.0", optional = true }
+optirs-gpu = { version = "0.3.2", optional = true }
+optirs-bench = { version = "0.3.2", optional = true }
 ```
 
 ### Step 2: Update Imports
@@ -102,16 +101,16 @@ let mut optimizer = Adam::new_with_config(0.001, 0.9, 0.999, 1e-8);
 
 OptiRS provides additional features not available in scirs2-optim:
 
-#### SIMD Acceleration (2-4x speedup)
+#### SIMD Acceleration
 ```rust
-use optirs_core::simd_optimizer::SimdSGD;
+use optirs_core::optimizers::SimdSGD;
 use optirs_core::optimizers::Optimizer;
 
 let mut optimizer = SimdSGD::new(0.01f32);
 let updated = optimizer.step(&params, &grads)?;
 ```
 
-#### Parallel Processing (4-8x speedup)
+#### Parallel Processing
 ```rust
 use optirs_core::parallel_optimizer::parallel_step_array1;
 
@@ -166,8 +165,8 @@ collector.update("adam", duration, lr, &grads.view(),
 | ExponentialDecay | ExponentialDecay | ✅ Compatible |
 | StepDecay | StepDecay | ✅ Compatible |
 | CosineAnnealing | CosineAnnealing | ✅ Compatible |
-| - | LinearWarmup | ✅ New |
-| - | OneCycleLR | ✅ New |
+| - | LinearWarmupDecay | ✅ New |
+| - | OneCycle | ✅ New |
 
 ## Complete Migration Example
 
@@ -236,7 +235,7 @@ fn train() -> Result<(), Box<dyn std::error::Error>> {
 
 ### GPU Acceleration
 ```rust
-use optirs_core::gpu_optimizer::{GpuOptimizer, GpuConfig};
+use optirs_core::gpu_optimizer::{GpuConfig, GpuOptimizer};
 
 let config = GpuConfig {
     use_tensor_cores: true,
@@ -248,31 +247,43 @@ let mut gpu_opt = GpuOptimizer::new(optimizer, config)?;
 let updated = gpu_opt.step(&params, &grads)?;
 ```
 
+Check `gpu_opt.is_gpu_available()` before assuming device execution. As of 0.3.2 Metal is
+the only backend running real optimizer kernels; WebGPU is blocked on an upstream
+`scirs2-core` adapter-probe bug, OpenCL is context-only, and there is no CUDA or ROCm
+backend.
+
 ### Learned Optimizers (Research)
 ```rust
+use optirs_learned::transformer::TransformerOptimizerConfig;
 use optirs_learned::TransformerOptimizer;
 
-let mut learned_opt = TransformerOptimizer::new()
-    .with_hidden_size(256)
-    .build()?;
+let config = TransformerOptimizerConfig::default();
+let mut learned_opt = TransformerOptimizer::new(config)?;
 ```
 
 ### Neural Architecture Search (Research)
 ```rust
-use optirs_nas::BayesianNAS;
+use optirs_nas::search_strategies::{AcquisitionType, BayesianOptimization, KernelType};
 
-let nas = BayesianNAS::new(search_space)?;
-let best_arch = nas.search(n_trials)?;
+let mut search = BayesianOptimization::new(
+    KernelType::Matern52,
+    AcquisitionType::EI, // expected improvement
+    0.1, // exploration factor
+);
 ```
 
-## Performance Comparison
+## Performance
 
-| Feature | SciRS2-Optim | OptiRS Core | Speedup |
-|---------|--------------|-------------|---------|
-| Basic SGD | 1.0x | 1.0x | - |
-| SIMD SGD | N/A | 2-4x | 2-4x |
-| Parallel Groups | N/A | 4-8x | 4-8x |
-| GPU Acceleration | N/A | 10-50x | 10-50x |
+OptiRS adds execution paths that `scirs2-optim` does not have — SIMD-vectorized optimizer
+steps, multi-core parameter-group processing, and (on Metal today) real GPU kernels. How
+much any of them helps depends entirely on array size, element type and hardware, so this
+guide publishes no speedup figures. `optirs-core/benches/` ships Criterion targets
+(`simd_benchmarks`, `parallel_benchmarks`, `gpu_benchmarks`, `optimizer_benchmarks`) so
+you can measure the difference on your own workload:
+
+```bash
+cargo bench -p optirs-core
+```
 
 ## Breaking Changes
 
@@ -284,7 +295,7 @@ New features like SIMD, parallel processing, and metrics require explicit import
 
 ```rust
 // These are new and need to be imported
-use optirs_core::simd_optimizer::SimdSGD;
+use optirs_core::optimizers::SimdSGD;
 use optirs_core::parallel_optimizer::ParallelOptimizer;
 use optirs_core::optimizer_metrics::MetricsCollector;
 ```

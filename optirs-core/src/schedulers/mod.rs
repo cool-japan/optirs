@@ -17,6 +17,20 @@ pub trait LearningRateScheduler<A: Float + Debug + ScalarOperand> {
     /// Update the scheduler state and return the new learning rate
     fn step(&mut self) -> A;
 
+    /// Update the scheduler state using an observed metric and return the new learning rate
+    ///
+    /// The default implementation ignores `metric` and forwards to
+    /// [`LearningRateScheduler::step`], which is the correct behaviour for every schedule
+    /// that is driven purely by the step counter. Metric-driven schedulers such as
+    /// [`ReduceOnPlateau`] override this method with the real plateau logic.
+    ///
+    /// The method is deliberately non-generic so the trait stays object safe and can keep
+    /// being used as `Box<dyn LearningRateScheduler<A>>`.
+    fn step_with_metric(&mut self, metric: A) -> A {
+        let _ = metric;
+        self.step()
+    }
+
     /// Apply the scheduler to an optimizer
     fn apply_to<D: Dimension, O: Optimizer<A, D>>(&self, optimizer: &mut O)
     where

@@ -11,6 +11,7 @@
 //! - **Warmup schedule**: Linear warmup for stable early training
 //! - **Momentum**: Classical momentum for smoother updates
 
+use crate::common::{cast_positive, cast_scalar};
 use crate::domain_optimizers::{l2_norm, AdvancedOptimizer, OptimizerStateInfo};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::Array1;
@@ -57,8 +58,8 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
     ///
     /// Defaults: no spatial scaling, no channel normalization, no progressive
     /// resolution, no warmup, momentum=0.9, EMA decay=0.999.
-    pub fn new(base_lr: T) -> Self {
-        Self {
+    pub fn new(base_lr: T) -> Result<Self> {
+        Ok(Self {
             base_lr,
             current_lr: base_lr,
             spatial_lr_scale: T::one(),
@@ -68,11 +69,11 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
             max_resolution_phases: 1,
             warmup_steps: 0,
             step_count: 0,
-            momentum: T::from(0.9).expect("0.9 should convert to T"),
+            momentum: cast_scalar(0.9)?,
             velocity: None,
             grad_norm_ema: T::zero(),
-            ema_decay: T::from(0.999).expect("0.999 should convert to T"),
-        }
+            ema_decay: cast_scalar(0.999)?,
+        })
     }
 
     /// Set the spatial learning rate scale factor (builder pattern).
@@ -133,32 +134,33 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
     }
 
     /// Compute the warmup multiplier for the current step.
-    fn warmup_factor(&self) -> T {
+    fn warmup_factor(&self) -> Result<T> {
         if self.warmup_steps == 0 || self.step_count >= self.warmup_steps {
-            return T::one();
+            return Ok(T::one());
         }
-        let step_t = T::from(self.step_count + 1).expect("step should convert");
-        let warmup_t = T::from(self.warmup_steps).expect("warmup should convert");
-        step_t / warmup_t
+        let step_t: T = cast_scalar(self.step_count + 1)?;
+        let warmup_t: T = cast_positive(self.warmup_steps, "warmup_steps")?;
+        Ok(step_t / warmup_t)
     }
 
     /// Compute the resolution phase scaling factor.
-    fn resolution_factor(&self) -> T {
+    fn resolution_factor(&self) -> Result<T> {
         if !self.progressive_resolution || self.max_resolution_phases <= 1 {
-            return T::one();
+            return Ok(T::one());
         }
-        let phase_t = T::from(self.resolution_phase + 1).expect("phase should convert");
-        let max_t = T::from(self.max_resolution_phases).expect("max_phases should convert");
-        phase_t / max_t
+        let phase_t: T = cast_scalar(self.resolution_phase + 1)?;
+        let max_t: T = cast_positive(self.max_resolution_phases, "max_resolution_phases")?;
+        Ok(phase_t / max_t)
     }
 
     /// Apply spatial scaling to gradients.
     ///
     /// Treats the first half of the gradient vector as "spatial" parameters
     /// and scales them by `spatial_lr_scale`.
-    fn apply_spatial_scaling(&self, gradients: &Array1<T>) -> Array1<T> {
-        if (self.spatial_lr_scale - T::one()).abs() < T::from(1e-12).expect("epsilon convert") {
-            return gradients.clone();
+    fn apply_spatial_scaling(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
+        let epsilon: T = cast_scalar(1e-12)?;
+        if (self.spatial_lr_scale - T::one()).abs() < epsilon {
+            return Ok(gradients.clone());
         }
         let len = gradients.len();
         let spatial_end = len / 2;
@@ -166,24 +168,40 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
         for i in 0..spatial_end {
             scaled[i] = scaled[i] * self.spatial_lr_scale;
         }
-        scaled
+        Ok(scaled)
     }
 
     /// Apply per-channel normalization to gradients.
     ///
-    /// Splits gradients into 4 equal groups (simulating channels) and
-    /// normalises each group to have unit norm, preserving direction.
-    fn apply_channel_normalization(&self, gradients: &Array1<T>) -> Array1<T> {
+    /// Splits gradients into 4 equal groups (simulating channels), equalises
+    /// their norms so no single channel dominates, then **rescales the whole
+    /// vector back to its original overall magnitude**. Preserving the total
+    /// gradient norm is essential: normalising each channel to unit norm on its
+    /// own discards magnitude, so the step size never shrank as gradients
+    /// vanished and the optimizer oscillated instead of converging. Here only
+    /// the *balance between* channels changes; the overall step magnitude still
+    /// tracks the true gradient norm.
+    fn apply_channel_normalization(&self, gradients: &Array1<T>) -> Result<Array1<T>> {
         if !self.channel_normalization {
-            return gradients.clone();
+            return Ok(gradients.clone());
         }
         let len = gradients.len();
         let num_channels: usize = 4; // simulated channel count
         let chunk_size = if len >= num_channels {
             len / num_channels
         } else {
-            return gradients.clone();
+            return Ok(gradients.clone());
         };
+        let epsilon: T = cast_scalar(1e-8)?;
+
+        let vec_norm =
+            |v: &Array1<T>| -> T { v.iter().fold(T::zero(), |acc, &g| acc + g * g).sqrt() };
+
+        // Overall magnitude that must survive the re-balancing.
+        let orig_norm = vec_norm(gradients);
+        if orig_norm <= epsilon {
+            return Ok(gradients.clone());
+        }
 
         let mut normalised = gradients.clone();
         for ch in 0..num_channels {
@@ -194,7 +212,6 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
                 start + chunk_size
             };
 
-            // Compute norm of this channel slice
             let channel_norm = {
                 let mut sum_sq = T::zero();
                 for i in start..end {
@@ -203,14 +220,20 @@ impl<T: Float + Debug + Send + Sync + 'static> CVOptimizer<T> {
                 sum_sq.sqrt()
             };
 
-            let epsilon = T::from(1e-8).expect("epsilon convert");
             if channel_norm > epsilon {
                 for i in start..end {
-                    normalised[i] = normalised[i] / (channel_norm + epsilon);
+                    normalised[i] = normalised[i] / channel_norm;
                 }
             }
         }
-        normalised
+
+        // Restore the original overall magnitude.
+        let new_norm = vec_norm(&normalised);
+        if new_norm > epsilon {
+            let scale = orig_norm / new_norm;
+            normalised.mapv_inplace(|v| v * scale);
+        }
+        Ok(normalised)
     }
 }
 
@@ -230,13 +253,13 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for CVOptimi
         }
 
         // 1. Apply warmup schedule
-        let warmup = self.warmup_factor();
+        let warmup = self.warmup_factor()?;
 
         // 2. Scale spatial gradients
-        let grad = self.apply_spatial_scaling(gradients);
+        let grad = self.apply_spatial_scaling(gradients)?;
 
         // 3. Normalize per-channel if enabled
-        let grad = self.apply_channel_normalization(&grad);
+        let grad = self.apply_channel_normalization(&grad)?;
 
         // 4. Update gradient norm EMA
         let norm = l2_norm(&grad);
@@ -244,7 +267,7 @@ impl<T: Float + Debug + Send + Sync + 'static> AdvancedOptimizer<T> for CVOptimi
             self.ema_decay * self.grad_norm_ema + (T::one() - self.ema_decay) * norm;
 
         // 5. Resolution phase factor
-        let res_factor = self.resolution_factor();
+        let res_factor = self.resolution_factor()?;
 
         // 6. Effective LR
         let effective_lr = self.base_lr * warmup * res_factor;
@@ -299,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_cv_optimizer_basic_step() {
-        let mut opt = CVOptimizer::new(0.01_f64);
+        let mut opt = CVOptimizer::new(0.01_f64).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3, 0.4]);
         let updated = opt.step(&params, &grads).expect("step should succeed");
@@ -312,7 +335,9 @@ mod tests {
 
     #[test]
     fn test_cv_optimizer_warmup() {
-        let mut opt = CVOptimizer::new(0.1_f64).with_warmup(10);
+        let mut opt = CVOptimizer::new(0.1_f64)
+            .expect("optimizer")
+            .with_warmup(10);
         let params = Array1::from_vec(vec![1.0, 1.0, 1.0, 1.0]);
         let grads = Array1::from_vec(vec![1.0, 1.0, 1.0, 1.0]);
 
@@ -333,9 +358,12 @@ mod tests {
     #[test]
     fn test_cv_optimizer_spatial_scaling() {
         let mut opt_scaled = CVOptimizer::new(0.01_f64)
+            .expect("optimizer")
             .with_spatial_lr_scale(2.0)
             .with_momentum(0.0);
-        let mut opt_base = CVOptimizer::new(0.01_f64).with_momentum(0.0);
+        let mut opt_base = CVOptimizer::new(0.01_f64)
+            .expect("optimizer")
+            .with_momentum(0.0);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let grads = Array1::from_vec(vec![0.1, 0.1, 0.1, 0.1]);
@@ -356,7 +384,9 @@ mod tests {
 
     #[test]
     fn test_cv_optimizer_progressive_resolution() {
-        let mut opt = CVOptimizer::new(0.1_f64).with_progressive_resolution(true, 4);
+        let mut opt = CVOptimizer::new(0.1_f64)
+            .expect("optimizer")
+            .with_progressive_resolution(true, 4);
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let grads = Array1::from_vec(vec![0.5, 0.5, 0.5, 0.5]);
 
@@ -375,7 +405,9 @@ mod tests {
 
     #[test]
     fn test_cv_optimizer_advance_phase_error() {
-        let mut opt = CVOptimizer::new(0.01_f64).with_progressive_resolution(true, 2);
+        let mut opt = CVOptimizer::new(0.01_f64)
+            .expect("optimizer")
+            .with_progressive_resolution(true, 2);
         opt.advance_resolution_phase().expect("first advance ok");
         let result = opt.advance_resolution_phase();
         assert!(result.is_err(), "should error when at max phase");
@@ -384,6 +416,7 @@ mod tests {
     #[test]
     fn test_cv_optimizer_channel_normalization() {
         let mut opt = CVOptimizer::new(0.01_f64)
+            .expect("optimizer")
             .with_channel_normalization(true)
             .with_momentum(0.0);
         let params = Array1::from_vec(vec![1.0; 8]);
@@ -405,9 +438,32 @@ mod tests {
         );
     }
 
+    /// F77 regression: with channel normalization enabled the optimizer must
+    /// still converge. The old unit-norm-per-channel scheme discarded the
+    /// gradient magnitude, so the step size never shrank and the iterate
+    /// oscillated around the optimum instead of reaching it.
+    #[test]
+    fn test_cv_optimizer_channel_normalization_converges() {
+        let mut opt = CVOptimizer::new(0.1_f64)
+            .expect("optimizer")
+            .with_channel_normalization(true)
+            .with_momentum(0.0);
+        // Minimise f(x) = ||x||^2 (grad = 2x); optimum at 0.
+        let mut x = Array1::from_vec(vec![1.0_f64; 8]);
+        for _ in 0..300 {
+            let grad = x.mapv(|v| 2.0 * v);
+            x = opt.step(&x, &grad).expect("step should succeed");
+        }
+        let final_norm = l2_norm(&x);
+        assert!(
+            final_norm < 1e-3,
+            "channel-normalized optimizer must converge, got norm {final_norm}"
+        );
+    }
+
     #[test]
     fn test_cv_optimizer_state_info() {
-        let mut opt = CVOptimizer::new(0.05_f64);
+        let mut opt = CVOptimizer::new(0.05_f64).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3, 0.4]);
         let _ = opt.step(&params, &grads).expect("step should succeed");
@@ -419,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_cv_optimizer_dimension_mismatch() {
-        let mut opt = CVOptimizer::new(0.01_f64);
+        let mut opt = CVOptimizer::new(0.01_f64).expect("optimizer");
         let params = Array1::from_vec(vec![1.0, 2.0]);
         let grads = Array1::from_vec(vec![0.1, 0.2, 0.3]);
         let result = opt.step(&params, &grads);

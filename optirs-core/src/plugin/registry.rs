@@ -6,10 +6,61 @@
 use super::core::*;
 use crate::error::{OptimError, Result};
 use scirs2_core::numeric::Float;
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+/// Take a read lock, recovering from poisoning instead of propagating the
+/// panic. A panic inside one plugin call (which runs while these locks are
+/// held) must never permanently brick the process-wide registry: the data
+/// behind these locks stays structurally consistent even if one accessor
+/// panicked partway through a call, since every mutation here is a single
+/// insert/remove/assign with no multi-step invariant spanning the guard.
+fn read_lock<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Take a write lock, recovering from poisoning. See [`read_lock`].
+fn write_lock<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Take a mutex lock, recovering from poisoning. See [`read_lock`].
+fn mutex_lock<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Parse a `major.minor.patch` prefix (ignoring any `-pre`/`+build` suffix,
+/// per semver's separator rules) into a numeric triplet. `None` when the
+/// string does not start with a dotted numeric version.
+fn parse_version_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// Compare two version strings numerically by `(major, minor, patch)` when
+/// both parse as dotted numeric versions (this crate has no `semver`
+/// dependency, so pre-release/build metadata ordering is not modelled).
+/// Falls back to a byte-lexicographic comparison for non-numeric version
+/// strings so callers still get a total order rather than a panic.
+///
+/// Byte-lexicographic comparison alone is wrong for numeric versions --
+/// `"0.10.0" < "0.9.0"` and `"1.10.0" < "1.9.0"` under `str`'s `Ord`, so an
+/// ecosystem that ever reaches a double-digit minor or patch would silently
+/// mis-resolve plugin version requirements.
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (parse_version_triplet(a), parse_version_triplet(b)) {
+        (Some(va), Some(vb)) => va.cmp(&vb),
+        _ => a.cmp(b),
+    }
+}
 
 /// Central plugin registry for managing all optimizer plugins
 #[derive(Debug)]
@@ -33,6 +84,9 @@ pub struct PluginRegistration {
     pub factory: Box<dyn PluginFactoryWrapper>,
     /// Plugin metadata
     pub info: PluginInfo,
+    /// Capabilities declared by the factory at registration time, used to
+    /// enforce `PluginQuery::required_capabilities` in `matches_query`.
+    pub capabilities: PluginCapabilities,
     /// Registration timestamp
     pub registered_at: std::time::SystemTime,
     /// Plugin status
@@ -53,6 +107,17 @@ pub trait PluginFactoryWrapper: Debug + Send + Sync {
 
     /// Get factory information
     fn info(&self) -> PluginInfo;
+
+    /// Get the capabilities the produced optimizer declares. Backed by a
+    /// default so existing `PluginFactoryWrapper` implementors outside this
+    /// crate keep compiling; the default reports every capability absent
+    /// (`PluginCapabilities::default()` is all-`false`), which is the safe
+    /// direction to fail in for `PluginQuery::required_capabilities`
+    /// filtering -- an unimplemented override under-promises rather than
+    /// over-promising what the plugin can do.
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::default()
+    }
 
     /// Validate configuration
     fn validate_config(&self, config: &OptimizerConfig) -> Result<()>;
@@ -89,9 +154,17 @@ pub struct RegistryConfig {
     pub auto_discovery: bool,
     /// Enable plugin validation on registration
     pub validate_on_registration: bool,
-    /// Enable plugin caching
+    /// Enable plugin caching. When `false`, [`PluginRegistry::create_optimizer`]
+    /// never reads or writes [`PluginCache`] -- every call reaches the
+    /// plugin factory, and `get_cache_stats()` stays at all-zero. See
+    /// [`PluginCache`] for the (f64-only) scope of what caching covers.
     pub enable_caching: bool,
-    /// Maximum cache size
+    /// Maximum number of distinct plugin names [`PluginCache`] holds at
+    /// once. Once reached, inserting a new entry evicts the
+    /// least-recently-used one first (see [`PluginCache`]). `0` means
+    /// "cache nothing": caching stays logically enabled (bypass is still
+    /// controlled solely by `enable_caching`) but every lookup misses and
+    /// nothing is ever retained.
     pub max_cache_size: usize,
     /// Plugin load timeout
     pub load_timeout: std::time::Duration,
@@ -114,13 +187,50 @@ pub enum PluginSource {
     Package(String),
 }
 
-/// Plugin cache for performance optimization
+/// Plugin cache for performance optimization.
+///
+/// # Scope: `f64` only
+///
+/// `CachedPlugin::plugin` is monomorphized to `Box<dyn OptimizerPlugin<f64>>`
+/// -- there is no generic `PluginCache<A>`. [`PluginRegistry::create_optimizer::<A>`]
+/// only consults this cache when `A = f64`; a call with `A = f32` (or any
+/// other `Float` impl) always goes straight to the factory and never
+/// touches `instances`, `stats.hits`, or `stats.misses`. This is a
+/// deliberate scope limitation, not an oversight: caching f32 instances
+/// too would need either a second, separately-bounded `HashMap` or an
+/// `Any`-erased value type, and nothing in this crate currently creates
+/// enough f32 optimizers through the registry to justify that complexity.
+///
+/// # Cache key and correctness
+///
+/// Entries are keyed by plugin *name*, but a lookup is only a hit when the
+/// caller's [`OptimizerConfig`] also equals the config the cached instance
+/// was built with (`CachedPlugin::config`). A name-only key would let a
+/// caller requesting e.g. a different `learning_rate` silently receive an
+/// instance built with someone else's config -- that would be exactly the
+/// kind of fabricated-success this crate's stub-removal pass exists to
+/// eliminate, so a config mismatch is treated as a miss (the stale entry is
+/// replaced by a freshly created one) rather than returned.
+///
+/// # Eviction
+///
+/// Bounded by [`RegistryConfig::max_cache_size`]: inserting past the limit
+/// evicts the least-recently-used entry first. "Recently used" is tracked
+/// with a monotonically increasing `u64` sequence number bumped on every
+/// insert and every hit, not a wall-clock timestamp -- two cache
+/// operations completing within the same clock tick (common on fast
+/// hardware or under `#[test]`) would otherwise tie under
+/// `SystemTime`-based LRU and evict a nondeterministically-chosen entry.
 #[derive(Debug)]
 pub struct PluginCache {
-    /// Cached plugin instances
+    /// Cached plugin instances, keyed by plugin name.
     instances: HashMap<String, CachedPlugin>,
     /// Cache statistics
     stats: CacheStats,
+    /// Source of the next `CachedPlugin::sequence` value; incremented on
+    /// every insert and every hit so eviction has a real, deterministic
+    /// "least recently used" ordering (see the struct-level doc comment).
+    next_sequence: u64,
 }
 
 /// Cached plugin instance
@@ -128,12 +238,18 @@ pub struct PluginCache {
 pub struct CachedPlugin {
     /// Plugin instance
     pub plugin: Box<dyn OptimizerPlugin<f64>>,
+    /// The exact [`OptimizerConfig`] this instance was created with. A
+    /// lookup with a different config is treated as a miss -- see
+    /// [`PluginCache`]'s "Cache key and correctness" section.
+    pub config: OptimizerConfig,
     /// Cache timestamp
     pub cached_at: std::time::SystemTime,
     /// Access count
     pub access_count: usize,
     /// Last accessed
     pub last_accessed: std::time::SystemTime,
+    /// Recency ordinal used for LRU eviction; see [`PluginCache::next_sequence`].
+    pub(super) sequence: u64,
 }
 
 /// Cache statistics
@@ -141,30 +257,39 @@ pub struct CachedPlugin {
 pub struct CacheStats {
     /// Total cache hits
     pub hits: usize,
-    /// Total cache misses
+    /// Total cache misses (an f64 `create_optimizer` call that reached the
+    /// factory: no matching cached entry existed, or its config differed)
     pub misses: usize,
     /// Total evictions
     pub evictions: usize,
-    /// Total memory used (bytes)
+    /// Approximate memory used by currently cached instances, in bytes.
+    /// Computed as `sum(size_of_val(&*cached.plugin))` -- the real,
+    /// runtime size of each cached optimizer's own concrete struct
+    /// (resolved through its vtable, not guessed). This deliberately does
+    /// **not** account for any heap allocations *inside* that struct
+    /// (e.g. a `Vec<f64>` momentum buffer): this crate has no allocator
+    /// instrumentation to attribute those bytes, and reporting only the
+    /// immediate struct size is an honest undercount rather than a
+    /// fabricated total.
     pub memory_used: usize,
 }
 
 /// Registry event listener trait
 pub trait RegistryEventListener: Debug + Send + Sync {
     /// Called when a plugin is registered
-    fn on_plugin_registered(&mut self, info: &PluginInfo) {}
+    fn on_plugin_registered(&mut self, _info: &PluginInfo) {}
 
     /// Called when a plugin is unregistered
-    fn on_plugin_unregistered(&mut self, name: &str) {}
+    fn on_plugin_unregistered(&mut self, _name: &str) {}
 
     /// Called when a plugin is loaded
-    fn on_plugin_loaded(&mut self, name: &str) {}
+    fn on_plugin_loaded(&mut self, _name: &str) {}
 
     /// Called when a plugin fails to load
-    fn on_plugin_load_failed(&mut self, _name: &str, error: &str) {}
+    fn on_plugin_load_failed(&mut self, _name: &str, _error: &str) {}
 
     /// Called when a plugin is enabled/disabled
-    fn on_plugin_status_changed(&mut self, _name: &str, status: &PluginStatus) {}
+    fn on_plugin_status_changed(&mut self, _name: &str, _status: &PluginStatus) {}
 }
 
 /// Plugin search query
@@ -246,9 +371,11 @@ impl PluginRegistry {
             self.validate_plugin(&factory)?;
         }
 
+        let capabilities = factory.capabilities();
         let registration = PluginRegistration {
             factory: Box::new(factory),
             info: info.clone(),
+            capabilities,
             registered_at: std::time::SystemTime::now(),
             status: PluginStatus::Active,
             load_count: 0,
@@ -256,13 +383,13 @@ impl PluginRegistry {
         };
 
         {
-            let mut factories = self.factories.write().expect("lock poisoned");
+            let mut factories = write_lock(&self.factories);
             factories.insert(name.clone(), registration);
         }
 
         // Notify event listeners
         {
-            let mut listeners = self.event_listeners.write().expect("lock poisoned");
+            let mut listeners = write_lock(&self.event_listeners);
             for listener in listeners.iter_mut() {
                 listener.on_plugin_registered(&info);
             }
@@ -273,11 +400,11 @@ impl PluginRegistry {
 
     /// Unregister a plugin
     pub fn unregister_plugin(&self, name: &str) -> Result<()> {
-        let mut factories = self.factories.write().expect("lock poisoned");
+        let mut factories = write_lock(&self.factories);
         if factories.remove(name).is_some() {
             // Notify event listeners
             drop(factories);
-            let mut listeners = self.event_listeners.write().expect("lock poisoned");
+            let mut listeners = write_lock(&self.event_listeners);
             for listener in listeners.iter_mut() {
                 listener.on_plugin_unregistered(name);
             }
@@ -296,7 +423,18 @@ impl PluginRegistry {
     where
         A: Float + Debug + Send + Sync + 'static,
     {
-        let factories = self.factories.read().expect("lock poisoned");
+        // A single write guard covers status check, validation, creation,
+        // and the load_count/last_used update -- there is no read-then-
+        // reacquire-as-write gap for another thread to unregister the
+        // plugin (or race a concurrent `create_optimizer` call) in between.
+        // The previous version dropped its read lock and reacquired a write
+        // lock purely to bump the usage counters, so `factories.get_mut(name)`
+        // could silently find nothing if the plugin was unregistered in
+        // that window -- the statistics update for an otherwise-successful
+        // creation would vanish with no error. Third-party factory code
+        // still runs under `catch_unwind` (as before), so a panicking
+        // plugin cannot poison this exclusive lock either.
+        let mut factories = write_lock(&self.factories);
         let registration = factories
             .get(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -312,7 +450,7 @@ impl PluginRegistry {
             }
             PluginStatus::Deprecated => {
                 // Log warning but continue
-                eprintln!("Warning: Plugin '{}' is deprecated", name);
+                log::warn!("Plugin '{}' is deprecated", name);
             }
             PluginStatus::Maintenance => {
                 return Err(OptimError::PluginInMaintenance(name.to_string()));
@@ -322,23 +460,100 @@ impl PluginRegistry {
         // Validate configuration
         registration.factory.validate_config(&config)?;
 
-        // Create optimizer based on type
+        // Create optimizer based on type. Third-party factory code runs here
+        // while `factories` is held write-locked, so a panic is caught
+        // rather than allowed to poison the registry-wide lock.
         let optimizer = if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f32>() {
-            let opt = registration.factory.create_f32(config)?;
-            // This is safe because we checked the type
-            unsafe {
-                std::mem::transmute::<Box<dyn OptimizerPlugin<f32>>, Box<dyn OptimizerPlugin<A>>>(
-                    opt,
-                )
-            }
+            // `PluginCache` is monomorphized to `Box<dyn OptimizerPlugin<f64>>`
+            // (see its doc comment) and so cannot represent an f32 instance
+            // at all -- this branch always reaches the factory, regardless
+            // of `enable_caching`.
+            let opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                registration.factory.create_f32(config)
+            }))
+            .map_err(|_| {
+                OptimError::PluginLoadError(format!(
+                    "plugin '{name}' panicked while creating an f32 optimizer"
+                ))
+            })??;
+            // Safe downcast: A and f32 are the same type here (proven by the
+            // TypeId check above), so boxing `opt` into `dyn Any` and
+            // downcasting to `Box<dyn OptimizerPlugin<A>>` succeeds via
+            // ordinary `Any` machinery -- no `transmute` of a trait object
+            // (whose fat-pointer/vtable layout across distinct generic
+            // instantiations is not guaranteed) is required.
+            let boxed_any: Box<dyn Any> = Box::new(opt);
+            *boxed_any
+                .downcast::<Box<dyn OptimizerPlugin<A>>>()
+                .map_err(|_| {
+                    OptimError::UnsupportedDataType(
+                        "internal error: f32 downcast failed".to_string(),
+                    )
+                })?
         } else if std::any::TypeId::of::<A>() == std::any::TypeId::of::<f64>() {
-            let opt = registration.factory.create_f64(config)?;
-            // This is safe because we checked the type
-            unsafe {
-                std::mem::transmute::<Box<dyn OptimizerPlugin<f64>>, Box<dyn OptimizerPlugin<A>>>(
-                    opt,
-                )
-            }
+            let use_cache = self.config.enable_caching;
+
+            // A cache hit must match on *both* plugin name and config (see
+            // `PluginCache`'s "Cache key and correctness" doc section), so
+            // the lookup runs before the factory call and can skip it
+            // entirely on a hit -- `get_or_record_miss` also folds in the
+            // `stats.misses` bump for every other outcome.
+            let cached_hit = if use_cache {
+                let mut cache = mutex_lock(&self.cache);
+                cache.get_or_record_miss(name, &config)?
+            } else {
+                None
+            };
+
+            let opt_f64: Box<dyn OptimizerPlugin<f64>> = if let Some(hit) = cached_hit {
+                hit
+            } else {
+                // Only clone `config` when it will actually be stored --
+                // avoids the clone entirely when caching is disabled.
+                let config_for_cache = use_cache.then(|| config.clone());
+                let created = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    registration.factory.create_f64(config)
+                }))
+                .map_err(|_| {
+                    OptimError::PluginLoadError(format!(
+                        "plugin '{name}' panicked while creating an f64 optimizer"
+                    ))
+                })??;
+                if let Some(cache_config) = config_for_cache {
+                    // Same rationale as `get_or_record_miss`: `clone_plugin`
+                    // is third-party code, called here under `factories`'s
+                    // write lock, so a panic must be caught rather than
+                    // allowed to unwind through it.
+                    let created_ref = &created;
+                    let cloned_for_cache =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            created_ref.clone_plugin()
+                        }))
+                        .map_err(|_| {
+                            OptimError::PluginLoadError(format!(
+                                "plugin '{name}' panicked while cloning a newly created f64 \
+                                 optimizer for the cache"
+                            ))
+                        })?;
+                    let mut cache = mutex_lock(&self.cache);
+                    cache.insert(
+                        name.to_string(),
+                        cloned_for_cache,
+                        cache_config,
+                        self.config.max_cache_size,
+                    );
+                }
+                created
+            };
+
+            let boxed_any: Box<dyn Any> = Box::new(opt_f64);
+            *boxed_any
+                .downcast::<Box<dyn OptimizerPlugin<A>>>()
+                .map_err(|_| {
+                    OptimError::UnsupportedDataType(
+                        "internal error: f64 downcast failed".to_string(),
+                    )
+                })?
         } else {
             return Err(OptimError::UnsupportedDataType(format!(
                 "Type {} not supported",
@@ -346,9 +561,9 @@ impl PluginRegistry {
             )));
         };
 
-        // Update usage statistics
-        drop(factories);
-        let mut factories = self.factories.write().expect("lock poisoned");
+        // Update usage statistics under the same write guard used to read
+        // and create -- no reacquisition, so this entry cannot have been
+        // removed since the lookup above.
         if let Some(registration) = factories.get_mut(name) {
             registration.load_count += 1;
             registration.last_used = Some(std::time::SystemTime::now());
@@ -356,7 +571,7 @@ impl PluginRegistry {
 
         // Notify event listeners
         drop(factories);
-        let mut listeners = self.event_listeners.write().expect("lock poisoned");
+        let mut listeners = write_lock(&self.event_listeners);
         for listener in listeners.iter_mut() {
             listener.on_plugin_loaded(name);
         }
@@ -366,19 +581,19 @@ impl PluginRegistry {
 
     /// List all registered plugins
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         factories.values().map(|reg| reg.info.clone()).collect()
     }
 
     /// Search for plugins matching criteria
     pub fn search_plugins(&self, query: PluginQuery) -> PluginSearchResult {
         let start_time = std::time::Instant::now();
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
 
         let mut matching_plugins = Vec::new();
 
         for registration in factories.values() {
-            if self.matches_query(&registration.info, &query) {
+            if self.matches_query(&registration.info, &registration.capabilities, &query) {
                 matching_plugins.push(registration.info.clone());
             }
         }
@@ -402,19 +617,19 @@ impl PluginRegistry {
 
     /// Get plugin information
     pub fn get_plugin_info(&self, name: &str) -> Option<PluginInfo> {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         factories.get(name).map(|reg| reg.info.clone())
     }
 
     /// Get plugin status
     pub fn get_plugin_status(&self, name: &str) -> Option<PluginStatus> {
-        let factories = self.factories.read().expect("lock poisoned");
+        let factories = read_lock(&self.factories);
         factories.get(name).map(|reg| reg.status.clone())
     }
 
     /// Enable/disable plugin
     pub fn set_plugin_status(&self, name: &str, status: PluginStatus) -> Result<()> {
-        let mut factories = self.factories.write().expect("lock poisoned");
+        let mut factories = write_lock(&self.factories);
         let registration = factories
             .get_mut(name)
             .ok_or_else(|| OptimError::PluginNotFound(name.to_string()))?;
@@ -425,7 +640,7 @@ impl PluginRegistry {
         // Notify event listeners if status changed
         if old_status != status {
             drop(factories);
-            let mut listeners = self.event_listeners.write().expect("lock poisoned");
+            let mut listeners = write_lock(&self.event_listeners);
             for listener in listeners.iter_mut() {
                 listener.on_plugin_status_changed(name, &status);
             }
@@ -436,7 +651,7 @@ impl PluginRegistry {
 
     /// Add plugin search path
     pub fn add_search_path<P: AsRef<Path>>(&self, path: P) {
-        let mut search_paths = self.search_paths.write().expect("lock poisoned");
+        let mut search_paths = write_lock(&self.search_paths);
         search_paths.push(path.as_ref().to_path_buf());
     }
 
@@ -446,7 +661,7 @@ impl PluginRegistry {
             return Ok(0);
         }
 
-        let search_paths = self.search_paths.read().expect("lock poisoned");
+        let search_paths = read_lock(&self.search_paths);
         let mut discovered_count = 0;
 
         for path in search_paths.iter() {
@@ -460,19 +675,19 @@ impl PluginRegistry {
 
     /// Add event listener
     pub fn add_event_listener(&self, listener: Box<dyn RegistryEventListener>) {
-        let mut listeners = self.event_listeners.write().expect("lock poisoned");
+        let mut listeners = write_lock(&self.event_listeners);
         listeners.push(listener);
     }
 
     /// Get cache statistics
     pub fn get_cache_stats(&self) -> CacheStats {
-        let cache = self.cache.lock().expect("lock poisoned");
+        let cache = mutex_lock(&self.cache);
         cache.stats.clone()
     }
 
     /// Clear plugin cache
     pub fn clear_cache(&self) {
-        let mut cache = self.cache.lock().expect("lock poisoned");
+        let mut cache = mutex_lock(&self.cache);
         cache.instances.clear();
         cache.stats = CacheStats::default();
     }
@@ -486,7 +701,12 @@ impl PluginRegistry {
         Ok(())
     }
 
-    fn matches_query(&self, info: &PluginInfo, query: &PluginQuery) -> bool {
+    fn matches_query(
+        &self,
+        info: &PluginInfo,
+        capabilities: &PluginCapabilities,
+        query: &PluginQuery,
+    ) -> bool {
         // Check name pattern
         if let Some(ref pattern) = query.name_pattern {
             if !info.name.contains(pattern) {
@@ -527,23 +747,35 @@ impl PluginRegistry {
             }
         }
 
+        // Check required capabilities: every named capability must be
+        // declared `true` by the plugin, or it is excluded from the
+        // results. Previously this field was declared on `PluginQuery` and
+        // never consulted at all, so a caller searching for e.g.
+        // `["gpu_support"]` got back plugins that do not support GPUs.
+        if !query
+            .required_capabilities
+            .iter()
+            .all(|cap| capabilities.has_capability(cap))
+        {
+            return false;
+        }
+
         true
     }
 
     fn version_matches(&self, version: &str, requirement: &VersionRequirement) -> bool {
-        // Simplified version matching - in practice would use semver
         if let Some(ref exact) = requirement.exact_version {
             return version == exact;
         }
 
         if let Some(ref min) = requirement.min_version {
-            if version < min.as_str() {
+            if version_cmp(version, min) == std::cmp::Ordering::Less {
                 return false;
             }
         }
 
         if let Some(ref max) = requirement.max_version {
-            if version >= max.as_str() {
+            if version_cmp(version, max) != std::cmp::Ordering::Less {
                 return false;
             }
         }
@@ -551,16 +783,48 @@ impl PluginRegistry {
         true
     }
 
+    /// Recursively count candidate plugin files under `path` (same
+    /// extension/name convention as `PluginLoader::is_plugin_file`: shared
+    /// libraries, or a `plugin.toml` manifest).
+    ///
+    /// This crate has no dynamic-loading backend (see the module-level note
+    /// in `plugin::loader` on why `dlopen`/`libloading` is not wired up),
+    /// so a discovered file cannot actually be turned into a registered
+    /// `PluginRegistration` here -- previously this returned a hardcoded
+    /// `Ok(0)` regardless of what was on disk, which reads identically to
+    /// "no plugins present" and "discovery is unimplemented". Returning the
+    /// real count at least tells a caller the truth about what discovery
+    /// *found*, even though loading them still requires
+    /// `PluginRegistry::register_plugin` with a statically compiled
+    /// factory.
     fn discover_plugins_in_directory(&self, path: &Path) -> Result<usize> {
-        // In a real implementation, this would scan for plugin files
-        // and attempt to load them dynamically
-        Ok(0)
+        let mut count = 0;
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                count += self.discover_plugins_in_directory(&entry_path)?;
+                continue;
+            }
+            let is_candidate = match entry_path.extension().and_then(|e| e.to_str()) {
+                Some("so") | Some("dylib") | Some("dll") => true,
+                _ => entry_path.file_name().and_then(|n| n.to_str()) == Some("plugin.toml"),
+            };
+            if is_candidate {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
-    fn register_builtin_plugins(&mut self) {
-        // Register built-in plugins would go here
-        // For now, this is a placeholder
-    }
+    /// Register any statically-compiled built-in plugins. There are
+    /// currently none shipped with this crate -- optimizers ship as their
+    /// own `OptimizerPlugin` implementations registered directly by the
+    /// caller via `register_plugin`, not as a fixed built-in set -- so this
+    /// legitimately has nothing to do. Kept as an explicit extension point
+    /// (and call site in `global()`) rather than removed, so adding a
+    /// future built-in plugin is a one-line change here.
+    fn register_builtin_plugins(&mut self) {}
 }
 
 impl PluginCache {
@@ -568,7 +832,134 @@ impl PluginCache {
         Self {
             instances: HashMap::new(),
             stats: CacheStats::default(),
+            next_sequence: 0,
         }
+    }
+
+    /// Look up a cached instance for `name`. Only a hit when `config`
+    /// equals the config the cached instance was built with (see
+    /// [`PluginCache`]'s "Cache key and correctness" doc section); any
+    /// other outcome -- no entry, or a config mismatch -- is a miss and
+    /// bumps `stats.misses`. On a hit, returns an independent clone (via
+    /// [`OptimizerPlugin::clone_plugin`]) so the caller gets an owned
+    /// instance while the cache keeps its own, and refreshes the entry's
+    /// recency so it is not the next eviction candidate.
+    ///
+    /// `clone_plugin` is third-party trait code -- the registered plugin
+    /// author's own impl, not anything this crate controls -- called here
+    /// while both the caller's `factories` write lock and this cache's own
+    /// mutex are held. A panic inside it is caught the same way the
+    /// adjacent factory-call sites in `create_optimizer` already catch
+    /// `create_f32`/`create_f64` panics, so it surfaces as `Err` instead of
+    /// unwinding through two held locks. The poisoned entry is evicted
+    /// (bumping `stats.evictions`) rather than left cached: recency was
+    /// already refreshed above, so leaving it in place would make this
+    /// plugin name return `Err` on every subsequent call forever instead
+    /// of just this one, once a broken `clone_plugin` demonstrated it
+    /// cannot be trusted.
+    fn get_or_record_miss(
+        &mut self,
+        name: &str,
+        config: &OptimizerConfig,
+    ) -> Result<Option<Box<dyn OptimizerPlugin<f64>>>> {
+        if let Some(entry) = self.instances.get_mut(name) {
+            if &entry.config == config {
+                self.next_sequence += 1;
+                entry.access_count += 1;
+                entry.last_accessed = std::time::SystemTime::now();
+                entry.sequence = self.next_sequence;
+
+                let plugin = &entry.plugin;
+                let clone_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    plugin.clone_plugin()
+                }));
+
+                return match clone_result {
+                    Ok(cloned) => {
+                        self.stats.hits += 1;
+                        Ok(Some(cloned))
+                    }
+                    Err(_) => {
+                        self.instances.remove(name);
+                        self.stats.evictions += 1;
+                        Err(OptimError::PluginLoadError(format!(
+                            "plugin '{name}' panicked while cloning a cached f64 optimizer; \
+                             the poisoned cache entry has been evicted"
+                        )))
+                    }
+                };
+            }
+        }
+        self.stats.misses += 1;
+        Ok(None)
+    }
+
+    /// Insert a freshly created instance, evicting the least-recently-used
+    /// entry first if this insertion would exceed `max_size`.
+    /// `max_size == 0` means "cache nothing" -- the entry is not inserted
+    /// (and, since there is nothing to make room for, nothing is evicted
+    /// either).
+    fn insert(
+        &mut self,
+        name: String,
+        plugin: Box<dyn OptimizerPlugin<f64>>,
+        config: OptimizerConfig,
+        max_size: usize,
+    ) {
+        if max_size == 0 {
+            return;
+        }
+        if !self.instances.contains_key(&name) && self.instances.len() >= max_size {
+            self.evict_lru();
+        }
+        self.next_sequence += 1;
+        let now = std::time::SystemTime::now();
+        self.instances.insert(
+            name,
+            CachedPlugin {
+                plugin,
+                config,
+                cached_at: now,
+                access_count: 1,
+                last_accessed: now,
+                sequence: self.next_sequence,
+            },
+        );
+        self.recompute_memory_used();
+    }
+
+    /// Evict the entry with the smallest `sequence` (the one least
+    /// recently inserted or hit). A no-op on an empty cache.
+    fn evict_lru(&mut self) {
+        let lru_name = self
+            .instances
+            .iter()
+            .min_by_key(|(_, cached)| cached.sequence)
+            .map(|(name, _)| name.clone());
+        if let Some(lru_name) = lru_name {
+            self.instances.remove(&lru_name);
+            self.stats.evictions += 1;
+            self.recompute_memory_used();
+        }
+    }
+
+    /// Recompute `stats.memory_used` from the currently cached instances;
+    /// see [`CacheStats::memory_used`] for exactly what this does and does
+    /// not account for.
+    fn recompute_memory_used(&mut self) {
+        self.stats.memory_used = self
+            .instances
+            .values()
+            .map(|cached| std::mem::size_of_val(&*cached.plugin))
+            .sum();
+    }
+
+    /// Number of distinct plugin names currently cached. Exposed (crate-
+    /// visible only) for tests asserting eviction actually bounds cache
+    /// size rather than merely incrementing a counter.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.instances.len()
     }
 }
 
@@ -669,4 +1060,76 @@ mod tests {
         assert_eq!(query.category, Some(PluginCategory::FirstOrder));
         assert_eq!(query.limit, Some(10));
     }
+
+    #[test]
+    fn discover_plugins_counts_real_files_on_disk() {
+        // F69 regression: `discover_plugins_in_directory` previously
+        // returned a hardcoded `Ok(0)` regardless of directory contents,
+        // making a directory full of plugin files indistinguishable from
+        // an empty one.
+        let root = std::env::temp_dir().join(format!(
+            "optirs_registry_discover_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).expect("create temp dir tree");
+
+        std::fs::write(root.join("plugin.toml"), "[plugin]\nname = \"x\"").expect("write");
+        std::fs::write(root.join("libfoo.so"), b"not a real library").expect("write");
+        std::fs::write(root.join("readme.txt"), b"not a plugin").expect("write");
+        std::fs::write(nested.join("bar.dylib"), b"not a real library").expect("write");
+
+        let config = RegistryConfig {
+            auto_discovery: true,
+            ..RegistryConfig::default()
+        };
+        let registry = PluginRegistry::new(config);
+        registry.add_search_path(&root);
+
+        let discovered = registry
+            .discover_plugins()
+            .expect("discovery should succeed");
+        assert_eq!(
+            discovered, 3,
+            "expected plugin.toml + libfoo.so + nested/bar.dylib, not readme.txt"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn discover_plugins_is_a_noop_when_auto_discovery_disabled() {
+        let root = std::env::temp_dir().join(format!(
+            "optirs_registry_discover_disabled_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        std::fs::write(root.join("plugin.toml"), "[plugin]\nname = \"x\"").expect("write");
+
+        let config = RegistryConfig {
+            auto_discovery: false,
+            ..RegistryConfig::default()
+        };
+        let registry = PluginRegistry::new(config);
+        registry.add_search_path(&root);
+
+        assert_eq!(registry.discover_plugins().expect("should succeed"), 0);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
+
+// Regression tests for the static plugin path: register -> create -> step,
+// the panic-at-the-trust-boundary guard (a plugin panic must surface as an
+// error, never poison the process-wide registry), and the lock-poisoning
+// recovery helpers themselves.
+#[cfg(test)]
+mod regression_tests;

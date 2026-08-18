@@ -237,7 +237,9 @@ mod tests {
         let ar = ActivityRegularization::l1(lambda);
 
         let activations = Array1::from_vec(vec![1.0f64, -2.0, 3.0]);
-        let penalty = ar.penalty(&activations).expect("unwrap failed");
+        let penalty = ar
+            .penalty(&activations)
+            .expect("ar.penalty succeeds in test_l1_penalty");
 
         // L1 penalty = lambda * sum(|x|) = 0.1 * (1 + 2 + 3) = 0.1 * 6 = 0.6
         assert_abs_diff_eq!(penalty, lambda * 6.0, epsilon = 1e-10);
@@ -249,7 +251,9 @@ mod tests {
         let ar = ActivityRegularization::l2(lambda);
 
         let activations = Array1::from_vec(vec![3.0f64, 4.0]);
-        let penalty = ar.penalty(&activations).expect("unwrap failed");
+        let penalty = ar
+            .penalty(&activations)
+            .expect("ar.penalty succeeds in test_l2_penalty");
 
         // L2 penalty = lambda * sqrt(sum(x^2)) = 0.1 * sqrt(9 + 16) = 0.1 * 5 = 0.5
         assert_abs_diff_eq!(penalty, lambda * 5.0, epsilon = 1e-10);
@@ -261,7 +265,9 @@ mod tests {
         let ar = ActivityRegularization::l2_squared(lambda);
 
         let activations = Array1::from_vec(vec![1.0f64, 2.0, 3.0]);
-        let penalty = ar.penalty(&activations).expect("unwrap failed");
+        let penalty = ar
+            .penalty(&activations)
+            .expect("ar.penalty succeeds in test_l2_squared_penalty");
 
         // L2 squared penalty = lambda * sum(x^2) = 0.1 * (1 + 4 + 9) = 0.1 * 14 = 1.4
         assert_abs_diff_eq!(penalty, lambda * 14.0, epsilon = 1e-10);
@@ -277,7 +283,7 @@ mod tests {
 
         let penalty = ar
             .apply(&activations, &mut gradients)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_l1_gradients");
 
         // L1 gradients = lambda * sign(x)
         assert_abs_diff_eq!(gradients[0], lambda, epsilon = 1e-10); // sign(1) = 1
@@ -298,7 +304,7 @@ mod tests {
 
         let penalty = ar
             .apply(&activations, &mut gradients)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_l2_gradients");
 
         // Norm = sqrt(9 + 16) = 5
         // L2 gradients = lambda * x / norm
@@ -319,7 +325,7 @@ mod tests {
 
         let penalty = ar
             .apply(&activations, &mut gradients)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_l2_gradients_zero_activations");
 
         // When all activations are zero, gradients should be zero to avoid division by zero
         assert_abs_diff_eq!(gradients[0], 0.0, epsilon = 1e-10);
@@ -339,7 +345,7 @@ mod tests {
 
         let penalty = ar
             .apply(&activations, &mut gradients)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_l2_squared_gradients");
 
         // L2 squared gradients = lambda * 2 * x
         assert_abs_diff_eq!(gradients[0], lambda * 2.0 * 2.0, epsilon = 1e-10);
@@ -354,9 +360,11 @@ mod tests {
         let lambda = 0.1f64;
         let ar = ActivityRegularization::l1(lambda);
 
-        let activations =
-            Array2::from_shape_vec((2, 2), vec![1.0f64, 2.0, -3.0, 4.0]).expect("unwrap failed");
-        let penalty = ar.penalty(&activations).expect("unwrap failed");
+        let activations = Array2::from_shape_vec((2, 2), vec![1.0f64, 2.0, -3.0, 4.0])
+            .expect("Array2::from_shape_vec succeeds in test_2d_activations");
+        let penalty = ar
+            .penalty(&activations)
+            .expect("ar.penalty succeeds in test_2d_activations");
 
         // L1 penalty = lambda * sum(|x|) = 0.1 * (1 + 2 + 3 + 4) = 0.1 * 10 = 1.0
         assert_abs_diff_eq!(penalty, lambda * 10.0, epsilon = 1e-10);
@@ -371,10 +379,12 @@ mod tests {
         let mut gradients = Array1::zeros(3);
 
         // Both penalty() and apply() should return the same penalty value
-        let penalty1 = ar.penalty(&activations).expect("unwrap failed");
+        let penalty1 = ar
+            .penalty(&activations)
+            .expect("ar.penalty succeeds in test_regularizer_trait");
         let penalty2 = ar
             .apply(&activations, &mut gradients)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_regularizer_trait");
 
         assert_abs_diff_eq!(penalty1, penalty2, epsilon = 1e-10);
 

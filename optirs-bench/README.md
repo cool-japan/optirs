@@ -11,9 +11,11 @@ OptiRS-Bench provides comprehensive benchmarking and performance analysis capabi
 - **Performance Benchmarking**: Comprehensive optimization performance measurement
 - **Regression Detection**: Automated detection of performance regressions
 - **Memory Profiling**: Memory usage analysis and leak detection
-- **System Monitoring**: Real-time system resource monitoring
+- **System Monitoring**: Real process/system resource monitoring (CPU, memory) via `sysinfo`
 - **Security Auditing**: Security analysis of optimization pipelines
-- **Cross-Platform Support**: Benchmarking across different platforms and hardware
+- **Cross-Platform Support**: Orchestrated benchmarking across platforms via local, Docker,
+  and SSH execution, with an explicit error when the runtime is absent rather than a
+  fabricated pass
 - **Continuous Integration**: Integration with CI/CD pipelines for automated testing
 - **Comparative Analysis**: Side-by-side comparison of optimization strategies
 
@@ -23,16 +25,15 @@ OptiRS-Bench provides comprehensive benchmarking and performance analysis capabi
 - **Throughput Analysis**: Operations per second measurement
 - **Latency Profiling**: Step-by-step timing analysis
 - **Convergence Tracking**: Optimization convergence rate measurement
-- **Resource Utilization**: CPU, memory, and GPU usage monitoring
-- **Scalability Testing**: Performance across different problem sizes
-- **Hardware-Specific Benchmarks**: Platform-optimized performance tests
+- **Resource Utilization**: CPU and memory usage monitoring via `sysinfo` (real process
+  RSS/virtual memory and system-wide load); GPU presence is detected (for cross-platform
+  test-matrix purposes) but there is no GPU utilization/memory telemetry
 
 ### Regression Detection
 - **Automated Testing**: Continuous performance regression detection
 - **Statistical Analysis**: Statistical significance testing for performance changes
 - **Threshold Monitoring**: Configurable performance degradation alerts
 - **Historical Tracking**: Long-term performance trend analysis
-- **Bisection Analysis**: Automated identification of regression-causing changes
 
 ## Installation
 
@@ -40,8 +41,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-bench = "0.3.1"
-scirs2-core = "0.4.0"  # Required foundation
+optirs-bench = "0.3.2"
+scirs2-core = "0.6.5"  # Required foundation
 ```
 
 ### Feature Selection
@@ -50,248 +51,183 @@ Enable specific benchmarking features:
 
 ```toml
 [dependencies]
-optirs-bench = { version = "0.3.1", features = ["profiling", "regression_detection", "security_auditing"] }
+optirs-bench = { version = "0.3.2", features = ["profiling", "regression_detection", "security_auditing"] }
 ```
 
 Available features:
 - `profiling`: Memory and performance profiling tools (enabled by default)
 - `regression_detection`: Automated regression detection
-- `security_auditing`: Security analysis tools
+- `security_auditing`: Security analysis tools (pulls in `rsa`/`x509-parser`)
 - `ci_integration`: Continuous integration support
 
 ## Command-Line Tools
 
-OptiRS-Bench includes several command-line utilities:
+`optirs-bench` ships 10 binaries (`autobins = false` in `Cargo.toml`; the `[[bin]]` list
+there is authoritative). Two pairs of names differ only by hyphen vs. underscore and are
+genuinely different tools -- read the binary path, not just the name.
 
-### Main Benchmarking Tool
+### Main benchmarking tool: `optirs-bench`
+
+Runs `optirs_bench::OptimizerBenchmark` against the crate's three built-in test functions
+(Quadratic, Rosenbrock, Sphere) comparing a baseline gradient-descent step against a
+decayed-learning-rate variant. There is no dataset loading, no `--optimizer`/`--dataset`
+selection, and no GPU/hardware targeting flag.
+
 ```bash
-# Run comprehensive benchmark suite
-optirs-bench --optimizer adam --dataset cifar10 --iterations 1000
+# Run the built-in benchmark suite and print a summary
+optirs-bench benchmark [--iterations N] [--tolerance T]
 
-# Compare multiple optimizers
-optirs-bench compare --optimizers adam,sgd,adamw --dataset imagenet
+# Compare the decayed-LR candidate against the baseline; exits non-zero if its
+# success rate regresses by more than PCT percentage points (default: 10.0)
+optirs-bench analyze [--max-regression PCT] [--iterations N] [--tolerance T]
 
-# Hardware-specific benchmarking
-optirs-bench --hardware gpu --device nvidia-rtx-4090
+# Render a full report to stdout, or to a file
+optirs-bench report [--format md|txt|csv] [--output PATH] [--iterations N] [--tolerance T]
 ```
 
-### Performance Regression Detector
-```bash
-# Detect performance regressions
-performance-regression-detector --baseline v1.0.0 --current HEAD
+### Performance regression detector: `performance-regression-detector`
 
-# Continuous monitoring
-performance-regression-detector --monitor --threshold 5% --alert email
+Two positional metrics files, not flags. Each line is `test_name: value[, value, ...]`;
+when several samples are given per line, their mean is compared. This tool only prints
+its findings -- its process always exits `0`, so it cannot gate a CI build by itself
+(use `optirs-bench analyze` or `security_audit_scanner` below for that).
+
+```bash
+performance-regression-detector <baseline_file> <current_file> [threshold_fraction]
+# threshold_fraction is relative and defaults to 0.05 (5% growth)
 ```
 
-### Memory Leak Reporter
-```bash
-# Memory leak detection
-memory-leak-reporter --duration 1h --sample-rate 1s
+### Memory reporting -- two different binaries
 
-# Generate memory usage report
-memory-leak-reporter --report --output memory_report.html
-```
+- **`memory-leak-reporter`** (hyphen; `src/bin/memory_reporter.rs`): a one-shot snapshot
+  of the *current* process' real RSS/virtual memory, via `system_sampler::SystemSampler`
+  (backed by `sysinfo`). Despite the name, it does not detect leaks.
+  ```bash
+  memory-leak-reporter <output_file>
+  ```
+- **`memory_leak_reporter`** (underscore; `src/bin/memory_leak_reporter.rs`): parses an
+  *existing* report from an external memory tool (Valgrind XML, Massif, HeapTrack, or a
+  custom JSON profiler) and renders a leak analysis.
+  ```bash
+  memory_leak_reporter --input <path> --format json|markdown|github-actions \
+      [--output PATH] [--severity-threshold N] [--confidence-threshold N] \
+      [--include-recommendations] [--verbose]
+  ```
 
-### Security Audit Scanner
-```bash
-# Security vulnerability scanning
-security-audit-scanner --scan-dependencies --check-versions
+### Security scanning -- two different binaries
 
-# Plugin security analysis
-security-audit-scanner --verify-plugins --sandbox-test
-```
+- **`security-audit-scanner`** (hyphen; `src/bin/security_scanner.rs`): a dependency-free
+  recursive scan of a directory for suspicious source patterns (potential secrets, weak
+  crypto, `unsafe`, command injection), word-boundary matched to avoid substring false
+  positives.
+  ```bash
+  security-audit-scanner <directory>
+  ```
+- **`security_audit_scanner`** (underscore; `src/bin/security_audit_scanner.rs`): the full
+  engine -- RustSec-range vulnerability matching against an embedded offline advisory
+  snapshot, license lookups, static-analysis pattern checks, Shannon-entropy secret
+  detection, and supply-chain risk analysis, via `ComprehensiveSecurityAuditor`. Exits with
+  a non-zero status when a finding meets `--severity`, so this is the tool suited to CI
+  gating.
+  ```bash
+  security_audit_scanner --project <path> [--format json|yaml|html|markdown] \
+      [--output PATH] [--severity info|low|medium|high|critical] \
+      [--scan-dependencies] [--scan-secrets] [--scan-code] [--check-licenses] \
+      [--all] [--verbose] [--exclude PATHS]
+  ```
+
+### Other binaries
+
+| Binary | Purpose (flags: `--help`) |
+|---|---|
+| `dependency_vulnerability_scanner` | Dependency vulnerability / outdated-package / license scanning (`--project`, `--output`, `--format`, `--update-database`, `--check-outdated`, `--check-licenses`, `--min-severity`, `--advisory-db`, `--verbose`) |
+| `longrun_analyzer` | Analyzes long-running stability/endurance test result files (`--input`, `--output`, `--format`, threshold flags, `--verbose`) |
+| `stress_test_analyzer` | Analyzes stress-test result files (same flag shape as `longrun_analyzer`) |
+| `performance_baseline_manager` | Creates/updates/validates performance baselines (`--results-file`, `--baseline-dir`, `--features`, `--commit-hash`, `--branch`, plus subcommand-specific flags) |
 
 ## Usage
 
 ### Basic Performance Benchmarking
 
-```rust
-use optirs_bench::{BenchmarkSuite, OptimizerBenchmark, BenchmarkConfig};
-use optirs_core::optimizers::{Adam, SGD};
-use criterion::Criterion;
-
-// Create benchmark configuration
-let config = BenchmarkConfig::new()
-    .with_iterations(1000)
-    .with_warmup_iterations(100)
-    .with_dataset_size(10000)
-    .with_batch_size(32)
-    .build();
-
-// Setup benchmark suite
-let mut benchmark_suite = BenchmarkSuite::new()
-    .with_config(config)
-    .add_optimizer("Adam", Adam::new(0.001))
-    .add_optimizer("SGD", SGD::new(0.01))
-    .build()?;
-
-// Run benchmarks
-let results = benchmark_suite.run().await?;
-
-// Generate report
-results.generate_report("benchmark_results.html")?;
-results.print_summary();
-```
-
-### Memory Profiling
+`OptimizerBenchmark::run_benchmark` accepts any `FnMut(&Array1<A>, &Array1<A>) -> Array1<A>`
+step function -- a plain closure, as below, or an `optirs-core` optimizer's `step` with its
+`Result` handled inside the closure.
 
 ```rust
-use optirs_bench::{MemoryProfiler, AllocationTracker};
+use optirs_bench::OptimizerBenchmark;
+use scirs2_core::ndarray::Array1;
 
-// Setup memory profiling
-let mut profiler = MemoryProfiler::new()
-    .with_sampling_rate(Duration::from_millis(100))
-    .with_stack_trace_depth(10)
-    .build()?;
+fn main() -> optirs_bench::Result<()> {
+    let mut benchmark = OptimizerBenchmark::<f64>::new();
+    benchmark.add_standard_test_functions(); // Quadratic, Rosenbrock, Sphere
 
-// Start profiling
-profiler.start_profiling()?;
+    // Plain gradient descent: x_{t+1} = x_t - lr * grad
+    let lr = 0.01;
+    benchmark.run_benchmark(
+        "gradient-descent".to_string(),
+        move |x: &Array1<f64>, grad: &Array1<f64>| x - &(grad * lr),
+        500,  // max_iterations
+        1e-6, // tolerance
+    )?;
 
-// Your optimization code here
-let mut optimizer = Adam::new(0.001);
-for epoch in 0..100 {
-    // Training loop
-    optimizer.step(&mut params, &grads).await?;
-    
-    // Record memory usage
-    profiler.record_memory_snapshot(&format!("epoch_{}", epoch))?;
-}
-
-// Stop profiling and generate report
-let memory_report = profiler.stop_and_generate_report()?;
-memory_report.save_to_file("memory_profile.json")?;
-```
-
-### Regression Detection
-
-```rust
-use optirs_bench::{RegressionDetector, PerformanceBaseline, StatisticalTest};
-
-// Load performance baseline
-let baseline = PerformanceBaseline::from_file("baseline_v1.0.0.json")?;
-
-// Setup regression detector
-let detector = RegressionDetector::new()
-    .with_baseline(baseline)
-    .with_significance_threshold(0.05)
-    .with_effect_size_threshold(0.1)
-    .with_statistical_test(StatisticalTest::WelchTTest)
-    .build()?;
-
-// Run current performance tests
-let current_results = run_performance_tests().await?;
-
-// Check for regressions
-let regression_analysis = detector.analyze(&current_results)?;
-
-if regression_analysis.has_regressions() {
-    println!("Performance regressions detected:");
-    for regression in regression_analysis.regressions() {
-        println!("  - {}: {:.2}% slower (p-value: {:.4})", 
-                 regression.metric_name, 
-                 regression.performance_delta * 100.0,
-                 regression.p_value);
-    }
+    let report = benchmark.generate_report();
+    println!(
+        "Ran {} benchmark result(s) across {} optimizer(s).",
+        report.total_tests,
+        report.optimizer_performance.len()
+    );
+    Ok(())
 }
 ```
 
-### System Resource Monitoring
+Render the same report to Markdown/plain-text/CSV with `report_templates` (this pattern
+is a passing doctest on `report_templates`, given a `report: &BenchmarkReport<A>`):
 
 ```rust
-use optirs_bench::{SystemMonitor, ResourceAlert};
+use optirs_bench::report_templates::{ReportFormat, ReportTemplate, save_report};
+use std::path::Path;
 
-// Setup system monitoring
-let monitor = SystemMonitor::new()
-    .with_sampling_interval(Duration::from_secs(1))
-    .monitor_cpu(true)
-    .monitor_memory(true)
-    .monitor_gpu(true)
-    .monitor_disk_io(true)
-    .monitor_network_io(true)
-    .build()?;
-
-// Configure alerts
-let alerts = ResourceAlert::new()
-    .cpu_threshold(90.0)  // Alert if CPU usage > 90%
-    .memory_threshold(8_000_000_000)  // Alert if memory usage > 8GB
-    .gpu_memory_threshold(0.95)  // Alert if GPU memory > 95%
-    .build();
-
-monitor.set_alerts(alerts);
-
-// Start monitoring
-let monitoring_handle = monitor.start_monitoring().await?;
-
-// Your optimization workload
-run_training_workload().await?;
-
-// Stop monitoring and get report
-let resource_report = monitor.stop_and_report().await?;
-resource_report.save_to_file("resource_usage.json")?;
+let markdown = ReportTemplate::new()
+    .with_title("Nightly Benchmark")
+    .render(&report, None, ReportFormat::Markdown);
+save_report(Path::new("/tmp/benchmark_report.md"), &markdown)?;
 ```
 
-### Comparative Analysis
-
-```rust
-use optirs_bench::{ComparativeAnalysis, OptimizerComparison, StatisticalComparison};
-
-// Compare multiple optimizers
-let comparison = ComparativeAnalysis::new()
-    .add_optimizer("Adam", adam_results)
-    .add_optimizer("SGD", sgd_results)
-    .add_optimizer("AdamW", adamw_results)
-    .with_metrics(&["convergence_speed", "final_accuracy", "memory_usage"])
-    .build()?;
-
-// Perform statistical comparison
-let statistical_analysis = comparison.statistical_comparison()?;
-
-// Generate visualization
-comparison.generate_comparison_plots("optimizer_comparison.html")?;
-
-// Print summary
-for result in statistical_analysis.significant_differences() {
-    println!("{} vs {}: {} is significantly better (p < 0.05)", 
-             result.optimizer_a, 
-             result.optimizer_b, 
-             result.better_performer);
-}
-```
+For regression detection and per-run system-resource monitoring, use the
+`performance-regression-detector` / `optirs-bench analyze` CLI tools and the
+`system_sampler::SystemSampler` type documented above and in rustdoc -- see the
+[Command-Line Tools](#command-line-tools) section for the verified, real invocations.
 
 ## Security Auditing
 
-### Dependency Scanning
-
 ```rust
-use optirs_bench::security::{SecurityAuditor, VulnerabilityScanner};
+use optirs_bench::security_auditor::SecurityAuditor;
 
-// Setup security auditor
-let auditor = SecurityAuditor::new()
-    .with_vulnerability_database(VulnerabilityDB::latest())
-    .with_severity_threshold(Severity::Medium)
-    .build()?;
-
-// Scan dependencies
-let scan_results = auditor.scan_dependencies().await?;
-
-if scan_results.has_vulnerabilities() {
-    println!("Security vulnerabilities found:");
-    for vuln in scan_results.vulnerabilities() {
-        println!("  - {}: {} ({})", 
-                 vuln.crate_name, 
-                 vuln.description, 
-                 vuln.severity);
-    }
+fn main() -> optirs_bench::Result<()> {
+    // `new()` is fallible: it validates its own default `SecurityAuditConfig`.
+    let mut auditor = SecurityAuditor::new()?;
+    auditor.run_complete_audit()?;
+    println!("{}", auditor.generate_report());
+    Ok(())
 }
-
-// Generate security report
-scan_results.generate_security_report("security_audit.html")?;
 ```
+
+`SecurityAuditor::lightweight()` / `::comprehensive()` select a lighter or fuller preset
+config; `auditor.export_json()` renders the results as JSON instead of the text report.
+
+For dependency/license/static-analysis auditing scoped to a Cargo project on disk (the
+engine behind the `security_audit_scanner` binary above), use
+`comprehensive_security_auditor::ComprehensiveSecurityAuditor::audit_project(path)` --
+see rustdoc for its full, real API.
 
 ## Continuous Integration Integration
 
 ### GitHub Actions
+
+Two commands here actually gate the build with a real non-zero exit status:
+`optirs-bench analyze` (regresses beyond `--max-regression`) and `security_audit_scanner`
+(a finding meets `--severity`). `performance-regression-detector` is reporting-only (see
+above) and is intentionally not used as a gate here.
 
 ```yaml
 name: Performance Benchmarks
@@ -306,111 +242,35 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      
-      - name: Run benchmarks
+
+      - name: Run the benchmark suite
+        run: cargo run --release --bin optirs-bench -- benchmark
+
+      - name: Fail on a benchmark regression
+        run: cargo run --release --bin optirs-bench -- analyze --max-regression 10
+
+      - name: Fail on a high/critical security finding
         run: |
-          cargo run --bin optirs-bench -- --output benchmark_results.json
-          
-      - name: Check for regressions
-        run: |
-          cargo run --bin performance-regression-detector -- \
-            --baseline benchmark_baseline.json \
-            --current benchmark_results.json \
-            --fail-on-regression
-```
-
-### Jenkins Pipeline
-
-```groovy
-pipeline {
-    agent any
-    
-    stages {
-        stage('Build') {
-            steps {
-                sh 'cargo build --release'
-            }
-        }
-        
-        stage('Benchmark') {
-            steps {
-                sh 'cargo run --bin optirs-bench -- --ci-mode'
-                archiveArtifacts 'benchmark_results.json'
-            }
-        }
-        
-        stage('Regression Check') {
-            steps {
-                script {
-                    def regressionCheck = sh(
-                        script: 'cargo run --bin performance-regression-detector',
-                        returnStatus: true
-                    )
-                    if (regressionCheck != 0) {
-                        error "Performance regression detected!"
-                    }
-                }
-            }
-        }
-    }
-}
-```
-
-## Configuration
-
-### Benchmark Configuration File
-
-```yaml
-# bench_config.yaml
-benchmark:
-  iterations: 1000
-  warmup_iterations: 100
-  timeout: 300  # seconds
-  
-optimizers:
-  - name: "Adam"
-    learning_rate: 0.001
-    beta1: 0.9
-    beta2: 0.999
-  - name: "SGD"
-    learning_rate: 0.01
-    momentum: 0.9
-    
-datasets:
-  - name: "CIFAR-10"
-    size: 50000
-    batch_size: 32
-  - name: "ImageNet"
-    size: 1281167
-    batch_size: 64
-    
-monitoring:
-  sample_rate: 1000  # milliseconds
-  metrics:
-    - cpu_usage
-    - memory_usage
-    - gpu_utilization
-    - disk_io
-    
-regression_detection:
-  significance_threshold: 0.05
-  effect_size_threshold: 0.1
-  baseline_file: "baseline.json"
+          cargo run --release --bin security_audit_scanner -- \
+            --project . --all --severity high
 ```
 
 ## Platform Support
 
-| Platform | CPU Profiling | GPU Profiling | Memory Profiling | Security Scanning |
-|----------|---------------|---------------|------------------|-------------------|
-| Linux    | ✅           | ✅ (CUDA/ROCm)| ✅              | ✅               |
-| macOS    | ✅           | ✅ (Metal)   | ✅              | ✅               |
-| Windows  | ✅           | ✅ (CUDA/DX)  | ✅              | ✅               |
-| Web      | ⚠️ (Limited)  | ❌            | ⚠️ (Limited)    | ⚠️ (Limited)     |
+| Platform | CPU Profiling | Memory Profiling | Security Scanning |
+|----------|---------------|-------------------|--------------------|
+| Linux    | Yes (`sysinfo`) | Yes (`sysinfo`) | Yes |
+| macOS    | Yes (`sysinfo`) | Yes (`sysinfo`) | Yes |
+| Windows  | Yes (`sysinfo`) | Yes (`sysinfo`) | Yes |
+
+This is a native crate (binaries + library); it does not target `wasm32`. There is no GPU
+utilization/memory telemetry on any platform -- see Resource Utilization above. Browser/WASM
+optimizer bindings are a separate crate, `optirs-wasm`.
 
 ## Contributing
 

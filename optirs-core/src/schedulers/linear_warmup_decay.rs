@@ -108,12 +108,10 @@ pub struct LinearWarmupDecay<A: Float + Debug> {
     /// Whether warmup phase is complete
     warmup_complete: bool,
     /// Inner scheduler for decay phase (initialized after warmup)
-    #[allow(clippy::missing_docs_in_private_items)]
     inner_scheduler: Option<InnerScheduler<A>>,
 }
 
 /// Inner scheduler types for LinearWarmupDecay
-#[allow(clippy::missing_docs_in_private_items)]
 #[derive(Debug)]
 enum InnerScheduler<A: Float + Debug> {
     /// Linear decay scheduler
@@ -210,8 +208,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A>
         if !self.warmup_complete && self.step <= self.warmup_steps {
             // Warmup phase: linear increase from min_lr to initial_lr
             let progress = if self.warmup_steps > 0 {
-                A::from(self.step).expect("unwrap failed")
-                    / A::from(self.warmup_steps).expect("unwrap failed")
+                A::from(self.step).expect("LinearWarmupDecay: step must fit in A (f32/f64)")
+                    / A::from(self.warmup_steps)
+                        .expect("LinearWarmupDecay: warmup_steps must fit in A (f32/f64)")
             } else {
                 A::one()
             };
@@ -320,7 +319,9 @@ mod tests {
         }
 
         // Verify the final learning rate is significantly lower than initial
-        let final_lr = *lrs.last().expect("unwrap failed");
+        let final_lr = *lrs
+            .last()
+            .expect("lrs.last succeeds in test_linear_warmup_exponential_decay");
         assert!(
             final_lr < 0.05,
             "Final learning rate {:.6} should be significantly less than initial 0.1",

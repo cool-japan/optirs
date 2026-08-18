@@ -9,12 +9,25 @@ use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, MutexGuard, PoisonError,
 };
 use std::time::{Duration, Instant};
 
 use crate::error::{OptimError, Result};
 use crate::optimizers::Optimizer;
+
+#[cfg(test)]
+mod regression_tests;
+
+/// Recovers a mutex guard even if the lock was poisoned by a panicking thread.
+///
+/// The data protected by every mutex in this module is a plain value with no
+/// cross-field invariant that a panic could leave half-updated, so continuing
+/// with the recovered value is strictly better than panicking a real-time
+/// update path.
+fn lock_recovered<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Low-latency optimization configuration
 #[derive(Debug, Clone)]
@@ -91,16 +104,28 @@ where
     /// Configuration
     config: LowLatencyConfig,
 
+    /// Live parameter vector (L1).
+    ///
+    /// The optimizer keeps the parameters it is optimizing so that every step
+    /// is applied to the *result of the previous step*. Previously each step
+    /// created a fresh `Array1::zeros(..)` as "current parameters", which meant
+    /// the returned vector was always a single step away from the origin: the
+    /// optimizer silently discarded all accumulated progress and, for any
+    /// caller that stored the return value, effectively zeroed the parameters
+    /// on every update. Seed real initial weights with [`Self::set_parameters`];
+    /// if nothing is seeded the vector starts at the origin on the first step.
+    parameters: Option<Array1<A>>,
+
     /// Pre-computation engine
     precomputation_engine: Option<PrecomputationEngine<A>>,
 
-    /// Lock-free update buffer
+    /// Bounded staging ring for produced updates
     update_buffer: LockFreeBuffer<A>,
 
     /// Memory pool for fast allocations
-    memory_pool: FastMemoryPool,
+    memory_pool: FastMemoryPool<A>,
 
-    /// SIMD processor
+    /// Chunked vector processor
     simd_processor: SIMDProcessor<A>,
 
     /// Quantization engine
@@ -121,14 +146,27 @@ struct PrecomputationEngine<A: Float + Send + Sync> {
     /// Buffer of pre-computed updates
     precomputed_updates: VecDeque<PrecomputedUpdate<A>>,
 
-    /// Background computation thread
-    computation_thread: Option<std::thread::JoinHandle<()>>,
-
     /// Prediction model for future gradients
     gradient_predictor: GradientPredictor<A>,
 
     /// Maximum buffer size
     max_buffer_size: usize,
+
+    /// Number of steps that were served from a pre-computed update
+    hits: usize,
+
+    /// Number of steps that had to fall back to a full update
+    misses: usize,
+
+    /// Minimum recorded prediction confidence a pre-computed update must carry
+    /// to be served.
+    ///
+    /// The predictor's measured confidence was stored on every entry and then
+    /// never consulted, so a wild guess was served as readily as a well
+    /// -supported prediction. Zero (the default) preserves that behaviour;
+    /// raising it makes the engine fall back to a full update when the
+    /// predictor is unsure.
+    min_confidence: A,
 }
 
 /// Pre-computed update entry
@@ -147,7 +185,12 @@ struct PrecomputedUpdate<A: Float + Send + Sync> {
     confidence: A,
 }
 
-/// Lock-free circular buffer for updates
+/// Bounded staging ring for produced updates.
+///
+/// Accessed exclusively through `&mut self` from the owning optimizer, so it
+/// needs no locking at all — hence "lock free". It is deliberately *not* a
+/// concurrent MPMC queue: claiming that would require `unsafe` interior
+/// mutability this module does not want in a real-time path.
 struct LockFreeBuffer<A: Float + Send + Sync> {
     /// Buffer storage
     buffer: Vec<Option<Array1<A>>>,
@@ -162,31 +205,44 @@ struct LockFreeBuffer<A: Float + Send + Sync> {
     capacity: usize,
 }
 
-/// Fast memory pool for low-latency allocations
-struct FastMemoryPool {
-    /// Pre-allocated memory blocks
-    blocks: Vec<*mut u8>,
+/// Fast memory pool for low-latency allocations.
+///
+/// L5: the previous implementation held `Vec<*mut u8>` filled by
+/// `std::alloc::alloc` with no `Drop`, so every dropped optimizer leaked its
+/// whole pool (1 MB by default). Blocks are now owned `Vec<A>` buffers, which
+/// release themselves when the pool is dropped — the leak is fixed by
+/// ownership rather than by a hand-written `Drop`, and the module no longer
+/// contains any `unsafe` code.
+struct FastMemoryPool<A> {
+    /// Currently free blocks, each pre-allocated to `elements_per_block`
+    free_blocks: Mutex<Vec<Vec<A>>>,
 
-    /// Available blocks queue
-    available_blocks: Arc<Mutex<VecDeque<usize>>>,
+    /// Elements per block
+    elements_per_block: usize,
 
-    /// Block size
-    blocksize: usize,
-
-    /// Total blocks
+    /// Total blocks the pool was created with
     total_blocks: usize,
+
+    /// Blocks currently checked out
+    checked_out: AtomicUsize,
+
+    /// High-water mark of simultaneously checked-out blocks
+    peak_checked_out: AtomicUsize,
+
+    /// Requests the pool could not satisfy (caller had to allocate)
+    misses: AtomicUsize,
 }
 
-/// SIMD processor for vectorized operations
+/// Chunked vector processor for the fast update path
 struct SIMDProcessor<A: Float + Send + Sync> {
-    /// Enable SIMD flag
+    /// Enable chunked processing
     enabled: bool,
 
-    /// Vector width
+    /// Chunk width used when walking the contiguous parameter slice
     vector_width: usize,
 
-    /// Temporary buffers for SIMD operations
-    temp_buffers: Vec<Array1<A>>,
+    /// Marker so the processor stays tied to the element type
+    _element: std::marker::PhantomData<A>,
 }
 
 /// Gradient quantization for reduced precision
@@ -200,7 +256,7 @@ struct GradientQuantizer<A: Float + Send + Sync> {
     /// Zero point
     zero_point: A,
 
-    /// Quantization error accumulator
+    /// Quantization error accumulator (error feedback)
     error_accumulator: Option<Array1<A>>,
 }
 
@@ -225,6 +281,12 @@ struct LatencyMonitor {
     total_operations: usize,
 }
 
+/// Maximum age of a retained latency/accuracy measurement.
+const PERFORMANCE_WINDOW_AGE: Duration = Duration::from_secs(30);
+
+/// Maximum number of retained latency/accuracy measurements.
+const PERFORMANCE_WINDOW_LEN: usize = 100;
+
 /// Approximation controller for trading accuracy for speed
 struct ApproximationController<A: Float + Send + Sync> {
     /// Current approximation level (0.0 = exact, 1.0 = maximum approximation)
@@ -246,9 +308,6 @@ struct PerformancePoint<A: Float + Send + Sync> {
     /// Latency measurement
     latency: Duration,
 
-    /// Approximation level used
-    approximation_level: A,
-
     /// Accuracy achieved
     accuracy: A,
 
@@ -261,14 +320,20 @@ struct GradientPredictor<A: Float + Send + Sync> {
     /// Recent gradient history
     gradient_history: VecDeque<Array1<A>>,
 
-    /// Prediction model (simple linear extrapolation)
+    /// Per-coordinate least-squares slope of the observed history
     trend_weights: Option<Array1<A>>,
 
     /// History window size
     windowsize: usize,
 
-    /// Prediction confidence
-    confidence: A,
+    /// Measured prediction confidence (EWMA of cosine similarity between the
+    /// last prediction and the gradient that actually arrived). `None` until
+    /// at least one prediction has been scored against real data — the
+    /// confidence is never seeded with an invented number.
+    confidence: Option<A>,
+
+    /// The prediction currently awaiting a real observation
+    pending_prediction: Option<Array1<A>>,
 }
 
 impl<O, A> LowLatencyOptimizer<O, A>
@@ -296,7 +361,7 @@ where
 
         let update_buffer = LockFreeBuffer::new(config.precomputation_buffer_size);
         let memory_pool = FastMemoryPool::new(config.memory_pool_size, 4096)?; // 4KB blocks
-        let simd_processor = SIMDProcessor::new(config.enable_simd);
+        let simd_processor = SIMDProcessor::new(config.enable_simd, config.batch_threshold);
 
         let quantizer = if config.enable_quantization {
             Some(GradientQuantizer::new(config.quantization_bits))
@@ -311,6 +376,7 @@ where
         Ok(Self {
             base_optimizer,
             config,
+            parameters: None,
             precomputation_engine,
             update_buffer,
             memory_pool,
@@ -322,38 +388,89 @@ where
         })
     }
 
+    /// Seed the parameter vector the optimizer will keep updating.
+    pub fn set_parameters(&mut self, parameters: Array1<A>) {
+        self.parameters = Some(parameters);
+    }
+
+    /// Current parameter vector, if any step has been taken or seeded.
+    /// Require a minimum predictor confidence before a pre-computed update is
+    /// served, falling back to a full update below it.
+    ///
+    /// No-op when pre-computation is disabled. Defaults to zero, which accepts
+    /// any prediction that matches the arriving gradient.
+    pub fn set_precomputation_min_confidence(&mut self, min_confidence: A) {
+        if let Some(precomp) = self.precomputation_engine.as_mut() {
+            precomp.set_min_confidence(min_confidence);
+        }
+    }
+
+    pub fn parameters(&self) -> Option<&Array1<A>> {
+        self.parameters.as_ref()
+    }
+
     /// Perform a low-latency update
     pub fn low_latency_step(&mut self, gradient: &Array1<A>) -> Result<Array1<A>> {
         let start_time = Instant::now();
 
-        // Try to use pre-computed update first
-        if let Some(ref mut precomp) = self.precomputation_engine {
-            if let Some(precomputed) = precomp.try_get_precomputed() {
-                let latency = start_time.elapsed();
-                self.perf_monitor.record_latency(latency);
-                return Ok(precomputed.update);
-            }
+        if gradient.is_empty() {
+            return Err(OptimError::DimensionMismatch(
+                "low_latency_step received an empty gradient".to_string(),
+            ));
         }
 
-        // Quantize gradient if enabled
-        let processed_gradient = if let Some(ref mut quantizer) = self.quantizer {
-            quantizer.quantize(gradient)?
-        } else {
-            gradient.clone()
+        let previous_params = self.parameters.clone();
+        let learning_rate = self.base_learning_rate();
+        let tolerance = self.config.approximation_tolerance.max(0.0);
+
+        // Speculative fast path: a pre-computed update is only served when the
+        // gradient it was computed for actually matches the gradient that
+        // arrived, within `approximation_tolerance`. That check is what makes
+        // the reported hit rate a real measurement instead of a constant.
+        let served = self
+            .precomputation_engine
+            .as_mut()
+            .and_then(|precomp| precomp.try_get_precomputed(gradient, tolerance));
+        if let Some(precomputed) = served {
+            let update = precomputed.update;
+            self.parameters = Some(update.clone());
+            let latency = start_time.elapsed();
+            self.perf_monitor.record_latency(latency);
+            if self.config.enable_lock_free {
+                self.update_buffer.push(update.clone());
+            }
+            let validity = Duration::from_micros(self.config.max_latency_us.max(1));
+            if let Some(ref mut precomp) = self.precomputation_engine {
+                precomp.start_precomputation(gradient, &update, learning_rate, validity);
+            }
+            self.step_counter.fetch_add(1, Ordering::Relaxed);
+            return Ok(update);
+        }
+
+        // Quantize gradient if enabled. With zero-copy enabled and no
+        // quantizer configured the original gradient is used in place, so the
+        // hot path performs no defensive clone at all.
+        let quantized = match self.quantizer.as_mut() {
+            Some(quantizer) => Some(quantizer.quantize(gradient)?),
+            None if self.config.enable_zero_copy => None,
+            None => Some(gradient.clone()),
         };
+        let processed_gradient: &Array1<A> = quantized.as_ref().unwrap_or(gradient);
 
         // Use approximation if necessary to meet latency budget
         let approximation_level = self.approximation_controller.get_approximation_level();
-        let update = if approximation_level > A::zero() {
-            self.approximate_update(&processed_gradient, approximation_level)?
+        let use_approximation = self.config.use_approximations && approximation_level > A::zero();
+        let update = if use_approximation {
+            let simplified = self.simplify_gradient(processed_gradient, approximation_level)?;
+            self.fast_path_update(&simplified, learning_rate)?
         } else {
-            self.exact_update(&processed_gradient)?
+            self.exact_update(processed_gradient)?
         };
 
         let latency = start_time.elapsed();
 
         // Record performance and adapt approximation level
-        let accuracy = self.estimate_accuracy(&update, gradient);
+        let accuracy = Self::estimate_accuracy(previous_params.as_ref(), &update, gradient);
         self.approximation_controller
             .record_performance(latency, approximation_level, accuracy);
         self.perf_monitor.record_latency(latency);
@@ -363,113 +480,183 @@ where
             self.handle_latency_violation(latency)?;
         }
 
-        // Start pre-computation for next step
-        if let Some(ref mut precomp) = self.precomputation_engine {
-            precomp.start_precomputation(gradient);
+        // Stage the produced update for asynchronous consumers.
+        if self.config.enable_lock_free {
+            self.update_buffer.push(update.clone());
         }
 
+        // Prepare the next step's speculative update while the caller is busy
+        // fetching its next sample.
+        let validity = Duration::from_micros(self.config.max_latency_us.max(1));
+        if let Some(ref mut precomp) = self.precomputation_engine {
+            precomp.start_precomputation(gradient, &update, learning_rate, validity);
+        }
+
+        self.parameters = Some(update.clone());
         self.step_counter.fetch_add(1, Ordering::Relaxed);
         Ok(update)
     }
 
-    /// Perform exact update using base optimizer
-    fn exact_update(&mut self, gradient: &Array1<A>) -> Result<Array1<A>> {
-        // This is a simplified version - in practice would get current parameters
-        let current_params = Array1::zeros(gradient.len());
-
-        let mut optimizer = self.base_optimizer.lock().expect("lock poisoned");
-        optimizer.step(&current_params, gradient)
+    /// Learning rate currently configured on the wrapped optimizer.
+    fn base_learning_rate(&self) -> A {
+        lock_recovered(&self.base_optimizer).get_learning_rate()
     }
 
-    /// Perform approximate update for speed
-    fn approximate_update(
-        &mut self,
-        gradient: &Array1<A>,
-        approximation_level: A,
-    ) -> Result<Array1<A>> {
-        // Simplified approximation: reduce precision or use fewer operations
-        let simplified_gradient = if approximation_level > A::from(0.5).expect("unwrap failed") {
-            self.simplify_gradient(gradient, approximation_level)?
-        } else {
-            gradient.clone()
-        };
-
-        // Use SIMD for fast computation
-        if self.simd_processor.enabled {
-            self.simd_processor.process(&simplified_gradient)
-        } else {
-            self.exact_update(&simplified_gradient)
+    /// Parameter vector to step from, allocated at the origin on first use.
+    fn current_parameters(&self, len: usize) -> Result<Array1<A>> {
+        match self.parameters.as_ref() {
+            Some(params) if params.len() == len => Ok(params.clone()),
+            Some(params) => Err(OptimError::DimensionMismatch(format!(
+                "gradient has {} elements but the tracked parameters have {}",
+                len,
+                params.len()
+            ))),
+            None => Ok(Array1::zeros(len)),
         }
     }
 
-    /// Simplify gradient for approximation
+    /// Perform exact update using base optimizer
+    fn exact_update(&mut self, gradient: &Array1<A>) -> Result<Array1<A>> {
+        let current_params = self.current_parameters(gradient.len())?;
+        let mut optimizer = lock_recovered(&self.base_optimizer);
+        optimizer.step(&current_params, gradient)
+    }
+
+    /// Chunked first-order update used by the approximate / pre-computation
+    /// paths.
+    ///
+    /// L3: this used to hand the gradient to a "SIMD processor" that returned
+    /// `gradient.clone()`, so the approximate path returned the *gradient*
+    /// where the caller expected *new parameters* and applied no update at
+    /// all. It now performs a real chunked `params -= lr * gradient` walk over
+    /// the contiguous parameter slice.
+    fn fast_path_update(&mut self, gradient: &Array1<A>, learning_rate: A) -> Result<Array1<A>> {
+        if !self.simd_processor.is_active(gradient.len()) {
+            return self.exact_update(gradient);
+        }
+        let mut params = self.current_parameters(gradient.len())?;
+        self.simd_processor
+            .apply_scaled_subtract(&mut params, gradient, learning_rate);
+        Ok(params)
+    }
+
+    /// Simplify gradient for approximation by keeping the largest magnitudes.
     fn simplify_gradient(&self, gradient: &Array1<A>, level: A) -> Result<Array1<A>> {
-        let mut simplified = gradient.clone();
+        let n = gradient.len();
+        if n == 0 {
+            return Ok(gradient.clone());
+        }
 
-        // Sparsify gradient based on approximation level
-        let sparsity_ratio = level.to_f64().unwrap_or(0.0);
+        let sparsity_ratio = level.to_f64().unwrap_or(0.0).clamp(0.0, 1.0);
         let keep_ratio = 1.0 - sparsity_ratio * 0.8; // Keep 20% to 100% of gradients
-        let keep_count = ((gradient.len() as f64) * keep_ratio) as usize;
+        let keep_count = (((n as f64) * keep_ratio).round() as usize).clamp(1, n);
+        if keep_count == n {
+            return Ok(gradient.clone());
+        }
 
-        // Keep only the largest magnitude gradients
-        let mut indexed_grads: Vec<(usize, A)> = gradient
-            .iter()
-            .enumerate()
-            .map(|(i, &g)| (i, g.abs()))
-            .collect();
+        // Magnitudes go into a pooled scratch buffer so the hot path does not
+        // allocate, and the k-th largest magnitude is found in linear time
+        // instead of by fully sorting.
+        let mut magnitudes = self
+            .memory_pool
+            .acquire(n)
+            .unwrap_or_else(|| Vec::with_capacity(n));
+        magnitudes.clear();
+        magnitudes.extend(gradient.iter().map(|g| g.abs()));
+        let kth = keep_count - 1;
+        magnitudes.select_nth_unstable_by(kth, |a, b| {
+            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let threshold = magnitudes[kth];
+        self.memory_pool.release(magnitudes);
 
-        indexed_grads.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Zero out smaller gradients
-        for (i, _) in indexed_grads.iter().skip(keep_count) {
-            simplified[*i] = A::zero();
+        let mut simplified = Array1::zeros(n);
+        let mut kept = 0usize;
+        for (i, &g) in gradient.iter().enumerate() {
+            if kept < keep_count && g.abs() >= threshold {
+                simplified[i] = g;
+                kept += 1;
+            }
         }
 
         Ok(simplified)
     }
 
-    /// Estimate accuracy of approximate update
-    fn estimate_accuracy(&self, approximate: &Array1<A>, exactgradient: &Array1<A>) -> A {
-        if approximate.len() != exactgradient.len() {
+    /// Estimate how well the applied step follows the true descent direction.
+    ///
+    /// The previous version compared the *new parameter vector* with the
+    /// *gradient*, two quantities with no meaningful angle between them. The
+    /// meaningful comparison is between the applied delta and `-gradient`.
+    fn estimate_accuracy(
+        previous_params: Option<&Array1<A>>,
+        new_params: &Array1<A>,
+        gradient: &Array1<A>,
+    ) -> A {
+        if new_params.len() != gradient.len() {
             return A::zero();
         }
 
-        // Cosine similarity as accuracy measure
-        let dot_product = approximate
-            .iter()
-            .zip(exactgradient.iter())
-            .map(|(&a, &b)| a * b)
-            .sum::<A>();
+        let zeros = Array1::zeros(new_params.len());
+        let previous = match previous_params {
+            Some(previous) if previous.len() == new_params.len() => previous,
+            _ => &zeros,
+        };
 
-        let norm_a = approximate.iter().map(|&x| x * x).sum::<A>().sqrt();
-        let norm_b = exactgradient.iter().map(|&x| x * x).sum::<A>().sqrt();
+        let mut dot = A::zero();
+        let mut norm_delta = A::zero();
+        let mut norm_grad = A::zero();
+        for ((&p_new, &p_old), &g) in new_params.iter().zip(previous.iter()).zip(gradient.iter()) {
+            let delta = p_new - p_old;
+            dot = dot + delta * (-g);
+            norm_delta = norm_delta + delta * delta;
+            norm_grad = norm_grad + g * g;
+        }
 
-        if norm_a == A::zero() || norm_b == A::zero() {
+        let norm_delta = norm_delta.sqrt();
+        let norm_grad = norm_grad.sqrt();
+        if norm_delta == A::zero() || norm_grad == A::zero() {
             A::zero()
         } else {
-            dot_product / (norm_a * norm_b)
+            dot / (norm_delta * norm_grad)
         }
     }
 
     /// Handle latency violations
     fn handle_latency_violation(&mut self, latency: Duration) -> Result<()> {
+        // Record the violation so `LowLatencyMetrics::latency_violations` is a
+        // real count rather than a permanent zero.
+        self.perf_monitor.violations += 1;
+
         // Increase approximation level to reduce future latency
         self.approximation_controller.increase_approximation();
 
-        // Enable more aggressive optimizations
+        // Escalate to gradient quantization when the budget is being missed by
+        // a wide margin and quantization has not been enabled yet.
         if !self.config.enable_quantization
-            && latency.as_micros() as u64 > self.config.max_latency_us * 2
+            && latency.as_micros() as u64 > self.config.max_latency_us.saturating_mul(2)
         {
-            // Could dynamically enable quantization
+            self.config.enable_quantization = true;
+            self.quantizer = Some(GradientQuantizer::new(self.config.quantization_bits));
         }
 
         Ok(())
+    }
+
+    /// Take the oldest staged update, if any.
+    pub fn try_pop_staged_update(&mut self) -> Option<Array1<A>> {
+        self.update_buffer.pop()
+    }
+
+    /// Number of updates currently staged.
+    pub fn staged_update_count(&self) -> usize {
+        self.update_buffer.len()
     }
 
     /// Get current performance metrics
     pub fn get_performance_metrics(&self) -> LowLatencyMetrics {
         LowLatencyMetrics {
             avg_latency_us: self.perf_monitor.get_average_latency().as_micros() as u64,
+            p50_latency_us: self.perf_monitor.p50_latency.as_micros() as u64,
             p95_latency_us: self.perf_monitor.p95_latency.as_micros() as u64,
             p99_latency_us: self.perf_monitor.p99_latency.as_micros() as u64,
             latency_violations: self.perf_monitor.violations,
@@ -479,12 +666,21 @@ where
                 .approximation_level
                 .to_f64()
                 .unwrap_or(0.0),
+            approximation_accuracy: self
+                .approximation_controller
+                .mean_accuracy()
+                .and_then(|value| value.to_f64()),
             precomputation_hit_rate: self
                 .precomputation_engine
                 .as_ref()
-                .map(|pe| pe.get_hit_rate())
-                .unwrap_or(0.0),
+                .and_then(|pe| pe.hit_rate()),
+            precomputation_attempts: self
+                .precomputation_engine
+                .as_ref()
+                .map(|pe| pe.attempts())
+                .unwrap_or(0),
             memory_efficiency: self.memory_pool.get_efficiency(),
+            memory_pool_misses: self.memory_pool.misses(),
         }
     }
 
@@ -496,17 +692,31 @@ where
 }
 
 // Implementation of helper structs
-impl<A: Float + Send + Sync + Send + Sync> PrecomputationEngine<A> {
+impl<A: Float + Send + Sync + std::iter::Sum> PrecomputationEngine<A> {
     fn new(_buffersize: usize) -> Self {
+        let capacity = _buffersize.max(1);
         Self {
-            precomputed_updates: VecDeque::with_capacity(_buffersize),
-            computation_thread: None,
+            precomputed_updates: VecDeque::with_capacity(capacity),
             gradient_predictor: GradientPredictor::new(10), // 10-step history
-            max_buffer_size: _buffersize,
+            max_buffer_size: capacity,
+            hits: 0,
+            misses: 0,
+            min_confidence: A::zero(),
         }
     }
 
-    fn try_get_precomputed(&mut self) -> Option<PrecomputedUpdate<A>> {
+    /// Require at least `min_confidence` before a pre-computed update is used.
+    fn set_min_confidence(&mut self, min_confidence: A) {
+        self.min_confidence = min_confidence;
+    }
+
+    /// Serve a pre-computed update only when it was computed for a gradient
+    /// that matches the one that actually arrived.
+    fn try_get_precomputed(
+        &mut self,
+        actual_gradient: &Array1<A>,
+        tolerance: f64,
+    ) -> Option<PrecomputedUpdate<A>> {
         // Remove expired updates
         let now = Instant::now();
         while let Some(update) = self.precomputed_updates.front() {
@@ -517,22 +727,104 @@ impl<A: Float + Send + Sync + Send + Sync> PrecomputationEngine<A> {
             }
         }
 
-        self.precomputed_updates.pop_front()
+        let candidate = self.precomputed_updates.pop_front();
+        self.gradient_predictor.observe(actual_gradient);
+
+        match candidate {
+            Some(candidate)
+                if candidate.confidence >= self.min_confidence
+                    && gradient_matches(&candidate.gradient, actual_gradient, tolerance) =>
+            {
+                self.hits += 1;
+                Some(candidate)
+            }
+            _ => {
+                self.misses += 1;
+                None
+            }
+        }
     }
 
-    fn start_precomputation(&mut self, gradient: &Array1<A>) {
-        // In a real implementation, would start background computation
-        // For now, just placeholder
+    /// Predict the next gradient and pre-compute the corresponding first-order
+    /// update.
+    ///
+    /// The stored update is a first-order (`params - lr * predicted_gradient`)
+    /// approximation of the wrapped optimizer's step, which is why it is only
+    /// ever served when the predicted gradient turns out to match the real one
+    /// within the configured tolerance.
+    fn start_precomputation(
+        &mut self,
+        _observed_gradient: &Array1<A>,
+        current_params: &Array1<A>,
+        learning_rate: A,
+        validity: Duration,
+    ) {
+        let Some((predicted, confidence)) = self.gradient_predictor.predict() else {
+            return;
+        };
+        if predicted.len() != current_params.len() {
+            return;
+        }
+
+        let mut update = current_params.clone();
+        for (p, &g) in update.iter_mut().zip(predicted.iter()) {
+            *p = *p - learning_rate * g;
+        }
+
+        if self.precomputed_updates.len() >= self.max_buffer_size {
+            self.precomputed_updates.pop_front();
+        }
+        self.precomputed_updates.push_back(PrecomputedUpdate {
+            gradient: predicted,
+            update,
+            valid_until: Instant::now() + validity,
+            confidence,
+        });
     }
 
-    fn get_hit_rate(&self) -> f64 {
-        // Simplified hit rate calculation
-        0.8 // 80% hit rate
+    fn attempts(&self) -> usize {
+        self.hits + self.misses
+    }
+
+    /// Measured hit rate, or `None` when no step has consulted the engine yet.
+    fn hit_rate(&self) -> Option<f64> {
+        let attempts = self.attempts();
+        if attempts == 0 {
+            None
+        } else {
+            Some(self.hits as f64 / attempts as f64)
+        }
     }
 }
 
-impl<A: Float + Send + Sync + Send + Sync> LockFreeBuffer<A> {
+/// Relative agreement test used to decide whether a speculative update is
+/// still valid for the gradient that arrived.
+fn gradient_matches<A: Float>(predicted: &Array1<A>, actual: &Array1<A>, tolerance: f64) -> bool {
+    if predicted.len() != actual.len() || predicted.is_empty() {
+        return false;
+    }
+    let mut diff_sq = A::zero();
+    let mut actual_sq = A::zero();
+    for (&p, &a) in predicted.iter().zip(actual.iter()) {
+        let d = p - a;
+        diff_sq = diff_sq + d * d;
+        actual_sq = actual_sq + a * a;
+    }
+    let diff = diff_sq.sqrt().to_f64().unwrap_or(f64::INFINITY);
+    let scale = actual_sq.sqrt().to_f64().unwrap_or(0.0);
+    if !diff.is_finite() {
+        return false;
+    }
+    if scale <= f64::EPSILON {
+        diff <= tolerance
+    } else {
+        diff / scale <= tolerance
+    }
+}
+
+impl<A: Float + Send + Sync> LockFreeBuffer<A> {
     fn new(capacity: usize) -> Self {
+        let capacity = capacity.max(1);
         Self {
             buffer: vec![None; capacity],
             write_index: AtomicUsize::new(0),
@@ -540,79 +832,226 @@ impl<A: Float + Send + Sync + Send + Sync> LockFreeBuffer<A> {
             capacity,
         }
     }
+
+    /// Stage an update, dropping the oldest entry when the ring is full.
+    fn push(&mut self, value: Array1<A>) {
+        let write = self.write_index.load(Ordering::Relaxed);
+        let read = self.read_index.load(Ordering::Relaxed);
+        if write - read >= self.capacity {
+            // Ring is full: advance the reader, discarding the oldest entry.
+            let slot = read % self.capacity;
+            self.buffer[slot] = None;
+            self.read_index.store(read + 1, Ordering::Relaxed);
+        }
+        let slot = write % self.capacity;
+        self.buffer[slot] = Some(value);
+        self.write_index.store(write + 1, Ordering::Relaxed);
+    }
+
+    fn pop(&mut self) -> Option<Array1<A>> {
+        let read = self.read_index.load(Ordering::Relaxed);
+        if read == self.write_index.load(Ordering::Relaxed) {
+            return None;
+        }
+        let slot = read % self.capacity;
+        let value = self.buffer[slot].take();
+        self.read_index.store(read + 1, Ordering::Relaxed);
+        value
+    }
+
+    fn len(&self) -> usize {
+        self.write_index.load(Ordering::Relaxed) - self.read_index.load(Ordering::Relaxed)
+    }
 }
 
-impl FastMemoryPool {
-    fn new(_total_size: usize, blocksize: usize) -> Result<Self> {
-        let total_blocks = _total_size / blocksize;
-        let mut blocks = Vec::with_capacity(total_blocks);
+impl<A: Float> FastMemoryPool<A> {
+    fn new(_total_size: usize, block_size_bytes: usize) -> Result<Self> {
+        let element_size = std::mem::size_of::<A>().max(1);
+        let elements_per_block = (block_size_bytes / element_size).max(1);
+        let total_blocks = _total_size / block_size_bytes.max(1);
 
-        // Pre-allocate all blocks
+        let mut free_blocks = Vec::with_capacity(total_blocks);
         for _ in 0..total_blocks {
-            let layout = std::alloc::Layout::from_size_align(blocksize, 8)
-                .map_err(|_| OptimError::InvalidConfig("Invalid memory layout".to_string()))?;
-
-            let ptr = unsafe { std::alloc::alloc(layout) };
-            if ptr.is_null() {
-                return Err(OptimError::InvalidConfig(
-                    "Memory allocation failed".to_string(),
-                ));
-            }
-            blocks.push(ptr);
+            free_blocks.push(Vec::with_capacity(elements_per_block));
         }
 
-        let available_blocks = Arc::new(Mutex::new((0..total_blocks).collect()));
-
         Ok(Self {
-            blocks,
-            available_blocks,
-            blocksize,
+            free_blocks: Mutex::new(free_blocks),
+            elements_per_block,
             total_blocks,
+            checked_out: AtomicUsize::new(0),
+            peak_checked_out: AtomicUsize::new(0),
+            misses: AtomicUsize::new(0),
         })
     }
 
-    fn get_efficiency(&self) -> f64 {
-        let available = self.available_blocks.lock().expect("lock poisoned").len();
-        1.0 - (available as f64 / self.total_blocks as f64)
-    }
-}
-
-impl<A: Float + Send + Sync + Send + Sync> SIMDProcessor<A> {
-    fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            vector_width: 8, // AVX2 width for f32
-            temp_buffers: Vec::new(),
+    /// Check out a pre-allocated scratch buffer able to hold `len` elements.
+    fn acquire(&self, len: usize) -> Option<Vec<A>> {
+        if len > self.elements_per_block {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        let block = lock_recovered(&self.free_blocks).pop();
+        match block {
+            Some(mut block) => {
+                block.clear();
+                let in_use = self.checked_out.fetch_add(1, Ordering::Relaxed) + 1;
+                self.peak_checked_out.fetch_max(in_use, Ordering::Relaxed);
+                Some(block)
+            }
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
         }
     }
 
-    fn process(&mut self, gradient: &Array1<A>) -> Result<Array1<A>> {
-        // Simplified SIMD processing - in practice would use actual SIMD instructions
-        Ok(gradient.clone())
+    /// Return a buffer previously obtained from [`Self::acquire`].
+    fn release(&self, mut block: Vec<A>) {
+        if block.capacity() < self.elements_per_block {
+            // Not one of ours (the caller allocated it) — just drop it.
+            return;
+        }
+        block.clear();
+        let mut free = lock_recovered(&self.free_blocks);
+        if free.len() < self.total_blocks {
+            free.push(block);
+            drop(free);
+            let previous = self.checked_out.load(Ordering::Relaxed);
+            if previous > 0 {
+                self.checked_out.store(previous - 1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Fraction of the pool that has actually been exercised (high-water mark
+    /// of simultaneously checked-out blocks). Returns `0.0` for an empty pool
+    /// instead of dividing by zero.
+    fn get_efficiency(&self) -> f64 {
+        if self.total_blocks == 0 {
+            return 0.0;
+        }
+        self.peak_checked_out.load(Ordering::Relaxed) as f64 / self.total_blocks as f64
+    }
+
+    fn misses(&self) -> usize {
+        self.misses.load(Ordering::Relaxed)
     }
 }
 
-impl<A: Float + Send + Sync + Send + Sync> GradientQuantizer<A> {
+impl<A: Float + Send + Sync> SIMDProcessor<A> {
+    fn new(enabled: bool, batch_threshold: usize) -> Self {
+        Self {
+            enabled,
+            vector_width: batch_threshold.max(1),
+            _element: std::marker::PhantomData,
+        }
+    }
+
+    /// The chunked path only pays for itself once there is at least one full
+    /// chunk of work, which is exactly what `batch_threshold` configures.
+    fn is_active(&self, len: usize) -> bool {
+        self.enabled && len >= self.vector_width
+    }
+
+    /// `params -= learning_rate * gradient`, walked in contiguous chunks so
+    /// the inner loop is a fixed-width, auto-vectorizable kernel.
+    fn apply_scaled_subtract(
+        &self,
+        params: &mut Array1<A>,
+        gradient: &Array1<A>,
+        learning_rate: A,
+    ) {
+        let width = self.vector_width.max(1);
+        match (params.as_slice_mut(), gradient.as_slice()) {
+            (Some(p), Some(g)) => {
+                for (p_chunk, g_chunk) in p.chunks_mut(width).zip(g.chunks(width)) {
+                    for (p_value, g_value) in p_chunk.iter_mut().zip(g_chunk.iter()) {
+                        *p_value = *p_value - learning_rate * *g_value;
+                    }
+                }
+            }
+            _ => {
+                for (p_value, g_value) in params.iter_mut().zip(gradient.iter()) {
+                    *p_value = *p_value - learning_rate * *g_value;
+                }
+            }
+        }
+    }
+}
+
+impl<A: Float + Send + Sync> GradientQuantizer<A> {
     fn new(bits: u8) -> Self {
         Self {
-            bits,
+            // 1..=24 keeps `1 << (bits - 1)` well inside `u32` and keeps the
+            // level count non-zero, so the scale can never become 0.
+            bits: bits.clamp(1, 24),
             scale: A::one(),
             zero_point: A::zero(),
             error_accumulator: None,
         }
     }
 
+    /// Symmetric linear quantization with error feedback.
+    ///
+    /// L4: the previous version computed `scale = max_abs / levels` and then
+    /// divided by it unconditionally. For an all-zero gradient (a normal
+    /// occurrence once a stream converges, and the default state of a freshly
+    /// initialised model) `max_abs` is 0, so every element became `0/0 = NaN`
+    /// and the NaN propagated into the parameters. `bits = 0` produced the
+    /// same division by zero via `2^0 - 1 = 0`.
     fn quantize(&mut self, gradient: &Array1<A>) -> Result<Array1<A>> {
-        // Simplified quantization
-        let max_val = gradient
-            .iter()
-            .cloned()
-            .fold(A::zero(), |acc, x| acc.max(x.abs()));
-        let levels = A::from(2_u32.pow(self.bits as u32) - 1).expect("unwrap failed");
-        self.scale = max_val / levels;
+        let n = gradient.len();
+        if n == 0 {
+            return Ok(gradient.clone());
+        }
 
-        let quantized = gradient.mapv(|x| (x / self.scale).round() * self.scale);
+        // Error feedback: carry the previous step's rounding residual forward
+        // so quantization does not introduce a systematic bias.
+        let compensated = match self.error_accumulator.as_ref() {
+            Some(error) if error.len() == n => gradient + error,
+            _ => gradient.clone(),
+        };
 
+        // NaN loses every `>` comparison, so a fold-based maximum silently
+        // ignores it; the window has to be scanned for finiteness explicitly.
+        if compensated.iter().any(|value| !value.is_finite()) {
+            return Err(OptimError::InvalidParameter(
+                "cannot quantize a gradient containing non-finite values".to_string(),
+            ));
+        }
+        let max_abs = compensated.iter().fold(
+            A::zero(),
+            |acc, x| if x.abs() > acc { x.abs() } else { acc },
+        );
+
+        self.zero_point = A::zero(); // symmetric quantization
+        if max_abs == A::zero() {
+            // Nothing to quantize; the representation is exact.
+            self.scale = A::one();
+            self.error_accumulator = Some(Array1::zeros(n));
+            return Ok(compensated);
+        }
+
+        let level_count = (1u32 << (self.bits.max(1) as u32 - 1))
+            .saturating_sub(1)
+            .max(1);
+        let levels = A::from(level_count).unwrap_or(A::one());
+        self.scale = max_abs / levels;
+        let scale = self.scale;
+        let zero_point = self.zero_point;
+
+        let quantized = compensated.mapv(|x| {
+            let mut q = (x / scale).round();
+            if q > levels {
+                q = levels;
+            } else if q < -levels {
+                q = -levels;
+            }
+            q * scale + zero_point
+        });
+
+        self.error_accumulator = Some(&compensated - &quantized);
         Ok(quantized)
     }
 }
@@ -621,7 +1060,7 @@ impl LatencyMonitor {
     fn new(maxsamples: usize) -> Self {
         Self {
             latency_samples: VecDeque::with_capacity(maxsamples),
-            maxsamples,
+            maxsamples: maxsamples.max(1),
             p50_latency: Duration::from_micros(0),
             p95_latency: Duration::from_micros(0),
             p99_latency: Duration::from_micros(0),
@@ -648,10 +1087,11 @@ impl LatencyMonitor {
         let mut sorted: Vec<_> = self.latency_samples.iter().cloned().collect();
         sorted.sort();
 
-        let len = sorted.len();
-        self.p50_latency = sorted[len / 2];
-        self.p95_latency = sorted[(len as f64 * 0.95) as usize];
-        self.p99_latency = sorted[(len as f64 * 0.99) as usize];
+        let last = sorted.len() - 1;
+        let index_for = |q: f64| ((sorted.len() as f64 * q) as usize).min(last);
+        self.p50_latency = sorted[index_for(0.50)];
+        self.p95_latency = sorted[index_for(0.95)];
+        self.p99_latency = sorted[index_for(0.99)];
     }
 
     fn get_average_latency(&self) -> Duration {
@@ -664,12 +1104,12 @@ impl LatencyMonitor {
     }
 }
 
-impl<A: Float + Send + Sync + Send + Sync> ApproximationController<A> {
+impl<A: Float + Send + Sync> ApproximationController<A> {
     fn new(targetlatency: Duration) -> Self {
         Self {
             approximation_level: A::zero(),
             performance_history: VecDeque::with_capacity(100),
-            adaptation_rate: A::from(0.1).expect("unwrap failed"),
+            adaptation_rate: A::from(0.1).unwrap_or_else(A::one),
             targetlatency,
         }
     }
@@ -678,24 +1118,55 @@ impl<A: Float + Send + Sync + Send + Sync> ApproximationController<A> {
         self.approximation_level
     }
 
-    fn record_performance(&mut self, latency: Duration, approximation_level: A, accuracy: A) {
+    fn record_performance(&mut self, latency: Duration, _approximation_level: A, accuracy: A) {
+        let now = Instant::now();
         let point = PerformancePoint {
             latency,
-            approximation_level,
             accuracy,
-            timestamp: Instant::now(),
+            timestamp: now,
         };
 
         self.performance_history.push_back(point);
-        if self.performance_history.len() > 100 {
+        // Bound the window by age as well as by count: a controller that reacts
+        // to latencies measured minutes ago is chasing a workload that no
+        // longer exists. `timestamp` was recorded for exactly this and never
+        // read.
+        while self
+            .performance_history
+            .front()
+            .is_some_and(|p| now.duration_since(p.timestamp) > PERFORMANCE_WINDOW_AGE)
+        {
+            self.performance_history.pop_front();
+        }
+        if self.performance_history.len() > PERFORMANCE_WINDOW_LEN {
             self.performance_history.pop_front();
         }
 
-        self.adapt_approximation_level(latency);
+        self.adapt_approximation_level();
     }
 
-    fn adapt_approximation_level(&mut self, latency: Duration) {
-        let latency_ratio = latency.as_micros() as f64 / self.targetlatency.as_micros() as f64;
+    /// Mean latency over the retained window, or `None` when it is empty.
+    fn mean_latency(&self) -> Option<Duration> {
+        let count = self.performance_history.len();
+        if count == 0 {
+            return None;
+        }
+        let total: Duration = self.performance_history.iter().map(|p| p.latency).sum();
+        Some(total / count as u32)
+    }
+
+    /// Move the approximation level towards the latency target.
+    ///
+    /// Driven by the *mean* latency of the retained window rather than the
+    /// single latest sample: every latency was already being recorded but only
+    /// the newest one was ever looked at, so one unlucky slow step swung the
+    /// approximation level as hard as a sustained regression.
+    fn adapt_approximation_level(&mut self) {
+        let Some(latency) = self.mean_latency() else {
+            return;
+        };
+        let target = self.targetlatency.as_micros().max(1) as f64;
+        let latency_ratio = latency.as_micros() as f64 / target;
 
         if latency_ratio > 1.1 {
             // Latency too high, increase approximation
@@ -709,20 +1180,143 @@ impl<A: Float + Send + Sync + Send + Sync> ApproximationController<A> {
     }
 
     fn increase_approximation(&mut self) {
-        self.approximation_level = (self.approximation_level
-            + self.adaptation_rate * A::from(2.0).expect("unwrap failed"))
-        .min(A::one());
+        let double = A::from(2.0).unwrap_or_else(A::one);
+        self.approximation_level =
+            (self.approximation_level + self.adaptation_rate * double).min(A::one());
+    }
+
+    /// Mean accuracy observed over the retained performance window.
+    fn mean_accuracy(&self) -> Option<A> {
+        if self.performance_history.is_empty() {
+            return None;
+        }
+        let count = A::from(self.performance_history.len())?;
+        let sum = self
+            .performance_history
+            .iter()
+            .fold(A::zero(), |acc, point| acc + point.accuracy);
+        Some(sum / count)
     }
 }
 
-impl<A: Float + Send + Sync + Send + Sync> GradientPredictor<A> {
+impl<A: Float + Send + Sync + std::iter::Sum> GradientPredictor<A> {
     fn new(windowsize: usize) -> Self {
         Self {
-            gradient_history: VecDeque::with_capacity(windowsize),
+            gradient_history: VecDeque::with_capacity(windowsize.max(2)),
             trend_weights: None,
-            windowsize,
-            confidence: A::from(0.5).expect("unwrap failed"),
+            windowsize: windowsize.max(2),
+            confidence: None,
+            pending_prediction: None,
         }
+    }
+
+    /// Record the gradient that actually arrived and score the outstanding
+    /// prediction against it.
+    fn observe(&mut self, gradient: &Array1<A>) {
+        if let Some(prediction) = self.pending_prediction.take() {
+            if prediction.len() == gradient.len() {
+                let similarity = cosine_similarity(&prediction, gradient);
+                let alpha = A::from(0.2).unwrap_or_else(A::one);
+                self.confidence = Some(match self.confidence {
+                    Some(previous) => previous * (A::one() - alpha) + similarity * alpha,
+                    None => similarity,
+                });
+            }
+        }
+
+        self.gradient_history.push_back(gradient.clone());
+        while self.gradient_history.len() > self.windowsize {
+            self.gradient_history.pop_front();
+        }
+        self.recompute_trend();
+    }
+
+    /// Per-coordinate ordinary-least-squares slope over the retained window.
+    fn recompute_trend(&mut self) {
+        let n = self.gradient_history.len();
+        if n < 2 {
+            self.trend_weights = None;
+            return;
+        }
+        let dim = match self.gradient_history.back() {
+            Some(last) => last.len(),
+            None => return,
+        };
+        if self.gradient_history.iter().any(|g| g.len() != dim) {
+            self.trend_weights = None;
+            return;
+        }
+
+        // x = 0..n-1, so sum(x) and sum((x - x_mean)^2) are closed forms.
+        let n_f = A::from(n).unwrap_or_else(A::one);
+        let x_mean = A::from((n - 1) as f64 / 2.0).unwrap_or_else(A::zero);
+        let mut denominator = A::zero();
+        for i in 0..n {
+            let dx = A::from(i).unwrap_or_else(A::zero) - x_mean;
+            denominator = denominator + dx * dx;
+        }
+        if denominator == A::zero() {
+            self.trend_weights = None;
+            return;
+        }
+
+        let mut slopes = Array1::zeros(dim);
+        for coordinate in 0..dim {
+            let mut y_sum = A::zero();
+            for gradient in &self.gradient_history {
+                y_sum = y_sum + gradient[coordinate];
+            }
+            let y_mean = y_sum / n_f;
+            let mut numerator = A::zero();
+            for (i, gradient) in self.gradient_history.iter().enumerate() {
+                let dx = A::from(i).unwrap_or_else(A::zero) - x_mean;
+                numerator = numerator + dx * (gradient[coordinate] - y_mean);
+            }
+            slopes[coordinate] = numerator / denominator;
+        }
+        self.trend_weights = Some(slopes);
+    }
+
+    /// Linear extrapolation of the next gradient, with the measured
+    /// confidence of the previous prediction.
+    fn predict(&mut self) -> Option<(Array1<A>, A)> {
+        let last = self.gradient_history.back()?.clone();
+        let slopes = self.trend_weights.as_ref()?;
+        if slopes.len() != last.len() {
+            return None;
+        }
+        let mut predicted = last;
+        for (value, &slope) in predicted.iter_mut().zip(slopes.iter()) {
+            *value = *value + slope;
+        }
+        self.pending_prediction = Some(predicted.clone());
+        // Until a prediction has been scored there is no measured confidence;
+        // report zero rather than inventing one.
+        let confidence = self.confidence.unwrap_or_else(A::zero);
+        Some((predicted, confidence))
+    }
+}
+
+/// Cosine similarity between two equally sized vectors, `0` when either is
+/// degenerate.
+fn cosine_similarity<A: Float>(a: &Array1<A>, b: &Array1<A>) -> A {
+    if a.len() != b.len() {
+        return A::zero();
+    }
+    let mut dot = A::zero();
+    let mut norm_a = A::zero();
+    let mut norm_b = A::zero();
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        dot = dot + x * y;
+        norm_a = norm_a + x * x;
+        norm_b = norm_b + y * y;
+    }
+    let norm_a = norm_a.sqrt();
+    let norm_b = norm_b.sqrt();
+    if norm_a == A::zero() || norm_b == A::zero() {
+        A::zero()
+    } else {
+        dot / (norm_a * norm_b)
     }
 }
 
@@ -731,6 +1325,8 @@ impl<A: Float + Send + Sync + Send + Sync> GradientPredictor<A> {
 pub struct LowLatencyMetrics {
     /// Average latency (microseconds)
     pub avg_latency_us: u64,
+    /// Median latency (microseconds)
+    pub p50_latency_us: u64,
     /// 95th percentile latency (microseconds)
     pub p95_latency_us: u64,
     /// 99th percentile latency (microseconds)
@@ -741,10 +1337,18 @@ pub struct LowLatencyMetrics {
     pub total_operations: usize,
     /// Current approximation level (0.0 to 1.0)
     pub current_approximation_level: f64,
-    /// Pre-computation hit rate
-    pub precomputation_hit_rate: f64,
-    /// Memory pool efficiency
+    /// Mean cosine agreement between the applied step and the descent
+    /// direction over the retained window, or `None` before the first step.
+    pub approximation_accuracy: Option<f64>,
+    /// Measured pre-computation hit rate, or `None` when pre-computation is
+    /// disabled or has not been consulted yet.
+    pub precomputation_hit_rate: Option<f64>,
+    /// Number of steps that consulted the pre-computation engine
+    pub precomputation_attempts: usize,
+    /// Fraction of the memory pool that has been exercised
     pub memory_efficiency: f64,
+    /// Scratch requests the memory pool could not satisfy
+    pub memory_pool_misses: usize,
 }
 
 #[cfg(test)]
@@ -788,7 +1392,7 @@ mod tests {
         let result = quantizer.quantize(&gradient);
         assert!(result.is_ok());
 
-        let quantized = result.expect("unwrap failed");
+        let quantized = result.expect("quantization of a finite gradient must succeed");
         assert_eq!(quantized.len(), gradient.len());
     }
 

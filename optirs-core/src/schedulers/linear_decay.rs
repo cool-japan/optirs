@@ -83,8 +83,9 @@ impl<A: Float + Debug + ScalarOperand + Send + Sync> LearningRateScheduler<A> fo
         // Calculate learning rate with linear decay
         // lr = initial_lr - (initial_lr - final_lr) * min(1.0, step / total_steps)
         let progress = if self.total_steps > 0 {
-            (A::from(self.step).expect("unwrap failed")
-                / A::from(self.total_steps).expect("unwrap failed"))
+            (A::from(self.step).expect("LinearDecay: step must fit in A (f32/f64)")
+                / A::from(self.total_steps)
+                    .expect("LinearDecay: total_steps must fit in A (f32/f64)"))
             .min(A::one())
         } else {
             A::one()

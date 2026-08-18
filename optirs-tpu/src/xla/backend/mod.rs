@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use super::frontend::XLAComputation;
 use super::optimization::MemoryPlan;
-use super::{GeneratedCode, TPUConfig};
-use crate::error::{OptimError, Result};
+use super::TPUConfig;
+use crate::error::Result;
 
 pub use code_generation::*;
 pub use profiling_integration::*;
@@ -103,20 +103,28 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLABack
         let generated_code = self
             .code_generator
             .generate_code(computation, memory_plan)?;
-        self.stats.codegen_time_us = start_time.elapsed().as_micros() as u64;
+        let codegen_duration = start_time.elapsed();
+        self.stats.codegen_time_us = codegen_duration.as_micros() as u64;
 
         // Integrate with runtime
         let runtime_start = std::time::Instant::now();
         let binary = self
             .runtime_manager
             .integrate(generated_code, &self.config.target_tpu)?;
-        self.stats.runtime_integration_time_us = runtime_start.elapsed().as_micros() as u64;
+        let runtime_integration_duration = runtime_start.elapsed();
+        self.stats.runtime_integration_time_us = runtime_integration_duration.as_micros() as u64;
         self.stats.binary_size = binary.len();
 
-        // Set up profiling if enabled
+        // Set up profiling if enabled, and record this compile step's real
+        // measured timings into it -- without this, `profiling_manager`
+        // would only ever hold empty sessions and every later
+        // `export_data()` would report empty files regardless of how much
+        // real compilation work had just happened.
         if self.config.enable_profiling {
             self.profiling_manager
                 .setup_profiling(computation, &binary)?;
+            self.profiling_manager
+                .record_compile_timings(codegen_duration, runtime_integration_duration);
         }
 
         Ok(binary)
@@ -125,6 +133,18 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync> XLABack
     /// Get backend statistics
     pub fn get_statistics(&self) -> &BackendStatistics {
         &self.stats
+    }
+
+    /// The profiling integration this backend set up for the compiled program.
+    pub fn profiling(&self) -> &ProfilingIntegration<T> {
+        &self.profiling_manager
+    }
+
+    /// Mutable access to the profiling integration, so the *runtime* side can
+    /// report the memory and timing events it observes into the same profile
+    /// the compile side started.
+    pub fn profiling_mut(&mut self) -> &mut ProfilingIntegration<T> {
+        &mut self.profiling_manager
     }
 
     /// Reset backend state

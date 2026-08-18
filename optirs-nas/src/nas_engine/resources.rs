@@ -8,14 +8,12 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
-use super::config::{
-    HardwareResources, ResourceConstraints, ResourceViolationHandling, TimeConstraints,
-};
+use super::config::ResourceConstraints;
 use super::results::{ResourceUsage, ResourceUsageSummary};
-use crate::error::{OptimError, Result};
+use super::telemetry::{StdTelemetry, TelemetrySample, TelemetrySource};
+use crate::error::Result;
 
 /// Resource monitor for tracking and managing system resources
 pub struct ResourceMonitor<T: Float + Debug + Send + Sync + 'static> {
@@ -62,6 +60,39 @@ impl<T: Float + Debug + Send + Sync + 'static> Debug for ResourceMonitor<T> {
     }
 }
 
+/// Lock a mutex, recovering the guarded value if the mutex was poisoned (F22).
+///
+/// Every mutex in this module guards a plain data snapshot: a `ResourceUsage`
+/// total or an append-only history vector. Neither has an invariant that a
+/// panicking writer could leave broken, so `PoisonError::into_inner` is the correct
+/// recovery — the previous `lock().expect("lock poisoned")` turned one unrelated
+/// panic into a permanently panicking getter.
+fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Derive memory pressure from a telemetry sample, or `None` when memory is not
+/// measurable. Shared by [`SystemResourceTracker`] and [`ResourceMonitor`].
+fn memory_pressure_from_sample(sample: &TelemetrySample) -> Option<MemoryPressure> {
+    let total = sample.total_memory_gb?;
+    let available = sample.available_memory_gb?;
+    if total <= 0.0 {
+        return None;
+    }
+    let used_fraction = ((total - available) / total).clamp(0.0, 1.0);
+    Some(if used_fraction >= 0.95 {
+        MemoryPressure::Critical
+    } else if used_fraction >= 0.85 {
+        MemoryPressure::High
+    } else if used_fraction >= 0.7 {
+        MemoryPressure::Medium
+    } else {
+        MemoryPressure::Low
+    })
+}
+
 /// Resource snapshot for history tracking
 #[derive(Debug, Clone)]
 pub struct ResourceSnapshot<T: Float + Debug + Send + Sync + 'static> {
@@ -74,46 +105,59 @@ pub struct ResourceSnapshot<T: Float + Debug + Send + Sync + 'static> {
     /// System metrics
     pub system_metrics: SystemMetrics<T>,
 
-    /// Active processes
-    pub active_processes: usize,
+    /// Number of processes visible on the system, when measurable.
+    pub active_processes: Option<usize>,
 
-    /// Memory pressure level
-    pub memory_pressure: MemoryPressure,
+    /// Memory pressure level, derived from measured available/total memory. `None`
+    /// when memory is not measurable — it used to be hard-coded to
+    /// [`MemoryPressure::Low`] regardless.
+    pub memory_pressure: Option<MemoryPressure>,
 
-    /// CPU load average
-    pub cpu_load_average: T,
+    /// 1-minute load average per logical CPU, when measurable. Previously a
+    /// hard-coded `0.6`.
+    pub cpu_load_average: Option<T>,
 
-    /// GPU utilization
-    pub gpu_utilization: T,
+    /// GPU utilization in `[0, 1]`, when measurable. Previously a hard-coded `0.8`.
+    pub gpu_utilization: Option<T>,
 }
 
-/// System metrics
-#[derive(Debug, Clone)]
+/// System metrics.
+///
+/// Every field is `Option` because most of them cannot be measured in pure Rust
+/// (F12). `None` means **not measured**, and consumers must treat it as
+/// *unconstrained* — never as zero, and never as a limit violation. The previous
+/// version made every field mandatory, which forced
+/// [`SystemResourceTracker`] to fabricate values (32 GB memory, 4 GPUs, 65 C,
+/// 250 W) that were then compared against the caller's real constraints.
+///
+/// Supply your own [`crate::nas_engine::telemetry::TelemetrySource`] to fill in
+/// the fields the default source cannot reach.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SystemMetrics<T: Float + Debug + Send + Sync + 'static> {
-    /// Available memory (GB)
-    pub available_memory_gb: T,
+    /// Memory the OS reports as available for new allocations (GB).
+    pub available_memory_gb: Option<T>,
 
-    /// Available CPU cores
-    pub available_cpu_cores: usize,
+    /// Logical CPUs usable by this process.
+    pub available_cpu_cores: Option<usize>,
 
-    /// Available GPU devices
-    pub available_gpu_devices: usize,
+    /// GPU devices visible to this process.
+    pub available_gpu_devices: Option<usize>,
 
-    /// Available disk space (GB)
-    pub available_disk_gb: T,
+    /// Free space on the working-directory filesystem (GB).
+    pub available_disk_gb: Option<T>,
 
-    /// Network bandwidth (MB/s)
-    pub network_bandwidth: T,
+    /// Network bandwidth (MB/s).
+    pub network_bandwidth: Option<T>,
 
-    /// System temperature (Celsius)
-    pub system_temperature: T,
+    /// System temperature (Celsius).
+    pub system_temperature: Option<T>,
 
-    /// Power consumption (watts)
-    pub power_consumption: T,
+    /// Power consumption (watts).
+    pub power_consumption: Option<T>,
 }
 
 /// Memory pressure levels
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryPressure {
     Low,
     Medium,
@@ -198,6 +242,17 @@ pub trait ResourceTracker<T: Float + Debug + Send + Sync + 'static>: Send + Sync
 
     /// Cleanup tracker
     fn cleanup(&mut self) -> Result<()>;
+
+    /// The raw telemetry reading behind [`ResourceTracker::get_system_metrics`], if
+    /// this tracker has one.
+    ///
+    /// [`ResourceMonitor::update_usage`] uses it for the snapshot fields that are not
+    /// part of [`SystemMetrics`] (process count, load average, GPU utilization).
+    /// Trackers with no underlying sample return `None`, and those snapshot fields
+    /// then stay `None` too — which is the honest outcome.
+    fn telemetry_sample(&self) -> Option<TelemetrySample> {
+        None
+    }
 }
 
 /// Resource violation
@@ -368,7 +423,18 @@ pub enum OptimizationPriority {
     Critical,
 }
 
-/// System resource tracker implementation
+/// System resource tracker backed by an injectable
+/// [`TelemetrySource`] (F12).
+///
+/// It previously returned hard-coded readings (32 GB memory / 16 GB used, 60% CPU,
+/// 4 GPUs at 80%, 1 TB disk, 1 GB/s network, 65 C, 250 W) from seven
+/// `get_*_info` helpers, each commented "in a real implementation, this would
+/// query system APIs". Those numbers reached [`ResourceTracker::check_limits`] and
+/// were compared against the caller's real constraints, so a tight memory budget
+/// aborted the search on invented data.
+///
+/// Now it reports whatever its source can actually measure and `None` for the rest,
+/// and `check_limits` **skips** any check whose measurement is missing.
 pub struct SystemResourceTracker {
     /// Tracker name
     name: String,
@@ -379,73 +445,67 @@ pub struct SystemResourceTracker {
     /// Last update time
     last_update: Instant,
 
-    /// Cached metrics
-    cached_metrics: Option<SystemMetrics<f64>>,
+    /// Telemetry source. Defaults to
+    /// [`StdTelemetry`](crate::nas_engine::telemetry::StdTelemetry).
+    telemetry: Box<dyn TelemetrySource>,
+
+    /// Most recent reading, refreshed on every query.
+    cached_sample: Option<TelemetrySample>,
+}
+
+impl Debug for SystemResourceTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SystemResourceTracker")
+            .field("name", &self.name)
+            .field("monitoring_interval", &self.monitoring_interval)
+            .field("telemetry", &self.telemetry.name())
+            .field("cached_sample", &self.cached_sample)
+            .finish()
+    }
 }
 
 impl SystemResourceTracker {
-    /// Create a new system resource tracker
+    /// Create a tracker using the default (honest, sparse) telemetry source.
     pub fn new(name: String, monitoring_interval: Duration) -> Self {
+        Self::with_telemetry(name, monitoring_interval, Box::new(StdTelemetry::new()))
+    }
+
+    /// Create a tracker backed by a caller-supplied telemetry source. This is how
+    /// GPU / thermal / power constraints become enforceable: provide a source that
+    /// can measure them.
+    pub fn with_telemetry(
+        name: String,
+        monitoring_interval: Duration,
+        telemetry: Box<dyn TelemetrySource>,
+    ) -> Self {
         Self {
             name,
             monitoring_interval,
             last_update: Instant::now(),
-            cached_metrics: None,
+            telemetry,
+            cached_sample: None,
         }
     }
 
-    /// Get memory information
-    fn get_memory_info(&self) -> Result<(f64, f64)> {
-        // In a real implementation, this would query system APIs
-        // For now, return simulated values
-        let total_memory = 32.0; // 32 GB
-        let used_memory = 16.0; // 16 GB used
-        Ok((total_memory, used_memory))
+    /// Name of the telemetry source in use.
+    pub fn telemetry_name(&self) -> &str {
+        self.telemetry.name()
     }
 
-    /// Get CPU information
-    fn get_cpu_info(&self) -> Result<(usize, f64)> {
-        // In a real implementation, this would query system APIs
-        let total_cores = num_cpus::get();
-        let cpu_usage = 0.6; // 60% usage
-        Ok((total_cores, cpu_usage))
+    /// The most recent reading, if one has been taken.
+    pub fn last_sample(&self) -> Option<&TelemetrySample> {
+        self.cached_sample.as_ref()
     }
 
-    /// Get GPU information
-    fn get_gpu_info(&self) -> Result<(usize, f64)> {
-        // In a real implementation, this would query GPU APIs (CUDA, OpenCL, etc.)
-        let gpu_devices = 4;
-        let gpu_usage = 0.8; // 80% usage
-        Ok((gpu_devices, gpu_usage))
+    /// Take a fresh reading.
+    pub fn sample(&self) -> TelemetrySample {
+        self.telemetry.sample()
     }
 
-    /// Get disk information
-    fn get_disk_info(&self) -> Result<(f64, f64)> {
-        // In a real implementation, this would query filesystem APIs
-        let total_disk = 1000.0; // 1TB
-        let used_disk = 500.0; // 500GB used
-        Ok((total_disk, used_disk))
-    }
-
-    /// Get network information
-    fn get_network_info(&self) -> Result<f64> {
-        // In a real implementation, this would query network interfaces
-        let bandwidth = 1000.0; // 1 GB/s
-        Ok(bandwidth)
-    }
-
-    /// Get temperature information
-    fn get_temperature_info(&self) -> Result<f64> {
-        // In a real implementation, this would query thermal sensors
-        let temperature = 65.0; // 65°C
-        Ok(temperature)
-    }
-
-    /// Get power information
-    fn get_power_info(&self) -> Result<f64> {
-        // In a real implementation, this would query power management APIs
-        let power = 250.0; // 250W
-        Ok(power)
+    /// Memory pressure derived from the current reading, or `None` when memory is
+    /// not measurable here.
+    pub fn memory_pressure(&self) -> Option<MemoryPressure> {
+        memory_pressure_from_sample(&self.telemetry.sample())
     }
 }
 
@@ -453,116 +513,125 @@ impl<T: Float + Debug + Send + Sync + 'static> ResourceTracker<T> for SystemReso
 where
     T: From<f64> + std::fmt::Debug,
 {
+    /// Resource usage attributable to **this search**.
+    ///
+    /// Only the process's own resident set size is reported, and only where it can
+    /// be measured; everything else stays at the accumulator identity (`0`), which
+    /// is honest for a *usage* total that nothing has been attributed to. The
+    /// previous version reported system-wide invented figures here, which is a
+    /// category error as well as a fabrication: `ResourceUsage` is compared against
+    /// a budget for the search, so charging it for the whole machine aborts the
+    /// search whenever the host is busy.
     fn get_current_usage(&self) -> Result<ResourceUsage<T>> {
-        let (total_memory, used_memory) = self.get_memory_info()?;
-        let (total_cores, cpu_usage) = self.get_cpu_info()?;
-        let (gpu_devices, gpu_usage) = self.get_gpu_info()?;
-
-        Ok(ResourceUsage {
-            memory_gb: scirs2_core::numeric::NumCast::from(used_memory)
-                .unwrap_or_else(|| T::zero()),
-            cpu_time_seconds: scirs2_core::numeric::NumCast::from(cpu_usage * 3600.0)
-                .unwrap_or_else(|| T::zero()), // Convert to CPU-hours equivalent
-            gpu_time_seconds: scirs2_core::numeric::NumCast::from(gpu_usage * 3600.0)
-                .unwrap_or_else(|| T::zero()), // Convert to GPU-hours equivalent
-            energy_kwh: scirs2_core::numeric::NumCast::from(0.25).unwrap_or_else(|| T::zero()), // 0.25 kWh estimated
-            network_io_gb: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()), // 1 GB network I/O
-            disk_io_gb: scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero()), // 2 GB disk I/O
-            peak_memory_gb: scirs2_core::numeric::NumCast::from(used_memory * 1.2)
-                .unwrap_or_else(|| T::zero()), // 20% overhead
-            efficiency_score: scirs2_core::numeric::NumCast::from(0.8).unwrap_or_else(|| T::zero()), // 80% efficiency
-            cost_usd: scirs2_core::numeric::NumCast::from(0.5).unwrap_or_else(|| T::zero()), // $0.50 estimated
-            network_gb: scirs2_core::numeric::NumCast::from(1.0).unwrap_or_else(|| T::zero()), // Same as network_io_gb
-        })
+        let sample = self.telemetry.sample();
+        let mut usage = ResourceUsage::default();
+        if let Some(process_memory_gb) = sample.process_memory_gb {
+            let value: T =
+                scirs2_core::numeric::NumCast::from(process_memory_gb).unwrap_or_else(|| T::zero());
+            usage.memory_gb = value;
+            usage.peak_memory_gb = value;
+        }
+        Ok(usage)
     }
 
     fn get_system_metrics(&self) -> Result<SystemMetrics<T>> {
-        let (total_memory, used_memory) = self.get_memory_info()?;
-        let (total_cores, _cpu_usage) = self.get_cpu_info()?;
-        let (gpu_devices, _gpu_usage) = self.get_gpu_info()?;
-        let (total_disk, used_disk) = self.get_disk_info()?;
-        let bandwidth = self.get_network_info()?;
-        let temperature = self.get_temperature_info()?;
-        let power = self.get_power_info()?;
-
+        let sample = self.telemetry.sample();
+        let convert = |value: Option<f64>| -> Option<T> {
+            value.and_then(|v| scirs2_core::numeric::NumCast::from(v))
+        };
         Ok(SystemMetrics {
-            available_memory_gb: scirs2_core::numeric::NumCast::from(total_memory - used_memory)
-                .unwrap_or_else(|| T::zero()),
-            available_cpu_cores: total_cores,
-            available_gpu_devices: gpu_devices,
-            available_disk_gb: scirs2_core::numeric::NumCast::from(total_disk - used_disk)
-                .unwrap_or_else(|| T::zero()),
-            network_bandwidth: scirs2_core::numeric::NumCast::from(bandwidth)
-                .unwrap_or_else(|| T::zero()),
-            system_temperature: scirs2_core::numeric::NumCast::from(temperature)
-                .unwrap_or_else(|| T::zero()),
-            power_consumption: scirs2_core::numeric::NumCast::from(power)
-                .unwrap_or_else(|| T::zero()),
+            available_memory_gb: convert(sample.available_memory_gb),
+            available_cpu_cores: sample.logical_cpus,
+            available_gpu_devices: sample.gpu_devices,
+            available_disk_gb: convert(sample.available_disk_gb),
+            network_bandwidth: convert(sample.network_bandwidth_mbps),
+            system_temperature: convert(sample.temperature_celsius),
+            power_consumption: convert(sample.power_watts),
         })
     }
 
+    /// Report only violations backed by an actual measurement (F12).
+    ///
+    /// Every check is guarded by the presence of its measurement, so an
+    /// unmeasurable resource is treated as **unlimited** and can never abort a
+    /// search. This is the whole point: `check_violations` is called from
+    /// `NeuralArchitectureSearch::should_stop_search` on every iteration, so a
+    /// fabricated reading here terminated real searches.
     fn check_limits(
         &self,
         constraints: &ResourceConstraints<T>,
     ) -> Result<Vec<ResourceViolation<T>>> {
-        let current_usage = self.get_current_usage()?;
+        let sample = self.telemetry.sample();
         let mut violations = Vec::new();
 
-        // Check memory limit
-        let memory_limit =
-            scirs2_core::numeric::NumCast::from(constraints.hardware_resources.max_memory_gb)
+        // Memory: this process's RSS against the hardware memory budget.
+        if let Some(process_memory_gb) = sample.process_memory_gb {
+            let current: T =
+                scirs2_core::numeric::NumCast::from(process_memory_gb).unwrap_or_else(|| T::zero());
+            let limit: T =
+                scirs2_core::numeric::NumCast::from(constraints.hardware_resources.max_memory_gb)
+                    .unwrap_or_else(|| T::zero());
+            if limit > T::zero() && current > limit {
+                violations.push(ResourceViolation {
+                    violation_type: ViolationType::MemoryExceeded,
+                    current_value: current,
+                    limit_value: limit,
+                    severity: ViolationSeverity::High,
+                    violation_time: Instant::now(),
+                    affected_resources: vec!["Memory".to_string()],
+                    suggested_actions: vec![
+                        "Clear caches".to_string(),
+                        "Reduce batch size".to_string(),
+                        "Enable memory optimization".to_string(),
+                    ],
+                });
+            }
+        }
+
+        // Power: only when a source can actually read it.
+        if let Some(power_watts) = sample.power_watts {
+            let current: T =
+                scirs2_core::numeric::NumCast::from(power_watts).unwrap_or_else(|| T::zero());
+            let limit: T =
+                scirs2_core::numeric::NumCast::from(POWER_LIMIT_WATTS).unwrap_or_else(|| T::zero());
+            if current > limit {
+                violations.push(ResourceViolation {
+                    violation_type: ViolationType::PowerExceeded,
+                    current_value: current,
+                    limit_value: limit,
+                    severity: ViolationSeverity::Medium,
+                    violation_time: Instant::now(),
+                    affected_resources: vec!["Power".to_string()],
+                    suggested_actions: vec![
+                        "Reduce clock speeds".to_string(),
+                        "Throttle processes".to_string(),
+                        "Enable power saving mode".to_string(),
+                    ],
+                });
+            }
+        }
+
+        // Temperature: likewise.
+        if let Some(temperature_celsius) = sample.temperature_celsius {
+            let current: T = scirs2_core::numeric::NumCast::from(temperature_celsius)
                 .unwrap_or_else(|| T::zero());
-        if current_usage.memory_gb > memory_limit {
-            violations.push(ResourceViolation {
-                violation_type: ViolationType::MemoryExceeded,
-                current_value: current_usage.memory_gb,
-                limit_value: memory_limit,
-                severity: ViolationSeverity::High,
-                violation_time: Instant::now(),
-                affected_resources: vec!["Memory".to_string()],
-                suggested_actions: vec![
-                    "Clear caches".to_string(),
-                    "Reduce batch size".to_string(),
-                    "Enable memory optimization".to_string(),
-                ],
-            });
-        }
-
-        // Check power limit
-        let system_metrics = self.get_system_metrics()?;
-        let power_limit = scirs2_core::numeric::NumCast::from(1000.0).unwrap_or_else(|| T::zero()); // 1000W limit
-        if system_metrics.power_consumption > power_limit {
-            violations.push(ResourceViolation {
-                violation_type: ViolationType::PowerExceeded,
-                current_value: system_metrics.power_consumption,
-                limit_value: power_limit,
-                severity: ViolationSeverity::Medium,
-                violation_time: Instant::now(),
-                affected_resources: vec!["Power".to_string()],
-                suggested_actions: vec![
-                    "Reduce clock speeds".to_string(),
-                    "Throttle processes".to_string(),
-                    "Enable power saving mode".to_string(),
-                ],
-            });
-        }
-
-        // Check temperature limit
-        let temp_limit = scirs2_core::numeric::NumCast::from(80.0).unwrap_or_else(|| T::zero()); // 80°C limit
-        if system_metrics.system_temperature > temp_limit {
-            violations.push(ResourceViolation {
-                violation_type: ViolationType::TemperatureExceeded,
-                current_value: system_metrics.system_temperature,
-                limit_value: temp_limit,
-                severity: ViolationSeverity::Critical,
-                violation_time: Instant::now(),
-                affected_resources: vec!["CPU".to_string(), "GPU".to_string()],
-                suggested_actions: vec![
-                    "Increase cooling".to_string(),
-                    "Reduce workload".to_string(),
-                    "Enable thermal throttling".to_string(),
-                ],
-            });
+            let limit: T = scirs2_core::numeric::NumCast::from(TEMPERATURE_LIMIT_CELSIUS)
+                .unwrap_or_else(|| T::zero());
+            if current > limit {
+                violations.push(ResourceViolation {
+                    violation_type: ViolationType::TemperatureExceeded,
+                    current_value: current,
+                    limit_value: limit,
+                    severity: ViolationSeverity::Critical,
+                    violation_time: Instant::now(),
+                    affected_resources: vec!["CPU".to_string(), "GPU".to_string()],
+                    suggested_actions: vec![
+                        "Increase cooling".to_string(),
+                        "Reduce workload".to_string(),
+                        "Enable thermal throttling".to_string(),
+                    ],
+                });
+            }
         }
 
         Ok(violations)
@@ -573,19 +642,46 @@ where
     }
 
     fn initialize(&mut self) -> Result<()> {
-        // Initialize system monitoring
         self.last_update = Instant::now();
-        println!("Initialized system resource tracker: {}", self.name);
+        let sample = self.telemetry.sample();
+        if sample.is_fully_unknown() {
+            log::warn!(
+                "resource tracker {} initialized with telemetry source '{}', which can measure \
+                 nothing on this platform; every resource constraint will be treated as \
+                 unlimited",
+                self.name,
+                self.telemetry.name()
+            );
+        } else {
+            log::info!(
+                "resource tracker {} initialized with telemetry source '{}': {:?}",
+                self.name,
+                self.telemetry.name(),
+                sample
+            );
+        }
+        self.cached_sample = Some(sample);
         Ok(())
     }
 
     fn cleanup(&mut self) -> Result<()> {
-        // Cleanup monitoring resources
-        self.cached_metrics = None;
-        println!("Cleaned up system resource tracker: {}", self.name);
+        self.cached_sample = None;
+        log::info!("cleaned up system resource tracker: {}", self.name);
         Ok(())
     }
+
+    fn telemetry_sample(&self) -> Option<TelemetrySample> {
+        Some(self.telemetry.sample())
+    }
 }
+
+/// Package power above which a [`ViolationType::PowerExceeded`] is reported —
+/// checked **only** when a telemetry source can actually read power draw.
+const POWER_LIMIT_WATTS: f64 = 1000.0;
+
+/// Die temperature above which a [`ViolationType::TemperatureExceeded`] is
+/// reported — checked only when a source can actually read temperature.
+const TEMPERATURE_LIMIT_CELSIUS: f64 = 80.0;
 
 /// Console alert handler implementation
 pub struct ConsoleAlertHandler {
@@ -607,35 +703,52 @@ impl<T: Float + Debug + Send + Sync + 'static> AlertHandler<T> for ConsoleAlertH
 where
     T: std::fmt::Display + std::fmt::Debug,
 {
+    /// Report a violation through `log`, at a level matching its severity (F24).
+    ///
+    /// This used to `println!` unconditionally, which writes to a library consumer's
+    /// stdout with no way to filter or redirect it.
     fn handle_violation(&self, violation: &ResourceViolation<T>) -> Result<()> {
-        println!(
-            "[VIOLATION] {:?}: Current={}, Limit={}, Severity={:?}",
+        let summary = format!(
+            "resource violation {:?}: current={}, limit={}, severity={:?}",
             violation.violation_type,
             violation.current_value,
             violation.limit_value,
             violation.severity
         );
+        match violation.severity {
+            ViolationSeverity::Critical | ViolationSeverity::High => log::error!("{}", summary),
+            ViolationSeverity::Medium => log::warn!("{}", summary),
+            ViolationSeverity::Low => log::info!("{}", summary),
+        }
 
         if self.verbose {
-            println!("  Time: {:?}", violation.violation_time);
-            println!("  Affected resources: {:?}", violation.affected_resources);
-            println!("  Suggested actions: {:?}", violation.suggested_actions);
+            log::debug!(
+                "violation detail: time={:?}, affected={:?}, suggested={:?}",
+                violation.violation_time,
+                violation.affected_resources,
+                violation.suggested_actions
+            );
         }
 
         Ok(())
     }
 
+    /// Report a warning through `log` (F24).
     fn handle_warning(&self, warning: &ResourceWarning<T>) -> Result<()> {
-        println!(
-            "[WARNING] {:?}: Current={}, Threshold={}, Trend={:?}",
-            warning.warning_type, warning.current_value, warning.threshold_value, warning.trend
+        log::warn!(
+            "resource warning {:?}: current={}, threshold={}, trend={:?}",
+            warning.warning_type,
+            warning.current_value,
+            warning.threshold_value,
+            warning.trend
         );
 
         if self.verbose {
-            if let Some(time_to_violation) = warning.time_to_violation {
-                println!("  Time to violation: {:?}", time_to_violation);
-            }
-            println!("  Message: {}", warning.message);
+            log::debug!(
+                "warning detail: time_to_violation={:?}, message={}",
+                warning.time_to_violation,
+                warning.message
+            );
         }
 
         Ok(())
@@ -801,7 +914,10 @@ where
         }
 
         self.monitoring_state = MonitoringState::Running;
-        println!("Resource monitoring started");
+        log::info!(
+            "resource monitoring started with {} tracker(s)",
+            self.monitors.len()
+        );
         Ok(())
     }
 
@@ -815,19 +931,32 @@ where
         }
 
         self.monitoring_state = MonitoringState::Stopped;
-        println!("Resource monitoring stopped");
+        log::info!("resource monitoring stopped");
         Ok(())
     }
 
-    /// Update resource usage
+    /// Sample every tracker and record a snapshot (F12).
+    ///
+    /// This is called once per generation from
+    /// `NeuralArchitectureSearch::check_resource_constraints`; before that wiring it
+    /// was never called at all, so `current_usage` stayed at
+    /// `ResourceUsage::default()` forever and `check_resource_violations` could
+    /// never fire.
+    ///
+    /// The snapshot's derived fields are all measured or absent: `active_processes`,
+    /// `memory_pressure`, `cpu_load_average` and `gpu_utilization` used to be
+    /// hard-coded to `1` / `Low` / `0.6` / `0.8`.
+    ///
+    /// The clock is read once and reused for the timestamp and the retention cutoff,
+    /// so a snapshot cannot be pruned by an `Instant::now()` taken microseconds later.
     pub fn update_usage(&self) -> Result<()> {
         if self.monitoring_state != MonitoringState::Running {
             return Ok(());
         }
 
-        // Get current usage from all monitors
         let mut total_usage = ResourceUsage::default();
         let mut system_metrics = None;
+        let mut telemetry_sample: Option<TelemetrySample> = None;
 
         for monitor in &self.monitors {
             let usage = monitor.get_current_usage()?;
@@ -835,39 +964,47 @@ where
             total_usage.cpu_time_seconds = total_usage.cpu_time_seconds + usage.cpu_time_seconds;
             total_usage.gpu_time_seconds = total_usage.gpu_time_seconds + usage.gpu_time_seconds;
             total_usage.energy_kwh = total_usage.energy_kwh + usage.energy_kwh;
+            if total_usage.peak_memory_gb < usage.peak_memory_gb {
+                total_usage.peak_memory_gb = usage.peak_memory_gb;
+            }
 
             if system_metrics.is_none() {
                 system_metrics = Some(monitor.get_system_metrics()?);
             }
+            if telemetry_sample.is_none() {
+                telemetry_sample = monitor.telemetry_sample();
+            }
         }
 
-        // Update current usage
         {
-            let mut current = self.current_usage.lock().expect("lock poisoned");
+            let mut current = lock_recovering(&self.current_usage);
             *current = total_usage.clone();
         }
 
-        // Add to history
         if let Some(metrics) = system_metrics {
+            let sample = telemetry_sample.unwrap_or_default();
+            let now = Instant::now();
             let snapshot = ResourceSnapshot {
-                timestamp: Instant::now(),
+                timestamp: now,
                 usage: total_usage,
                 system_metrics: metrics,
-                active_processes: 1,                  // Simplified
-                memory_pressure: MemoryPressure::Low, // Simplified
-                cpu_load_average: scirs2_core::numeric::NumCast::from(0.6)
-                    .unwrap_or_else(|| T::zero()),
-                gpu_utilization: scirs2_core::numeric::NumCast::from(0.8)
-                    .unwrap_or_else(|| T::zero()),
+                active_processes: sample.process_count,
+                memory_pressure: memory_pressure_from_sample(&sample),
+                cpu_load_average: sample
+                    .load_average_per_cpu
+                    .and_then(scirs2_core::numeric::NumCast::from),
+                gpu_utilization: sample
+                    .gpu_utilization
+                    .and_then(scirs2_core::numeric::NumCast::from),
             };
 
             {
-                let mut history = self.usage_history.lock().expect("lock poisoned");
+                let mut history = lock_recovering(&self.usage_history);
                 history.push(snapshot);
-
-                // Clean old history
-                let cutoff_time = Instant::now() - self.monitoring_config.history_retention;
-                history.retain(|s| s.timestamp > cutoff_time);
+                let cutoff_time = now
+                    .checked_sub(self.monitoring_config.history_retention)
+                    .unwrap_or(now);
+                history.retain(|s| s.timestamp >= cutoff_time);
             }
         }
 
@@ -900,7 +1037,7 @@ where
         }
 
         let current_usage = {
-            let usage = self.current_usage.lock().expect("lock poisoned");
+            let usage = lock_recovering(&self.current_usage);
             usage.clone()
         };
 
@@ -913,27 +1050,73 @@ where
             }
         }
 
-        // Sort by priority
-        optimization_actions.sort_by_key(|a| a.priority);
+        // Most urgent first (F25). `OptimizationPriority` derives `Ord` with
+        // `Low < Medium < High < Critical`, so the previous ascending
+        // `sort_by_key(|a| a.priority)` put the *least* urgent action at the front —
+        // the opposite of what a caller applying a prefix of the list needs.
+        optimization_actions.sort_by_key(|action| std::cmp::Reverse(action.priority));
 
         Ok(optimization_actions)
     }
 
-    /// Get current resource usage
+    /// Get current resource usage.
+    ///
+    /// Recovers from a poisoned mutex instead of panicking (F22): the guarded data
+    /// is a plain snapshot with no invariants that a panicking writer could have
+    /// broken, so one panic elsewhere must not make this getter panic forever.
     pub fn get_current_usage(&self) -> ResourceUsage<T> {
-        let usage = self.current_usage.lock().expect("lock poisoned");
-        usage.clone()
+        lock_recovering(&self.current_usage).clone()
     }
 
-    /// Get usage history
+    /// Get usage history. Poison-recovering, for the same reason as
+    /// [`ResourceMonitor::get_current_usage`].
     pub fn get_usage_history(&self) -> Vec<ResourceSnapshot<T>> {
-        let history = self.usage_history.lock().expect("lock poisoned");
-        history.clone()
+        lock_recovering(&self.usage_history).clone()
     }
 
     /// Get monitoring state
     pub fn get_monitoring_state(&self) -> MonitoringState {
         self.monitoring_state
+    }
+
+    /// Replace the resource trackers. This is the injection point for real
+    /// telemetry: hand in a [`SystemResourceTracker::with_telemetry`] built over a
+    /// source that can measure what the default cannot (F12).
+    pub fn set_trackers(&mut self, monitors: Vec<Box<dyn ResourceTracker<T>>>) {
+        self.monitors = monitors;
+    }
+
+    /// Replace the alert handlers.
+    pub fn set_alert_handlers(&mut self, handlers: Vec<Box<dyn AlertHandler<T>>>) {
+        self.alert_handlers = handlers;
+    }
+
+    /// Replace the optimization strategies.
+    pub fn set_optimization_strategies(&mut self, strategies: Vec<Box<dyn ResourceOptimizer<T>>>) {
+        self.optimization_strategies = strategies;
+    }
+
+    /// Names of the telemetry sources currently backing this monitor.
+    pub fn telemetry_source_names(&self) -> Vec<&str> {
+        self.monitors.iter().map(|monitor| monitor.name()).collect()
+    }
+
+    /// Deliberately poison both internal mutexes, so a test can prove the getters
+    /// recover (F22) rather than panicking forever.
+    #[cfg(test)]
+    pub(crate) fn poison_locks_for_test(&self) {
+        for _ in 0..2 {
+            let usage = std::sync::Arc::clone(&self.current_usage);
+            let history = std::sync::Arc::clone(&self.usage_history);
+            let handle = std::thread::spawn(move || {
+                let _usage_guard = usage.lock();
+                let _history_guard = history.lock();
+                panic!("deliberate panic to poison the resource-monitor mutexes");
+            });
+            let _ = handle.join();
+        }
+        debug_assert!(self.current_usage.is_poisoned());
+        debug_assert!(self.usage_history.is_poisoned());
     }
 
     /// Update constraints
@@ -956,14 +1139,14 @@ where
             usage_trend,
             efficiency_score,
             total_samples: history.len(),
-            monitoring_duration: if !history.is_empty() {
-                history
-                    .last()
-                    .expect("unwrap failed")
-                    .timestamp
-                    .duration_since(history.first().expect("unwrap failed").timestamp)
-            } else {
-                Duration::from_secs(0)
+            monitoring_duration: match (history.first(), history.last()) {
+                // `duration_since` on `Instant` panics if the argument is later;
+                // history is append-only and monotonic, but `saturating_duration_since`
+                // makes that structural rather than an assumption.
+                (Some(first), Some(last)) => {
+                    last.timestamp.saturating_duration_since(first.timestamp)
+                }
+                _ => Duration::from_secs(0),
             },
             recommendations,
             constraint_violations: self.check_violations().unwrap_or_default(),
@@ -1317,5 +1500,324 @@ mod tests {
         let stable_values = vec![1.0, 1.0, 1.0, 1.0, 1.0];
         let stable_trend = monitor.calculate_metric_trend(stable_values);
         assert!(matches!(stable_trend, TrendDirection::Stable));
+    }
+    use super::super::telemetry::FixedTelemetry;
+
+    /// Build a monitor whose single tracker reports exactly `sample`.
+    fn monitor_with(
+        constraints: ResourceConstraints<f64>,
+        sample: TelemetrySample,
+    ) -> ResourceMonitor<f64> {
+        let mut monitor = ResourceMonitor::<f64>::new(constraints);
+        monitor.set_trackers(vec![Box::new(SystemResourceTracker::with_telemetry(
+            "fixed".to_string(),
+            Duration::from_secs(1),
+            Box::new(FixedTelemetry::new("fixed", sample)),
+        ))]);
+        monitor
+    }
+
+    // ---- F12: no fabricated telemetry -----------------------------------
+
+    /// The default tracker must not report the old invented constants, and every
+    /// unmeasurable metric must be `None`.
+    #[test]
+    fn the_default_tracker_reports_no_fabricated_metrics() {
+        use super::ResourceTracker;
+        let tracker = SystemResourceTracker::new("t".to_string(), Duration::from_secs(1));
+        assert_eq!(tracker.telemetry_name(), "std");
+
+        let metrics = <SystemResourceTracker as ResourceTracker<f64>>::get_system_metrics(&tracker)
+            .expect("metrics");
+
+        // These were 4 GPUs, 1 TB disk (500 GB free), 1 GB/s, 65 C and 250 W.
+        assert_eq!(metrics.available_gpu_devices, None);
+        assert_eq!(metrics.available_disk_gb, None);
+        assert_eq!(metrics.network_bandwidth, None);
+        assert_eq!(metrics.system_temperature, None);
+        assert_eq!(metrics.power_consumption, None);
+        // CPU count is genuinely measurable.
+        assert!(metrics.available_cpu_cores.is_some_and(|cores| cores >= 1));
+
+        let usage = <SystemResourceTracker as ResourceTracker<f64>>::get_current_usage(&tracker)
+            .expect("usage");
+        // Memory was a fixed 16.0 GB with a 19.2 GB "peak"; now it is either a real
+        // measurement or the accumulator identity.
+        assert_ne!(usage.memory_gb, 16.0);
+        assert_ne!(usage.peak_memory_gb, 19.2);
+        assert!(usage.memory_gb >= 0.0 && usage.memory_gb.is_finite());
+        // These were 0.25 kWh, 1 GB network, 2 GB disk I/O, 0.8 efficiency, $0.50.
+        assert_eq!(usage.energy_kwh, 0.0);
+        assert_eq!(usage.network_io_gb, 0.0);
+        assert_eq!(usage.disk_io_gb, 0.0);
+        assert_eq!(usage.cost_usd, 0.0);
+    }
+
+    /// The core F12 hazard: a tight constraint must not abort a search on the
+    /// strength of an unmeasured resource.
+    #[test]
+    fn unknown_measurements_are_treated_as_unlimited() {
+        use super::ResourceTracker;
+        let tracker = SystemResourceTracker::with_telemetry(
+            "blind".to_string(),
+            Duration::from_secs(1),
+            Box::new(FixedTelemetry::new("blind", TelemetrySample::unknown())),
+        );
+
+        // An absurdly tight budget on every axis.
+        let mut constraints = ResourceConstraints::<f64>::default();
+        constraints.hardware_resources.max_memory_gb = 0.001;
+        constraints.max_memory_gb = 0.001;
+        constraints.max_computation_hours = 0.0;
+        constraints.max_energy_kwh = 0.0;
+        constraints.max_cost_usd = 0.0;
+
+        let violations = tracker.check_limits(&constraints).expect("check_limits");
+        assert!(
+            violations.is_empty(),
+            "an unmeasurable resource must never produce a violation, got {:?}",
+            violations
+                .iter()
+                .map(|v| v.violation_type)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A measured value over budget still must be reported — the guard must not
+    /// have disabled enforcement altogether.
+    #[test]
+    fn measured_overruns_are_still_reported() {
+        use super::ResourceTracker;
+        let sample = TelemetrySample {
+            process_memory_gb: Some(9.0),
+            temperature_celsius: Some(95.0),
+            power_watts: Some(1500.0),
+            ..TelemetrySample::unknown()
+        };
+        let tracker = SystemResourceTracker::with_telemetry(
+            "hot".to_string(),
+            Duration::from_secs(1),
+            Box::new(FixedTelemetry::new("hot", sample)),
+        );
+
+        let mut constraints = ResourceConstraints::<f64>::default();
+        constraints.hardware_resources.max_memory_gb = 4.0;
+
+        let violations = tracker.check_limits(&constraints).expect("check_limits");
+        let kinds: Vec<String> = violations
+            .iter()
+            .map(|v| format!("{:?}", v.violation_type))
+            .collect();
+        assert!(kinds.contains(&"MemoryExceeded".to_string()), "{kinds:?}");
+        assert!(
+            kinds.contains(&"TemperatureExceeded".to_string()),
+            "{kinds:?}"
+        );
+        assert!(kinds.contains(&"PowerExceeded".to_string()), "{kinds:?}");
+
+        // A generous budget produces no memory violation.
+        constraints.hardware_resources.max_memory_gb = 64.0;
+        let relaxed = tracker.check_limits(&constraints).expect("check_limits");
+        assert!(!relaxed
+            .iter()
+            .any(|v| matches!(v.violation_type, ViolationType::MemoryExceeded)));
+    }
+
+    /// `update_usage` must actually record what the tracker measured, and the
+    /// snapshot's derived fields must be measured or `None` — never the old
+    /// hard-coded `1` / `Low` / `0.6` / `0.8`.
+    #[test]
+    fn update_usage_records_measured_values_and_no_hardcoded_ones() {
+        let sample = TelemetrySample {
+            process_memory_gb: Some(2.5),
+            total_memory_gb: Some(16.0),
+            available_memory_gb: Some(2.0),
+            logical_cpus: Some(8),
+            load_average_per_cpu: Some(0.375),
+            process_count: Some(412),
+            ..TelemetrySample::unknown()
+        };
+        let mut monitor = monitor_with(ResourceConstraints::default(), sample);
+
+        // Nothing is recorded while monitoring is stopped.
+        monitor.update_usage().expect("update while stopped");
+        assert!(monitor.get_usage_history().is_empty());
+
+        monitor.start_monitoring().expect("start");
+        monitor.update_usage().expect("update");
+
+        let usage = monitor.get_current_usage();
+        assert_eq!(usage.memory_gb, 2.5, "the measured RSS must be recorded");
+
+        let history = monitor.get_usage_history();
+        assert_eq!(history.len(), 1);
+        let snapshot = &history[0];
+        assert_eq!(snapshot.active_processes, Some(412));
+        assert_eq!(snapshot.cpu_load_average, Some(0.375));
+        assert_ne!(
+            snapshot.cpu_load_average,
+            Some(0.6),
+            "0.6 was the hardcoded load average"
+        );
+        assert_eq!(
+            snapshot.gpu_utilization, None,
+            "GPU utilization is unmeasurable here; 0.8 was fabricated"
+        );
+        // 14/16 = 87.5% used -> High, derived, not the hardcoded Low.
+        assert!(
+            matches!(snapshot.memory_pressure, Some(MemoryPressure::High)),
+            "got {:?}",
+            snapshot.memory_pressure
+        );
+        assert_eq!(snapshot.system_metrics.available_cpu_cores, Some(8));
+
+        // The summary now reflects real data instead of an untouched default.
+        let summary = monitor.get_usage_summary();
+        assert_eq!(summary.total_memory_gb, 2.5);
+    }
+
+    #[test]
+    fn a_blind_monitor_records_a_snapshot_with_everything_unknown() {
+        let mut monitor = monitor_with(ResourceConstraints::default(), TelemetrySample::unknown());
+        monitor.start_monitoring().expect("start");
+        monitor.update_usage().expect("update");
+
+        let history = monitor.get_usage_history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].active_processes, None);
+        assert_eq!(history[0].memory_pressure, None);
+        assert_eq!(history[0].cpu_load_average, None);
+        assert_eq!(history[0].gpu_utilization, None);
+        assert!(monitor
+            .check_resource_violations()
+            .expect("violations")
+            .is_empty());
+    }
+
+    // ---- F22: poisoned locks are recovered, not fatal --------------------
+
+    #[test]
+    fn a_poisoned_lock_is_recovered_instead_of_panicking_forever() {
+        use std::sync::{Arc, Mutex};
+
+        let shared: Arc<Mutex<u32>> = Arc::new(Mutex::new(7));
+        let poisoner = Arc::clone(&shared);
+        let handle = std::thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock succeeds");
+            panic!("deliberate panic to poison the mutex");
+        });
+        assert!(
+            handle.join().is_err(),
+            "the helper thread must have panicked"
+        );
+        assert!(shared.is_poisoned(), "the mutex must be poisoned");
+
+        // `lock().expect("lock poisoned")` would panic here forever.
+        assert_eq!(*lock_recovering(&shared), 7);
+    }
+
+    #[test]
+    fn getters_survive_a_poisoned_usage_lock() {
+        let sample = TelemetrySample {
+            process_memory_gb: Some(1.25),
+            ..TelemetrySample::unknown()
+        };
+        let mut monitor = monitor_with(ResourceConstraints::default(), sample);
+        monitor.start_monitoring().expect("start");
+        monitor.update_usage().expect("update");
+
+        monitor.poison_locks_for_test();
+
+        // Every getter must still work.
+        assert_eq!(monitor.get_current_usage().memory_gb, 1.25);
+        assert_eq!(monitor.get_usage_history().len(), 1);
+        let report = monitor.generate_report();
+        assert_eq!(report.total_samples, 1);
+        assert!(monitor.optimize_resources().is_ok());
+    }
+
+    // ---- F25: priority ordering ------------------------------------------
+
+    /// An optimizer that always emits an action at a chosen priority, so the sort
+    /// direction can be observed. `MemoryOptimizer` alone cannot do this: it emits
+    /// either `High` or `Low`, and `optimize_resources` filters `Low` out, so every
+    /// surviving action has the same priority and any ordering passes.
+    #[derive(Debug)]
+    struct FixedPriorityOptimizer {
+        name: String,
+        priority: OptimizationPriority,
+    }
+
+    impl ResourceOptimizer<f64> for FixedPriorityOptimizer {
+        fn optimize(
+            &self,
+            _current_usage: &ResourceUsage<f64>,
+            _constraints: &ResourceConstraints<f64>,
+        ) -> Result<OptimizationAction<f64>> {
+            Ok(OptimizationAction {
+                action_type: ActionType::ClearCaches,
+                parameters: HashMap::new(),
+                expected_savings: ResourceUsage::default(),
+                implementation_cost: 0.0,
+                description: format!("{} action", self.name),
+                priority: self.priority,
+            })
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn priority(&self) -> OptimizationPriority {
+            self.priority
+        }
+    }
+
+    #[test]
+    fn optimization_actions_are_returned_most_urgent_first() {
+        let mut monitor = monitor_with(ResourceConstraints::default(), TelemetrySample::unknown());
+        // Registered in an order that an ascending sort would preserve and a
+        // descending sort must reverse.
+        monitor.set_optimization_strategies(vec![
+            Box::new(FixedPriorityOptimizer {
+                name: "medium".to_string(),
+                priority: OptimizationPriority::Medium,
+            }),
+            Box::new(FixedPriorityOptimizer {
+                name: "critical".to_string(),
+                priority: OptimizationPriority::Critical,
+            }),
+            Box::new(FixedPriorityOptimizer {
+                name: "high".to_string(),
+                priority: OptimizationPriority::High,
+            }),
+        ]);
+        monitor.start_monitoring().expect("start");
+        monitor.update_usage().expect("update");
+
+        let actions = monitor.optimize_resources().expect("optimize");
+        let priorities: Vec<OptimizationPriority> =
+            actions.iter().map(|action| action.priority).collect();
+        assert_eq!(
+            priorities,
+            vec![
+                OptimizationPriority::Critical,
+                OptimizationPriority::High,
+                OptimizationPriority::Medium
+            ],
+            "the previous ascending `sort_by_key(|a| a.priority)` yielded \
+             [Medium, High, Critical] — least urgent first"
+        );
+    }
+
+    #[test]
+    fn optimization_can_be_disabled() {
+        let mut monitor = monitor_with(ResourceConstraints::default(), TelemetrySample::unknown());
+        monitor.set_optimization_strategies(vec![Box::new(FixedPriorityOptimizer {
+            name: "critical".to_string(),
+            priority: OptimizationPriority::Critical,
+        })]);
+        monitor.monitoring_config.enable_auto_optimization = false;
+        assert!(monitor.optimize_resources().expect("optimize").is_empty());
     }
 }

@@ -2,9 +2,9 @@
 
 use super::config::TransformerBasedOptimizerConfig;
 use crate::error::Result;
-use scirs2_core::ndarray::{Array1, Array2, Array3, Axis};
+use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 
 /// Type alias for sequence data tuple (gradients, parameters, losses)
@@ -26,7 +26,9 @@ pub enum SequenceProcessingStrategy {
 }
 
 /// Optimization sequence processor
-pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'static> {
+pub struct OptimizationSequenceProcessor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Processing strategy
     strategy: SequenceProcessingStrategy,
 
@@ -39,9 +41,6 @@ pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'stati
     /// Overlap between windows
     window_overlap: usize,
 
-    /// Model dimension
-    model_dimension: usize,
-
     /// Sequence history buffer
     sequence_buffer: SequenceBuffer<T>,
 
@@ -50,37 +49,51 @@ pub struct OptimizationSequenceProcessor<T: Float + Debug + Send + Sync + 'stati
 
     /// Preprocessing pipeline
     preprocessor: SequencePreprocessor<T>,
-
-    /// Chunking strategy
-    chunking: ChunkingStrategy<T>,
 }
 
-impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
-    OptimizationSequenceProcessor<T>
+impl<
+        T: Float
+            + Debug
+            + scirs2_core::numeric::FromPrimitive
+            + scirs2_core::ndarray::ScalarOperand
+            + Send
+            + Sync,
+    > OptimizationSequenceProcessor<T>
 {
     /// Create new sequence processor
+    ///
+    /// # Errors
+    /// Returns `Err` when `config.sequence_length` is zero. The derived window
+    /// size (`sequence_length / 2`) and stride (`window_size - overlap`) must
+    /// both be at least one: a zero stride makes `Iterator::step_by` panic, and
+    /// `window_size - window_overlap` would underflow in release builds. The
+    /// window is therefore floored at 1 and the overlap is kept strictly below
+    /// it.
     pub fn new(config: &TransformerBasedOptimizerConfig<T>) -> Result<Self> {
         let strategy = SequenceProcessingStrategy::SlidingWindow;
         let max_sequence_length = config.sequence_length;
-        let window_size = max_sequence_length / 2;
-        let window_overlap = window_size / 4;
+        if max_sequence_length == 0 {
+            return Err(crate::error::OptimError::InvalidConfig(
+                "sequence_length must be greater than 0".to_string(),
+            ));
+        }
+        let window_size = (max_sequence_length / 2).max(1);
+        // Overlap must stay strictly below the window so the stride is >= 1.
+        let window_overlap = (window_size / 4).min(window_size - 1);
         let model_dimension = config.model_dimension;
 
-        let sequence_buffer = SequenceBuffer::new(1000, model_dimension)?;
+        let sequence_buffer = SequenceBuffer::new(1000)?;
         let statistics = SequenceStatistics::new();
         let preprocessor = SequencePreprocessor::new(model_dimension)?;
-        let chunking = ChunkingStrategy::new(max_sequence_length, window_size)?;
 
         Ok(Self {
             strategy,
             max_sequence_length,
             window_size,
             window_overlap,
-            model_dimension,
             sequence_buffer,
             statistics,
             preprocessor,
-            chunking,
         })
     }
 
@@ -132,9 +145,11 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
             return self.combine_sequences(gradient_history, parameter_history, loss_history);
         }
 
-        // Process in overlapping windows
+        // Process in overlapping windows. `saturating_sub` plus `.max(1)` keeps
+        // the stride positive even if the window/overlap pair is ever mutated
+        // into an inconsistent state: `step_by(0)` panics.
         let mut processed_chunks = Vec::new();
-        let step_size = self.window_size - self.window_overlap;
+        let step_size = self.window_size.saturating_sub(self.window_overlap).max(1);
 
         for start in (0..sequence_length).step_by(step_size) {
             let end = (start + self.window_size).min(sequence_length);
@@ -179,8 +194,14 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
             levels.push(current_level.clone());
         }
 
-        // Return the highest level that fits
-        Ok(levels.last().expect("unwrap failed").clone())
+        // Return the highest level that fits. `levels` is seeded with the
+        // combined sequence before the loop, so it is never empty; taking the
+        // fallible read keeps that local rather than asserting it from afar.
+        levels.pop().ok_or_else(|| {
+            crate::error::OptimError::ComputationError(
+                "hierarchical processing produced no levels".to_string(),
+            )
+        })
     }
 
     /// Process using attention-based selection
@@ -286,11 +307,13 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
         let sequence_length = trajectory.gradient_sequence.shape()[0];
         let mut sequences = Vec::new();
 
-        // Create overlapping sequences for training
-        for start in (0..sequence_length).step_by(self.window_size / 2) {
+        // Create overlapping sequences for training. The stride is floored at 1
+        // because `step_by(0)` panics, which it did for any window size < 2.
+        let stride = (self.window_size / 2).max(1);
+        for start in (0..sequence_length).step_by(stride) {
             let end = (start + self.window_size).min(sequence_length);
 
-            if end - start < self.window_size / 2 {
+            if end - start < stride {
                 break; // Skip sequences that are too short
             }
 
@@ -445,7 +468,13 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
             .map(|(i, &score)| (i, score))
             .collect();
 
-        indexed_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
+        // `total_cmp` is a total order, so a NaN importance score sorts
+        // deterministically rather than panicking inside `sort_by`.
+        indexed_scores.sort_by(|a, b| {
+            b.1.to_f64()
+                .unwrap_or(f64::NAN)
+                .total_cmp(&a.1.to_f64().unwrap_or(f64::NAN))
+        });
 
         let mut selected_indices: Vec<usize> = indexed_scores
             .into_iter()
@@ -463,15 +492,20 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
         let window_size = 5;
         let threshold = scirs2_core::numeric::NumCast::from(0.1).unwrap_or_else(|| T::zero());
 
-        for i in window_size..losses.len() - window_size {
-            let before_mean = losses
-                .slice(s![i - window_size..i])
-                .mean()
-                .expect("unwrap failed");
-            let after_mean = losses
-                .slice(s![i..i + window_size])
-                .mean()
-                .expect("unwrap failed");
+        // `losses.len() - window_size` underflowed (usize) for any trajectory
+        // shorter than 2*window_size, producing a huge upper bound and an
+        // out-of-bounds slice panic. Bail out instead when there is not enough
+        // history on both sides of a candidate change point.
+        let last_candidate = losses.len().saturating_sub(window_size);
+        for i in window_size..last_candidate {
+            let before_mean = match losses.slice(s![i - window_size..i]).mean() {
+                Some(m) => m,
+                None => continue,
+            };
+            let after_mean = match losses.slice(s![i..i + window_size]).mean() {
+                Some(m) => m,
+                None => continue,
+            };
 
             if (before_mean - after_mean).abs() > threshold {
                 change_points.push(i);
@@ -534,7 +568,9 @@ impl<T: Float + Debug + scirs2_core::numeric::FromPrimitive + Send + Sync>
 }
 
 /// Sequence buffer for storing optimization history
-pub struct SequenceBuffer<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceBuffer<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Gradient history
     gradient_buffer: VecDeque<Array2<T>>,
 
@@ -546,19 +582,23 @@ pub struct SequenceBuffer<T: Float + Debug + Send + Sync + 'static> {
 
     /// Maximum buffer size
     max_size: usize,
-
-    /// Model dimension
-    model_dimension: usize,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SequenceBuffer<T> {
-    pub fn new(max_size: usize, model_dimension: usize) -> Result<Self> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequenceBuffer<T>
+{
+    /// A buffer holding at most `max_size` recorded sequences.
+    ///
+    /// The feature width is not a buffer concern: it belongs to
+    /// [`SequencePreprocessor`], which is the component that actually truncates
+    /// to it. The duplicate `model_dimension` this used to store was never read
+    /// and could silently disagree with the preprocessor's.
+    pub fn new(max_size: usize) -> Result<Self> {
         Ok(Self {
             gradient_buffer: VecDeque::new(),
             parameter_buffer: VecDeque::new(),
             loss_buffer: VecDeque::new(),
             max_size,
-            model_dimension,
         })
     }
 
@@ -617,7 +657,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceBuffer<T> {
 }
 
 /// Sequence statistics tracker
-pub struct SequenceStatistics<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceStatistics<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Gradient statistics
     gradient_stats: StatisticsAccumulator<T>,
 
@@ -631,13 +673,17 @@ pub struct SequenceStatistics<T: Float + Debug + Send + Sync + 'static> {
     length_stats: StatisticsAccumulator<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for SequenceStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for SequenceStatistics<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequenceStatistics<T>
+{
     pub fn new() -> Self {
         Self {
             gradient_stats: StatisticsAccumulator::new(),
@@ -657,7 +703,7 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
         self.parameter_stats.update_from_array2(parameters);
         self.loss_stats.update_from_array1(losses);
         self.length_stats
-            .update(T::from(gradients.shape()[0]).expect("unwrap failed"));
+            .update(crate::common::cast_scalar(gradients.shape()[0])?);
 
         Ok(())
     }
@@ -682,20 +728,28 @@ impl<T: Float + Debug + Send + Sync + 'static> SequenceStatistics<T> {
     }
 }
 
-/// Sequence preprocessor
-pub struct SequencePreprocessor<T: Float + Debug + Send + Sync + 'static> {
+/// Sequence preprocessor.
+///
+/// The per-feature normalization statistics this used to declare were never
+/// populated or consulted — `combine_sequences` normalizes a loss against the
+/// first observed loss instead — so the empty map has been removed rather than
+/// left as a permanently-empty cache.
+pub struct SequencePreprocessor<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Model dimension
     model_dimension: usize,
 
-    /// Normalization statistics
-    normalization_stats: HashMap<String, (T, T)>, // (mean, std)
+    _element: std::marker::PhantomData<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> SequencePreprocessor<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    SequencePreprocessor<T>
+{
     pub fn new(model_dimension: usize) -> Result<Self> {
         Ok(Self {
             model_dimension,
-            normalization_stats: HashMap::new(),
+            _element: std::marker::PhantomData,
         })
     }
 
@@ -754,7 +808,9 @@ impl<T: Float + Debug + Send + Sync + 'static> SequencePreprocessor<T> {
 }
 
 /// Chunking strategy
-pub struct ChunkingStrategy<T: Float + Debug + Send + Sync + 'static> {
+pub struct ChunkingStrategy<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     /// Maximum chunk size
     max_chunk_size: usize,
 
@@ -765,8 +821,25 @@ pub struct ChunkingStrategy<T: Float + Debug + Send + Sync + 'static> {
     chunk_stats: StatisticsAccumulator<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> ChunkingStrategy<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    ChunkingStrategy<T>
+{
+    /// # Errors
+    /// Returns `Err` when `max_chunk_size` is zero or `overlap_size` is not
+    /// strictly smaller than it — either would make the chunking stride
+    /// (`max_chunk_size - overlap_size`) zero or underflow, and a zero stride
+    /// makes `Iterator::step_by` panic.
     pub fn new(max_chunk_size: usize, overlap_size: usize) -> Result<Self> {
+        if max_chunk_size == 0 {
+            return Err(crate::error::OptimError::InvalidConfig(
+                "max_chunk_size must be greater than 0".to_string(),
+            ));
+        }
+        if overlap_size >= max_chunk_size {
+            return Err(crate::error::OptimError::InvalidConfig(format!(
+                "overlap_size ({overlap_size}) must be smaller than max_chunk_size ({max_chunk_size})"
+            )));
+        }
         Ok(Self {
             max_chunk_size,
             overlap_size,
@@ -774,20 +847,31 @@ impl<T: Float + Debug + Send + Sync + 'static> ChunkingStrategy<T> {
         })
     }
 
+    /// Accumulated statistics over every element of every chunk this strategy
+    /// has produced.
+    ///
+    /// `create_chunks` used to build the chunks without ever feeding the
+    /// accumulator, so these statistics were permanently empty.
+    pub fn chunk_stats(&self) -> &StatisticsAccumulator<T> {
+        &self.chunk_stats
+    }
+
     pub fn create_chunks(&mut self, sequence: &Array2<T>) -> Result<Vec<Array2<T>>> {
         let sequence_length = sequence.shape()[0];
         let mut chunks = Vec::new();
 
         if sequence_length <= self.max_chunk_size {
+            self.chunk_stats.update_from_array2(sequence);
             chunks.push(sequence.clone());
             return Ok(chunks);
         }
 
-        let step_size = self.max_chunk_size - self.overlap_size;
+        let step_size = self.max_chunk_size.saturating_sub(self.overlap_size).max(1);
 
         for start in (0..sequence_length).step_by(step_size) {
             let end = (start + self.max_chunk_size).min(sequence_length);
             let chunk = sequence.slice(s![start..end, ..]).to_owned();
+            self.chunk_stats.update_from_array2(&chunk);
             chunks.push(chunk);
 
             if end >= sequence_length {
@@ -801,7 +885,9 @@ impl<T: Float + Debug + Send + Sync + 'static> ChunkingStrategy<T> {
 
 /// Supporting data structures
 #[derive(Debug, Clone)]
-pub struct SequenceSegment<T: Float + Debug + Send + Sync + 'static> {
+pub struct SequenceSegment<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     pub gradients: Array2<T>,
     pub parameters: Array2<T>,
     pub losses: Array1<T>,
@@ -809,7 +895,9 @@ pub struct SequenceSegment<T: Float + Debug + Send + Sync + 'static> {
     pub end_index: usize,
 }
 
-pub struct StatisticsAccumulator<T: Float + Debug + Send + Sync + 'static> {
+pub struct StatisticsAccumulator<
+    T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static,
+> {
     count: usize,
     sum: T,
     sum_sq: T,
@@ -817,13 +905,17 @@ pub struct StatisticsAccumulator<T: Float + Debug + Send + Sync + 'static> {
     max: T,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for StatisticsAccumulator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static> Default
+    for StatisticsAccumulator<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> StatisticsAccumulator<T> {
+impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'static>
+    StatisticsAccumulator<T>
+{
     pub fn new() -> Self {
         Self {
             count: 0,
@@ -910,10 +1002,10 @@ mod tests {
 
     #[test]
     fn test_sequence_buffer() {
-        let buffer = SequenceBuffer::<f32>::new(10, 64);
+        let buffer = SequenceBuffer::<f32>::new(10);
         assert!(buffer.is_ok());
 
-        let mut buf = buffer.expect("unwrap failed");
+        let mut buf = buffer.expect("SequenceBuffer::new should succeed");
         let gradients = Array2::<f32>::ones((5, 64));
         let parameters = Array2::<f32>::ones((5, 64));
         let losses = Array1::<f32>::ones(5);
@@ -952,13 +1044,13 @@ mod tests {
         let chunking = ChunkingStrategy::<f32>::new(10, 2);
         assert!(chunking.is_ok());
 
-        let mut strategy = chunking.expect("unwrap failed");
+        let mut strategy = chunking.expect("ChunkingStrategy::new should succeed");
         let sequence = Array2::<f32>::ones((25, 5));
 
         let chunks = strategy.create_chunks(&sequence);
         assert!(chunks.is_ok());
 
-        let chunk_vec = chunks.expect("unwrap failed");
+        let chunk_vec = chunks.expect("create_chunks should succeed");
         assert!(chunk_vec.len() > 1);
     }
 }

@@ -1,6 +1,6 @@
 //! # OptiRS Bench - Benchmarking and Performance Analysis
 //!
-//! **Version:** 0.3.1
+//! **Version:** 0.3.2
 //! **Status:** Available
 //!
 //! This crate provides comprehensive benchmarking, profiling, performance analysis, and regression
@@ -8,8 +8,8 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
-//! - `optirs-core` 0.1.0 - Core optimizers
+//! - `scirs2-core` 0.6.5 - Required foundation
+//! - `optirs-core` 0.3.2 - Core optimizers
 //!
 //! ## Features
 //!
@@ -20,19 +20,36 @@
 //! - **Cross-Platform Testing**: Validate optimizers across different hardware and OS
 //! - **Security Auditing**: Scan for security vulnerabilities and compliance issues
 //! - **CI/CD Integration**: Automated testing and reporting for continuous integration
-//! - **Visualization Tools**: Generate plots and reports for optimization analysis
+//! - **Visualization Tools**: Text-based visualizations (parameter heatmaps, state
+//!   summaries) plus structured [`visualization::VisualizationExport`] data for
+//!   feeding external plotting tools; this crate does not render image/HTML plots
+//!   itself
 //!
 //! ## Architecture
 //!
-//! The crate is organized into several main modules:
+//! The crate is organized into modules by concern (see the sidebar for the full list);
+//! the main ones are:
 //!
-//! - `benchmarking`: Core benchmarking functionality and test suites
-//! - `memory`: Memory profiling, leak detection, and optimization
-//! - `regression`: Performance regression detection and alerting
-//! - `security`: Security auditing and vulnerability scanning
-//! - `visualization`: Plotting and reporting tools
-//! - `ci_cd_automation`: Continuous integration and deployment automation
-//! - `cross_platform`: Cross-platform testing and validation
+//! - `mod_impl` (private; re-exported at the crate root): [`OptimizerBenchmark`],
+//!   [`GradientFlowAnalyzer`], and the [`visualization`] submodule -- the core
+//!   benchmarking and gradient-flow-analysis types.
+//! - [`report_templates`]: Markdown/plain-text/CSV report rendering.
+//! - [`regression_tester`], [`performance_regression_detector`]: statistical
+//!   regression detection.
+//! - [`memory_optimizer`], [`memory_leak_detector`], [`advanced_memory_leak_detector`],
+//!   [`advanced_leak_detectors`], [`enhanced_memory_monitor`], [`leak_tool_reports`]:
+//!   memory profiling, leak detection, and third-party leak-tool report parsing.
+//! - [`security_auditor`], [`comprehensive_security_auditor`]: security auditing and
+//!   vulnerability scanning.
+//! - [`ci_cd_automation`]: CI/CD platform configuration and automated test execution.
+//! - [`advanced_cross_platform_orchestrator`], [`cross_platform_tester`]:
+//!   cross-platform test orchestration.
+//! - [`cross_framework`]: PyTorch/TensorFlow comparison benchmarking.
+//! - [`anomaly_detection`], [`performance_forecast`], [`performance_pattern_recognition`],
+//!   [`performance_prediction`]: statistical analytics over benchmark history.
+//! - [`system_sampler`]: real process/system metrics via `sysinfo`.
+//! - [`notification_transport`]: alert delivery (curl/file/log transports).
+//! - [`documentation_analyzer`]: documentation-quality analysis for Rust projects.
 //!
 //! ## Usage
 //!
@@ -73,6 +90,7 @@ pub mod advanced_cross_platform_orchestrator;
 pub mod advanced_leak_detectors;
 pub mod advanced_memory_leak_detector;
 pub mod advanced_pattern_detection;
+pub mod anomaly_detection;
 pub mod automated_test_runners;
 pub mod ci_cd_automation;
 pub mod comprehensive_security_auditor;
@@ -80,12 +98,19 @@ pub mod cross_framework;
 pub mod cross_platform_tester;
 pub mod documentation_analyzer;
 pub mod enhanced_memory_monitor;
+pub mod leak_tool_reports;
 pub mod memory_leak_detector;
 pub mod memory_optimizer;
+pub mod notification_transport;
+pub mod performance_forecast;
+pub mod performance_pattern_recognition;
+pub mod performance_prediction;
 pub mod performance_profiler;
 pub mod performance_regression_detector;
 pub mod regression_tester;
+pub mod report_templates;
 pub mod security_auditor;
+pub mod system_sampler;
 
 // Re-export common types for convenience
 pub use mod_impl::{
@@ -100,6 +125,9 @@ pub use mod_impl::visualization::{
     VisualizationExport,
 };
 
+// Re-export report generation types
+pub use report_templates::{ReportFormat, ReportTemplate};
+
 /// Prelude module for common imports
 pub mod prelude {
     pub use crate::{
@@ -113,6 +141,8 @@ pub mod prelude {
         VisualizationExport,
     };
 
+    pub use crate::report_templates::{ReportFormat, ReportTemplate};
+
     pub use scirs2_core::ndarray::{Array, Array1, Array2, ArrayView, ArrayViewMut};
     pub use scirs2_core::random::{thread_rng, Rng};
 }
@@ -120,7 +150,6 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_relative_eq;
 
     #[test]
     fn test_library_integration() {

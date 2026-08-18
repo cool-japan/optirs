@@ -466,7 +466,14 @@ impl PeerReviewSystem {
         session_id
     }
 
-    /// Assign reviewers to a session
+    /// Assign reviewers to a session.
+    ///
+    /// Skips any reviewer who is unknown or who already has an active
+    /// (pending/accepted/completed) assignment for this session -- without
+    /// this check, calling this twice with overlapping reviewer lists (or
+    /// passing a duplicate ID) created two assignments for the same
+    /// (session, reviewer) pair, which corrupted the reviews-complete count
+    /// in [`Self::submit_review`] and double-counted reviewer workload.
     pub fn assign_reviewers(
         &mut self,
         session_id: &str,
@@ -479,11 +486,25 @@ impl PeerReviewSystem {
 
         let mut assignment_ids = Vec::new();
         let now = Utc::now();
-        let session = self.sessions.get(session_id).expect("unwrap failed");
+        let deadline = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| {
+                OptimError::InvalidState(format!("session '{session_id}' vanished during lookup"))
+            })?
+            .deadline;
 
         for reviewer_id in reviewer_ids {
             if !self.reviewers.contains_key(reviewer_id) {
                 continue; // Skip unknown reviewers
+            }
+
+            let already_assigned = self
+                .assignments
+                .iter()
+                .any(|a| a.session_id == session_id && a.reviewer_id == *reviewer_id);
+            if already_assigned {
+                continue;
             }
 
             let assignment_id = uuid::Uuid::new_v4().to_string();
@@ -492,7 +513,7 @@ impl PeerReviewSystem {
                 session_id: session_id.to_string(),
                 reviewer_id: reviewer_id.clone(),
                 assigned_at: now,
-                due_date: session.deadline,
+                due_date: deadline,
                 status: AssignmentStatus::Pending,
                 assignment_method: assignment_method.clone(),
                 expertise_match: self.calculate_expertise_match(reviewer_id, session_id),
@@ -500,6 +521,13 @@ impl PeerReviewSystem {
 
             self.assignments.push(assignment);
             assignment_ids.push(assignment_id);
+
+            // Track load on the reviewer record itself: this is what
+            // `get_available_reviewers` consults to avoid overloading a
+            // reviewer, so it must reflect assignments as they happen.
+            if let Some(reviewer) = self.reviewers.get_mut(reviewer_id) {
+                reviewer.availability.current_load += 1;
+            }
         }
 
         // Update session status
@@ -510,7 +538,15 @@ impl PeerReviewSystem {
         Ok(assignment_ids)
     }
 
-    /// Submit a peer review
+    /// Submit a peer review.
+    ///
+    /// Rejects a second submission from the same reviewer for the same
+    /// session: without this check, a duplicate call inflated
+    /// `session.reviews` past the number of distinct assigned reviewers,
+    /// which both skewed the meta-review consensus (the same opinion
+    /// counted twice) and could prevent `reviews.len() == total_assignments`
+    /// from ever matching (so the session would never reach
+    /// `ReviewsComplete`).
     pub fn submit_review(
         &mut self,
         session_id: &str,
@@ -531,6 +567,12 @@ impl PeerReviewSystem {
                 OptimError::InvalidConfig("Reviewer not assigned to this session".to_string())
             })?;
 
+        if assignment.status == AssignmentStatus::Completed {
+            return Err(OptimError::InvalidConfig(format!(
+                "reviewer '{reviewer_id}' already submitted a review for session '{session_id}'"
+            )));
+        }
+
         // Update assignment status
         assignment.status = AssignmentStatus::Completed;
 
@@ -546,6 +588,15 @@ impl PeerReviewSystem {
 
         if session.reviews.len() == total_assignments {
             session.status = ReviewSessionStatus::ReviewsComplete;
+        }
+
+        // A completed review is no longer part of the reviewer's *active*
+        // load (mirrors `calculate_reviewer_workload`, which only counts
+        // Pending/Accepted assignments), freeing capacity for new
+        // assignments now that this one is done.
+        if let Some(reviewer) = self.reviewers.get_mut(reviewer_id) {
+            reviewer.availability.current_load =
+                reviewer.availability.current_load.saturating_sub(1);
         }
 
         Ok(())
@@ -569,8 +620,10 @@ impl PeerReviewSystem {
             self.create_meta_review(session, meta_reviewer_id)
         };
 
-        // Now update the session with mutable access
-        let session = self.sessions.get_mut(session_id).expect("unwrap failed"); // Safe because we just checked it exists
+        // Now update the session with mutable access.
+        let session = self.sessions.get_mut(session_id).ok_or_else(|| {
+            OptimError::InvalidState(format!("session '{session_id}' vanished during lookup"))
+        })?;
         session.meta_review = Some(meta_review);
         session.status = ReviewSessionStatus::Complete;
 
@@ -625,7 +678,11 @@ impl PeerReviewSystem {
                 .map(|s| s.len())
                 .sum::<usize>();
 
-        let length_score = ((review_length as f64).ln() / 10.0).min(1.0);
+        // `ln_1p` (ln(1+x)) rather than `ln(x)`: a review with zero
+        // measured length (empty comments/strengths/weaknesses) is a
+        // realistic, valid input, and `ln(0) == -inf` would otherwise poison
+        // the entire quality score to `-inf` (see regression test below).
+        let length_score = ((review_length as f64).ln_1p() / 10.0).clamp(0.0, 1.0);
         quality_score += length_score * 0.3;
         total_weight += 0.3;
 
@@ -645,18 +702,54 @@ impl PeerReviewSystem {
         quality_score / total_weight
     }
 
+    /// How well a reviewer's declared expertise covers a session's criteria, in
+    /// `[0, 1]`.
+    ///
+    /// The score is the fraction of the session's review criteria whose name or
+    /// description mentions one of the reviewer's expertise areas
+    /// (case-insensitive substring match). A reviewer with no declared expertise
+    /// scores `0.0`, and a session with no criteria yields `0.5` -- there is
+    /// nothing to match against, so neither a good nor a bad match can be
+    /// claimed.
+    ///
+    /// Until 0.3.2 this ignored `sessionid` entirely and returned the constant
+    /// `0.8` for any reviewer with a non-empty `expertise_areas` list and `0.5`
+    /// otherwise, so assignment ranked a cryptographer and a numerical analyst
+    /// identically on an optimization paper.
     fn calculate_expertise_match(&self, reviewer_id: &str, sessionid: &str) -> f64 {
-        // Simplified expertise matching
-        // In practice, you'd use more sophisticated matching algorithms
-        if let Some(reviewer) = self.reviewers.get(reviewer_id) {
-            if reviewer.expertise_areas.is_empty() {
-                0.5 // Default moderate match
-            } else {
-                0.8 // Good match if has expertise areas
-            }
-        } else {
-            0.0
+        let Some(reviewer) = self.reviewers.get(reviewer_id) else {
+            return 0.0;
+        };
+        if reviewer.expertise_areas.is_empty() {
+            return 0.0;
         }
+        let Some(session) = self.sessions.get(sessionid) else {
+            return 0.5;
+        };
+        if session.criteria.is_empty() {
+            return 0.5;
+        }
+
+        let areas: Vec<String> = reviewer
+            .expertise_areas
+            .iter()
+            .map(|area| area.to_ascii_lowercase())
+            .filter(|area| !area.is_empty())
+            .collect();
+        if areas.is_empty() {
+            return 0.0;
+        }
+
+        let matched = session
+            .criteria
+            .iter()
+            .filter(|criterion| {
+                let haystack =
+                    format!("{} {}", criterion.name, criterion.description).to_ascii_lowercase();
+                areas.iter().any(|area| haystack.contains(area))
+            })
+            .count();
+        matched as f64 / session.criteria.len() as f64
     }
 
     fn create_meta_review(&self, session: &ReviewSession, meta_reviewer_id: &str) -> MetaReview {
@@ -699,21 +792,71 @@ impl PeerReviewSystem {
         }
     }
 
+    /// Deterministic consensus: the median of the reviewers' ordinal ranks.
+    ///
+    /// A plain "most common recommendation" vote is not well-defined when
+    /// there is a tie (e.g. two `Accept` and two `Reject`): breaking the tie
+    /// by iterating a `HashMap` makes the outcome depend on hash iteration
+    /// order, so the same set of reviews could yield a different consensus
+    /// recommendation on different runs. The median is always well-defined,
+    /// deterministic, and (unlike the mode) robust to a single outlier
+    /// review.
     fn determine_consensus_recommendation(
         &self,
         recommendations: &[&ReviewRecommendation],
     ) -> ReviewRecommendation {
-        // Simplified consensus algorithm - use majority vote
-        let mut counts = HashMap::new();
-        for rec in recommendations {
-            *counts.entry(rec).or_insert(0) += 1;
+        if recommendations.is_empty() {
+            return ReviewRecommendation::BorderlineReject;
         }
 
-        counts
-            .into_iter()
-            .max_by_key(|(_, count)| *count)
-            .map(|(rec, _)| (*rec).clone())
-            .unwrap_or(ReviewRecommendation::BorderlineReject)
+        let mut ranks: Vec<u8> = recommendations
+            .iter()
+            .map(|rec| Self::recommendation_rank(rec))
+            .collect();
+        ranks.sort_unstable();
+
+        let mid = ranks.len() / 2;
+        let median_rank = if ranks.len().is_multiple_of(2) {
+            // Even count: average the two middle ranks, rounding toward the
+            // more critical (reject) side on an exact half -- an "err on
+            // the side of caution" convention that is itself deterministic.
+            let lower = u16::from(ranks[mid - 1]);
+            let upper = u16::from(ranks[mid]);
+            (lower + upper).div_ceil(2) as u8
+        } else {
+            ranks[mid]
+        };
+
+        Self::recommendation_from_rank(median_rank)
+    }
+
+    /// Ordinal rank of a recommendation from most (0) to least (7)
+    /// favorable, used to compute a deterministic median consensus.
+    fn recommendation_rank(rec: &ReviewRecommendation) -> u8 {
+        match rec {
+            ReviewRecommendation::StrongAccept => 0,
+            ReviewRecommendation::Accept => 1,
+            ReviewRecommendation::WeakAccept => 2,
+            ReviewRecommendation::BorderlineAccept => 3,
+            ReviewRecommendation::BorderlineReject => 4,
+            ReviewRecommendation::WeakReject => 5,
+            ReviewRecommendation::Reject => 6,
+            ReviewRecommendation::StrongReject => 7,
+        }
+    }
+
+    /// Inverse of [`Self::recommendation_rank`].
+    fn recommendation_from_rank(rank: u8) -> ReviewRecommendation {
+        match rank {
+            0 => ReviewRecommendation::StrongAccept,
+            1 => ReviewRecommendation::Accept,
+            2 => ReviewRecommendation::WeakAccept,
+            3 => ReviewRecommendation::BorderlineAccept,
+            4 => ReviewRecommendation::BorderlineReject,
+            5 => ReviewRecommendation::WeakReject,
+            6 => ReviewRecommendation::Reject,
+            _ => ReviewRecommendation::StrongReject,
+        }
     }
 
     fn create_default_quality_metrics() -> Vec<ReviewQualityMetric> {
@@ -848,5 +991,153 @@ mod tests {
 
         let workload = system.calculate_reviewer_workload("reviewer2");
         assert_eq!(workload, 0);
+    }
+
+    fn make_reviewer(id: &str) -> Reviewer {
+        Reviewer {
+            id: id.to_string(),
+            expertise_areas: vec!["optimization".to_string()],
+            experience_level: ExperienceLevel::Senior,
+            review_history: ReviewerHistory::default(),
+            availability: ReviewerAvailability::default(),
+            quality_metrics: ReviewerQualityMetrics::default(),
+            preferences: ReviewerPreferences {
+                preferred_paper_types: Vec::new(),
+                avoid_paper_types: Vec::new(),
+                max_review_length: None,
+                anonymous_preference: true,
+                notification_preferences: NotificationPreferences::default(),
+            },
+        }
+    }
+
+    fn make_review(reviewer_id: &str, recommendation: ReviewRecommendation) -> PeerReview {
+        PeerReview {
+            id: uuid::Uuid::new_v4().to_string(),
+            reviewer_id: reviewer_id.to_string(),
+            recommendation,
+            criterion_scores: HashMap::new(),
+            overall_score: 3.0,
+            confidence: 0.5,
+            written_review: WrittenReview {
+                summary: String::new(),
+                strengths: Vec::new(),
+                weaknesses: Vec::new(),
+                detailed_comments: String::new(),
+                questions: Vec::new(),
+                minor_issues: Vec::new(),
+                suggestions: Vec::new(),
+                committee_comments: None,
+            },
+            status: ReviewStatus::Submitted,
+            submitted_at: Some(Utc::now()),
+            time_spent_minutes: Some(30),
+        }
+    }
+
+    // Regression test for F73: `ln(0)` is `-inf`, and a review with no
+    // written content at all (a realistic, valid input -- e.g. a
+    // placeholder or a reviewer who only filled in scores) has
+    // `review_length == 0`, which used to poison the entire quality score
+    // to `-inf` instead of a valid score in `[0, 1]`.
+    #[test]
+    fn test_calculate_review_quality_handles_empty_review() {
+        let system = PeerReviewSystem::new();
+        let review = make_review("reviewer1", ReviewRecommendation::BorderlineAccept);
+
+        let quality = system.calculate_review_quality(&review);
+
+        assert!(
+            quality.is_finite(),
+            "quality score must be finite, got {quality}"
+        );
+        assert!(
+            (0.0..=1.0).contains(&quality),
+            "quality score must be in [0, 1], got {quality}"
+        );
+    }
+
+    // Regression test for F74: consensus used to be "most frequent
+    // recommendation, ties broken by HashMap iteration order" -- so a tied
+    // vote could yield a different result on different runs for the exact
+    // same input. It must now be the deterministic median, independent of
+    // the order recommendations are supplied in.
+    #[test]
+    fn test_determine_consensus_recommendation_is_deterministic_median() {
+        let system = PeerReviewSystem::new();
+
+        // Tied 1-1 vote between Accept and Reject: the median of ranks
+        // [1, 6] is rank 4 (BorderlineReject), not an order-dependent pick
+        // of either tied recommendation.
+        let accept = ReviewRecommendation::Accept;
+        let reject = ReviewRecommendation::Reject;
+        let order_a = system.determine_consensus_recommendation(&[&accept, &reject]);
+        let order_b = system.determine_consensus_recommendation(&[&reject, &accept]);
+        assert_eq!(order_a, ReviewRecommendation::BorderlineReject);
+        assert_eq!(order_a, order_b, "consensus must not depend on input order");
+
+        // A single outlier must not dominate the median the way it would a
+        // naive average: [StrongAccept, Accept, Reject] medians to Accept.
+        let strong_accept = ReviewRecommendation::StrongAccept;
+        let median = system.determine_consensus_recommendation(&[&reject, &strong_accept, &accept]);
+        assert_eq!(median, ReviewRecommendation::Accept);
+    }
+
+    // Regression test for F75: `assign_reviewers` never updated
+    // `reviewer.availability.current_load`, so the load-based capacity
+    // check in `get_available_reviewers` never actually reflected real
+    // assignments; and neither `assign_reviewers` nor `submit_review`
+    // guarded against the same reviewer being attached to / submitting for
+    // one session twice.
+    #[test]
+    fn test_assign_reviewers_tracks_load_and_rejects_duplicates() {
+        let mut system = PeerReviewSystem::new();
+        system
+            .reviewers
+            .insert("reviewer1".to_string(), make_reviewer("reviewer1"));
+
+        let deadline = Utc::now() + chrono::Duration::days(14);
+        let session_id =
+            system.create_review_session("paper1", ReviewType::DoubleBlind, vec![], deadline);
+
+        // Duplicate ID within a single call must only produce one assignment.
+        let ids = system
+            .assign_reviewers(
+                &session_id,
+                &["reviewer1".to_string(), "reviewer1".to_string()],
+                AssignmentMethod::Manual,
+            )
+            .expect("assignment should succeed");
+        assert_eq!(ids.len(), 1);
+        assert_eq!(system.reviewers["reviewer1"].availability.current_load, 1);
+
+        // A second call for the same (session, reviewer) must be a no-op.
+        let ids_again = system
+            .assign_reviewers(
+                &session_id,
+                &["reviewer1".to_string()],
+                AssignmentMethod::Manual,
+            )
+            .expect("assignment should succeed");
+        assert!(ids_again.is_empty());
+        assert_eq!(system.reviewers["reviewer1"].availability.current_load, 1);
+        assert_eq!(system.calculate_reviewer_workload("reviewer1"), 1);
+
+        // Submitting frees up the reviewer's active load...
+        let review = make_review("reviewer1", ReviewRecommendation::Accept);
+        system
+            .submit_review(&session_id, "reviewer1", review)
+            .expect("first submission should succeed");
+        assert_eq!(system.reviewers["reviewer1"].availability.current_load, 0);
+
+        // ...but a second submission for the same session must be rejected.
+        let duplicate_review = make_review("reviewer1", ReviewRecommendation::Reject);
+        let result = system.submit_review(&session_id, "reviewer1", duplicate_review);
+        assert!(result.is_err(), "duplicate submission must be rejected");
+        assert_eq!(
+            system.sessions[&session_id].reviews.len(),
+            1,
+            "duplicate submission must not be recorded"
+        );
     }
 }

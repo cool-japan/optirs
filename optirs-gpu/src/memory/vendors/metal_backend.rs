@@ -3,13 +3,123 @@
 // This module provides Apple Metal-specific memory management functionality,
 // including device memory allocation, Metal command buffers, and performance
 // optimization features specific to Apple Silicon GPUs.
+//
+// # This is a host-memory simulation, not real Metal
+//
+// Unlike `crate::optimizers`/`crate::shaders`, which drive a *real* Metal
+// device through `scirs2_core::gpu::GpuContext` (compiled `.metal` sources,
+// real `MTLBuffer`s, real dispatch), this standalone module does not: it has
+// no `GpuContext` of its own, so "private", "shared", "managed" and
+// "memoryless" storage are all the *same* system-heap allocation (see
+// `sim_alloc`/`sim_dealloc` below), and `MetalDeviceProperties`/`MetalStats`
+// are example numbers, not a query of the real GPU. This module models the
+// `MTLBuffer` memory-management *API shape* for testing that shape in
+// isolation; treat every allocation as host memory and every device number
+// as illustrative. For real Metal compute, use [`crate::optimizers`].
+//
+// This extends to data movement: `blit_copy` copies **zero bytes**. It
+// records a `MetalCommand::BlitCommand` on a queued command buffer, commits
+// and "waits for" that buffer (both of which complete synchronously and
+// never dereference `src`/`dst`), and increments `MetalStats::blit_commands`
+// — that counter says "this many `blit_copy` calls were made," not "this
+// many bytes moved." An earlier revision of
+// `commit_command_buffer`/`wait_until_completed`/`wait_until_idle` also
+// injected a `std::thread::sleep` to imitate command-buffer execution
+// latency; that fake timing has been removed, so every command buffer now
+// completes the instant it is committed. `MetalStats::compute_commands`,
+// `MetalStats::render_commands` and `MetalStats::command_buffers_completed`
+// are declared for API-shape completeness but nothing in this module ever
+// increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Upper bound this module's simulated allocator supports for a caller-
+/// requested alignment (this module only ever requests 16 or 64). Also the
+/// fixed header size reserved ahead of every non-empty allocation, so a
+/// request with alignment `<= SIM_ALLOC_ALIGN` needs no per-call alignment
+/// bookkeeping: over-aligning to `SIM_ALLOC_ALIGN` always satisfies a
+/// smaller request too.
+const SIM_ALLOC_ALIGN: usize = 256;
+
+/// Allocate `size` bytes at (at least) `align`-byte alignment through the
+/// system allocator, without the two ways the naive
+/// `std::alloc::alloc(Layout::from_size_align_unchecked(size, align))` this
+/// module used to call was undefined behaviour: a zero-size layout is
+/// unsound to pass to `GlobalAlloc::alloc`, and a real allocation failure
+/// returns null, which must never be treated as valid memory. See
+/// `cuda_backend::sim_alloc` for the full rationale (this mirrors it, with
+/// an added alignment check since this module's alignment is caller-chosen
+/// rather than a fixed constant).
+///
+/// The payload is prefixed with a `SIM_ALLOC_ALIGN`-byte header recording
+/// the requested size, so [`sim_dealloc`] can reconstruct the exact `Layout`
+/// this function used — the `Layout::from_size_align_unchecked(1, 1)` this
+/// module used at free time was a mismatched-layout deallocation, itself
+/// unconditionally undefined behaviour.
+fn sim_alloc(size: usize, align: usize) -> Result<*mut c_void, MetalError> {
+    if !align.is_power_of_two() || align > SIM_ALLOC_ALIGN {
+        return Err(MetalError::AllocationFailed(format!(
+            "unsupported allocation alignment {align}: this simulated backend supports \
+             power-of-two alignments up to {SIM_ALLOC_ALIGN} bytes"
+        )));
+    }
+    if size == 0 {
+        return Ok(SIM_ALLOC_ALIGN as *mut c_void);
+    }
+    let total = SIM_ALLOC_ALIGN.checked_add(size).ok_or_else(|| {
+        MetalError::AllocationFailed(format!(
+            "{size}-byte request overflows the allocator's size limit"
+        ))
+    })?;
+    // Always allocate at `SIM_ALLOC_ALIGN`: since `align <= SIM_ALLOC_ALIGN`
+    // and both are powers of two, this over-aligned block also satisfies the
+    // caller's smaller request.
+    let layout = std::alloc::Layout::from_size_align(total, SIM_ALLOC_ALIGN)
+        .map_err(|e| MetalError::AllocationFailed(format!("invalid allocation layout: {e}")))?;
+    // SAFETY: `layout` has non-zero size (checked above) and a valid
+    // (power-of-two) alignment constructed by `Layout::from_size_align`.
+    let base = unsafe { std::alloc::alloc(layout) };
+    if base.is_null() {
+        return Err(MetalError::AllocationFailed(format!(
+            "allocator returned null for a {size}-byte request"
+        )));
+    }
+    // SAFETY: `base` is non-null and `layout`'s size is at least
+    // `SIM_ALLOC_ALIGN + size >= SIM_ALLOC_ALIGN >= size_of::<usize>()`, so
+    // writing one `usize` at the start of the block is in-bounds.
+    unsafe { (base as *mut usize).write(size) };
+    // SAFETY: `base` was allocated with `total = SIM_ALLOC_ALIGN + size`
+    // bytes, so offsetting by `SIM_ALLOC_ALIGN` stays within (or one past)
+    // the allocation.
+    Ok(unsafe { base.add(SIM_ALLOC_ALIGN) } as *mut c_void)
+}
+
+/// Free a pointer returned by [`sim_alloc`]. A no-op for a null pointer or
+/// the zero-size sentinel — neither was ever allocated.
+///
+/// Only ever called from this module (it is not `pub`) with a pointer
+/// `sim_alloc` returned that has not already been freed — the unsafety of
+/// the pointer arithmetic below is contained to that invariant, matching
+/// this module's existing style of confining `unsafe` to the raw
+/// `std::alloc` calls rather than marking `free()`'s public wrapper unsafe.
+fn sim_dealloc(ptr: *mut c_void) {
+    if ptr.is_null() || (ptr as usize) == SIM_ALLOC_ALIGN {
+        return;
+    }
+    // SAFETY: by this function's contract `ptr` came from `sim_alloc`.
+    let base = unsafe { (ptr as *mut u8).sub(SIM_ALLOC_ALIGN) };
+    // SAFETY: `sim_alloc` wrote a `usize` at `base` before returning.
+    let size = unsafe { (base as *const usize).read() };
+    if let Ok(layout) = std::alloc::Layout::from_size_align(SIM_ALLOC_ALIGN + size, SIM_ALLOC_ALIGN)
+    {
+        // SAFETY: `layout` is exactly the layout `sim_alloc` allocated
+        // `base` with.
+        unsafe { std::alloc::dealloc(base, layout) };
+    }
+}
 
 /// Metal memory backend implementation
 pub struct MetalMemoryBackend {
@@ -17,8 +127,6 @@ pub struct MetalMemoryBackend {
     config: MetalConfig,
     /// Device properties
     device_properties: MetalDeviceProperties,
-    /// Active Metal devices
-    devices: HashMap<u32, MetalDevice>,
     /// Memory pools
     memory_pools: HashMap<MetalMemoryType, MetalMemoryPool>,
     /// Statistics
@@ -207,8 +315,6 @@ pub enum MetalCommand {
 pub struct MetalMemoryPool {
     /// Memory type
     memory_type: MetalMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -307,7 +413,6 @@ impl MetalMemoryPool {
 
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -323,7 +428,9 @@ impl MetalMemoryPool {
         // Try to find suitable free block
         for i in 0..self.free_blocks.len() {
             if self.free_blocks[i].size >= size {
-                let mut block = self.free_blocks.remove(i).expect("unwrap failed");
+                let Some(mut block) = self.free_blocks.remove(i) else {
+                    continue;
+                };
 
                 // Split block if much larger
                 if block.size > size * 2 {
@@ -453,30 +560,9 @@ impl MetalMemoryPool {
         };
 
         match self.memory_type {
-            MetalMemoryType::Private => {
-                // MTLBuffer with private storage
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
-            MetalMemoryType::Shared => {
-                // MTLBuffer with shared storage
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
-            MetalMemoryType::Managed => {
-                // MTLBuffer with managed storage
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
-            }
+            MetalMemoryType::Private => sim_alloc(size, alignment), // MTLBuffer, private storage
+            MetalMemoryType::Shared => sim_alloc(size, alignment),  // MTLBuffer, shared storage
+            MetalMemoryType::Managed => sim_alloc(size, alignment), // MTLBuffer, managed storage
             MetalMemoryType::Memoryless => {
                 // Memoryless render target (tile memory)
                 if size > 8 * 1024 * 1024 {
@@ -485,11 +571,7 @@ impl MetalMemoryPool {
                         "Memoryless allocation too large".to_string(),
                     ));
                 }
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
+                sim_alloc(size, alignment)
             }
         }
     }
@@ -625,8 +707,12 @@ impl MetalCommandManager {
                 .find(|b| b.buffer_id == buffer_id)
             {
                 buffer.committed = true;
-                // Simulate command execution
-                std::thread::sleep(Duration::from_micros(50));
+                // Host-memory simulation (see module docs): there is no real
+                // Metal command queue to submit to, so this used to inject an
+                // artificial `std::thread::sleep` to mimic command-buffer
+                // execution latency before marking the buffer complete. That
+                // fake timing has been removed; the buffer now completes
+                // immediately rather than after a fabricated delay.
                 buffer.completed = true;
                 Ok(())
             } else {
@@ -646,19 +732,19 @@ impl MetalCommandManager {
         buffer_id: u32,
     ) -> Result<(), MetalError> {
         if let Some(queue) = self.queues.iter().find(|q| q.id == queue_id) {
-            if let Some(buffer) = queue
+            if queue
                 .command_buffers
                 .iter()
-                .find(|b| b.buffer_id == buffer_id)
+                .any(|b| b.buffer_id == buffer_id)
             {
-                if buffer.completed {
-                    Ok(())
-                } else {
-                    // In a real implementation, this would poll the Metal API
-                    // For now, assume completion after a short delay
-                    std::thread::sleep(Duration::from_micros(50));
-                    Ok(())
-                }
+                // Host-memory simulation (see module docs): there is no real
+                // Metal command queue to poll, and `commit_command_buffer`
+                // already completes every buffer synchronously, so there is
+                // nothing left to wait for here. This used to inject an
+                // artificial `std::thread::sleep` in the not-yet-completed
+                // case to mimic polling latency; that fake timing has been
+                // removed.
+                Ok(())
             } else {
                 Err(MetalError::InvalidCommandBuffer(
                     "Command buffer not found".to_string(),
@@ -727,7 +813,6 @@ impl MetalMemoryBackend {
         Ok(Self {
             config,
             device_properties,
-            devices: HashMap::new(),
             memory_pools,
             stats: MetalStats::default(),
             command_manager,
@@ -824,32 +909,16 @@ impl MetalMemoryBackend {
 
         // Simulate Metal buffer allocation
         match memory_type {
-            MetalMemoryType::Private => Ok(unsafe {
-                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                    size, alignment,
-                )) as *mut c_void
-            }),
-            MetalMemoryType::Shared => Ok(unsafe {
-                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                    size, alignment,
-                )) as *mut c_void
-            }),
-            MetalMemoryType::Managed => Ok(unsafe {
-                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                    size, alignment,
-                )) as *mut c_void
-            }),
+            MetalMemoryType::Private => sim_alloc(size, alignment),
+            MetalMemoryType::Shared => sim_alloc(size, alignment),
+            MetalMemoryType::Managed => sim_alloc(size, alignment),
             MetalMemoryType::Memoryless => {
                 if size > 8 * 1024 * 1024 {
                     return Err(MetalError::UnsupportedOperation(
                         "Memoryless allocation too large".to_string(),
                     ));
                 }
-                Ok(unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                        size, alignment,
-                    )) as *mut c_void
-                })
+                sim_alloc(size, alignment)
             }
         }
     }
@@ -869,13 +938,10 @@ impl MetalMemoryBackend {
                 ));
             }
         } else {
-            // Direct deallocation
-            unsafe {
-                std::alloc::dealloc(
-                    ptr as *mut u8,
-                    std::alloc::Layout::from_size_align_unchecked(1, 1),
-                );
-            }
+            // Direct deallocation. `ptr` was returned by `sim_alloc` via
+            // the allocation methods above, and this is the first time it
+            // is freed.
+            sim_dealloc(ptr);
         }
 
         self.stats.total_deallocations += 1;
@@ -929,14 +995,13 @@ impl MetalMemoryBackend {
 
     /// Wait for all operations to complete
     pub fn wait_until_idle(&mut self) -> Result<(), MetalError> {
-        // Wait for all command buffers to complete
-        for queue in &self.command_manager.queues {
-            for buffer in &queue.command_buffers {
-                if buffer.committed && !buffer.completed {
-                    std::thread::sleep(Duration::from_micros(100));
-                }
-            }
-        }
+        // Host-memory simulation (see module docs): `commit_command_buffer`
+        // completes every buffer synchronously, so there is never a
+        // committed-but-incomplete buffer to wait on here. This used to walk
+        // every queue's command buffers and inject an artificial
+        // `std::thread::sleep` for any it found in that (unreachable) state;
+        // that fake timing has been removed along with the now-vestigial
+        // scan, since it never changed the `Ok(())` result below.
         Ok(())
     }
 }
@@ -1004,17 +1069,17 @@ impl ThreadSafeMetalBackend {
         size: usize,
         memory_type: MetalMemoryType,
     ) -> Result<*mut c_void, MetalError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.allocate(size, memory_type)
     }
 
     pub fn free(&self, ptr: *mut c_void, memory_type: MetalMemoryType) -> Result<(), MetalError> {
-        let mut backend = self.backend.lock().expect("lock poisoned");
+        let mut backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.free(ptr, memory_type)
     }
 
     pub fn get_stats(&self) -> MetalStats {
-        let backend = self.backend.lock().expect("lock poisoned");
+        let backend = self.backend.lock().unwrap_or_else(|e| e.into_inner());
         backend.get_stats().clone()
     }
 }
@@ -1022,6 +1087,54 @@ impl ThreadSafeMetalBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for F26: a zero-size request must not reach
+    /// `std::alloc::alloc` (unsound for a zero-size layout), and an
+    /// out-of-range alignment must be an honest error, not silent UB.
+    #[test]
+    fn sim_alloc_zero_size_is_a_safe_sentinel_not_a_ub_call() {
+        let ptr = sim_alloc(0, 64).expect("zero-size request must succeed");
+        assert!(!ptr.is_null());
+        sim_dealloc(ptr);
+    }
+
+    #[test]
+    fn sim_alloc_rejects_unsupported_alignment() {
+        assert!(sim_alloc(16, 3).is_err(), "3 is not a power of two");
+        assert!(
+            sim_alloc(16, 512).is_err(),
+            "512 exceeds this simulated backend's supported alignment"
+        );
+    }
+
+    /// A real allocation must be readable/writable across its full size and
+    /// must free through the same layout it was allocated with.
+    #[test]
+    fn sim_alloc_real_allocation_round_trips_and_frees_cleanly() {
+        for (size, align) in [(1usize, 16usize), (7, 16), (256, 64), (4096, 64)] {
+            let ptr = sim_alloc(size, align).expect("allocation must succeed") as *mut u8;
+            assert!(!ptr.is_null());
+            assert_eq!(
+                (ptr as usize) % align,
+                0,
+                "returned pointer does not honour the requested alignment"
+            );
+            unsafe {
+                for i in 0..size {
+                    ptr.add(i).write(0xAB);
+                }
+                for i in 0..size {
+                    assert_eq!(ptr.add(i).read(), 0xAB);
+                }
+                sim_dealloc(ptr as *mut c_void);
+            }
+        }
+    }
+
+    #[test]
+    fn sim_dealloc_null_is_a_no_op() {
+        sim_dealloc(std::ptr::null_mut());
+    }
 
     #[test]
     fn test_metal_backend_creation() {

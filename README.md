@@ -1,228 +1,202 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.3.1
-**Status:** 🚀 Production Ready - Stable Release
+**Version:** 0.3.2
+**License:** Apache-2.0
 
-OptiRS is a comprehensive optimization library for machine learning that **extends and leverages the full power of SciRS2-Core**. It provides specialized optimization algorithms and hardware acceleration while making **FULL USE** of SciRS2's scientific computing capabilities.
+OptiRS is a machine-learning optimization library for Rust, built on the
+[SciRS2](https://github.com/cool-japan/scirs) scientific computing ecosystem. It provides
+optimizers, learning-rate schedulers, regularizers and gradient tooling in `optirs-core`,
+plus separate crates for GPU acceleration, TPU-style coordination, learned optimizers,
+neural architecture search, benchmarking and WebAssembly bindings.
 
-## 🚨 CRITICAL: Full SciRS2-Core Usage
+## Built on SciRS2-Core
 
-**OptiRS is NOT a standalone project** - it is an extension of SciRS2 that MUST make full use of scirs2-core for ALL operations:
-- ✅ **Arrays**: Uses `scirs2_core::ndarray` exclusively (NO direct ndarray)
-- ✅ **Random**: Uses `scirs2_core::random` exclusively (NO direct rand)
-- ✅ **SIMD**: Uses `scirs2_core::simd` and `simd_ops` for vectorization
-- ✅ **GPU**: Built on `scirs2_core::gpu` abstractions
-- ✅ **Memory**: Uses `scirs2_core::memory` and `memory_efficient`
-- ✅ **Profiling**: Uses `scirs2_core::profiling` and `benchmarking`
-- ✅ **Error Handling**: Uses `scirs2_core::error::Result`
+OptiRS does not depend on `ndarray`, `rand`, `rayon`, `num-traits` or any other library
+that `scirs2-core` already abstracts. Every array, RNG, numeric-trait, SIMD and
+parallelism operation goes through `scirs2-core`:
 
-### SciRS2 Dependencies:
+| Concern | Path used |
+|---|---|
+| Arrays | `scirs2_core::ndarray` (and `ndarray_ext`) |
+| Random numbers | `scirs2_core::random` |
+| Numeric traits | `scirs2_core::numeric` |
+| SIMD | `scirs2_core::simd_ops` |
+| Parallelism | `scirs2_core::parallel_ops` |
+| GPU abstractions | `scirs2_core::gpu` |
+| Metrics | `scirs2_core::metrics` |
 
-**Required (Always):**
-- **scirs2-core** 0.4.0: Core scientific computing primitives (arrays, random, GPU, SIMD, parallel)
-- **scirs2-optimize** 0.4.0: Base optimization algorithms and interfaces
+This is a hard rule, enforced by review — see
+[`SCIRS2_INTEGRATION_POLICY.md`](SCIRS2_INTEGRATION_POLICY.md). It applies to scientific
+computing only; ordinary infrastructure crates (`serde`, `thiserror`, `tokio`, `toml`,
+`sha2`, `oxicode`, the GPU backend crates, `wasm-bindgen`) are used directly.
 
-**Evidence-Based (Used by OptiRS):**
-- **scirs2-neural**: Neural network components
-- **scirs2-metrics**: Performance monitoring and metrics
-- **scirs2-stats**: Statistical functions and distributions
-- **scirs2-series**: Time series support
-- **scirs2-datasets**: Dataset handling (optional, feature-gated)
-- **scirs2-linalg**: Linear algebra operations
-- **scirs2-signal**: Signal processing capabilities
+### SciRS2 dependencies
 
-**Not Used by OptiRS:**
-- ❌ **scirs2-autograd**: OptiRS receives pre-computed gradients, does not perform automatic differentiation
-- ❌ **scirs2-optim**: Replaced by optirs-core
-- ❌ **scirs2-cluster**, **scirs2-fft**, **scirs2-transform**, **scirs2-sparse**, **scirs2-vision**, **scirs2-graph**: Not required for optimization
-- ❌ **scirs2-io**, **scirs2-integrate**, **scirs2-interpolate**, **scirs2-spatial**, **scirs2-special**, **scirs2-text**, **scirs2-ndimage**: Not required for optimization
+**Required (all crates):**
 
-### Architecture Philosophy:
-OptiRS extends SciRS2's scientific computing capabilities with specialized ML optimization features. It leverages SciRS2's robust numerical foundation while adding advanced optimization algorithms, hardware acceleration, and learned optimizers.
+- `scirs2-core` 0.6.5 — arrays, random, numeric traits, SIMD, parallel, GPU abstractions
+- `scirs2-optimize` 0.6.5 — base optimization interfaces (`optirs-core`)
 
-**DO NOT remove or replace SciRS2 dependencies** - OptiRS is designed to build upon the entire SciRS2 ecosystem.
+**Also required by `optirs-core`:**
+
+- `scirs2-neural` 0.6.5 — used by `neuromorphic::spike_based`
+- `scirs2-stats` 0.6.5 — distributions and statistical functions
+
+**Optional, feature-gated in `optirs-core`:**
+
+- `scirs2-metrics` 0.6.5 — behind the `metrics-integration` feature
+- `scirs2-datasets` 0.6.5 — behind the `cross-platform-testing` feature
+
+**Not used:** `scirs2-autograd` (OptiRS consumes pre-computed gradients rather than
+computing them), `scirs2-optim` (superseded by `optirs-core`), and `scirs2-linalg`,
+`scirs2-signal`, `scirs2-series`, which were removed in 0.3.2 after an audit found no
+call sites.
+
+## Workspace layout
+
+```
+optirs/                # facade crate re-exporting the others behind feature gates
+├── optirs-core/       # optimizers, schedulers, regularizers, privacy, streaming, plugins
+├── optirs-gpu/        # GPU acceleration (wgpu / Metal / OpenCL / CUDA scaffolding)
+├── optirs-tpu/        # TPU-style coordination and an XLA-shaped compiler (CPU reference)
+├── optirs-learned/    # learned optimizers and meta-learning
+├── optirs-nas/        # neural architecture search
+├── optirs-bench/      # benchmarking, profiling and regression detection
+└── optirs-wasm/       # WebAssembly bindings
+```
 
 ## Features
 
-### Core Optimizers (`optirs-core`) ✅ Production Ready
+### `optirs-core` — stable
 
-#### 22 Production-Ready Optimizers
-All optimizers built exclusively on SciRS2-Core:
+**Optimizers.** SGD (with momentum / Nesterov), SimdSGD, Adam, AdamW, AdaDelta, AdaBound,
+Adagrad, RMSprop, LAMB, LARS, Lion, Lookahead, RAdam, Ranger, SAM, SparseAdam,
+GroupedAdam, MAML, MetaSGD, Reptile and an NTM-style optimizer, all exported from
+`optirs_core::optimizers`; L-BFGS, Newton, Newton-CG and K-FAC from
+`optirs_core::second_order`; FedProx from `optirs_core::distributed`. See the
+`optirs-core` API docs for the authoritative roster.
 
-**First-Order Optimizers (20)**
-- **SGD** - Stochastic Gradient Descent with optional momentum
-- **SimdSGD** - SIMD-accelerated SGD (2-4x faster for large arrays)
-- **Adam** - Adaptive Moment Estimation
-- **AdamW** - Adam with decoupled weight decay
-- **RMSprop** - Root Mean Square Propagation
-- **Adagrad** - Adaptive Gradient Algorithm
-- **AdaDelta** - Adaptive learning rate method
-- **AdaBound** - Adaptive gradient with dynamic bound
-- **LAMB** - Layer-wise Adaptive Moments for Batch training
-- **LARS** - Layer-wise Adaptive Rate Scaling
-- **Lion** - Evolved Sign Momentum optimizer
-- **Lookahead** - Look ahead optimizer wrapper
-- **RAdam** - Rectified Adam
-- **Ranger** - RAdam + Lookahead hybrid
-- **SAM** - Sharpness-Aware Minimization
-- **SparseAdam** - Adam variant for sparse gradients
-- **GroupedAdam** - Adam with parameter groups
-- **FedProx** - Federated Proximal optimizer for distributed training
-- **ReptileOptimizer** - Meta-learning optimizer with inner loop SGD
-- **MetaSGD** - Per-parameter learnable learning rates
+**Learning-rate schedulers.** `ConstantScheduler`, `ExponentialDecay`, `LinearDecay`,
+`StepDecay`, `CosineAnnealing`, `CosineAnnealingWarmRestarts`, `CyclicLR`, `OneCycle`,
+`LinearWarmupDecay`, `ReduceOnPlateau`, `NoiseInjectionScheduler`, `CurriculumScheduler`,
+`CustomScheduler`/`CombinedScheduler`, plus `ViTLayerDecay` and `AttentionAwareScheduler`
+for transformer training.
 
-**Second-Order Optimizers (2)**
-- **L-BFGS** - Limited-memory Broyden-Fletcher-Goldfarb-Shanno
-- **K-FAC** - Kronecker-Factored Approximate Curvature
-- **Newton-CG** - Newton Conjugate Gradient
+**Gradient and loss analysis.** `gradient_flow` records gradient propagation through
+layers and detects vanishing/exploding gradients; `loss_landscape` performs 2-D
+perturbation analysis with sharpness and saddle-point detection. Both can emit SVG.
 
-#### Learning Rate Schedulers
-- **ExponentialDecay** - Exponential learning rate decay
-- **StepDecay** - Step-wise learning rate reduction
-- **CosineAnnealing** - Cosine annealing schedule
-- **LinearWarmup** - Linear warmup with decay
-- **OneCycleLR** - One cycle learning rate policy
-- **ViT Layer Decay** - Layer-wise learning rate decay for Vision Transformers
-- **Attention-Aware** - Attention-aware scheduling for transformer models
+**Performance paths.**
 
-#### Gradient and Loss Analysis
-- **Gradient Flow Analysis** - Track gradient propagation through network layers
-- **Loss Landscape Analysis** - Visualize and analyze loss surface geometry
+- *SIMD* — `SimdSGD` and the `simd_optimizer` helpers use
+  `scirs2_core::simd_ops::SimdUnifiedOps`, activating above a per-type element threshold.
+- *Parallel* — `parallel_optimizer::parallel_step_array1` and the `ParallelOptimizer`
+  wrapper distribute parameter groups across cores via `scirs2_core::parallel_ops`.
+- *Memory-efficient* — gradient accumulation and chunked parameter processing for models
+  that do not fit comfortably in RAM.
+- *GPU* — `gpu_optimizer` provides context management and host/device transfer built on
+  `scirs2_core::gpu`.
 
-#### Advanced Performance Features
+Speedups depend entirely on array size, element type and hardware. Measure them on your
+own workload with the benchmarks below rather than trusting a headline number.
 
-**SIMD Acceleration** (2-4x speedup)
-- Automatic SIMD vectorization for f32/f64
-- Uses `scirs2_core::simd_ops::SimdUnifiedOps`
-- Threshold-based activation (16 elements for f32, 8 for f64)
-- SimdSGD optimizer with momentum support
+**Metrics and monitoring.** `optimizer_metrics::MetricsCollector` tracks per-step
+duration, learning rate, gradient statistics (mean, standard deviation, norm, sparsity)
+and parameter-update statistics, with convergence detection and JSON/CSV export through
+`MetricsReporter`.
 
-**Parallel Processing** (4-8x speedup)
-- Multi-core parameter group processing
-- Automatic work distribution across CPU cores
-- ParallelOptimizer wrapper for any optimizer
-- Uses `scirs2_core::parallel_ops` exclusively
+**Also in `optirs-core`.** Differentially private and federated optimization (including a
+real Bonawitz secure-aggregation protocol), streaming/online optimization with statistical
+drift and anomaly detection, checkpointed coordination with a filesystem-backed store, a
+plugin system with TOML manifests, hardware-aware tuning, and quantum-inspired and
+neuromorphic experiments.
 
-**Memory-Efficient Operations**
-- Gradient accumulation for micro-batch training
-- Chunked parameter processing for billion-parameter models
-- Memory usage estimation and recommendations
-- Self-contained implementation using only SciRS2 standard features
+### `optirs-gpu` — partial hardware coverage
 
-**GPU Acceleration Framework** (10-50x potential speedup)
-- GPU context management and initialization
-- Multi-backend support (CUDA, Metal, OpenCL, WebGPU)
-- Tensor cores and mixed-precision support
-- Host-device data transfer utilities
-- GPU memory tracking and statistics
-- Built on `scirs2_core::gpu` abstractions
+Read this section as a status report, not a feature list:
 
-**Production Metrics & Monitoring**
-- Real-time optimizer performance tracking
-- Gradient statistics (mean, std dev, norm, sparsity)
-- Parameter statistics (update magnitude, relative change)
-- Convergence detection with moving averages
-- Multi-optimizer tracking with MetricsCollector
-- Export to JSON and CSV formats
-- Minimal overhead (<5% typical)
+- **Metal** — real compute shaders (MSL pipelines, buffers, dispatch, readback) run Adam,
+  AdamW, SGD, RMSprop, Adagrad and LAMB end to end.
+- **WebGPU** — WGSL kernels are implemented but currently blocked on an upstream
+  `scirs2-core` adapter-probe bug.
+- **OpenCL** — context creation only; no kernels shipped.
+- **CUDA / ROCm** — no backend (`scirs2-core` 0.6.x dropped its CUDA backend).
+- **Tensor cores** — real mixed-precision tiled GEMM on the `wgpu` path.
+- **Memory management** — the arena/buddy/slab allocators are CPU-side models of GPU
+  memory pools; the vendor memory backends are host-memory API-shape simulations whose
+  copy functions move zero bytes, and each file says so at the top.
+- **Multi-GPU** — single-device reduction kernels work; true cross-device collectives
+  return an explicit `UnsupportedOperation` error rather than a fabricated result.
 
-### Performance Benchmarks
+### `optirs-tpu` — CPU reference implementation
 
-All benchmarks use Criterion.rs with statistical analysis:
+No vendor TPU runtime is linked (it is proprietary and not distributable as pure Rust).
+Every path runs and is tested on the CPU executor and returns an explicit error where real
+TPU silicon would be required:
 
-- **optimizer_benchmarks.rs** - Compare 16 optimizers (100 to 100k parameters)
-- **simd_benchmarks.rs** - SIMD vs scalar performance (expected 2-4x)
-- **parallel_benchmarks.rs** - Multi-core scaling (expected 4-8x)
-- **memory_efficient_benchmarks.rs** - Memory optimization impact
-- **gpu_benchmarks.rs** - GPU vs CPU comparison (expected 10-50x)
-- **metrics_benchmarks.rs** - Monitoring overhead measurement
+- Pod management: device/channel topology, barrier synchronization, load balancing, fault
+  detection
+- An XLA-shaped compiler: graph builder, dead-code elimination, constant folding,
+  common-subexpression elimination, kernel-fusion legality checks, a real allocator, shape
+  inference
+- Fault tolerance: checkpoints serialized with a SHA-256 integrity hash, verified on
+  restore
+- Collectives: ring all-reduce, broadcast, reduce-scatter
 
-### Test Coverage
+### `optirs-learned` — research-grade
 
-- **1,249 unit tests + 82 doc tests** - All passing across 7 crates (9 skipped, 4 doc tests ignored)
-- **Zero clippy warnings** - Production-ready code quality
-- **254K+ lines of Rust code** across 985 files
+Transformer- and LSTM-based learned optimizers (with real truncated BPTT meta-training and
+seeded, reproducible initialization), meta-learning across tasks, few-shot learning
+(prototypical networks, fast adaptation, episodic memory), continual learning (EWC,
+progressive networks), online MAML, cross-domain transfer, and CV/NLP/attention
+domain-specific optimizers. Implementations are real and tested; APIs may still change.
 
-| Crate | Tests | Status |
-|-------|-------|--------|
-| optirs-core | 647 | Stable |
-| optirs-bench | 205 | Stable |
-| optirs-learned | 143 | Alpha |
-| optirs-gpu | 104 | Alpha |
-| optirs-nas | 63 | Alpha |
-| optirs-tpu | 58 | Alpha |
-| optirs-wasm | 29 | Alpha |
+### `optirs-nas` — research-grade
 
-### GPU Acceleration (`optirs-gpu`) - Alpha
-- **Multi-GPU Support**: Distributed optimization across multiple GPUs
-- **Backend Support**: CUDA, Metal, OpenCL, WebGPU, ROCm
-- **Memory Management**: Advanced memory pools and vendor-specific backends
-- **Tensor Cores**: Mixed-precision training support
-- **104 tests passing**
+Random, evolutionary, reinforcement-learning, Bayesian and differentiable (DARTS,
+PC-DARTS, RobustDARTS) search strategies; multi-objective optimization with exact
+hypervolume, NSGA-II and MOEA/D; progressive search; hardware-aware search; architecture
+embedding; and real grid / TPE / surrogate-based hyperparameter search. Implementations are
+real and tested; APIs may still change.
 
-### TPU Coordination (`optirs-tpu`) - Alpha
-- **Pod Management**: TPU pod coordination and synchronization
-- **XLA Integration**: Compiler optimizations for TPU workloads
-- **Fault Tolerance**: Robust handling of hardware failures
-- **Distributed Training**: Large-scale distributed optimization
-- **58 tests passing**
+### `optirs-bench`
 
-### Learned Optimizers (`optirs-learned`) - Alpha
-- **Transformer-based Optimizers**: Self-attention mechanisms for optimization
-- **LSTM Optimizers**: Recurrent neural network optimizers
-- **Meta-Learning**: Learning to optimize across different tasks
-- **Online MAML**: Online meta-learning with continuous adaptation
-- **Cross-Domain Transfer**: Transfer learning across optimization domains
-- **Few-Shot Learning**: PrototypicalNetwork, FastAdaptation, EpisodicMemory implementations
-- **Continual Learning**: EWC and Progressive Networks
-- **Domain-Specific Optimizers**: CV, NLP, and Attention optimizers
-- **143 tests passing**
+Criterion-based benchmarking, memory profiling and leak-report parsing, regression
+detection, cross-platform orchestration (local, Docker and SSH execution, with an explicit
+error when the runtime is absent) and a security auditor.
 
-### Neural Architecture Search (`optirs-nas`) - Alpha
-- **Search Strategies**: Evolutionary, reinforcement learning, random search
-- **Multi-Objective**: Balancing accuracy, efficiency, and resource usage
-- **Progressive Search**: Gradually increasing architecture complexity
-- **Hardware-Aware**: Optimization for specific hardware targets
-- **DARTS**: Differentiable architecture search with Memory-Efficient and Robust variants
-- **Domain-Specific NAS**: Specialized search for different application domains
-- **Architecture Embedding**: Learned representations of neural architectures
-- **63 tests passing**
+### `optirs-wasm`
 
-### Benchmarking (`optirs-bench`) ✅ Available
-- **Performance Analysis**: Comprehensive benchmarking tools
-- **Statistical Analysis**: Using Criterion.rs
-- **Memory Profiling**: Detailed memory usage analysis
-- **Throughput Metrics**: Elements/second tracking
+`wasm-bindgen` bindings for the core optimizers, plus WebGPU adapter detection. Running
+WGSL compute kernels from the WASM bindings is documented as not implemented.
 
-## Quick Start
-
-### Installation
+## Quick start
 
 ```toml
 [dependencies]
-optirs-core = "0.3.1"
-scirs2-core = "0.4.0"  # Required foundation
-
-# Optional: GPU acceleration
-optirs-gpu = { version = "0.3.1", optional = true }
+optirs-core = "0.3.2"
+scirs2-core = "0.6.5"  # required foundation
 ```
 
-### Basic Usage
+Or through the facade crate, which gates the extension crates behind features:
+
+```toml
+[dependencies]
+optirs = { version = "0.3.2", features = ["gpu", "bench"] }
+```
+
+### Basic usage
 
 ```rust
 use optirs_core::optimizers::{Adam, Optimizer};
-// ALWAYS use scirs2_core for arrays - NEVER direct ndarray!
+// Always use scirs2_core for arrays - never ndarray directly.
 use scirs2_core::ndarray::Array1;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create parameters and gradients using SciRS2
     let params = Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]);
     let gradients = Array1::from_vec(vec![0.1, 0.2, 0.15, 0.08]);
 
-    // Create Adam optimizer
     let mut optimizer = Adam::new(0.001);
-
-    // Perform optimization step
     let updated_params = optimizer.step(&params, &gradients)?;
 
     println!("Updated parameters: {:?}", updated_params);
@@ -230,82 +204,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### SIMD Acceleration (2-4x speedup)
+### SIMD-accelerated SGD
 
 ```rust
-use optirs_core::simd_optimizer::SimdSGD;
-use optirs_core::optimizers::Optimizer;
+use optirs_core::optimizers::{Optimizer, SimdSGD};
 use scirs2_core::ndarray::Array1;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Large parameter array (SIMD shines with 10k+ elements)
     let params = Array1::from_elem(100_000, 1.0f32);
     let grads = Array1::from_elem(100_000, 0.001f32);
 
-    // SIMD-accelerated SGD
     let mut optimizer = SimdSGD::new(0.01f32);
     let updated = optimizer.step(&params, &grads)?;
 
-    println!("Optimized {} parameters with SIMD", updated.len());
+    println!("Optimized {} parameters", updated.len());
     Ok(())
 }
 ```
 
-### Parallel Processing (4-8x speedup)
+### Parallel parameter groups
 
 ```rust
-use optirs_core::optimizers::{Adam, Optimizer};
+use optirs_core::optimizers::Adam;
 use optirs_core::parallel_optimizer::parallel_step_array1;
 use scirs2_core::ndarray::Array1;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Multiple parameter groups (e.g., different network layers)
     let params_list = vec![
         Array1::from_elem(10_000, 1.0),
         Array1::from_elem(20_000, 1.0),
         Array1::from_elem(15_000, 1.0),
     ];
-
     let grads_list = vec![
         Array1::from_elem(10_000, 0.01),
         Array1::from_elem(20_000, 0.01),
         Array1::from_elem(15_000, 0.01),
     ];
 
-    // Process all groups in parallel
     let mut optimizer = Adam::new(0.001);
     let updated_list = parallel_step_array1(&mut optimizer, &params_list, &grads_list)?;
 
-    println!("Optimized {} parameter groups in parallel", updated_list.len());
+    println!("Optimized {} parameter groups", updated_list.len());
     Ok(())
 }
 ```
 
-### Production Monitoring
+### Metrics collection
 
 ```rust
-use optirs_core::optimizers::{Adam, Optimizer};
 use optirs_core::optimizer_metrics::{MetricsCollector, MetricsReporter};
+use optirs_core::optimizers::{Adam, Optimizer};
 use scirs2_core::ndarray::Array1;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut collector = MetricsCollector::new();
     collector.register_optimizer("adam");
 
     let mut optimizer = Adam::new(0.001);
-    let params = Array1::from_elem(1000, 1.0);
+    let mut params = Array1::from_elem(1000, 1.0);
     let grads = Array1::from_elem(1000, 0.01);
 
-    // Training loop with metrics
     for _ in 0..100 {
         let params_before = params.clone();
-        let start = Instant::now();
 
-        let params = optimizer.step(&params, &grads)?;
+        let start = Instant::now();
+        params = optimizer.step(&params, &grads)?;
         let duration = start.elapsed();
 
-        // Update metrics
         collector.update(
             "adam",
             duration,
@@ -316,286 +282,159 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    // Generate report
     println!("{}", collector.summary_report());
 
-    // Export to JSON
-    let metrics = collector.get_metrics("adam").unwrap();
-    println!("{}", MetricsReporter::to_json(metrics));
+    if let Some(metrics) = collector.get_metrics("adam") {
+        println!("{}", MetricsReporter::to_json(metrics));
+    }
 
     Ok(())
 }
 ```
 
-### Complete Examples
+## Examples
 
-See the `examples/` directory for comprehensive examples:
+The facade crate carries two end-to-end examples:
 
-- **basic_optimization.rs** - Getting started with SGD, Adam, AdamW
-- **advanced_optimization.rs** - Schedulers, parameter groups, regularization, gradient clipping
-- **performance_optimization.rs** - SIMD, parallel, memory-efficient, GPU acceleration
-- **production_monitoring.rs** - Metrics collection, convergence detection, profiling
-
-Run examples with:
 ```bash
-cargo run --example basic_optimization --release
-cargo run --example advanced_optimization --release
-cargo run --example performance_optimization --release
-cargo run --example production_monitoring --release
+cargo run -p optirs --example basic_optimization --release
+cargo run -p optirs --example scirs2_integration_demo --release
 ```
+
+`optirs-core/examples/` holds a larger set of focused ones — schedulers, gradient
+clipping, parameter groups, regularization, L-BFGS, LAMB, Lion, memory-efficient
+optimization and production monitoring among them:
+
+```bash
+cargo run -p optirs-core --example advanced_optimization --release
+cargo run -p optirs-core --example production_monitoring --release
+```
+
+(`optirs-core/examples/broken/` is a quarantine directory for examples that have not been
+brought up to the current API; Cargo does not build it.)
+
+## Benchmarks
+
+`optirs-core` ships six Criterion benchmark targets:
+
+| Target | Measures |
+|---|---|
+| `optimizer_benchmarks` | SGD, SGD+momentum, Adam and AdamW across parameter sizes, cold start, and 100-step convergence loops |
+| `simd_benchmarks` | SIMD versus scalar optimizer steps |
+| `parallel_benchmarks` | Multi-core parameter-group scaling |
+| `memory_efficient_benchmarks` | Gradient accumulation and chunked processing |
+| `gpu_benchmarks` | GPU versus CPU paths |
+| `metrics_benchmarks` | Metrics-collection overhead |
+
+```bash
+cargo bench -p optirs-core
+```
+
+No benchmark numbers are published here: they are hardware-dependent, and the only honest
+figure is the one you measure on your own machine.
+
+## Building and testing
+
+```bash
+# Build everything
+cargo build --workspace --all-features
+
+# Lint (the workspace is kept at zero warnings)
+cargo clippy --workspace --all-features --all-targets
+
+# Test
+cargo test --workspace --all-features
+# or, faster:
+cargo nextest run --workspace --all-features
+
+# Documentation
+cargo doc --workspace --all-features --no-deps --open
+
+# Dependency policy (banned crates)
+cargo deny check bans
+```
+
+### Project status (measured 2026-08-18)
+
+- 907 Rust source files, ~342k lines of code (`tokei`, excluding `target/`)
+- More than 4,200 unit and integration tests passing, plus doc tests
+- Zero `rustc` and zero `clippy` warnings across the workspace with `--all-features
+  --all-targets`
+- No source file at or above 2,000 lines
+- `cargo deny check bans` passes
+
+Run the commands above to reproduce any of these.
 
 ## Documentation
 
-### Comprehensive Guides
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes
+- [`SCIRS2_INTEGRATION_POLICY.md`](SCIRS2_INTEGRATION_POLICY.md) — the dependency rules
+  above, in full
+- [`USAGE_GUIDE.md`](USAGE_GUIDE.md) — extended usage guide
+- [`MIGRATION_FROM_SCIRS2.md`](MIGRATION_FROM_SCIRS2.md) — for users coming from
+  `scirs2-optim`
+- API documentation: `cargo doc --open --no-deps`, or [docs.rs/optirs](https://docs.rs/optirs)
 
-- **USAGE_GUIDE.md** - Comprehensive user guide (8000+ words)
-  - Quick start and installation
-  - All 16 optimizers with examples
-  - Advanced features (schedulers, parameter groups, regularization)
-  - Performance optimization (SIMD, parallel, memory-efficient, GPU)
-  - Production deployment (metrics, monitoring, convergence)
-  - SciRS2 integration patterns
-  - Best practices and troubleshooting
+Each crate also carries its own `README.md` and `TODO.md`.
 
-### API Documentation
+## Platform support
 
-Generate and view API documentation:
-```bash
-cargo doc --open --no-deps
-```
+Everything except the GPU backends is portable pure Rust, so `optirs-core`,
+`optirs-tpu`, `optirs-learned`, `optirs-nas` and `optirs-bench` behave the same on Linux,
+macOS and Windows. The hardware-specific differences are:
 
-All public APIs are fully documented with:
-- Detailed function descriptions
-- Parameter explanations
-- Return value specifications
-- Usage examples
-- Performance notes
-- SciRS2 integration patterns
+| Crate | Linux | macOS | Windows |
+|---|---|---|---|
+| `optirs-gpu` (Metal) | ❌ | ✅ real compute | ❌ |
+| `optirs-gpu` (WebGPU) | 🚧 blocked upstream | 🚧 blocked upstream | 🚧 blocked upstream |
+| `optirs-gpu` (OpenCL) | 🚧 context only | 🚧 context only | 🚧 context only |
+| `optirs-gpu` (CUDA / ROCm) | ❌ no backend | ❌ no backend | ❌ no backend |
 
-### Module Documentation
-
-Each module contains comprehensive documentation:
-
-- **parallel_optimizer** - Multi-core parameter group processing
-- **memory_efficient_optimizer** - Gradient accumulation and chunked processing
-- **gpu_optimizer** - GPU acceleration with SciRS2 abstractions
-- **optimizer_metrics** - Production metrics and monitoring
-- **simd_optimizer** - SIMD-accelerated optimizers
-
-### Performance Guidelines
-
-**When to use SIMD:**
-- Parameter arrays with 10,000+ elements
-- Expected speedup: 2-4x for f32/f64
-- Automatic threshold detection
-
-**When to use Parallel:**
-- Multiple parameter groups (e.g., network layers)
-- 4+ CPU cores available
-- Expected speedup: 4-8x
-
-**When to use Memory-Efficient:**
-- Models with billions of parameters
-- Limited RAM (gradient accumulation)
-- Micro-batch training
-
-**When to use GPU:**
-- Models with millions of parameters
-- GPU with 4GB+ memory
-- Expected speedup: 10-50x
-
-### Best Practices
-
-**Optimizer Selection:**
-- **SGD**: Simple, robust, good for convex problems
-- **Adam/AdamW**: Default choice for most deep learning tasks
-- **LAMB/LARS**: Large batch training (batch size > 1024)
-- **RAdam**: When training is unstable
-- **SAM**: For better generalization
-
-**Learning Rate Guidelines:**
-- Start with 0.001 for Adam/AdamW
-- Start with 0.01-0.1 for SGD
-- Use learning rate schedulers for better convergence
-- Monitor gradient norms to detect issues
-
-**Gradient Clipping:**
-- Clip by norm to prevent exploding gradients
-- Typical max norm: 1.0 to 10.0
-- Essential for RNNs and transformers
-
-**Convergence Monitoring:**
-- Track parameter update magnitudes
-- Monitor gradient statistics
-- Use convergence detection to stop early
-- Export metrics for analysis
-
-## SciRS2 Integration Best Practices
-
-### ✅ CORRECT Usage - Full SciRS2 Integration
-```rust
-// Arrays and numerical operations
-use scirs2_core::ndarray_ext::{Array, Array2, ArrayView};
-use scirs2_core::ndarray_ext::stats::{mean, variance};
-
-// Random number generation
-use scirs2_core::random::{Random, rng};
-
-// Performance optimization
-use scirs2_core::simd_ops::simd_dot_product;
-use scirs2_core::parallel_ops::par_chunks;
-
-// Memory efficiency
-use scirs2_core::memory::BufferPool;
-use scirs2_core::memory_efficient::MemoryMappedArray;
-
-// Error handling
-use scirs2_core::error::{CoreError, Result};
-```
-
-### ❌ INCORRECT Usage - Direct Dependencies
-```rust
-// NEVER DO THIS!
-use ndarray::{Array, Array2};  // ❌ Wrong!
-use rand::Rng;                 // ❌ Wrong!
-use rand_distr::Normal;         // ❌ Wrong!
-```
-
-## Architecture
-
-OptiRS is designed as a modular system built entirely on SciRS2-Core:
-
-```
-optirs/                    # Main integration crate (uses scirs2_core)
-├── optirs-core/          # Core optimization algorithms (uses scirs2_core)
-├── optirs-gpu/           # GPU acceleration (uses scirs2_core::gpu)
-├── optirs-tpu/           # TPU coordination (uses scirs2_core::distributed)
-├── optirs-learned/       # Learned optimizers (uses scirs2_core::ml_pipeline)
-├── optirs-nas/           # Neural Architecture Search (uses scirs2_core::neural_architecture_search)
-└── optirs-bench/         # Benchmarking tools (uses scirs2_core::benchmarking)
-```
-
-## Separation from SciRS2
-
-OptiRS was separated from SciRS2 to:
-- Enable focused development on optimization research
-- Support independent release cycles
-- Reduce complexity of the main SciRS2 project
-- Allow specialized hardware optimization
-
-## Development Guidelines
-
-### 🚨 MANDATORY: Full SciRS2-Core Usage
-
-**ALL OptiRS code MUST use SciRS2-Core for scientific computing operations:**
-
-```rust
-// ✅ ALWAYS use SciRS2-Core
-use scirs2_core::ndarray_ext::{Array2, ArrayView2};
-use scirs2_core::random::Random;
-use scirs2_core::simd_ops::simd_dot_product;
-use scirs2_core::parallel_ops::par_chunks;
-use scirs2_core::error::Result;
-
-// ❌ NEVER use direct dependencies
-use ndarray::Array2;        // ❌ FORBIDDEN
-use rand::thread_rng;       // ❌ FORBIDDEN
-use rayon::prelude::*;      // ❌ Use scirs2_core::parallel instead
-```
-
-### Coding Standards
-
-To maintain consistency and readability across the entire OptiRS ecosystem, all contributors must follow these guidelines:
-
-#### SciRS2 Integration Requirements
-- **MUST** use `scirs2_core::ndarray` for ALL array operations
-- **MUST** use `scirs2_core::random` for ALL random number generation
-- **MUST** use `scirs2_core::simd` for ALL SIMD operations
-- **MUST** use `scirs2_core::parallel` for ALL parallel processing
-- **MUST** use `scirs2_core::error::Result` for ALL error handling
-- **MUST** use `scirs2_core::profiling` for ALL performance profiling
-- **MUST** use `scirs2_core::benchmarking` for ALL benchmarks
-
-#### Variable Naming
-- **Always use `snake_case` for variable names** (e.g., `user_id`, `max_iterations`, `learning_rate`)
-- **Avoid camelCase or other naming conventions** (e.g., `userId` ❌, `maxIterations` ❌)
-- **Use descriptive names** that clearly indicate the variable's purpose
-
-```rust
-// ✅ Correct: snake_case with SciRS2 types
-use scirs2_core::ndarray_ext::Array2;
-let experiment_id = "exp_001";
-let max_epochs = 100;
-let learning_rate = 0.001;
-let gradient_array = Array2::<f32>::zeros((100, 50));
-
-// ❌ Incorrect: camelCase or direct dependencies
-use ndarray::Array2;  // ❌ Wrong dependency!
-let experimentId = "exp_001";
-let maxEpochs = 100;
-```
-
-#### Function and Method Names
-- Use `snake_case` for function and method names
-- Use descriptive verbs that indicate the function's action
-
-#### Type Names
-- Use `PascalCase` for struct, enum, and trait names
-- Use `SCREAMING_SNAKE_CASE` for constants
-
-#### General Guidelines
-- Follow Rust's official naming conventions as specified in [RFC 430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md)
-- Use `rustfmt` and `clippy` to maintain code formatting and catch common issues
-- Write clear, self-documenting code with appropriate comments
-
-### Before Submitting Code
-1. Run `cargo fmt` to format your code
-2. Run `cargo clippy` to check for lint issues
-3. Ensure all tests pass with `cargo test`
-4. Verify compilation with `cargo check`
+For `wasm32-unknown-unknown`, use `optirs-wasm`; see its own README for what is exposed.
 
 ## Contributing
 
-We welcome contributions! When contributing to OptiRS, please ensure:
+Contributions are welcome. Before submitting:
 
-1. **ALL code uses SciRS2-Core** - No direct ndarray or rand imports
-2. **Follow the SciRS2 integration guidelines** in CLAUDE.md
-3. **Run tests with SciRS2 dependencies** - `cargo test`
-4. **Benchmark using SciRS2 tools** - `scirs2_core::benchmarking`
-5. **Profile using SciRS2 profiler** - `scirs2_core::profiling`
+1. `cargo fmt`
+2. `cargo clippy --workspace --all-features --all-targets` — must be warning-free
+3. `cargo test --workspace --all-features`
+4. `cargo deny check bans`
 
-## SciRS2 Dependency Verification
+### Coding standards
 
-Before submitting PRs, verify SciRS2 usage:
+- **SciRS2 first.** Use `scirs2_core::ndarray`, `scirs2_core::random`,
+  `scirs2_core::numeric`, `scirs2_core::simd_ops` and `scirs2_core::parallel_ops` rather
+  than `ndarray`, `rand`, `num-traits`, `wide` or `rayon`. You can check this with:
 
-```bash
-# Check for forbidden direct dependencies
-grep -r "use ndarray::" --include="*.rs" .  # Should return nothing
-grep -r "use rand::" --include="*.rs" .     # Should return nothing
+  ```bash
+  grep -rn "^use ndarray::" --include='*.rs' .   # must return nothing
+  grep -rn "^use rand::"    --include='*.rs' .   # must return nothing
+  ```
 
-# Verify SciRS2 usage
-grep -r "use scirs2_core::" --include="*.rs" . # Should show many results
-```
+- **No panics on recoverable conditions.** No `unwrap()`, `panic!()`, `todo!()` or
+  `unimplemented!()` in production code — return an `OptimError` instead. `expect()` is
+  admissible only where the signature genuinely cannot return an error (a `Default`
+  implementation converting a constant, for example), and its message must name the
+  invariant that is being relied on.
+- **No fabricated results.** A code path that cannot compute something must return an
+  error naming what is missing, never a plausible-looking constant.
+- **Naming.** `snake_case` for variables, functions and modules; `PascalCase` for types;
+  `SCREAMING_SNAKE_CASE` for constants ([RFC 430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md)).
+- **File size.** Keep source files under 2,000 lines; split into directory modules
+  instead.
 
 ## Sponsorship
 
 OptiRS is developed and maintained by **COOLJAPAN OU (Team Kitasan)**.
 
-If you find OptiRS useful, please consider sponsoring the project to support continued development of the Pure Rust ecosystem.
-
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red?logo=github)](https://github.com/sponsors/cool-japan)
 
 **[https://github.com/sponsors/cool-japan](https://github.com/sponsors/cool-japan)**
 
-Your sponsorship helps us:
-- Maintain and improve the COOLJAPAN ecosystem
-- Keep the entire ecosystem (OxiBLAS, OxiFFT, SciRS2, etc.) 100% Pure Rust
-- Provide long-term support and security updates
+Your sponsorship helps keep the COOLJAPAN ecosystem (OxiBLAS, OxiFFT, SciRS2 and friends)
+100% pure Rust, and funds long-term support and security updates.
 
 ## License
 
-This project is licensed under Apache-2.0.
-
----
-
-**⚠️ REMEMBER**: OptiRS is an extension of SciRS2, not a standalone project. It MUST leverage the full power of scirs2-core for ALL scientific computing operations. Direct use of ndarray, rand, or other libraries that scirs2-core provides is **STRICTLY FORBIDDEN**.
+Apache-2.0. See [`LICENSE`](LICENSE).

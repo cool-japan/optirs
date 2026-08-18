@@ -5,11 +5,11 @@
 // real-time metrics collection, statistical analysis, and predictive modeling.
 
 use super::config::*;
-use super::optimizer::{Adaptation, AdaptationPriority, AdaptationType, StreamingDataPoint};
+use super::optimizer::{Adaptation, AdaptationType};
 use super::resource_management::ResourceUsage;
 
+use crate::utils::{scalar_or, try_scalar_str};
 use scirs2_core::numeric::Float;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::iter::Sum;
 use std::time::{Duration, Instant};
@@ -19,6 +19,12 @@ use std::time::{Duration, Instant};
 pub struct PerformanceSnapshot<A: Float + Send + Sync> {
     /// Timestamp when snapshot was taken
     pub timestamp: Instant,
+    /// Wall-clock time the optimization step that produced this snapshot took.
+    ///
+    /// This is a measured duration, distinct from `timestamp.elapsed()` (which
+    /// is the snapshot's *age*). Consumers reasoning about processing cost must
+    /// read this field.
+    pub processing_duration: Duration,
     /// Primary loss metric
     pub loss: A,
     /// Accuracy metric (if applicable)
@@ -120,6 +126,9 @@ pub struct PerformanceTracker<A: Float + Send + Sync + std::iter::Sum> {
     improvement_tracker: PerformanceImprovementTracker<A>,
     /// Anomaly detector for performance
     performance_anomaly_detector: PerformanceAnomalyDetector<A>,
+    /// Number of snapshots accepted since the baseline was last refreshed,
+    /// driving `PerformanceConfig::baseline_update_frequency`.
+    snapshots_since_baseline: usize,
 }
 
 /// Trend analysis for performance metrics
@@ -128,8 +137,6 @@ pub struct PerformanceTrendAnalyzer<A: Float + Send + Sync> {
     window_size: usize,
     /// Current trends for different metrics
     trends: HashMap<String, TrendData<A>>,
-    /// Trend computation methods
-    trend_methods: Vec<TrendMethod>,
 }
 
 /// Trend data for a specific metric
@@ -168,10 +175,33 @@ pub struct PerformancePredictor<A: Float + Send + Sync> {
     prediction_methods: Vec<PredictionMethod>,
     /// Historical predictions for accuracy tracking
     prediction_history: VecDeque<PredictionResult<A>>,
-    /// Model accuracy scores
+    /// Model accuracy scores, keyed by the per-method label used in
+    /// `ensemble_weights`.
     model_accuracies: HashMap<String, A>,
     /// Ensemble weights for combining predictions
     ensemble_weights: HashMap<String, A>,
+    /// Per-method forecasts still awaiting their ground-truth observation.
+    ///
+    /// `PredictionResult` carries only the combined ensemble label, so scoring
+    /// individual methods (which is what the ensemble weights need) requires
+    /// keeping each method's own forecast until the actual value arrives.
+    pending_method_forecasts: VecDeque<MethodForecast<A>>,
+    /// Number of snapshots observed, used as the clock a forecast horizon is
+    /// measured against (`steps_ahead` counts snapshots, not seconds).
+    snapshots_since_start: usize,
+}
+
+/// A single method's forecast, held until its horizon elapses.
+#[derive(Debug, Clone)]
+struct MethodForecast<A: Float + Send + Sync> {
+    /// Per-method label matching the `model_accuracies` key.
+    label: String,
+    /// Forecast value.
+    predicted_value: A,
+    /// Number of steps ahead the forecast was made for.
+    steps_ahead: usize,
+    /// Snapshot index at which the forecast was issued.
+    issued_at_index: usize,
 }
 
 /// Prediction methods for performance forecasting
@@ -200,6 +230,9 @@ pub struct PredictionResult<A: Float + Send + Sync> {
     pub method: String,
     /// Steps ahead predicted
     pub steps_ahead: usize,
+    /// Snapshot index at which the prediction was issued. `steps_ahead` counts
+    /// snapshots, so this is the clock its horizon is measured against.
+    pub issued_at_index: usize,
     /// Prediction timestamp
     pub timestamp: Instant,
     /// Actual value (filled in later for accuracy assessment)
@@ -243,8 +276,10 @@ pub struct PlateauDetector<A: Float + Send + Sync> {
     recent_values: VecDeque<A>,
     /// Current plateau status
     is_plateau: bool,
-    /// Plateau duration
+    /// Plateau duration, measured from `plateau_started`.
     plateau_duration: Duration,
+    /// Instant the current plateau began, if any.
+    plateau_started: Option<Instant>,
     /// Last significant change timestamp
     last_significant_change: Option<Instant>,
 }
@@ -343,23 +378,58 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
             trend_analyzer,
             predictor,
             baseline: None,
+            snapshots_since_baseline: 0,
             current_context: None,
             improvement_tracker,
             performance_anomaly_detector,
         })
     }
 
-    /// Adds a new performance snapshot
+    /// Test-only view of the current baseline's loss.
+    #[cfg(test)]
+    pub(crate) fn baseline_loss_for_test(&self) -> Option<A> {
+        self.baseline.as_ref().map(|snapshot| snapshot.loss)
+    }
+
+    /// Adds a new performance snapshot.
+    ///
+    /// Two `PerformanceConfig` fields that previously had no reader at all now
+    /// govern this (CF1):
+    ///
+    /// * `enable_tracking == false` makes this a no-op, so turning tracking off
+    ///   actually stops history, trend, prediction and anomaly work instead of
+    ///   silently doing all of it anyway.
+    /// * `baseline_update_frequency` re-bases the comparison baseline every N
+    ///   accepted snapshots. Before, the baseline was pinned to the very first
+    ///   measurement forever, so every "improvement over baseline" figure was
+    ///   measured against the start of the run no matter how long it had been
+    ///   running.
     pub fn add_performance(&mut self, snapshot: PerformanceSnapshot<A>) -> Result<(), String> {
+        if !self.config.enable_tracking {
+            return Ok(());
+        }
+
         // Store in history
         if self.performance_history.len() >= self.config.history_size {
             self.performance_history.pop_front();
         }
         self.performance_history.push_back(snapshot.clone());
 
-        // Set baseline if this is the first measurement
-        if self.baseline.is_none() {
+        // Set baseline if this is the first measurement, then refresh it on the
+        // configured cadence.
+        self.snapshots_since_baseline = self.snapshots_since_baseline.saturating_add(1);
+        let refresh_due = self.config.baseline_update_frequency > 0
+            && self.snapshots_since_baseline >= self.config.baseline_update_frequency;
+        if self.baseline.is_none() || refresh_due {
             self.baseline = Some(snapshot.clone());
+            // Only a *refresh* starts a new window. Establishing the very first
+            // baseline must not also consume a window slot: the sample that
+            // set it is the first sample of the window, so zeroing here made
+            // every cadence one sample too long (a frequency of 3 re-based on
+            // the 4th sample, then the 7th).
+            if refresh_due {
+                self.snapshots_since_baseline = 0;
+            }
         }
 
         // Update trend analysis
@@ -462,6 +532,7 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + std::fmt::Debug
     pub fn reset(&mut self) -> Result<(), String> {
         self.performance_history.clear();
         self.baseline = None;
+        self.snapshots_since_baseline = 0;
         self.current_context = None;
         self.trend_analyzer.reset();
         self.predictor.reset();
@@ -488,13 +559,6 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
         Self {
             window_size,
             trends: HashMap::new(),
-            trend_methods: vec![
-                TrendMethod::LinearRegression,
-                TrendMethod::MovingAverage {
-                    window: window_size / 2,
-                },
-                TrendMethod::ExponentialSmoothing { alpha: 0.3 },
-            ],
         }
     }
 
@@ -578,18 +642,20 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
             return Ok(A::zero());
         }
 
-        let n = A::from(values.len()).expect("unwrap failed");
+        let n = try_scalar_str::<A, _>(values.len())?;
         // Compute sum_x = 1 + 2 + ... + n = n*(n+1)/2
-        let sum_x = n * (n + A::one()) / A::from(2.0).expect("unwrap failed");
+        let sum_x = n * (n + A::one()) / try_scalar_str::<A, _>(2.0)?;
         let sum_y = values.iter().cloned().sum::<A>();
         let sum_xy = values
             .iter()
             .enumerate()
-            .map(|(i, &y)| A::from(i + 1).expect("unwrap failed") * y)
+            .map(|(i, &y)| try_scalar_str::<A, _>(i + 1).map(|x| x * y))
+            .collect::<Result<Vec<A>, String>>()?
+            .into_iter()
             .sum::<A>();
         // Compute sum_x_squared = 1^2 + 2^2 + ... + n^2 = n*(n+1)*(2n+1)/6
-        let two = A::from(2.0).expect("unwrap failed");
-        let six = A::from(6.0).expect("unwrap failed");
+        let two = try_scalar_str::<A, _>(2.0)?;
+        let six = try_scalar_str::<A, _>(6.0)?;
         let sum_x_squared = n * (n + A::one()) * (two * n + A::one()) / six;
 
         let denominator = n * sum_x_squared - sum_x * sum_x;
@@ -609,12 +675,12 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
         // Simplified correlation with time index
         let n = values.len();
         let time_values: Vec<A> = (1..=n)
-            .map(|i| A::from(i).expect("unwrap failed"))
-            .collect();
+            .map(try_scalar_str::<A, _>)
+            .collect::<Result<Vec<A>, String>>()?;
         let value_vec: Vec<A> = values.iter().cloned().collect();
 
-        let mean_time = time_values.iter().cloned().sum::<A>() / A::from(n).expect("unwrap failed");
-        let mean_value = value_vec.iter().cloned().sum::<A>() / A::from(n).expect("unwrap failed");
+        let mean_time = time_values.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(n)?;
+        let mean_value = value_vec.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(n)?;
 
         let numerator = time_values
             .iter()
@@ -645,10 +711,9 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformanceTrend
             return Ok(A::zero());
         }
 
-        let mean =
-            values.iter().cloned().sum::<A>() / A::from(values.len()).expect("unwrap failed");
+        let mean = values.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(values.len())?;
         let variance = values.iter().map(|&v| (v - mean) * (v - mean)).sum::<A>()
-            / A::from(values.len()).expect("unwrap failed");
+            / try_scalar_str::<A, _>(values.len())?;
 
         Ok(variance.sqrt())
     }
@@ -689,9 +754,21 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
             prediction_history: VecDeque::with_capacity(1000),
             model_accuracies: HashMap::new(),
             ensemble_weights: HashMap::new(),
+            pending_method_forecasts: VecDeque::with_capacity(1000),
+            snapshots_since_start: 0,
         }
     }
 
+    /// Forecasts the loss `steps_ahead` batches into the future.
+    ///
+    /// P3f/P4f: this used to run only `linear_prediction`, leaving
+    /// `exponential_prediction`, the `prediction_methods` list and the
+    /// `ensemble_weights` map as permanently-unread dead state. Every
+    /// configured method now runs, and their forecasts are combined by weights
+    /// derived from each method's *measured* accuracy (see
+    /// `update_accuracy_metrics`), so a method that has been predicting badly
+    /// loses influence. Methods with no accuracy history yet are weighted
+    /// equally.
     fn predict(
         &mut self,
         steps_ahead: usize,
@@ -704,21 +781,99 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         // Extract loss values for prediction
         let loss_values: Vec<A> = history.iter().map(|s| s.loss).collect();
 
-        // Use linear prediction for simplicity
-        let predicted_value = self.linear_prediction(&loss_values, steps_ahead)?;
+        // Run every configured method.
+        let methods = self.prediction_methods.clone();
+        let mut forecasts: Vec<(String, A)> = Vec::with_capacity(methods.len());
+        for method in &methods {
+            let (label, value) = match method {
+                PredictionMethod::Linear => (
+                    "linear".to_string(),
+                    self.linear_prediction(&loss_values, steps_ahead)?,
+                ),
+                PredictionMethod::Exponential { alpha, beta } => (
+                    format!("exponential(alpha={alpha},beta={beta})"),
+                    self.exponential_prediction(&loss_values, steps_ahead, *alpha, *beta)?,
+                ),
+                other => {
+                    // An unimplemented forecaster must not silently contribute a
+                    // made-up number to the ensemble.
+                    return Err(format!(
+                        "prediction method {other:?} has no implementation; remove it from \
+                         `prediction_methods` or implement it"
+                    ));
+                }
+            };
+            if value.is_finite() {
+                forecasts.push((label, value));
+            }
+        }
 
-        // Estimate confidence interval (simplified)
+        if forecasts.is_empty() {
+            return Err("no prediction method produced a finite forecast".to_string());
+        }
+
+        // Weight each method by its measured accuracy, refreshing the stored
+        // ensemble weights so they are real, inspectable state.
+        let mut total_weight = A::zero();
+        let mut weighted_sum = A::zero();
+        for (label, value) in &forecasts {
+            // An unseen method starts at the neutral weight of 1; a measured
+            // accuracy in [0, 1] is floored so a method is never fully muted.
+            let accuracy = self
+                .model_accuracies
+                .get(label)
+                .copied()
+                .unwrap_or_else(A::one);
+            let floor = A::from(0.05).ok_or_else(|| "0.05 is not representable".to_string())?;
+            let weight = accuracy.max(floor);
+            self.ensemble_weights.insert(label.clone(), weight);
+            total_weight = total_weight + weight;
+            weighted_sum = weighted_sum + weight * *value;
+        }
+        if total_weight <= A::zero() {
+            return Err("ensemble weights sum to zero".to_string());
+        }
+        let predicted_value = weighted_sum / total_weight;
+
+        // Confidence interval from the real recent volatility of the series,
+        // widened by the disagreement between the methods (a genuine measure of
+        // model uncertainty).
         let recent_volatility = self.compute_recent_volatility(&loss_values)?;
-        let confidence_interval = (
-            predicted_value - recent_volatility,
-            predicted_value + recent_volatility,
-        );
+        let spread = if forecasts.len() > 1 {
+            let values: Vec<A> = forecasts.iter().map(|(_, value)| *value).collect();
+            let count = A::from(values.len())
+                .ok_or_else(|| "sample count not representable".to_string())?;
+            let mean = values.iter().fold(A::zero(), |acc, &v| acc + v) / count;
+            (values
+                .iter()
+                .fold(A::zero(), |acc, &v| acc + (v - mean) * (v - mean))
+                / count)
+                .sqrt()
+        } else {
+            A::zero()
+        };
+        let half_width = recent_volatility + spread;
+        let confidence_interval = (predicted_value - half_width, predicted_value + half_width);
+
+        let method = if forecasts.len() == 1 {
+            forecasts[0].0.clone()
+        } else {
+            format!(
+                "ensemble[{}]",
+                forecasts
+                    .iter()
+                    .map(|(label, _)| label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
 
         let prediction = PredictionResult {
             predicted_value,
             confidence_interval,
-            method: "linear".to_string(),
+            method,
             steps_ahead,
+            issued_at_index: self.snapshots_since_start,
             timestamp: Instant::now(),
             actual_value: None,
         };
@@ -729,50 +884,103 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         }
         self.prediction_history.push_back(prediction.clone());
 
+        // Keep each method's own forecast so its accuracy — and therefore its
+        // ensemble weight — can be scored against the real outcome.
+        let issued_at_index = self.snapshots_since_start;
+        for (label, value) in forecasts {
+            if self.pending_method_forecasts.len() >= 1000 {
+                self.pending_method_forecasts.pop_front();
+            }
+            self.pending_method_forecasts.push_back(MethodForecast {
+                label,
+                predicted_value: value,
+                steps_ahead,
+                issued_at_index,
+            });
+        }
+
         Ok(prediction)
     }
 
+    /// Ordinary-least-squares extrapolation over the whole observed series.
+    ///
+    /// The previous version bound four locals (`x1`, `y1`, `x2`, `y2`) it never
+    /// read and then estimated the slope from a two-point finite difference over
+    /// `values[n-1] - values[n-3]`, which is dominated by noise on a jittery
+    /// stream. A least-squares fit uses every observation.
     fn linear_prediction(&self, values: &[A], steps_ahead: usize) -> Result<A, String> {
-        if values.len() < 2 {
-            return Ok(A::zero());
-        }
-
-        // Simple linear extrapolation using last two points
         let n = values.len();
-        let x1 = A::from(n - 1).expect("unwrap failed");
-        let y1 = values[n - 1];
-        let x2 = A::from(n).expect("unwrap failed");
-        let y2 = values[n - 1]; // Use same point for stability
-
-        // Use trend from last few points
-        if n >= 3 {
-            let slope = (values[n - 1] - values[n - 3]) / A::from(2).expect("unwrap failed");
-            let predicted = values[n - 1] + slope * A::from(steps_ahead).expect("unwrap failed");
-            Ok(predicted)
-        } else {
-            Ok(values[n - 1])
+        if n == 0 {
+            return Err("linear prediction requires at least one observation".to_string());
         }
+        if n < 2 {
+            return Ok(values[0]);
+        }
+
+        let count = A::from(n).ok_or_else(|| "sample count not representable".to_string())?;
+        let two = A::from(2.0).ok_or_else(|| "2.0 not representable".to_string())?;
+        let six = A::from(6.0).ok_or_else(|| "6.0 not representable".to_string())?;
+
+        // x = 1..=n
+        let sum_x = count * (count + A::one()) / two;
+        let sum_x_squared = count * (count + A::one()) * (two * count + A::one()) / six;
+        let mut sum_y = A::zero();
+        let mut sum_xy = A::zero();
+        for (index, &value) in values.iter().enumerate() {
+            let x = A::from(index + 1).ok_or_else(|| format!("index {index} not representable"))?;
+            sum_y = sum_y + value;
+            sum_xy = sum_xy + x * value;
+        }
+
+        let denominator = count * sum_x_squared - sum_x * sum_x;
+        if denominator == A::zero() {
+            return Ok(values[n - 1]);
+        }
+        let slope = (count * sum_xy - sum_x * sum_y) / denominator;
+        let intercept = (sum_y - slope * sum_x) / count;
+
+        let horizon = A::from(n + steps_ahead)
+            .ok_or_else(|| "forecast horizon not representable".to_string())?;
+        Ok(intercept + slope * horizon)
     }
 
-    fn exponential_prediction(&self, values: &[A], steps_ahead: usize) -> Result<A, String> {
+    /// Holt's linear (double exponential) smoothing.
+    ///
+    /// `alpha` smooths the level and `beta` the trend; the forecast is
+    /// `level + steps_ahead * trend`. The previous implementation used single
+    /// exponential smoothing and then multiplied the forecast by `0.99` once per
+    /// step ahead — a fabricated "assume slight improvement" factor unrelated to
+    /// the data — and ignored `beta` entirely.
+    fn exponential_prediction(
+        &self,
+        values: &[A],
+        steps_ahead: usize,
+        alpha: f64,
+        beta: f64,
+    ) -> Result<A, String> {
         if values.is_empty() {
-            return Ok(A::zero());
+            return Err("exponential prediction requires at least one observation".to_string());
+        }
+        if values.len() < 2 {
+            return Ok(values[0]);
         }
 
-        // Simple exponential smoothing
-        let alpha = A::from(0.3).expect("unwrap failed");
-        let mut forecast = values[0];
+        let alpha = A::from(alpha.clamp(f64::MIN_POSITIVE, 1.0))
+            .ok_or_else(|| "alpha not representable".to_string())?;
+        let beta =
+            A::from(beta.clamp(0.0, 1.0)).ok_or_else(|| "beta not representable".to_string())?;
 
+        let mut level = values[0];
+        let mut trend = values[1] - values[0];
         for &value in values.iter().skip(1) {
-            forecast = alpha * value + (A::one() - alpha) * forecast;
+            let previous_level = level;
+            level = alpha * value + (A::one() - alpha) * (previous_level + trend);
+            trend = beta * (level - previous_level) + (A::one() - beta) * trend;
         }
 
-        // Project forward (simplified)
-        for _ in 0..steps_ahead {
-            forecast = forecast * A::from(0.99).expect("unwrap failed"); // Assume slight improvement
-        }
-
-        Ok(forecast)
+        let horizon =
+            A::from(steps_ahead).ok_or_else(|| "forecast horizon not representable".to_string())?;
+        Ok(level + horizon * trend)
     }
 
     fn compute_recent_volatility(&self, values: &[A]) -> Result<A, String> {
@@ -783,54 +991,90 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         let recent_count = values.len().min(10);
         let recent_values = &values[values.len() - recent_count..];
 
-        let mean = recent_values.iter().cloned().sum::<A>()
-            / A::from(recent_count).expect("unwrap failed");
+        let mean = recent_values.iter().cloned().sum::<A>() / try_scalar_str::<A, _>(recent_count)?;
         let variance = recent_values
             .iter()
             .map(|&v| (v - mean) * (v - mean))
             .sum::<A>()
-            / A::from(recent_count).expect("unwrap failed");
+            / try_scalar_str::<A, _>(recent_count)?;
 
         Ok(variance.sqrt())
     }
 
+    /// Matches issued forecasts against the observed value and updates each
+    /// method's measured accuracy.
+    ///
+    /// P4f: the previous version gated on a fabricated
+    /// `Duration::from_secs(steps_ahead * 10)` — "assume 10s per step" — which
+    /// bears no relation to the real batch cadence, so on a fast stream no
+    /// prediction was ever scored and `model_accuracies` stayed empty forever.
+    /// The horizon is now counted in *snapshots*, which is the unit
+    /// `steps_ahead` is actually expressed in.
     fn update_with_actual(&mut self, snapshot: &PerformanceSnapshot<A>) -> Result<(), String> {
-        // Update prediction accuracy by matching actual values with predictions
-        let mut updated_predictions = Vec::new();
+        self.snapshots_since_start = self.snapshots_since_start.saturating_add(1);
+        let now = self.snapshots_since_start;
 
-        for prediction in &mut self.prediction_history {
-            if prediction.actual_value.is_none() {
-                let time_diff = snapshot.timestamp.duration_since(prediction.timestamp);
-                let expected_duration = Duration::from_secs(prediction.steps_ahead as u64 * 10); // Assume 10s per step
-
-                if time_diff >= expected_duration {
-                    prediction.actual_value = Some(snapshot.loss);
-                    updated_predictions.push(prediction.clone());
-                }
+        // Score every per-method forecast whose horizon has elapsed, counted in
+        // snapshots rather than wall-clock seconds.
+        let mut matured: Vec<MethodForecast<A>> = Vec::new();
+        self.pending_method_forecasts.retain(|forecast| {
+            let due_at = forecast.issued_at_index + forecast.steps_ahead.max(1);
+            if now >= due_at {
+                matured.push(forecast.clone());
+                false
+            } else {
+                true
             }
+        });
+
+        for forecast in &matured {
+            let accuracy = Self::accuracy_of(forecast.predicted_value, snapshot.loss)?;
+            // Exponentially-weighted so a method's score reflects its recent
+            // behaviour rather than only its latest observation.
+            let smoothing = A::from(0.3).ok_or_else(|| "0.3 is not representable".to_string())?;
+            let updated = match self.model_accuracies.get(&forecast.label) {
+                Some(&previous) => smoothing * accuracy + (A::one() - smoothing) * previous,
+                None => accuracy,
+            };
+            self.model_accuracies
+                .insert(forecast.label.clone(), updated);
         }
 
-        // Update accuracy metrics for all updated predictions
-        for prediction in &updated_predictions {
-            self.update_accuracy_metrics(prediction)?;
+        // Fill in the actual value on the combined predictions whose horizon has
+        // also elapsed, so the history is a complete record.
+        let mut index = 0usize;
+        while index < self.prediction_history.len() {
+            if let Some(prediction) = self.prediction_history.get_mut(index) {
+                if prediction.actual_value.is_none()
+                    && now >= prediction.issued_at_index + prediction.steps_ahead.max(1)
+                {
+                    prediction.actual_value = Some(snapshot.loss);
+                }
+            }
+            index += 1;
         }
 
         Ok(())
     }
 
-    fn update_accuracy_metrics(&mut self, prediction: &PredictionResult<A>) -> Result<(), String> {
-        if let Some(actual) = prediction.actual_value {
-            let error = (prediction.predicted_value - actual).abs();
-            let relative_error = error / actual.max(A::from(1e-8).expect("unwrap failed"));
+    /// Accuracy of a single forecast: `1 - min(1, |error| / scale)`, where the
+    /// scale is the magnitude of the observed value (floored so a near-zero
+    /// observation cannot make the relative error explode).
+    fn accuracy_of(predicted: A, actual: A) -> Result<A, String> {
+        let epsilon = A::from(1e-8).ok_or_else(|| "1e-8 is not representable".to_string())?;
+        let error = (predicted - actual).abs();
+        let scale = actual.abs().max(epsilon);
+        Ok((A::one() - (error / scale).min(A::one())).max(A::zero()))
+    }
 
-            // Update accuracy for this method
-            let accuracy = A::one() - relative_error.min(A::one());
-            let method_name = &prediction.method;
+    /// Measured accuracy of a single named method, if it has been scored.
+    pub fn method_accuracy(&self, label: &str) -> Option<A> {
+        self.model_accuracies.get(label).copied()
+    }
 
-            self.model_accuracies.insert(method_name.clone(), accuracy);
-        }
-
-        Ok(())
+    /// Current ensemble weights, keyed by method label.
+    pub fn ensemble_weights(&self) -> &HashMap<String, A> {
+        &self.ensemble_weights
     }
 
     fn get_average_accuracy(&self) -> f64 {
@@ -839,7 +1083,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         }
 
         let sum: A = self.model_accuracies.values().cloned().sum();
-        let avg = sum / A::from(self.model_accuracies.len()).expect("unwrap failed");
+        let avg = sum / scalar_or(self.model_accuracies.len(), A::one());
         avg.to_f64().unwrap_or(0.0)
     }
 
@@ -847,6 +1091,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PerformancePredi
         self.prediction_history.clear();
         self.model_accuracies.clear();
         self.ensemble_weights.clear();
+        self.pending_method_forecasts.clear();
+        self.snapshots_since_start = 0;
     }
 }
 
@@ -858,7 +1104,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync>
             baseline_metrics: HashMap::new(),
             improvement_rates: HashMap::new(),
             improvement_history: VecDeque::with_capacity(1000),
-            plateau_detector: PlateauDetector::new(50, A::from(0.01).expect("unwrap failed")),
+            plateau_detector: PlateauDetector::new(50, scalar_or(0.01, A::zero())),
         }
     }
 
@@ -877,11 +1123,34 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync>
         if let Some(&baseline_loss) = self.baseline_metrics.get("loss") {
             if snapshot.loss < baseline_loss {
                 let improvement = baseline_loss - snapshot.loss;
+
+                // Real rate: improvement per second since the previous
+                // improvement (or since this snapshot's own step, for the first
+                // one). Dividing by a literal `1.0` made `improvement_rate` an
+                // exact duplicate of `improvement`, so the field carried no
+                // information about how *fast* the optimizer was improving.
+                let elapsed = match self.improvement_history.back() {
+                    Some(previous) => snapshot
+                        .timestamp
+                        .saturating_duration_since(previous.timestamp),
+                    None => snapshot.processing_duration,
+                };
+                let seconds = elapsed.as_secs_f64();
+                let improvement_rate = if seconds > 0.0 {
+                    let divisor = A::from(seconds)
+                        .ok_or_else(|| format!("elapsed {seconds}s is not representable"))?;
+                    improvement / divisor
+                } else {
+                    // No measurable interval yet: report the raw improvement
+                    // rather than dividing by zero.
+                    improvement
+                };
+
                 let improvement_event = ImprovementEvent {
                     timestamp: snapshot.timestamp,
                     metric_name: "loss".to_string(),
                     improvement,
-                    improvement_rate: improvement / A::from(1.0).expect("unwrap failed"), // Simplified rate
+                    improvement_rate,
                     context: "optimization_step".to_string(),
                 };
 
@@ -889,6 +1158,8 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync>
                     self.improvement_history.pop_front();
                 }
                 self.improvement_history.push_back(improvement_event);
+                self.improvement_rates
+                    .insert("loss".to_string(), improvement_rate);
 
                 // Update baseline
                 self.baseline_metrics
@@ -918,6 +1189,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PlateauDetector<
             recent_values: VecDeque::with_capacity(window_size),
             is_plateau: false,
             plateau_duration: Duration::ZERO,
+            plateau_started: None,
             last_significant_change: None,
         }
     }
@@ -933,26 +1205,73 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PlateauDetector<
         }
     }
 
+    /// Detects whether the tracked metric has flattened out.
+    ///
+    /// P1f: the range used to be computed with `fold(A::zero(), A::max)` and
+    /// `fold(A::zero(), A::min)`, i.e. seeded at zero. For any all-positive
+    /// metric (loss, latency, error rate — essentially all of them) the seeded
+    /// minimum stayed at `0`, so `range == max_val` and the detector only ever
+    /// fired when the *largest observed value* fell below the plateau
+    /// threshold. The seed is now the first observation, which is the only
+    /// correct identity for a min/max reduction.
+    ///
+    /// P2f: `plateau_duration` was advanced by a hard-coded
+    /// `Duration::from_secs(1)` per update, so it reported "one second per
+    /// sample" regardless of how fast or slow samples actually arrived. It is
+    /// now measured from the real `Instant` at which the plateau began.
     fn detect_plateau(&mut self) {
+        let mut values = self.recent_values.iter().copied();
+        let Some(first) = values.next() else {
+            return;
+        };
         if self.recent_values.len() < 2 {
             return;
         }
 
-        let max_val = self.recent_values.iter().cloned().fold(A::zero(), A::max);
-        let min_val = self.recent_values.iter().cloned().fold(A::zero(), A::min);
+        let mut min_val = first;
+        let mut max_val = first;
+        for value in values {
+            if value < min_val {
+                min_val = value;
+            }
+            if value > max_val {
+                max_val = value;
+            }
+        }
         let range = max_val - min_val;
 
         let was_plateau = self.is_plateau;
         self.is_plateau = range < self.plateau_threshold;
 
-        if self.is_plateau && !was_plateau {
-            self.plateau_duration = Duration::ZERO;
-        } else if self.is_plateau {
-            self.plateau_duration += Duration::from_secs(1); // Simplified
-        } else if !self.is_plateau {
+        if self.is_plateau {
+            if !was_plateau {
+                // Plateau just began: stamp the real clock.
+                self.plateau_started = Some(Instant::now());
+                self.plateau_duration = Duration::ZERO;
+            } else if let Some(started) = self.plateau_started {
+                self.plateau_duration = started.elapsed();
+            }
+        } else {
             self.last_significant_change = Some(Instant::now());
+            self.plateau_started = None;
             self.plateau_duration = Duration::ZERO;
         }
+    }
+
+    /// Whether the metric is currently plateaued.
+    pub fn is_plateau(&self) -> bool {
+        self.is_plateau
+    }
+
+    /// Real elapsed duration of the current plateau, measured from the instant
+    /// it was first detected. `Duration::ZERO` when not plateaued.
+    pub fn plateau_duration(&self) -> Duration {
+        self.plateau_duration
+    }
+
+    /// Instant of the most recent significant (non-plateau) change.
+    pub fn last_significant_change(&self) -> Option<Instant> {
+        self.last_significant_change
     }
 
     fn reset(&mut self) {
@@ -966,7 +1285,7 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> PlateauDetector<
 impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAnomalyDetector<A> {
     fn new(threshold: f64) -> Self {
         Self {
-            threshold: A::from(threshold).expect("unwrap failed"),
+            threshold: scalar_or(threshold, A::zero()),
             historical_stats: HashMap::new(),
             recent_anomalies: VecDeque::with_capacity(100),
             adaptive_threshold: true,
@@ -1019,7 +1338,7 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
         // Update running statistics
         stats.count += 1;
         let delta = value - stats.mean;
-        stats.mean = stats.mean + delta / A::from(stats.count).expect("unwrap failed");
+        stats.mean = stats.mean + delta / try_scalar_str::<A, _>(stats.count)?;
         let delta2 = value - stats.mean;
         stats.variance = stats.variance + delta * delta2;
         stats.min_value = stats.min_value.min(value);
@@ -1028,14 +1347,13 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
 
         // Check for anomaly after sufficient samples
         if stats.count >= 10 {
-            let std_dev =
-                (stats.variance / A::from(stats.count - 1).expect("unwrap failed")).sqrt();
-            let z_score = (value - stats.mean) / std_dev.max(A::from(1e-8).expect("unwrap failed"));
+            let std_dev = (stats.variance / try_scalar_str::<A, _>(stats.count - 1)?).sqrt();
+            let z_score = (value - stats.mean) / std_dev.max(try_scalar_str::<A, _>(1e-8)?);
 
             if z_score.abs() > self.threshold {
-                let severity = if z_score.abs() > A::from(3.0).expect("unwrap failed") {
+                let severity = if z_score.abs() > try_scalar_str::<A, _>(3.0)? {
                     AnomalySeverity::Critical
-                } else if z_score.abs() > A::from(2.5).expect("unwrap failed") {
+                } else if z_score.abs() > try_scalar_str::<A, _>(2.5)? {
                     AnomalySeverity::Major
                 } else {
                     AnomalySeverity::Moderate
@@ -1068,8 +1386,24 @@ impl<A: Float + Default + Clone + Sum + Send + Sync + Send + Sync> PerformanceAn
         Ok(None)
     }
 
-    fn update_threshold(&mut self, new_threshold: A) {
+    /// Move the anomaly-detection threshold, if this detector is configured to
+    /// adapt it.
+    ///
+    /// `adaptive_threshold` was set at construction and never consulted, so a
+    /// detector configured with a fixed threshold still had it moved by every
+    /// `AdaptationType::PerformanceThreshold` adaptation. Returns whether the
+    /// threshold actually moved.
+    fn update_threshold(&mut self, new_threshold: A) -> bool {
+        if !self.adaptive_threshold {
+            return false;
+        }
         self.threshold = new_threshold;
+        true
+    }
+
+    /// Whether this detector adapts its threshold.
+    pub fn is_threshold_adaptive(&self) -> bool {
+        self.adaptive_threshold
     }
 
     fn reset(&mut self) {
@@ -1087,4 +1421,289 @@ pub struct PerformanceDiagnostics {
     pub anomalies_detected: usize,
     pub plateau_detected: bool,
     pub prediction_accuracy: f64,
+}
+
+#[cfg(test)]
+mod plateau_and_prediction_regression_tests {
+    use super::*;
+    use scirs2_core::ndarray::Array1;
+
+    fn snapshot(loss: f64) -> PerformanceSnapshot<f64> {
+        PerformanceSnapshot {
+            timestamp: Instant::now(),
+            processing_duration: Duration::from_millis(3),
+            loss,
+            accuracy: Some(1.0 - loss.min(1.0)),
+            convergence_rate: None,
+            gradient_norm: Some(loss.sqrt()),
+            parameter_update_magnitude: Some(loss / 10.0),
+            data_statistics: DataStatistics {
+                sample_count: 1,
+                feature_means: Array1::from_vec(vec![loss]),
+                feature_stds: Array1::from_vec(vec![0.0]),
+                average_quality: 1.0,
+                timestamp: Instant::now(),
+            },
+            resource_usage: ResourceUsage::default(),
+            custom_metrics: HashMap::new(),
+        }
+    }
+
+    /// P1f: `detect_plateau` reduced with `fold(A::zero(), A::min)`, seeding the
+    /// minimum at `0`. For an all-positive metric the observed minimum could
+    /// never be anything but `0`, so `range == max_val` and the detector only
+    /// fired when the *largest* value fell under the threshold. A genuinely flat
+    /// series at level 5.0 with a 0.01 threshold must be reported as a plateau —
+    /// under the old code `range` would have been `5.0` and it never would be.
+    #[test]
+    fn plateau_is_detected_for_a_flat_series_away_from_zero() {
+        let mut detector = PlateauDetector::<f64>::new(10, 0.01);
+        for i in 0..10 {
+            // Flat at 5.0, jitter of 0.001 — total range 0.001 < 0.01.
+            detector.update(5.0 + 0.001 * ((i % 2) as f64));
+        }
+        assert!(
+            detector.is_plateau(),
+            "P1f regression: a flat series at level 5.0 was not detected as a \
+             plateau (the min seed was still 0)"
+        );
+    }
+
+    /// P1f: the mirror case — a series with genuine variation must not be
+    /// reported as a plateau.
+    #[test]
+    fn plateau_is_not_detected_for_a_varying_series() {
+        let mut detector = PlateauDetector::<f64>::new(10, 0.01);
+        for i in 0..10 {
+            detector.update(5.0 + i as f64);
+        }
+        assert!(
+            !detector.is_plateau(),
+            "a series spanning 9.0 must not be a plateau under a 0.01 threshold"
+        );
+        assert_eq!(detector.plateau_duration(), Duration::ZERO);
+        assert!(detector.last_significant_change().is_some());
+    }
+
+    /// P2f: `plateau_duration` was advanced by a hard-coded
+    /// `Duration::from_secs(1)` per update, so after N updates it always claimed
+    /// exactly N-1 seconds regardless of how fast samples arrived. It must now
+    /// reflect real elapsed time — far less than a second for a tight loop.
+    #[test]
+    fn plateau_duration_is_real_elapsed_time_not_one_second_per_sample() {
+        let mut detector = PlateauDetector::<f64>::new(5, 1.0);
+        // 5 samples to trigger, then 20 more updates inside the plateau.
+        for _ in 0..25 {
+            detector.update(3.0);
+        }
+        assert!(detector.is_plateau());
+
+        let duration = detector.plateau_duration();
+        assert!(
+            duration < Duration::from_secs(1),
+            "P2f regression: plateau_duration is {duration:?} — the fabricated \
+             one-second-per-sample clock is still in use (20 in-plateau updates \
+             would have claimed ~20s)"
+        );
+    }
+
+    /// P2f: the duration must genuinely grow with wall-clock time.
+    #[test]
+    fn plateau_duration_grows_with_wall_clock_time() {
+        let mut detector = PlateauDetector::<f64>::new(3, 1.0);
+        for _ in 0..3 {
+            detector.update(2.0);
+        }
+        assert!(detector.is_plateau());
+        let first = detector.plateau_duration();
+
+        std::thread::sleep(Duration::from_millis(25));
+        detector.update(2.0);
+        let second = detector.plateau_duration();
+
+        assert!(
+            second > first,
+            "the plateau duration must advance with real time ({first:?} -> {second:?})"
+        );
+        assert!(
+            second >= Duration::from_millis(20),
+            "expected at least the ~25ms that actually elapsed, got {second:?}"
+        );
+    }
+
+    /// P3f: `predict` only ever ran `linear_prediction`;
+    /// `exponential_prediction`, `prediction_methods` and `ensemble_weights`
+    /// were dead. Every configured method must now run and be combined, which
+    /// shows up as a populated `ensemble_weights` map and an ensemble label.
+    #[test]
+    fn prediction_runs_every_configured_method_and_records_weights() {
+        let config = StreamingConfig::default();
+        let mut tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
+
+        for i in 0..12 {
+            tracker
+                .add_performance(snapshot(10.0 - 0.5 * i as f64))
+                .expect("add_performance");
+        }
+
+        let prediction = tracker.predict_performance(3).expect("prediction");
+        assert!(
+            prediction.method.starts_with("ensemble["),
+            "P3f regression: only one method ran (method={})",
+            prediction.method
+        );
+        assert!(
+            prediction.method.contains("linear") && prediction.method.contains("exponential"),
+            "both configured methods must appear in the ensemble label (got {})",
+            prediction.method
+        );
+        assert!(
+            prediction.confidence_interval.0 < prediction.predicted_value
+                && prediction.predicted_value < prediction.confidence_interval.1,
+            "the interval must bracket the point forecast"
+        );
+    }
+
+    /// P3f: the linear forecaster must extrapolate a real least-squares trend.
+    /// A perfectly linear series must be predicted almost exactly.
+    #[test]
+    fn linear_prediction_extrapolates_a_known_trend_exactly() {
+        let predictor = PerformancePredictor::<f64>::new();
+        // y = 2x for x = 1..=10, so the value at x = 13 is 26.
+        let values: Vec<f64> = (1..=10).map(|x| 2.0 * x as f64).collect();
+        let forecast = predictor
+            .linear_prediction(&values, 3)
+            .expect("linear_prediction");
+        assert!(
+            (forecast - 26.0).abs() < 1e-9,
+            "expected 26.0 for a perfect y = 2x fit, got {forecast}"
+        );
+    }
+
+    /// P3f: Holt's linear smoothing must follow the trend, not multiply the
+    /// forecast by a fabricated 0.99 "assume slight improvement" factor.
+    #[test]
+    fn exponential_prediction_follows_the_trend_not_a_fixed_decay() {
+        let predictor = PerformancePredictor::<f64>::new();
+        // Steadily rising series: the forecast must be above the last value.
+        let rising: Vec<f64> = (1..=20).map(|x| x as f64).collect();
+        let up = predictor
+            .exponential_prediction(&rising, 5, 0.5, 0.5)
+            .expect("exponential_prediction");
+        assert!(
+            up > 20.0,
+            "a rising series must forecast above its last value, got {up}"
+        );
+
+        // Steadily falling series: the forecast must be below the last value.
+        let falling: Vec<f64> = (1..=20).map(|x| 21.0 - x as f64).collect();
+        let down = predictor
+            .exponential_prediction(&falling, 5, 0.5, 0.5)
+            .expect("exponential_prediction");
+        assert!(
+            down < 1.0,
+            "a falling series must forecast below its last value, got {down}"
+        );
+    }
+
+    /// P4f: accuracy scoring was gated on a fabricated
+    /// `Duration::from_secs(steps_ahead * 10)`, so on any stream faster than
+    /// "10 seconds per batch" no prediction was ever scored and
+    /// `model_accuracies` stayed permanently empty — which in turn meant the
+    /// ensemble weights had nothing to be derived from. The horizon is now
+    /// counted in snapshots, so accuracy is measured within a handful of
+    /// batches with no sleeping at all.
+    #[test]
+    fn prediction_accuracy_is_scored_without_waiting_ten_seconds_per_step() {
+        let config = StreamingConfig::default();
+        let mut tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
+
+        for i in 0..12 {
+            tracker
+                .add_performance(snapshot(10.0 - 0.5 * i as f64))
+                .expect("add_performance");
+        }
+        tracker.predict_performance(1).expect("prediction");
+
+        // Two more snapshots is more than the 1-step horizon.
+        for i in 0..2 {
+            tracker
+                .add_performance(snapshot(4.0 - 0.5 * i as f64))
+                .expect("add_performance");
+        }
+
+        let diagnostics = tracker.get_diagnostics();
+        assert!(
+            diagnostics.prediction_accuracy > 0.0,
+            "P4f regression: no prediction was ever scored, so accuracy is still \
+             {} after the horizon elapsed",
+            diagnostics.prediction_accuracy
+        );
+    }
+
+    /// P4f: a forecaster with no implementation must be an honest error rather
+    /// than contributing a fabricated number to the ensemble.
+    #[test]
+    fn unimplemented_prediction_methods_are_an_error() {
+        let config = StreamingConfig::default();
+        let mut tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
+        tracker.predictor.prediction_methods = vec![PredictionMethod::ARIMA { p: 1, d: 1, q: 1 }];
+
+        for i in 0..12 {
+            tracker
+                .add_performance(snapshot(10.0 - 0.5 * i as f64))
+                .expect("add_performance");
+        }
+
+        assert!(
+            tracker.predict_performance(2).is_err(),
+            "an unimplemented forecaster must not silently produce a value"
+        );
+    }
+    /// `improvement_rate` was `improvement / 1.0`, an exact duplicate of
+    /// `improvement`, so it said nothing about how *fast* the optimizer was
+    /// improving. It must now be a real per-second rate, which for two
+    /// improvements separated by a measurable interval differs from the raw
+    /// improvement.
+    #[test]
+    fn improvement_rate_is_a_real_per_second_rate() {
+        let config = StreamingConfig::default();
+        let mut tracker = PerformanceTracker::<f64>::new(&config).expect("tracker");
+
+        tracker.add_performance(snapshot(10.0)).expect("first");
+        // Second improvement, well after the first.
+        std::thread::sleep(Duration::from_millis(40));
+        tracker.add_performance(snapshot(9.0)).expect("second");
+        std::thread::sleep(Duration::from_millis(40));
+        tracker.add_performance(snapshot(8.0)).expect("third");
+
+        let events = &tracker.improvement_tracker.improvement_history;
+        assert!(
+            events.len() >= 2,
+            "at least two improvements should have been recorded, got {}",
+            events.len()
+        );
+        let last = events
+            .back()
+            .expect("an improvement event must have been recorded");
+        assert!(
+            (last.improvement - 1.0).abs() < 1e-12,
+            "the raw improvement should be 1.0, got {}",
+            last.improvement
+        );
+        assert!(
+            (last.improvement_rate - last.improvement).abs() > 1e-9,
+            "the rate must differ from the raw improvement once a real interval \
+             has elapsed (improvement={}, rate={})",
+            last.improvement,
+            last.improvement_rate
+        );
+        // 1.0 of improvement over ~40ms is roughly 25 per second, and certainly
+        // more than 1 per second.
+        assert!(
+            last.improvement_rate > 1.0,
+            "expected a rate well above 1/s for a 40ms interval, got {}",
+            last.improvement_rate
+        );
+    }
 }

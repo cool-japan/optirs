@@ -197,6 +197,13 @@ impl MemorySafetyAnalyzer {
         if self.memory_tracking.current_usage > self.memory_tracking.peak_usage {
             self.memory_tracking.peak_usage = self.memory_tracking.current_usage;
         }
+        self.memory_tracking
+            .usage_history
+            .push_back(MemorySnapshot {
+                timestamp: Instant::now(),
+                usage_bytes: self.memory_tracking.current_usage,
+                allocation_count: self.memory_tracking.usage_history.len() + 1,
+            });
 
         // Check if this indicates a potential issue (simplified logic)
         if self.should_detect_memory_issue(0.3) {
@@ -204,8 +211,8 @@ impl MemorySafetyAnalyzer {
                 issue_type: MemoryIssueType::Leak,
                 severity: SeverityLevel::Medium,
                 description: format!(
-                    "Large allocation of {} bytes may indicate memory leak",
-                    large_size
+                    "Large allocation of {} bytes (usage {} -> {} bytes) may indicate memory leak",
+                    large_size, before_usage, self.memory_tracking.current_usage
                 ),
                 stack_trace: Some("test_large_array_allocation".to_string()),
                 memory_location: Some(MemoryLocation {

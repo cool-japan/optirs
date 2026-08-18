@@ -1,6 +1,5 @@
 // Deadlock ML Module
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
 pub use super::algorithms::CombinationStrategy;

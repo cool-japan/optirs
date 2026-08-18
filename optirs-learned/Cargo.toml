@@ -31,9 +31,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 log = { workspace = true }
 
-# ML dependencies
-autograd = { workspace = true, optional = true }
-tokenizers = { workspace = true, optional = true }
 # Random generation - REMOVED: Use scirs2_core::random instead
 # rand = { workspace = true }
 # rand_distr = { workspace = true }
@@ -41,10 +38,38 @@ tokenizers = { workspace = true, optional = true }
 [dev-dependencies]
 approx = { workspace = true }
 
+# Integration tests that exercise a feature-gated module. Declared explicitly so
+# `cargo test --no-default-features` skips them instead of failing to compile.
+# Auto-discovery still picks up every other file in `tests/`.
+[[test]]
+name = "lstm_layers"
+required-features = ["lstm"]
+
+[[test]]
+name = "lstm_meta_training"
+required-features = ["lstm"]
+
+[[test]]
+name = "adaptive_enhancement"
+required-features = ["transformer"]
+
+[[test]]
+name = "xavier_initialization"
+required-features = ["lstm", "transformer"]
+
 [features]
-default = ["transformer"]
+# All three optimizer families are on by default so the crate's public surface
+# is unchanged from a plain `optirs-learned = "0.3"` dependency. Each feature
+# actually gates its modules (see `src/lib.rs`), so `--no-default-features`
+# plus a single family is a real, smaller build.
+default = ["transformer", "lstm", "meta_learning"]
+
+# Transformer-based learned optimizers: `transformer`, `transformer_based_optimizer`
+# and the `adaptive` architecture-adaptation layer that is written against them.
 transformer = []
+
+# LSTM-based learned optimizer and its BPTT meta-trainer: `lstm`.
 lstm = []
+
+# Gradient-based meta-learning framework (MAML / Reptile / Meta-SGD): `meta_learning`.
 meta_learning = []
-autograd_integration = ["autograd"]
-nlp = ["tokenizers"]

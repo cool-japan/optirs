@@ -1,4 +1,18 @@
 // Multi-GPU synchronization support for distributed training
+//
+// # What is real here
+//
+// [`MultiGpuSync`] drives a real, compiled compute shader
+// ([`crate::shaders::CollectiveKernel::AllReduceMean`]) through
+// [`scirs2_core::gpu`] on whatever single device the caller's [`GpuContext`]
+// opened. That is honestly the extent of it: `scirs2-core` 0.6.x exposes one
+// device per context and no cross-device transport (no NCCL/MPI-equivalent),
+// so there is no way for this crate to fetch another physical GPU's data.
+// Every method here is therefore real for `num_gpus == 1` (the only case
+// where "all-reduce" is answerable from local data alone — the answer is the
+// local data itself) and an honest [`GpuOptimError::UnsupportedOperation`]
+// for `num_gpus > 1`, rather than a kernel dispatch to a name nothing
+// registers, or a bare `Ok(())` that quietly did nothing.
 
 use scirs2_core::gpu::{GpuBuffer, GpuContext, GpuDataType, GpuKernelHandle};
 use scirs2_core::ndarray::{ArrayBase, Data, DataMut, Dimension};
@@ -6,7 +20,7 @@ use scirs2_core::numeric::Float;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::backends::GpuBackend;
+use crate::shaders::{CollectiveKernel, WORKGROUP_SIZE};
 use crate::GpuOptimError;
 
 /// Multi-GPU synchronization strategy
@@ -70,44 +84,34 @@ impl Default for MultiGpuConfig {
     }
 }
 
-/// Multi-GPU synchronization manager
-pub struct MultiGpuSync<A: Float + GpuDataType> {
-    /// GPU context
-    context: Arc<GpuContext>,
-    /// Configuration
-    config: MultiGpuConfig,
-    /// Synchronization kernels
-    sync_kernels: SyncKernels,
-    /// Workspace buffers
-    workspace: WorkspaceBuffers<A>,
-    /// Communication performance monitor
-    perf_monitor: CommunicationPerformanceMonitor,
-    /// Adaptive strategy selector
-    adaptive_selector: AdaptiveCommunicationSelector,
-    /// Asynchronous communication handles
-    async_handles: Vec<AsyncCommunicationHandle>,
-    /// Step counter for monitoring
-    step_counter: usize,
-    /// Phantom data for type parameter
-    _phantom: PhantomData<A>,
-}
-
-/// Container for synchronization kernels
-struct SyncKernels {
-    ring_allreduce: Option<Arc<GpuKernelHandle>>,
-    tree_allreduce: Option<Arc<GpuKernelHandle>>,
-    hierarchical_allreduce: Option<Arc<GpuKernelHandle>>,
-    compress_gradients: Option<Arc<GpuKernelHandle>>,
-    decompress_gradients: Option<Arc<GpuKernelHandle>>,
-}
-
-/// Workspace buffers for synchronization
-struct WorkspaceBuffers<A: Float + GpuDataType> {
-    recv_buffer: Option<GpuBuffer<A>>,
-    workspace: Option<GpuBuffer<A>>,
-    compressed_values: Option<GpuBuffer<A>>,
-    compressed_indices: Option<GpuBuffer<i32>>,
-    error_feedback: Option<GpuBuffer<A>>,
+impl MultiGpuConfig {
+    /// Check every field that is later used as a divisor or an index bound,
+    /// so a bad config fails here with a clear message instead of panicking
+    /// (division by zero) deep inside a sync call.
+    pub fn validate(&self) -> Result<(), GpuOptimError> {
+        let invalid =
+            |what: &str| GpuOptimError::InvalidState(format!("invalid multi-GPU config: {what}"));
+        if self.num_gpus == 0 {
+            return Err(invalid("num_gpus must be >= 1"));
+        }
+        if self.rank >= self.num_gpus {
+            return Err(invalid("rank must be < num_gpus"));
+        }
+        if self.local_group_size == 0 {
+            return Err(invalid("local_group_size must be >= 1"));
+        }
+        if self.pipeline_depth == 0 {
+            return Err(invalid("pipeline_depth must be >= 1"));
+        }
+        if self.gradient_compression
+            && !(self.compression_ratio.is_finite()
+                && self.compression_ratio > 0.0
+                && self.compression_ratio <= 1.0)
+        {
+            return Err(invalid("compression_ratio must be finite and in (0, 1]"));
+        }
+        Ok(())
+    }
 }
 
 /// Communication performance monitoring
@@ -123,8 +127,6 @@ pub struct CommunicationPerformanceMonitor {
     bandwidth_history: std::collections::VecDeque<f64>,
     /// Strategy performance tracking
     strategy_performance: std::collections::HashMap<SyncStrategy, StrategyPerformanceMetrics>,
-    /// Current optimal strategy
-    optimal_strategy: SyncStrategy,
 }
 
 impl CommunicationPerformanceMonitor {
@@ -135,11 +137,20 @@ impl CommunicationPerformanceMonitor {
             comm_operations: 0,
             bandwidth_history: std::collections::VecDeque::with_capacity(1000),
             strategy_performance: std::collections::HashMap::new(),
-            optimal_strategy: SyncStrategy::RingAllReduce,
         }
     }
 
-    fn record_communication(&mut self, strategy: SyncStrategy, data_bytes: u64, timeus: u64) {
+    fn record_communication(
+        &mut self,
+        strategy: SyncStrategy,
+        data_bytes: u64,
+        timeus: u64,
+        tensor_size: usize,
+    ) {
+        // A sub-microsecond elapsed time is real (small local ops legitimately
+        // take under 1us), but dividing by it is not: clamp to 1us so the
+        // bandwidth estimate is merely optimistic instead of `inf`/`NaN`.
+        let timeus = timeus.max(1);
         self.total_comm_time_us += timeus;
         self.total_data_bytes += data_bytes;
         self.comm_operations += 1;
@@ -156,7 +167,7 @@ impl CommunicationPerformanceMonitor {
             .strategy_performance
             .entry(strategy)
             .or_insert_with(StrategyPerformanceMetrics::new);
-        metrics.update(bandwidth_gb_s, timeus);
+        metrics.update(bandwidth_gb_s, timeus, tensor_size);
     }
 
     fn get_average_bandwidth(&self) -> f64 {
@@ -202,13 +213,15 @@ impl StrategyPerformanceMetrics {
         }
     }
 
-    fn update(&mut self, bandwidth_gb_s: f64, latencyus: u64) {
+    fn update(&mut self, bandwidth_gb_s: f64, latencyus: u64, tensor_size: usize) {
         self.bandwidth_samples.push_back(bandwidth_gb_s);
         self.latency_samples.push_back(latencyus);
+        self.tensor_sizes.push_back(tensor_size);
 
         if self.bandwidth_samples.len() > 100 {
             self.bandwidth_samples.pop_front();
             self.latency_samples.pop_front();
+            self.tensor_sizes.pop_front();
         }
 
         // Update efficiency score based on recent performance
@@ -223,7 +236,25 @@ impl StrategyPerformanceMetrics {
     fn calculate_score(&self, tensorsize: usize) -> f64 {
         // Higher score for better efficiency, adjusted for tensor _size
         let size_factor = if tensorsize > 1000000 { 2.0 } else { 1.0 }; // Favor strategies for large tensors
-        self.efficiency_score * size_factor
+
+        // Trust this strategy's efficiency score less when it has no track
+        // record at a comparable tensor size (within 10x): bandwidth and
+        // latency measured on very differently-sized transfers may not
+        // generalize to this one. A strategy with no history at all is not
+        // penalized further here -- its `efficiency_score` already starts
+        // at 0.0 until `update` has run at least once.
+        let has_comparable_history = self.tensor_sizes.is_empty()
+            || self.tensor_sizes.iter().any(|&recorded| {
+                let (small, large) = if recorded <= tensorsize {
+                    (recorded.max(1), tensorsize.max(1))
+                } else {
+                    (tensorsize.max(1), recorded)
+                };
+                large <= small * 10
+            });
+        let relevance = if has_comparable_history { 1.0 } else { 0.5 };
+
+        self.efficiency_score * size_factor * relevance
     }
 }
 
@@ -236,7 +267,21 @@ pub struct AdaptiveCommunicationSelector {
     switch_cooldown: usize,
     /// Last switch step
     last_switch_step: usize,
-    /// Evaluation window (steps)
+    /// Evaluation window (steps).
+    ///
+    /// Not currently consulted by [`Self::should_evaluate_strategy`] or
+    /// [`Self::evaluate_and_switch`]: `switch_cooldown` (steps since the
+    /// last switch) is the only gate implemented today. Whether
+    /// `evaluation_window` should instead gate how often a potential
+    /// switch is *checked for* (independent of `switch_cooldown`, which
+    /// gates when a switch may actually happen), or how much recent
+    /// history `evaluate_and_switch` compares (as opposed to each
+    /// strategy's full rolling `efficiency_score`), is a scheduling-policy
+    /// decision this lint pass is not making unilaterally -- especially
+    /// since the two fields' default values (50 and 20) are not a clean
+    /// multiple of each other, so guessing the intended relationship risks
+    /// getting it wrong. Recorded as a finding rather than force-wired.
+    #[allow(dead_code)]
     evaluation_window: usize,
     /// Performance threshold for strategy switching
     performance_threshold: f64,
@@ -290,32 +335,6 @@ impl AdaptiveCommunicationSelector {
     }
 }
 
-/// Handle for asynchronous communication operations
-#[derive(Debug)]
-pub struct AsyncCommunicationHandle {
-    /// Communication ID
-    id: usize,
-    /// Start time
-    start_time: std::time::Instant,
-    /// Expected completion time
-    expected_completion: std::time::Duration,
-    /// Communication strategy used
-    strategy: SyncStrategy,
-    /// Data size (bytes)
-    data_size: usize,
-    /// Status
-    status: AsyncCommStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AsyncCommStatus {
-    Pending,
-    InProgress,
-    Completed,
-    Failed,
-    Timeout,
-}
-
 /// Communication performance statistics snapshot
 #[derive(Debug, Clone)]
 pub struct CommunicationPerformanceStats {
@@ -323,36 +342,112 @@ pub struct CommunicationPerformanceStats {
     pub total_operations: usize,
     pub total_data_transferred_gb: f64,
     pub current_strategy: SyncStrategy,
+    /// Always `0`: this build has no asynchronous collective machinery (see
+    /// the module docs). The field is kept so callers that already match on
+    /// this struct do not need to change; it is not a rounded-down real count.
     pub pending_async_ops: usize,
     pub step_count: usize,
 }
 
+/// Encode a `usize` element count into an `f32` slot bit-for-bit, recovered on
+/// the device with `bitcast<u32>` / `as_type<uint>`.
+fn encode_u32(value: usize) -> Result<f32, GpuOptimError> {
+    let raw = u32::try_from(value).map_err(|_| {
+        GpuOptimError::UnsupportedOperation(format!("{value} does not fit in a u32 kernel operand"))
+    })?;
+    Ok(f32::from_bits(raw))
+}
+
+/// Number of `WORKGROUP_SIZE`-wide workgroups needed to cover `n` elements.
+fn workgroup_count(n: usize) -> Result<u32, GpuOptimError> {
+    let groups = n.div_ceil(WORKGROUP_SIZE);
+    u32::try_from(groups).map_err(|_| {
+        GpuOptimError::UnsupportedOperation(format!(
+            "{n} elements need {groups} workgroups, which exceeds the u32 dispatch limit"
+        ))
+    })
+}
+
+/// Dispatch the real all-reduce-mean kernel over `data[range]`, in place.
+///
+/// Works for any `A: Float`, not just `f32`: the host round-trips through an
+/// `f32` buffer (the shaders are `f32`-only, matching every other kernel this
+/// crate ships) via the same numeric conversion used throughout this crate
+/// rather than a byte reinterpret, so it is correct for `A = f64` too, just
+/// rounded through `f32` precision.
+fn dispatch_local_reduce(
+    context: &GpuContext,
+    kernel: &GpuKernelHandle,
+    host: &[f32],
+    num_gpus: usize,
+) -> Result<Vec<f32>, GpuOptimError> {
+    let n = host.len();
+    let hyper = [encode_u32(n)?, encode_u32(num_gpus)?];
+    let groups = workgroup_count(n)?;
+
+    let x_buf = context.create_buffer::<f32>(n);
+    x_buf.copy_from_host(host)?;
+    let y_buf = context.create_buffer::<f32>(hyper.len());
+    y_buf.copy_from_host(&hyper)?;
+
+    kernel.set_buffer("x", &x_buf);
+    kernel.set_buffer("y", &y_buf);
+    kernel.dispatch([groups, 1, 1]);
+
+    let mut out = vec![0.0f32; n];
+    x_buf.copy_to_host(&mut out)?;
+    Ok(out)
+}
+
+/// Multi-GPU synchronization manager
+pub struct MultiGpuSync<A: Float + GpuDataType> {
+    /// GPU context
+    context: Arc<GpuContext>,
+    /// Configuration
+    config: MultiGpuConfig,
+    /// Upper bound on the number of elements a single sync call will accept.
+    max_param_size: usize,
+    /// The real local-reduction kernel, compiled once for the context's
+    /// backend. `None` when that backend has no shader source for it (every
+    /// backend this crate ships kernels for is `Wgpu`/`Metal`); every method
+    /// that would need it then returns an honest `UnsupportedOperation`
+    /// instead of dereferencing a handle that was never created.
+    reduce_kernel: Option<GpuKernelHandle>,
+    /// Communication performance monitor
+    perf_monitor: CommunicationPerformanceMonitor,
+    /// Adaptive strategy selector
+    adaptive_selector: AdaptiveCommunicationSelector,
+    /// Step counter for monitoring
+    step_counter: usize,
+    /// Phantom data for type parameter
+    _phantom: PhantomData<A>,
+}
+
 impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
-    /// Create a new multi-GPU synchronization manager
+    /// Create a new multi-GPU synchronization manager.
+    ///
+    /// `max_param_size` bounds how large a single tensor `sync_gradients` (and
+    /// friends) will accept; it is a resource cap the caller opts into, not a
+    /// buffer that gets preallocated.
     pub fn new(
         context: Arc<GpuContext>,
         config: MultiGpuConfig,
         max_param_size: usize,
     ) -> Result<Self, GpuOptimError> {
-        // Load synchronization kernels
-        let sync_kernels = Self::load_sync_kernels(&context, &config)?;
+        config.validate()?;
 
-        // Allocate workspace buffers
-        let workspace = Self::allocate_workspace(&context, &config, max_param_size)?;
-
-        // Initialize performance monitoring and adaptive components
-        let perf_monitor = CommunicationPerformanceMonitor::new();
-        let adaptive_selector = AdaptiveCommunicationSelector::new();
-        let async_handles = Vec::with_capacity(config.pipeline_depth);
+        let reduce_kernel = match CollectiveKernel::AllReduceMean.source_for(context.backend()) {
+            Some(source) => Some(context.execute(|compiler| compiler.compile(source))?),
+            None => None,
+        };
 
         Ok(Self {
             context,
             config,
-            sync_kernels,
-            workspace,
-            perf_monitor,
-            adaptive_selector,
-            async_handles,
+            max_param_size,
+            reduce_kernel,
+            perf_monitor: CommunicationPerformanceMonitor::new(),
+            adaptive_selector: AdaptiveCommunicationSelector::new(),
             step_counter: 0,
             _phantom: PhantomData,
         })
@@ -386,11 +481,14 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             self.config.sync_strategy
         };
 
-        // Execute synchronization
+        // Execute synchronization. Without a cross-device transport every
+        // topology (ring / tree / hierarchical) answers the single-device
+        // case identically, and every topology is equally unable to serve
+        // `num_gpus > 1` — see the module docs.
         let result = match strategy {
-            SyncStrategy::RingAllReduce => self.ring_allreduce(gradients),
-            SyncStrategy::TreeAllReduce => self.tree_allreduce(gradients),
-            SyncStrategy::HierarchicalAllReduce => self.hierarchical_allreduce(gradients),
+            SyncStrategy::RingAllReduce
+            | SyncStrategy::TreeAllReduce
+            | SyncStrategy::HierarchicalAllReduce => self.local_reduce(gradients),
             SyncStrategy::PipelineParallel => {
                 if self.config.async_param_updates {
                     self.pipeline_parallel_async(gradients)
@@ -410,6 +508,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             strategy,
             data_bytes as u64,
             elapsed.as_micros() as u64,
+            tensor_size,
         );
 
         // Periodic monitoring output
@@ -423,202 +522,60 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         result
     }
 
-    /// Ring all-reduce implementation
-    fn ring_allreduce<S, D>(&self, gradients: &mut ArrayBase<S, D>) -> Result<(), GpuOptimError>
+    /// The one real operation every collective strategy reduces to on a
+    /// single device: divide the local buffer by the replica count. For
+    /// `num_gpus == 1` this is the exact all-reduce-mean answer — there is
+    /// nothing else to sum — computed for real via a compiled compute
+    /// shader. For `num_gpus > 1` this honestly refuses: there is no
+    /// transport in this build to fetch the other replicas' data.
+    fn local_reduce<S, D>(&self, gradients: &mut ArrayBase<S, D>) -> Result<(), GpuOptimError>
     where
         S: DataMut<Elem = A>,
         D: Dimension,
     {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            let kernel = self
-                .sync_kernels
-                .ring_allreduce
-                .as_ref()
-                .ok_or(GpuOptimError::NotInitialized)?;
-
-            // Get the length before creating mutable slice
-            let grad_len = gradients.len();
-
-            let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
-                GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
-            })?;
-
-            // Create GPU buffer for gradients
-            let grad_buffer = self.context.create_buffer_from_slice(grad_slice);
-
-            // Calculate chunk size for ring operations
-            let chunk_size = grad_len.div_ceil(self.config.num_gpus);
-
-            // Set kernel parameters
-            kernel.set_buffer("data", &grad_buffer);
-            kernel.set_buffer(
-                "recv_buffer",
-                self.workspace.recv_buffer.as_ref().expect("unwrap failed"),
-            );
-            kernel.set_i32("chunk_size", chunk_size as i32);
-            kernel.set_i32("rank", self.config.rank as i32);
-            kernel.set_i32("world_size", self.config.num_gpus as i32);
-
-            // Execute ring all-reduce for each chunk
-            for chunk_id in 0..self.config.num_gpus {
-                kernel.set_i32("chunk_id", chunk_id as i32);
-
-                let (grid_size, block_size) = crate::utils::calculate_block_size(chunk_size, 256);
-                kernel.dispatch([grid_size as u32, 1, 1]);
-            }
-
-            // Copy results back
-            grad_buffer.copy_to_host(grad_slice)?;
+        if self.config.num_gpus > 1 {
+            return Err(GpuOptimError::UnsupportedOperation(format!(
+                "all-reduce across {} GPUs needs a cross-device transport (an NCCL/MPI \
+                 equivalent); this build has a single scirs2_core::gpu::GpuContext and no such \
+                 transport, so peer devices' data can never be fetched",
+                self.config.num_gpus
+            )));
         }
+        let n = gradients.len();
+        if n == 0 {
+            return Ok(());
+        }
+        if n > self.max_param_size {
+            return Err(GpuOptimError::InvalidState(format!(
+                "gradient tensor has {n} elements, above the {}-element bound this \
+                 MultiGpuSync was constructed with",
+                self.max_param_size
+            )));
+        }
+        let kernel = self.reduce_kernel.as_ref().ok_or_else(|| {
+            GpuOptimError::UnsupportedOperation(format!(
+                "no all-reduce kernel source for backend {}",
+                self.context.backend()
+            ))
+        })?;
 
-        Ok(())
+        let host: Vec<f32> = gradients
+            .iter()
+            .map(|v| v.to_f32().unwrap_or(0.0))
+            .collect();
+        let out = dispatch_local_reduce(&self.context, kernel, &host, 1)?;
+        write_back(gradients, &out)
     }
 
-    /// Tree all-reduce implementation
-    fn tree_allreduce<S, D>(&self, gradients: &mut ArrayBase<S, D>) -> Result<(), GpuOptimError>
-    where
-        S: DataMut<Elem = A>,
-        D: Dimension,
-    {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            let kernel = self
-                .sync_kernels
-                .tree_allreduce
-                .as_ref()
-                .ok_or(GpuOptimError::NotInitialized)?;
-
-            // Get the length before creating mutable slice
-            let grad_len = gradients.len();
-
-            let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
-                GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
-            })?;
-
-            // Create GPU buffer for gradients
-            let grad_buffer = self.context.create_buffer_from_slice(grad_slice);
-
-            // Calculate tree reduction levels
-            let num_levels = (self.config.num_gpus as f32).log2().ceil() as usize;
-
-            // Set kernel parameters
-            kernel.set_buffer("data", &grad_buffer);
-            kernel.set_buffer(
-                "workspace",
-                self.workspace.workspace.as_ref().expect("unwrap failed"),
-            );
-            kernel.set_i32("rank", self.config.rank as i32);
-            kernel.set_i32("world_size", self.config.num_gpus as i32);
-            kernel.set_i32("data_size", grad_len as i32);
-
-            // Execute tree all-reduce in phases
-            for level in 0..num_levels {
-                let stride = 1 << level;
-                let peer_rank = self.config.rank ^ stride;
-
-                if peer_rank < self.config.num_gpus {
-                    kernel.set_i32("level", level as i32);
-                    kernel.set_i32("peer_rank", peer_rank as i32);
-
-                    let (grid_size, block_size) = crate::utils::calculate_block_size(grad_len, 256);
-                    kernel.dispatch([grid_size as u32, 1, 1]);
-
-                    // Synchronization handled at kernel level
-                }
-            }
-
-            // Copy results back
-            grad_buffer.copy_to_host(grad_slice)?;
-        }
-
-        Ok(())
-    }
-
-    /// Hierarchical all-reduce for multi-node setups
-    fn hierarchical_allreduce<S, D>(
-        &self,
-        gradients: &mut ArrayBase<S, D>,
-    ) -> Result<(), GpuOptimError>
-    where
-        S: DataMut<Elem = A>,
-        D: Dimension,
-    {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            let kernel = self
-                .sync_kernels
-                .hierarchical_allreduce
-                .as_ref()
-                .ok_or(GpuOptimError::NotInitialized)?;
-
-            // Get the length before creating mutable slice
-            let grad_len = gradients.len();
-
-            let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
-                GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
-            })?;
-
-            // Calculate local and global ranks
-            let local_rank = self.config.rank % self.config.local_group_size;
-            let global_rank = self.config.rank / self.config.local_group_size;
-            let global_size = self.config.num_gpus / self.config.local_group_size;
-
-            // Create GPU buffer for gradients
-            let grad_buffer = self.context.create_buffer_from_slice(grad_slice);
-
-            // Phase 1: Reduce-scatter within local group
-            kernel.set_buffer("data", &grad_buffer);
-            kernel.set_buffer(
-                "workspace",
-                self.workspace.workspace.as_ref().expect("unwrap failed"),
-            );
-            kernel.set_i32("local_rank", local_rank as i32);
-            kernel.set_i32("local_size", self.config.local_group_size as i32);
-            kernel.set_i32("global_rank", global_rank as i32);
-            kernel.set_i32("global_size", global_size as i32);
-            kernel.set_i32("data_size", grad_len as i32);
-            kernel.set_i32("phase", 1); // Local reduce-scatter
-
-            let (grid_size, block_size) = crate::utils::calculate_block_size(grad_len, 256);
-            kernel.dispatch([grid_size as u32, 1, 1]);
-            // Synchronization handled at kernel level
-
-            // Phase 2: All-reduce across global leaders (one per node)
-            if local_rank == 0 {
-                kernel.set_i32("phase", 2); // Global all-reduce
-                kernel.dispatch([grid_size as u32, 1, 1]);
-                // Synchronization handled at kernel level
-            }
-
-            // Phase 3: All-gather within local group
-            kernel.set_i32("phase", 3); // Local all-gather
-            kernel.dispatch([grid_size as u32, 1, 1]);
-            // Synchronization handled at kernel level
-
-            // Copy results back
-            grad_buffer.copy_to_host(grad_slice)?;
-        }
-
-        Ok(())
-    }
-
-    /// Pipeline parallel asynchronous synchronization
+    /// Pipeline-parallel synchronization.
+    ///
+    /// Splits the tensor into [`MultiGpuConfig::pipeline_depth`] chunks and
+    /// submits one real dispatch per chunk with
+    /// [`GpuKernelHandle::dispatch_no_wait`], then waits for the whole batch
+    /// with one [`GpuContext::gpu_sync`]. That is genuine command-queue
+    /// overlap — what "pipelining" means at the hardware level — and it does
+    /// not require a second physical device to be real. `num_gpus > 1` is
+    /// still an honest error for the same reason as [`Self::local_reduce`].
     fn pipeline_parallel_async<S, D>(
         &mut self,
         gradients: &mut ArrayBase<S, D>,
@@ -627,58 +584,71 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: DataMut<Elem = A>,
         D: Dimension,
     {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            // Get required values before mutable borrow
-            let grad_len = gradients.len();
-            let data_size = grad_len * std::mem::size_of::<A>();
-            let chunk_size = grad_len / self.config.pipeline_depth;
+        if self.config.num_gpus > 1 {
+            return Err(GpuOptimError::UnsupportedOperation(format!(
+                "pipeline-parallel sync across {} GPUs needs a cross-device transport this \
+                 build does not have",
+                self.config.num_gpus
+            )));
+        }
+        let n = gradients.len();
+        if n == 0 {
+            return Ok(());
+        }
+        if n > self.max_param_size {
+            return Err(GpuOptimError::InvalidState(format!(
+                "gradient tensor has {n} elements, above the {}-element bound this \
+                 MultiGpuSync was constructed with",
+                self.max_param_size
+            )));
+        }
+        let kernel = self.reduce_kernel.as_ref().ok_or_else(|| {
+            GpuOptimError::UnsupportedOperation(format!(
+                "no all-reduce kernel source for backend {}",
+                self.context.backend()
+            ))
+        })?;
 
-            let grad_slice = gradients.as_slice_mut().ok_or_else(|| {
-                GpuOptimError::InvalidState("Gradients must be contiguous".to_string())
-            })?;
+        let host: Vec<f32> = gradients
+            .iter()
+            .map(|v| v.to_f32().unwrap_or(0.0))
+            .collect();
+        let depth = self.config.pipeline_depth.max(1);
+        // `div_ceil` so the tail is never dropped: the last chunk absorbs
+        // whatever remainder `n` does not divide evenly by `depth`.
+        let chunk_size = n.div_ceil(depth).max(1);
 
-            // Create async communication handle
-            let handle = AsyncCommunicationHandle {
-                id: self.async_handles.len(),
-                start_time: std::time::Instant::now(),
-                expected_completion: std::time::Duration::from_millis(10), // Estimate
-                strategy: SyncStrategy::PipelineParallel,
-                data_size,
-                status: AsyncCommStatus::InProgress,
-            };
-
-            // Pipeline stages: overlap computation and communication
-
-            for stage in 0..self.config.pipeline_depth {
-                let start_idx = stage * chunk_size;
-                let end_idx = ((stage + 1) * chunk_size).min(grad_len);
-
-                if start_idx < end_idx {
-                    // Process chunk asynchronously
-                    let chunk_buffer = self
-                        .context
-                        .create_buffer_from_slice(&grad_slice[start_idx..end_idx]);
-
-                    // Submit async operation (placeholder - would use actual GPU streams)
-                    // In practice, this would use CUDA streams or similar
-                }
+        let mut chunks: Vec<(usize, usize, GpuBuffer<f32>)> = Vec::with_capacity(depth);
+        for stage in 0..depth {
+            let start = stage * chunk_size;
+            if start >= n {
+                break;
             }
+            let end = (start + chunk_size).min(n);
+            let hyper = [encode_u32(end - start)?, encode_u32(1)?];
 
-            self.async_handles.push(handle);
+            let x_buf = self.context.create_buffer::<f32>(end - start);
+            x_buf.copy_from_host(&host[start..end])?;
+            let y_buf = self.context.create_buffer::<f32>(hyper.len());
+            y_buf.copy_from_host(&hyper)?;
 
-            // Clean up completed handles periodically
-            if self.async_handles.len() > self.config.pipeline_depth * 2 {
-                self.cleanup_completed_handles();
-            }
+            kernel.set_buffer("x", &x_buf);
+            kernel.set_buffer("y", &y_buf);
+            kernel.dispatch_no_wait([workgroup_count(end - start)?, 1, 1]);
+            chunks.push((start, end, x_buf));
         }
 
-        Ok(())
+        // One fence for the whole batch: Metal command queues are FIFO, so
+        // waiting on a buffer submitted after every chunk's guarantees every
+        // chunk has completed (see `GpuContext::gpu_sync` docs).
+        self.context.gpu_sync()?;
+
+        let mut out = vec![0.0f32; n];
+        for (start, end, buf) in &chunks {
+            buf.copy_to_host(&mut out[*start..*end])?;
+        }
+
+        write_back(gradients, &out)
     }
 
     /// Log performance statistics
@@ -686,29 +656,13 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         let avg_bandwidth = self.perf_monitor.get_average_bandwidth();
         let total_ops = self.perf_monitor.comm_operations;
 
-        println!(
+        log::info!(
             "Multi-GPU Performance [Step {}]: {:.2} GB/s avg bandwidth, {} ops, current strategy: {:?}",
             self.step_counter,
             avg_bandwidth,
             total_ops,
             self.adaptive_selector.current_strategy
         );
-    }
-
-    /// Clean up completed asynchronous communication handles
-    fn cleanup_completed_handles(&mut self) {
-        let current_time = std::time::Instant::now();
-
-        self.async_handles.retain(|handle| {
-            let elapsed = current_time.duration_since(handle.start_time);
-
-            if elapsed > handle.expected_completion {
-                // Mark as completed or timeout
-                false // Remove from vector
-            } else {
-                true // Keep in vector
-            }
-        });
     }
 
     /// Get communication performance statistics
@@ -718,36 +672,23 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             total_operations: self.perf_monitor.comm_operations,
             total_data_transferred_gb: self.perf_monitor.total_data_bytes as f64 / 1e9,
             current_strategy: self.adaptive_selector.current_strategy,
-            pending_async_ops: self.async_handles.len(),
+            pending_async_ops: 0,
             step_count: self.step_counter,
         }
     }
 
-    /// Force synchronization of all pending operations
+    /// Wait for every dispatch issued so far to complete.
     pub fn synchronize_all(&mut self) -> Result<(), GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            // Synchronization handled at kernel level
-
-            // Update all pending handles to completed
-            for handle in &mut self.async_handles {
-                if handle.status == AsyncCommStatus::InProgress {
-                    handle.status = AsyncCommStatus::Completed;
-                }
-            }
-
-            self.cleanup_completed_handles();
-        }
-
-        Ok(())
+        self.context.gpu_sync().map_err(GpuOptimError::from)
     }
 
-    /// Compress gradients for bandwidth optimization
+    /// Compress gradients for bandwidth optimization with real top-*k*
+    /// (largest-magnitude) selection.
+    ///
+    /// This is host-side selection, not a GPU kernel: choosing the *k* largest
+    /// magnitudes is a sort/partition, not a per-element map, and gains
+    /// nothing from a compute shader at the sizes this crate targets. The
+    /// returned `indices` are into the flattened (`.iter()`-order) tensor.
     pub fn compress_gradients<S, D>(
         &mut self,
         gradients: &ArrayBase<S, D>,
@@ -756,166 +697,53 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
         S: Data<Elem = A>,
         D: Dimension,
     {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            let kernel = self
-                .sync_kernels
-                .compress_gradients
-                .as_ref()
-                .ok_or(GpuOptimError::NotInitialized)?;
-
-            let k = (gradients.len() as f32 * self.config.compression_ratio) as usize;
-
-            // Set kernel parameters and execute
-            // ... implementation details
-
-            // Return compressed values and indices
-            let compressed_values = vec![A::zero(); k];
-            let compressed_indices = vec![0i32; k];
-
-            Ok((compressed_values, compressed_indices))
+        let len = gradients.len();
+        if len == 0 {
+            return Ok((Vec::new(), Vec::new()));
         }
+        // `k = 0` would silently compress every tensor to nothing; a ratio in
+        // (0, 1] (enforced by `MultiGpuConfig::validate`) always keeps at
+        // least the single largest element.
+        let k = (((len as f64) * (self.config.compression_ratio as f64)).round() as usize)
+            .clamp(1, len);
 
-        #[cfg(not(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        )))]
-        {
-            Err(GpuOptimError::UnsupportedOperation(
-                "GPU feature not enabled".to_string(),
+        let mut indexed: Vec<(usize, A)> = gradients.iter().copied().enumerate().collect();
+        // `Float` gives no `Ord`/`total_cmp`; NaNs sort as equal instead of
+        // panicking the comparator.
+        indexed.sort_by(|(_, a), (_, b)| {
+            b.abs()
+                .partial_cmp(&a.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        indexed.truncate(k);
+
+        let mut values = Vec::with_capacity(k);
+        let mut indices = Vec::with_capacity(k);
+        for (idx, value) in indexed {
+            values.push(value);
+            indices.push(idx as i32);
+        }
+        Ok((values, indices))
+    }
+}
+
+/// Write a flat `f32` slice back into an array of any layout, converting each
+/// element back to `A` through the same numeric path [`local_reduce`] read it
+/// with (never a byte reinterpret).
+fn write_back<A, S, D>(array: &mut ArrayBase<S, D>, values: &[f32]) -> Result<(), GpuOptimError>
+where
+    A: Float,
+    S: DataMut<Elem = A>,
+    D: Dimension,
+{
+    for (dst, &src) in array.iter_mut().zip(values.iter()) {
+        *dst = A::from(src).ok_or_else(|| {
+            GpuOptimError::InvalidState(format!(
+                "{src} is not representable in the target float type"
             ))
-        }
+        })?;
     }
-
-    /// Load synchronization kernels
-    fn load_sync_kernels(
-        context: &Arc<GpuContext>,
-        config: &MultiGpuConfig,
-    ) -> Result<SyncKernels, GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            let ring_kernel = if matches!(config.sync_strategy, SyncStrategy::RingAllReduce) {
-                Some(Arc::new(context.get_kernel("ring_allreduce_f32")?))
-            } else {
-                None
-            };
-
-            let tree_kernel = if matches!(config.sync_strategy, SyncStrategy::TreeAllReduce) {
-                Some(Arc::new(context.get_kernel("tree_allreduce_f32")?))
-            } else {
-                None
-            };
-
-            let hierarchical_kernel =
-                if matches!(config.sync_strategy, SyncStrategy::HierarchicalAllReduce) {
-                    Some(Arc::new(context.get_kernel("hierarchical_allreduce_f32")?))
-                } else {
-                    None
-                };
-
-            let compress_kernel = if config.gradient_compression {
-                Some(Arc::new(context.get_kernel("compress_gradients_topk_f32")?))
-            } else {
-                None
-            };
-
-            let decompress_kernel = if config.gradient_compression {
-                Some(Arc::new(context.get_kernel("decompress_gradients_f32")?))
-            } else {
-                None
-            };
-
-            Ok(SyncKernels {
-                ring_allreduce: ring_kernel,
-                tree_allreduce: tree_kernel,
-                hierarchical_allreduce: hierarchical_kernel,
-                compress_gradients: compress_kernel,
-                decompress_gradients: decompress_kernel,
-            })
-        }
-
-        #[cfg(not(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        )))]
-        {
-            Ok(SyncKernels {
-                ring_allreduce: None,
-                tree_allreduce: None,
-                hierarchical_allreduce: None,
-                compress_gradients: None,
-                decompress_gradients: None,
-            })
-        }
-    }
-
-    /// Allocate workspace buffers
-    fn allocate_workspace(
-        context: &Arc<GpuContext>,
-        config: &MultiGpuConfig,
-        max_param_size: usize,
-    ) -> Result<WorkspaceBuffers<A>, GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            let recv_buffer = Some(context.create_buffer::<A>(max_param_size));
-            let workspace = Some(context.create_buffer::<A>(max_param_size));
-
-            let (compressed_values, compressed_indices, error_feedback) =
-                if config.gradient_compression {
-                    let k = (max_param_size as f32 * config.compression_ratio) as usize;
-                    (
-                        Some(context.create_buffer::<A>(k)),
-                        Some(context.create_buffer::<i32>(k)),
-                        Some(context.create_buffer::<A>(max_param_size)),
-                    )
-                } else {
-                    (None, None, None)
-                };
-
-            Ok(WorkspaceBuffers {
-                recv_buffer,
-                workspace,
-                compressed_values,
-                compressed_indices,
-                error_feedback,
-            })
-        }
-
-        #[cfg(not(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        )))]
-        {
-            Ok(WorkspaceBuffers {
-                recv_buffer: None,
-                workspace: None,
-                compressed_values: None,
-                compressed_indices: None,
-                error_feedback: None,
-            })
-        }
-    }
+    Ok(())
 }
 
 /// Helper to setup multi-GPU training
@@ -927,16 +755,38 @@ pub struct MultiGpuSetup {
 }
 
 impl MultiGpuSetup {
-    /// Initialize multi-GPU setup
+    /// Initialize multi-GPU setup.
+    ///
+    /// Every logical rank shares the *same* physical device: `scirs2-core`
+    /// 0.6.x has no API to enumerate or address more than one, so there is
+    /// nothing else this constructor could honestly open. Opens the context
+    /// via [`crate::optimizers::SUPPORTED_BACKENDS`] (the backends this
+    /// crate actually ships kernels for), never the removed `Cuda` backend
+    /// that always errors.
     pub fn new(num_gpus: usize, max_param_size: usize) -> Result<Self, GpuOptimError> {
-        let mut contexts = Vec::new();
-        let mut sync_managers = Vec::new();
+        let mut reasons = Vec::new();
+        let mut opened = None;
+        for backend in crate::optimizers::SUPPORTED_BACKENDS {
+            match GpuContext::new(backend) {
+                Ok(context) => {
+                    opened = Some(context);
+                    break;
+                }
+                Err(e) => reasons.push(format!("{backend}: {e}")),
+            }
+        }
+        let Some(shared_context) = opened else {
+            return Err(GpuOptimError::UnsupportedOperation(format!(
+                "no GPU backend available for multi-GPU setup ({})",
+                reasons.join("; ")
+            )));
+        };
+
+        let mut contexts = Vec::with_capacity(num_gpus);
+        let mut sync_managers = Vec::with_capacity(num_gpus);
+        let context = Arc::new(shared_context);
 
         for rank in 0..num_gpus {
-            // Create GPU context for each device
-            let context = Arc::new(GpuContext::new(scirs2_core::gpu::GpuBackend::Cuda)?);
-
-            // Create sync manager
             let config = MultiGpuConfig {
                 num_gpus,
                 rank,
@@ -945,7 +795,7 @@ impl MultiGpuSetup {
 
             let sync_manager = MultiGpuSync::new(context.clone(), config, max_param_size)?;
 
-            contexts.push(context);
+            contexts.push(context.clone());
             sync_managers.push(sync_manager);
         }
 
@@ -959,6 +809,8 @@ impl MultiGpuSetup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimizers::SUPPORTED_BACKENDS;
+    use scirs2_core::ndarray::Array1;
 
     #[test]
     fn test_multi_gpu_config_default() {
@@ -967,6 +819,51 @@ mod tests {
         assert_eq!(config.rank, 0);
         assert_eq!(config.sync_strategy, SyncStrategy::RingAllReduce);
         assert!(!config.gradient_compression);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn config_validate_rejects_divide_by_zero_fields() {
+        let base = MultiGpuConfig::default();
+        assert!(MultiGpuConfig {
+            num_gpus: 0,
+            ..base.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(MultiGpuConfig {
+            local_group_size: 0,
+            ..base.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(MultiGpuConfig {
+            pipeline_depth: 0,
+            ..base.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(MultiGpuConfig {
+            rank: 5,
+            num_gpus: 2,
+            ..base.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(MultiGpuConfig {
+            gradient_compression: true,
+            compression_ratio: 0.0,
+            ..base.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(MultiGpuConfig {
+            gradient_compression: true,
+            compression_ratio: f32::NAN,
+            ..base
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]
@@ -992,8 +889,8 @@ mod tests {
         let mut monitor = CommunicationPerformanceMonitor::new();
 
         // Record some communications
-        monitor.record_communication(SyncStrategy::RingAllReduce, 1000000, 1000); // 1GB/s
-        monitor.record_communication(SyncStrategy::TreeAllReduce, 2000000, 1000); // 2GB/s
+        monitor.record_communication(SyncStrategy::RingAllReduce, 1000000, 1000, 1000000); // 1GB/s
+        monitor.record_communication(SyncStrategy::TreeAllReduce, 2000000, 1000, 1000000); // 2GB/s
 
         assert_eq!(monitor.comm_operations, 2);
         assert!(monitor.get_average_bandwidth() > 0.0);
@@ -1006,6 +903,23 @@ mod tests {
         ));
     }
 
+    /// A zero-microsecond sample must not poison the running bandwidth with
+    /// `inf`/`NaN` (regression test for F17).
+    #[test]
+    fn record_communication_clamps_zero_elapsed_time() {
+        let mut monitor = CommunicationPerformanceMonitor::new();
+        monitor.record_communication(SyncStrategy::RingAllReduce, 1_000_000, 0, 1_000_000);
+        let avg = monitor.get_average_bandwidth();
+        assert!(avg.is_finite(), "average bandwidth was not finite: {avg}");
+        assert!(avg > 0.0);
+        assert!(monitor
+            .bandwidth_history
+            .back()
+            .copied()
+            .unwrap_or(f64::NAN)
+            .is_finite());
+    }
+
     #[test]
     fn test_adaptive_communication_selector() {
         let mut selector = AdaptiveCommunicationSelector::new();
@@ -1016,7 +930,7 @@ mod tests {
 
         // Record better performance for tree all-reduce
         for _ in 0..10 {
-            monitor.record_communication(SyncStrategy::TreeAllReduce, 1000000, 500);
+            monitor.record_communication(SyncStrategy::TreeAllReduce, 1000000, 500, 1000000);
             // Better bandwidth
         }
 
@@ -1052,33 +966,37 @@ mod tests {
     }
 
     #[test]
-    fn test_async_communication_handle() {
-        let handle = AsyncCommunicationHandle {
-            id: 0,
-            start_time: std::time::Instant::now(),
-            expected_completion: std::time::Duration::from_millis(10),
-            strategy: SyncStrategy::PipelineParallel,
-            data_size: 1000000,
-            status: AsyncCommStatus::Pending,
-        };
-
-        assert_eq!(handle.id, 0);
-        assert_eq!(handle.strategy, SyncStrategy::PipelineParallel);
-        assert_eq!(handle.data_size, 1000000);
-        assert_eq!(handle.status, AsyncCommStatus::Pending);
-    }
-
-    #[test]
     fn test_strategy_performance_metrics() {
         let mut metrics = StrategyPerformanceMetrics::new();
 
-        metrics.update(10.0, 1000); // 10 GB/s, 1ms
-        metrics.update(15.0, 800); // 15 GB/s, 0.8ms
+        metrics.update(10.0, 1000, 1000000); // 10 GB/s, 1ms
+        metrics.update(15.0, 800, 1000000); // 15 GB/s, 0.8ms
 
         assert!(metrics.efficiency_score > 0.0);
 
         let score = metrics.calculate_score(1000000); // Large tensor
         assert!(score > 0.0);
+    }
+
+    /// `calculate_score` must genuinely use recorded tensor sizes (not just
+    /// accept and discard them): a strategy whose entire track record is at
+    /// one scale should be trusted less when scored against a tensor size
+    /// three orders of magnitude away, versus a size close to what it has
+    /// actually proven itself on.
+    #[test]
+    fn test_calculate_score_discounts_unfamiliar_tensor_sizes() {
+        let mut metrics = StrategyPerformanceMetrics::new();
+        metrics.update(10.0, 1000, 1_000_000);
+        metrics.update(10.0, 1000, 1_000_000);
+
+        let familiar = metrics.calculate_score(1_000_000);
+        let unfamiliar = metrics.calculate_score(1_000);
+
+        assert!(
+            unfamiliar < familiar,
+            "score for an unfamiliar tensor size ({unfamiliar}) should be lower than for a \
+             size this strategy has a track record at ({familiar})"
+        );
     }
 
     #[test]
@@ -1088,7 +1006,7 @@ mod tests {
             total_operations: 100,
             total_data_transferred_gb: 50.0,
             current_strategy: SyncStrategy::RingAllReduce,
-            pending_async_ops: 2,
+            pending_async_ops: 0,
             step_count: 1000,
         };
 
@@ -1096,7 +1014,207 @@ mod tests {
         assert_eq!(stats.total_operations, 100);
         assert_eq!(stats.total_data_transferred_gb, 50.0);
         assert_eq!(stats.current_strategy, SyncStrategy::RingAllReduce);
-        assert_eq!(stats.pending_async_ops, 2);
+        assert_eq!(stats.pending_async_ops, 0);
         assert_eq!(stats.step_count, 1000);
+    }
+
+    /// Real top-*k* selection: the returned values must be exactly the *k*
+    /// largest-magnitude elements (regression test for F12 — this used to
+    /// unconditionally return zeros).
+    #[test]
+    fn compress_gradients_selects_real_top_k() {
+        let context = match probe_backend() {
+            Some(backend) => Arc::new(GpuContext::new(backend).expect("backend just probed")),
+            None => {
+                eprintln!("SKIP: compress_gradients_selects_real_top_k — no usable GPU backend");
+                return;
+            }
+        };
+        let config = MultiGpuConfig {
+            gradient_compression: true,
+            compression_ratio: 0.25,
+            ..Default::default()
+        };
+        let mut sync = MultiGpuSync::<f32>::new(context, config, 1024).expect("construction");
+
+        let data = Array1::from(vec![0.1f32, -5.0, 2.0, 0.3, -4.0, 1.0, 0.05, -0.2]);
+        let (values, indices) = sync.compress_gradients(&data).expect("compression");
+
+        // ratio 0.25 of 8 elements -> k = 2; the two largest magnitudes are
+        // -5.0 (index 1) and -4.0 (index 4).
+        assert_eq!(values.len(), 2);
+        assert_eq!(indices.len(), 2);
+        let mut got: Vec<(i32, f32)> = indices.into_iter().zip(values).collect();
+        got.sort_by_key(|(idx, _)| *idx);
+        assert_eq!(got, vec![(1, -5.0), (4, -4.0)]);
+    }
+
+    #[test]
+    fn compress_gradients_ratio_never_selects_zero_elements() {
+        let context = match probe_backend() {
+            Some(backend) => Arc::new(GpuContext::new(backend).expect("backend just probed")),
+            None => {
+                eprintln!(
+                    "SKIP: compress_gradients_ratio_never_selects_zero_elements — no usable GPU backend"
+                );
+                return;
+            }
+        };
+        let config = MultiGpuConfig {
+            gradient_compression: true,
+            compression_ratio: 0.01, // rounds to 0 of 4 elements without the clamp
+            ..Default::default()
+        };
+        let mut sync = MultiGpuSync::<f32>::new(context, config, 1024).expect("construction");
+        let data = Array1::from(vec![1.0f32, 2.0, 3.0, 4.0]);
+        let (values, _) = sync.compress_gradients(&data).expect("compression");
+        assert_eq!(
+            values.len(),
+            1,
+            "a nonzero ratio must keep at least one element"
+        );
+    }
+
+    fn probe_backend() -> Option<scirs2_core::gpu::GpuBackend> {
+        SUPPORTED_BACKENDS
+            .into_iter()
+            .find(|&backend| GpuContext::new(backend).is_ok())
+    }
+
+    /// `MultiGpuSync::new` used to unconditionally fail (F2: it asked the
+    /// registry for kernel names nothing registers). It must now construct,
+    /// and a single-device sync must actually run the kernel and leave the
+    /// data numerically unchanged (dividing one replica by one).
+    #[test]
+    fn single_device_sync_runs_a_real_kernel_and_is_the_identity() {
+        let backend = match probe_backend() {
+            Some(b) => b,
+            None => {
+                eprintln!(
+                    "SKIP: single_device_sync_runs_a_real_kernel_and_is_the_identity — no usable GPU backend"
+                );
+                return;
+            }
+        };
+        let context = Arc::new(GpuContext::new(backend).expect("backend just probed"));
+        let config = MultiGpuConfig::default(); // num_gpus: 1
+        let mut sync = MultiGpuSync::<f32>::new(context, config, 4096).expect("construction");
+
+        for strategy in [
+            SyncStrategy::RingAllReduce,
+            SyncStrategy::TreeAllReduce,
+            SyncStrategy::HierarchicalAllReduce,
+        ] {
+            sync.config.sync_strategy = strategy;
+            let original: Array1<f32> =
+                Array1::from((0..777).map(|i| i as f32 * 0.5 - 10.0).collect::<Vec<_>>());
+            let mut grads = original.clone();
+            sync.sync_gradients(&mut grads).unwrap_or_else(|e| {
+                panic!("{strategy:?}: single-device sync must succeed, got {e}")
+            });
+            for (a, b) in original.iter().zip(grads.iter()) {
+                assert!(
+                    (a - b).abs() < 1e-5,
+                    "{strategy:?}: single-device all-reduce changed the data: {a} -> {b}"
+                );
+            }
+        }
+    }
+
+    /// `num_gpus > 1` must be an explicit, honest error — never a silent
+    /// `Ok(())` that did nothing (F15) and never a panic (F2/F18).
+    #[test]
+    fn multi_device_sync_is_an_honest_unsupported_error() {
+        let backend = match probe_backend() {
+            Some(b) => b,
+            None => {
+                eprintln!("SKIP: multi_device_sync_is_an_honest_unsupported_error — no usable GPU backend");
+                return;
+            }
+        };
+        let context = Arc::new(GpuContext::new(backend).expect("backend just probed"));
+        let config = MultiGpuConfig {
+            num_gpus: 2,
+            ..Default::default()
+        };
+        let mut sync = MultiGpuSync::<f32>::new(context, config, 4096).expect("construction");
+        let mut grads = Array1::from_elem(16, 1.0f32);
+        let err = sync
+            .sync_gradients(&mut grads)
+            .expect_err("num_gpus > 1 must fail, not silently succeed");
+        assert!(matches!(err, GpuOptimError::UnsupportedOperation(_)));
+    }
+
+    /// Pipeline-parallel sync with a chunk count that does not evenly divide
+    /// the tensor length must not drop the tail (regression test for F13).
+    #[test]
+    fn pipeline_parallel_covers_every_element_including_the_tail() {
+        let backend = match probe_backend() {
+            Some(b) => b,
+            None => {
+                eprintln!(
+                    "SKIP: pipeline_parallel_covers_every_element_including_the_tail — no usable GPU backend"
+                );
+                return;
+            }
+        };
+        let context = Arc::new(GpuContext::new(backend).expect("backend just probed"));
+        let config = MultiGpuConfig {
+            sync_strategy: SyncStrategy::PipelineParallel,
+            async_param_updates: true,
+            pipeline_depth: 4,
+            adaptive_communication: false,
+            ..Default::default()
+        };
+        let mut sync = MultiGpuSync::<f32>::new(context, config, 4096).expect("construction");
+
+        // 777 does not divide evenly by 4.
+        let original: Array1<f32> = Array1::from((0..777).map(|i| i as f32).collect::<Vec<_>>());
+        let mut grads = original.clone();
+        sync.sync_gradients(&mut grads).expect("pipeline sync");
+        for (i, (a, b)) in original.iter().zip(grads.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 1e-5,
+                "element {i} was dropped or corrupted: {a} -> {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn synchronize_all_waits_on_a_real_fence() {
+        let backend = match probe_backend() {
+            Some(b) => b,
+            None => {
+                eprintln!("SKIP: synchronize_all_waits_on_a_real_fence — no usable GPU backend");
+                return;
+            }
+        };
+        let context = Arc::new(GpuContext::new(backend).expect("backend just probed"));
+        let mut sync = MultiGpuSync::<f32>::new(context, MultiGpuConfig::default(), 1024)
+            .expect("construction");
+        assert!(sync.synchronize_all().is_ok());
+    }
+
+    #[test]
+    fn multi_gpu_setup_opens_a_real_backend_not_the_removed_cuda_one() {
+        match MultiGpuSetup::new(2, 1024) {
+            Ok(setup) => {
+                assert_eq!(setup.contexts.len(), 2);
+                assert_eq!(setup.sync_managers.len(), 2);
+                for context in &setup.contexts {
+                    assert_ne!(
+                        context.backend(),
+                        scirs2_core::gpu::GpuBackend::Cuda,
+                        "must never request the CUDA backend scirs2-core 0.6.x always errors on"
+                    );
+                }
+            }
+            Err(e) => {
+                // Legitimate on a headless machine with no GPU adapter at all.
+                eprintln!(
+                    "SKIP: multi_gpu_setup_opens_a_real_backend_not_the_removed_cuda_one — {e}"
+                );
+            }
+        }
     }
 }

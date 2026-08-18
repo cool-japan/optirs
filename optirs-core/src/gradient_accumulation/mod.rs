@@ -4,6 +4,7 @@
 // micro-batches to simulate larger batch sizes without increasing memory usage.
 
 use crate::error::{OptimError, Result};
+use crate::utils::try_scalar;
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
@@ -117,7 +118,7 @@ impl<A: Float + ScalarOperand + Debug, D: Dimension + Send + Sync> GradientAccum
                 // Gradients are already summed, nothing to do
             }
             AccumulationMode::Average => {
-                let scale = A::one() / A::from(self.accumulation_count).expect("unwrap failed");
+                let scale = A::one() / try_scalar::<A, _>(self.accumulation_count)?;
                 for grad in &mut result {
                     grad.mapv_inplace(|x| x * scale);
                 }

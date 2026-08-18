@@ -4,13 +4,13 @@
 // dynamically adjust learning rates based on multiple signals including
 // gradient statistics, performance metrics, concept drift, and resource constraints.
 
-use scirs2_core::ndarray::{Array1, Array2};
+use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-#[allow(unused_imports)]
 use crate::error::Result;
+use crate::utils::scalar_or;
 
 /// Performance metric types for adaptation
 #[derive(Debug, Clone)]
@@ -30,10 +30,6 @@ pub struct EnhancedAdaptiveLRController<A: Float + Send + Sync> {
 
     /// Base learning rate
     base_lr: A,
-
-    /// Learning rate bounds
-    min_lr: A,
-    max_lr: A,
 
     /// Multi-signal adaptation strategy
     adaptation_strategy: MultiSignalAdaptationStrategy<A>,
@@ -98,25 +94,33 @@ pub struct AdaptiveLRConfig<A: Float + Send + Sync> {
 
     /// Use ensemble voting for conflicting signals
     pub use_ensemble_voting: bool,
+
+    /// Wall-clock budget for a single optimizer step, when the deployment has
+    /// one. Without it there is nothing to measure time pressure against, so
+    /// the resource signal reports no time term rather than inventing one.
+    pub step_time_budget: Option<Duration>,
+
+    /// Memory budget in MB, when the deployment has one.
+    pub memory_budget_mb: Option<f64>,
 }
 
 /// Multi-signal adaptation strategy
 #[derive(Debug, Clone)]
 pub struct MultiSignalAdaptationStrategy<A: Float + Send + Sync> {
     /// Weighted voting system for adaptation signals
-    signal_weights: HashMap<AdaptationSignalType, A>,
+    pub(crate) signal_weights: HashMap<AdaptationSignalType, A>,
 
     /// Signal voting history
-    voting_history: VecDeque<SignalVote<A>>,
+    pub(crate) voting_history: VecDeque<SignalVote<A>>,
 
     /// Conflict resolution method
-    conflict_resolution: ConflictResolution,
+    pub(crate) conflict_resolution: ConflictResolution,
 
     /// Signal reliability scores
-    signal_reliability: HashMap<AdaptationSignalType, A>,
+    pub(crate) signal_reliability: HashMap<AdaptationSignalType, A>,
 
     /// Last adaptation decision
-    last_decision: Option<AdaptationDecision<A>>,
+    pub(crate) last_decision: Option<AdaptationDecision<A>>,
 }
 
 /// Types of adaptation signals
@@ -140,6 +144,37 @@ pub struct SignalVote<A: Float + Send + Sync> {
     confidence: A,
     reasoning: String,
     timestamp: Instant,
+}
+
+impl<A: Float + Send + Sync> SignalVote<A> {
+    /// Which signal cast this vote.
+    pub fn signal_type(&self) -> AdaptationSignalType {
+        self.signal_type
+    }
+
+    /// Multiplier this signal recommends applying to the learning rate.
+    pub fn recommended_lr_change(&self) -> A {
+        self.recommended_lr_change
+    }
+
+    /// Confidence the signal attaches to its recommendation.
+    pub fn confidence(&self) -> A {
+        self.confidence
+    }
+
+    /// Human-readable justification the signal produced for this vote.
+    ///
+    /// Each adapter builds this string from the statistics it actually
+    /// measured; it had no reader outside the tests, so callers had no way to
+    /// see *why* a learning-rate change was proposed.
+    pub fn reasoning(&self) -> &str {
+        &self.reasoning
+    }
+
+    /// When the vote was cast.
+    pub fn timestamp(&self) -> Instant {
+        self.timestamp
+    }
 }
 
 /// Conflict resolution methods for contradictory signals
@@ -168,6 +203,39 @@ pub struct AdaptationDecision<A: Float + Send + Sync> {
     timestamp: Instant,
 }
 
+impl<A: Float + Send + Sync> AdaptationDecision<A> {
+    /// Learning rate this decision settled on.
+    pub fn new_lr(&self) -> A {
+        self.new_lr
+    }
+
+    /// Multiplier applied to the previous learning rate.
+    pub fn lr_multiplier(&self) -> A {
+        self.lr_multiplier
+    }
+
+    /// Signals that contributed to the decision.
+    pub fn contributing_signals(&self) -> &[AdaptationSignalType] {
+        &self.contributing_signals
+    }
+
+    /// Confidence in the decision, aggregated across contributing signals.
+    pub fn confidence(&self) -> A {
+        self.confidence
+    }
+
+    /// Human-readable explanation of how the contributing signals were
+    /// reconciled, built by the configured conflict-resolution rule.
+    pub fn rationale(&self) -> &str {
+        &self.rationale
+    }
+
+    /// When the decision was taken.
+    pub fn timestamp(&self) -> Instant {
+        self.timestamp
+    }
+}
+
 /// Gradient-based adaptation using statistical analysis
 #[derive(Debug, Clone)]
 pub struct GradientBasedAdapter<A: Float + Send + Sync> {
@@ -184,7 +252,7 @@ pub struct GradientBasedAdapter<A: Float + Send + Sync> {
     snr_estimator: SignalToNoiseEstimator<A>,
 
     /// Gradient staleness detection
-    staleness_detector: GradientStalenessDetector<A>,
+    staleness_detector: GradientStalenessDetector,
 }
 
 /// Performance-based adaptation using multiple metrics
@@ -244,9 +312,6 @@ pub struct ResourceAwareAdapter<A: Float + Send + Sync> {
 /// Meta-learning optimizer for hyperparameter adaptation
 #[derive(Debug, Clone)]
 pub struct MetaOptimizer<A: Float + Send + Sync> {
-    /// Neural network for learning rate prediction
-    lr_predictor: LearningRatePredictorNetwork<A>,
-
     /// Hyperparameter optimization history
     optimization_history: VecDeque<HyperparameterUpdate<A>>,
 
@@ -264,8 +329,6 @@ pub struct AdaptationEvent<A: Float + Send + Sync> {
     old_lr: A,
     new_lr: A,
     trigger_signals: Vec<AdaptationSignalType>,
-    adaptation_reason: String,
-    confidence: A,
     effectiveness_score: Option<A>, // Measured retrospectively
 }
 
@@ -286,7 +349,6 @@ pub struct SignalToNoiseEstimator<A: Float + Send + Sync> {
     signal_estimate: A,
     noise_estimate: A,
     snr_history: VecDeque<A>,
-    estimation_method: SNREstimationMethod,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -298,18 +360,9 @@ pub enum SNREstimationMethod {
 }
 
 /// Gradient staleness detection for distributed settings
-#[derive(Debug, Clone)]
-pub struct GradientStalenessDetector<A: Float + Send + Sync> {
-    staleness_threshold: Duration,
+#[derive(Debug, Clone, Default)]
+pub struct GradientStalenessDetector {
     gradient_timestamps: VecDeque<Instant>,
-    staleness_impact_model: StalenessImpactModel<A>,
-}
-
-#[derive(Debug, Clone)]
-pub struct StalenessImpactModel<A: Float + Send + Sync> {
-    staleness_penalty: A,
-    compensation_factor: A,
-    impact_history: VecDeque<A>,
 }
 
 /// Performance trend analysis for learning rate adaptation
@@ -318,7 +371,6 @@ pub struct PerformanceTrendAnalyzer<A: Float + Send + Sync> {
     trend_detection_window: usize,
     trend_types: Vec<TrendType>,
     trend_strength: A,
-    trend_duration: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -344,27 +396,30 @@ pub struct PlateauDetector<A: Float + Send + Sync> {
 pub struct OverfittingDetector<A: Float + Send + Sync> {
     train_loss_history: VecDeque<A>,
     val_loss_history: VecDeque<A>,
-    overfitting_threshold: A,
-    early_stopping_patience: usize,
 }
 
 /// Learning efficiency tracking
 #[derive(Debug, Clone)]
 pub struct LearningEfficiencyTracker<A: Float + Send + Sync> {
     loss_reduction_per_step: VecDeque<A>,
-    parameter_change_magnitude: VecDeque<A>,
     efficiency_score: A,
     efficiency_trend: TrendType,
 }
 
-/// Concept drift detection methods
+/// Concept drift detection over the loss/gradient stream.
+///
+/// E3: this struct had no methods at all and `DriftAwareAdapter::drift_detectors`
+/// was `vec![]`, so `generate_signal` returned a hardcoded "No drift detected"
+/// vote on every call. It now delegates to the real detectors implemented in
+/// [`crate::streaming::concept_drift`] rather than reimplementing them.
 #[derive(Debug, Clone)]
 pub struct ConceptDriftDetector<A: Float + Send + Sync> {
-    detection_method: DriftDetectionMethod,
-    drift_threshold: A,
-    window_size: usize,
-    drift_confidence: A,
-    last_drift_time: Option<Instant>,
+    pub(crate) detection_method: DriftDetectionMethod,
+    pub(crate) drift_threshold: A,
+    pub(crate) window_size: usize,
+    pub(crate) drift_confidence: A,
+    pub(crate) last_drift_time: Option<Instant>,
+    pub(crate) inner: LossDriftDetector<A>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -381,8 +436,6 @@ pub enum DriftDetectionMethod {
 #[derive(Debug, Clone)]
 pub struct DistributionTracker<A: Float + Send + Sync> {
     feature_distributions: HashMap<usize, FeatureDistribution<A>>,
-    kl_divergence_threshold: A,
-    wasserstein_distance_threshold: A,
     distribution_drift_score: A,
 }
 
@@ -415,9 +468,7 @@ pub struct DriftSeverityAssessor<A: Float + Send + Sync> {
 #[derive(Debug, Clone)]
 pub struct DriftSeverityLevel<A: Float + Send + Sync> {
     level: DriftSeverity,
-    magnitude: A,
     recommended_lr_adjustment: A,
-    adaptation_urgency: A,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -432,32 +483,40 @@ pub enum DriftSeverity {
 /// Resource usage tracking components
 #[derive(Debug, Clone, Default)]
 pub struct MemoryUsageTracker {
-    current_usage_mb: f64,
-    peak_usage_mb: f64,
-    usage_history: VecDeque<f64>,
-    memory_pressure: f64,
+    pub(crate) current_usage_mb: f64,
+    pub(crate) peak_usage_mb: f64,
+    pub(crate) usage_history: VecDeque<f64>,
+    /// E4: `memory_pressure` was never written to, so the resource signal
+    /// always read a 0.0 that it then interpreted as "plenty of head-room" and
+    /// pushed the learning rate *up*. It is now `None` until a real usage
+    /// figure and a budget are both available.
+    pub(crate) memory_pressure: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ComputationTimeTracker {
-    step_times: VecDeque<Duration>,
-    average_step_time: Duration,
-    time_budget: Duration,
-    time_pressure: f64,
+    pub(crate) step_times: VecDeque<Duration>,
+    pub(crate) average_step_time: Duration,
+    pub(crate) time_budget: Option<Duration>,
+    /// `None` until both a measured step time and a configured budget exist.
+    pub(crate) time_pressure: Option<f64>,
 }
 
+/// Energy consumption tracker.
+///
+/// There is no portable, pure-Rust way to read energy draw, so every field here
+/// stays empty unless a caller feeds real measurements through
+/// [`EnhancedAdaptiveLRController::record_energy_sample`].
 #[derive(Debug, Clone, Default)]
 pub struct EnergyConsumptionTracker {
-    energy_per_step: VecDeque<f64>,
-    cumulative_energy: f64,
-    energy_budget: f64,
-    energy_efficiency: f64,
+    pub(crate) energy_per_step: VecDeque<f64>,
+    pub(crate) cumulative_energy: f64,
+    pub(crate) energy_efficiency: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ThroughputRequirements<A: Float + Send + Sync> {
     min_samples_per_second: A,
-    target_samples_per_second: A,
     current_throughput: A,
     throughput_deficit: A,
 }
@@ -466,50 +525,21 @@ pub struct ThroughputRequirements<A: Float + Send + Sync> {
 pub struct ResourceBudgetManager<A: Float + Send + Sync> {
     memory_budget_mb: f64,
     compute_budget_seconds: f64,
-    energy_budget_joules: f64,
     budget_utilization: A,
     budget_violations: usize,
-}
-
-/// Learning rate predictor neural network
-#[derive(Debug, Clone)]
-pub struct LearningRatePredictorNetwork<A: Float + Send + Sync> {
-    input_features: Vec<FeatureType>,
-    hidden_layers: Vec<usize>,
-    weights: Vec<Array2<A>>,
-    biases: Vec<Array1<A>>,
-    prediction_confidence: A,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum FeatureType {
-    GradientNorm,
-    LossValue,
-    LossGradient,
-    ParameterNorm,
-    UpdateMagnitude,
-    LearningProgress,
-    ResourceUtilization,
-    DataCharacteristics,
 }
 
 /// Hyperparameter update record
 #[derive(Debug, Clone)]
 pub struct HyperparameterUpdate<A: Float + Send + Sync> {
-    timestamp: Instant,
-    old_lr: A,
-    new_lr: A,
     features: Array1<A>,
     reward: A, // Performance improvement
-    exploration_bonus: A,
 }
 
 /// Exploration strategy for hyperparameter optimization
 #[derive(Debug, Clone)]
 pub struct ExplorationStrategy<A: Float + Send + Sync> {
-    strategy_type: ExplorationStrategyType,
     exploration_rate: A,
-    exploitation_rate: A,
     arm_rewards: HashMap<usize, A>,
     arm_counts: HashMap<usize, usize>,
 }
@@ -527,33 +557,12 @@ pub enum ExplorationStrategyType {
 #[derive(Debug, Clone)]
 pub struct TransferLearner<A: Float + Send + Sync> {
     source_task_data: Vec<TaskData<A>>,
-    similarity_metrics: Vec<TaskSimilarityMetric<A>>,
-    transfer_weights: Array1<A>,
     transfer_confidence: A,
 }
 
 #[derive(Debug, Clone)]
 pub struct TaskData<A: Float + Send + Sync> {
-    task_id: String,
     optimal_lr_sequence: Vec<A>,
-    task_features: Array1<A>,
-    performance_curve: Vec<A>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskSimilarityMetric<A: Float + Send + Sync> {
-    metric_type: SimilarityMetricType,
-    similarity_score: A,
-    weight: A,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum SimilarityMetricType {
-    DatasetSize,
-    ModelArchitecture,
-    LossFunction,
-    DataDistribution,
-    OptimizationLandscape,
 }
 
 /// Adaptation statistics for monitoring and analysis
@@ -584,7 +593,7 @@ pub struct AdaptationStatistics<A: Float + Send + Sync> {
     pub convergence_speed_improvement: A,
 }
 
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRController<A> {
+impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync> EnhancedAdaptiveLRController<A> {
     /// Create a new enhanced adaptive learning rate controller
     pub fn new(config: AdaptiveLRConfig<A>) -> Result<Self> {
         let adaptation_strategy = MultiSignalAdaptationStrategy::new(&config)?;
@@ -597,8 +606,6 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
         Ok(Self {
             current_lr: config.base_lr,
             base_lr: config.base_lr,
-            min_lr: config.min_lr,
-            max_lr: config.max_lr,
             adaptation_strategy,
             gradient_adapter,
             performance_adapter,
@@ -610,6 +617,30 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
         })
     }
 
+    /// Report the memory this optimizer's workload is currently using, so the
+    /// resource signal has a real figure to work from (E4).
+    pub fn record_memory_usage_mb(&mut self, usage_mb: f64) {
+        self.resource_adapter
+            .record_memory_usage(usage_mb, self.config.memory_budget_mb);
+    }
+
+    /// Report measured energy consumption for the most recent step.
+    pub fn record_energy_sample(&mut self, joules: f64) {
+        self.resource_adapter.record_energy(joules);
+    }
+
+    /// Report the observed sample throughput so the resource signal can compare
+    /// it against the configured requirement.
+    pub fn record_throughput(&mut self, samples_per_second: A) {
+        self.resource_adapter.record_throughput(samples_per_second);
+    }
+
+    /// Register a previously solved task so the meta-optimizer can transfer its
+    /// learning-rate schedule (it contributes nothing while none are known).
+    pub fn add_source_task(&mut self, task: TaskData<A>) {
+        self.meta_optimizer.add_source_task(task);
+    }
+
     /// Update learning rate based on multiple adaptation signals
     pub fn update_learning_rate(
         &mut self,
@@ -618,6 +649,20 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
         metrics: &HashMap<String, A>,
         step: usize,
     ) -> Result<A> {
+        let step_started = Instant::now();
+
+        // Honour the configured adaptation cadence: outside an adaptation step
+        // the learning rate is left exactly as it is (`adaptation_frequency`
+        // used to be ignored entirely).
+        let frequency = self.config.adaptation_frequency.max(1);
+        if !step.is_multiple_of(frequency) {
+            self.gradient_adapter.observe_only(gradients);
+            self.performance_adapter.observe_only(loss);
+            self.resource_adapter
+                .record_step_time(step_started.elapsed(), self.config.step_time_budget);
+            return Ok(self.current_lr);
+        }
+
         // Collect adaptation signals from all components
         let mut signals = Vec::new();
 
@@ -648,8 +693,18 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
             }
         }
 
-        // Resolve conflicts and make adaptation decision
-        let decision = self.adaptation_strategy.resolve_signals(signals, step)?;
+        // Resolve conflicts and make adaptation decision. E1: the resolver used
+        // to ignore the live learning rate entirely and multiply the hardcoded
+        // literal 0.001 by the vote, so every adaptation snapped the learning
+        // rate back to ~0.001 no matter where it actually was.
+        let previous_lr = self.current_lr;
+        let decision = self.adaptation_strategy.resolve_signals(
+            signals,
+            previous_lr,
+            self.config.adaptation_sensitivity,
+            self.config.use_ensemble_voting,
+            step,
+        )?;
 
         // Apply meta-learning if enabled
         if self.config.enable_meta_learning {
@@ -667,11 +722,11 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
         // Record adaptation event
         let event = AdaptationEvent {
             timestamp: Instant::now(),
-            old_lr: decision.new_lr, // Store for comparison
+            // The learning rate *before* this adaptation; storing the decision's
+            // own output here made every recorded event look like a no-op.
+            old_lr: previous_lr,
             new_lr: self.current_lr,
             trigger_signals: decision.contributing_signals,
-            adaptation_reason: decision.rationale,
-            confidence: decision.confidence,
             effectiveness_score: None, // Will be updated later
         };
 
@@ -680,7 +735,25 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
             self.adaptation_history.pop_front();
         }
 
+        self.resource_adapter
+            .record_step_time(step_started.elapsed(), self.config.step_time_budget);
+
         Ok(self.current_lr)
+    }
+
+    /// Learning rate before the most recent adaptation, if there was one.
+    pub fn previous_lr(&self) -> Option<A> {
+        self.adaptation_history.back().map(|event| event.old_lr)
+    }
+
+    /// The most recent adaptation decision, including its rationale.
+    pub fn last_decision(&self) -> Option<&AdaptationDecision<A>> {
+        self.adaptation_strategy.last_decision.as_ref()
+    }
+
+    /// Recorded signal votes, newest last.
+    pub fn voting_history(&self) -> &VecDeque<SignalVote<A>> {
+        &self.adaptation_strategy.voting_history
     }
 
     /// Get current learning rate
@@ -709,7 +782,7 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
                 .collect();
 
             let mean_lr = lr_values.iter().fold(A::zero(), |acc, &lr| acc + lr)
-                / A::from(lr_values.len()).expect("unwrap failed");
+                / scalar_or(lr_values.len(), A::one());
 
             let variance = lr_values
                 .iter()
@@ -718,41 +791,114 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
                     diff * diff
                 })
                 .fold(A::zero(), |acc, var| acc + var)
-                / A::from(lr_values.len()).expect("unwrap failed");
+                / scalar_or(lr_values.len(), A::one());
 
             variance.sqrt()
         } else {
             A::zero()
         };
 
+        // Real per-signal reliability and effectiveness rather than the empty
+        // maps `..Default::default()` used to leave behind.
+        let signal_reliability_scores = self.adaptation_strategy.signal_reliability.clone();
+        let mut signal_effectiveness: HashMap<AdaptationSignalType, A> = HashMap::new();
+        let mut signal_counts: HashMap<AdaptationSignalType, usize> = HashMap::new();
+        for event in &self.adaptation_history {
+            let Some(score) = event.effectiveness_score else {
+                continue;
+            };
+            for signal_type in &event.trigger_signals {
+                let count = signal_counts.entry(*signal_type).or_insert(0);
+                *count += 1;
+                let steps = A::from(*count).unwrap_or_else(A::one);
+                let entry = signal_effectiveness
+                    .entry(*signal_type)
+                    .or_insert_with(A::zero);
+                *entry = *entry + (score - *entry) / steps;
+            }
+        }
+
+        let avg_adaptation_frequency = if let (Some(first), Some(last)) = (
+            self.adaptation_history.front(),
+            self.adaptation_history.back(),
+        ) {
+            let span = last.timestamp.saturating_duration_since(first.timestamp);
+            if span.as_secs_f64() > 0.0 {
+                A::from(total_adaptations as f64 / span.as_secs_f64()).unwrap_or_else(A::zero)
+            } else {
+                A::zero()
+            }
+        } else {
+            A::zero()
+        };
+
+        let convergence_speed_improvement = {
+            let scores: Vec<A> = self
+                .adaptation_history
+                .iter()
+                .filter_map(|event| event.effectiveness_score)
+                .collect();
+            if scores.is_empty() {
+                A::zero()
+            } else {
+                let count = A::from(scores.len()).unwrap_or_else(A::one);
+                scores.iter().fold(A::zero(), |acc, score| acc + *score) / count
+            }
+        };
+
         AdaptationStatistics {
             total_adaptations,
             successful_adaptations,
+            avg_adaptation_frequency,
             lr_volatility,
-            ..Default::default()
+            signal_reliability_scores,
+            signal_effectiveness,
+            resource_efficiency_gains: A::from(self.resource_adapter.budget_violations() as f64)
+                .map(|violations| A::zero() - violations)
+                .unwrap_or_else(A::zero),
+            convergence_speed_improvement,
         }
     }
 
     /// Apply meta-learning adjustment to base decision
     fn apply_meta_adjustment(&self, base_lr: A, meta_adjustment: A) -> A {
         // Combine base decision with meta-learning recommendation
-        let alpha = A::from(0.7).expect("unwrap failed"); // Weight for base decision
-        let beta = A::from(0.3).expect("unwrap failed"); // Weight for meta-learning
+        let alpha = scalar_or(0.7, A::zero()); // Weight for base decision
+        let beta = scalar_or(0.3, A::zero()); // Weight for meta-learning
 
         alpha * base_lr + beta * meta_adjustment
     }
 
     /// Evaluate adaptation effectiveness retrospectively
     pub fn evaluate_adaptation_effectiveness(&mut self, performance_improvement: A) {
+        let mut signals = Vec::new();
         if let Some(last_event) = self.adaptation_history.back_mut() {
             last_event.effectiveness_score = Some(performance_improvement);
-
-            // Update signal reliability based on effectiveness
-            for signal_type in &last_event.trigger_signals {
-                self.adaptation_strategy
-                    .update_signal_reliability(*signal_type, performance_improvement);
-            }
+            signals = last_event.trigger_signals.clone();
         }
+        // Update signal reliability based on effectiveness
+        for signal_type in signals {
+            self.adaptation_strategy
+                .update_signal_reliability(signal_type, performance_improvement);
+        }
+        // E2: the meta-optimizer's bandit learns from the same measurement, so
+        // its arm values come from observed effectiveness rather than a constant.
+        self.meta_optimizer.record_reward(performance_improvement);
+    }
+
+    /// Measured mean reward per meta-learning arm.
+    pub fn meta_arm_rewards(&self) -> &HashMap<usize, A> {
+        self.meta_optimizer.arm_rewards()
+    }
+
+    /// Times each meta-learning arm has been played.
+    pub fn meta_arm_counts(&self) -> &HashMap<usize, usize> {
+        self.meta_optimizer.arm_counts()
+    }
+
+    /// Measured reliability of each adaptation signal.
+    pub fn signal_reliability(&self) -> &HashMap<AdaptationSignalType, A> {
+        &self.adaptation_strategy.signal_reliability
     }
 
     /// Reset controller state
@@ -767,268 +913,13 @@ impl<A: Float + Default + Clone + Send + Sync + Send + Sync> EnhancedAdaptiveLRC
     }
 }
 
-// Implementation stubs for the various components
-// In a full implementation, these would contain sophisticated algorithms
+mod meta;
+mod signals;
 
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> MultiSignalAdaptationStrategy<A> {
-    fn new(config: &AdaptiveLRConfig<A>) -> Result<Self> {
-        Ok(Self {
-            signal_weights: HashMap::new(),
-            voting_history: VecDeque::new(),
-            conflict_resolution: ConflictResolution::WeightedAverage,
-            signal_reliability: HashMap::new(),
-            last_decision: None,
-        })
-    }
+#[cfg(test)]
+mod adaptive_lr_tests;
 
-    fn resolve_signals(
-        &mut self,
-        signals: Vec<SignalVote<A>>,
-        _step: usize,
-    ) -> Result<AdaptationDecision<A>> {
-        if signals.is_empty() {
-            return Ok(AdaptationDecision {
-                new_lr: A::from(0.001).expect("unwrap failed"),
-                lr_multiplier: A::one(),
-                contributing_signals: vec![],
-                confidence: A::zero(),
-                rationale: "No signals available".to_string(),
-                timestamp: Instant::now(),
-            });
-        }
-
-        // Simplified conflict resolution using weighted average
-        let total_weight = signals
-            .iter()
-            .map(|s| s.confidence)
-            .fold(A::zero(), |acc, c| acc + c);
-
-        let weighted_change = signals
-            .iter()
-            .map(|s| s.recommended_lr_change * s.confidence)
-            .fold(A::zero(), |acc, change| acc + change)
-            / total_weight;
-
-        let contributing_signals = signals.iter().map(|s| s.signal_type).collect();
-
-        Ok(AdaptationDecision {
-            new_lr: A::from(0.001).expect("unwrap failed") * weighted_change,
-            lr_multiplier: weighted_change,
-            contributing_signals,
-            confidence: total_weight / A::from(signals.len()).expect("unwrap failed"),
-            rationale: "Weighted average of adaptation signals".to_string(),
-            timestamp: Instant::now(),
-        })
-    }
-
-    fn update_signal_reliability(&mut self, signal_type: AdaptationSignalType, effectiveness: A) {
-        let reliability = self
-            .signal_reliability
-            .entry(signal_type)
-            .or_insert(A::from(0.5).expect("unwrap failed"));
-
-        // Update reliability using exponential moving average
-        let alpha = A::from(0.1).expect("unwrap failed");
-        *reliability = (*reliability) * (A::one() - alpha) + effectiveness * alpha;
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> GradientBasedAdapter<A> {
-    fn new(config: &AdaptiveLRConfig<A>) -> Result<Self> {
-        Ok(Self {
-            magnitude_history: VecDeque::new(),
-            direction_variance_history: VecDeque::new(),
-            norm_statistics: GradientNormStatistics::default(),
-            snr_estimator: SignalToNoiseEstimator::default(),
-            staleness_detector: GradientStalenessDetector::default(),
-        })
-    }
-
-    fn generate_signal(&mut self, gradients: &Array1<A>, step: usize) -> Result<SignalVote<A>> {
-        let magnitude = gradients
-            .iter()
-            .map(|&g| g * g)
-            .fold(A::zero(), |acc, x| acc + x)
-            .sqrt();
-        self.magnitude_history.push_back(magnitude);
-
-        if self.magnitude_history.len() > 100 {
-            self.magnitude_history.pop_front();
-        }
-
-        // Simple adaptation based on gradient magnitude
-        let recommended_change = if magnitude > A::from(1.0).expect("unwrap failed") {
-            A::from(0.9).expect("unwrap failed") // Decrease LR for large gradients
-        } else if magnitude < A::from(0.01).expect("unwrap failed") {
-            A::from(1.1).expect("unwrap failed") // Increase LR for small gradients
-        } else {
-            A::one() // No change
-        };
-
-        Ok(SignalVote {
-            signal_type: AdaptationSignalType::GradientMagnitude,
-            recommended_lr_change: recommended_change,
-            confidence: A::from(0.7).expect("unwrap failed"),
-            reasoning: "Gradient magnitude-based adaptation".to_string(),
-            timestamp: Instant::now(),
-        })
-    }
-
-    fn reset(&mut self) {
-        self.magnitude_history.clear();
-        self.direction_variance_history.clear();
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> PerformanceBasedAdapter<A> {
-    fn new(config: &AdaptiveLRConfig<A>) -> Result<Self> {
-        Ok(Self {
-            metric_history: HashMap::new(),
-            trend_analyzer: PerformanceTrendAnalyzer::default(),
-            plateau_detector: PlateauDetector::default(),
-            overfitting_detector: OverfittingDetector::default(),
-            efficiency_tracker: LearningEfficiencyTracker::default(),
-        })
-    }
-
-    fn generate_signal(
-        &mut self,
-        loss: A,
-        metrics: &HashMap<String, A>,
-        _step: usize,
-    ) -> Result<SignalVote<A>> {
-        let loss_history = self.metric_history.entry("loss".to_string()).or_default();
-
-        loss_history.push_back(loss);
-        if loss_history.len() > 50 {
-            loss_history.pop_front();
-        }
-
-        // Simple trend analysis
-        let recommended_change = if loss_history.len() >= 2 {
-            let recent_loss = loss_history.back().expect("unwrap failed");
-            let prev_loss = loss_history
-                .get(loss_history.len() - 2)
-                .expect("unwrap failed");
-
-            if *recent_loss > *prev_loss {
-                A::from(0.95).expect("unwrap failed") // Decrease LR if loss increased
-            } else {
-                A::from(1.02).expect("unwrap failed") // Slight increase if loss decreased
-            }
-        } else {
-            A::one()
-        };
-
-        Ok(SignalVote {
-            signal_type: AdaptationSignalType::LossProgression,
-            recommended_lr_change: recommended_change,
-            confidence: A::from(0.8).expect("unwrap failed"),
-            reasoning: "Loss progression analysis".to_string(),
-            timestamp: Instant::now(),
-        })
-    }
-
-    fn reset(&mut self) {
-        self.metric_history.clear();
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> DriftAwareAdapter<A> {
-    fn new(config: &AdaptiveLRConfig<A>) -> Result<Self> {
-        Ok(Self {
-            drift_detectors: vec![],
-            distribution_tracker: DistributionTracker::default(),
-            adaptation_speed: AdaptationSpeedController::default(),
-            drift_severity: DriftSeverityAssessor::default(),
-        })
-    }
-
-    fn generate_signal(&mut self, gradients: &Array1<A>, step: usize) -> Result<SignalVote<A>> {
-        // Simplified drift detection
-        Ok(SignalVote {
-            signal_type: AdaptationSignalType::ConceptDrift,
-            recommended_lr_change: A::one(),
-            confidence: A::from(0.5).expect("unwrap failed"),
-            reasoning: "No drift detected".to_string(),
-            timestamp: Instant::now(),
-        })
-    }
-
-    fn reset(&mut self) {
-        // Reset drift detection state
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> ResourceAwareAdapter<A> {
-    fn new(config: &AdaptiveLRConfig<A>) -> Result<Self> {
-        Ok(Self {
-            memory_tracker: MemoryUsageTracker::default(),
-            compute_tracker: ComputationTimeTracker::default(),
-            energy_tracker: EnergyConsumptionTracker::default(),
-            throughput_requirements: ThroughputRequirements {
-                min_samples_per_second: A::from(100.0).expect("unwrap failed"),
-                target_samples_per_second: A::from(1000.0).expect("unwrap failed"),
-                current_throughput: A::from(500.0).expect("unwrap failed"),
-                throughput_deficit: A::zero(),
-            },
-            budget_manager: ResourceBudgetManager {
-                memory_budget_mb: 1000.0,
-                compute_budget_seconds: 3600.0,
-                energy_budget_joules: 1000.0,
-                budget_utilization: A::from(0.5).expect("unwrap failed"),
-                budget_violations: 0,
-            },
-        })
-    }
-
-    fn generate_signal(&mut self, step: usize) -> Result<SignalVote<A>> {
-        // Simplified resource-based adaptation
-        let memory_pressure = self.memory_tracker.memory_pressure;
-
-        let recommended_change = if memory_pressure > 0.8 {
-            A::from(0.9).expect("unwrap failed") // Reduce LR to decrease memory usage
-        } else if memory_pressure < 0.3 {
-            A::from(1.05).expect("unwrap failed") // Can afford to increase LR
-        } else {
-            A::one()
-        };
-
-        Ok(SignalVote {
-            signal_type: AdaptationSignalType::ResourceUtilization,
-            recommended_lr_change: recommended_change,
-            confidence: A::from(0.6).expect("unwrap failed"),
-            reasoning: format!("Memory pressure: {:.2}", memory_pressure),
-            timestamp: Instant::now(),
-        })
-    }
-
-    fn reset(&mut self) {
-        self.memory_tracker = MemoryUsageTracker::default();
-        self.compute_tracker = ComputationTimeTracker::default();
-        self.energy_tracker = EnergyConsumptionTracker::default();
-    }
-}
-
-impl<A: Float + Default + Clone + Send + Sync + Send + Sync> MetaOptimizer<A> {
-    fn new(config: &AdaptiveLRConfig<A>) -> Result<Self> {
-        Ok(Self {
-            lr_predictor: LearningRatePredictorNetwork::default(),
-            optimization_history: VecDeque::new(),
-            exploration_strategy: ExplorationStrategy::default(),
-            transfer_learner: TransferLearner::default(),
-        })
-    }
-
-    fn meta_optimize(&mut self, decision: &AdaptationDecision<A>, step: usize) -> Result<A> {
-        // Simplified meta-optimization
-        Ok(A::from(0.001).expect("unwrap failed"))
-    }
-
-    fn reset(&mut self) {
-        self.optimization_history.clear();
-    }
-}
+pub(crate) use signals::LossDriftDetector;
 
 // Default implementations for various structures
 impl<A: Float + Default + Send + Sync + Send + Sync> Default for GradientNormStatistics<A> {
@@ -1050,27 +941,6 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for SignalToNoiseEs
             signal_estimate: A::default(),
             noise_estimate: A::default(),
             snr_history: VecDeque::new(),
-            estimation_method: SNREstimationMethod::MovingAverage,
-        }
-    }
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> Default for GradientStalenessDetector<A> {
-    fn default() -> Self {
-        Self {
-            staleness_threshold: Duration::from_secs(1),
-            gradient_timestamps: VecDeque::new(),
-            staleness_impact_model: StalenessImpactModel::default(),
-        }
-    }
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> Default for StalenessImpactModel<A> {
-    fn default() -> Self {
-        Self {
-            staleness_penalty: A::default(),
-            compensation_factor: A::default(),
-            impact_history: VecDeque::new(),
         }
     }
 }
@@ -1081,7 +951,6 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for PerformanceTren
             trend_detection_window: 10,
             trend_types: vec![],
             trend_strength: A::default(),
-            trend_duration: Duration::from_secs(0),
         }
     }
 }
@@ -1102,8 +971,6 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for OverfittingDete
         Self {
             train_loss_history: VecDeque::new(),
             val_loss_history: VecDeque::new(),
-            overfitting_threshold: A::default(),
-            early_stopping_patience: 10,
         }
     }
 }
@@ -1112,7 +979,6 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for LearningEfficie
     fn default() -> Self {
         Self {
             loss_reduction_per_step: VecDeque::new(),
-            parameter_change_magnitude: VecDeque::new(),
             efficiency_score: A::default(),
             efficiency_trend: TrendType::Improving,
         }
@@ -1123,8 +989,6 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for DistributionTra
     fn default() -> Self {
         Self {
             feature_distributions: HashMap::new(),
-            kl_divergence_threshold: A::default(),
-            wasserstein_distance_threshold: A::default(),
             distribution_drift_score: A::default(),
         }
     }
@@ -1156,21 +1020,7 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for DriftSeverityLe
     fn default() -> Self {
         Self {
             level: DriftSeverity::None,
-            magnitude: A::default(),
             recommended_lr_adjustment: A::one(),
-            adaptation_urgency: A::default(),
-        }
-    }
-}
-
-impl<A: Float + Default + Send + Sync + Send + Sync> Default for LearningRatePredictorNetwork<A> {
-    fn default() -> Self {
-        Self {
-            input_features: vec![],
-            hidden_layers: vec![],
-            weights: vec![],
-            biases: vec![],
-            prediction_confidence: A::default(),
         }
     }
 }
@@ -1178,9 +1028,7 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for LearningRatePre
 impl<A: Float + Default + Send + Sync + Send + Sync> Default for ExplorationStrategy<A> {
     fn default() -> Self {
         Self {
-            strategy_type: ExplorationStrategyType::EpsilonGreedy,
             exploration_rate: A::from(0.1).unwrap_or_default(),
-            exploitation_rate: A::from(0.9).unwrap_or_default(),
             arm_rewards: HashMap::new(),
             arm_counts: HashMap::new(),
         }
@@ -1191,8 +1039,6 @@ impl<A: Float + Default + Send + Sync + Send + Sync> Default for TransferLearner
     fn default() -> Self {
         Self {
             source_task_data: vec![],
-            similarity_metrics: vec![],
-            transfer_weights: Array1::from_vec(vec![]),
             transfer_confidence: A::default(),
         }
     }
@@ -1218,6 +1064,8 @@ mod tests {
             adaptation_frequency: 10,
             adaptation_sensitivity: 0.1,
             use_ensemble_voting: true,
+            step_time_budget: None,
+            memory_budget_mb: None,
         };
 
         let controller = EnhancedAdaptiveLRController::<f32>::new(config);
@@ -1239,6 +1087,8 @@ mod tests {
             adaptation_frequency: 10,
             adaptation_sensitivity: 0.1,
             use_ensemble_voting: true,
+            step_time_budget: None,
+            memory_budget_mb: None,
         };
 
         let mut controller =
@@ -1267,6 +1117,8 @@ mod tests {
             adaptation_frequency: 10,
             adaptation_sensitivity: 0.1,
             use_ensemble_voting: true,
+            step_time_budget: None,
+            memory_budget_mb: None,
         };
 
         let controller = EnhancedAdaptiveLRController::<f32>::new(config).expect("unwrap failed");

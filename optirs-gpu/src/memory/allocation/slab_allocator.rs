@@ -4,7 +4,6 @@
 // Slab allocation is highly efficient for objects of the same size and provides
 // excellent cache locality and minimal fragmentation.
 
-#[allow(dead_code)]
 use std::collections::{HashMap, VecDeque};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
@@ -14,8 +13,6 @@ use std::time::Instant;
 pub struct SlabAllocator {
     /// Cache configurations indexed by object size
     caches: HashMap<usize, SlabCache>,
-    /// Statistics for the entire allocator
-    stats: SlabStats,
     /// Configuration
     config: SlabConfig,
     /// Memory pool for backing slabs
@@ -228,10 +225,11 @@ impl MemoryPool {
 
         // Try to reuse a free region first
         if let Some(region_index) = self.find_suitable_free_region(aligned_size) {
-            let region = self
-                .free_regions
-                .remove(region_index)
-                .expect("unwrap failed");
+            // `region_index` was just found in this exact deque with no
+            // mutation in between, so removal is guaranteed to succeed;
+            // `?` reports allocation failure defensively rather than
+            // panicking if that invariant were ever violated.
+            let region = self.free_regions.remove(region_index)?;
             let ptr = unsafe { NonNull::new_unchecked(self.base_ptr.as_ptr().add(region.offset)) };
 
             // If region is larger than needed, split it
@@ -295,8 +293,14 @@ impl MemoryPool {
         while i < self.free_regions.len().saturating_sub(1) {
             let current_end = self.free_regions[i].offset + self.free_regions[i].size;
             if current_end == self.free_regions[i + 1].offset {
-                // Coalesce regions
-                let next_region = self.free_regions.remove(i + 1).expect("unwrap failed");
+                // Coalesce regions. The while condition just proved
+                // `i + 1 < self.free_regions.len()`, so removal is
+                // guaranteed to succeed; the `else` stops coalescing
+                // defensively rather than panicking if that invariant were
+                // ever violated.
+                let Some(next_region) = self.free_regions.remove(i + 1) else {
+                    break;
+                };
                 self.free_regions[i].size += next_region.size;
             } else {
                 i += 1;
@@ -661,7 +665,6 @@ impl SlabAllocator {
 
         Self {
             caches: HashMap::new(),
-            stats: SlabStats::default(),
             memory_pool,
             config,
         }
@@ -678,14 +681,14 @@ impl SlabAllocator {
         // Round up size to alignment boundary
         let aligned_size = (size + self.config.alignment - 1) & !(self.config.alignment - 1);
 
-        // Get or create cache for this size
-        self.caches.entry(aligned_size).or_insert_with(|| {
-            let cache_config = CacheConfig::default();
-
-            SlabCache::new(aligned_size, cache_config)
-        });
-
-        let cache = self.caches.get_mut(&aligned_size).expect("unwrap failed");
+        // Get or create cache for this size. `entry().or_insert_with()`
+        // already hands back the `&mut SlabCache` for the (possibly
+        // freshly-inserted) entry, so no separate `get_mut` + expect is
+        // needed to prove the key is present.
+        let cache = self
+            .caches
+            .entry(aligned_size)
+            .or_insert_with(|| SlabCache::new(aligned_size, CacheConfig::default()));
         cache.allocate(&mut self.memory_pool)
     }
 
@@ -839,22 +842,22 @@ impl ThreadSafeSlabAllocator {
     }
 
     pub fn allocate(&self, size: usize) -> Result<NonNull<u8>, SlabError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.allocate(size)
     }
 
     pub fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<(), SlabError> {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.deallocate(ptr, size)
     }
 
     pub fn get_stats(&self) -> SlabAllocatorStats {
-        let allocator = self.allocator.lock().expect("lock poisoned");
+        let allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.get_stats()
     }
 
     pub fn reclaim_memory(&self) -> usize {
-        let mut allocator = self.allocator.lock().expect("lock poisoned");
+        let mut allocator = self.allocator.lock().unwrap_or_else(|e| e.into_inner());
         allocator.reclaim_memory()
     }
 }

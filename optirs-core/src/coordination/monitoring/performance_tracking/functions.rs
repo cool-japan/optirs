@@ -2,9 +2,9 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 use scirs2_core::numeric::Float;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::types::{

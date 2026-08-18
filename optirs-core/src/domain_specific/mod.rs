@@ -7,9 +7,24 @@
 use crate::adaptive_selection::{OptimizerType, ProblemCharacteristics};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::ScalarOperand;
-use scirs2_core::numeric::Float;
+use scirs2_core::numeric::{Float, ToPrimitive};
 use std::collections::HashMap;
 use std::fmt::Debug;
+
+/// Fallibly converts an `f64`/`usize` literal or measurement into the
+/// selector's generic scalar type `A`.
+///
+/// Centralizes what used to be `A::from(x).expect("unwrap failed")` call
+/// sites across the domain-specific hyperparameter builders: instead of
+/// panicking, a type that genuinely cannot represent `x` now produces an
+/// honest [`OptimError`].
+fn cast_scalar<A: Float, T: ToPrimitive>(value: T) -> Result<A> {
+    A::from(value).ok_or_else(|| {
+        OptimError::InvalidConfig(
+            "failed to convert a numeric value to the domain selector's scalar type".to_string(),
+        )
+    })
+}
 
 /// Domain-specific optimization strategy
 #[derive(Debug, Clone)]
@@ -345,46 +360,40 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         // Resolution-_adaptive optimization
         if resolution_adaptive {
             let resolution_factor = self.estimate_resolution_factor(&context.problem_chars);
-            config.learning_rate =
-                self.config.base_learning_rate * A::from(resolution_factor).expect("unwrap failed");
+            config.learning_rate = self.config.base_learning_rate * cast_scalar(resolution_factor)?;
 
             // Larger images need smaller learning rates
             if context.problem_chars.input_dim > 512 * 512 {
-                config.learning_rate = config.learning_rate * A::from(0.5).expect("unwrap failed");
+                config.learning_rate = config.learning_rate * cast_scalar(0.5)?;
             }
         }
 
         // Batch normalization _tuning
         if batch_norm_tuning {
             config.optimizer_type = OptimizerType::AdamW; // Better for batch norm
-            config.specialized_params.insert(
-                "batch_norm_momentum".to_string(),
-                A::from(0.99).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "batch_norm_eps".to_string(),
-                A::from(1e-5).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("batch_norm_momentum".to_string(), cast_scalar(0.99)?);
+            config
+                .specialized_params
+                .insert("batch_norm_eps".to_string(), cast_scalar(1e-5)?);
         }
 
         // Data augmentation awareness
         if augmentation_aware {
             // More aggressive regularization with augmentation
-            config.regularization_strength =
-                config.regularization_strength * A::from(1.5).expect("unwrap failed");
-            config.specialized_params.insert(
-                "mixup_alpha".to_string(),
-                A::from(0.2).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "cutmix_alpha".to_string(),
-                A::from(1.0).expect("unwrap failed"),
-            );
+            config.regularization_strength = config.regularization_strength * cast_scalar(1.5)?;
+            config
+                .specialized_params
+                .insert("mixup_alpha".to_string(), cast_scalar(0.2)?);
+            config
+                .specialized_params
+                .insert("cutmix_alpha".to_string(), cast_scalar(1.0)?);
         }
 
         // CV-specific optimizations
         config.batch_size = self.select_cv_batch_size(&context.resource_constraints);
-        config.gradient_clip_norm = Some(A::from(1.0).expect("unwrap failed"));
+        config.gradient_clip_norm = Some(cast_scalar(1.0)?);
 
         // Use cosine annealing for CV tasks
         config.lr_schedule = LearningRateScheduleType::CosineAnnealing {
@@ -410,32 +419,28 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
 
             // Longer sequences need more careful optimization
             if seq_length > 512 {
-                config.learning_rate =
-                    self.config.base_learning_rate * A::from(0.7).expect("unwrap failed");
-                config.gradient_clip_norm = Some(A::from(0.5).expect("unwrap failed"));
+                config.learning_rate = self.config.base_learning_rate * cast_scalar(0.7)?;
+                config.gradient_clip_norm = Some(cast_scalar(0.5)?);
             } else {
                 config.learning_rate = self.config.base_learning_rate;
-                config.gradient_clip_norm = Some(A::from(1.0).expect("unwrap failed"));
+                config.gradient_clip_norm = Some(cast_scalar(1.0)?);
             }
         }
 
         // Attention mechanism optimization
         if attention_optimized {
             config.optimizer_type = OptimizerType::AdamW; // Best for transformers
-            config.specialized_params.insert(
-                "attention_dropout".to_string(),
-                A::from(0.1).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "attention_head_dim".to_string(),
-                A::from(64.0).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("attention_dropout".to_string(), cast_scalar(0.1)?);
+            config
+                .specialized_params
+                .insert("attention_head_dim".to_string(), cast_scalar(64.0)?);
 
             // Layer-wise learning rate decay for transformers
-            config.specialized_params.insert(
-                "layer_decay_rate".to_string(),
-                A::from(0.95).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("layer_decay_rate".to_string(), cast_scalar(0.95)?);
         }
 
         // Vocabulary-_aware optimization
@@ -444,28 +449,29 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
 
             // Large vocabularies need special handling
             if vocab_size > 30000 {
-                config.specialized_params.insert(
-                    "tie_embeddings".to_string(),
-                    A::from(1.0).expect("unwrap failed"),
-                );
-                config.specialized_params.insert(
-                    "embedding_dropout".to_string(),
-                    A::from(0.1).expect("unwrap failed"),
-                );
+                config
+                    .specialized_params
+                    .insert("tie_embeddings".to_string(), cast_scalar(1.0)?);
+                config
+                    .specialized_params
+                    .insert("embedding_dropout".to_string(), cast_scalar(0.1)?);
             }
         }
 
         // NLP-specific optimizations
         config.batch_size = self.select_nlp_batch_size(&context.resource_constraints);
         config.lr_schedule = LearningRateScheduleType::OneCycle {
-            max_lr: config.learning_rate.to_f64().expect("unwrap failed"),
+            max_lr: config.learning_rate.to_f64().ok_or_else(|| {
+                OptimError::InvalidConfig(
+                    "optimize_natural_language: learning_rate must convert to f64".to_string(),
+                )
+            })?,
         };
 
         // Warmup for transformers
-        config.specialized_params.insert(
-            "warmup_steps".to_string(),
-            A::from(1000.0).expect("unwrap failed"),
-        );
+        config
+            .specialized_params
+            .insert("warmup_steps".to_string(), cast_scalar(1000.0)?);
 
         Ok(config)
     }
@@ -483,41 +489,36 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         // Collaborative _filtering optimization
         if collaborative_filtering {
             config.optimizer_type = OptimizerType::Adam; // Good for sparse data
-            config.regularization_strength = A::from(0.01).expect("unwrap failed"); // Prevent overfitting
-            config.specialized_params.insert(
-                "negative_sampling_rate".to_string(),
-                A::from(5.0).expect("unwrap failed"),
-            );
+            config.regularization_strength = cast_scalar(0.01)?; // Prevent overfitting
+            config
+                .specialized_params
+                .insert("negative_sampling_rate".to_string(), cast_scalar(5.0)?);
         }
 
         // Matrix _factorization tuning
         if matrix_factorization {
-            config.learning_rate = A::from(0.01).expect("unwrap failed"); // Lower LR for stability
-            config.specialized_params.insert(
-                "embedding_dim".to_string(),
-                A::from(128.0).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "factorization_rank".to_string(),
-                A::from(50.0).expect("unwrap failed"),
-            );
+            config.learning_rate = cast_scalar(0.01)?; // Lower LR for stability
+            config
+                .specialized_params
+                .insert("embedding_dim".to_string(), cast_scalar(128.0)?);
+            config
+                .specialized_params
+                .insert("factorization_rank".to_string(), cast_scalar(50.0)?);
         }
 
         // Cold start handling
         if cold_start_aware {
-            config.specialized_params.insert(
-                "content_weight".to_string(),
-                A::from(0.3).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "popularity_bias".to_string(),
-                A::from(0.1).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("content_weight".to_string(), cast_scalar(0.3)?);
+            config
+                .specialized_params
+                .insert("popularity_bias".to_string(), cast_scalar(0.1)?);
         }
 
         // RecSys-specific optimizations
         config.batch_size = self.select_recsys_batch_size(&context.resource_constraints);
-        config.gradient_clip_norm = Some(A::from(5.0).expect("unwrap failed")); // Higher clip for sparse gradients
+        config.gradient_clip_norm = Some(cast_scalar(5.0)?); // Higher clip for sparse gradients
 
         Ok(config)
     }
@@ -535,40 +536,36 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         // Temporal dependency handling
         if temporal_aware {
             config.optimizer_type = OptimizerType::RMSprop; // Good for RNNs
-            config.learning_rate = A::from(0.001).expect("unwrap failed"); // Conservative for temporal stability
+            config.learning_rate = cast_scalar(0.001)?; // Conservative for temporal stability
             config.specialized_params.insert(
                 "sequence_length".to_string(),
-                A::from(context.problem_chars.input_dim as f64).expect("unwrap failed"),
+                cast_scalar(context.problem_chars.input_dim as f64)?,
             );
         }
 
         // Seasonality consideration
         if seasonality_adaptive {
-            config.specialized_params.insert(
-                "seasonal_periods".to_string(),
-                A::from(24.0).expect("unwrap failed"),
-            ); // Daily pattern
-            config.specialized_params.insert(
-                "trend_strength".to_string(),
-                A::from(0.1).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("seasonal_periods".to_string(), cast_scalar(24.0)?); // Daily pattern
+            config
+                .specialized_params
+                .insert("trend_strength".to_string(), cast_scalar(0.1)?);
         }
 
         // Multi-_step ahead optimization
         if multi_step {
-            config.specialized_params.insert(
-                "prediction_horizon".to_string(),
-                A::from(12.0).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "multi_step_loss_weight".to_string(),
-                A::from(0.8).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("prediction_horizon".to_string(), cast_scalar(12.0)?);
+            config
+                .specialized_params
+                .insert("multi_step_loss_weight".to_string(), cast_scalar(0.8)?);
         }
 
         // Time series-specific optimizations
         config.batch_size = 32; // Smaller batches for temporal consistency
-        config.gradient_clip_norm = Some(A::from(1.0).expect("unwrap failed"));
+        config.gradient_clip_norm = Some(cast_scalar(1.0)?);
         config.lr_schedule = LearningRateScheduleType::ReduceOnPlateau {
             patience: 10,
             factor: 0.5,
@@ -590,44 +587,38 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         // Policy _gradient optimization
         if policy_gradient {
             config.optimizer_type = OptimizerType::Adam;
-            config.learning_rate = A::from(3e-4).expect("unwrap failed"); // Standard RL learning rate
-            config.specialized_params.insert(
-                "entropy_coeff".to_string(),
-                A::from(0.01).expect("unwrap failed"),
-            );
+            config.learning_rate = cast_scalar(3e-4)?; // Standard RL learning rate
+            config
+                .specialized_params
+                .insert("entropy_coeff".to_string(), cast_scalar(0.01)?);
         }
 
         // Value _function optimization
         if value_function {
-            config.specialized_params.insert(
-                "value_loss_coeff".to_string(),
-                A::from(0.5).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "huber_loss_delta".to_string(),
-                A::from(1.0).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("value_loss_coeff".to_string(), cast_scalar(0.5)?);
+            config
+                .specialized_params
+                .insert("huber_loss_delta".to_string(), cast_scalar(1.0)?);
         }
 
         // Exploration-exploitation balance
         if exploration_aware {
-            config.specialized_params.insert(
-                "epsilon_start".to_string(),
-                A::from(1.0).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "epsilon_end".to_string(),
-                A::from(0.1).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "epsilon_decay".to_string(),
-                A::from(0.995).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("epsilon_start".to_string(), cast_scalar(1.0)?);
+            config
+                .specialized_params
+                .insert("epsilon_end".to_string(), cast_scalar(0.1)?);
+            config
+                .specialized_params
+                .insert("epsilon_decay".to_string(), cast_scalar(0.995)?);
         }
 
         // RL-specific optimizations
-        config.batch_size = 64; // Standard RL batch size
-        config.gradient_clip_norm = Some(A::from(0.5).expect("unwrap failed")); // Important for RL stability
+        config.batch_size = self.select_rl_batch_size(&context.resource_constraints);
+        config.gradient_clip_norm = Some(cast_scalar(0.5)?); // Important for RL stability
         config.lr_schedule = LearningRateScheduleType::Constant; // Often constant in RL
 
         Ok(config)
@@ -646,32 +637,28 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         // Numerical stability prioritization
         if stability_focused {
             config.optimizer_type = OptimizerType::LBFGS; // More stable for scientific problems
-            config.learning_rate = A::from(0.1).expect("unwrap failed"); // Higher LR for LBFGS
-            config.specialized_params.insert(
-                "line_search_tolerance".to_string(),
-                A::from(1e-6).expect("unwrap failed"),
-            );
+            config.learning_rate = cast_scalar(0.1)?; // Higher LR for LBFGS
+            config
+                .specialized_params
+                .insert("line_search_tolerance".to_string(), cast_scalar(1e-6)?);
         }
 
         // High precision requirements
         if precision_critical {
-            config.specialized_params.insert(
-                "convergence_tolerance".to_string(),
-                A::from(1e-8).expect("unwrap failed"),
-            );
-            config.specialized_params.insert(
-                "max_iterations".to_string(),
-                A::from(1000.0).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("convergence_tolerance".to_string(), cast_scalar(1e-8)?);
+            config
+                .specialized_params
+                .insert("max_iterations".to_string(), cast_scalar(1000.0)?);
         }
 
         // Sparse matrix optimization
         if sparse_optimized {
             config.optimizer_type = OptimizerType::Adam;
-            config.specialized_params.insert(
-                "sparsity_threshold".to_string(),
-                A::from(1e-6).expect("unwrap failed"),
-            );
+            config
+                .specialized_params
+                .insert("sparsity_threshold".to_string(), cast_scalar(1e-6)?);
         }
 
         // Scientific computing-specific optimizations
@@ -706,16 +693,21 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         // Analyze historical performance for this domain
         if let Some(history) = self.domain_performance.get(domain) {
             if !history.is_empty() {
-                let avg_performance = history.iter().map(|m| m.validation_accuracy).sum::<A>()
-                    / A::from(history.len()).expect("unwrap failed");
+                let history_len: A = A::from(history.len())
+                    .expect("get_domain_recommendations: history.len() must fit in A");
+                let avg_performance =
+                    history.iter().map(|m| m.validation_accuracy).sum::<A>() / history_len;
 
                 recommendations.push(DomainRecommendation {
                     recommendation_type: RecommendationType::PerformanceBaseline,
                     description: format!(
                         "Historical average performance: {:.4}",
-                        avg_performance.to_f64().expect("unwrap failed")
+                        avg_performance.to_f64().expect(
+                            "get_domain_recommendations: A (f32/f64) always converts to f64"
+                        )
                     ),
-                    confidence: A::from(0.8).expect("unwrap failed"),
+                    confidence: A::from(0.8)
+                        .expect("get_domain_recommendations: literal 0.8 must fit in A"),
                     action: "Consider this as baseline for improvements".to_string(),
                 });
             }
@@ -729,7 +721,9 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
                     description: format!(
                         "Transfer from {} domain with {:.2} effectiveness",
                         knowledge.source_domain,
-                        knowledge.transfer_score.to_f64().expect("unwrap failed")
+                        knowledge.transfer_score.to_f64().expect(
+                            "get_domain_recommendations: A (f32/f64) always converts to f64"
+                        )
                     ),
                     confidence: knowledge.transfer_score,
                     action: format!("Use {:?} optimizer", knowledge.successful_strategy),
@@ -792,19 +786,39 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
         }
     }
 
+    fn select_rl_batch_size(&self, constraints: &ResourceConstraints<A>) -> usize {
+        // RL rollout/replay batches scale with available memory, but more
+        // conservatively than supervised CV/NLP batches: most on-policy and
+        // off-policy algorithms are sensitive to very large batch sizes.
+        if constraints.max_memory > 16_000_000_000 {
+            // 16GB+
+            128
+        } else if constraints.max_memory > 8_000_000_000 {
+            // 8GB+
+            64
+        } else {
+            32
+        }
+    }
+
     /// Create default configuration for a strategy
     fn default_config_for_strategy(strategy: &DomainStrategy) -> DomainConfig<A> {
         match strategy {
             DomainStrategy::ComputerVision { .. } => DomainConfig {
-                base_learning_rate: A::from(0.001).expect("unwrap failed"),
+                base_learning_rate: A::from(0.001)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 recommended_batch_sizes: vec![32, 64, 128],
                 gradient_clip_values: vec![
-                    A::from(1.0).expect("unwrap failed"),
-                    A::from(2.0).expect("unwrap failed"),
+                    A::from(1.0)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(2.0)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ],
                 regularization_range: (
-                    A::from(1e-5).expect("unwrap failed"),
-                    A::from(1e-2).expect("unwrap failed"),
+                    A::from(1e-5)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1e-2)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ),
                 optimizer_ranking: vec![
                     OptimizerType::AdamW,
@@ -814,62 +828,83 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum + Send + Sync> DomainSpec
                 domain_params: HashMap::new(),
             },
             DomainStrategy::NaturalLanguage { .. } => DomainConfig {
-                base_learning_rate: A::from(2e-5).expect("unwrap failed"),
+                base_learning_rate: A::from(2e-5)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 recommended_batch_sizes: vec![16, 32, 64],
                 gradient_clip_values: vec![
-                    A::from(0.5).expect("unwrap failed"),
-                    A::from(1.0).expect("unwrap failed"),
+                    A::from(0.5)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1.0)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ],
                 regularization_range: (
-                    A::from(1e-4).expect("unwrap failed"),
-                    A::from(1e-1).expect("unwrap failed"),
+                    A::from(1e-4)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1e-1)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ),
                 optimizer_ranking: vec![OptimizerType::AdamW, OptimizerType::Adam],
                 domain_params: HashMap::new(),
             },
             DomainStrategy::RecommendationSystems { .. } => DomainConfig {
-                base_learning_rate: A::from(0.01).expect("unwrap failed"),
+                base_learning_rate: A::from(0.01)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 recommended_batch_sizes: vec![128, 256, 512],
                 gradient_clip_values: vec![
-                    A::from(5.0).expect("unwrap failed"),
-                    A::from(10.0).expect("unwrap failed"),
+                    A::from(5.0)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(10.0)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ],
                 regularization_range: (
-                    A::from(1e-3).expect("unwrap failed"),
-                    A::from(1e-1).expect("unwrap failed"),
+                    A::from(1e-3)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1e-1)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ),
                 optimizer_ranking: vec![OptimizerType::Adam, OptimizerType::AdaGrad],
                 domain_params: HashMap::new(),
             },
             DomainStrategy::TimeSeries { .. } => DomainConfig {
-                base_learning_rate: A::from(0.001).expect("unwrap failed"),
+                base_learning_rate: A::from(0.001)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 recommended_batch_sizes: vec![16, 32, 64],
-                gradient_clip_values: vec![A::from(1.0).expect("unwrap failed")],
+                gradient_clip_values: vec![A::from(1.0)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)")],
                 regularization_range: (
-                    A::from(1e-4).expect("unwrap failed"),
-                    A::from(1e-2).expect("unwrap failed"),
+                    A::from(1e-4)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1e-2)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ),
                 optimizer_ranking: vec![OptimizerType::RMSprop, OptimizerType::Adam],
                 domain_params: HashMap::new(),
             },
             DomainStrategy::ReinforcementLearning { .. } => DomainConfig {
-                base_learning_rate: A::from(3e-4).expect("unwrap failed"),
+                base_learning_rate: A::from(3e-4)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 recommended_batch_sizes: vec![32, 64, 128],
-                gradient_clip_values: vec![A::from(0.5).expect("unwrap failed")],
+                gradient_clip_values: vec![A::from(0.5)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)")],
                 regularization_range: (
-                    A::from(1e-4).expect("unwrap failed"),
-                    A::from(1e-2).expect("unwrap failed"),
+                    A::from(1e-4)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1e-2)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ),
                 optimizer_ranking: vec![OptimizerType::Adam],
                 domain_params: HashMap::new(),
             },
             DomainStrategy::ScientificComputing { .. } => DomainConfig {
-                base_learning_rate: A::from(0.1).expect("unwrap failed"),
+                base_learning_rate: A::from(0.1)
+                    .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 recommended_batch_sizes: vec![64, 128, 256, 512],
                 gradient_clip_values: vec![],
                 regularization_range: (
-                    A::from(1e-6).expect("unwrap failed"),
-                    A::from(1e-3).expect("unwrap failed"),
+                    A::from(1e-6)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
+                    A::from(1e-3)
+                        .expect("default_config_for_strategy: literal must fit in A (f32/f64)"),
                 ),
                 optimizer_ranking: vec![OptimizerType::LBFGS, OptimizerType::Adam],
                 domain_params: HashMap::new(),
@@ -901,10 +936,15 @@ impl<A: Float + Send + Sync> Default for DomainOptimizationConfig<A> {
     fn default() -> Self {
         Self {
             optimizer_type: OptimizerType::Adam,
-            learning_rate: A::from(0.001).expect("unwrap failed"),
+            learning_rate: A::from(0.001)
+                .expect("DomainOptimizationConfig: default learning_rate (0.001) must fit in A"),
             batch_size: 32,
-            gradient_clip_norm: Some(A::from(1.0).expect("unwrap failed")),
-            regularization_strength: A::from(1e-4).expect("unwrap failed"),
+            gradient_clip_norm: Some(A::from(1.0).expect(
+                "DomainOptimizationConfig: default gradient_clip_norm (1.0) must fit in A",
+            )),
+            regularization_strength: A::from(1e-4).expect(
+                "DomainOptimizationConfig: default regularization_strength (1e-4) must fit in A",
+            ),
             lr_schedule: LearningRateScheduleType::Constant,
             specialized_params: HashMap::new(),
         }
@@ -999,11 +1039,69 @@ mod tests {
         };
 
         selector.setcontext(context);
-        let config = selector.select_optimal_config().expect("unwrap failed");
+        let config = selector
+            .select_optimal_config()
+            .expect("selector.select_optimal_config succeeds in test_computer_vision_optimization");
 
         assert_eq!(config.optimizer_type, OptimizerType::AdamW);
         assert_eq!(config.batch_size, 128); // Should select larger batch size for high memory
         assert!(config.gradient_clip_norm.is_some());
+    }
+
+    #[test]
+    fn test_reinforcement_learning_optimization_uses_resource_constraints() {
+        let strategy = DomainStrategy::ReinforcementLearning {
+            policy_gradient: true,
+            value_function: true,
+            exploration_aware: true,
+        };
+
+        let mut selector = DomainSpecificSelector::<f64>::new(strategy);
+
+        let make_context = |max_memory: usize| OptimizationContext {
+            problem_chars: ProblemCharacteristics {
+                dataset_size: 10000,
+                input_dim: 128,
+                output_dim: 4,
+                problem_type: ProblemType::ReinforcementLearning,
+                gradient_sparsity: 0.0,
+                gradient_noise: 0.1,
+                memory_budget: max_memory,
+                time_budget: 3600.0,
+                batch_size: 64,
+                lr_sensitivity: 0.5,
+                regularization_strength: 0.0,
+                architecture_type: None,
+            },
+            resource_constraints: ResourceConstraints {
+                max_memory,
+                max_time: 3600.0,
+                gpu_available: true,
+                distributed_capable: false,
+                energy_efficient: false,
+            },
+            training_config: TrainingConfiguration {
+                max_epochs: 1000,
+                early_stopping_patience: 50,
+                validation_frequency: 10,
+                lr_schedule_type: LearningRateScheduleType::Constant,
+                regularization_approach: RegularizationApproach::L2Only { weight: 0.0 },
+            },
+            domain_metadata: HashMap::new(),
+        };
+
+        // Low memory: falls back to the smallest RL batch-size tier.
+        selector.setcontext(make_context(4_000_000_000));
+        let low_mem_config = selector.select_optimal_config().expect("selector.select_optimal_config succeeds in test_reinforcement_learning_optimization_uses_resource_constraints");
+        assert_eq!(low_mem_config.batch_size, 32);
+
+        // High memory: batch size should scale up accordingly, proving the
+        // resource constraints actually drive the RL batch-size decision
+        // rather than a hardcoded constant.
+        selector.setcontext(make_context(17_000_000_000));
+        let high_mem_config = selector.select_optimal_config().expect("selector.select_optimal_config succeeds in test_reinforcement_learning_optimization_uses_resource_constraints");
+        assert_eq!(high_mem_config.batch_size, 128);
+        assert!(high_mem_config.gradient_clip_norm.is_some());
     }
 
     #[test]
@@ -1049,7 +1147,9 @@ mod tests {
         };
 
         selector.setcontext(context);
-        let config = selector.select_optimal_config().expect("unwrap failed");
+        let config = selector.select_optimal_config().expect(
+            "selector.select_optimal_config succeeds in test_natural_language_optimization",
+        );
 
         assert_eq!(config.optimizer_type, OptimizerType::AdamW);
         assert!(config.specialized_params.contains_key("warmup_steps"));
@@ -1102,7 +1202,9 @@ mod tests {
         };
 
         selector.setcontext(context);
-        let config = selector.select_optimal_config().expect("unwrap failed");
+        let config = selector
+            .select_optimal_config()
+            .expect("selector.select_optimal_config succeeds in test_time_series_optimization");
 
         assert_eq!(config.optimizer_type, OptimizerType::RMSprop);
         assert_eq!(config.batch_size, 32);
@@ -1208,7 +1310,9 @@ mod tests {
         };
 
         selector.setcontext(context);
-        let config = selector.select_optimal_config().expect("unwrap failed");
+        let config = selector.select_optimal_config().expect(
+            "selector.select_optimal_config succeeds in test_scientific_computing_optimization",
+        );
 
         assert_eq!(config.optimizer_type, OptimizerType::LBFGS);
         assert!(config.gradient_clip_norm.is_none()); // No clipping for precision

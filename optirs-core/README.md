@@ -8,32 +8,44 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 
 ## Features
 
-- **19 Production-Ready Optimizers**: SGD, Adam, AdamW, RMSprop, AdaDelta, AdaBound, Ranger, LAMB, LARS, Lion, SAM, RAdam, Lookahead, L-BFGS, Newton-CG, and more
+- **26 Optimizer Implementations**: 22 implement `optimizers::Optimizer` (first-order methods,
+  quasi-Newton L-BFGS, and meta-learning optimizers MAML/Reptile/Meta-SGD/NTM). 4 more live in
+  `second_order` as a separate family: Newton and a second, independent L-BFGS implement
+  `SecondOrderOptimizer`; Newton-CG and K-FAC expose their own `step` API instead
 - **100% SciRS2 Integration**: Built exclusively on SciRS2's scientific computing primitives
-- **High Performance**: SIMD acceleration, parallel processing, GPU support via scirs2-core
-- **Linear Algebra**: High-performance matrix operations via scirs2-linalg
-- **Performance Monitoring**: Built-in metrics and benchmarking via scirs2-metrics
+- **SIMD & Parallel**: SIMD-accelerated (`SimdSGD`) and multi-core (`parallel_optimizer`) paths
+  via scirs2-core, measured by the `simd_benchmarks` / `parallel_benchmarks` Criterion suites
+- **Performance Monitoring**: Built-in metrics via `optimizer_metrics`, optional
+  `scirs2-metrics` integration behind the `metrics-integration` feature
 - **Serialization**: Complete Serde support for checkpointing and model persistence
 - **Memory Efficient**: Gradient accumulation, chunked processing for billion-parameter models
-- **Federated Optimization**: FedProxOptimizer with proximal term (mu=0 degenerates to FedAvg)
-- **Vision Transformer Support**: ViTLayerDecay scheduler for per-layer exponential LR decay
-- **Attention-Aware Scheduling**: Component-specific LR scaling for Transformer models
-- **Gradient Flow Analysis**: GradientFlowAnalyzer with vanishing/exploding detection and SVG visualization
-- **Loss Landscape Analysis**: 2D perturbation analysis, sharpness computation, saddle point detection
-- **647 Tests Passing**: Comprehensive test coverage across all modules
+- **Federated Optimization**: `FedProxOptimizer` with proximal term (mu=0 degenerates to FedAvg)
+- **Vision Transformer Support**: `ViTLayerDecay` scheduler for per-layer exponential LR decay
+- **Attention-Aware Scheduling**: `AttentionAwareScheduler` - component-specific LR scaling for
+  Transformer models
+- **Gradient Flow Analysis**: `GradientFlowAnalyzer` with vanishing/exploding detection and SVG
+  visualization
+- **Loss Landscape Analysis**: 2D perturbation analysis, sharpness computation, saddle point
+  detection
+- **2202 Tests Passing**: library + integration tests (`cargo nextest run -p optirs-core
+  --all-features`), plus 95 passing doc tests
 
 ## Optimization Algorithms
 
-### Supported Optimizers
+### Optimizers
 
-- **SGD (Stochastic Gradient Descent)**: Classic optimizer with momentum and weight decay
-- **Adam**: Adaptive moment estimation with bias correction
-- **AdamW**: Adam with decoupled weight decay for better generalization
-- **RMSprop**: Root Mean Square Propagation for adaptive learning rates
+Commonly used: SGD, Adam, AdamW, RMSprop, Adagrad, AdaDelta, AdaBound, LAMB, LARS, Lion, SAM,
+RAdam, Ranger, Lookahead, SparseAdam, GroupedAdam, L-BFGS, Newton, Newton-CG, K-FAC, and the
+meta-learning optimizers MAML, Reptile, Meta-SGD and NTM. `second_order` also has a second,
+independent L-BFGS implementation (re-exported as `SecondOrderLBFGS`) alongside Newton.
+
+See the crate documentation (`cargo doc -p optirs-core --open`) for the complete, categorized
+list of all 26 optimizers.
 
 ### Advanced Features
 
-- Learning rate scheduling and decay
+- Learning rate scheduling and decay (`optirs_core::schedulers` - see the crate docs for the
+  full list of schedulers)
 - Gradient clipping and normalization
 - Warm-up and cooldown strategies
 - Numerical stability guarantees
@@ -42,23 +54,23 @@ OptiRS-Core provides the foundational optimization algorithms and mathematical u
 ## Dependencies
 
 ### Required Dependencies (SciRS2 Ecosystem)
-- `scirs2-core` 0.4.0: Foundation scientific primitives (REQUIRED)
+- `scirs2-core` 0.6.5: Foundation scientific primitives (REQUIRED)
   - Provides: arrays, random, numeric traits, SIMD, parallel ops, GPU abstractions
-- `scirs2-optimize` 0.4.0: Base optimization interfaces (REQUIRED)
+- `scirs2-optimize` 0.6.5: Base optimization interfaces (REQUIRED)
+- `scirs2-neural`: Required by specific modules (e.g. `neuromorphic`)
+- `scirs2-stats`: Required by distribution-based regularizers
 
-### Additional SciRS2 Dependencies
-- `scirs2-neural`: Neural network optimization support
-- `scirs2-metrics`: Performance monitoring and benchmarks
-- `scirs2-stats`: Statistical analysis
-- `scirs2-series`: Time series support
-- `scirs2-datasets`: Dataset utilities (optional)
-- `scirs2-linalg`: Linear algebra operations
-- `scirs2-signal`: Signal processing
+### Optional SciRS2 Dependencies
+- `scirs2-metrics`: Behind the `metrics-integration` feature
+- `scirs2-datasets`: Behind the `cross-platform-testing` feature
 
 ### External Dependencies
-- `serde`, `serde_json`: Serialization
-- `thiserror`, `anyhow`: Error handling
-- `approx`, `criterion`: Testing and benchmarking
+- `serde`, `serde_json`, `toml`: Serialization / config parsing
+- `thiserror`: Error handling
+- `chrono`, `sha2`, `oxicode`, `x25519-dalek`, `log`: checkpoint storage, hashing, and
+  secure-aggregation support
+- `rsa` (optional, behind the `crypto` feature): plugin signature verification
+- Dev-only: `approx`, `criterion`, `tempfile` (testing and benchmarking)
 
 **Note**: OptiRS does **NOT** use `scirs2-autograd`. OptiRS receives pre-computed gradients and does not perform automatic differentiation.
 
@@ -68,8 +80,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.3.1"
-scirs2-core = "0.4.0"  # Required foundation
+optirs-core = "0.3.2"
+scirs2-core = "0.6.5"  # Required foundation
 ```
 
 ### Basic Example
@@ -78,88 +90,97 @@ scirs2-core = "0.4.0"  # Required foundation
 use optirs_core::optimizers::{Adam, Optimizer};
 use scirs2_core::ndarray::Array1;  // ✅ CORRECT - Use scirs2_core
 
-// Create an Adam optimizer
-let mut optimizer = Adam::new(0.001)
-    .beta1(0.9)
-    .beta2(0.999)
-    .epsilon(1e-8)
-    .build();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create an Adam optimizer
+    let mut optimizer = Adam::new(0.001);
 
-// Your parameters and gradients
-let mut params = Array1::from(vec![1.0, 2.0, 3.0]);
-let grads = Array1::from(vec![0.1, 0.2, 0.3]);
+    // Your parameters and gradients
+    let params = Array1::from(vec![1.0, 2.0, 3.0]);
+    let grads = Array1::from(vec![0.1, 0.2, 0.3]);
 
-// Update parameters
-optimizer.step(&mut params, &grads);
+    // `step` returns the updated parameters rather than mutating in place
+    let params = optimizer.step(&params, &grads)?;
+    println!("{params:?}");
+    Ok(())
+}
 ```
 
 ### With Learning Rate Scheduling
 
 ```rust
-use optirs_core::optimizers::Adam;
-use optirs_core::schedulers::{ExponentialDecay, LRScheduler};
-use scirs2_core::ndarray::Array1;
+use optirs_core::optimizers::{Adam, Optimizer};
+use optirs_core::schedulers::{ExponentialDecay, LearningRateScheduler};
+use scirs2_core::ndarray::{Array1, Ix1};
 
-// Create optimizer with learning rate scheduler
-let mut optimizer = Adam::new(0.001);
-let mut scheduler = ExponentialDecay::new(0.001, 0.95);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create optimizer with learning rate scheduler
+    let mut optimizer = Adam::new(0.001);
+    let mut scheduler = ExponentialDecay::new(0.001, 0.95, 1000);
 
-let mut params = Array1::from(vec![1.0, 2.0, 3.0]);
-let grads = Array1::from(vec![0.1, 0.2, 0.3]);
+    let mut params = Array1::from(vec![1.0, 2.0, 3.0]);
+    let grads = Array1::from(vec![0.1, 0.2, 0.3]);
 
-// Update with scheduled learning rate
-let current_lr = scheduler.step();
-optimizer.set_learning_rate(current_lr);
-optimizer.step(&mut params, &grads);
+    for _ in 0..3 {
+        // Update the learning rate from the schedule, then take a step.
+        // `Optimizer` is generic over the array dimension `D`, so a turbofish is
+        // needed on `set_learning_rate` (its own signature doesn't mention `D`).
+        let current_lr = scheduler.step();
+        Optimizer::<f64, Ix1>::set_learning_rate(&mut optimizer, current_lr);
+        params = optimizer.step(&params, &grads)?;
+    }
+    println!("{params:?}");
+    Ok(())
+}
 ```
 
-## Features
+## Cargo Features
 
 ### Default Features
 - `std`: Standard library support (enabled by default)
 
 ### Optional Features
-- `cross-platform-testing`: Enable cross-platform compatibility testing (requires scirs2-datasets)
+- `cross-platform-testing`: Cross-platform compatibility testing (pulls in `scirs2-datasets`)
+- `metrics-integration`: Re-exports `metrics::*` and pulls in `scirs2-metrics`
+- `crypto`: Plugin signature verification (pulls in `rsa`)
 
 Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = { version = "0.3.1", features = ["cross-platform-testing"] }
+optirs-core = { version = "0.3.2", features = ["cross-platform-testing"] }
 ```
 
 **Note**: SIMD and parallel processing are built-in via scirs2-core and automatically enabled when beneficial.
 
 ## Architecture
 
-OptiRS-Core is designed with modularity and performance in mind:
+OptiRS-Core is designed with modularity and performance in mind. Selected top-level modules
+(see `src/lib.rs` for the complete list of 40 public modules):
 
 ```
 optirs-core/
 ├── src/
-│   ├── lib.rs              # Public API and re-exports
-│   ├── optimizers/         # Optimizer implementations
-│   │   ├── mod.rs
-│   │   ├── sgd.rs
-│   │   ├── adam.rs
-│   │   ├── adamw.rs
-│   │   └── rmsprop.rs
-│   ├── schedulers/         # Learning rate scheduling
-│   ├── utils/              # Mathematical utilities
-│   └── integration/        # SciRS2 integration layer
+│   ├── lib.rs                     # Public API and re-exports
+│   ├── optimizers/                 # Optimizer implementations (sgd.rs, adam.rs, adamw.rs, ...)
+│   ├── second_order/               # Newton, Newton-CG, K-FAC
+│   ├── schedulers/                 # Learning rate scheduling
+│   ├── distributed/                # Ring all-reduce, pipeline parallelism, elastic training
+│   ├── privacy/                    # Differential privacy, secure aggregation
+│   └── utils/                      # Mathematical utilities
 ```
 
 ## Performance
 
 OptiRS-Core is optimized for high-performance machine learning workloads:
 
-- **SIMD Acceleration**: 2-4x speedup via scirs2_core::simd_ops
-- **Parallel Processing**: 4-8x speedup via scirs2_core::parallel_ops
-- **GPU Support**: Multi-backend acceleration via scirs2_core::gpu
+- **SIMD Acceleration**: via `scirs2_core::simd_ops` (`optimizers::SimdSGD`, `simd_optimizer`);
+  measured by `benches/simd_benchmarks.rs`, no fixed speedup ratio is asserted in these docs
+- **Parallel Processing**: via `scirs2_core::parallel_ops` (`parallel_optimizer`, non-wasm32
+  targets); measured by `benches/parallel_benchmarks.rs`
+- **GPU Support**: Backed by `scirs2_core::gpu` abstractions (`gpu_optimizer`)
 - **Memory Efficient**: Gradient accumulation, chunked processing
 - **Vectorized Operations**: Via scirs2_core::ndarray abstractions
-- **Zero-Copy Operations**: Where possible for maximum efficiency
-- **Numerical Stability**: Validated on standard optimization benchmarks
+- **Numerical Stability**: Validated on standard optimization benchmarks (Rosenbrock, Himmelblau)
 
 ## Development Guidelines
 
@@ -176,12 +197,12 @@ To ensure consistency across the OptiRS-Core codebase, all contributors must fol
 // ✅ Correct: snake_case
 let gradient_norm = gradients.norm();
 let parameter_count = model.parameter_count();
-let learning_rate = optimizer.learning_rate();
+let learning_rate = optimizer.get_learning_rate();
 
 // ❌ Incorrect: camelCase or other formats
 let gradientNorm = gradients.norm();
 let parameterCount = model.parameter_count();
-let learningrate = optimizer.learning_rate();
+let learningrate = optimizer.get_learning_rate();
 ```
 
 #### Function and Method Names

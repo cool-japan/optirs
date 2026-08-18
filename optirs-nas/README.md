@@ -1,416 +1,305 @@
 # OptiRS NAS
 
-Neural Architecture Search and hyperparameter optimization for the OptiRS machine learning optimization library.
+Neural architecture search and hyperparameter optimization for the OptiRS machine-learning
+optimization library.
 
-## Overview
+## Scope
 
-OptiRS-NAS provides comprehensive Neural Architecture Search (NAS) capabilities combined with hyperparameter optimization. This crate implements state-of-the-art NAS algorithms, Bayesian optimization, evolutionary search, and reinforcement learning-based approaches to automatically design optimal neural network architectures and hyperparameters.
+`optirs-nas` searches for **optimizer architectures** — which optimizer components to compose
+(SGD, Adam, AdamW, RMSprop, AdaGrad, Momentum, Lion, schedulers, regularizers) and with which
+hyperparameters — and provides the hyperparameter-search machinery around that. It is not a
+computer-vision layer-topology search: the search space is
+[`nas_engine::SearchSpaceConfig`], whose unit is an optimizer component.
 
-## Features
+Status: **research-grade**. Every algorithm listed below is implemented and tested in this crate,
+but the search-space and objective APIs may still change between releases. Validate a discovered
+configuration against your own baselines before relying on it.
 
-- **Neural Architecture Search**: Automated neural network design
-- **Bayesian Optimization**: Gaussian process-based hyperparameter tuning
-- **Evolutionary Algorithms**: Population-based architecture evolution
-- **Reinforcement Learning NAS**: RL agents for architecture design
-- **Progressive Search**: Gradually growing architecture complexity
-- **Multi-Objective Optimization**: Balancing accuracy, efficiency, and resource usage
-- **Hardware-Aware NAS**: Architecture optimization for specific hardware
-- **Transfer Learning**: Knowledge transfer across architecture searches
-- **Domain-Specific NAS**: Pre-configured search spaces for CV, NLP, TimeSeries, Reinforcement, and Scientific domains
-- **Architecture Embedding**: Vector-space representation and similarity search for architectures
+> Every Rust block in this file is compiled and run by `cargo test --doc` (see
+> `ReadmeDoctests` in `src/lib.rs`), so the examples cannot drift away from the API.
 
-## Search Strategies
-
-### Bayesian Optimization
-- **Gaussian Process**: Probabilistic surrogate models
-- **Acquisition Functions**: Expected improvement, upper confidence bound
-- **Multi-Fidelity**: Early stopping and progressive evaluation
-- **Constrained Optimization**: Resource-aware search
-- **Parallel Evaluation**: Batch Bayesian optimization
-
-### Evolutionary Algorithms
-- **Genetic Algorithms**: Population-based architecture evolution
-- **Differential Evolution**: Continuous hyperparameter optimization
-- **NSGA-II**: Multi-objective Pareto frontier exploration
-- **CMA-ES**: Covariance matrix adaptation evolution strategy
-- **Population Diversity**: Maintaining search diversity
-
-### Reinforcement Learning
-- **Controller Networks**: RNN/Transformer controllers for architecture generation
-- **REINFORCE**: Policy gradient-based architecture search
-- **Progressive NAS**: Gradually increasing architecture complexity
-- **Distributed Training**: Parallel architecture evaluation
-- **Efficient NAS**: Resource-constrained architecture search
-
-## Installation
-
-Add this to your `Cargo.toml`:
+## Dependencies
 
 ```toml
 [dependencies]
-optirs-nas = "0.3.1"
-scirs2-core = "0.4.0"  # Required foundation
+optirs-nas = "0.3.2"
 ```
 
-### Feature Selection
+`scirs2-core` is pulled in transitively; you do not need to depend on it yourself unless you use
+its types directly. The crate has **no intra-workspace dependencies** — it builds and tests
+standalone.
 
-Enable specific NAS approaches:
+There are **no Cargo features**. Earlier versions declared `bayesian`, `evolutionary`,
+`reinforcement`, `progressive`, `multi_objective` and `learned_integration`; none of them gated
+any code (there was not a single `cfg(feature = ...)` in the crate), so they have been removed
+rather than left as documentation that promised a build knob that did not exist.
 
-```toml
-[dependencies]
-optirs-nas = { version = "0.3.1", features = ["bayesian", "evolutionary", "reinforcement"] }
-```
+## What is implemented
 
-Available features:
-- `bayesian`: Bayesian optimization methods (enabled by default)
-- `evolutionary`: Evolutionary algorithms
-- `reinforcement`: Reinforcement learning approaches
-- `progressive`: Progressive search strategies
-- `multi_objective`: Multi-objective optimization
-- `learned_integration`: Integration with OptiRS-Learned
+| Area | Module | Notes |
+|---|---|---|
+| Random search | [`search_strategies::random`] | OS-entropy seeded, or reproducible with an explicit seed |
+| Evolutionary search | [`search_strategies::evolutionary`] | population-based, real crossover/mutation |
+| Bayesian optimization | [`search_strategies::bayesian`] | Gaussian-process surrogate with EI/PI/UCB |
+| RL controller | [`search_strategies::rl_search`] | LSTM controller trained by REINFORCE |
+| Differentiable (DARTS) | [`search_strategies::differentiable`] | plus PC-DARTS-style and robust variants |
+| Neural predictor | [`search_strategies::neural_predictor`] | trained by real backpropagation; MC-dropout uncertainty |
+| Progressive search | [`search_strategies::progressive`] | staged complexity growth |
+| Multi-objective | [`multi_objective`] | NSGA-II, NSGA-III, MOEA/D and weighted-sum, exact hypervolume |
+| Hyperparameter search | [`hyperparameter`] | grid enumeration, TPE, GP-free surrogate, evolutionary |
+| Hardware cost models | [`hardware_cost`] | latency / memory / energy estimation |
+| Domain search spaces | [`domain_specific_nas`] | CV, NLP, TimeSeries, Reinforcement, Scientific |
+| Architecture embedding | [`architecture_embedding`] | vector-space similarity over architectures |
+| AutoML coordination | [`automl_pipeline`] | pipeline stages around a search |
 
-## Usage
+Multi-objective algorithms **other than** NSGA-II, NSGA-III, MOEA/D and weighted-sum (PAES,
+SPEA2, epsilon-constraint, goal programming) are *not* implemented. Configuring one returns
+`OptimError::NotImplemented` at engine construction instead of silently substituting NSGA-II or
+producing an empty Pareto front.
 
-### Basic Bayesian Optimization
+## Running a search
 
 ```rust
-use optirs_nas::{BayesianOptimizer, SearchSpace, GaussianProcess};
+use optirs_nas::nas_engine::resources::SystemResourceTracker;
+use optirs_nas::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
+use optirs_nas::nas_engine::{
+    create_minimal_nas_config, NeuralArchitectureSearch, SearchStrategyType,
+};
+use std::time::Duration;
 
-// Define hyperparameter search space
-let search_space = SearchSpace::new()
-    .add_continuous("learning_rate", 1e-5, 1e-1)
-    .add_discrete("batch_size", &[16, 32, 64, 128, 256])
-    .add_categorical("optimizer", &["sgd", "adam", "adamw"])
-    .add_discrete("hidden_layers", &[1, 2, 3, 4, 5])
-    .add_continuous("dropout_rate", 0.0, 0.5)
-    .build();
+# fn main() -> Result<(), optirs_nas::error::OptimError> {
+let mut config = create_minimal_nas_config::<f64>();
+config.search_strategy = SearchStrategyType::Evolutionary;
+config.search_budget = 2;
+config.population_size = 4;
 
-// Create Bayesian optimizer
-let mut bayesian_opt = BayesianOptimizer::new()
-    .with_search_space(search_space)
-    .with_surrogate_model(GaussianProcess::default())
-    .with_acquisition_function(ExpectedImprovement::new())
-    .with_budget(100)  // Number of evaluations
-    .build()?;
+let mut engine = NeuralArchitectureSearch::new(config)?;
 
-// Run optimization
-for iteration in 0..100 {
-    let candidate = bayesian_opt.suggest_next_candidate()?;
+// The engine reports which strategy is actually running, not just what was requested.
+assert_eq!(engine.search_strategy_name(), "EvolutionaryStrategy");
 
-    // Evaluate the candidate configuration
-    let performance = evaluate_configuration(&candidate).await?;
+// Pin the telemetry so this example does not depend on the host's free memory.
+// `resource_monitor_mut` is also the supported injection point for real telemetry.
+engine.resource_monitor_mut().set_trackers(vec![Box::new(
+    SystemResourceTracker::with_telemetry(
+        "example".to_string(),
+        Duration::from_secs(5),
+        Box::new(FixedTelemetry::new("example", TelemetrySample::unknown())),
+    ),
+)]);
 
-    // Update surrogate model
-    bayesian_opt.update(&candidate, performance)?;
+let results = engine.run_search()?;
+assert!(!results.search_history.is_empty());
+# Ok(())
+# }
+```
 
-    println!("Iteration {}: Best performance = {:.4}",
-             iteration, bayesian_opt.best_performance());
+Every `SearchStrategyType` resolves to a real implementation. There is no
+"falls back to Evolutionary" arm.
+
+## Hyperparameter search
+
+```rust
+use optirs_nas::hyperparameter::{
+    DistributionType, HyperparameterOptimizer, HyperparameterSpace, OptimizationStrategy,
+    ParameterRange,
+};
+
+# fn main() -> Result<(), optirs_nas::error::OptimError> {
+let mut space: HyperparameterSpace<f64> = HyperparameterSpace::new();
+space.add_parameter(
+    "learning_rate".to_string(),
+    ParameterRange {
+        name: "learning_rate".to_string(),
+        min_value: 1e-5,
+        max_value: 1e-1,
+        distribution: DistributionType::Uniform,
+        log_scale: true,
+        discrete_values: None,
+    },
+);
+space.add_categorical_parameter(
+    "optimizer".to_string(),
+    vec!["adam".to_string(), "sgd".to_string()],
+);
+
+// Grid search really enumerates the grid: 4 log-spaced rates x 2 optimizers.
+let mut optimizer =
+    HyperparameterOptimizer::with_seed(space, OptimizationStrategy::Grid, 7);
+optimizer.set_grid_resolution(4);
+assert_eq!(optimizer.grid_size(), Some(8));
+
+let suggestion = optimizer.suggest_configuration()?;
+let learning_rate = suggestion.parameters["learning_rate"];
+assert!((1e-5..=1e-1).contains(&learning_rate));
+# Ok(())
+# }
+```
+
+Available strategies and what they do:
+
+- `Random` — samples each parameter from its declared `DistributionType` (all five are
+  implemented; none silently degrades to uniform).
+- `Grid` — deterministic mixed-radix enumeration; the *n*-th call returns the *n*-th grid point
+  and the whole grid is covered before it wraps. Continuous axes are log-spaced when the range
+  declares `log_scale`.
+- `TPE` — the published Tree-structured Parzen Estimator: the history is split by score
+  quantile and **two** adaptive kernel-density estimators are fitted, candidates are drawn from
+  the "good" density and ranked by the density ratio.
+- `Bayesian` — a GP-free Nadaraya-Watson kernel-regression surrogate whose predictive variance
+  grows away from the data, maximized under Expected Improvement / Probability of Improvement /
+  Upper Confidence Bound / an entropy term.
+- `Evolutionary` — tournament selection over a bounded elitist population, recombination per
+  parameter, and Gaussian mutation on the parameter's own (log-aware) axis.
+
+`TPE`, `Bayesian` and `Evolutionary` require a random *initial design* before they can be
+fitted — that is part of the published algorithms. During that phase
+`last_strategy_used()` reports `Random`, so the phase is visible rather than hidden:
+
+```rust
+use optirs_nas::hyperparameter::{
+    DistributionType, HyperparameterOptimizer, HyperparameterSpace, OptimizationStrategy,
+    ParameterRange,
+};
+
+# fn main() -> Result<(), optirs_nas::error::OptimError> {
+let mut space: HyperparameterSpace<f64> = HyperparameterSpace::new();
+space.add_parameter(
+    "x".to_string(),
+    ParameterRange {
+        name: "x".to_string(),
+        min_value: 0.0,
+        max_value: 1.0,
+        distribution: DistributionType::Uniform,
+        log_scale: false,
+        discrete_values: None,
+    },
+);
+
+let mut optimizer =
+    HyperparameterOptimizer::with_seed(space, OptimizationStrategy::TPE, 5);
+let _first = optimizer.suggest_configuration()?;
+assert_eq!(optimizer.last_strategy_used(), OptimizationStrategy::Random);
+# Ok(())
+# }
+```
+
+`ParticleSwarm`, `SuccessiveHalving`, `Hyperband` and `BOHB` are declared in the enum but not
+implemented; selecting one returns `OptimError::NotImplemented`.
+
+## Multi-objective search and the hypervolume indicator
+
+The hypervolume is the **exact** indicator (recursive slicing / HSO), not a bounding-box
+heuristic, and it handles mixed `Minimize` / `Maximize` directions:
+
+```rust
+use optirs_nas::multi_objective::hypervolume_minimization;
+
+// Union of [1,2]x[0,2] and [0,2]x[1,2] against the reference point (2, 2).
+let front = vec![vec![1.0_f64, 0.0], vec![0.0, 1.0]];
+let hypervolume = hypervolume_minimization(&front, &[2.0, 2.0]);
+assert!((hypervolume - 3.0).abs() < 1e-12);
+
+// A dominated point adds nothing; a genuinely non-dominated one strictly increases it.
+let with_dominated = vec![vec![1.0_f64, 0.0], vec![0.0, 1.0], vec![1.5, 1.5]];
+assert!((hypervolume_minimization(&with_dominated, &[2.0, 2.0]) - 3.0).abs() < 1e-12);
+let with_new = vec![vec![1.0_f64, 0.0], vec![0.0, 1.0], vec![0.5, 0.5]];
+assert!(hypervolume_minimization(&with_new, &[2.0, 2.0]) > 3.0);
+```
+
+`HypervolumeCalculator` wraps this with caching and a method selector. `WFG`, `Quick` and `HSO`
+are all exact and return identical values (documented on the enum); `MonteCarlo` is a real,
+seeded box-sampling estimator, not a hand-off to the exact routine.
+
+Front quality metrics — `convergence`, `objective_space_coverage`, `reference_distance`,
+`epsilon_dominance`, `spread`, `spacing` — are all computed from the front
+([`multi_objective::metrics`]). `convergence` is the relative change of the hypervolume since
+the previous update, measured against a reference point that is latched on first use so
+generations stay comparable.
+
+## Resource monitoring
+
+Resource telemetry is **injectable**, and the default source reports only what it can honestly
+measure — `std::thread::available_parallelism` everywhere, plus `/proc` on Linux — and `None`
+for everything else (GPU count, disk capacity, network bandwidth, temperature, power). An
+unmeasurable resource is treated as *unlimited*, so a resource constraint can never abort a
+search on the strength of a value nobody measured:
+
+```rust
+use optirs_nas::nas_engine::telemetry::{StdTelemetry, TelemetrySource};
+
+let sample = StdTelemetry::new().sample();
+
+// Genuinely measurable.
+assert!(sample.logical_cpus.is_some());
+
+// Not reachable in pure Rust: reported as unknown, never invented.
+assert!(sample.gpu_devices.is_none());
+assert!(sample.temperature_celsius.is_none());
+assert!(sample.power_watts.is_none());
+```
+
+To enforce GPU / thermal / power budgets, supply your own `TelemetrySource` and install it with
+`NeuralArchitectureSearch::resource_monitor_mut().set_trackers(..)` +
+`SystemResourceTracker::with_telemetry(..)`.
+
+Resource enforcement lives in exactly one place: the search loop samples the monitor each
+generation and returns `OptimError::ResourceLimitExceeded` on a violation. It never truncates a
+search silently.
+
+## Domain-specific search spaces
+
+```rust
+use optirs_nas::domain_specific_nas::{DomainNASEngine, DomainType};
+
+# fn main() -> Result<(), optirs_nas::error::OptimError> {
+let mut engine = DomainNASEngine::<f64>::new_for_domain(DomainType::ComputerVision);
+
+// Search within the domain's pre-configured space, then check the winner against
+// the domain's own structural rules.
+let architectures = engine.search(4)?;
+assert!(!architectures.is_empty());
+
+if let Some(best) = engine.get_best_architecture() {
+    let issues = engine.validate_for_domain(best)?;
+    // `issues` is a (possibly empty) list of human-readable rule violations.
+    assert!(issues.len() < 100);
 }
-
-let best_config = bayesian_opt.best_configuration()?;
+# Ok(())
+# }
 ```
 
-### Neural Architecture Search
-
-```rust
-use optirs_nas::{ArchitectureSearchSpace, NASController, ReinforcementLearningNAS};
-
-// Define architecture search space
-let arch_space = ArchitectureSearchSpace::new()
-    .add_layer_types(&["conv2d", "depthwise_conv2d", "separable_conv2d"])
-    .add_kernel_sizes(&[3, 5, 7])
-    .add_channel_sizes(&[16, 32, 64, 128, 256])
-    .add_activation_functions(&["relu", "gelu", "swish"])
-    .add_normalization_types(&["batch_norm", "layer_norm", "group_norm"])
-    .with_max_depth(20)
-    .with_skip_connections(true)
-    .build();
-
-// Create RL-based NAS controller
-let mut nas_controller = ReinforcementLearningNAS::new()
-    .with_controller(LSTMController::new(256, 2))
-    .with_search_space(arch_space)
-    .with_reward_function(AccuracyEfficiencyReward::new())
-    .with_training_episodes(1000)
-    .build()?;
-
-// Search for optimal architectures
-let best_architectures = nas_controller.search().await?;
-
-for (rank, arch) in best_architectures.iter().enumerate() {
-    println!("Rank {}: Accuracy = {:.2}%, FLOPs = {:.2}M",
-             rank + 1, arch.accuracy * 100.0, arch.flops / 1e6);
-}
-```
-
-### Multi-Objective Optimization
-
-```rust
-use optirs_nas::{MultiObjectiveOptimizer, ParetoFrontier, Objective};
-
-// Define multiple objectives
-let objectives = vec![
-    Objective::Maximize("accuracy"),
-    Objective::Minimize("latency"),
-    Objective::Minimize("memory_usage"),
-    Objective::Minimize("power_consumption"),
-];
-
-let mut multi_obj = MultiObjectiveOptimizer::new()
-    .with_objectives(objectives)
-    .with_algorithm(NSGA2::default())
-    .with_population_size(100)
-    .with_generations(50)
-    .build()?;
-
-// Run multi-objective optimization
-let pareto_frontier = multi_obj.optimize().await?;
-
-// Analyze trade-offs
-for solution in pareto_frontier.solutions() {
-    println!("Accuracy: {:.2}%, Latency: {:.2}ms, Memory: {:.2}MB",
-             solution.accuracy * 100.0,
-             solution.latency,
-             solution.memory_mb);
-}
-```
-
-### Progressive NAS
-
-```rust
-use optirs_nas::{ProgressiveNAS, ArchitectureGrowthStrategy};
-
-// Progressive architecture search with growing complexity
-let mut progressive_nas = ProgressiveNAS::new()
-    .with_initial_depth(3)
-    .with_max_depth(15)
-    .with_growth_strategy(ArchitectureGrowthStrategy::Gradual)
-    .with_complexity_budget(1e9)  // FLOPs budget
-    .build()?;
-
-// Search with gradually increasing complexity
-for stage in 0..5 {
-    let stage_results = progressive_nas.search_stage(stage).await?;
-
-    println!("Stage {}: Found {} architectures",
-             stage, stage_results.len());
-
-    // Progress to next complexity level
-    progressive_nas.advance_complexity()?;
-}
-```
-
-### Hardware-Aware Optimization
-
-```rust
-use optirs_nas::{HardwareAwareNAS, TargetHardware, LatencyPredictor};
-
-// Define target hardware constraints
-let target_hardware = TargetHardware::new()
-    .with_device_type("mobile_gpu")
-    .with_memory_limit(4_000_000_000)  // 4GB
-    .with_power_limit(5.0)  // 5W
-    .with_latency_constraint(50.0)  // 50ms
-    .build();
-
-let latency_predictor = LatencyPredictor::from_hardware_profile(&target_hardware)?;
-
-let mut hw_aware_nas = HardwareAwareNAS::new()
-    .with_target_hardware(target_hardware)
-    .with_latency_predictor(latency_predictor)
-    .with_accuracy_threshold(0.85)
-    .build()?;
-
-// Search for hardware-efficient architectures
-let efficient_architectures = hw_aware_nas.search().await?;
-```
-
-### Transfer Learning for NAS
-
-```rust
-use optirs_nas::{TransferableNAS, ArchitectureKnowledge};
-
-// Load pre-trained architecture knowledge
-let knowledge_base = ArchitectureKnowledge::load_from_file("imagenet_nas_knowledge.json")?;
-
-let mut transferable_nas = TransferableNAS::new()
-    .with_source_knowledge(knowledge_base)
-    .with_transfer_strategy(TransferStrategy::FineTuning)
-    .with_adaptation_budget(20)  // Limited budget for new domain
-    .build()?;
-
-// Quickly adapt to new domain
-let adapted_architectures = transferable_nas
-    .adapt_to_new_domain(&target_dataset)
-    .await?;
-```
-
-## Domain-Specific NAS (Wave 2)
-
-### DomainNASEngine
-
-Domain-aware NAS with pre-configured search spaces for common ML domains:
-
-```rust
-use optirs_nas::domain_specific_nas::{DomainNASEngine, DomainSearchSpace, NASConstraint};
-
-// Create a domain-specific NAS engine for computer vision
-let engine = DomainNASEngine::new(DomainSearchSpace::ComputerVision);
-
-// Apply constraints to the search
-let constraints = vec![
-    NASConstraint::MaxLatencyMs(50.0),
-    NASConstraint::MaxMemoryMb(512.0),
-    NASConstraint::MinAccuracy(0.90),
-    NASConstraint::MaxDepth(20),
-    NASConstraint::MaxWidth(256),
-];
-
-// Validate constraints before search
-engine.validate_constraints(&constraints)?;
-```
-
-Supported domains:
-- **ComputerVision**: Convolutional architectures, pooling, skip connections
-- **NLP**: Attention layers, embedding dimensions, transformer blocks
-- **TimeSeries**: Recurrent layers, temporal convolutions, sequence modeling
-- **Reinforcement**: Policy networks, value heads, exploration modules
-- **Scientific**: Physics-informed layers, conservation constraints
-
-### Architecture Embedding
-
-Embed architectures into a continuous vector space for similarity analysis:
-
-```rust
-use optirs_nas::architecture_embedding::{ArchitectureEmbedder, AggregationMethod};
-
-// Create an embedder with weighted sum aggregation
-let mut embedder = ArchitectureEmbedder::new(128, AggregationMethod::WeightedSum);
-
-// Update embeddings for a set of architectures
-embedder.update_embeddings(&architectures)?;
-
-// Find top-k most similar architectures to a query
-let similar = embedder.find_similar(&query_architecture, 5)?;
-
-// Compute cosine similarity between two architecture embeddings
-let similarity = embedder.cosine_similarity(&arch_a, &arch_b)?;
-```
-
-Aggregation methods:
-- **Mean**: Simple average of layer embeddings
-- **WeightedSum**: Weighted combination with learned importance
-- **AttentionPooling**: Attention-based aggregation over layer representations
-
-## Architecture Components
-
-### Search Space Definition
-- **Layer Types**: Convolution, attention, normalization, activation
-- **Connection Patterns**: Skip connections, dense connections, routing
-- **Hyperparameters**: Learning rates, regularization, optimization settings
-- **Resource Constraints**: FLOPs, memory, latency, energy consumption
-
-### Evaluation Framework
-- **Performance Metrics**: Accuracy, F1-score, AUC, perplexity
-- **Efficiency Metrics**: FLOPs, parameters, memory usage
-- **Hardware Metrics**: Latency, throughput, power consumption
-- **Multi-Fidelity**: Early stopping, progressive evaluation, proxy tasks
-
-### Search Algorithms
-- **Surrogate Models**: Gaussian processes, neural networks, tree-based models
-- **Acquisition Functions**: Exploration-exploitation trade-offs
-- **Population Methods**: Genetic algorithms, particle swarm optimization
-- **Gradient-Based**: Differentiable architecture search (DARTS)
-
-## Advanced Features
-
-### Distributed Search
-```rust
-use optirs_nas::{DistributedNAS, WorkerPool};
-
-// Distribute architecture evaluation across multiple workers
-let worker_pool = WorkerPool::new()
-    .with_workers(8)
-    .with_gpu_per_worker(1)
-    .build()?;
-
-let distributed_nas = DistributedNAS::new()
-    .with_worker_pool(worker_pool)
-    .with_load_balancing(LoadBalancing::RoundRobin)
-    .build()?;
-
-let results = distributed_nas.parallel_search().await?;
-```
-
-### AutoML Pipeline
-```rust
-use optirs_nas::{AutoMLPipeline, DataPreprocessing, ModelSelection};
-
-// Complete automated machine learning pipeline
-let automl = AutoMLPipeline::new()
-    .with_data_preprocessing(DataPreprocessing::default())
-    .with_feature_engineering(FeatureEngineering::automated())
-    .with_architecture_search(BayesianOptimizer::default())
-    .with_hyperparameter_tuning(HyperparameterOptimizer::default())
-    .with_model_selection(ModelSelection::cross_validation(5))
-    .build()?;
-
-let optimized_model = automl.fit(&training_data).await?;
-```
-
-## Performance Monitoring
-
-```rust
-use optirs_nas::{NASMonitor, SearchAnalytics};
-
-let monitor = NASMonitor::new()
-    .with_metrics_collection(true)
-    .with_visualization(true)
-    .with_early_stopping(EarlyStopping::patience(10))
-    .build();
-
-let analytics = SearchAnalytics::new()
-    .track_convergence()
-    .track_diversity()
-    .track_efficiency()
-    .build();
-
-// Monitor search progress
-monitor.track_search_progress(&nas_results).await?;
-analytics.generate_search_report().await?;
-```
-
-## Integration with OptiRS Ecosystem
-
-### Learned Optimizer Integration
-```rust
-use optirs_nas::learned_integration::LearnedNAS;
-use optirs_learned::MetaLearner;
-
-// Combine NAS with learned optimizers
-let learned_nas = LearnedNAS::new()
-    .with_meta_learner(MetaLearner::default())
-    .with_architecture_adaptation(true)
-    .build()?;
-
-let co_optimized_result = learned_nas
-    .co_optimize_architecture_and_optimizer(&task)
-    .await?;
-```
+Supported domains ([`domain_specific_nas::DomainType`]): `ComputerVision`,
+`NaturalLanguageProcessing`, `TimeSeries`, `Reinforcement`, `Scientific`, `Multimodal`.
+Constraints are expressed with [`domain_specific_nas::NASConstraint`]
+(`MaxLatencyMs`, `MaxMemoryMb`, `MinAccuracy`, `RequiresComponent`, `MaxDepth`, `MaxWidth`).
+
+## Notes on API shape
+
+This crate is entirely **synchronous**. It contains no `async fn`, so nothing here is `.await`ed.
+Earlier revisions of this document showed `await` on every example; that was never valid.
+
+Longer, runnable programs live in `examples/` rather than in this file.
+
+## References
+
+Techniques implemented here follow:
+
+- Zoph & Le, *Neural Architecture Search with Reinforcement Learning* (2017)
+- Liu et al., *DARTS: Differentiable Architecture Search* (2019)
+- Deb et al., *A Fast and Elitist Multiobjective Genetic Algorithm: NSGA-II* (2002)
+- Deb & Jain, *An Evolutionary Many-Objective Optimization Algorithm Using Reference-Point-Based
+  Nondominated Sorting Approach, Part I: NSGA-III* (2014)
+- Zhang & Li, *MOEA/D: A Multiobjective Evolutionary Algorithm Based on Decomposition* (2007)
+- Bergstra, Bardenet, Bengio & Kegl, *Algorithms for Hyper-Parameter Optimization* (2011) — TPE
+- While, Bradstreet & Barone, *A Fast Way of Calculating Exact Hypervolumes* (2012) — the exact
+  slicing recursion
 
 ## Contributing
 
-OptiRS follows the Cool Japan organization's development standards. See the main OptiRS repository for contribution guidelines.
-
-## Research Papers and References
-
-This crate implements techniques from various research papers:
-- "Neural Architecture Search with Reinforcement Learning" (Zoph & Le)
-- "Efficient Neural Architecture Search via Parameter Sharing" (Pham et al.)
-- "DARTS: Differentiable Architecture Search" (Liu et al.)
-- "Progressive Neural Architecture Search" (Liu et al.)
-- "MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications" (Howard et al.)
+OptiRS follows the Cool Japan organization's development standards. See the main OptiRS
+repository for contribution guidelines.
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0.
+Apache-2.0

@@ -1,23 +1,21 @@
-# OptiRS Learned TODO (v0.3.1)
+# OptiRS Learned TODO (v0.3.2)
 
-## Module Status: Production Ready
+## Module Status: Research-Grade (Pre-1.0)
 
-**Release Date**: 2026-03-27
-**Tests**: 143 tests passing (2 ignored)
-**Features**: LSTM optimizers, Transformer optimizers, Meta-learning
-**SciRS2 Compliance**: 100%
+**Tests**: 565 tests (library + integration, `cargo nextest run -p optirs-learned
+--all-features`) + 3 doc tests, all passing
+**Feature flags**: `transformer`, `lstm`, `meta_learning` (all on by default; each genuinely
+gates its modules - see `src/lib.rs`)
+**SciRS2 Compliance**: 100% (no direct `ndarray`/`rand` dependency; see `Cargo.toml`)
 
 ---
 
 ## Completed: SciRS2 Integration
 
-- [x] **Full SciRS2-Core Integration** - 100% complete
-- [x] **ML Pipeline Foundation** - Built on scirs2_core::ml_pipeline
-- [x] **Neural Architecture Search** - Using scirs2_core::neural_architecture_search
-- [x] **Memory Efficient Operations** - scirs2_core::memory_efficient::LazyArray for history
-- [x] **JIT Compilation** - scirs2_core::jit for optimized transformer kernels
+- [x] **Full SciRS2-Core Integration** - 100% complete, no direct `ndarray`/`rand` dependency
 - [x] **Array Operations** - All neural operations use scirs2_core::ndarray
 - [x] **Random Generation** - scirs2_core::random for all stochastic operations
+- [x] **Numeric Traits** - scirs2_core::numeric (`Float`, `NumCast`) throughout
 
 ---
 
@@ -40,10 +38,8 @@
 - [x] Memory-efficient attention implementation
 
 ### LSTM Optimizers
-- [x] Vanilla LSTM for parameter update rules
-- [x] GRU alternative for computational efficiency
-- [x] Bidirectional variants for global context
-- [x] Forget gate analysis and tuning
+- [x] Vanilla LSTM for parameter update rules, with layer normalization (`LayerNormalization`)
+- [x] Forget/input/output gate state tracking (`StateStatistics`)
 - [x] Hidden state initialization strategies
 - [x] Gradient clipping for stability
 
@@ -65,11 +61,13 @@
 - [x] Warmup and cooldown strategy learning
 
 ### Training Infrastructure
-- [x] Distributed meta-training foundation
+- [ ] Distributed meta-training (not yet implemented; noted as a v1.1.0+ item in
+  `transformer_based_optimizer/attention.rs`)
 - [x] Efficient task sampling and batching
 - [x] Gradient accumulation for large meta-batches
-- [x] Mixed precision training support
-- [x] Checkpointing and resumption
+- [ ] Mixed precision training support (not yet implemented)
+- [x] Checkpointing and resumption (`transformer_based_optimizer::state` checkpoint manager,
+  `gradient_checkpointing` config)
 
 ### Evaluation Framework
 - [x] Convergence speed metrics
@@ -90,23 +88,23 @@
 ### Online Learning and Adaptation
 - [x] Continual learning (EWC, Progressive Networks)
 - [x] Online MAML for continuous task streams (staleness decay, buffer management, adaptation efficiency)
-- [ ] Real-time adaptation mechanisms
+- [x] Real-time adaptation mechanisms (`src/realtime_adaptation.rs` — online EWMA + two-sided CUSUM drift detection on loss & grad-norm streams driving an AIMD learning-rate / momentum controller with plateau detection, clamping, and cooldown; 22 tests) (2026-06-24)
 
 ### Advanced Architectures
-- [ ] Graph Neural Network optimizers
-- [ ] Memory-augmented optimizers (NTM)
+- [x] Graph Neural Network optimizers (`src/gnn_optimizer.rs` — message-passing GNN over the parameter/layer graph: node gradient features, edge messages, GRU node update, readout → per-parameter update; Chain / FullyConnected / KNearest topologies; impl `AdvancedOptimizer<T>`; 14 tests) (2026-06-24). Evolution-strategies meta-training of the GRU weights via `MetaTrainable` (`src/gnn_optimizer/meta_training.rs`; 6 tests) closes the gap where those weights were previously drawn once from the seed and never updated (2026-08-18)
+- [x] Memory-augmented optimizers (NTM) (`src/ntm_optimizer.rs` — full Graves-2014 addressing: content `softmax(β·cosine)` → interpolation → circular-convolution shift → sharpening, erase+add writes, feed-forward controller; impl `AdvancedOptimizer<T>`; 20 tests) (2026-06-24). Evolution-strategies meta-training of the controller weights via `MetaTrainable` (`src/ntm_optimizer/meta_training.rs`; 5 tests) closes the gap where those weights were previously drawn once from the seed and never updated (2026-08-18)
 - [x] Episodic memory systems (EpisodicMemoryBank, SupportSetManager)
 
 ### Multi-Task and Transfer
 - [x] Cross-domain knowledge transfer (domain registration, similarity, transferability matrix)
 - [x] Shared representation learning (shared representation updates)
-- [ ] Zero-shot optimization
+- [x] Zero-shot optimization (`src/zero_shot.rs` — 9 gradient/landscape meta-features → multinomial-logistic optimizer classifier + linear log-learning-rate regressor; offline meta-fit, no per-task training; 18 tests) (2026-06-24)
 - [x] Few-shot adaptation strategies (PrototypicalNetwork, FastAdaptationEngine, TaskSimilarityCalculator)
 
 ### Research Features
-- [ ] NAS for optimizer architectures (DARTS)
-- [ ] Quantum-inspired optimizers
-- [ ] Variational quantum optimizer
+- [x] NAS for optimizer architectures (DARTS) (`src/darts_optimizer_search.rs` — softmax architecture weights α over update primitives (grad / momentum / RMSprop / sign / Adam-like / weight-decay), closed-form α-gradient bilevel alternation, discretization to the final optimizer; 14 tests) (2026-06-24)
+- [x] Quantum-inspired optimizers (`src/quantum_learned.rs` — `QuantumLearnedOptimizer` adapter exposing core `QuantumAnnealing` / `HybridQuantumClassical` through `AdvancedOptimizer<T>`; 16 tests) (2026-06-24)
+- [x] Variational quantum optimizer (`src/quantum_learned.rs` — `QuantumBackend::Variational` wrapping core `VariationalQuantumOptimizer` (SPSA) behind `AdvancedOptimizer<T>`) (2026-06-24)
 
 ---
 
@@ -121,22 +119,24 @@
 
 ### Test Count
 ```
-143 tests passing
-2 intentionally ignored (hardware-specific)
+565 tests passing (library + integration, cargo nextest run -p optirs-learned --all-features)
+3 doc tests passing
 ```
+Re-measure with the commands above before quoting a count elsewhere - hardcoded numbers go
+stale quickly.
 
 ---
 
-## Performance Achievements
+## Status Summary
 
-- Learned optimizer framework operational
-- Meta-learning pipeline complete
-- Transformer and LSTM optimizers working
-- Production-ready evaluation metrics
+- Learned optimizer framework operational (Transformer, LSTM, GNN, NTM)
+- Meta-learning pipeline (MAML, Reptile, Meta-SGD) implemented and tested
+- Evaluation metrics (AUC, accuracy, confidence, convergence speed, ...) are computed from
+  real per-run measurements, not hardcoded constants
 - Wave 2: Few-shot learning, episodic memory, online MAML, cross-domain transfer
 
 ---
 
-**Status**: ✅ Production Ready
-**Version**: v0.3.1
-**Release Date**: 2026-03-27
+**Status**: Research-grade - APIs may still change between 0.x releases; benchmark against
+`optirs-core`'s hand-designed optimizers before depending on a learned one in production
+**Version**: v0.3.2

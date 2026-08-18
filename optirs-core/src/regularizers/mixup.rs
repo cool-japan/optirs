@@ -6,12 +6,106 @@
 
 use scirs2_core::ndarray::{Array, Array2, Array4, Dimension, ScalarOperand};
 use scirs2_core::numeric::{Float, FromPrimitive};
-use scirs2_core::random::Rng;
+use scirs2_core::random::rngs::StdRng;
+use scirs2_core::random::Random;
 // Removed unused import ScientificNumber
 use std::fmt::Debug;
 
 use crate::error::{OptimError, Result};
 use crate::regularizers::Regularizer;
+
+/// Hard cap on rejection-sampling attempts, so a pathological RNG stream can
+/// never spin forever. Marsaglia–Tsang accepts with probability > 0.95 per
+/// attempt, so exhausting this budget is astronomically unlikely.
+const MAX_REJECTION_ATTEMPTS: usize = 1024;
+
+/// Draw a standard normal variate with the Box–Muller transform.
+///
+/// Only uniform draws are required, so this stays dependency-free and works
+/// with the plain `Random` handle used throughout the crate.
+fn standard_normal(rng: &mut Random<StdRng>) -> f64 {
+    let mut u1: f64 = rng.gen_range(0.0..1.0);
+    if u1 <= 0.0 {
+        // ln(0) is -inf; nudge onto the smallest representable positive value.
+        u1 = f64::MIN_POSITIVE;
+    }
+    let u2: f64 = rng.gen_range(0.0..1.0);
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+}
+
+/// Sample from `Gamma(shape, 1)` using the Marsaglia–Tsang rejection method.
+///
+/// For `shape >= 1` this is the standard squeeze-accelerated algorithm. For
+/// `shape < 1` it uses the boost trick: `Gamma(a) = Gamma(a + 1) · U^(1/a)`.
+/// Returns `0.0` for non-positive shapes, which the Beta sampler treats as a
+/// degenerate draw.
+fn sample_gamma(shape: f64, rng: &mut Random<StdRng>) -> f64 {
+    if !shape.is_finite() || shape <= 0.0 {
+        return 0.0;
+    }
+
+    if shape < 1.0 {
+        // Boost: draw Gamma(shape + 1) and scale by U^(1/shape).
+        let boosted = sample_gamma(shape + 1.0, rng);
+        let mut u: f64 = rng.gen_range(0.0..1.0);
+        if u <= 0.0 {
+            u = f64::MIN_POSITIVE;
+        }
+        return boosted * u.powf(1.0 / shape);
+    }
+
+    let d = shape - 1.0 / 3.0;
+    let c = 1.0 / (9.0 * d).sqrt();
+
+    for _ in 0..MAX_REJECTION_ATTEMPTS {
+        // Draw x until v = 1 + c*x is positive (so v^3 is a valid scale factor).
+        let mut x = standard_normal(rng);
+        let mut v = 1.0 + c * x;
+        let mut inner = 0usize;
+        while v <= 0.0 && inner < MAX_REJECTION_ATTEMPTS {
+            x = standard_normal(rng);
+            v = 1.0 + c * x;
+            inner += 1;
+        }
+        if v <= 0.0 {
+            continue;
+        }
+        v = v * v * v;
+
+        let mut u: f64 = rng.gen_range(0.0..1.0);
+        if u <= 0.0 {
+            u = f64::MIN_POSITIVE;
+        }
+
+        // Fast squeeze test, then the exact log test.
+        let x_sq = x * x;
+        if u < 1.0 - 0.0331 * x_sq * x_sq {
+            return d * v;
+        }
+        if u.ln() < 0.5 * x_sq + d * (1.0 - v + v.ln()) {
+            return d * v;
+        }
+    }
+
+    // Extremely unlikely fallback: the distribution mean.
+    shape
+}
+
+/// Sample `lambda ~ Beta(a, b)` from two Gamma draws: `X/(X+Y)` with
+/// `X ~ Gamma(a, 1)` and `Y ~ Gamma(b, 1)`.
+///
+/// This is the identity that makes Beta sampling exact without any special
+/// functions. Falls back to `0.5` only if both Gamma draws underflow to zero.
+fn sample_beta(a: f64, b: f64, rng: &mut Random<StdRng>) -> f64 {
+    let x = sample_gamma(a, rng);
+    let y = sample_gamma(b, rng);
+    let total = x + y;
+    if total > 0.0 && total.is_finite() {
+        (x / total).clamp(0.0, 1.0)
+    } else {
+        0.5
+    }
+}
 
 /// MixUp augmentation
 ///
@@ -24,18 +118,17 @@ use crate::regularizers::Regularizer;
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::MixUp;
 ///
-/// let mixup = MixUp::new(0.2).expect("unwrap failed");
+/// let mixup = MixUp::new(0.2).expect("MixUp::new succeeds");
 ///
 /// // Apply MixUp to batch of inputs and labels
 /// let inputs = array![[1.0, 2.0], [3.0, 4.0]];
 /// let labels = array![[1.0, 0.0], [0.0, 1.0]];
 ///
-/// let (mixed_inputs, mixed_labels) = mixup.apply_batch(&inputs, &labels, 42).expect("unwrap failed");
+/// let (mixed_inputs, mixed_labels) = mixup.apply_batch(&inputs, &labels, 42).expect("mixup.apply_batch succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct MixUp<A: Float> {
     /// Alpha parameter for Beta distribution
-    #[allow(dead_code)]
     alpha: A,
 }
 
@@ -59,22 +152,30 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
         Ok(Self { alpha })
     }
 
-    /// Get a random mixing factor from Beta distribution
+    /// Get the alpha parameter of the Beta distribution
+    pub fn alpha(&self) -> A {
+        self.alpha
+    }
+
+    /// Draw a mixing factor `lambda ~ Beta(alpha, alpha)`
+    ///
+    /// The draw honours the configured `alpha`: small values (`alpha < 1`) give
+    /// a U-shaped distribution that mostly returns lambdas near 0 or 1 (little
+    /// mixing), while large values concentrate lambda near 0.5 (heavy mixing).
+    /// `Beta(a, a)` has mean `0.5` and variance `1 / (4·(2a + 1))`.
     ///
     /// # Arguments
     ///
-    /// * `seed` - Random seed
+    /// * `seed` - Random seed; the same seed always yields the same lambda
     ///
     /// # Returns
     ///
-    /// Mixing factor lambda ~ Beta(alpha, alpha)
-    fn get_mixing_factor(&self, seed: u64) -> A {
-        let mut rng = scirs2_core::random::Random::seed(seed);
-
-        // Use simple uniform distribution to approximate Beta for simplicity
-        // For actual Beta distribution, we'd need more complex sampling
-        let x: f64 = rng.gen_range(0.0..1.0);
-        A::from_f64(x).expect("unwrap failed")
+    /// Mixing factor lambda ~ Beta(alpha, alpha), in `[0, 1]`
+    pub fn mixing_factor(&self, seed: u64) -> A {
+        let mut rng = Random::seed(seed);
+        let alpha = self.alpha.to_f64().unwrap_or(1.0);
+        let lambda = sample_beta(alpha, alpha, &mut rng);
+        A::from_f64(lambda).unwrap_or_else(|| A::one() / (A::one() + A::one()))
     }
 
     /// Apply MixUp to a batch of examples
@@ -108,7 +209,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
         }
 
         let mut rng = scirs2_core::random::Random::default();
-        let lambda = self.get_mixing_factor(seed);
+        let lambda = self.mixing_factor(seed);
 
         // Create permutation for mixing using Fisher-Yates shuffle
         let mut indices: Vec<usize> = (0..batch_size).collect();
@@ -154,18 +255,17 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> MixUp<A> {
 /// use scirs2_core::ndarray::array;
 /// use optirs_core::regularizers::CutMix;
 ///
-/// let cutmix = CutMix::new(1.0).expect("unwrap failed");
+/// let cutmix = CutMix::new(1.0).expect("CutMix::new succeeds");
 ///
 /// // Apply CutMix to a batch of images (4D array: batch, channels, height, width)
 /// let images = array![[[[1.0, 2.0], [3.0, 4.0]]], [[[5.0, 6.0], [7.0, 8.0]]]];
 /// let labels = array![[1.0, 0.0], [0.0, 1.0]];
 ///
-/// let (mixed_images, mixed_labels) = cutmix.apply_batch(&images, &labels, 42).expect("unwrap failed");
+/// let (mixed_images, mixed_labels) = cutmix.apply_batch(&images, &labels, 42).expect("cutmix.apply_batch succeeds");
 /// ```
 #[derive(Debug, Clone)]
 pub struct CutMix<A: Float> {
     /// Beta parameter to control cutting size
-    #[allow(dead_code)]
     beta: A,
 }
 
@@ -210,8 +310,8 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
     ) -> (usize, usize, usize, usize) {
         let cut_ratio = A::sqrt(A::one() - lambda);
 
-        let h_ratio = cut_ratio.to_f64().expect("unwrap failed");
-        let w_ratio = cut_ratio.to_f64().expect("unwrap failed");
+        let h_ratio = cut_ratio.to_f64().unwrap_or(0.0);
+        let w_ratio = cut_ratio.to_f64().unwrap_or(0.0);
 
         let cut_h = (height as f64 * h_ratio) as usize;
         let cut_w = (width as f64 * w_ratio) as usize;
@@ -236,22 +336,30 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
         (y_min, y_max, x_min, x_max)
     }
 
-    /// Get a random mixing factor from Beta distribution
+    /// Get the beta parameter of the Beta distribution
+    pub fn beta(&self) -> A {
+        self.beta
+    }
+
+    /// Draw a mixing factor `lambda ~ Beta(beta, beta)`
+    ///
+    /// `lambda` sets the *area* of the patch that is cut out, so small `beta`
+    /// values produce mostly all-or-nothing patches while large values cluster
+    /// the patch area around half the image. `Beta(b, b)` has mean `0.5` and
+    /// variance `1 / (4·(2b + 1))`.
     ///
     /// # Arguments
     ///
-    /// * `seed` - Random seed
+    /// * `seed` - Random seed; the same seed always yields the same lambda
     ///
     /// # Returns
     ///
-    /// Mixing factor lambda ~ Beta(alpha, alpha)
-    fn get_mixing_factor(&self, seed: u64) -> A {
-        let mut rng = scirs2_core::random::Random::seed(seed);
-
-        // For simplicity, we use a uniform distribution between 0 and 1
-        // A proper Beta distribution would be used in a production implementation
-        let x: f64 = rng.gen_range(0.0..1.0);
-        A::from_f64(x).expect("unwrap failed")
+    /// Mixing factor lambda ~ Beta(beta, beta), in `[0, 1]`
+    pub fn mixing_factor(&self, seed: u64) -> A {
+        let mut rng = Random::seed(seed);
+        let beta = self.beta.to_f64().unwrap_or(1.0);
+        let lambda = sample_beta(beta, beta, &mut rng);
+        A::from_f64(lambda).unwrap_or_else(|| A::one() / (A::one() + A::one()))
     }
 
     /// Apply CutMix to a batch of images
@@ -285,7 +393,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
         }
 
         let mut rng = scirs2_core::random::Random::seed(seed + 1); // Use different seed for shuffle
-        let lambda = self.get_mixing_factor(seed);
+        let lambda = self.mixing_factor(seed);
 
         // Create permutation for mixing using Fisher-Yates shuffle
         let mut indices: Vec<usize> = (0..batch_size).collect();
@@ -317,7 +425,7 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
                 let box_area = (y_max - y_min) * (x_max - x_min);
                 let image_area = height * width;
                 let actual_lambda =
-                    A::from_f64(box_area as f64 / image_area as f64).expect("unwrap failed");
+                    A::from_f64(box_area as f64 / image_area as f64).unwrap_or_else(A::zero);
 
                 // Apply CutMix to image
                 for c in 0..channels {
@@ -344,12 +452,12 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive + Send + Sync> CutMix<A> {
 impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Sync> Regularizer<A, D>
     for MixUp<A>
 {
-    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
+    fn apply(&self, _params: &Array<A, D>, _gradients: &mut Array<A, D>) -> Result<A> {
         // MixUp is applied to inputs and labels, not model parameters
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // MixUp doesn't add a parameter penalty term
         Ok(A::zero())
     }
@@ -359,12 +467,12 @@ impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Syn
 impl<A: Float + Debug + ScalarOperand + FromPrimitive, D: Dimension + Send + Sync> Regularizer<A, D>
     for CutMix<A>
 {
-    fn apply(&self, _params: &Array<A, D>, gradients: &mut Array<A, D>) -> Result<A> {
+    fn apply(&self, _params: &Array<A, D>, _gradients: &mut Array<A, D>) -> Result<A> {
         // CutMix is applied to inputs and labels, not model parameters
         Ok(A::zero())
     }
 
-    fn penalty(&self, params: &Array<A, D>) -> Result<A> {
+    fn penalty(&self, _params: &Array<A, D>) -> Result<A> {
         // CutMix doesn't add a parameter penalty term
         Ok(A::zero())
     }
@@ -377,7 +485,8 @@ mod tests {
 
     #[test]
     fn test_mixup_creation() {
-        let mixup = MixUp::<f64>::new(0.2).expect("unwrap failed");
+        let mixup =
+            MixUp::<f64>::new(0.2).expect("MixUp::<f64>::new succeeds in test_mixup_creation");
         assert_eq!(mixup.alpha, 0.2);
 
         // Alpha <= 0 should fail
@@ -387,7 +496,8 @@ mod tests {
 
     #[test]
     fn test_cutmix_creation() {
-        let cutmix = CutMix::<f64>::new(1.0).expect("unwrap failed");
+        let cutmix =
+            CutMix::<f64>::new(1.0).expect("CutMix::<f64>::new succeeds in test_cutmix_creation");
         assert_eq!(cutmix.beta, 1.0);
 
         // Beta <= 0 should fail
@@ -397,12 +507,12 @@ mod tests {
 
     #[test]
     fn test_mixing_factor() {
-        let mixup = MixUp::new(0.2).expect("unwrap failed");
+        let mixup = MixUp::new(0.2).expect("MixUp::new succeeds in test_mixing_factor");
 
         // With fixed seeds, should get deterministic values
-        let lambda1 = mixup.get_mixing_factor(42);
-        let lambda2 = mixup.get_mixing_factor(42);
-        let lambda3 = mixup.get_mixing_factor(123);
+        let lambda1 = mixup.mixing_factor(42);
+        let lambda2 = mixup.mixing_factor(42);
+        let lambda3 = mixup.mixing_factor(123);
 
         // Same seed should give same result
         assert_eq!(lambda1, lambda2);
@@ -416,8 +526,61 @@ mod tests {
     }
 
     #[test]
+    fn test_gamma_sampler_matches_theoretical_moments() {
+        // Gamma(k, 1) has mean k and variance k. Check both branches of the
+        // sampler: shape >= 1 (direct) and shape < 1 (boost trick).
+        let mut rng = Random::seed(20240517);
+        for &shape in &[0.3f64, 1.0, 4.5] {
+            let n = 20_000;
+            let mut sum = 0.0;
+            let mut sum_sq = 0.0;
+            for _ in 0..n {
+                let x = sample_gamma(shape, &mut rng);
+                assert!(x >= 0.0 && x.is_finite(), "invalid gamma draw {x}");
+                sum += x;
+                sum_sq += x * x;
+            }
+            let mean = sum / n as f64;
+            let variance = sum_sq / n as f64 - mean * mean;
+            assert!(
+                (mean - shape).abs() < 0.15 * shape.max(1.0),
+                "shape {shape}: mean {mean} != {shape}"
+            );
+            assert!(
+                (variance - shape).abs() < 0.3 * shape.max(1.0),
+                "shape {shape}: variance {variance} != {shape}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_mixing_factor_honours_alpha() {
+        // Beta(a, a) has variance 1 / (4 (2a + 1)); a small alpha must produce a
+        // much more spread-out (U-shaped) lambda than a large alpha.
+        let small = MixUp::<f64>::new(0.2)
+            .expect("MixUp::<f64>::new succeeds in test_mixing_factor_honours_alpha");
+        let large = MixUp::<f64>::new(5.0)
+            .expect("MixUp::<f64>::new succeeds in test_mixing_factor_honours_alpha");
+
+        let variance_of = |m: &MixUp<f64>| {
+            let n = 4000u64;
+            let samples: Vec<f64> = (0..n).map(|s| m.mixing_factor(s * 7 + 1)).collect();
+            let mean = samples.iter().sum::<f64>() / n as f64;
+            let var = samples.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n as f64;
+            (mean, var)
+        };
+
+        let (small_mean, small_var) = variance_of(&small);
+        let (large_mean, large_var) = variance_of(&large);
+
+        assert!((small_mean - 0.5).abs() < 0.05, "mean {small_mean}");
+        assert!((large_mean - 0.5).abs() < 0.05, "mean {large_mean}");
+        assert!(small_var > 5.0 * large_var, "{small_var} vs {large_var}");
+    }
+
+    #[test]
     fn test_mixup_batch() {
-        let mixup = MixUp::new(0.5).expect("unwrap failed");
+        let mixup = MixUp::new(0.5).expect("MixUp::new succeeds in test_mixup_batch");
 
         // Create 2 examples with 2 features
         let inputs = array![[1.0, 2.0], [3.0, 4.0]];
@@ -425,7 +588,7 @@ mod tests {
 
         let (mixed_inputs, mixed_labels) = mixup
             .apply_batch(&inputs, &labels, 42)
-            .expect("unwrap failed");
+            .expect("apply_batch succeeds in test_mixup_batch");
 
         // Should have same shape
         assert_eq!(mixed_inputs.shape(), inputs.shape());
@@ -459,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_cutmix_batch() {
-        let cutmix = CutMix::new(1.0).expect("unwrap failed");
+        let cutmix = CutMix::new(1.0).expect("CutMix::new succeeds in test_cutmix_batch");
 
         // Create 2 5x5 images with 1 channel (larger for more reliable mixing)
         let images =
@@ -469,7 +632,7 @@ mod tests {
 
         let (mixed_images, mixed_labels) = cutmix
             .apply_batch(&images, &labels, 123)
-            .expect("unwrap failed"); // Use different seed
+            .expect("apply_batch succeeds in test_cutmix_batch"); // Use different seed
 
         // Should have same shape
         assert_eq!(mixed_images.shape(), images.shape());
@@ -528,12 +691,14 @@ mod tests {
 
     #[test]
     fn test_mixup_regularizer_trait() {
-        let mixup = MixUp::new(0.5).expect("unwrap failed");
+        let mixup = MixUp::new(0.5).expect("MixUp::new succeeds in test_mixup_regularizer_trait");
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradients = gradients.clone();
 
-        let penalty = mixup.apply(&params, &mut gradients).expect("unwrap failed");
+        let penalty = mixup
+            .apply(&params, &mut gradients)
+            .expect("mixup.apply succeeds in test_mixup_regularizer_trait");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);
@@ -544,14 +709,15 @@ mod tests {
 
     #[test]
     fn test_cutmix_regularizer_trait() {
-        let cutmix = CutMix::new(1.0).expect("unwrap failed");
+        let cutmix =
+            CutMix::new(1.0).expect("CutMix::new succeeds in test_cutmix_regularizer_trait");
         let params = array![[1.0, 2.0], [3.0, 4.0]];
         let mut gradients = array![[0.1, 0.2], [0.3, 0.4]];
         let original_gradients = gradients.clone();
 
         let penalty = cutmix
             .apply(&params, &mut gradients)
-            .expect("unwrap failed");
+            .expect("apply succeeds in test_cutmix_regularizer_trait");
 
         // Penalty should be zero
         assert_eq!(penalty, 0.0);

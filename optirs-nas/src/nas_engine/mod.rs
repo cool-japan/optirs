@@ -83,6 +83,14 @@ pub mod config;
 pub mod engine;
 pub mod resources;
 pub mod results;
+/// Engine-side adapters exposing the real `crate::search_strategies`
+/// implementations through the engine's own `SearchStrategy` trait.
+///
+/// Crate-internal: the adapters are an implementation detail of
+/// [`engine::NeuralArchitectureSearch::new`], which picks one per
+/// [`config::SearchStrategyType`].
+pub(crate) mod strategy_adapters;
+pub mod telemetry;
 
 // Re-export core types for convenience
 pub use config::*;
@@ -333,7 +341,6 @@ pub fn create_minimal_nas_config<T: Float + Debug + Send + Sync + 'static>() -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scirs2_core::numeric::Float;
 
     #[test]
     fn test_nas_config_creation() {
@@ -358,7 +365,37 @@ mod tests {
             cost_constraints: Some(1000.0),
         };
 
-        let monitor = ResourceMonitor::new(constraints.clone());
+        // The monitor used to be built and dropped without a single assertion, so
+        // the test proved nothing about it. Check the constraints actually reach
+        // the monitor and that an idle monitor reports idle state rather than
+        // fabricated activity.
+        let mut monitor = ResourceMonitor::new(constraints.clone());
+        assert_eq!(monitor.get_monitoring_state(), MonitoringState::Stopped);
+        assert!(monitor.get_usage_history().is_empty());
+        assert!(
+            monitor
+                .check_violations()
+                .expect("checking violations on an idle monitor must succeed")
+                .is_empty(),
+            "generous constraints cannot be violated before anything is measured"
+        );
+
+        let report = monitor.generate_report();
+        assert_eq!(report.total_samples, 0);
+        assert_eq!(report.monitoring_duration, std::time::Duration::ZERO);
+
+        // Re-configuring the monitor is what `update_constraints` exists for.
+        let mut tightened = constraints.clone();
+        tightened.max_memory_gb = 0.0;
+        monitor.update_constraints(tightened);
+        assert!(
+            monitor
+                .check_violations()
+                .expect("checking violations must succeed after reconfiguration")
+                .is_empty(),
+            "no sample has been taken, so even a zero budget cannot be exceeded yet"
+        );
+
         assert!(constraints.max_memory_gb > 0.0);
     }
 

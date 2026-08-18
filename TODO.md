@@ -1,279 +1,122 @@
-# OptiRS TODO - v0.3.1 (Stable Release)
+# OptiRS TODO
 
-## Project Status: Stable Release - Production Ready
+**Version:** 0.3.2
+**Last audited:** 2026-08-18
 
-**Current Version**: v0.3.1
-**Release Date**: 2026-03-27
-**Total Tests**: 1,249 tests passing + 82 doc tests (100% pass rate, 9 skipped, 4 doc tests ignored)
-**SLoC**: 254,494 lines of Rust code (985 files, 325,228 total lines)
-**SciRS2 Compliance**: 100%
+This file tracks what is *open*. What has been completed is recorded in
+[`CHANGELOG.md`](CHANGELOG.md); duplicating it here only creates two things to keep in
+sync. Each crate has its own `TODO.md` for crate-local work.
 
----
+## Current state (measured, `--all-features`)
 
-## Completed: v0.3.1 Release
+| Signal | Value |
+|---|---|
+| Tests | more than 4,200 unit/integration tests passing, plus doc tests |
+| `cargo check --workspace --all-targets` | 0 warnings |
+| `cargo clippy --workspace --all-targets` | 0 warnings |
+| Blanket `#![allow(...)]` attributes | none anywhere in the workspace |
+| Production `.unwrap()` | none |
+| Production blind `expect("unwrap failed")` / `expect("lock poisoned")` | none (the only textual matches are doc comments quoting the pattern they replaced) |
+| Source files ≥ 2,000 lines | none |
+| `cargo deny check bans` | passes |
+| Source size | 907 Rust files, ~342k lines of code (`tokei`) |
+| SciRS2 | 0.6.5; no direct `ndarray` / `rand` / `rayon` / `num-traits` imports |
 
-### SciRS2 Core Integration
-- [x] **Remove ALL direct ndarray imports** - All 474 imports updated to scirs2_core::ndarray
-- [x] **Remove ALL direct rand imports** - All 50+ imports updated to scirs2_core::random
-- [x] **Migrate to SciRS2 error handling** - Using scirs2_core::error::CoreError
-- [x] **SIMD operations** - Using scirs2_core::simd_ops::SimdUnifiedOps
-- [x] **Parallel processing** - Using scirs2_core::parallel_ops
+Reproduce with `cargo nextest run --workspace --all-features`,
+`cargo clippy --workspace --all-features --all-targets` and `cargo deny check bans`.
 
-### Core Optimizer Implementation (22 total)
+## Open work
 
-**First-Order Optimizers (17)**
-- [x] **SGD Optimizer** - Complete with momentum, Nesterov, weight decay
-  - [x] Basic SGD with learning rate
-  - [x] Classical momentum (Polyak)
-  - [x] Nesterov accelerated gradient (NAG)
-  - [x] Weight decay integration
-  - [x] Learning rate scheduling support
-  - [x] SIMD-accelerated variant (sgd_simd.rs)
+Everything below is a real gap in the current tree. Each item names the code path so the
+claim can be checked. Paths that cannot deliver a result return an explicit error today —
+none of them fabricate one.
 
-- [x] **Adam Optimizer** - Complete with bias correction
-  - [x] Basic Adam algorithm (beta1=0.9, beta2=0.999, epsilon=1e-8)
-  - [x] Bias correction for first and second moments
-  - [x] Numerical stability with epsilon clipping
-  - [x] Memory-efficient implementation
+### Blocked on upstream
 
-- [x] **AdamW Optimizer** - Decoupled weight decay
-  - [x] Separate weight decay from gradient updates
-  - [x] Performance optimization with vectorized operations
+- **`optirs-gpu` WebGPU backend.** The WGSL kernels are implemented, but `scirs2-core`
+  0.6.5's runtime device probe never enumerates `wgpu` adapters, so
+  `GpuContext::new(Wgpu)` fails everywhere. The path goes live when the upstream probe is
+  fixed; nothing on the OptiRS side is missing.
 
-- [x] **RMSprop Optimizer** - Adaptive learning rate
-  - [x] Basic RMSprop with squared gradient accumulator
-  - [x] Momentum integration
+### Requires a design decision
 
-- [x] **AdaGrad Optimizer** - Adaptive gradient algorithm
-  - [x] Basic AdaGrad with accumulator
-  - [x] Sparse variant (sparse_adam.rs)
+- **`self_tuning` hyperparameter proposal.** `SelfTuningOptimizer` records the observation
+  half of a hyperparameter search (metric history, best-so-far configuration), but the
+  proposal step is not implemented and the `SearchStrategy` variants return
+  `UnsupportedOperation` (`optirs-core/src/self_tuning.rs`). Implementing it means
+  choosing which hyperparameters are searchable and which strategy family
+  (Bayesian / successive halving / grid) is canonical.
+- **`AdaptiveTuner` Bayesian and reinforcement-learning strategies.** Grid, Greedy and GA
+  search work; the other two return `UnsupportedOperation`
+  (`optirs-core/src/hardware_aware/adaptive_tuner.rs`). A Bayesian variant should reuse
+  the Gaussian process already in `privacy/private_hyperparameter_optimization`, rather
+  than growing a third one.
+- **Byte-level compression and Parquet export for streaming metrics.**
+  `optirs-core/src/streaming/streaming_metrics/export.rs` refuses Gzip/LZ4/Zstd payload
+  compression and Parquet output because `optirs-core` bundles no codec or columnar
+  writer. If these are wanted, the pure-Rust route is an `oxiarc-*` dependency; that is a
+  workspace-level decision.
+- **Nested automatic differentiation in `optirs-learned::higher_order`.**
+  `HvpMode::NestedAutodiff` and `MixedPartialMethod::NestedAutodiff` return explicit
+  errors. This is not an omission that can be patched: the engine's objective is
+  `impl Fn(&Array1<T>) -> T`, monomorphic in `T`, and forward mode needs the objective
+  generic over a dual type while reverse mode needs it as tape operations. Real nested AD
+  requires changing that signature.
+- **Shamir `t`-of-`n` self-mask shares for secure aggregation.** The Bonawitz
+  implementation in `optirs-core/src/privacy/federated/` handles dropout by disclosure.
+  Adding threshold secret sharing of the self-mask seed would make it robust to a
+  dropped-then-recovered client. The Shamir primitive already exists in
+  `privacy/secure_multiparty`; wiring it in is a protocol change, not a port.
+- **NAS `MultiObjectiveConfig::user_preferences` / `constraint_handling`.** Declared and
+  documented but not read by any algorithm (`optirs-nas/src/nas_engine/config.rs`);
+  preference articulation is unimplemented for NSGA-II, NSGA-III and MOEA/D.
+- **`optirs-nas` benchmark-suite custom evaluator.** The callback shape for a
+  user-supplied architecture evaluator has not been designed.
+- **A meta-learning API reference.** The workspace-root `docs/meta_learning_api.md` was
+  deleted in 0.3.2: it documented an `optirs_core::meta_learning` module that does not
+  exist (the real one is `optirs_learned::meta_learning`, with an entirely different API),
+  four of its seven documented types existed nowhere in the workspace, and the file had a
+  corrupted, half-duplicated section. If a narrative meta-learning guide is wanted, it
+  should live inside `optirs-learned/` next to the code it describes, written against
+  `MetaLearner`, the MAML / Reptile / Meta-SGD learners and `MetaTask`.
 
-- [x] **LAMB Optimizer** - Large batch training
-  - [x] Layer-wise adaptation mechanism
-  - [x] Trust ratio computation
-  - [x] Large batch optimization support
+### Requires hardware or an external runtime
 
-- [x] **LARS Optimizer** - Layer-wise Adaptive Rate Scaling
-  - [x] Layer-wise learning rate adaptation
-  - [x] Trust ratio computation
+- **`optirs-gpu` CUDA and ROCm backends.** `scirs2-core` 0.6.x ships no CUDA backend, so
+  there is nothing to build on. OpenCL gets as far as context creation; no kernels ship.
+- **`optirs-tpu` vendor runtime.** No TPU runtime is linked — it is proprietary and not
+  distributable as pure Rust. The crate is a CPU-reference implementation and says so.
+- **`optirs-wasm` WGSL compute kernels.** WebGPU adapter detection and the device
+  handshake are real; running per-optimizer compute shaders from the WASM bindings is not
+  implemented and would need `optirs-gpu`/`wgpu` in the WASM build.
+- **`optirs-gpu` vendor memory backends** (`cuda`/`rocm`/`oneapi`/`metal`) are host-memory
+  API-shape simulations whose copy functions move zero bytes. Each file states this at the
+  top. They become real only alongside a real device backend.
 
-- [x] **RAdam Optimizer** - Rectified Adam
-  - [x] Variance rectification term
-  - [x] Automated warmup scheduling
+### Code-quality follow-ups
 
-- [x] **Lookahead Optimizer** - Slow/fast weight updates
-  - [x] Dual optimizer state management
-  - [x] Interpolation mechanism
-  - [x] Compatibility wrapper for any base optimizer
+- **One remaining production `panic!`.** `CurriculumScheduler::new`
+  (`optirs-core/src/schedulers/curriculum.rs`) panics when handed an empty stage list.
+  Every other panic path in the workspace was converted to a typed error during 0.3.2;
+  this one is a constructor precondition and needs a fallible constructor (or a
+  non-empty-collection parameter type) to close.
+- **About 165 `expect(...)` calls remain in production code**, all in positions whose
+  signature cannot return an error — overwhelmingly `Default` implementations converting a
+  constant literal such as `0.9` into the generic scalar type. Each carries a message
+  naming the invariant rather than the old blanket `"unwrap failed"`. Removing them
+  entirely means giving those types fallible constructors instead of `Default`.
 
-- [x] **Lion Optimizer** - Evolved Sign Momentum
-  - [x] Sign-based updates
-  - [x] Memory-efficient (no second moment)
+## Ideas for 0.4.0
 
-- [x] **SAM Optimizer** - Sharpness Aware Minimization
-  - [x] Sharpness-aware perturbation
-  - [x] Better generalization characteristics
+Not committed, not started:
 
-- [x] **SparseAdam** - Sparse gradient support
-  - [x] Efficient sparse tensor handling
+- Transformer-based learned-optimizer improvements (`optirs-learned`)
+- Preference-articulated multi-objective NAS (depends on the config decision above)
+- A dedicated GPU kernel path once the upstream `wgpu` probe is fixed
 
-- [x] **GroupedAdam** - Parameter group support
-  - [x] Different hyperparameters per group
+## Conventions for this file
 
-- [x] **AdaDelta Optimizer** - Adaptive learning rate without manual tuning
-  - [x] Automatic step size adaptation using RMS of gradients/updates
-  - [x] 10-step warmup boost for cold-start problem
-  - [x] Full convergence validation (7 tests)
-
-- [x] **AdaBound Optimizer** - Dynamic bounds converging to SGD
-  - [x] Dynamic bound computation
-  - [x] Smooth transition from adaptive to SGD
-  - [x] AMSBound variant support
-  - [x] Final learning rate convergence guarantees
-
-- [x] **Ranger Optimizer** - RAdam + Lookahead combination
-  - [x] Variance rectification from RAdam
-  - [x] Trajectory smoothing from Lookahead
-  - [x] Proper slow/fast weight synchronization
-  - [x] 7 comprehensive tests
-
-- [x] **FedProx Optimizer** - Federated Proximal for distributed training
-  - [x] Proximal term for heterogeneous data
-  - [x] Compatible with federated learning workflows
-
-**Second-Order Methods (2)**
-- [x] **L-BFGS** - Limited-memory BFGS
-  - [x] Two-loop recursion algorithm
-  - [x] Line search with Wolfe conditions
-  - [x] Memory-efficient history management
-
-- [x] **L-BFGS Simple** - Simplified L-BFGS variant
-  - [x] Easier configuration
-  - [x] Good default parameters
-
-- [x] **Newton-CG** - Newton Conjugate Gradient
-  - [x] Conjugate gradient solver for Newton system
-  - [x] O(n) memory using only Hessian-vector products
-  - [x] Trust region control
-  - [x] Negative curvature detection
-  - [x] 7 comprehensive tests
-
-### Advanced Features
-
-**SIMD Acceleration**
-- [x] SimdOptimizer trait for f32/f64
-- [x] SIMD-accelerated SGD (SimdSGD)
-- [x] SIMD operations for momentum, Adam moments
-- [x] Automatic threshold detection (16 elements for f32, 8 for f64)
-- [x] 15 SIMD tests passing
-- [x] Expected 2-4x speedup achieved
-
-**Parallel Processing**
-- [x] ParallelOptimizer wrapper
-- [x] Parameter group parallelization
-- [x] ParallelBatchProcessor
-- [x] 9 parallel tests passing
-- [x] Expected 4-8x speedup achieved
-
-**Memory Efficiency**
-- [x] GradientAccumulator for micro-batch training
-- [x] ChunkedOptimizer for billion-parameter models
-- [x] MemoryUsageEstimator utilities
-- [x] 7 memory-efficient tests passing
-
-**GPU Integration**
-- [x] GpuOptimizer wrapper
-- [x] GPU context management
-- [x] Tensor cores support
-- [x] Mixed-precision training
-- [x] Host-device data transfer
-- [x] 11 GPU integration tests passing
-- [x] Multi-backend support (CUDA, Metal, OpenCL, WebGPU)
-
-**Production Tools**
-- [x] Profiling integration using scirs2_core::metrics
-- [x] OptimizerMetrics tracking
-- [x] GradientStatistics analysis
-- [x] ParameterStatistics tracking
-- [x] ConvergenceMetrics detection
-- [x] MetricsCollector and MetricsReporter
-- [x] 10 metrics tests passing
-
----
-
-## Completed: Wave 2 Features (v0.3.1)
-
-### Learned Optimizers
-- [x] Meta-learning framework enhancements
-- [x] Online MAML - Online meta-learning with continuous adaptation
-- [x] Cross-domain transfer learning
-- [x] Few-shot learning implementations (PrototypicalNetwork, FastAdaptation, EpisodicMemory)
-
-### Neural Architecture Search
-- [x] Differentiable architecture search (DARTS)
-- [x] Domain-Specific NAS - Specialized search for different application domains
-- [x] Architecture Embedding - Learned representations of neural architectures
-
-### Core Enhancements
-- [x] FedProx optimizer for distributed/federated training
-- [x] ViT Layer Decay scheduler for Vision Transformers
-- [x] Attention-Aware scheduler for transformer models
-- [x] Gradient Flow Analysis - Track gradient propagation through layers
-- [x] Loss Landscape Analysis - Visualize and analyze loss surface geometry
-
----
-
-## Future Work (v0.4.0+)
-
-### Learned Optimizers
-- [ ] Transformer-based optimization improvements
-
-### Neural Architecture Search
-- [ ] Hardware-aware NAS enhancements
-- [ ] Multi-objective search improvements
-
-### Distributed Training
-- [ ] Multi-GPU ring-allreduce optimization
-- [ ] Pipeline parallelism
-- [ ] Elastic training with dynamic workers
-
-### Quantum-Inspired Methods
-- [ ] Quantum annealing simulation
-- [ ] Variational quantum optimizer
-- [ ] Hybrid quantum-classical optimization
-
----
-
-## Test Coverage Summary
-
-### By Module
-```
-optirs-core:    647 tests passing
-optirs-bench:   205 tests passing
-optirs-gpu:     104 tests passing
-optirs-learned: 143 tests passing
-optirs-nas:      63 tests passing
-optirs-tpu:      58 tests passing
-optirs-wasm:     29 tests passing
-
-Total: 1,249 unit tests + 82 doc tests (9 skipped, 4 doc tests ignored)
-```
-
-### Test Quality
-- [x] Unit tests for all optimizers
-- [x] Convergence tests on standard problems (Rosenbrock, etc.)
-- [x] Numerical stability tests
-- [x] Performance regression tests with Criterion
-- [x] 100% doc test coverage for public API
-
----
-
-## Performance Achievements
-
-### Speed Metrics
-- SGD: < 10ns per parameter update
-- Adam: < 50ns per parameter update
-- SIMD variants: 2-4x faster on large arrays
-- GPU variants: 10-50x faster for large models
-
-### Memory Efficiency
-- Optimizer state: < 2x parameter memory
-- Zero-copy operations where possible
-- Gradient accumulation for memory-constrained training
-
----
-
-## Code Quality
-
-### Compliance
-- [x] Zero clippy warnings
-- [x] Zero unused dependencies
-- [x] 100% public API documentation
-- [x] All examples use scirs2_core exclusively
-- [x] snake_case naming convention throughout
-
-### Architecture
-- [x] Modular workspace structure
-- [x] Feature-gated compilation
-- [x] Proper error handling with thiserror
-- [x] Comprehensive serialization with serde
-
----
-
-## Release Status (v0.3.1)
-
-- [x] All core optimizers implemented (22 total)
-- [x] Full SciRS2 integration verified
-- [x] 1,249 tests passing + 82 doc tests
-- [x] Wave 2 features implemented (FedProx, ViT schedulers, gradient flow, loss landscape, few-shot, online MAML, cross-domain transfer, domain NAS, architecture embedding)
-- [x] Documentation complete
-- [x] CHANGELOG.md created
-- [x] Examples working
-- [x] Benchmarks validated
-- [x] crates.io publication
-- [x] GitHub release tag
-
----
-
-**Status**: ✅ Released (2026-03-27)
-**Next Milestone**: v0.4.0 - Further enhancements and research implementations
+- An item is listed only if the gap is verifiable in the current tree.
+- Completed work moves to `CHANGELOG.md` and is deleted from here.
+- "Not implemented" must correspond to code that returns an error, never to code that
+  returns a plausible-looking value.

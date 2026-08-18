@@ -4,7 +4,7 @@
 // of parameters to be zeroed out, enabling structured sparsity. It also provides
 // structured sparsity patterns (column, row, block) for matrix parameters.
 
-use scirs2_core::ndarray::{Array, Dimension, ScalarOperand, Zip};
+use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
 

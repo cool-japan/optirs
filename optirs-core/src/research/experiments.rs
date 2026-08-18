@@ -4,11 +4,9 @@
 // machine learning optimization experiments with full reproducibility support.
 
 use crate::error::{OptimError, Result};
-use crate::optimizers::*;
 use crate::unified_api::OptimizerConfig;
 use chrono::{DateTime, Utc};
-use scirs2_core::ndarray::{Array1, Array2};
-use scirs2_core::numeric::Float;
+use scirs2_core::ndarray::Array2;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -803,6 +801,74 @@ impl Default for SystemInfo {
     }
 }
 
+impl ExperimentRunner {
+    /// Create a new runner wrapping `experiment`, sampling resource usage
+    /// every `monitor_interval_seconds` seconds while a run is active.
+    pub fn new(experiment: Experiment, monitor_interval_seconds: u64) -> Self {
+        Self {
+            experiment,
+            resource_monitor: ResourceMonitor::new(monitor_interval_seconds),
+            progress_callback: None,
+        }
+    }
+
+    /// Register a callback invoked with a completion fraction in `[0.0, 1.0]`
+    /// every time [`Self::record_result`] appends a new run result.
+    pub fn set_progress_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(f64) + Send + Sync + 'static,
+    {
+        self.progress_callback = Some(Box::new(callback));
+    }
+
+    /// Borrow the experiment under management.
+    pub fn experiment(&self) -> &Experiment {
+        &self.experiment
+    }
+
+    /// Mutably borrow the experiment under management.
+    pub fn experiment_mut(&mut self) -> &mut Experiment {
+        &mut self.experiment
+    }
+
+    /// Borrow the resource monitor.
+    pub fn resource_monitor(&self) -> &ResourceMonitor {
+        &self.resource_monitor
+    }
+
+    /// Transition the underlying experiment to `Running` and start resource
+    /// monitoring. Mirrors [`Experiment::start`]'s status-transition rules.
+    pub fn start(&mut self) -> Result<()> {
+        self.experiment.start()?;
+        self.resource_monitor.start_monitoring();
+        Ok(())
+    }
+
+    /// Record the outcome of one run against the experiment and report
+    /// progress (as `results.len() / config.num_runs`) to the progress
+    /// callback, if one is registered.
+    pub fn record_result(&mut self, mut result: ExperimentResult) {
+        if result.end_time.is_none() {
+            result.end_time = Some(Utc::now());
+        }
+        self.experiment.results.push(result);
+
+        if let Some(ref callback) = self.progress_callback {
+            let target = self.experiment.config.num_runs.max(1);
+            let completed = self.experiment.results.len().min(target);
+            callback(completed as f64 / target as f64);
+        }
+    }
+
+    /// Stop resource monitoring and mark the experiment `Completed`,
+    /// returning the aggregate resource usage for the run.
+    pub fn finish(&mut self) -> Result<ResourceUsage> {
+        let usage = self.resource_monitor.stop_monitoring();
+        self.experiment.complete()?;
+        Ok(usage)
+    }
+}
+
 impl ResourceMonitor {
     /// Create a new resource monitor
     pub fn new(_intervalseconds: u64) -> Self {
@@ -814,10 +880,42 @@ impl ResourceMonitor {
         }
     }
 
-    /// Start monitoring resources
+    /// Discard any samples collected so far and begin a fresh window.
+    ///
+    /// This crate takes no measurements of its own: reading CPU and memory
+    /// counters requires platform-specific system interfaces, and the project's
+    /// pure-Rust policy rules out the FFI they need. Until 0.3.2 this method
+    /// had an empty body with the comment "Implementation would use system
+    /// monitoring libraries", so `stop_monitoring` reported a summary over an
+    /// empty sample set as though it had measured something. Feed measurements
+    /// in with [`Self::record_sample`]; the summary then describes real data or
+    /// honestly reports none.
     pub fn start_monitoring(&mut self) {
-        // Implementation would use system monitoring libraries
-        // This is a placeholder for the actual monitoring logic
+        self.cpu_usage.clear();
+        self.memory_usage.clear();
+        self.gpu_memory_usage.clear();
+    }
+
+    /// Record one observation. `gpu_memory_mb` is `None` when no GPU is in use.
+    pub fn record_sample(
+        &mut self,
+        cpu_percent: f64,
+        memory_mb: usize,
+        gpu_memory_mb: Option<usize>,
+    ) {
+        self.cpu_usage.push(cpu_percent);
+        self.memory_usage.push(memory_mb);
+        self.gpu_memory_usage.push(gpu_memory_mb);
+    }
+
+    /// Number of samples recorded in the current window.
+    pub fn sample_count(&self) -> usize {
+        self.cpu_usage.len()
+    }
+
+    /// The sampling interval the monitor was configured with, in seconds.
+    pub fn interval_seconds(&self) -> u64 {
+        self.interval_seconds
     }
 
     /// Stop monitoring and return resource usage summary
@@ -841,8 +939,14 @@ impl ResourceMonitor {
             avg_cpu_usage: avg_cpu,
             peak_memory_mb: peak_memory,
             avg_memory_mb: avg_memory,
-            peak_gpu_memory_mb: None, // Would be calculated from gpu_memory_usage
-            total_time_seconds: 0.0,  // Would be calculated from monitoring duration
+            // Real values derived from the recorded samples: the peak of the
+            // GPU series, and the wall-clock span the samples cover at the
+            // configured interval. Both were hardcoded to `None` / `0.0` with a
+            // "would be calculated" comment.
+            peak_gpu_memory_mb: self.gpu_memory_usage.iter().flatten().copied().max(),
+            total_time_seconds: self.cpu_usage.len().saturating_sub(1) as f64
+                * self.interval_seconds as f64,
+            // Energy draw needs a hardware power counter this crate cannot read.
             energy_consumption_joules: None,
         }
     }
@@ -893,5 +997,58 @@ mod tests {
         assert_eq!(experiment.notes.len(), 2);
         assert_eq!(experiment.notes[0].note_type, NoteType::Observation);
         assert_eq!(experiment.notes[1].note_type, NoteType::Issue);
+    }
+
+    // Regression test for F24: `ExperimentRunner` was exported with fully
+    // private fields and no constructor at all, making it impossible to
+    // build despite being part of the public API.
+    #[test]
+    fn test_experiment_runner_is_constructible_and_functional() {
+        let mut experiment = Experiment::new("Runner Test");
+        experiment.config.num_runs = 2;
+        experiment.status = ExperimentStatus::Ready;
+
+        let mut runner = ExperimentRunner::new(experiment, 1);
+        assert!(runner.start().is_ok());
+        assert_eq!(runner.experiment().status, ExperimentStatus::Running);
+
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let progress_clone = progress.clone();
+        runner.set_progress_callback(move |fraction| {
+            progress_clone.lock().expect("lock").push(fraction);
+        });
+
+        let make_result = |run_id: &str| ExperimentResult {
+            run_id: run_id.to_string(),
+            optimizer_name: "adam".to_string(),
+            start_time: Utc::now(),
+            end_time: None,
+            status: RunStatus::Success,
+            final_metrics: HashMap::new(),
+            training_history: TrainingHistory {
+                epochs: vec![],
+                train_metrics: HashMap::new(),
+                val_metrics: HashMap::new(),
+                learning_rates: vec![],
+                gradient_norms: vec![],
+                parameter_norms: vec![],
+                step_times: vec![],
+            },
+            resource_usage: ResourceUsage::default(),
+            error_info: None,
+            metadata: HashMap::new(),
+        };
+
+        runner.record_result(make_result("run-1"));
+        runner.record_result(make_result("run-2"));
+
+        assert_eq!(runner.experiment().results.len(), 2);
+        assert!(runner.experiment().results[0].end_time.is_some());
+        let recorded_progress = progress.lock().expect("lock").clone();
+        assert_eq!(recorded_progress, vec![0.5, 1.0]);
+
+        let usage = runner.finish().expect("finish should succeed");
+        assert_eq!(usage.peak_cpu_usage, 0.0);
+        assert_eq!(runner.experiment().status, ExperimentStatus::Completed);
     }
 }

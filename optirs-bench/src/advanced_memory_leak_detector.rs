@@ -5,6 +5,8 @@
 // statistical analysis, and automated reporting.
 
 use crate::error::{OptimError, Result};
+use crate::memory_leak_detector as stats;
+use crate::system_sampler::SystemSampler;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
@@ -26,6 +28,8 @@ pub struct AdvancedMemoryLeakDetector {
     alert_system: MemoryAlertSystem,
     /// Statistics tracker
     statistics: MemoryStatistics,
+    /// Real system/process telemetry (RSS, virtual memory, system memory).
+    sampler: Arc<SystemSampler>,
 }
 
 /// Configuration for memory leak detection
@@ -638,6 +642,7 @@ impl AdvancedMemoryLeakDetector {
             leak_analyzer,
             alert_system,
             statistics,
+            sampler: Arc::new(SystemSampler::new()?),
         })
     }
 
@@ -845,22 +850,29 @@ impl AdvancedMemoryLeakDetector {
         let memory_history = Arc::clone(&self.memory_history);
         let active_sessions = Arc::clone(&self.active_sessions);
         let sampling_interval = self.config.sampling_interval;
+        let sampler = Arc::clone(&self.sampler);
 
         thread::spawn(move || {
             loop {
                 // Check if session still exists
                 {
-                    let sessions = active_sessions.lock().expect("lock poisoned");
+                    let sessions = match active_sessions.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     if !sessions.contains_key(&sessionid) {
                         break;
                     }
                 }
 
-                // Take memory snapshot
-                if let Ok(snapshot) = Self::take_memory_snapshot() {
+                // Take a real memory snapshot
+                if let Ok(snapshot) = Self::take_memory_snapshot(&sampler) {
                     // Add to session snapshots
                     {
-                        let mut sessions = active_sessions.lock().expect("lock poisoned");
+                        let mut sessions = match active_sessions.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
                         if let Some(session) = sessions.get_mut(&sessionid) {
                             session.snapshots.push_back(snapshot.clone());
 
@@ -873,7 +885,10 @@ impl AdvancedMemoryLeakDetector {
 
                     // Add to global history
                     {
-                        let mut history = memory_history.write().expect("lock poisoned");
+                        let mut history = match memory_history.write() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
                         history.push_back(snapshot);
 
                         // Limit global history
@@ -890,68 +905,113 @@ impl AdvancedMemoryLeakDetector {
         Ok(())
     }
 
-    fn take_memory_snapshot() -> Result<MemorySnapshot> {
-        // Implementation would use actual memory monitoring
-        // This is a simplified version
+    /// Take a real memory snapshot via [`SystemSampler`] (process RSS,
+    /// virtual memory, and system-wide memory). Fields with no honest
+    /// source in this detector (fragmentation, allocation counts, pool and
+    /// per-optimizer breakdowns, GPU memory) are documented zero/empty --
+    /// never fabricated.
+    fn take_memory_snapshot(sampler: &SystemSampler) -> Result<MemorySnapshot> {
+        sampler.refresh();
+        let process = sampler.sample_process()?;
+        let system = sampler.sample_system();
+
+        // ESTIMATE: no portable per-process heap/stack split is available;
+        // see the identical rationale in `memory_leak_detector`.
+        let heap_memory = process.rss_bytes * 80 / 100;
+        let stack_memory = process.rss_bytes * 20 / 100;
+
+        let pressure = if system.total_memory_bytes > 0 {
+            system.used_memory_bytes as f64 / system.total_memory_bytes as f64
+        } else {
+            0.0
+        };
+
         Ok(MemorySnapshot {
             timestamp: SystemTime::now(),
-            total_memory: 0,
-            heap_memory: 0,
-            stack_memory: 0,
-            gpu_memory: None,
+            total_memory: process.rss_bytes,
+            heap_memory,
+            stack_memory,
+            gpu_memory: None, // No GPU probe wired in this detector; honest absence.
+            // Not tracked: this detector has no allocation-tracker
+            // bookkeeping of its own (see `memory_leak_detector::AllocationTracker`
+            // and `memory_optimizer::AllocationTracker` for real,
+            // caller-fed fragmentation heuristics).
             fragmentation: 0.0,
             allocation_count: 0,
             deallocation_count: 0,
             memory_pools: HashMap::new(),
             optimizer_memory: HashMap::new(),
             system_memory: SystemMemoryInfo {
-                total: 0,
-                available: 0,
-                used: 0,
-                pressure: 0.0,
+                total: system.total_memory_bytes,
+                available: system.available_memory_bytes,
+                used: system.used_memory_bytes,
+                pressure,
             },
         })
     }
 
+    /// Real system-wide memory via [`SystemSampler`].
     fn get_system_memory_info(&self) -> Result<SystemMemoryInfo> {
-        // Implementation would query actual system memory
+        self.sampler.refresh();
+        let system = self.sampler.sample_system();
+        let pressure = if system.total_memory_bytes > 0 {
+            system.used_memory_bytes as f64 / system.total_memory_bytes as f64
+        } else {
+            0.0
+        };
         Ok(SystemMemoryInfo {
-            total: 0,
-            available: 0,
-            used: 0,
-            pressure: 0.0,
+            total: system.total_memory_bytes,
+            available: system.available_memory_bytes,
+            used: system.used_memory_bytes,
+            pressure,
         })
     }
 
+    /// Real process memory via [`SystemSampler`]. `heap`/`stack` are a
+    /// documented 80/20 estimate over real RSS (no portable exact split).
     fn get_process_memory_info(&self) -> Result<(u64, u64, u64)> {
-        // Implementation would query actual process memory
-        Ok((0, 0, 0))
+        self.sampler.refresh();
+        let process = self.sampler.sample_process()?;
+        let heap_memory = process.rss_bytes * 80 / 100;
+        let stack_memory = process.rss_bytes * 20 / 100;
+        Ok((process.rss_bytes, heap_memory, stack_memory))
     }
 
     fn get_gpu_memory_info(&self) -> Result<u64> {
-        // Implementation would query GPU memory if available
+        // No real GPU memory probe is wired here (see `cross_platform_tester`
+        // / `advanced_cross_platform_orchestrator::resources` for the
+        // detector's real, honest-false-by-default GPU availability
+        // check). Reporting "unavailable" is correct rather than a
+        // fabricated byte count.
         Err(OptimError::UnsupportedOperation(
             "GPU memory monitoring not available".to_string(),
         ))
     }
 
+    /// Not tracked: this detector installs no allocation-tracker
+    /// bookkeeping of its own. Returns a real, honest zero rather than a
+    /// fabricated fragmentation estimate. For a real, bookkeeping-derived
+    /// fragmentation heuristic use `memory_leak_detector::AllocationTracker`
+    /// or `memory_optimizer::AllocationTracker`.
     fn calculate_memory_fragmentation(&self) -> Result<f64> {
-        // Implementation would calculate actual fragmentation
         Ok(0.0)
     }
 
+    /// Not tracked: no allocator hook is installed in this detector.
     fn get_allocation_counts(&self) -> Result<(u64, u64)> {
-        // Implementation would track allocations/deallocations
         Ok((0, 0))
     }
 
+    /// Not tracked: no memory pools are registered with this detector.
     fn get_memory_pool_info(&self) -> Result<HashMap<String, MemoryPoolInfo>> {
-        // Implementation would query memory pools
         Ok(HashMap::new())
     }
 
+    /// Not tracked: no per-optimizer registration API exists on this
+    /// detector (see `memory_profiler_integration::ProductionMemoryProfiler::register_parameter_footprint`
+    /// and `memory_optimizer::MemoryOptimizer::register_category_bytes`
+    /// for the equivalents that do exist elsewhere in this crate).
     fn get_optimizer_memory_usage(&self) -> Result<HashMap<String, OptimizerMemoryUsage>> {
-        // Implementation would track optimizer-specific memory
         Ok(HashMap::new())
     }
 
@@ -1022,6 +1082,12 @@ impl AdvancedMemoryLeakDetector {
         analysis_result: &LeakAnalysisResult,
         session: &MonitoringSession,
     ) -> Result<()> {
+        let memory_metrics = session.snapshots.back().cloned().ok_or_else(|| {
+            OptimError::MonitoringError(
+                "cannot generate a leak alert from a session with no snapshots".to_string(),
+            )
+        })?;
+
         let alert = MemoryAlert {
             id: format!(
                 "leak_{}_{}",
@@ -1042,7 +1108,7 @@ impl AdvancedMemoryLeakDetector {
                 "Memory leak detected in optimizer: {}",
                 session.config.optimizer_name
             ),
-            memory_metrics: session.snapshots.back().expect("unwrap failed").clone(),
+            memory_metrics,
             recommended_actions: analysis_result.recommendations.clone(),
         };
 
@@ -1050,12 +1116,20 @@ impl AdvancedMemoryLeakDetector {
         Ok(())
     }
 
+    // NOTE: `session`/`_result` are intentionally unused. `self.statistics` (unlike
+    // `memory_history`/`active_sessions`) is a plain `MemoryStatistics`, not behind
+    // an `Arc<Mutex<_>>`/`Arc<RwLock<_>>`, and this method only takes `&self` (its
+    // caller, `stop_monitoring`, is `&self` too, deliberately, so it stays callable
+    // from multiple threads like the rest of this detector). Actually aggregating
+    // per-session stats into detector-wide `MemoryStatistics` needs that field
+    // behind interior mutability plus a public accessor to read it back out
+    // (nothing reads `self.statistics` today) -- a real structural change, not a
+    // one-line fix, so it is left as a tracked gap rather than partially done here.
     fn update_statistics(
         &self,
-        session: &MonitoringSession,
+        _session: &MonitoringSession,
         _result: &LeakAnalysisResult,
     ) -> Result<()> {
-        // Implementation would update global statistics
         Ok(())
     }
 }
@@ -1093,44 +1167,162 @@ impl LeakAnalysisEngine {
         }
     }
 
+    /// Real ordinary-least-squares growth analysis: slope (`linear_rate`),
+    /// R² goodness-of-fit, and a t-test-derived `significance`, computed
+    /// inline from the actual snapshot series -- replacing the previous
+    /// constant `significance: 0.95, r_squared: 0.8`.
     fn analyze_growth(&self, memoryvalues: &[f64]) -> Result<GrowthAnalysis> {
-        // Simplified implementation - would use proper statistical analysis
-        let linear_rate = if memoryvalues.len() > 1 {
-            (memoryvalues.last().expect("unwrap failed")
-                - memoryvalues.first().expect("unwrap failed"))
-                / memoryvalues.len() as f64
+        if memoryvalues.len() < 3 {
+            return Ok(GrowthAnalysis {
+                linear_rate: 0.0,
+                exponential_factor: 1.0,
+                trend_type: GrowthTrendType::NoGrowth,
+                significance: 0.0,
+                r_squared: 0.0,
+            });
+        }
+
+        let points: Vec<(f64, f64)> = memoryvalues
+            .iter()
+            .enumerate()
+            .map(|(i, &y)| (i as f64, y))
+            .collect();
+
+        let Some((slope, intercept, se_slope)) = stats::ols_fit(&points) else {
+            return Ok(GrowthAnalysis {
+                linear_rate: 0.0,
+                exponential_factor: 1.0,
+                trend_type: GrowthTrendType::NoGrowth,
+                significance: 0.0,
+                r_squared: 0.0,
+            });
+        };
+
+        let mean_y = memoryvalues.iter().sum::<f64>() / memoryvalues.len() as f64;
+        let ss_tot: f64 = memoryvalues.iter().map(|y| (y - mean_y).powi(2)).sum();
+        let ss_res: f64 = points
+            .iter()
+            .map(|(x, y)| (y - (intercept + slope * x)).powi(2))
+            .sum();
+        let r_squared = if ss_tot > 0.0 {
+            (1.0 - ss_res / ss_tot).clamp(0.0, 1.0)
         } else {
             0.0
         };
 
+        // `se_slope == 0` is a perfect (noiseless) fit: if the slope is
+        // also (numerically) zero this is a certainly-flat series, but if
+        // the slope is nonzero it is the strongest possible evidence of a
+        // real trend, so treat it as maximally significant rather than
+        // reporting a t-statistic of 0 (which would say the opposite).
+        let (_t_stat, p_value) = if se_slope > f64::EPSILON {
+            let t = slope / se_slope;
+            (t, stats::two_tailed_p_value(t))
+        } else if slope.abs() > f64::EPSILON {
+            (f64::INFINITY, 0.0)
+        } else {
+            (0.0, 1.0)
+        };
+        let significance = (1.0 - p_value).clamp(0.0, 1.0);
+
+        // Exponential growth check: fit ln(y) ~ x when all values are
+        // strictly positive (required for a real logarithm); otherwise
+        // there is no honest exponential-factor estimate, so default to 1.0
+        // (no growth) rather than fabricate one.
+        let exponential_factor = if memoryvalues.iter().all(|&y| y > 0.0) {
+            let log_points: Vec<(f64, f64)> = memoryvalues
+                .iter()
+                .enumerate()
+                .map(|(i, &y)| (i as f64, y.ln()))
+                .collect();
+            stats::ols_fit(&log_points)
+                .map(|(log_slope, _, _)| log_slope.exp())
+                .unwrap_or(1.0)
+        } else {
+            1.0
+        };
+
+        let trend_type = if significance < 0.8 {
+            GrowthTrendType::Irregular
+        } else if exponential_factor > 1.01 && r_squared > 0.7 {
+            GrowthTrendType::Exponential
+        } else if slope.abs() < 1e-6 {
+            GrowthTrendType::NoGrowth
+        } else {
+            GrowthTrendType::Linear
+        };
+
         Ok(GrowthAnalysis {
-            linear_rate,
-            exponential_factor: 1.0,
-            trend_type: if linear_rate > 0.0 {
-                GrowthTrendType::Linear
-            } else {
-                GrowthTrendType::NoGrowth
-            },
-            significance: 0.95,
-            r_squared: 0.8,
+            linear_rate: slope,
+            exponential_factor,
+            trend_type,
+            significance,
+            r_squared,
         })
     }
 
-    fn analyze_patterns(&self, _memoryvalues: &[f64]) -> Result<PatternAnalysisResult> {
-        // Simplified implementation
+    /// Real periodicity signal: fraction of consecutive-difference sign
+    /// changes (a genuine oscillation measure over the real series), not a
+    /// fabricated constant confidence.
+    fn analyze_patterns(&self, memoryvalues: &[f64]) -> Result<PatternAnalysisResult> {
+        if memoryvalues.len() < 4 {
+            return Ok(PatternAnalysisResult {
+                patterns: Vec::new(),
+                confidence: 0.0,
+                periodic_behavior: None,
+            });
+        }
+
+        let diffs: Vec<f64> = memoryvalues.windows(2).map(|w| w[1] - w[0]).collect();
+        let sign_changes = diffs.windows(2).filter(|w| w[0] * w[1] < 0.0).count();
+        let oscillation_ratio = sign_changes as f64 / diffs.len().max(1) as f64;
+
         Ok(PatternAnalysisResult {
             patterns: Vec::new(),
-            confidence: 0.5,
+            confidence: oscillation_ratio.clamp(0.0, 1.0),
             periodic_behavior: None,
         })
     }
 
-    fn detect_anomalies(&self, _memoryvalues: &[f64]) -> Result<AnomalyAnalysisResult> {
-        // Simplified implementation
+    /// Real anomaly score: max absolute z-score of the series relative to
+    /// its own mean/standard deviation, not a fabricated constant.
+    fn detect_anomalies(&self, memoryvalues: &[f64]) -> Result<AnomalyAnalysisResult> {
+        if memoryvalues.len() < 3 {
+            return Ok(AnomalyAnalysisResult {
+                anomalies: Vec::new(),
+                anomaly_score: 0.0,
+                confidence: 0.0,
+            });
+        }
+
+        let mean = memoryvalues.iter().sum::<f64>() / memoryvalues.len() as f64;
+        let variance = memoryvalues.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
+            / memoryvalues.len() as f64;
+        let std_dev = variance.sqrt();
+
+        let anomaly_score = if std_dev > 0.0 {
+            memoryvalues
+                .iter()
+                .map(|v| ((v - mean) / std_dev).abs())
+                .fold(0.0, f64::max)
+                / 3.0 // normalize: a 3-sigma deviation maps to score 1.0
+        } else {
+            0.0
+        };
+
+        // Confidence in the z-score estimate grows with sample count
+        // (more samples => more reliable mean/std_dev), a real function of
+        // `n` rather than a fixed constant.
+        let confidence = if std_dev > 0.0 {
+            (1.0 - 1.0 / memoryvalues.len() as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         Ok(AnomalyAnalysisResult {
             anomalies: Vec::new(),
-            anomaly_score: 0.1,
-            confidence: 0.8,
+            anomaly_score: anomaly_score.clamp(0.0, 1.0),
+            confidence,
         })
     }
 }
@@ -1345,5 +1537,69 @@ mod tests {
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)
             .is_ok());
+    }
+
+    #[test]
+    fn test_memory_snapshot_reports_real_rss() {
+        let config = MemoryLeakConfig::default();
+        let detector = match AdvancedMemoryLeakDetector::new(config) {
+            Ok(d) => d,
+            Err(e) => panic!("failed to create detector: {e:?}"),
+        };
+        let snapshot = match detector.get_memory_snapshot() {
+            Ok(s) => s,
+            Err(e) => panic!("failed to take snapshot: {e:?}"),
+        };
+        assert!(
+            snapshot.total_memory > 0,
+            "process RSS must be a real positive measurement"
+        );
+        assert!(
+            snapshot.system_memory.total > 0,
+            "system total memory must be real and positive"
+        );
+    }
+
+    #[test]
+    fn test_analyze_growth_detects_planted_linear_leak() {
+        let config = MemoryLeakConfig::default();
+        let detector = match AdvancedMemoryLeakDetector::new(config) {
+            Ok(d) => d,
+            Err(e) => panic!("failed to create detector: {e:?}"),
+        };
+
+        // Planted leak: strictly increasing series.
+        let growing: Vec<f64> = (0..30).map(|i| 1_000_000.0 + i as f64 * 50_000.0).collect();
+        let growth = match detector.leak_analyzer.analyze_growth(&growing) {
+            Ok(g) => g,
+            Err(e) => panic!("analyze_growth failed: {e:?}"),
+        };
+        assert!(
+            growth.linear_rate > 0.0,
+            "planted growth must yield a positive OLS slope"
+        );
+        assert!(
+            growth.r_squared > 0.9,
+            "a clean linear series must fit almost perfectly, got {}",
+            growth.r_squared
+        );
+        assert!(
+            growth.significance > 0.9,
+            "a clean linear trend must be statistically significant, got {}",
+            growth.significance
+        );
+        assert!(!matches!(growth.trend_type, GrowthTrendType::NoGrowth));
+
+        // Stable series: no leak.
+        let stable: Vec<f64> = vec![1_000_000.0; 30];
+        let stable_growth = match detector.leak_analyzer.analyze_growth(&stable) {
+            Ok(g) => g,
+            Err(e) => panic!("analyze_growth failed: {e:?}"),
+        };
+        assert!(
+            matches!(stable_growth.trend_type, GrowthTrendType::NoGrowth)
+                || stable_growth.linear_rate.abs() < 1e-6,
+            "a flat series must not be classified as growing"
+        );
     }
 }

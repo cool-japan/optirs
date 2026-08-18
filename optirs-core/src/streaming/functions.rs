@@ -2,16 +2,15 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use scirs2_core::ndarray::{Array1, ArrayBase, ScalarOperand};
-use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
-
-use super::types::{StreamingConfig, StreamingDataPoint, StreamingMetrics, StreamingOptimizer};
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::optimizers::SGD;
+    use crate::streaming::types::{
+        StreamingConfig, StreamingDataPoint, StreamingMetrics, StreamingOptimizer,
+    };
+    use scirs2_core::ndarray::Array1;
+    use std::collections::HashMap;
+    use std::time::Instant;
     #[test]
     fn test_streaming_config_default() {
         let config = StreamingConfig::default();

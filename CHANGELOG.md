@@ -5,6 +5,319 @@ All notable changes to OptiRS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-08-18
+
+A production-hardening release. The organizing theme is honesty: throughout the
+workspace, code that *simulated* a result — fabricated p-values, hardcoded success
+rates, `thread::sleep` standing in for device latency, secure-aggregation masks that
+were never actually cancelled — was either replaced with a real implementation or
+changed to return an explicit error naming what it cannot do. No path in this release
+reports a number it did not compute.
+
+No optimizer, scheduler or regularizer was removed or renamed, so ordinary training code
+should need no changes. A large amount of never-implemented scaffolding *was* deleted,
+though, so code that named those types will no longer compile — see **Removed**.
+
+### Added
+
+#### Streaming, drift detection and anomaly detection (`optirs-core::streaming`)
+
+- **Real statistical drift tests.** A new shared numerics module
+  (`streaming/adaptive_streaming/statistics.rs`) provides NaN-safe total ordering,
+  in-place median/quantile selection, the standard-normal survival function (through
+  the `scirs2-stats` Gaussian CDF), a Lanczos `ln_gamma` plus regularized upper
+  incomplete gamma driving an accurate chi-square SF, the Kolmogorov distribution SF,
+  the two-sample KS statistic, smoothed histograms/PMFs, KL / Jensen-Shannon /
+  Hellinger divergences, 1-D Wasserstein distance and the G-test statistic. The drift
+  tests, distribution comparators and linear-model detector in `drift_tests.rs` are
+  built on these instead of on invented p-values.
+- **Real ML anomaly detectors** (`anomaly_ml.rs`), with the z-score and IQR detectors
+  separated into `anomaly_statistical.rs`. Detector success rates are measured, not
+  hardcoded.
+- **Drift-detector models** — `NeuralNetwork`, `DecisionTree` and `Ensemble`
+  (`drift_models.rs`), each fitted against a **Winsorised prequential error baseline**
+  so that a single large error can no longer inflate the baseline variance the detector
+  is testing against.
+- **Per-context drift-detector banks**: `ContextAwareDriftDetector` now builds and keeps
+  an independent detector per observed context instead of sharing one global detector.
+- **Full-curve AUC-ROC** (`anomaly_scoring.rs`): scores are retained in a bounded buffer
+  (4096 entries) and integrated with a tie-grouped trapezoidal rule. Fewer than two
+  labelled scores per class is an explicit error rather than a single-point guess.
+- **Adaptive ensemble voting** (`anomaly_ensemble.rs`): detector weights are per-detector
+  balanced accuracy measured from recorded outcomes, with a documented uniform fallback.
+- **Time-bucketed metric aggregation** with retention eviction
+  (`streaming/streaming_metrics/aggregation.rs`); the configured aggregated-retention
+  window is now enforced instead of being read by nobody.
+- **Contextual-bandit meta-learning** arms, feature standardisation and state/action
+  encoding (`meta_bandit.rs`).
+- `LowLatencyOptimizer` now owns its parameter vector, so `exact_update` returns an
+  actual optimization trajectory rather than one step away from the origin.
+- Resource management now tracks this process's own memory footprint separately from
+  system-wide usage, so per-process allocation budgets are checked against a per-process
+  figure.
+
+#### Privacy (`optirs-core::privacy`)
+
+- **Real Bonawitz secure aggregation** (`privacy/federated/`). Each client generates a
+  per-round X25519 key pair and publishes only the public half; pairwise seeds come from
+  a real ECDH shared secret hashed with SHA-256 under a domain separator, masks are
+  expanded by a SHA-256 counter-mode PRG with rejection sampling (uniform over the group,
+  no modulo bias), and each unordered client pair contributes `+m` once and `−m` once so
+  the server's sum telescopes. The server holds no key material and cannot reconstruct
+  any client's mask. Low-order public keys and self-pairing are rejected.
+  New pure-Rust dependency: `x25519-dalek`.
+- **Robust aggregation operators** (`privacy/federated/robust_ops.rs`): coordinate-wise
+  median, trimmed mean, Krum, Multi-Krum, Bulyan and centered clipping.
+- **Outlier tests** (`privacy/federated/outlier_tests.rs`): z-score, modified z-score,
+  IQR, Grubbs and Chauvenet.
+- **Differentially private hyperparameter selection** via a real exponential mechanism
+  (`private_hyperparameter_optimization/selection.rs`), plus report-noisy-max with
+  Gumbel noise, Laplace and Gaussian selection; unsupported mechanisms are refused with
+  a pointer to the real primitive.
+- **Private Bayesian optimization** with a pure-Rust Gaussian process (Cholesky, RBF
+  kernel), Expected Improvement acquisition and an invertible parameter encoding —
+  `suggest_next` no longer returns an empty configuration.
+- **Verifiable audit trails** (`privacy/enhanced_audit/`): an RFC-6962-style Merkle tree
+  with domain-separated leaf/node tags, canonical length-prefixed event encoding,
+  HMAC-SHA256 pinned against RFC 4231 vectors, constant-time digest comparison, and
+  verification that re-derives every leaf from the caller's events and names the first
+  offending index.
+- **Federated privacy configuration validation** (`federated_privacy/validation.rs`),
+  invoked from the coordinator constructor, plus real subsampling amplification
+  (`ε / ln(1 + q(e^ε − 1))`) replacing a fabricated factor.
+
+#### Checkpointing and plugins (`optirs-core`)
+
+- **`FileCheckpointStorage`** — a filesystem-backed `CheckpointStorage` implementation
+  (`coordination/orchestration/checkpoint_manager/file_storage.rs`) using `oxicode` for
+  the on-disk codec and its CRC32 checksum wrapper for corruption detection. This
+  required `Serialize`/`Deserialize` derives across the 47 types reachable from
+  `Checkpoint<T>`.
+- **Real `plugin.toml` parsing** (`plugin/loader/manifest.rs`) using the `toml` crate,
+  including genuine array-of-tables dependency and permission entries, overlaid onto the
+  previous defaults. `PluginCache` now honours its configured limits.
+
+#### Hardware-aware and lifelong optimization (`optirs-core`)
+
+- **A real optimizer step path** for `hardware_aware::OptimizationState`
+  (`hardware_aware/optimization_state.rs`): it owns a boxed `Optimizer` and a boxed
+  `LearningRateScheduler`, applies the schedule's current rate before stepping and
+  advances it after, and honours gradient accumulation.
+- **Recommendation-driven optimizer selection**: `HardwareOptimizerKind::recommend_for`
+  chooses between SGD / Lion / Adam / LAMB on a stated per-parameter optimizer-state
+  footprint rationale, reported by `state_buffers_per_parameter()`.
+- **Similarity-driven cross-task transfer** for `LifelongOptimizer`
+  (`online_learning/transfer.rs`), with single-linkage task clustering at the transfer
+  threshold and a stable hash for reproducible task grouping.
+- **`AdaptiveTuner`** (`hardware_aware/adaptive_tuner.rs`) with working Grid, Greedy and
+  genetic-algorithm search strategies. Bayesian and reinforcement-learning strategies
+  return explicit errors rather than silently falling back to random search.
+
+#### Neural architecture search (`optirs-nas`)
+
+- **Exact hypervolume** by HSO recursion (`multi_objective/hypervolume.rs`), wired into
+  NSGA-II against a latched reference point, with convergence and objective-space
+  coverage actually computed.
+- **NSGA-II** with real crossover and mutation over architecture components, a full
+  non-dominated sort, and unevaluated individuals excluded from dominance.
+- **MOEA/D** (Zhang & Li, 2007) with a Das-Dennis weight lattice
+  (`multi_objective/moead.rs`) — previously every fallible method returned
+  "not implemented".
+- **Real hyperparameter search** (`hyperparameter/`): mixed-radix grid enumeration
+  (`grid.rs`), a TPE implementation with two adaptive Parzen estimators (`tpe.rs`), and a
+  kernel-regression surrogate with erf-based acquisition functions (`surrogate.rs`).
+  These no longer delegate to random search.
+- **Neural predictor** `backward_update` performs a real backward pass with input
+  validation instead of returning `Ok(())`.
+
+#### Learned optimizers (`optirs-learned`)
+
+- **LSTM truncated BPTT meta-training** (`lstm/bptt.rs`, `lstm/trainer.rs`,
+  `lstm/features.rs`), with gradients verified against finite differences (with and
+  without attention) and meta-training verified to reduce held-out meta-loss.
+- **Seeded, reproducible initialization**: `LSTMNetwork::new_seeded(config, seed)` threads
+  a seeded RNG through the LSTM layers, output projection and attention mechanism;
+  `new()` delegates with an entropy seed.
+- **Transformer performance predictor** (`adaptive/performance_predictor.rs`): a
+  Xavier-initialised random-feature map with ridge-fitted heads. An untrained predictor
+  reports "no information" instead of the previous fabricated 0.15 / 0.92 / 0.85
+  constants.
+- **Real backward pass** in `transformer_based_optimizer`, propagating through the output
+  projection, layer norms, feed-forward blocks and input embedding.
+- **Distinct higher-order differentiation modes**: `HvpMode::{CentralDifference,
+  ForwardDifference, QuadraticSecant, MaterializedHessian}` are four genuinely different
+  algorithms (they were previously byte-identical function bodies);
+  `HvpMode::NestedAutodiff` and `MixedPartialMethod::NestedAutodiff` return explicit
+  errors explaining that nested AD cannot exist behind the engine's black-box `Fn`
+  objective signature.
+- **Evolution-strategies meta-training for `GnnOptimizer` and `NtmOptimizer`**
+  (`gnn_optimizer/meta_training.rs`, `ntm_optimizer/meta_training.rs`), implementing the
+  crate's `MetaTrainable` trait to flatten each architecture's learned weights into one
+  vector, load them back, and clear per-rollout state between generations. Both
+  optimizers previously drew their weights once from the configured seed and never
+  updated them again, so every "learned" step ran on a permanently random network; they
+  now actually train.
+
+#### Benchmarking (`optirs-bench`)
+
+- **Real cross-platform test execution** — the orchestrator's `execute_*_test` paths now
+  run `docker exec`, a local `Command`, or `ssh`, and return an explicit error when the
+  runtime is absent instead of reporting a fabricated pass.
+- **True parallel test execution** (via `futures`), and a new `leak_tool_reports` module
+  for parsing external leak-detector output.
+- Real git metadata collection in the CI/CD automation path.
+
+#### WebAssembly (`optirs-wasm`)
+
+- `WasmGpuOptimizer` gained a real `wasm_bindgen` constructor, genuine `navigator.gpu`
+  presence detection, and a real `requestAdapter()` → `requestDevice()` handshake that
+  reads the actual adapter's vendor/architecture/description, returning an explicit error
+  when WebGPU is unavailable. (Running WGSL compute kernels remains explicitly documented
+  as not implemented.)
+
+#### Tooling and policy
+
+- **`deny.toml`** at the workspace root, enforced by `cargo deny check bans` across the
+  Linux / macOS / Windows / `wasm32` targets. Banned in favour of the COOLJAPAN pure-Rust
+  equivalents: BLAS/LAPACK FFI (`openblas-src`, `blas-src`, `lapack-src`, `intel-mkl-src`,
+  `netlib-src`), `bincode`, the C regex/tokenizer toolchains reached through
+  `onig`/`onig_sys`/`esaxx-rs`, `z3`, `rusqlite`, the compression family
+  (`zip`/`flate2`/`zstd`/`bzip2`/`lz4`/`tar`/`snap`/`brotli`/`miniz_oxide`) and TLS/crypto
+  FFI (`openssl`, `native-tls`, `ring`, `aws-lc-sys`). Wildcard version requirements are
+  denied.
+
+### Changed
+
+- **Zero-warning workspace policy, with no blanket allows.** The workspace-level
+  `[workspace.lints.rust]` table is now intentionally empty and every crate opts in via
+  `[lints] workspace = true`; the previous blanket `#![allow(...)]` attributes were
+  deleted from every crate. This exposed roughly 1,241 `rustc` and 1,360 `clippy`
+  warnings that the allows had been hiding — unused imports, unused variables and dead
+  code — all of which were fixed rather than re-suppressed. `cargo check` and
+  `cargo clippy --workspace --all-features --all-targets` are both at zero warnings.
+- **`unwrap`/`expect` sweep.** Production code no longer panics on numeric conversion or
+  lock poisoning: `A::from(x).expect("unwrap failed")` call sites were replaced with
+  fallible `cast_scalar` / `scalar_to_f64` helpers returning `OptimError`, and mutex
+  handling recovers from poisoning instead of unwrapping. Remaining `expect` calls in
+  test code were given messages that say what actually failed.
+- **File-size policy.** Every source file in the workspace is now under 2,000 lines. The
+  17 files that exceeded it were split into roughly 90 module files (largest result: 1,176
+  lines), with public APIs preserved through re-exports; item inventories, `#[test]` counts
+  and doc-comment counts were diffed against the originals in both directions to confirm
+  that nothing was lost or duplicated. Files split include
+  `optirs-core/src/privacy/byzantine_tolerance.rs`,
+  `privacy/secure_multiparty.rs`, `coordination/orchestration/checkpoint_manager.rs`,
+  `coordination/monitoring/anomaly_detection.rs`, `reinforcement_learning/actor_critic.rs`,
+  `plugin/loader.rs`, `streaming/types.rs`, `optirs-nas/src/multi_objective.rs` and
+  `optirs-tpu/src/tpu_backend.rs`.
+- **GPU vendor backends are disclosed as host-memory simulations.** The
+  `cuda`/`rocm`/`oneapi`/`metal` memory backends no longer sleep to imitate device
+  latency, and each file's header now states plainly that its copy functions move zero
+  bytes and which statistics fields are declared but never incremented.
+- **`GpuOptimizer::to_gpu` / `to_cpu`** renamed to `move_to_gpu` / `move_to_cpu`
+  (`optirs-gpu`, internal step engine) to match Rust self-convention.
+- **SciRS2 dependencies raised from 0.4.0 to 0.6.5** (`scirs2-core`, `scirs2-optimize`,
+  `scirs2-neural`, `scirs2-stats`, and the optional `scirs2-metrics` /
+  `scirs2-datasets`).
+- **Reproducible tests.** Learning-outcome tests that previously depended on entropy
+  seeding (and could therefore fail as a lottery over initializations) are pinned to
+  fixed seeds, with a determinism regression test.
+
+### Fixed
+
+- **Secure aggregation was numerically wrong as well as insecure**: masks were added and
+  never removed, so the "aggregate" was the mean of the client updates plus a pile of
+  random noise. Masks now cancel exactly.
+- **DARTS progressive discretization selected the wrong operation.** The default path
+  took the argmax of *squared* signed logits, which selects the most negative logit.
+  Replaced with a plain argmax, with regression tests.
+- **`LowLatencyOptimizer::exact_update` zeroed parameters** on every call by treating a
+  fresh zero array as the current parameters.
+- **A prequential drift baseline absorbed the drift it existed to detect** — its variance
+  estimator was an EWMA of the squared deviation from the slow mean, so a single
+  k-sigma observation multiplied it by roughly `α·k²` (measured: `1.0e-5` → `70` in one
+  observation), masking the shift within about twenty samples. Now Winsorised.
+- **Second-order finite-difference steps were not precision-aware.** Second-order stencils
+  used the raw configured `1e-5` epsilon; dividing by `h² = 1e-10` puts the roundoff floor
+  at about `2e-6` in `f64` and `1.2e3` in `f32` — the `f32` Hessian was pure noise. Fixed
+  to a machine-precision-aware step at the stencil's total order.
+- **`truncated_newton_direction` materialised the entire Hessian inside every CG
+  iteration** (`4n²` objective calls per Hessian-vector product where `4n` suffice).
+- **`kfac_hessian_approximation` indexed past the end** of the activation/gradient slices
+  instead of returning an error.
+- **`jacobian_forward_mode` used a one-sided step** and re-evaluated the objective once per
+  input column, inconsistently with the reverse-mode path.
+- **K-FAC convolution statistics** were computed from a modulo placeholder instead of a
+  real averaged outer product.
+- **NAS architecture encoding was lossy**: operation indices are now an injective 0..=40
+  mapping with lossless metadata and an explicit decline-to-guess fallback, covered by a
+  bijection test.
+- **Resource-budget checks compared system-wide RAM against a per-process allocation
+  budget**, reporting 671 % memory utilisation and a spurious violation on a default
+  configuration.
+- **The cross-platform benchmark harness could report infinite throughput**
+  (`optirs-core/src/benchmarking/cross_platform_tester.rs`): per-iteration timing
+  quantised to zero on fast closures, so the derived rate was a division by zero. Timing
+  is now batched across iterations, and an unresolvable duration is an explicit error
+  rather than a fabricated rate.
+- **Docker benchmark containers exited immediately** because `docker create` with no
+  command used the image's default `CMD`.
+- **`ResourceConstraints::default` latent bug** and an inverted task-priority sort
+  (priorities are now sorted descending) were corrected.
+- **`optirs-wasm` WebGPU feature detection** silently returned `false` regardless of real
+  browser support, and `WasmGpuOptimizer` had no constructor at all, making its accessors
+  unreachable.
+- Numerous unguarded index and shape operations now return typed errors instead of
+  panicking.
+
+### Removed
+
+> **API removals.** This release deletes a substantial amount of scaffolding that was
+> publicly exported but never implemented — types whose methods returned `Ok(())`,
+> configuration structs read by nobody, and duplicate definitions of the same concept.
+> Code that named these types will no longer compile. Nothing that had a working
+> implementation was removed, and no working type was renamed.
+
+- **`optirs-core::privacy`**: the duplicate `SecureAggregator<T>` in
+  `federated_privacy/components.rs` (its state was the insecure server-holds-every-mask
+  design); `AdvancedFederatedConfig` and roughly 14 of its sub-configuration structs;
+  roughly 20 residual duplicate public types; 11 constructor-only shells in
+  `components.rs` and 8 dead shells in the private-HPO type module; and 35 generated
+  `*_traits.rs` shell files across `enhanced_audit/` and
+  `private_hyperparameter_optimization/`, collapsed into one `trait_impls.rs` each.
+- **`optirs-core::plugin`**: the `template_generator` and `validator` modules.
+- **`optirs-learned`**: roughly 40 dead scaffolding types, and about 13 million dead
+  duplicate parameters in the transformer optimizer (which is what made its previously
+  `#[ignore]`d creation test fast enough to enable).
+- **`optirs-nas`**: roughly 45 dead scaffolding types, including the whole of
+  `multi_objective/algorithms.rs` (`IBEA`, `QualityIndicator`, `SmsEmoa`),
+  `multi_objective/preference.rs` (`ConstraintHandler` and friends) and 22 types from
+  `evaluation/predictor.rs`. All three pre-existing `#[allow(unused_imports)]`
+  attributes were removed; the crate now contains no `#[allow]` of any kind.
+- **`optirs-tpu`**: the duplicate `xla_compilation` module (folded into `xla/`); the
+  `PowerProfiler` scaffolding in the XLA profiling-integration module; the descriptor
+  stand-in for a compiled program binary (`encode_program_binary`, `tpu_version_code`,
+  `optimization_level_code`, `fnv1a_64`) and the identity `evaluate_reference`, both
+  superseded by the real code generator and reference executor; and the
+  optimization-level lookup tables `estimate_compute_utilization` /
+  `estimate_bandwidth_utilization`, superseded by measured figures.
+- **`optirs-gpu`**: `src/kernels.rs` and the SGD/Adam kernel string templates; the
+  `thread::sleep` latency simulations in all four vendor memory backends.
+- **`optirs-bench`**: the superseded `memory_profiler_integration` and
+  `regression_tester_refactored` modules (`regression_tester` remains).
+- **Dependencies**: `tokenizers` and `autograd` (both pulled in C/C++ code), and the
+  unused `scirs2-linalg`, `scirs2-signal` and `scirs2-series` dependencies.
+
+### Verification
+
+At the close of this cycle, on `--all-features`:
+
+- `cargo check --workspace --all-targets` — 0 warnings
+- `cargo clippy --workspace --all-targets` — 0 warnings
+- more than 4,200 unit/integration tests passing, plus the doc tests
+- `cargo deny check bans` — ok
+- no source file at or above 2,000 lines
+
 ## [0.3.1] - 2026-03-27
 
 ### Changed
@@ -353,6 +666,7 @@ Legend: ✅ Production Ready | 🚧 In Development | 🔬 Research Phase | ❌ N
 
 ---
 
+[0.3.2]: https://github.com/cool-japan/optirs/releases/tag/v0.3.2
 [0.3.1]: https://github.com/cool-japan/optirs/releases/tag/v0.3.1
 [0.3.0]: https://github.com/cool-japan/optirs/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cool-japan/optirs/releases/tag/v0.2.0

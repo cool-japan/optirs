@@ -3,18 +3,104 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use crate::error::{OptimError, Result};
-use crate::privacy::moment_accountant::MomentsAccountant;
 use crate::privacy::{DifferentialPrivacyConfig, PrivacyBudget};
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::rngs::StdRng;
-use scirs2_core::random::Rng;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use super::functions::{NoisyOptimizer, ObjectiveFn, RuleFn, TestFn};
+use super::functions::{ObjectiveFn, RuleFn, TestFn};
+use super::results::SelectionReport;
 
-/// Result validator
+/// Generator used by the private HPO search strategies and noise mechanisms.
+pub type HpoRng = scirs2_core::random::Random<StdRng>;
+
+/// Create a search generator seeded from OS entropy.
+///
+/// Hyperparameter proposals must not be predictable from a constant seed:
+/// a fixed seed makes the whole search trajectory public knowledge, which
+/// leaks which configurations were evaluated against the private dataset.
+/// The `*_with_seed` constructors exist for reproducible tests only.
+pub fn os_seeded_hpo_rng() -> HpoRng {
+    scirs2_core::random::SeedableRng::from_rng(&mut scirs2_core::random::thread_rng())
+}
+
+/// Seconds since the Unix epoch, or an error if the clock is before it.
+///
+/// Replaces a `.expect("unwrap failed")` in the evaluation loop: a clock skewed
+/// behind the epoch is a configuration problem, not a reason to abort the
+/// process.
+pub fn unix_timestamp() -> Result<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .map_err(|err| {
+            OptimError::InvalidState(format!(
+                "the system clock is set before the Unix epoch, so evaluations cannot be \
+                 timestamped: {err}"
+            ))
+        })
+}
+
+/// Outcome of running a [`ResultValidator`] over a batch of evaluations.
+///
+/// This is a *sanity* report on the optimizer's own bookkeeping, not a privacy
+/// statement: it is computed from values the optimizer already holds, so it
+/// spends no epsilon. Do not publish it alongside a private release without
+/// accounting for it separately.
+#[derive(Debug, Clone)]
+pub struct ValidationReport {
+    /// Number of results inspected.
+    pub inspected: usize,
+    /// Results whose objective was not finite (NaN or infinity).
+    pub non_finite: usize,
+    /// Results whose status was not [`EvaluationStatus::Success`].
+    pub incomplete: usize,
+    /// Names of the [`ValidationRule`]s that at least one result failed, each
+    /// with the number of failures and the rule's weight.
+    pub rule_failures: Vec<(String, usize, f64)>,
+    /// Weighted failure score: `sum(weight * failures) / sum(weight *
+    /// inspected)` over the configured rules, in `[0, 1]`. `0.0` when no rules
+    /// are configured.
+    pub weighted_failure_rate: f64,
+    /// One entry per configured [`StatisticalTest`], paired with whether its
+    /// p-value fell below the test's `alpha`.
+    pub test_results: Vec<(String, StatisticalTestResult, bool)>,
+    /// Indices of results the [`AnomalyDetector`] flagged.
+    pub anomalies: Vec<usize>,
+}
+
+impl ValidationReport {
+    /// Whether anything at all was flagged.
+    pub fn is_clean(&self) -> bool {
+        self.non_finite == 0
+            && self.incomplete == 0
+            && self.rule_failures.is_empty()
+            && self.anomalies.is_empty()
+            && self.test_results.iter().all(|(_, _, rejected)| !rejected)
+    }
+}
+
+/// Validator for a batch of hyperparameter-optimization results.
+///
+/// # What it checks
+///
+/// 1. **Structural checks**, always applied: a non-finite objective (the usual
+///    symptom of a diverged trial) and a status other than
+///    [`EvaluationStatus::Success`].
+/// 2. **Configured rules** ([`Self::add_rule`]): arbitrary per-result
+///    predicates, each with a weight, aggregated into
+///    [`ValidationReport::weighted_failure_rate`].
+/// 3. **Configured tests** ([`Self::add_test`]): batch-level statistics, each
+///    with its own `alpha`; the report records whether each rejected.
+/// 4. **Anomaly detection** ([`AnomalyDetector`]): objective values far from
+///    the batch's own robust centre.
+///
+/// Before 0.3.2 this type had `new()` and nothing else: `validation_rules` and
+/// `statistical_tests` were empty vectors that no code path could populate or
+/// read, and the anomaly detector was constructed and never consulted, so the
+/// aggregator's "validation" step validated nothing.
 pub struct ResultValidator<T: Float + Debug + Send + Sync + 'static> {
     /// Validation rules
     validation_rules: Vec<ValidationRule<T>>,
@@ -23,12 +109,120 @@ pub struct ResultValidator<T: Float + Debug + Send + Sync + 'static> {
     /// Anomaly detection
     anomaly_detector: AnomalyDetector<T>,
 }
+
 impl<T: Float + Debug + Send + Sync + 'static> ResultValidator<T> {
+    /// A validator with the structural checks and the default z-score anomaly
+    /// detector, and no user rules or tests.
     pub fn new() -> Self {
         Self {
             validation_rules: Vec::new(),
             statistical_tests: Vec::new(),
             anomaly_detector: AnomalyDetector::new(),
+        }
+    }
+
+    /// Register a per-result rule. `weight` must be positive and finite.
+    pub fn add_rule(&mut self, rule: ValidationRule<T>) -> Result<()> {
+        if !rule.weight.is_finite() || rule.weight <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "validation rule '{}' has weight {}, which must be positive and finite",
+                rule.name, rule.weight
+            )));
+        }
+        self.validation_rules.push(rule);
+        Ok(())
+    }
+
+    /// Register a batch-level statistical test. `alpha` must lie in `(0, 1)`.
+    pub fn add_test(&mut self, test: StatisticalTest<T>) -> Result<()> {
+        if !(0.0..1.0).contains(&test.alpha) || test.alpha <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "statistical test '{}' has alpha {}, which must lie in (0, 1)",
+                test.name, test.alpha
+            )));
+        }
+        self.statistical_tests.push(test);
+        Ok(())
+    }
+
+    /// The registered rules.
+    pub fn rules(&self) -> &[ValidationRule<T>] {
+        &self.validation_rules
+    }
+
+    /// The registered tests.
+    pub fn tests(&self) -> &[StatisticalTest<T>] {
+        &self.statistical_tests
+    }
+
+    /// Mutable access to the anomaly detector, so its threshold, method and
+    /// baseline can be configured.
+    pub fn anomaly_detector_mut(&mut self) -> &mut AnomalyDetector<T> {
+        &mut self.anomaly_detector
+    }
+
+    /// The anomaly detector.
+    pub fn anomaly_detector(&self) -> &AnomalyDetector<T> {
+        &self.anomaly_detector
+    }
+
+    /// Run every configured check over `results`.
+    ///
+    /// An empty batch yields an empty report rather than an error: there is
+    /// nothing wrong with having produced no results yet.
+    pub fn validate(&self, results: &[HPOResult<T>]) -> ValidationReport {
+        let mut non_finite = 0usize;
+        let mut incomplete = 0usize;
+        for result in results {
+            if result
+                .objective_value
+                .to_f64()
+                .is_none_or(|v| !v.is_finite())
+            {
+                non_finite += 1;
+            }
+            if !matches!(result.status, EvaluationStatus::Success) {
+                incomplete += 1;
+            }
+        }
+
+        let mut rule_failures = Vec::new();
+        let mut weighted_failures = 0.0_f64;
+        let mut weighted_total = 0.0_f64;
+        for rule in &self.validation_rules {
+            let failures = results.iter().filter(|r| !(rule.rule_fn)(r)).count();
+            weighted_failures += rule.weight * failures as f64;
+            weighted_total += rule.weight * results.len() as f64;
+            if failures > 0 {
+                rule_failures.push((rule.name.clone(), failures, rule.weight));
+            }
+        }
+        let weighted_failure_rate = if weighted_total > 0.0 {
+            weighted_failures / weighted_total
+        } else {
+            0.0
+        };
+
+        let test_results = self
+            .statistical_tests
+            .iter()
+            .map(|test| {
+                let outcome = (test.test_fn)(results);
+                let rejected = outcome.p_value < test.alpha;
+                (test.name.clone(), outcome, rejected)
+            })
+            .collect();
+
+        let anomalies = self.anomaly_detector.flag(results);
+
+        ValidationReport {
+            inspected: results.len(),
+            non_finite,
+            incomplete,
+            rule_failures,
+            weighted_failure_rate,
+            test_results,
+            anomalies,
         }
     }
 }
@@ -62,30 +256,6 @@ pub struct HPOEvaluation<T: Float + Debug + Send + Sync + 'static> {
     /// Evaluation metadata
     pub metadata: HashMap<String, String>,
 }
-/// Adaptive budget controller
-pub struct AdaptiveBudgetController {
-    /// Historical performance scores
-    performance_history: Vec<f64>,
-    /// Budget efficiency tracker
-    budget_efficiency: Vec<f64>,
-    /// Allocation weights
-    allocation_weights: Vec<f64>,
-    /// Learning rate for adaptation
-    adaptation_rate: f64,
-}
-impl AdaptiveBudgetController {
-    pub fn new() -> Self {
-        Self {
-            performance_history: Vec::new(),
-            budget_efficiency: Vec::new(),
-            allocation_weights: Vec::new(),
-            adaptation_rate: 0.1,
-        }
-    }
-    pub fn record_performance(&mut self, score: f64) {
-        self.performance_history.push(score);
-    }
-}
 /// Smooth sensitivity parameters
 #[derive(Debug, Clone)]
 pub struct SmoothSensitivityParams<T: Float + Debug + Send + Sync + 'static> {
@@ -113,32 +283,6 @@ pub enum SearchAlgorithm {
     SimulatedAnnealing,
     /// Tree-structured Parzen estimator with differential privacy
     TPE,
-}
-/// Search strategy for hyperparameter optimization
-pub struct SearchStrategy<T: Float + Debug + Send + Sync + 'static> {
-    /// Search algorithm
-    algorithm: SearchAlgorithm,
-    /// Algorithm-specific parameters
-    algorithm_params: HashMap<String, f64>,
-    /// Exploration-exploitation balance
-    exploration_factor: f64,
-    /// Convergence criteria
-    convergence_criteria: ConvergenceCriteria<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> SearchStrategy<T> {
-    pub fn new() -> Self {
-        Self {
-            algorithm: SearchAlgorithm::RandomSearch,
-            algorithm_params: HashMap::new(),
-            exploration_factor: 0.1,
-            convergence_criteria: ConvergenceCriteria {
-                max_iterations: 100,
-                tolerance: T::from(1e-6).unwrap_or_else(|| T::zero()),
-                patience: 10,
-                min_change: T::from(1e-4).unwrap_or_else(|| T::zero()),
-            },
-        }
-    }
 }
 /// Fold assignment strategies
 #[derive(Debug, Clone, Copy)]
@@ -225,55 +369,38 @@ pub enum TestConclusion {
     InsufficientEvidence,
 }
 /// Selection parameters
+///
+/// # 0.3.2 change
+///
+/// `delta` was added so [`HyperparameterNoiseMechanism::Gaussian`] selection can
+/// be calibrated instead of refused. Struct-literal construction needs the extra
+/// field; [`SelectionParameters::pure_epsilon`] builds the pure-epsilon shape.
 #[derive(Debug, Clone)]
 pub struct SelectionParameters<T: Float + Debug + Send + Sync + 'static> {
-    /// Temperature parameter (for exponential mechanism)
+    /// Temperature parameter, dividing the utility before it is exponentiated
     pub temperature: T,
-    /// Sensitivity bound for utility
+    /// Sensitivity bound for utility (`Delta_u`)
     pub utility_sensitivity: T,
-    /// Privacy parameters
+    /// Epsilon charged per selection
     pub epsilon: f64,
-    /// Selection threshold
+    /// Delta charged per selection; required by the Gaussian mechanism only
+    pub delta: Option<f64>,
+    /// Public utility threshold below which candidates are discarded before the
+    /// mechanism runs.
+    ///
+    /// Only sound when the threshold is public knowledge: filtering on a
+    /// data-dependent threshold would leak through the candidate set.
     pub threshold: Option<T>,
 }
-/// Private aggregation of cross-validation results
-pub struct PrivateFoldAggregation<T: Float + Debug + Send + Sync + 'static> {
-    /// Aggregation method
-    aggregation_method: AggregationMethod,
-    /// Noise parameters for aggregation
-    noise_params: NoiseParameters<T>,
-    /// Confidence interval estimation
-    confidence_estimation: ConfidenceEstimation<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PrivateFoldAggregation<T> {
-    pub fn new() -> Self {
+impl<T: Float + Debug + Send + Sync + 'static> SelectionParameters<T> {
+    /// Parameters for a pure-epsilon mechanism.
+    pub fn pure_epsilon(epsilon: f64, utility_sensitivity: T) -> Self {
         Self {
-            aggregation_method: AggregationMethod::NoisyMean,
-            noise_params: NoiseParameters {
-                scale: T::one(),
-                sensitivity: T::one(),
-                epsilon: 1.0,
-                delta: Some(1e-5),
-            },
-            confidence_estimation: ConfidenceEstimation::new(),
-        }
-    }
-}
-/// Acquisition function for Bayesian optimization
-pub struct AcquisitionFunction<T: Float + Debug + Send + Sync + 'static> {
-    /// Function type
-    function_type: AcquisitionFunctionType,
-    /// Function parameters
-    parameters: Vec<T>,
-    /// Exploration-exploitation balance
-    exploration_weight: T,
-}
-impl<T: Float + Debug + Send + Sync + 'static> AcquisitionFunction<T> {
-    pub fn new() -> Self {
-        Self {
-            function_type: AcquisitionFunctionType::ExpectedImprovement,
-            parameters: Vec::new(),
-            exploration_weight: T::from(0.1).unwrap_or_else(|| T::zero()),
+            temperature: T::one(),
+            utility_sensitivity,
+            epsilon,
+            delta: None,
+            threshold: None,
         }
     }
 }
@@ -325,6 +452,7 @@ pub struct GaussianProcessModel<T: Float + Debug + Send + Sync + 'static> {
     hyperparameters: Vec<T>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> GaussianProcessModel<T> {
+    /// An empty (unfitted) model with an RBF kernel.
     pub fn new() -> Self {
         Self {
             training_inputs: Vec::new(),
@@ -332,6 +460,84 @@ impl<T: Float + Debug + Send + Sync + 'static> GaussianProcessModel<T> {
             kernel: KernelFunction::new(),
             hyperparameters: Vec::new(),
         }
+    }
+
+    /// Number of recorded training points.
+    pub fn observation_count(&self) -> usize {
+        self.training_inputs.len()
+    }
+
+    /// The kernel.
+    pub fn kernel(&self) -> &KernelFunction<T> {
+        &self.kernel
+    }
+
+    /// The fitted hyperparameters: `[length_scale, signal_variance,
+    /// noise_variance]` once [`GaussianProcessModel::fit`] has run.
+    pub fn hyperparameters(&self) -> &[T] {
+        &self.hyperparameters
+    }
+
+    /// Record training data and fit the exact posterior.
+    ///
+    /// Delegates the linear algebra to
+    /// [`super::gaussian_process::GaussianProcessFit`], which factorises
+    /// `K + sigma_n^2 I` by Cholesky. Returns the fitted posterior so a caller
+    /// can predict with it.
+    pub fn fit(
+        &mut self,
+        inputs: &[Vec<T>],
+        outputs: &[T],
+        noise_variance: f64,
+    ) -> Result<super::gaussian_process::GaussianProcessFit> {
+        if inputs.len() != outputs.len() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "{} inputs and {} outputs were supplied",
+                inputs.len(),
+                outputs.len()
+            )));
+        }
+        let encoded: Vec<Vec<f64>> = inputs
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|value| {
+                        value.to_f64().ok_or_else(|| {
+                            OptimError::InvalidParameter(
+                                "a training input cannot be represented as f64".to_string(),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<f64>>>()
+            })
+            .collect::<Result<Vec<Vec<f64>>>>()?;
+        let targets: Vec<f64> = outputs
+            .iter()
+            .map(|value| {
+                value.to_f64().ok_or_else(|| {
+                    OptimError::InvalidParameter(
+                        "a training output cannot be represented as f64".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<f64>>>()?;
+
+        let fit = super::gaussian_process::GaussianProcessFit::fit_with_median_heuristic(
+            &encoded,
+            &targets,
+            noise_variance,
+        )?;
+        self.training_inputs = inputs.to_vec();
+        self.training_outputs = outputs.to_vec();
+        self.hyperparameters = [
+            fit.length_scale(),
+            fit.signal_variance(),
+            fit.noise_variance(),
+        ]
+        .iter()
+        .filter_map(|value| T::from(*value))
+        .collect();
+        Ok(fit)
     }
 }
 /// Noise mechanisms for hyperparameter selection
@@ -375,15 +581,19 @@ pub enum BootstrapType {
     Block,
 }
 /// Utility function for hyperparameter selection
+///
+/// [`UtilityFunction::evaluate`] (in [`super::selection`]) maps a raw objective
+/// value to the utility the exponential mechanism scores.
 pub struct UtilityFunction<T: Float + Debug + Send + Sync + 'static> {
     /// Function type
     function_type: UtilityFunctionType,
-    /// Function parameters
+    /// Function parameters; `parameters[0]` scales the mapping
     parameters: Vec<T>,
     /// Multi-objective weights
     multi_objective_weights: Option<Vec<T>>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> UtilityFunction<T> {
+    /// A linear, unit-scaled utility.
     pub fn new() -> Self {
         Self {
             function_type: UtilityFunctionType::Linear,
@@ -391,85 +601,35 @@ impl<T: Float + Debug + Send + Sync + 'static> UtilityFunction<T> {
             multi_objective_weights: None,
         }
     }
-}
-/// Privacy budget manager for hyperparameter optimization
-pub struct HPOBudgetManager {
-    /// Total privacy budget
-    total_budget: PrivacyBudget,
-    /// Budget allocation per evaluation
-    evaluation_budgets: Vec<PrivacyBudget>,
-    /// Budget allocation strategy
-    allocation_strategy: BudgetAllocationStrategy,
-    /// Consumed budget tracker
-    consumed_budget: PrivacyBudget,
-    /// Adaptive budget controller
-    adaptive_controller: AdaptiveBudgetController,
-}
-impl HPOBudgetManager {
-    pub fn new(
-        baseconfig: DifferentialPrivacyConfig,
-        allocation_strategy: BudgetAllocationStrategy,
-        num_evaluations: usize,
-    ) -> Result<Self> {
-        let total_budget = PrivacyBudget {
-            epsilon_consumed: 0.0,
-            delta_consumed: 0.0,
-            epsilon_remaining: baseconfig.target_epsilon,
-            delta_remaining: baseconfig.target_delta,
-            steps_taken: 0,
-            accounting_method: crate::privacy::AccountingMethod::MomentsAccountant,
-            estimated_steps_remaining: num_evaluations,
-        };
-        Ok(Self {
-            total_budget,
-            evaluation_budgets: Vec::new(),
-            allocation_strategy,
-            consumed_budget: PrivacyBudget {
-                epsilon_consumed: 0.0,
-                delta_consumed: 0.0,
-                epsilon_remaining: baseconfig.target_epsilon,
-                delta_remaining: baseconfig.target_delta,
-                steps_taken: 0,
-                accounting_method: crate::privacy::AccountingMethod::MomentsAccountant,
-                estimated_steps_remaining: num_evaluations,
-            },
-            adaptive_controller: AdaptiveBudgetController::new(),
-        })
+
+    /// The configured function family.
+    pub fn function_type(&self) -> UtilityFunctionType {
+        self.function_type
     }
-    pub fn has_budget_remaining(&self) -> Result<bool> {
-        Ok(self.consumed_budget.epsilon_remaining > 0.0
-            && self.consumed_budget.delta_remaining > 0.0)
+
+    /// Replace the function family.
+    pub fn set_function_type(&mut self, function_type: UtilityFunctionType) {
+        self.function_type = function_type;
     }
-    pub fn get_evaluation_budget(&mut self, iteration: usize) -> Result<PrivacyBudget> {
-        let remaining_evaluations = self
-            .total_budget
-            .estimated_steps_remaining
-            .saturating_sub(iteration);
-        let epsilon_per_eval =
-            self.consumed_budget.epsilon_remaining / remaining_evaluations.max(1) as f64;
-        let delta_per_eval =
-            self.consumed_budget.delta_remaining / remaining_evaluations.max(1) as f64;
-        Ok(PrivacyBudget {
-            epsilon_consumed: 0.0,
-            delta_consumed: 0.0,
-            epsilon_remaining: epsilon_per_eval,
-            delta_remaining: delta_per_eval,
-            steps_taken: 0,
-            accounting_method: crate::privacy::AccountingMethod::MomentsAccountant,
-            estimated_steps_remaining: 1,
-        })
+
+    /// The function parameters.
+    pub fn parameters(&self) -> &[T] {
+        &self.parameters
     }
-    pub fn record_evaluation(&mut self, budgetused: &PrivacyBudget, score: f64) -> Result<()> {
-        self.consumed_budget.epsilon_consumed += budgetused.epsilon_remaining;
-        self.consumed_budget.delta_consumed += budgetused.delta_remaining;
-        self.consumed_budget.epsilon_remaining -= budgetused.epsilon_remaining;
-        self.consumed_budget.delta_remaining -= budgetused.delta_remaining;
-        self.consumed_budget.steps_taken += 1;
-        self.adaptive_controller.record_performance(score);
-        Ok(())
+
+    /// Replace the function parameters.
+    pub fn set_parameters(&mut self, parameters: Vec<T>) {
+        self.parameters = parameters;
     }
-    pub fn get_total_consumed_budget(&self) -> PrivacyBudget {
-        self.consumed_budget.clone()
+
+    /// The multi-objective weights, if configured.
+    pub fn multi_objective_weights(&self) -> Option<&[T]> {
+        self.multi_objective_weights.as_deref()
+    }
+
+    /// Replace the multi-objective weights.
+    pub fn set_multi_objective_weights(&mut self, weights: Option<Vec<T>>) {
+        self.multi_objective_weights = weights;
     }
 }
 /// Model selection results
@@ -554,24 +714,6 @@ pub struct PrivateHPOConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Validation strategy
     pub validation_strategy: ValidationStrategy,
 }
-/// Objective sensitivity analyzer
-pub struct ObjectiveSensitivityAnalyzer<T: Float + Debug + Send + Sync + 'static> {
-    /// Sensitivity estimation method
-    estimation_method: SensitivityEstimationMethod,
-    /// Sensitivity cache
-    sensitivity_cache: HashMap<String, T>,
-    /// Sample-based sensitivity estimator
-    sample_estimator: SampleBasedSensitivityEstimator<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ObjectiveSensitivityAnalyzer<T> {
-    pub fn new() -> Self {
-        Self {
-            estimation_method: SensitivityEstimationMethod::Global,
-            sensitivity_cache: HashMap::new(),
-            sample_estimator: SampleBasedSensitivityEstimator::new(),
-        }
-    }
-}
 /// Parameter value types
 #[derive(Debug, Clone)]
 pub enum ParameterValue<T: Float + Debug + Send + Sync + 'static> {
@@ -619,73 +761,7 @@ pub enum ParameterPrior<T: Float + Debug + Send + Sync + 'static> {
     /// Gamma prior
     Gamma(T, T),
 }
-/// Private results aggregator
-pub struct PrivateResultsAggregator<T: Float + Debug + Send + Sync + 'static> {
-    /// Aggregation strategy
-    aggregation_strategy: ResultAggregationStrategy,
-    /// Privacy budget for final selection
-    selection_budget: PrivacyBudget,
-    /// Selection mechanism
-    selection_mechanism: SelectionMechanism<T>,
-    /// Result validation
-    result_validator: ResultValidator<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PrivateResultsAggregator<T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            aggregation_strategy: ResultAggregationStrategy::SelectBest,
-            selection_budget: PrivacyBudget {
-                epsilon_consumed: 0.0,
-                delta_consumed: 0.0,
-                epsilon_remaining: 0.1,
-                delta_remaining: 1e-6,
-                steps_taken: 0,
-                accounting_method: crate::privacy::AccountingMethod::MomentsAccountant,
-                estimated_steps_remaining: 1,
-            },
-            selection_mechanism: SelectionMechanism::new(),
-            result_validator: ResultValidator::new(),
-        })
-    }
-    pub fn aggregate_results(
-        &self,
-        evaluations: &[HPOEvaluation<T>],
-    ) -> Result<AggregatedResults<T>> {
-        let mut topconfigs = Vec::new();
-        let mut sorted_evals = evaluations.to_vec();
-        sorted_evals.sort_by(|a, b| {
-            b.result
-                .objective_value
-                .partial_cmp(&a.result.objective_value)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        for eval in sorted_evals.iter().take(5) {
-            topconfigs.push((eval.configuration.clone(), eval.result.objective_value));
-        }
-        let objective_values: Vec<T> = evaluations
-            .iter()
-            .map(|eval| eval.result.objective_value)
-            .collect();
-        let mean = if !objective_values.is_empty() {
-            objective_values.iter().fold(T::zero(), |acc, &x| acc + x)
-                / T::from(objective_values.len()).expect("unwrap failed")
-        } else {
-            T::zero()
-        };
-        let summary_stats = SummaryStatistics {
-            noisy_mean: mean,
-            noisy_std: T::zero(),
-            noisy_median: mean,
-            noisy_quantiles: vec![(0.5, mean)],
-        };
-        Ok(AggregatedResults {
-            topconfigurations: topconfigs,
-            confidence_intervals: None,
-            summary_stats,
-            model_selection: None,
-        })
-    }
-}
+
 /// Anomaly detection methods
 #[derive(Debug, Clone, Copy)]
 pub enum AnomalyDetectionMethod {
@@ -698,61 +774,173 @@ pub enum AnomalyDetectionMethod {
     /// Local outlier factor
     LocalOutlierFactor,
 }
-/// Noise mechanisms for objective function evaluation
+/// Noise mechanism for objective function evaluation.
+///
+/// # The defect this replaces
+///
+/// `add_noise` matched only `Gaussian` and fell through to `_ => Ok(value)`, so
+/// the Laplace, Exponential, NoisyMax and SparseVector settings added **no noise
+/// at all**. The privacy budget argument was named `_privacybudget` and ignored
+/// entirely, so the noise scale was the constant `T::one()` regardless of the
+/// epsilon the evaluation had been granted.
+///
+/// Now the scale is derived from the granted epsilon and the declared
+/// sensitivity, and the mechanisms that are not scalar-perturbation mechanisms
+/// are refused rather than silently skipped.
 pub struct ObjectiveNoiseMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Mechanism type
     mechanism_type: HyperparameterNoiseMechanism,
-    /// Noise parameters
+    /// Noise parameters; `scale` records the last derived scale
     noise_params: NoiseParameters<T>,
-    /// Random number generator
-    rng: scirs2_core::random::Random,
+    /// Generator, seeded from OS entropy
+    rng: HpoRng,
+    /// Total epsilon charged for objective perturbation
+    epsilon_spent: f64,
+    /// Number of noisy releases
+    releases: usize,
 }
 impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
+    /// A Laplace mechanism at unit sensitivity, seeded from OS entropy.
+    ///
+    /// Laplace is the default because the objective release is charged in pure
+    /// epsilon, matching the pure-epsilon selection that consumes it.
     pub fn new() -> Self {
         Self {
-            mechanism_type: HyperparameterNoiseMechanism::Gaussian,
+            mechanism_type: HyperparameterNoiseMechanism::Laplace,
             noise_params: NoiseParameters {
                 scale: T::one(),
                 sensitivity: T::one(),
                 epsilon: 1.0,
-                delta: Some(1e-5),
+                delta: None,
             },
-            rng: scirs2_core::random::Random::default(),
+            rng: os_seeded_hpo_rng(),
+            epsilon_spent: 0.0,
+            releases: 0,
         }
     }
-    pub fn add_noise(&mut self, value: f64, _privacybudget: &PrivacyBudget) -> Result<f64> {
-        use scirs2_core::random::{RandNormal, Rng};
-        match self.mechanism_type {
-            HyperparameterNoiseMechanism::Gaussian => {
-                let noise_scale = self.noise_params.scale.to_f64().unwrap_or(1.0);
-                let normal = RandNormal::new(0.0, noise_scale)
-                    .map_err(|_| OptimError::InvalidConfig("Invalid noise scale".to_string()))?;
-                let noise = self.rng.sample(normal);
-                Ok(value + noise)
+
+    /// A mechanism with explicit parameters.
+    pub fn with_parameters(
+        mechanism_type: HyperparameterNoiseMechanism,
+        noise_params: NoiseParameters<T>,
+    ) -> Result<Self> {
+        let sensitivity = noise_params.sensitivity.to_f64().ok_or_else(|| {
+            OptimError::InvalidParameter("the sensitivity cannot be represented as f64".to_string())
+        })?;
+        if !sensitivity.is_finite() || sensitivity <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the objective sensitivity must be positive and finite, got {sensitivity}"
+            )));
+        }
+        Ok(Self {
+            mechanism_type,
+            noise_params,
+            rng: os_seeded_hpo_rng(),
+            epsilon_spent: 0.0,
+            releases: 0,
+        })
+    }
+
+    /// Replace the generator with a deterministic one (tests only).
+    pub fn seed_for_tests(&mut self, seed: u64) {
+        self.rng = scirs2_core::random::Random::seed(seed);
+    }
+
+    /// The configured mechanism.
+    pub fn mechanism_type(&self) -> HyperparameterNoiseMechanism {
+        self.mechanism_type
+    }
+
+    /// The noise parameters, including the last derived scale.
+    pub fn noise_params(&self) -> &NoiseParameters<T> {
+        &self.noise_params
+    }
+
+    /// Total epsilon charged for objective perturbation.
+    pub fn epsilon_spent(&self) -> f64 {
+        self.epsilon_spent
+    }
+
+    /// Number of noisy releases produced.
+    pub fn releases(&self) -> usize {
+        self.releases
+    }
+
+    /// Perturb one objective value under the granted budget.
+    ///
+    /// `privacy_budget.epsilon_consumed` is the grant for this evaluation (see
+    /// [`super::budget_manager::HPOBudgetManager::get_evaluation_budget`]); the noise scale is derived
+    /// from it and from the declared sensitivity.
+    pub fn add_noise(&mut self, value: f64, privacy_budget: &PrivacyBudget) -> Result<f64> {
+        if !value.is_finite() {
+            return Err(OptimError::InvalidParameter(format!(
+                "the objective value {value} is not finite, so it cannot be released"
+            )));
+        }
+        let epsilon = privacy_budget.epsilon_consumed;
+        if !epsilon.is_finite() || epsilon <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the evaluation was granted epsilon = {epsilon}; a private objective release needs \
+                 a positive finite epsilon"
+            )));
+        }
+        let sensitivity = self.noise_params.sensitivity.to_f64().ok_or_else(|| {
+            OptimError::InvalidParameter("the sensitivity cannot be represented as f64".to_string())
+        })?;
+        if !sensitivity.is_finite() || sensitivity <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the objective sensitivity must be positive and finite, got {sensitivity}"
+            )));
+        }
+
+        let (noise, scale) = match self.mechanism_type {
+            HyperparameterNoiseMechanism::Laplace => {
+                let scale = sensitivity / epsilon;
+                (
+                    super::selection::laplace_sample(&mut self.rng, scale)?,
+                    scale,
+                )
             }
-            _ => Ok(value),
-        }
-    }
-}
-/// Private cross-validation evaluator
-pub struct PrivateCrossValidation<T: Float + Debug + Send + Sync + 'static> {
-    /// Number of folds
-    num_folds: usize,
-    /// Privacy budget per fold
-    fold_budgets: Vec<PrivacyBudget>,
-    /// Fold assignment strategy
-    fold_strategy: FoldStrategy,
-    /// Result aggregation with privacy
-    private_aggregation: PrivateFoldAggregation<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PrivateCrossValidation<T> {
-    pub fn new() -> Self {
-        Self {
-            num_folds: 5,
-            fold_budgets: Vec::new(),
-            fold_strategy: FoldStrategy::Random,
-            private_aggregation: PrivateFoldAggregation::new(),
-        }
+            HyperparameterNoiseMechanism::Gaussian => {
+                let delta = self.noise_params.delta.ok_or_else(|| {
+                    OptimError::InvalidConfig(
+                        "the Gaussian mechanism is an (epsilon, delta) mechanism but no delta is \
+                         configured in NoiseParameters"
+                            .to_string(),
+                    )
+                })?;
+                let sigma = super::selection::gaussian_sigma(sensitivity, epsilon, delta)?;
+                (
+                    super::selection::gaussian_sample(&mut self.rng, sigma)?,
+                    sigma,
+                )
+            }
+            HyperparameterNoiseMechanism::Exponential
+            | HyperparameterNoiseMechanism::NoisyMax
+            | HyperparameterNoiseMechanism::SparseVector => {
+                return Err(OptimError::UnsupportedOperation(format!(
+                    "{:?} selects among candidates and cannot perturb a scalar objective; \
+                     configure Laplace or Gaussian for the objective release and use \
+                     SelectionMechanism for the choice",
+                    self.mechanism_type
+                )))
+            }
+        };
+
+        // The recorded scale is read back by the Bayesian surrogate to derive the
+        // observation-noise variance of an already-released objective. Falling
+        // back to `T::one()` on a failed conversion would hand the surrogate a
+        // noise level the mechanism never used, so the conversion is fallible.
+        self.noise_params.scale = T::from(scale).ok_or_else(|| {
+            OptimError::InvalidState(format!(
+                "the noise scale {scale} actually used for this release cannot be represented in \
+                 the optimizer's value type, so it cannot be recorded"
+            ))
+        })?;
+        self.noise_params.epsilon = epsilon;
+        self.epsilon_spent += epsilon;
+        self.releases += 1;
+        Ok(value + noise)
     }
 }
 /// Types of hyperparameters
@@ -789,174 +977,6 @@ pub struct ParameterConstraint<T: Float + Debug + Send + Sync + 'static> {
     /// Constraint violation penalty
     pub penalty: T,
 }
-/// Privacy-preserving hyperparameter optimizer
-pub struct PrivateHyperparameterOptimizer<T: Float + Debug + Send + Sync + 'static> {
-    /// Configuration for privacy-preserving hyperparameter optimization
-    config: PrivateHPOConfig<T>,
-    /// Privacy budget manager
-    budget_manager: HPOBudgetManager,
-    /// Noisy optimization algorithms
-    noisy_optimizers: HashMap<String, Box<dyn NoisyOptimizer<T>>>,
-    /// Hyperparameter space definition
-    parameterspace: ParameterSpace<T>,
-    /// Objective function with privacy guarantees
-    private_objective: PrivateObjective<T>,
-    /// Search strategy
-    search_strategy: SearchStrategy<T>,
-    /// Results aggregator with privacy
-    results_aggregator: PrivateResultsAggregator<T>,
-    /// Privacy accountant for hyperparameter selection
-    privacy_accountant: MomentsAccountant,
-}
-impl<T: Float + Debug + Send + Sync + 'static> PrivateHyperparameterOptimizer<T> {
-    /// Create new private hyperparameter optimizer
-    pub fn new(config: PrivateHPOConfig<T>, parameterspace: ParameterSpace<T>) -> Result<Self> {
-        let budget_manager = HPOBudgetManager::new(
-            config.base_privacyconfig.clone(),
-            config.budget_allocation,
-            config.num_evaluations,
-        )?;
-        let privacy_accountant = MomentsAccountant::new(
-            config.base_privacyconfig.noise_multiplier,
-            config.base_privacyconfig.target_delta,
-            config.base_privacyconfig.batch_size,
-            config.base_privacyconfig.dataset_size,
-        );
-        let mut noisy_optimizers: HashMap<String, Box<dyn NoisyOptimizer<T>>> = HashMap::new();
-        match config.search_algorithm {
-            SearchAlgorithm::RandomSearch => {
-                noisy_optimizers.insert(
-                    "random_search".to_string(),
-                    Box::new(PrivateRandomSearch::new(config.clone())?),
-                );
-            }
-            SearchAlgorithm::BayesianOptimization => {
-                noisy_optimizers.insert(
-                    "bayesian_opt".to_string(),
-                    Box::new(PrivateBayesianOptimization::new(config.clone())?),
-                );
-            }
-            _ => {
-                noisy_optimizers.insert(
-                    "random_search".to_string(),
-                    Box::new(PrivateRandomSearch::new(config.clone())?),
-                );
-            }
-        }
-        Ok(Self {
-            config,
-            budget_manager,
-            noisy_optimizers,
-            parameterspace,
-            private_objective: PrivateObjective::new()?,
-            search_strategy: SearchStrategy::new(),
-            results_aggregator: PrivateResultsAggregator::new()?,
-            privacy_accountant,
-        })
-    }
-    /// Optimize hyperparameters with differential privacy
-    pub fn optimize(&mut self, objective_fn: ObjectiveFn<T>) -> Result<PrivateHPOResults<T>> {
-        self.private_objective.set_objective(objective_fn)?;
-        let mut evaluations = Vec::new();
-        let mut bestconfig: Option<ParameterConfiguration<T>> = None;
-        let mut best_score = T::neg_infinity();
-        let optimizer_name = match self.config.search_algorithm {
-            SearchAlgorithm::RandomSearch => "random_search",
-            SearchAlgorithm::BayesianOptimization => "bayesian_opt",
-            _ => "random_search",
-        };
-        for iteration in 0..self.config.num_evaluations {
-            if !self.budget_manager.has_budget_remaining()? {
-                break;
-            }
-            let evaluation_budget = self.budget_manager.get_evaluation_budget(iteration)?;
-            let config = if let Some(optimizer) = self.noisy_optimizers.get_mut(optimizer_name) {
-                optimizer.suggest_next(&self.parameterspace, &evaluations, &evaluation_budget)?
-            } else {
-                return Err(OptimError::InvalidConfig(
-                    "No optimizer available".to_string(),
-                ));
-            };
-            let result = self
-                .private_objective
-                .evaluate(&config, &evaluation_budget)?;
-            let evaluation = HPOEvaluation {
-                id: format!("eval_{}", iteration),
-                configuration: config.clone(),
-                result: result.clone(),
-                privacy_cost: evaluation_budget.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("unwrap failed")
-                    .as_secs(),
-                metadata: HashMap::new(),
-            };
-            if result.objective_value > best_score {
-                best_score = result.objective_value;
-                bestconfig = Some(config.clone());
-            }
-            if let Some(optimizer) = self.noisy_optimizers.get_mut(optimizer_name) {
-                optimizer.update(&config, &result, &evaluation_budget)?;
-            }
-            evaluations.push(evaluation);
-            self.budget_manager.record_evaluation(
-                &evaluation_budget,
-                result.objective_value.to_f64().unwrap_or(0.0),
-            )?;
-            if self.should_stop_early(&evaluations)? {
-                break;
-            }
-        }
-        let final_results = self.results_aggregator.aggregate_results(&evaluations)?;
-        Ok(PrivateHPOResults {
-            bestconfiguration: bestconfig,
-            best_score,
-            all_evaluations: evaluations,
-            final_results,
-            total_privacy_cost: self.budget_manager.get_total_consumed_budget(),
-            optimization_stats: self.compute_optimization_stats()?,
-        })
-    }
-    /// Check early stopping criteria
-    fn should_stop_early(&self, evaluations: &[HPOEvaluation<T>]) -> Result<bool> {
-        if !self.config.early_stopping.enabled {
-            return Ok(false);
-        }
-        if evaluations.len() < self.config.early_stopping.patience {
-            return Ok(false);
-        }
-        let recent_scores: Vec<T> = evaluations
-            .iter()
-            .rev()
-            .take(self.config.early_stopping.patience)
-            .map(|eval| eval.result.objective_value)
-            .collect();
-        let best_recent =
-            recent_scores
-                .iter()
-                .fold(T::neg_infinity(), |acc, &x| if x > acc { x } else { acc });
-        let best_overall = evaluations
-            .iter()
-            .map(|eval| eval.result.objective_value)
-            .fold(T::neg_infinity(), |acc, x| if x > acc { x } else { acc });
-        let improvement = best_recent - best_overall;
-        Ok(improvement
-            < T::from(self.config.early_stopping.min_improvement).unwrap_or_else(|| T::zero()))
-    }
-    /// Compute optimization statistics
-    fn compute_optimization_stats(&self) -> Result<OptimizationStats<T>> {
-        Ok(OptimizationStats {
-            total_evaluations: 0,
-            successful_evaluations: 0,
-            failed_evaluations: 0,
-            average_evaluation_time: 0.0,
-            total_optimization_time: 0.0,
-            convergence_iteration: None,
-            budget_efficiency: 0.0,
-            _phantom: std::marker::PhantomData,
-        })
-    }
-}
 /// Aggregated results from private optimization
 #[derive(Debug, Clone)]
 pub struct AggregatedResults<T: Float + Debug + Send + Sync + 'static> {
@@ -987,38 +1007,72 @@ pub struct PrivateObjective<T: Float + Debug + Send + Sync + 'static> {
     objective_fn: ObjectiveFn<T>,
     /// Noise mechanism for objective evaluation
     noise_mechanism: ObjectiveNoiseMechanism<T>,
-    /// Sensitivity analysis
-    sensitivity_analyzer: ObjectiveSensitivityAnalyzer<T>,
-    /// Cross-validation with privacy
-    cv_evaluator: PrivateCrossValidation<T>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> PrivateObjective<T> {
+    /// A private objective with no function set yet.
+    ///
+    /// The placeholder objective **errors**. It used to be
+    /// `Box::new(|_| Ok(0.0))`, so calling `evaluate` before `set_objective`
+    /// returned a perfectly plausible score of zero for every configuration.
     pub fn new() -> Result<Self> {
+        Self::with_noise_mechanism(ObjectiveNoiseMechanism::new())
+    }
+
+    /// A private objective with an explicit noise mechanism.
+    pub fn with_noise_mechanism(noise_mechanism: ObjectiveNoiseMechanism<T>) -> Result<Self> {
         Ok(Self {
-            objective_fn: Box::new(|_| Ok(0.0)),
-            noise_mechanism: ObjectiveNoiseMechanism::new(),
-            sensitivity_analyzer: ObjectiveSensitivityAnalyzer::new(),
-            cv_evaluator: PrivateCrossValidation::new(),
+            objective_fn: Box::new(|_| {
+                Err(OptimError::InvalidState(
+                    "no objective function has been set on this PrivateObjective; call \
+                     set_objective before evaluating"
+                        .to_string(),
+                ))
+            }),
+            noise_mechanism,
         })
     }
+
+    /// Seed the noise mechanism deterministically (tests only).
+    pub fn seed_for_tests(&mut self, seed: u64) {
+        self.noise_mechanism.seed_for_tests(seed);
+    }
+
+    /// Install the objective function.
     pub fn set_objective(&mut self, objective_fn: ObjectiveFn<T>) -> Result<()> {
         self.objective_fn = objective_fn;
         Ok(())
     }
+
+    /// The noise mechanism used for the objective release.
+    pub fn noise_mechanism(&self) -> &ObjectiveNoiseMechanism<T> {
+        &self.noise_mechanism
+    }
+
+    /// Evaluate the objective and release a noisy value.
     pub fn evaluate(
         &mut self,
         config: &ParameterConfiguration<T>,
         privacy_budget: &PrivacyBudget,
     ) -> Result<HPOResult<T>> {
+        let started = std::time::Instant::now();
         let objective_value = (self.objective_fn)(config)?;
         let noisy_value = self
             .noise_mechanism
             .add_noise(objective_value, privacy_budget)?;
+        let objective = T::from(noisy_value).ok_or_else(|| {
+            OptimError::InvalidParameter(format!(
+                "the noisy objective value {noisy_value} cannot be represented in the parameter \
+                 type"
+            ))
+        })?;
+        let scale = self.noise_mechanism.noise_params().scale;
         Ok(HPOResult {
-            objective_value: T::from(noisy_value).unwrap_or_else(|| T::zero()),
-            standard_error: None,
+            objective_value: objective,
+            // The released value's uncertainty is dominated by the noise that
+            // was added to it; reporting `None` hid that from the caller.
+            standard_error: Some(scale),
             cv_scores: None,
-            training_time: None,
+            training_time: Some(started.elapsed().as_secs_f64()),
             complexity_metrics: HashMap::new(),
             additional_metrics: HashMap::new(),
             status: EvaluationStatus::Success,
@@ -1033,11 +1087,100 @@ pub struct KernelFunction<T: Float + Debug + Send + Sync + 'static> {
     parameters: Vec<T>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> KernelFunction<T> {
+    /// An RBF kernel with a unit length scale.
     pub fn new() -> Self {
         Self {
             kernel_type: KernelType::RBF,
             parameters: vec![T::one()],
         }
+    }
+
+    /// A kernel of the given family with explicit parameters.
+    pub fn with_parameters(kernel_type: KernelType, parameters: Vec<T>) -> Result<Self> {
+        if parameters.is_empty() {
+            return Err(OptimError::InvalidParameter(
+                "a kernel needs at least one parameter".to_string(),
+            ));
+        }
+        Ok(Self {
+            kernel_type,
+            parameters,
+        })
+    }
+
+    /// The kernel family.
+    pub fn kernel_type(&self) -> KernelType {
+        self.kernel_type
+    }
+
+    /// The kernel parameters.
+    pub fn parameters(&self) -> &[T] {
+        &self.parameters
+    }
+
+    /// Evaluate the kernel between two encoded points.
+    ///
+    /// * `RBF`: `exp(-||x - y||^2 / (2 l^2))`
+    /// * `Matern`: Matern-5/2, `(1 + s + s^2/3) exp(-s)` with `s = sqrt(5) r / l`
+    /// * `Linear`: `l * <x, y>`
+    /// * `Polynomial`: `(<x, y> + c)^d`, with `c = parameters[1]` (default 1) and
+    ///   `d = parameters[2]` (default 2)
+    pub fn evaluate(&self, left: &[f64], right: &[f64]) -> Result<f64> {
+        if left.len() != right.len() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "the kernel was given {}- and {}-dimensional points",
+                left.len(),
+                right.len()
+            )));
+        }
+        if left.is_empty() {
+            return Err(OptimError::InvalidParameter(
+                "the kernel was given zero-dimensional points".to_string(),
+            ));
+        }
+        let scale = self
+            .parameters
+            .first()
+            .and_then(|value| value.to_f64())
+            .unwrap_or(1.0);
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the kernel scale must be positive and finite, got {scale}"
+            )));
+        }
+        let squared: f64 = left
+            .iter()
+            .zip(right.iter())
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum();
+        let dot: f64 = left.iter().zip(right.iter()).map(|(a, b)| a * b).sum();
+
+        Ok(match self.kernel_type {
+            KernelType::RBF => (-squared / (2.0 * scale * scale)).exp(),
+            KernelType::Matern => {
+                let s = 5.0f64.sqrt() * squared.sqrt() / scale;
+                (1.0 + s + s * s / 3.0) * (-s).exp()
+            }
+            KernelType::Linear => scale * dot,
+            KernelType::Polynomial => {
+                let offset = self
+                    .parameters
+                    .get(1)
+                    .and_then(|value| value.to_f64())
+                    .unwrap_or(1.0);
+                let degree = self
+                    .parameters
+                    .get(2)
+                    .and_then(|value| value.to_f64())
+                    .unwrap_or(2.0);
+                if !degree.is_finite() || degree <= 0.0 {
+                    return Err(OptimError::InvalidParameter(format!(
+                        "the polynomial kernel degree must be positive and finite, got {degree}"
+                    )));
+                }
+                (dot + offset).powf(degree)
+            }
+        })
     }
 }
 /// Optimization statistics
@@ -1055,30 +1198,82 @@ pub struct OptimizationStats<T: Float + Debug + Send + Sync + 'static> {
     pub total_optimization_time: f64,
     /// Iteration where convergence was detected
     pub convergence_iteration: Option<usize>,
-    /// Budget efficiency score
+    /// Budget efficiency score: best-score improvement per unit epsilon spent
     pub budget_efficiency: f64,
     /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
+    pub(super) _phantom: std::marker::PhantomData<T>,
 }
 /// Private Bayesian Optimization implementation
 pub struct PrivateBayesianOptimization<T: Float + Debug + Send + Sync + 'static> {
     /// Configuration
     config: PrivateHPOConfig<T>,
-    /// Gaussian process surrogate model
-    gp_model: Option<GaussianProcessModel<T>>,
-    /// Acquisition function
-    acquisition_fn: AcquisitionFunction<T>,
+    /// Fitted Gaussian-process surrogate, once there is history to fit it to
+    gp_model: Option<super::gaussian_process::GaussianProcessFit>,
     /// Evaluation history
     history: Vec<HPOEvaluation<T>>,
+    /// Generator used to draw the initial (history-free) configuration
+    pub(super) rng: HpoRng,
 }
 impl<T: Float + Debug + Send + Sync + 'static> PrivateBayesianOptimization<T> {
+    /// Create a Bayesian optimizer seeded from OS entropy.
+    ///
+    /// An earlier revision constructed `Random::seed(42)` *inside*
+    /// `suggest_next`, so the very first configuration was a compile-time
+    /// constant, identical in every process and on every run.
     pub fn new(config: PrivateHPOConfig<T>) -> Result<Self> {
         Ok(Self {
             config,
             gp_model: None,
-            acquisition_fn: AcquisitionFunction::new(),
             history: Vec::new(),
+            rng: os_seeded_hpo_rng(),
         })
+    }
+
+    /// Create a Bayesian optimizer with a caller-supplied seed.
+    ///
+    /// Reproducible proposals for tests and benchmarks only.
+    pub fn new_with_seed(config: PrivateHPOConfig<T>, seed: u64) -> Result<Self> {
+        Ok(Self {
+            config,
+            gp_model: None,
+            history: Vec::new(),
+            rng: scirs2_core::random::Random::seed(seed),
+        })
+    }
+
+    /// The configuration this optimizer was built with.
+    pub fn config(&self) -> &PrivateHPOConfig<T> {
+        &self.config
+    }
+
+    /// Recorded evaluations.
+    pub fn history(&self) -> &[HPOEvaluation<T>] {
+        &self.history
+    }
+
+    /// Record an evaluation.
+    pub(super) fn push_history(&mut self, evaluation: HPOEvaluation<T>) {
+        self.history.push(evaluation);
+    }
+
+    /// Mutable access to the generator.
+    pub(super) fn rng_mut(&mut self) -> &mut HpoRng {
+        &mut self.rng
+    }
+
+    /// The most recently fitted surrogate, if any.
+    pub fn surrogate(&self) -> Option<&super::gaussian_process::GaussianProcessFit> {
+        self.gp_model.as_ref()
+    }
+
+    /// Whether a surrogate has been fitted.
+    pub(super) fn gp_model_is_fitted(&self) -> bool {
+        self.gp_model.is_some()
+    }
+
+    /// Store the surrogate that produced the latest proposal.
+    pub(super) fn record_surrogate(&mut self, fit: super::gaussian_process::GaussianProcessFit) {
+        self.gp_model = Some(fit);
     }
 }
 /// Evaluation status
@@ -1109,30 +1304,6 @@ pub enum UtilityFunctionType {
     /// Custom utility function
     Custom,
 }
-/// Sample-based sensitivity estimator
-pub struct SampleBasedSensitivityEstimator<T: Float + Debug + Send + Sync + 'static> {
-    /// Number of samples for estimation
-    num_samples: usize,
-    /// Sampling strategy
-    sampling_strategy: SamplingStrategy,
-    /// Confidence level for bounds
-    confidence_level: f64,
-    /// Bootstrap estimator
-    bootstrap_estimator: BootstrapEstimator<T>,
-    /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> SampleBasedSensitivityEstimator<T> {
-    pub fn new() -> Self {
-        Self {
-            num_samples: 1000,
-            sampling_strategy: SamplingStrategy::Uniform,
-            confidence_level: 0.95,
-            bootstrap_estimator: BootstrapEstimator::new(),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
 /// Statistical test result
 #[derive(Debug, Clone)]
 pub struct StatisticalTestResult {
@@ -1155,11 +1326,162 @@ pub struct AnomalyDetector<T: Float + Debug + Send + Sync + 'static> {
     baseline: Option<T>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> AnomalyDetector<T> {
+    /// A z-score detector with a 3-sigma threshold and no fixed baseline.
     pub fn new() -> Self {
         Self {
             threshold: T::from(3.0).unwrap_or_else(|| T::zero()),
             detection_method: AnomalyDetectionMethod::ZScore,
             baseline: None,
+        }
+    }
+
+    /// The cutoff: z-scores (or IQR multiples) above this are flagged.
+    pub fn threshold(&self) -> T {
+        self.threshold
+    }
+
+    /// Replace the cutoff. Must be positive and finite.
+    pub fn set_threshold(&mut self, threshold: T) -> Result<()> {
+        let value = threshold.to_f64().unwrap_or(f64::NAN);
+        if !value.is_finite() || value <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the anomaly threshold must be positive and finite, got {value}"
+            )));
+        }
+        self.threshold = threshold;
+        Ok(())
+    }
+
+    /// The configured detection method.
+    pub fn detection_method(&self) -> AnomalyDetectionMethod {
+        self.detection_method
+    }
+
+    /// Select the detection method.
+    ///
+    /// [`AnomalyDetectionMethod::IsolationForest`] and
+    /// [`AnomalyDetectionMethod::LocalOutlierFactor`] are multivariate methods
+    /// that need a feature matrix; a scalar objective series cannot support
+    /// them, so selecting one is refused rather than silently behaving like the
+    /// z-score rule.
+    pub fn set_detection_method(&mut self, method: AnomalyDetectionMethod) -> Result<()> {
+        match method {
+            AnomalyDetectionMethod::ZScore | AnomalyDetectionMethod::IQR => {
+                self.detection_method = method;
+                Ok(())
+            }
+            other => Err(OptimError::UnsupportedOperation(format!(
+                "{other:?} is a multivariate detector and cannot be applied to a scalar objective \
+                 series; use AnomalyDetectionMethod::ZScore or ::IQR here, or run the multivariate \
+                 detector in coordination::monitoring::anomaly_detection over a feature matrix"
+            ))),
+        }
+    }
+
+    /// A fixed centre to measure deviation from, if one has been set.
+    ///
+    /// With no baseline the batch's own mean (z-score) or median (IQR) is used,
+    /// which is what makes the detector usable on a single batch.
+    pub fn baseline(&self) -> Option<T> {
+        self.baseline
+    }
+
+    /// Pin the centre to a value observed on earlier, trusted runs.
+    pub fn set_baseline(&mut self, baseline: Option<T>) {
+        self.baseline = baseline;
+    }
+
+    /// Indices of `results` whose objective value is anomalous.
+    ///
+    /// * [`AnomalyDetectionMethod::ZScore`]: `|x - centre| > threshold * sigma`,
+    ///   where `sigma` is the batch's sample standard deviation. A batch of
+    ///   fewer than two usable values, or one with zero spread, flags nothing --
+    ///   there is no scale to measure against.
+    /// * [`AnomalyDetectionMethod::IQR`]: `x` outside
+    ///   `[Q1 - threshold*IQR, Q3 + threshold*IQR]`. Robust to the outliers it
+    ///   is looking for, unlike the z-score, whose sigma the outliers inflate.
+    ///
+    /// Non-finite objectives are never flagged here; they are counted separately
+    /// by [`ResultValidator::validate`] as structural failures.
+    pub fn flag(&self, results: &[HPOResult<T>]) -> Vec<usize> {
+        let values: Vec<(usize, f64)> = results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, result)| {
+                result
+                    .objective_value
+                    .to_f64()
+                    .filter(|v| v.is_finite())
+                    .map(|v| (index, v))
+            })
+            .collect();
+        if values.len() < 2 {
+            return Vec::new();
+        }
+        let threshold = match self.threshold.to_f64() {
+            Some(t) if t.is_finite() && t > 0.0 => t,
+            _ => return Vec::new(),
+        };
+        let baseline = self
+            .baseline
+            .and_then(|b| b.to_f64())
+            .filter(|b| b.is_finite());
+
+        match self.detection_method {
+            AnomalyDetectionMethod::ZScore => {
+                let centre = baseline.unwrap_or_else(|| {
+                    values.iter().map(|(_, v)| *v).sum::<f64>() / values.len() as f64
+                });
+                let mean = values.iter().map(|(_, v)| *v).sum::<f64>() / values.len() as f64;
+                let variance = values
+                    .iter()
+                    .map(|(_, v)| (v - mean) * (v - mean))
+                    .sum::<f64>()
+                    / (values.len() - 1) as f64;
+                let sigma = variance.sqrt();
+                if !sigma.is_finite() || sigma <= 0.0 {
+                    return Vec::new();
+                }
+                values
+                    .into_iter()
+                    .filter(|(_, v)| (v - centre).abs() > threshold * sigma)
+                    .map(|(index, _)| index)
+                    .collect()
+            }
+            AnomalyDetectionMethod::IQR => {
+                let mut sorted: Vec<f64> = values.iter().map(|(_, v)| *v).collect();
+                sorted.sort_by(|a, b| a.total_cmp(b));
+                let quantile = |q: f64| -> f64 {
+                    let position = q * (sorted.len() - 1) as f64;
+                    let lower = position.floor() as usize;
+                    let upper = position.ceil() as usize;
+                    if lower == upper {
+                        sorted[lower]
+                    } else {
+                        let weight = position - lower as f64;
+                        sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+                    }
+                };
+                let q1 = quantile(0.25);
+                let q3 = quantile(0.75);
+                let iqr = q3 - q1;
+                if !iqr.is_finite() || iqr <= 0.0 {
+                    return Vec::new();
+                }
+                let shift = baseline.map(|b| b - (q1 + q3) / 2.0).unwrap_or(0.0);
+                let low = q1 + shift - threshold * iqr;
+                let high = q3 + shift + threshold * iqr;
+                values
+                    .into_iter()
+                    .filter(|(_, v)| *v < low || *v > high)
+                    .map(|(index, _)| index)
+                    .collect()
+            }
+            // Refused by `set_detection_method`; unreachable for a detector built
+            // through the public API, and flagging nothing is the safe reading if
+            // one is ever constructed another way.
+            AnomalyDetectionMethod::IsolationForest
+            | AnomalyDetectionMethod::LocalOutlierFactor => Vec::new(),
         }
     }
 }
@@ -1172,48 +1494,6 @@ pub struct ParameterConfiguration<T: Float + Debug + Send + Sync + 'static> {
     pub id: String,
     /// Configuration metadata
     pub metadata: HashMap<String, String>,
-}
-/// Confidence interval estimation
-pub struct ConfidenceEstimation<T: Float + Debug + Send + Sync + 'static> {
-    /// Confidence level
-    confidence_level: f64,
-    /// Estimation method
-    estimation_method: ConfidenceEstimationMethod,
-    /// Bootstrap parameters
-    bootstrap_params: Option<BootstrapParams>,
-    /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> ConfidenceEstimation<T> {
-    pub fn new() -> Self {
-        Self {
-            confidence_level: 0.95,
-            estimation_method: ConfidenceEstimationMethod::Normal,
-            bootstrap_params: None,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-/// Bootstrap estimator for sensitivity
-pub struct BootstrapEstimator<T: Float + Debug + Send + Sync + 'static> {
-    /// Number of bootstrap samples
-    num_bootstrap: usize,
-    /// Bootstrap confidence interval
-    confidence_interval: (f64, f64),
-    /// Bias correction
-    bias_correction: bool,
-    /// Phantom data to mark type parameter as intentionally unused
-    _phantom: std::marker::PhantomData<T>,
-}
-impl<T: Float + Debug + Send + Sync + 'static> BootstrapEstimator<T> {
-    pub fn new() -> Self {
-        Self {
-            num_bootstrap: 1000,
-            confidence_interval: (0.025, 0.975),
-            bias_correction: true,
-            _phantom: std::marker::PhantomData,
-        }
-    }
 }
 /// Validation strategies for private hyperparameter optimization
 #[derive(Debug, Clone, Copy)]
@@ -1230,6 +1510,10 @@ pub enum ValidationStrategy {
     TimeSeriesSplit,
 }
 /// Selection mechanisms for final hyperparameter choice
+///
+/// The mechanism implementations live in [`super::selection`]. The important
+/// property is that [`SelectionMechanism::select_index`] never returns the exact
+/// argmax deterministically, and always charges the epsilon it used.
 pub struct SelectionMechanism<T: Float + Debug + Send + Sync + 'static> {
     /// Mechanism type
     mechanism_type: HyperparameterNoiseMechanism,
@@ -1237,19 +1521,133 @@ pub struct SelectionMechanism<T: Float + Debug + Send + Sync + 'static> {
     selection_params: SelectionParameters<T>,
     /// Utility function for selection
     utility_function: UtilityFunction<T>,
+    /// Generator used by the noise-adding mechanisms
+    rng: HpoRng,
+    /// Seed recorded when the mechanism was seeded for tests
+    test_seed: Option<u64>,
+    /// Total epsilon charged so far
+    epsilon_spent: f64,
+    /// Total delta charged so far
+    delta_spent: f64,
+    /// Number of selections performed
+    selection_count: usize,
 }
 impl<T: Float + Debug + Send + Sync + 'static> SelectionMechanism<T> {
+    /// An exponential mechanism at `epsilon = 1`, `Delta_u = 1`, seeded from OS
+    /// entropy.
     pub fn new() -> Self {
         Self {
             mechanism_type: HyperparameterNoiseMechanism::Exponential,
-            selection_params: SelectionParameters {
-                temperature: T::one(),
-                utility_sensitivity: T::one(),
-                epsilon: 1.0,
-                threshold: None,
-            },
+            selection_params: SelectionParameters::pure_epsilon(1.0, T::one()),
             utility_function: UtilityFunction::new(),
+            rng: os_seeded_hpo_rng(),
+            test_seed: None,
+            epsilon_spent: 0.0,
+            delta_spent: 0.0,
+            selection_count: 0,
         }
+    }
+
+    /// The configured mechanism.
+    pub fn mechanism_type(&self) -> HyperparameterNoiseMechanism {
+        self.mechanism_type
+    }
+
+    /// Replace the configured mechanism.
+    pub fn set_mechanism_type(&mut self, mechanism_type: HyperparameterNoiseMechanism) {
+        self.mechanism_type = mechanism_type;
+    }
+
+    /// The selection parameters.
+    pub fn selection_params(&self) -> &SelectionParameters<T> {
+        &self.selection_params
+    }
+
+    /// Replace the selection parameters, validating them.
+    pub fn set_selection_parameters(&mut self, params: SelectionParameters<T>) -> Result<()> {
+        if !params.epsilon.is_finite() || params.epsilon <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the selection epsilon must be positive and finite, got {}",
+                params.epsilon
+            )));
+        }
+        let sensitivity = params.utility_sensitivity.to_f64().ok_or_else(|| {
+            OptimError::InvalidParameter(
+                "the utility sensitivity cannot be represented as f64".to_string(),
+            )
+        })?;
+        if !sensitivity.is_finite() || sensitivity <= 0.0 {
+            return Err(OptimError::InvalidParameter(format!(
+                "the utility sensitivity must be positive and finite, got {sensitivity}"
+            )));
+        }
+        if let Some(delta) = params.delta {
+            if !delta.is_finite() || !(0.0..1.0).contains(&delta) || delta <= 0.0 {
+                return Err(OptimError::InvalidParameter(format!(
+                    "the selection delta must lie in (0, 1), got {delta}"
+                )));
+            }
+        }
+        if !params.temperature.is_finite() || params.temperature <= T::zero() {
+            return Err(OptimError::InvalidParameter(
+                "the selection temperature must be positive and finite".to_string(),
+            ));
+        }
+        self.selection_params = params;
+        Ok(())
+    }
+
+    /// The utility function.
+    pub fn utility_function(&self) -> &UtilityFunction<T> {
+        &self.utility_function
+    }
+
+    /// Replace the utility function.
+    pub fn set_utility_function(&mut self, utility_function: UtilityFunction<T>) {
+        self.utility_function = utility_function;
+    }
+
+    /// Total epsilon charged for selections.
+    pub fn epsilon_spent(&self) -> f64 {
+        self.epsilon_spent
+    }
+
+    /// Total delta charged for selections.
+    pub fn delta_spent(&self) -> f64 {
+        self.delta_spent
+    }
+
+    /// Number of selections performed.
+    pub fn selection_count(&self) -> usize {
+        self.selection_count
+    }
+
+    /// Mutable access to the generator, for the mechanisms in
+    /// [`super::selection`].
+    pub(super) fn rng_mut(&mut self) -> &mut HpoRng {
+        &mut self.rng
+    }
+
+    /// Replace the generator.
+    pub(super) fn set_rng(&mut self, rng: HpoRng) {
+        self.rng = rng;
+    }
+
+    /// The recorded test seed, if any.
+    pub(super) fn test_seed(&self) -> Option<u64> {
+        self.test_seed
+    }
+
+    /// Record the test seed.
+    pub(super) fn set_test_seed(&mut self, seed: Option<u64>) {
+        self.test_seed = seed;
+    }
+
+    /// Charge one selection.
+    pub(super) fn record_selection(&mut self, epsilon: f64, delta: f64) {
+        self.epsilon_spent += epsilon;
+        self.delta_spent += delta;
+        self.selection_count += 1;
     }
 }
 /// Validation rule for results
@@ -1262,6 +1660,13 @@ pub struct ValidationRule<T: Float + Debug + Send + Sync + 'static> {
     pub weight: f64,
 }
 /// Private hyperparameter optimization results
+///
+/// # 0.3.2 change
+///
+/// `selection` was added. It records whether the returned configuration was
+/// chosen by a differentially private mechanism, which mechanism, and what it
+/// cost. Before this release the choice was always the exact argmax with no
+/// indication that it leaked.
 #[derive(Debug, Clone)]
 pub struct PrivateHPOResults<T: Float + Debug + Send + Sync + 'static> {
     /// Best configuration found
@@ -1276,6 +1681,8 @@ pub struct PrivateHPOResults<T: Float + Debug + Send + Sync + 'static> {
     pub total_privacy_cost: PrivacyBudget,
     /// Optimization statistics
     pub optimization_stats: OptimizationStats<T>,
+    /// How the reported configuration was selected
+    pub selection: SelectionReport,
 }
 /// Private Random Search implementation
 pub struct PrivateRandomSearch<T: Float + Debug + Send + Sync + 'static> {
@@ -1287,10 +1694,37 @@ pub struct PrivateRandomSearch<T: Float + Debug + Send + Sync + 'static> {
     pub(super) history: Vec<HPOEvaluation<T>>,
 }
 impl<T: Float + Debug + Send + Sync + 'static> PrivateRandomSearch<T> {
+    /// The configuration this search was built with.
+    ///
+    /// Mirrors [`PrivateBayesianOptimization::config`]; without it the stored
+    /// configuration was unreachable, so a caller could not check which privacy
+    /// parameters the search was actually running under.
+    pub fn config(&self) -> &PrivateHPOConfig<T> {
+        &self.config
+    }
+
+    /// Create a random search seeded from OS entropy.
+    ///
+    /// The generator must not be seeded from a constant: a fixed seed makes
+    /// the sequence of proposed hyperparameter configurations identical in
+    /// every process, so an adversary knows exactly which configurations were
+    /// evaluated on the private data.
     pub fn new(config: PrivateHPOConfig<T>) -> Result<Self> {
         Ok(Self {
             config,
-            rng: scirs2_core::random::Random::seed(42),
+            rng: os_seeded_hpo_rng(),
+            history: Vec::new(),
+        })
+    }
+
+    /// Create a random search with a caller-supplied seed.
+    ///
+    /// Reproducible search order for tests and benchmarks only; never use
+    /// this when the search touches real private data.
+    pub fn new_with_seed(config: PrivateHPOConfig<T>, seed: u64) -> Result<Self> {
+        Ok(Self {
+            config,
+            rng: scirs2_core::random::Random::seed(seed),
             history: Vec::new(),
         })
     }

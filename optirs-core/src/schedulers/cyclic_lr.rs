@@ -3,10 +3,31 @@
 // This module provides cyclic learning rate scheduling, which cycles the learning rate
 // between two boundaries with a constant frequency.
 
+use crate::error::{OptimError, Result};
 use crate::schedulers::LearningRateScheduler;
 use scirs2_core::ndarray::ScalarOperand;
 use scirs2_core::numeric::Float;
 use std::fmt;
+
+/// Convert a `usize` exponent into `i32`, saturating instead of wrapping.
+fn exponent_i32(v: usize) -> i32 {
+    i32::try_from(v).unwrap_or(i32::MAX)
+}
+
+/// Convert a `usize` counter into the scheduler's float type.
+fn from_usize<A: Float>(v: usize) -> A {
+    A::from(v).unwrap_or_else(A::zero)
+}
+
+/// Convert a `usize` denominator into the scheduler's float type.
+///
+/// Falls back to `1` so the value can never introduce a division by zero.
+fn denom_from_usize<A: Float>(v: usize) -> A {
+    match A::from(v) {
+        Some(x) if x != A::zero() => x,
+        _ => A::one(),
+    }
+}
 
 /// Cyclic learning rate policy
 #[derive(Debug, Clone, Copy)]
@@ -15,7 +36,7 @@ pub enum CyclicMode {
     Triangular,
     /// Triangular2 mode: linear scaling with halved amplitude each cycle
     Triangular2,
-    /// Exponential range: exponential scaling
+    /// Exponential range: the amplitude is scaled by `gamma^global_step`
     ExpRange(f64),
 }
 
@@ -23,6 +44,20 @@ pub enum CyclicMode {
 ///
 /// This scheduler cycles the learning rate between two boundaries with a constant frequency.
 /// It's based on the paper "Cyclical Learning Rates for Training Neural Networks" by Leslie N. Smith.
+///
+/// # Modes
+///
+/// * [`CyclicMode::Triangular`] - constant amplitude.
+/// * [`CyclicMode::Triangular2`] - the amplitude is halved after every full cycle.
+/// * [`CyclicMode::ExpRange`] - the amplitude is multiplied by `gamma^global_step`. The
+///   exponent is the **global** iteration counter, so the decay carries across cycles
+///   (it used to be reset at every cycle boundary, which made the mode a no-op).
+///
+/// # Validation
+///
+/// The constructors never fail: a `step_size` of `0` is clamped to `1` so the schedule can
+/// never divide by zero. Use [`CyclicLR::try_new`] to reject an invalid configuration
+/// instead.
 ///
 /// # Example
 ///
@@ -41,6 +76,7 @@ pub enum CyclicMode {
 pub struct CyclicLR<A: Float> {
     base_lr: A,
     max_lr: A,
+    /// Number of iterations per half cycle (always >= 1)
     step_size: usize,
     mode: CyclicMode,
     gamma: A,
@@ -69,25 +105,28 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
     ///
     /// * `base_lr` - Minimum learning rate
     /// * `max_lr` - Maximum learning rate
-    /// * `step_size` - Number of training iterations per half cycle
+    /// * `step_size` - Number of training iterations per half cycle. `0` is invalid and is
+    ///   clamped to `1`; use [`CyclicLR::try_new`] to reject it instead.
     /// * `mode` - Cycling mode (Triangular, Triangular2, or ExpRange)
     pub fn new(base_lr: A, max_lr: A, step_size: usize, mode: CyclicMode) -> Self {
+        let step_size = step_size.max(1);
         let gamma = match mode {
-            CyclicMode::ExpRange(g) => A::from(g).expect("unwrap failed"),
+            CyclicMode::ExpRange(g) => A::from(g).unwrap_or_else(A::one),
             _ => A::one(),
         };
 
         let scale_fn: Box<dyn Fn(usize, usize, A, A) -> A + Send + Sync> = match mode {
             CyclicMode::Triangular => Box::new(|_, _, _, _| A::one()),
             CyclicMode::Triangular2 => Box::new(|current, cycle_half, _, _| {
-                A::one()
-                    / (A::from(2)
-                        .expect("unwrap failed")
-                        .powi(current as i32 / (2 * cycle_half) as i32))
+                let cycle_len = cycle_half.saturating_mul(2).max(1);
+                let two = A::from(2).unwrap_or_else(A::one);
+                A::one() / two.powi(exponent_i32(current / cycle_len))
             }),
-            CyclicMode::ExpRange(_) => Box::new(|current, cycle_half, gamma, _| {
-                gamma.powi((current % (2 * cycle_half)) as i32)
-            }),
+            // The exponent is the GLOBAL step count so the decay accumulates across
+            // cycles instead of restarting at every cycle boundary.
+            CyclicMode::ExpRange(_) => {
+                Box::new(|current, _cycle_half, gamma, _| gamma.powi(exponent_i32(current)))
+            }
         };
 
         Self {
@@ -99,6 +138,47 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
             current_step: 0,
             scale_fn,
         }
+    }
+
+    /// Create a new cyclic learning rate scheduler, validating the configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OptimError::InvalidConfig`] when
+    /// * `step_size == 0`,
+    /// * `base_lr` or `max_lr` is not finite,
+    /// * `base_lr < 0` or `max_lr < base_lr`, or
+    /// * the mode is [`CyclicMode::ExpRange`] with a gamma outside `(0, 1]`.
+    pub fn try_new(base_lr: A, max_lr: A, step_size: usize, mode: CyclicMode) -> Result<Self> {
+        if step_size == 0 {
+            return Err(OptimError::InvalidConfig(
+                "CyclicLR requires step_size > 0".to_string(),
+            ));
+        }
+        if !base_lr.is_finite() || !max_lr.is_finite() {
+            return Err(OptimError::InvalidConfig(
+                "CyclicLR requires finite base_lr and max_lr".to_string(),
+            ));
+        }
+        if base_lr < A::zero() {
+            return Err(OptimError::InvalidConfig(
+                "CyclicLR requires base_lr >= 0".to_string(),
+            ));
+        }
+        if max_lr < base_lr {
+            return Err(OptimError::InvalidConfig(
+                "CyclicLR requires max_lr >= base_lr".to_string(),
+            ));
+        }
+        if let CyclicMode::ExpRange(g) = mode {
+            if !g.is_finite() || g <= 0.0 || g > 1.0 {
+                return Err(OptimError::InvalidConfig(format!(
+                    "CyclicLR ExpRange requires gamma in (0, 1], got {g}"
+                )));
+            }
+        }
+
+        Ok(Self::new(base_lr, max_lr, step_size, mode))
     }
 
     /// Create a new triangular cyclic scheduler
@@ -117,6 +197,9 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
     }
 
     /// Set custom scale function
+    ///
+    /// The closure receives `(global_step, step_size, gamma, 1)` and returns the amplitude
+    /// scale factor for the current step.
     pub fn with_scale_fn<F>(mut self, scale_fn: F) -> Self
     where
         F: Fn(usize, usize, A, A) -> A + Send + Sync + 'static,
@@ -125,22 +208,31 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> CyclicLR<A> {
         self
     }
 
+    /// Number of iterations per half cycle (always >= 1)
+    pub fn step_size(&self) -> usize {
+        self.step_size
+    }
+
     /// Get the current cycle number
     pub fn get_cycle(&self) -> usize {
-        self.current_step / (2 * self.step_size)
+        self.current_step / self.cycle_len()
+    }
+
+    /// Full cycle length in steps (always >= 2)
+    fn cycle_len(&self) -> usize {
+        self.step_size.saturating_mul(2).max(1)
     }
 
     /// Get position within current cycle (0.0 to 1.0)
     pub fn get_cycle_position(&self) -> A {
-        let cycle_position = self.current_step % (2 * self.step_size);
+        let cycle_len = self.cycle_len();
+        let cycle_position = self.current_step % cycle_len;
         if cycle_position < self.step_size {
             // First half: increasing
-            A::from(cycle_position).expect("unwrap failed")
-                / A::from(self.step_size).expect("unwrap failed")
+            from_usize::<A>(cycle_position) / denom_from_usize::<A>(self.step_size)
         } else {
             // Second half: decreasing
-            A::from(2 * self.step_size - cycle_position).expect("unwrap failed")
-                / A::from(self.step_size).expect("unwrap failed")
+            from_usize::<A>(cycle_len - cycle_position) / denom_from_usize::<A>(self.step_size)
         }
     }
 }
@@ -157,7 +249,7 @@ impl<A: Float + ScalarOperand + std::fmt::Debug + Send + Sync> LearningRateSched
     }
 
     fn step(&mut self) -> A {
-        self.current_step += 1;
+        self.current_step = self.current_step.saturating_add(1);
         self.get_learning_rate()
     }
 
@@ -247,6 +339,64 @@ mod tests {
 
         // But the increase should be modulated by gamma
         assert!(lr_10_steps < base_lr + (max_lr - base_lr) * 0.1);
+    }
+
+    #[test]
+    fn test_exp_range_decay_is_global_not_per_cycle() {
+        let base_lr = 0.001;
+        let max_lr = 0.01;
+        let step_size = 5;
+        let gamma = 0.9;
+
+        let mut scheduler = CyclicLR::exp_range(base_lr, max_lr, step_size, gamma);
+
+        for _ in 0..step_size {
+            scheduler.step();
+        }
+        let first_peak = scheduler.get_learning_rate();
+
+        for _ in 0..(2 * step_size) {
+            scheduler.step();
+        }
+        let second_peak = scheduler.get_learning_rate();
+
+        assert!(second_peak < first_peak);
+        assert_relative_eq!(
+            first_peak,
+            base_lr + (max_lr - base_lr) * gamma.powi(step_size as i32),
+            epsilon = 1e-12
+        );
+        assert_relative_eq!(
+            second_peak,
+            base_lr + (max_lr - base_lr) * gamma.powi(3 * step_size as i32),
+            epsilon = 1e-12
+        );
+    }
+
+    #[test]
+    fn test_zero_step_size_is_clamped() {
+        for mut scheduler in [
+            CyclicLR::triangular(0.001f64, 0.01, 0),
+            CyclicLR::triangular2(0.001f64, 0.01, 0),
+            CyclicLR::exp_range(0.001f64, 0.01, 0, 0.99),
+        ] {
+            assert_eq!(scheduler.step_size(), 1);
+            assert!(scheduler.get_learning_rate().is_finite());
+            for _ in 0..10 {
+                assert!(scheduler.step().is_finite());
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_new_validates() {
+        assert!(CyclicLR::try_new(0.001f64, 0.01, 0, CyclicMode::Triangular).is_err());
+        assert!(CyclicLR::try_new(0.01f64, 0.001, 10, CyclicMode::Triangular).is_err());
+        assert!(CyclicLR::try_new(-0.1f64, 0.01, 10, CyclicMode::Triangular).is_err());
+        assert!(CyclicLR::try_new(0.001f64, 0.01, 10, CyclicMode::ExpRange(0.0)).is_err());
+        assert!(CyclicLR::try_new(0.001f64, 0.01, 10, CyclicMode::ExpRange(1.5)).is_err());
+        assert!(CyclicLR::try_new(0.001f64, 0.01, 10, CyclicMode::ExpRange(0.99)).is_ok());
+        assert!(CyclicLR::try_new(0.001f64, 0.01, 10, CyclicMode::Triangular).is_ok());
     }
 
     #[test]

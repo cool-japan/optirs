@@ -1,21 +1,10 @@
 // Clock Sources Module
 
-use crate::pod_coordination::types::*;
 use serde::{Deserialize, Serialize};
 
-pub mod authentication;
-pub mod management;
-pub mod monitoring;
-pub mod radio;
 pub mod selection;
-pub mod time_sources;
 
-pub use authentication::*;
-pub use management::*;
-pub use monitoring::*;
-pub use radio::*;
 pub use selection::*;
-pub use time_sources::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AtomicClockType {
@@ -65,6 +54,15 @@ pub struct SystemClockConfig {
 #[derive(Debug, Clone, Default)]
 pub struct TimeSource {
     pub source_type: ClockSource,
+
+    /// Endpoint this source is reached at (an NTP/PTP server host, a GPS
+    /// receiver device path, ...).
+    ///
+    /// `None` for sources that need no address, such as
+    /// [`ClockSource::System`] and a locally attached atomic reference. A
+    /// network source without an address is not addressable at all, which is
+    /// why [`super::utils::create_ntp_sync_manager`] refuses to build one.
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

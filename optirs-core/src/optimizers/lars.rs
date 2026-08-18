@@ -27,7 +27,11 @@ use std::fmt::Debug;
 /// * `weight_decay` - Weight decay factor (default: 0.0001)
 /// * `trust_coefficient` - Trust coefficient for scaling (default: 0.001)
 /// * `eps` - Small constant for numerical stability (default: 1e-8)
-/// * `exclude_bias_and_norm` - Whether to exclude bias and normalization layers from LARS adaptation (default: true)
+/// * `exclude_bias_and_norm` - Whether to exclude bias and normalization parameters
+///   from LARS trust-ratio scaling (default: true). Bias and normalization
+///   parameters are identified by their rank: tensors with one dimension or fewer
+///   (`ndim() <= 1`) are treated as biases / normalization scales, matching the
+///   convention used by the reference LARS and LAMB implementations.
 ///
 /// # Example
 ///
@@ -43,7 +47,7 @@ use std::fmt::Debug;
 /// let params = Array1::zeros(10);
 /// let gradients = Array1::ones(10);
 ///
-/// let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+/// let updated_params = optimizer.step(&params, &gradients).expect("optimizer.step succeeds");
 /// // Parameters are automatically updated
 /// ```
 #[derive(Debug, Clone)]
@@ -54,7 +58,8 @@ pub struct LARS<A: Float> {
     trust_coefficient: A,
     eps: A,
     exclude_bias_and_norm: bool,
-    velocity: Option<Vec<A>>,
+    /// Momentum buffers, one flat buffer per parameter-tensor index
+    velocity: Option<Vec<Vec<A>>>,
 }
 
 impl<A: Float + ScalarOperand + Debug + Send + Sync> LARS<A> {
@@ -62,10 +67,12 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LARS<A> {
     pub fn new(learning_rate: A) -> Self {
         Self {
             learning_rate,
-            momentum: A::from(0.9).expect("unwrap failed"),
-            weight_decay: A::from(0.0001).expect("unwrap failed"),
-            trust_coefficient: A::from(0.001).expect("unwrap failed"),
-            eps: A::from(1e-8).expect("unwrap failed"),
+            momentum: A::from(0.9).expect("LARS: default momentum (0.9) must fit in A"),
+            weight_decay: A::from(0.0001)
+                .expect("LARS: default weight_decay (0.0001) must fit in A"),
+            trust_coefficient: A::from(0.001)
+                .expect("LARS: default trust_coefficient (0.001) must fit in A"),
+            eps: A::from(1e-8).expect("LARS: default eps (1e-8) must fit in A"),
             exclude_bias_and_norm: true,
             velocity: None,
         }
@@ -105,50 +112,51 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync> LARS<A> {
     pub fn reset(&mut self) {
         self.velocity = None;
     }
-}
 
-impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync> Optimizer<A, D>
-    for LARS<A>
-{
-    fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
-        // Initialize velocity if not already created
-        let n_params = gradients.len();
-        if self.velocity.is_none() {
-            self.velocity = Some(vec![A::zero(); n_params]);
+    /// Ensures a momentum buffer exists for `index` with `len` elements
+    fn ensure_state(&mut self, index: usize, len: usize) {
+        let velocity = self.velocity.get_or_insert_with(Vec::new);
+        while velocity.len() <= index {
+            velocity.push(vec![A::zero(); len]);
+        }
+        if velocity[index].len() != len {
+            velocity[index] = vec![A::zero(); len];
+        }
+    }
+
+    /// Performs a LARS update for the parameter tensor at `index`
+    ///
+    /// LARS is a *layer-wise* algorithm: the trust ratio is computed per tensor, and
+    /// each tensor keeps its own momentum buffer.
+    pub fn step_indexed<D: Dimension>(
+        &mut self,
+        index: usize,
+        params: &Array<A, D>,
+        gradients: &Array<A, D>,
+    ) -> Result<Array<A, D>> {
+        if params.shape() != gradients.shape() {
+            return Err(OptimError::DimensionMismatch(format!(
+                "Incompatible shapes: parameters have shape {:?}, gradients have shape {:?}",
+                params.shape(),
+                gradients.shape()
+            )));
         }
 
-        let velocity = match &mut self.velocity {
-            Some(v) => {
-                if v.len() != n_params {
-                    return Err(OptimError::InvalidConfig(format!(
-                        "LARS velocity length ({}) does not match gradients length ({})",
-                        v.len(),
-                        n_params
-                    )));
-                }
-                v
-            }
-            None => unreachable!(), // We already initialized it
-        };
+        // A bias / normalization parameter is a rank <= 1 tensor.
+        let is_bias_or_norm = params.ndim() <= 1;
+        let n_params = gradients.len();
+        self.ensure_state(index, n_params);
 
-        // Make a clone of parameters for calculating update
-        let params_clone = params.clone();
-
-        // Calculate the weight decay term
-        let weight_decay_term = if self.weight_decay > A::zero() {
-            &params_clone * self.weight_decay
-        } else {
-            Array::zeros(params.raw_dim())
-        };
-
-        // Calculate weight norm and gradient norm
-        let weight_norm = params_clone.mapv(|x| x * x).sum().sqrt();
+        // Calculate weight norm and gradient norm over this tensor only.
+        let weight_norm = params.mapv(|x| x * x).sum().sqrt();
         let grad_norm = gradients.mapv(|x| x * x).sum().sqrt();
 
-        // Determine if we should apply LARS scaling
-        let should_apply_lars = !self.exclude_bias_and_norm || weight_norm > A::zero();
+        // Determine if we should apply LARS scaling.
+        // Bias and normalization parameters (rank <= 1) are excluded when configured,
+        // and fall back to plain SGD-with-momentum, exactly as the paper prescribes.
+        let should_apply_lars = !(self.exclude_bias_and_norm && is_bias_or_norm);
 
-        // Calculate local learning rate using trust ratio
+        // Calculate local learning rate using the trust ratio
         let local_lr = if should_apply_lars && weight_norm > A::zero() && grad_norm > A::zero() {
             self.trust_coefficient * weight_norm
                 / (grad_norm + self.weight_decay * weight_norm + self.eps)
@@ -156,31 +164,62 @@ impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync>
             A::one()
         };
 
-        // Apply local learning rate scaling
         let scaled_lr = self.learning_rate * local_lr;
+        let momentum = self.momentum;
+        let weight_decay = self.weight_decay;
+        let use_weight_decay = weight_decay > A::zero();
 
-        // Calculate gradient update with weight decay
-        let update_raw = gradients + &weight_decay_term;
+        let velocity = self
+            .velocity
+            .as_mut()
+            .ok_or_else(|| OptimError::InvalidConfig("LARS state not initialized".to_string()))?;
+        let buffer = velocity.get_mut(index).ok_or_else(|| {
+            OptimError::InvalidConfig(format!("LARS has no velocity buffer for index {}", index))
+        })?;
 
-        // Apply scaled learning rate
-        let update_scaled = update_raw * scaled_lr;
-
-        // Create output array - will be our result
         let mut updated_params = params.clone();
-
-        // Apply momentum and update parameters
-        for (idx, (p, &update)) in updated_params
+        for (slot, (p, g)) in buffer
             .iter_mut()
-            .zip(update_scaled.iter())
-            .enumerate()
+            .zip(updated_params.iter_mut().zip(gradients.iter()))
         {
-            // Update velocity with momentum
-            velocity[idx] = self.momentum * velocity[idx] + update;
-            // Update parameter
-            *p = *p - velocity[idx];
+            let grad = if use_weight_decay {
+                *g + weight_decay * *p
+            } else {
+                *g
+            };
+            *slot = momentum * *slot + grad * scaled_lr;
+            *p = *p - *slot;
         }
 
         Ok(updated_params)
+    }
+}
+
+impl<A: Float + ScalarOperand + Debug + Send + Sync, D: Dimension + Send + Sync> Optimizer<A, D>
+    for LARS<A>
+{
+    fn step(&mut self, params: &Array<A, D>, gradients: &Array<A, D>) -> Result<Array<A, D>> {
+        self.step_indexed(0, params, gradients)
+    }
+
+    fn step_list(
+        &mut self,
+        params_list: &[&Array<A, D>],
+        gradients_list: &[&Array<A, D>],
+    ) -> Result<Vec<Array<A, D>>> {
+        if params_list.len() != gradients_list.len() {
+            return Err(OptimError::InvalidConfig(format!(
+                "Number of parameter arrays ({}) does not match number of gradient arrays ({})",
+                params_list.len(),
+                gradients_list.len()
+            )));
+        }
+
+        let mut results = Vec::with_capacity(params_list.len());
+        for (index, (params, grads)) in params_list.iter().zip(gradients_list.iter()).enumerate() {
+            results.push(self.step_indexed(index, params, grads)?);
+        }
+        Ok(results)
     }
 
     fn set_learning_rate(&mut self, learning_rate: A) {
@@ -227,16 +266,21 @@ mod tests {
 
     #[test]
     fn test_lars_update() {
+        // 1-D tensors are treated as bias / normalization parameters, which LARS
+        // excludes by default. Opt in explicitly to exercise the trust-ratio path.
         let mut optimizer = LARS::new(0.1)
             .with_momentum(0.9)
             .with_weight_decay(0.0)
-            .with_trust_coefficient(1.0);
+            .with_trust_coefficient(1.0)
+            .with_exclude_bias_and_norm(false);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         // First update
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lars_update");
 
         // LARS scaling factor with trust_coefficient=1.0 should be:
         // weight_norm / grad_norm = sqrt(14) / sqrt(0.14) ≈ 10
@@ -253,7 +297,7 @@ mod tests {
         // Second update should include momentum
         let updated_params2 = optimizer
             .step(&updated_params, &gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_lars_update");
 
         // For the second update, the velocity will be updated with momentum
         // Just check that parameters continue to change in the expected direction
@@ -267,12 +311,15 @@ mod tests {
         let mut optimizer = LARS::new(0.01)
             .with_momentum(0.0) // No momentum for clarity
             .with_weight_decay(0.1)
-            .with_trust_coefficient(1.0);
+            .with_trust_coefficient(1.0)
+            .with_exclude_bias_and_norm(false);
 
         let params = Array1::from_vec(vec![1.0, 2.0, 3.0]);
         let gradients = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
-        let updated_params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        let updated_params = optimizer
+            .step(&params, &gradients)
+            .expect("optimizer.step succeeds in test_lars_weight_decay");
 
         // Gradients with weight decay: [0.1, 0.2, 0.3] + 0.1*[1.0, 2.0, 3.0] = [0.2, 0.4, 0.6]
         // LARS scaling factor includes weight decay in denominator
@@ -300,7 +347,7 @@ mod tests {
 
         let updated_params = optimizer
             .step(&params, &zero_gradients)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_zero_gradients");
 
         // With zero gradients, only weight decay should contribute to the update
         // With small weight decay (0.0001), changes should be very small
@@ -327,10 +374,10 @@ mod tests {
 
         let updated_excluded = optimizer_excluded
             .step(&bias_params, &bias_grads)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_exclude_bias_and_norm");
         let updated_included = optimizer_included
             .step(&bias_params, &bias_grads)
-            .expect("unwrap failed");
+            .expect("step succeeds in test_exclude_bias_and_norm");
 
         // When excluded, should use base learning rate (but still include momentum calculation)
         assert_abs_diff_eq!(updated_excluded[0], 0.1 - 0.01 * 0.01, epsilon = 1e-4);
@@ -345,5 +392,59 @@ mod tests {
             0.1 - 0.01 * expected_factor * 0.01,
             epsilon = 1e-5
         );
+    }
+
+    /// Regression test for the `exclude_bias_and_norm` tautology.
+    ///
+    /// The flag used to be evaluated as `!exclude || weight_norm > 0`, which is true
+    /// for every parameter with a non-zero norm, so the exclusion never actually
+    /// excluded anything. Bias / normalization parameters are rank <= 1 tensors and
+    /// must fall back to the plain (unscaled) learning rate.
+    #[test]
+    fn test_exclude_bias_and_norm_is_decided_by_rank() {
+        use scirs2_core::ndarray::Array2;
+
+        // Rank-1 tensor => treated as a bias, excluded from the trust ratio.
+        let mut bias_opt = LARS::new(0.01)
+            .with_momentum(0.0)
+            .with_weight_decay(0.0)
+            .with_trust_coefficient(1.0)
+            .with_exclude_bias_and_norm(true);
+
+        let bias = Array1::from_vec(vec![1.0f64, 2.0, 3.0]);
+        let bias_grads = Array1::from_vec(vec![0.1f64, 0.2, 0.3]);
+        let updated_bias = bias_opt.step(&bias, &bias_grads).expect("bias step");
+
+        // Plain SGD: p - lr * g
+        assert_abs_diff_eq!(updated_bias[0], 1.0 - 0.01 * 0.1, epsilon = 1e-12);
+        assert_abs_diff_eq!(updated_bias[2], 3.0 - 0.01 * 0.3, epsilon = 1e-12);
+
+        // Rank-2 tensor => a weight matrix, LARS scaling applies even when the
+        // exclusion flag is enabled.
+        let mut weight_opt = LARS::new(0.01)
+            .with_momentum(0.0)
+            .with_weight_decay(0.0)
+            .with_trust_coefficient(1.0)
+            .with_exclude_bias_and_norm(true);
+
+        let weights =
+            Array2::from_shape_vec((3, 1), vec![1.0f64, 2.0, 3.0]).expect("valid 3x1 matrix");
+        let weight_grads =
+            Array2::from_shape_vec((3, 1), vec![0.1f64, 0.2, 0.3]).expect("valid 3x1 matrix");
+        let updated_weights = weight_opt
+            .step(&weights, &weight_grads)
+            .expect("weight step");
+
+        let weight_norm = weights.mapv(|x: f64| x * x).sum().sqrt();
+        let grad_norm = weight_grads.mapv(|x: f64| x * x).sum().sqrt();
+        let scale = weight_norm / (grad_norm + 1e-8);
+        assert_abs_diff_eq!(
+            updated_weights[[0, 0]],
+            1.0 - 0.01 * scale * 0.1,
+            epsilon = 1e-8
+        );
+
+        // The two paths must genuinely differ.
+        assert!((updated_bias[0] - updated_weights[[0, 0]]).abs() > 1e-6);
     }
 }

@@ -1,7 +1,6 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.3.1
-//! **Release Date:** 2026-03-27 (Stable Release)
+//! **Version:** 0.3.2
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -13,16 +12,23 @@
 //!
 //! ## Dependencies
 //!
-//! - `scirs2-core` 0.1.1 - Required foundation
+//! - `scirs2-core` 0.6.5 - Required foundation
 //!
-//! ## Sub-Crate Status (v0.1.0)
+//! ## Sub-Crate Status (v0.3.2)
 //!
-//! - ✅ `optirs-core` - Production Ready (19 optimizers, SIMD, parallel, metrics)
-//! - ✅ `optirs-bench` - Production Ready (comprehensive benchmarking and profiling)
-//! - 🚧 `optirs-gpu` - Framework Ready (GPU kernels in development)
-//! - 🔬 `optirs-learned` - Research Phase (meta-learning and learned optimizers)
-//! - 🔬 `optirs-nas` - Research Phase (neural architecture search)
-//! - 📝 `optirs-tpu` - Framework Ready (TPU coordination planning stage)
+//! - ✅ `optirs-core` - Stable, production-ready (optimizers, schedulers, regularizers,
+//!   SIMD and parallel paths, metrics)
+//! - ✅ `optirs-bench` - Available (benchmarking, profiling, regression detection)
+//! - 🚧 `optirs-gpu` - Real GPU compute path (Metal backend live end-to-end; WebGPU
+//!   kernels implemented but blocked on an upstream `scirs2-core` adapter-probe bug;
+//!   OpenCL is context-only; CUDA/ROCm have no backend) plus a fully-tested CPU
+//!   library of GPU-aware algorithms
+//! - 🔬 `optirs-learned` - Research-grade learned optimizers and meta-learning (real,
+//!   tested implementations; APIs may still change)
+//! - 🔬 `optirs-nas` - Research-grade neural architecture search (real, tested
+//!   implementations; APIs may still change)
+//! - 📝 `optirs-tpu` - Working CPU-reference implementation of TPU-style coordination
+//!   and an XLA-shaped compiler; no vendor TPU runtime is linked (proprietary hardware)
 //!
 //! ## Quick Start
 //!
@@ -30,7 +36,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-core = "0.3.1"
+//! optirs-core = "0.3.2"
 //! ```
 //!
 //! Basic usage:
@@ -57,59 +63,80 @@
 //!
 //! ### Core Optimizers (`optirs-core`)
 //!
-//! 16 state-of-the-art optimizers with performance optimizations:
-//!
-//! - **First-Order**: SGD, Adam, AdamW, RMSprop, Adagrad, LAMB, LARS, Lion, RAdam, SAM
-//! - **SIMD-Accelerated**: SimdSGD (2-4x faster for large arrays)
-//! - **Sparse**: SparseAdam, GroupedAdam
-//! - **Wrapper**: Lookahead
-//! - **Second-Order**: L-BFGS, Newton
+//! - **First-Order**: SGD, Adam, AdamW, AdaDelta, AdaBound, Adagrad, RMSprop, LAMB,
+//!   LARS, Lion, RAdam, Ranger, SAM
+//! - **SIMD-Accelerated**: `SimdSGD`
+//! - **Sparse / grouped**: `SparseAdam`, `GroupedAdam`
+//! - **Meta-learning**: `MAML`, `MetaSGD`, `ReptileOptimizer`
+//! - **Wrapper**: `Lookahead`
+//! - **Second-Order** (`optirs_core::second_order`): L-BFGS, Newton, Newton-CG, K-FAC
+//! - **Distributed** (`optirs_core::distributed`): FedProx
 //!
 //! #### Performance Features
 //!
-//! - **SIMD Acceleration** - 2-4x speedup for large parameter arrays
-//! - **Parallel Processing** - 4-8x speedup for multiple parameter groups
-//! - **Memory-Efficient** - Gradient accumulation and chunked processing
-//! - **GPU Framework** - 10-50x potential speedup with GPU acceleration
-//! - **Production Metrics** - Real-time monitoring with minimal overhead
+//! - **SIMD** - vectorized optimizer steps through `scirs2_core::simd_ops`
+//! - **Parallel** - parameter groups distributed across cores through
+//!   `scirs2_core::parallel_ops`
+//! - **Memory-Efficient** - gradient accumulation and chunked processing
+//! - **GPU** - see the `optirs-gpu` status below for which backends are real
+//! - **Production Metrics** - per-step monitoring with gradient and parameter statistics
 //!
-//! ### GPU Acceleration (`optirs-gpu`) [Coming Soon]
+//! Speedups are workload- and hardware-dependent; measure them with the Criterion
+//! benchmarks in `optirs-core/benches/` rather than assuming a headline figure.
 //!
-//! ```toml
-//! [dependencies]
-//! optirs-gpu = { version = "0.1.0", features = ["cuda"] }
-//! ```
-//!
-//! - **Multi-Backend**: CUDA, Metal, OpenCL, WebGPU
-//! - **Tensor Cores**: Mixed-precision training support
-//! - **Memory Management**: Advanced GPU memory pools
-//! - **Multi-GPU**: Distributed optimization across GPUs
-//!
-//! ### TPU Coordination (`optirs-tpu`) [Coming Soon]
+//! ### GPU Acceleration (`optirs-gpu`)
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-tpu = "0.1.0"
+//! optirs-gpu = { version = "0.3.2", features = ["metal"] }
 //! ```
 //!
-//! - **Pod Management**: TPU pod coordination
-//! - **XLA Integration**: Compiler optimizations
-//! - **Fault Tolerance**: Robust hardware failure handling
-//! - **Large-Scale**: Distributed training for massive models
+//! - **Metal**: real compute shaders (MSL pipelines, buffers, dispatch, readback) run
+//!   Adam, AdamW, SGD, RMSprop, Adagrad and LAMB end-to-end today
+//! - **WebGPU**: WGSL kernels are implemented, but blocked on an upstream `scirs2-core`
+//!   adapter-probe bug; **OpenCL**: context creation only, no kernels shipped yet;
+//!   **CUDA / ROCm**: no backend (`scirs2-core` 0.6.x dropped its CUDA backend)
+//! - **Tensor Cores**: real mixed-precision tiled GEMM on the wgpu path
+//! - **Memory Management**: CPU-side GPU memory pool models (arena/buddy/slab allocators)
+//! - **Multi-GPU**: single-device reduction kernels; true cross-device collectives
+//!   return an explicit `UnsupportedOperation` error rather than a fabricated result
 //!
-//! ### Learned Optimizers (`optirs-learned`) [Research Phase]
+//! ### TPU Coordination (`optirs-tpu`)
 //!
-//! - **Transformer-based**: Self-attention optimization
-//! - **LSTM**: Recurrent optimizer networks
-//! - **Meta-Learning**: Learning to optimize across tasks
-//! - **Few-Shot**: Rapid adaptation to new problems
+//! ```toml
+//! [dependencies]
+//! optirs-tpu = "0.3.2"
+//! ```
 //!
-//! ### Neural Architecture Search (`optirs-nas`) [Research Phase]
+//! A working CPU-reference implementation - no vendor TPU runtime is linked (that is
+//! proprietary and not distributable as pure Rust); every path below runs and is tested
+//! on the CPU executor, and returns an explicit error where real TPU silicon would be
+//! required instead of a fabricated result.
 //!
-//! - **Search Strategies**: Bayesian, evolutionary, RL-based
-//! - **Multi-Objective**: Balance accuracy, efficiency, resources
-//! - **Progressive**: Gradually increasing complexity
-//! - **Hardware-Aware**: Optimization for specific targets
+//! - **Pod Management**: device/channel topology, barrier sync, load balancing, fault detection
+//! - **XLA-shaped Compiler**: graph builder, dead-code elimination, constant folding,
+//!   common-subexpression elimination, kernel-fusion legality checks, a real allocator,
+//!   shape inference
+//! - **Fault Tolerance**: checkpoints serialized with a SHA-256 integrity hash, verified on restore
+//! - **Collectives**: ring all-reduce / broadcast / reduce-scatter
+//!
+//! ### Learned Optimizers (`optirs-learned`) [Research-Grade]
+//!
+//! - **Transformer-based**: self-attention optimizer with a real backward pass
+//! - **LSTM**: recurrent optimizer networks trained by truncated BPTT, with seeded,
+//!   reproducible initialization
+//! - **Meta-Learning**: MAML, Reptile, Meta-SGD and online meta-learning across tasks
+//! - **Few-Shot**: prototypical networks, fast adaptation, episodic memory
+//! - **Continual Learning**: elastic weight consolidation, progressive networks
+//!
+//! ### Neural Architecture Search (`optirs-nas`) [Research-Grade]
+//!
+//! - **Search Strategies**: random, evolutionary, reinforcement-learning, Bayesian and
+//!   differentiable (DARTS, PC-DARTS, RobustDARTS)
+//! - **Multi-Objective**: NSGA-II and MOEA/D with exact hypervolume
+//! - **Hyperparameter Search**: grid, TPE and a kernel-regression surrogate
+//! - **Progressive**: search with a gradually increasing complexity budget
+//! - **Hardware-Aware**: latency, memory and energy cost modelling
 //!
 //! ## Module Organization
 //!
@@ -167,7 +194,7 @@
 //! ### Production Monitoring
 //!
 //! ```rust
-//! use optirs::core::optimizer_metrics::{MetricsCollector, MetricsReporter};
+//! use optirs::core::optimizer_metrics::MetricsCollector;
 //! use optirs::prelude::*;
 //! use scirs2_core::ndarray::Array1;
 //! use std::time::Instant;
@@ -212,19 +239,25 @@
 //!
 //! This ensures type safety, performance, and consistency across the ecosystem.
 //!
-//! ## Performance
+//! ## Project health
 //!
-//! - **549 unit tests** + **54 doc tests** = **603 total tests**
-//! - **Zero clippy warnings** - Production quality
-//! - **Comprehensive benchmarks** - Using Criterion.rs
-//! - **Statistical analysis** - For reliable performance metrics
+//! Measured on the 0.3.2 release candidate with `--all-features`:
+//!
+//! - more than 4,200 unit and integration tests passing workspace-wide, plus the
+//!   doc tests
+//! - `cargo check` and `cargo clippy --workspace --all-targets` both at zero warnings,
+//!   with no blanket `allow` attributes anywhere
+//! - `cargo deny check bans` passes
+//!
+//! Reproduce with `cargo nextest run --workspace --all-features` and
+//! `cargo clippy --workspace --all-features --all-targets`.
 //!
 //! ## Documentation
 //!
 //! - **API Documentation**: [docs.rs/optirs](https://docs.rs/optirs)
-//! - **User Guide**: See `USAGE_GUIDE.md` (8000+ words)
-//! - **Examples**: See `examples/` directory
-//! - **README**: Comprehensive feature overview
+//! - **User Guide**: `USAGE_GUIDE.md` in the repository
+//! - **Examples**: the `examples/` directory of this crate
+//! - **Release notes**: `CHANGELOG.md` in the repository
 //!
 //! ## Contributing
 //!
@@ -256,21 +289,28 @@ pub use optirs_nas as nas;
 #[cfg(feature = "bench")]
 pub use optirs_bench as bench;
 
-/// Common imports for ease of use
-#[allow(ambiguous_glob_reexports)]
+/// Common imports for ease of use.
+///
+/// This intentionally covers only `optirs-core` (optimizers, regularizers,
+/// schedulers), which is always available and whose names are verified not
+/// to collide with one another. The `gpu`/`tpu`/`learned`/`nas` extension
+/// crates are deliberately **not** globbed in here: they are independently
+/// versioned and, with more than one enabled at once, their public names do
+/// collide with `core` and with each other (for example, both
+/// `optirs-core::optimizers` and `optirs-gpu` export a `SparseAdam`, and both
+/// `optirs-learned` and `optirs-nas` export their own `OptimError`/`Result`).
+/// A glob re-export of colliding names is ambiguous and unusable through the
+/// path that introduced the ambiguity (`ambiguous_glob_reexports`), so
+/// pulling them in here would silently break `optirs::prelude::SparseAdam`
+/// (etc.) the moment two of those features are enabled together.
+///
+/// Reach extension-crate types through their own namespace instead, e.g.
+/// `optirs::gpu::GpuAdam`, `optirs::learned::LSTMOptimizer`,
+/// `optirs::nas::ArchitectureSpace`.
 pub mod prelude {
     pub use crate::core::optimizers::*;
     pub use crate::core::regularizers::*;
     pub use crate::core::schedulers::*;
-
-    #[cfg(feature = "gpu")]
-    pub use crate::gpu::*;
-
-    #[cfg(feature = "learned")]
-    pub use crate::learned::*;
-
-    #[cfg(feature = "nas")]
-    pub use crate::nas::*;
 }
 
 // Re-export core functionality at the top level

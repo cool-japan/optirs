@@ -5,7 +5,6 @@
 
 pub mod configuration;
 pub mod interfaces;
-pub mod management;
 pub mod memory;
 pub mod metrics;
 pub mod networking;
@@ -17,7 +16,6 @@ pub mod types;
 
 pub use self::configuration::*;
 pub use self::interfaces::*;
-pub use self::management::*;
 pub use self::memory::*;
 pub use self::metrics::*;
 pub use self::networking::*;
