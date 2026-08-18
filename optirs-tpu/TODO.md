@@ -1,4 +1,4 @@
-# OptiRS TPU TODO (v0.3.2)
+# OptiRS TPU TODO (v0.3.3)
 
 ## Module Status: Working CPU-reference implementation (no vendor TPU runtime)
 
@@ -171,4 +171,4 @@ behavior:
 
 **Status**: Working CPU-reference implementation; hardware/cloud execution is
 explicitly out of scope until a vendor runtime is available.
-**Version**: v0.3.2
+**Version**: v0.3.3

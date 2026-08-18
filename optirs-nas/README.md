@@ -22,7 +22,7 @@ configuration against your own baselines before relying on it.
 
 ```toml
 [dependencies]
-optirs-nas = "0.3.2"
+optirs-nas = "0.3.3"
 ```
 
 `scirs2-core` is pulled in transitively; you do not need to depend on it yourself unless you use

@@ -1,6 +1,6 @@
 # OptiRS WASM - WebAssembly Bindings for OptiRS
 
-**Version:** 0.3.2
+**Version:** 0.3.3
 **Status:** Production Ready
 
 High-performance WebAssembly bindings for OptiRS deep learning optimizers and learning rate schedulers. Run state-of-the-art ML optimization algorithms in the browser and Node.js.

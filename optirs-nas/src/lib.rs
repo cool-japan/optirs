@@ -1,6 +1,6 @@
 //! # OptiRS NAS - Neural Architecture Search
 //!
-//! **Version:** 0.3.2
+//! **Version:** 0.3.3
 //! **Status:** Research-grade implementations; APIs may still change between releases
 //!
 //! ⚠️ **Warning:** Architecture search is compute-heavy and the search-space / objective
@@ -20,7 +20,7 @@
 //! [`evaluation::BenchmarkSuite`] implements its optimizer update rules directly, which
 //! also makes NAS scores reproducible independently of sibling-crate changes.
 //!
-//! ## Implementation Status (v0.3.2)
+//! ## Implementation Status (v0.3.3)
 //!
 //! - ✅ Bayesian optimization ([`search_strategies::bayesian`] - Gaussian-process surrogate search)
 //! - ✅ Hyperparameter search ([`hyperparameter`] - grid enumeration, TPE, a GP-free

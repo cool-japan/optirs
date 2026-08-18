@@ -1,6 +1,6 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
-//! **Version:** 0.3.2
+//! **Version:** 0.3.3
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -14,7 +14,7 @@
 //!
 //! - `scirs2-core` 0.6.5 - Required foundation
 //!
-//! ## Sub-Crate Status (v0.3.2)
+//! ## Sub-Crate Status (v0.3.3)
 //!
 //! - ✅ `optirs-core` - Stable, production-ready (optimizers, schedulers, regularizers,
 //!   SIMD and parallel paths, metrics)
@@ -36,7 +36,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-core = "0.3.2"
+//! optirs-core = "0.3.3"
 //! ```
 //!
 //! Basic usage:
@@ -88,7 +88,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-gpu = { version = "0.3.2", features = ["metal"] }
+//! optirs-gpu = { version = "0.3.3", features = ["metal"] }
 //! ```
 //!
 //! - **Metal**: real compute shaders (MSL pipelines, buffers, dispatch, readback) run
@@ -105,7 +105,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! optirs-tpu = "0.3.2"
+//! optirs-tpu = "0.3.3"
 //! ```
 //!
 //! A working CPU-reference implementation - no vendor TPU runtime is linked (that is

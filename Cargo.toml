@@ -16,7 +16,7 @@ resolver = "2"
 [workspace.lints.rust]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 authors = ["COOLJAPAN OU (Team KitaSan)"]
 description = "Advanced ML optimization and hardware acceleration library"
@@ -101,12 +101,12 @@ x509-parser = { version = "0.18" }
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 
 # OptiRS crates
-optirs-core = { version = "0.3.2", path = "./optirs-core" }
-optirs-gpu = { version = "0.3.2", path = "./optirs-gpu" }
-optirs-tpu = { version = "0.3.2", path = "./optirs-tpu" }
-optirs-learned = { version = "0.3.2", path = "./optirs-learned" }
-optirs-nas = { version = "0.3.2", path = "./optirs-nas" }
-optirs-bench = { version = "0.3.2", path = "./optirs-bench" }
+optirs-core = { version = "0.3.3", path = "./optirs-core" }
+optirs-gpu = { version = "0.3.3", path = "./optirs-gpu" }
+optirs-tpu = { version = "0.3.3", path = "./optirs-tpu" }
+optirs-learned = { version = "0.3.3", path = "./optirs-learned" }
+optirs-nas = { version = "0.3.3", path = "./optirs-nas" }
+optirs-bench = { version = "0.3.3", path = "./optirs-bench" }
 
 # WASM dependencies
 wasm-bindgen = "0.2.126"

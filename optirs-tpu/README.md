@@ -64,8 +64,8 @@ doc comment (`cargo doc -p optirs-tpu --open`) for the current per-module status
 
 ```toml
 [dependencies]
-optirs-tpu = "0.3.2"
-optirs-core = "0.3.2"
+optirs-tpu = "0.3.3"
+optirs-core = "0.3.3"
 ```
 
 ## Usage

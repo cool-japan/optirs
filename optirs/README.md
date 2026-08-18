@@ -11,14 +11,14 @@ want more than one OptiRS crate under a single version and a single import root.
 
 ```toml
 [dependencies]
-optirs = "0.3.2"
+optirs = "0.3.3"
 ```
 
 `optirs-core` is always included. Everything else is optional:
 
 ```toml
 [dependencies]
-optirs = { version = "0.3.2", features = ["gpu", "bench"] }
+optirs = { version = "0.3.3", features = ["gpu", "bench"] }
 ```
 
 | Feature | Enables | Re-exported as |

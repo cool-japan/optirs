@@ -1,4 +1,4 @@
-# OptiRS NAS TODO (v0.3.2)
+# OptiRS NAS TODO (v0.3.3)
 
 ## Module status
 
@@ -130,4 +130,4 @@ Hyperband, BOHB}` return `OptimError::NotImplemented`.
 **Status**: Research-grade. Every algorithm above is implemented and tested, but the
 search-space and objective APIs may still change between releases — validate a discovered
 configuration against your own baselines before relying on it.
-**Version**: v0.3.2
+**Version**: v0.3.3

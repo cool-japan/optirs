@@ -1,4 +1,4 @@
-# OptiRS Bench TODO (v0.3.2)
+# OptiRS Bench TODO (v0.3.3)
 
 ## Module Status: Production Ready
 
@@ -145,4 +145,4 @@ number as the crate grows -- it will go stale again.)
 ---
 
 **Status**: Production Ready
-**Version**: v0.3.2
+**Version**: v0.3.3

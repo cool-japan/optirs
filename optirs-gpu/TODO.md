@@ -1,4 +1,4 @@
-# OptiRS GPU TODO (v0.3.2)
+# OptiRS GPU TODO (v0.3.3)
 
 ## Module status
 

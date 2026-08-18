@@ -1,4 +1,4 @@
-# OptiRS Core TODO (v0.3.2)
+# OptiRS Core TODO (v0.3.3)
 
 ## Module Status: Pre-1.0 (0.3.x)
 
@@ -275,4 +275,4 @@ grows quickly and a hardcoded number goes stale fast.
 ---
 
 **Status**: Pre-1.0 (0.3.x) - public API may still change between 0.x releases
-**Version**: v0.3.2
+**Version**: v0.3.3

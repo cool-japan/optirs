@@ -1,6 +1,6 @@
 //! # OptiRS GPU — GPU acceleration and GPU-aware optimizer tooling
 //!
-//! **Version:** 0.3.2
+//! **Version:** 0.3.3
 //!
 //! `optirs-gpu` has two halves, and it is worth being precise about which is
 //! which:

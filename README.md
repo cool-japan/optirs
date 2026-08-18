@@ -1,6 +1,6 @@
 # OptiRS - Advanced ML Optimization Built on SciRS2
 
-**Version:** 0.3.2
+**Version:** 0.3.3
 **License:** Apache-2.0
 
 OptiRS is a machine-learning optimization library for Rust, built on the
@@ -174,7 +174,7 @@ WGSL compute kernels from the WASM bindings is documented as not implemented.
 
 ```toml
 [dependencies]
-optirs-core = "0.3.2"
+optirs-core = "0.3.3"
 scirs2-core = "0.6.5"  # required foundation
 ```
 
@@ -182,7 +182,7 @@ Or through the facade crate, which gates the extension crates behind features:
 
 ```toml
 [dependencies]
-optirs = { version = "0.3.2", features = ["gpu", "bench"] }
+optirs = { version = "0.3.3", features = ["gpu", "bench"] }
 ```
 
 ### Basic usage

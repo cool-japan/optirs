@@ -1,6 +1,6 @@
 //! # OptiRS Learned - Learned Optimizers and Meta-Learning
 //!
-//! **Version:** 0.3.2
+//! **Version:** 0.3.3
 //! **Status:** Research-grade implementations; APIs may still change between releases
 //!
 //! ⚠️ **Warning:** Learned optimizers are inherently sensitive to the distribution of
@@ -13,9 +13,9 @@
 //! ## Dependencies
 //!
 //! - `scirs2-core` 0.6.5 - Required foundation
-//! - `optirs-core` 0.3.2 - Core optimizers
+//! - `optirs-core` 0.3.3 - Core optimizers
 //!
-//! ## Implementation Status (v0.3.2)
+//! ## Implementation Status (v0.3.3)
 //!
 //! - ✅ Transformer-based optimizers ([`transformer`], [`transformer_based_optimizer`] -
 //!   self-/cross-attention over parameters)

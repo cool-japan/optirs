@@ -1,4 +1,4 @@
-# OptiRS Learned TODO (v0.3.2)
+# OptiRS Learned TODO (v0.3.3)
 
 ## Module Status: Research-Grade (Pre-1.0)
 
@@ -139,4 +139,4 @@ stale quickly.
 
 **Status**: Research-grade - APIs may still change between 0.x releases; benchmark against
 `optirs-core`'s hand-designed optimizers before depending on a learned one in production
-**Version**: v0.3.2
+**Version**: v0.3.3

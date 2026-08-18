@@ -10,7 +10,7 @@ algorithms (MAML, Reptile, Meta-SGD) on top of [`optirs-core`](../optirs-core). 
 meta-trained on, so benchmark against `optirs-core`'s hand-designed optimizers on your own
 workload before depending on a learned one in production.
 
-## Implementation Status (v0.3.2)
+## Implementation Status (v0.3.3)
 
 - Transformer-based optimizers (`transformer`, `transformer_based_optimizer` - self-/cross-attention over parameters)
 - LSTM optimizer (`lstm` - recurrent per-parameter update rule)
@@ -34,7 +34,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-learned = "0.3.2"
+optirs-learned = "0.3.3"
 scirs2-core = "0.6.5"  # Required foundation
 ```
 
@@ -56,7 +56,7 @@ ungated.
 
 ```toml
 [dependencies]
-optirs-learned = { version = "0.3.2", default-features = false, features = ["lstm"] }
+optirs-learned = { version = "0.3.3", default-features = false, features = ["lstm"] }
 ```
 
 ## Usage

@@ -36,7 +36,7 @@ Nothing in this crate fabricates a result: where a capability genuinely is not r
 
 ```toml
 [dependencies]
-optirs-gpu = "0.3.2"
+optirs-gpu = "0.3.3"
 ```
 
 Default features enable `wgpu`. On macOS, `metal` is also always compiled in (see `optirs-gpu/Cargo.toml`), because it is currently the backend that actually reaches the GPU there.

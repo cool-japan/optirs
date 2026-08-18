@@ -1,6 +1,6 @@
 # OptiRS WASM TODO
 
-**Version:** 0.3.2
+**Version:** 0.3.3
 **Last audited:** 2026-08-18
 
 This file tracks what is *open* for `optirs-wasm`. What has been completed is recorded in

@@ -1,6 +1,6 @@
 //! # OptiRS TPU - TPU Coordination and Pod Management
 //!
-//! **Version:** 0.3.2
+//! **Version:** 0.3.3
 //! **Status:** Working CPU-reference implementation; no vendor TPU runtime
 //!
 //! `optirs-tpu` provides TPU-style coordination, pod management, and an XLA-shaped
